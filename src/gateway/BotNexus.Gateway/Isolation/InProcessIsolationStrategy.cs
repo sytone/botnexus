@@ -139,6 +139,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         // conversation-id lookup reuses the memoised GetConversationIdAsync so this adds no second
         // DB round-trip.
         var conversationOverrideLayer = await ResolveConversationOverrideLayerAsync(
+            descriptor,
             conversationStore => GetConversationIdAsync(conversationStore, _serviceProvider.GetService<ISessionStore>()),
             cancellationToken).ConfigureAwait(false);
 
@@ -368,11 +369,18 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 if (hookDispatcher is null)
                     return null;
 
+                var hookOrigin = DiagnosticExecutionOrigin.ForToolInvocation(
+                    agentId,
+                    context.SessionId,
+                    await GetConversationIdForOriginAsync().ConfigureAwait(false),
+                    ctx.ToolCallRequest.Id,
+                    ResolveExecutionChannel(context));
                 var hookEvent = new BeforeToolCallEvent(
                     agentId,
                     ctx.ToolCallRequest.Name,
                     ctx.ToolCallRequest.Id,
-                    ctx.ValidatedArgs);
+                    ctx.ValidatedArgs,
+                    hookOrigin);
 
                 var results = await hookDispatcher
                     .DispatchAsync<BeforeToolCallEvent, GatewayBeforeToolCallResult>(hookEvent, ct)
@@ -399,12 +407,19 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                     return null;
 
                 var resultText = AgentToolResultText.Extract(ctx.Result);
+                var hookOrigin = DiagnosticExecutionOrigin.ForToolInvocation(
+                    agentId,
+                    context.SessionId,
+                    await GetConversationIdForOriginAsync().ConfigureAwait(false),
+                    ctx.ToolCallRequest.Id,
+                    ResolveExecutionChannel(context));
                 var hookEvent = new AfterToolCallEvent(
                     agentId,
                     ctx.ToolCallRequest.Name,
                     ctx.ToolCallRequest.Id,
                     resultText,
-                    ctx.IsError);
+                    ctx.IsError,
+                    hookOrigin);
 
                 await hookDispatcher
                     .DispatchAsync<AfterToolCallEvent, GatewayAfterToolCallResult>(hookEvent, ct)
@@ -412,6 +427,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
                 return null;
             };
+        }
+
+        async Task<ConversationId?> GetConversationIdForOriginAsync()
+        {
+            var conversationStore = _serviceProvider.GetService<IConversationStore>();
+            return conversationStore is null
+                ? null
+                : await GetConversationIdAsync(
+                    conversationStore,
+                    _serviceProvider.GetService<ISessionStore>()).ConfigureAwait(false);
         }
 
         List<AgentMessage>? initialMessages = null;
@@ -660,6 +685,13 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     private static bool IsWildcardToolIds(IReadOnlyList<string> toolIds)
         => toolIds.Count == 0 || (toolIds.Count == 1 && toolIds[0] == "*");
 
+    private static string? ResolveExecutionChannel(AgentExecutionContext context)
+        => context.Parameters.TryGetValue("channel", out var raw)
+            && raw is string channel
+            && !string.IsNullOrWhiteSpace(channel)
+                ? channel.Trim()
+                : null;
+
     // Parse the descriptor's wire-form thinking string ("minimal".."max", plus "xhigh") into the
     // ThinkingLevel enum for the resolver's agent layer. Unset / unrecognised => null (fall through
     // to the model default). Capability validity is enforced at registration; this is a lenient read.
@@ -826,6 +858,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     // treated as unset rather than throwing, because the API boundary validates tokens before they
     // are stored.
     private async Task<ModelOverrideLayer> ResolveConversationOverrideLayerAsync(
+        AgentDescriptor descriptor,
         Func<IConversationStore, Task<ConversationId?>> resolveConversationId,
         CancellationToken cancellationToken)
     {
@@ -846,8 +879,21 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             && TryParseThinkingToken(conversation.ThinkingOverride, out var parsed))
             thinking = parsed;
 
+        var modelOverride = string.IsNullOrWhiteSpace(conversation.ModelOverride)
+            ? null
+            : conversation.ModelOverride.Trim();
+        if (modelOverride is not null && !AgentModelPermission.IsPermitted(descriptor, modelOverride))
+        {
+            _logger.LogWarning(
+                "Ignoring forbidden conversation model override for agent '{AgentId}' conversation '{ConversationId}': {RequestedModel}",
+                descriptor.AgentId,
+                conversation.ConversationId,
+                modelOverride);
+            modelOverride = null;
+        }
+
         return new ModelOverrideLayer(
-            Model: string.IsNullOrWhiteSpace(conversation.ModelOverride) ? null : conversation.ModelOverride,
+            Model: modelOverride,
             Thinking: thinking,
             ContextWindow: conversation.ContextWindowOverride);
     }

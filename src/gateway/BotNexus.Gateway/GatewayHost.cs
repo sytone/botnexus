@@ -10,6 +10,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Diagnostics;
@@ -72,6 +73,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly IOutboundResponseDeliverer _deliverer;
     private readonly Sessions.ISessionTurnTracker _turnTracker;
     private readonly ChannelStartupReport _startupReport;
+    private readonly IConversationEventPublisher? _conversationEventPublisher;
 
     /// <summary>
     /// The single execution-layer tool-audit sink (#2614), used by the blocking branch of
@@ -110,9 +112,11 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         ChannelStartupReport? startupReport = null,
         ISessionContextWindowResolver? contextWindowResolver = null,
         Audit.IToolAuditSink? toolAudit = null,
-        Sessions.IContextExhaustionNotifier? contextExhaustionNotifier = null)
+        Sessions.IContextExhaustionNotifier? contextExhaustionNotifier = null,
+        IConversationEventPublisher? conversationEventPublisher = null)
     {
         _toolAudit = toolAudit ?? Audit.DefaultToolAuditSink.Instance;
+        _conversationEventPublisher = conversationEventPublisher;
         _contextWindowResolver = contextWindowResolver;
         // #3535: a run that ends on an empty assistant completion because the context window is
         // exhausted must say so instead of presenting as a blank turn. Built from the collaborators
@@ -631,59 +635,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     // forum topics) already fold them into the address itself.
                     var streamingSource = resolvedSource;
 
-                    // Resolve SignalR observer bindings for cross-channel live update (#332).
-                    // When the originating channel is not SignalR (e.g. Telegram), any SignalR
-                    // bindings on the conversation receive stream events so connected web
-                    // clients update in real-time without a page reload.
-                    //
-                    // #2073: deduplicate by the primary destination's *resolved delivery identity*,
-                    // not by the inbound message.ChannelType. Internal/sub-agent completion turns
-                    // arrive as `internal` but the primary streaming channel resolves to the
-                    // originating session's channel - which is itself SignalR whenever the parent
-                    // session was a portal/web session. In that case the primary path already
-                    // streams into the SignalR conversation group, so fanning the same deltas out
-                    // to the SignalR observer binding would deliver every delta twice to the same
-                    // group ("TheThe independent independent..."). The terminal channel the primary
-                    // path delivers to is the session's own channel: the direct path streams via
-                    // message.ChannelType, and the internal adapter resolves the target adapter from
-                    // session.ChannelType (falling back to signalr). We therefore suppress SignalR
-                    // observer fan-out whenever that terminal channel is SignalR, regardless of the
-                    // model or the inbound channel type.
-                    var primaryTerminalChannel = message.ChannelType.Value == "internal"
-                        ? (session.ChannelType?.Value ?? "signalr")
-                        : message.ChannelType.Value;
-                    var primaryDeliversToSignalR = string.Equals(
-                        primaryTerminalChannel, "signalr", StringComparison.Ordinal);
-
-                    IReadOnlyList<(IStreamEventChannelAdapter Adapter, ChannelStreamTarget Target)> signalRObservers = [];
-                    if (_conversationRouter is not null && !primaryDeliversToSignalR)
+                    // Capture the complete routing view once. Every event in this turn carries the
+                    // same immutable binding snapshot, so sinks cannot race mutable conversation state.
+                    var bindingSnapshots = System.Collections.Immutable.ImmutableArray<ConversationBindingSnapshot>.Empty;
+                    if (_conversationStore is not null && session.ConversationId.IsInitialized())
                     {
-                        try
-                        {
-                            var observerBindings = await _conversationRouter.GetOutboundBindingsAsync(
-                                typedSessionId,
-                                message.BindingId,
-                                cancellationToken);
-
-                            signalRObservers = observerBindings
-                                .Where(b => b.ChannelType.Value == "signalr")
-                                .Select(b =>
-                                {
-                                    var adapter = ResolveChannelAdapter(b.ChannelType) as IStreamEventChannelAdapter;
-                                    var observerTarget = new ChannelStreamTarget(
-                                        session.ConversationId,
-                                        typedSessionId,
-                                        b.ChannelAddress,
-                                        b.BindingId);
-                                    return (Adapter: adapter!, Target: observerTarget);
-                                })
-                                .Where(x => x.Adapter is not null)
-                                .ToList();
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to resolve SignalR observer bindings for session {SessionId}. Live update disabled for this turn.", sessionId);
-                        }
+                        var conversation = await _conversationStore.GetAsync(session.ConversationId, cancellationToken);
+                        bindingSnapshots = ConversationBindingSnapshot.FromMany(conversation?.ChannelBindings);
                     }
 
                     var userMessage = BuildUserMessage(message, processedParts ?? originalParts, agentDescriptor);
@@ -731,16 +689,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                     ConversationId = evt.ConversationId ?? session.ConversationId
                                 };
 
-                                // Build the typed stream target the channel adapter uses to
-                                // route this delta or event. Each adapter consumes the field
-                                // that matches its routing semantics — see ChannelStreamTarget.
-                                var streamTarget = new ChannelStreamTarget(
-                                    session.ConversationId,
-                                    typedSessionId,
-                                    message.ChannelAddress,
-                                    message.BindingId,
-                                    message.ChannelRequestId);
-
+                                // AskUserTool persisted its checkpoint before this event became observable.
+                                // With the generic seam active, this legacy path serves only adapters that
+                                // cannot consume structured stream events. Directly constructed hosts without
+                                // a publisher retain the historical primary delivery behavior.
                                 if (enriched.Type == AgentStreamEventType.UserInputRequired)
                                 {
                                     await HandleUserInputRequiredAsync(
@@ -749,28 +701,41 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                                         session.ConversationId,
                                         streamingSource,
                                         enriched,
+                                        streamViaConversationEvents: _conversationEventPublisher is not null,
                                         ct);
-                                    return;
                                 }
 
-                                if (channel is IStreamEventChannelAdapter streamEventChannel)
-                                    await streamEventChannel.SendStreamEventAsync(streamTarget, enriched, ct);
-                                else if (evt.Type == AgentStreamEventType.ContentDelta && evt.ContentDelta is not null)
-                                    await channel.SendStreamDeltaAsync(streamTarget, evt.ContentDelta, ct);
-
-                                // Fan-out stream events to SignalR observer bindings (#332).
-                                // Each observer gets the event keyed by its own typed target so the
-                                // portal can route it correctly and exclude its own originating binding.
-                                foreach (var (observerAdapter, observerTarget) in signalRObservers)
+                                if (_conversationEventPublisher is not null)
                                 {
-                                    try
+                                    var sender = message.Sender.Kind == CitizenKind.User
+                                        ? message.Sender.AsUser
+                                        : (UserId?)null;
+                                    _ = await _conversationEventPublisher.PublishAsync(new ConversationAgentEvent
                                     {
-                                        await observerAdapter.SendStreamEventAsync(observerTarget, enriched, ct);
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.LogWarning(ex, "SignalR observer fan-out failed for address {Address}. Skipping.", observerTarget.ChannelAddress);
-                                    }
+                                        AgentId = typedAgentId,
+                                        ConversationId = session.ConversationId,
+                                        SessionId = typedSessionId,
+                                        Origin = new ConversationEventOrigin(
+                                            message.BindingId,
+                                            sender,
+                                            message.ChannelRequestId),
+                                        Bindings = bindingSnapshots,
+                                        OccurredAt = enriched.Timestamp,
+                                        StreamEvent = enriched
+                                    }, ct);
+                                }
+                                else if (enriched.Type != AgentStreamEventType.UserInputRequired)
+                                {
+                                    var streamTarget = new ChannelStreamTarget(
+                                        session.ConversationId,
+                                        typedSessionId,
+                                        message.ChannelAddress,
+                                        message.BindingId,
+                                        message.ChannelRequestId);
+                                    if (channel is IStreamEventChannelAdapter streamEventChannel)
+                                        await streamEventChannel.SendStreamEventAsync(streamTarget, enriched, ct);
+                                    else if (enriched.Type == AgentStreamEventType.ContentDelta && enriched.ContentDelta is not null)
+                                        await channel.SendStreamDeltaAsync(streamTarget, enriched.ContentDelta, ct);
                                 }
                             },
                         MaxPersistedToolResultBytes: maxPersistedToolResultBytes),
@@ -1564,12 +1529,13 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         ConversationId conversationId,
         ChannelSource source,
         AgentStreamEvent streamEvent,
+        bool streamViaConversationEvents,
         CancellationToken cancellationToken)
     {
         var request = streamEvent.UserInputRequest;
 
         if (ResolveChannelAdapter(message.ChannelType) is { } sourceAdapter)
-            await SendAskUserToBindingAsync(sourceAdapter, source, typedSessionId, conversationId, streamEvent, request, cancellationToken);
+            await SendAskUserToBindingAsync(sourceAdapter, source, typedSessionId, conversationId, streamEvent, request, streamViaConversationEvents, cancellationToken);
 
         if (_conversationRouter is null)
             return;
@@ -1591,7 +1557,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 message.SenderId,
                 binding.BindingId,
                 binding.DisplayPrefix);
-            await SendAskUserToBindingAsync(adapter, bindingSource, typedSessionId, conversationId, streamEvent, request, cancellationToken);
+            await SendAskUserToBindingAsync(adapter, bindingSource, typedSessionId, conversationId, streamEvent, request, streamViaConversationEvents, cancellationToken);
         }
     }
 
@@ -1602,10 +1568,14 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         ConversationId conversationId,
         AgentStreamEvent streamEvent,
         AskUserRequest? request,
+        bool streamViaConversationEvents,
         CancellationToken cancellationToken)
     {
         if (adapter is IStreamEventChannelAdapter streamAdapter)
         {
+            if (streamViaConversationEvents)
+                return;
+
             var target = new ChannelStreamTarget(
                 conversationId,
                 typedSessionId,

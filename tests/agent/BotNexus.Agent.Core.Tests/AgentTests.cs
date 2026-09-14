@@ -1,6 +1,7 @@
 using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Tests.TestUtils;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Streaming;
 using System.Reflection;
 
@@ -58,6 +59,31 @@ public class AgentTests
         agent.State.StreamingMessage.ShouldBeNull();
         agent.State.PendingToolCalls.ShouldBeEmpty();
         agent.Status.ShouldBe(AgentStatus.Idle);
+    }
+
+    [Fact]
+    public async Task PromptAsync_WhenCredentialResolverReturnsBlank_PreservesDeclaredSentinelInProviderOptions()
+    {
+        SimpleStreamOptions? capturedOptions = null;
+        const string api = "declared-blank-api";
+        using var provider = TestHelpers.RegisterProvider(
+            new TestApiProvider(
+                api,
+                simpleStreamFactory: (_, _, options) =>
+                {
+                    capturedOptions = options;
+                    return TestStreamFactory.CreateTextResponse("assistant");
+                }));
+        var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel(api)) with
+        {
+            GetApiKey = (_, _) => Task.FromResult<string?>(string.Empty)
+        };
+        var agent = new BotNexus.Agent.Core.Agent(options);
+
+        await agent.PromptAsync("hello");
+
+        capturedOptions.ShouldNotBeNull();
+        capturedOptions.ApiKey.ShouldBe(string.Empty);
     }
 
     [Fact]

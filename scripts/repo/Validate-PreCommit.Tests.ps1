@@ -80,7 +80,7 @@ function New-TestRepository {
     return $path
 }
 
-function Write-Receipt([string]$Repository, [string]$Mode = 'full') {
+function Write-Receipt([string]$Repository, [string]$Mode = 'core') {
     $fingerprint = & $fingerprintScript -WorktreePath $Repository
     $gitDirectory = (Invoke-IsolatedGit -Arguments @('-C', $Repository, 'rev-parse', '--absolute-git-dir')).Trim()
     $receiptDirectory = Join-Path $gitDirectory 'botnexus-validation'
@@ -137,10 +137,15 @@ if ($azureRunnerSource -notmatch "(?s)Mode -ne 'strict'.+playwrightArtifact" -or
     $azureRunnerSource -notmatch 'result.exitCode -eq 0 -and\s+\$requiredArtifactsPresent') {
     $failures.Add('Strict Azure receipt creation must require a Playwright artifact.')
 }
+# Preserve the original cross-platform path-safety invariant with the replacement
+# transport: NUL-safe Git enumeration and ZIP entries replace tar list-file parsing.
+$snapshotSource = Get-Content (Join-Path $repoRoot 'scripts/repo/SourceSnapshot.psm1') -Raw
 if ($azureRunnerSource -match 'ls-files.+-z.+tar --null' -or
-    $azureRunnerSource -notmatch 'workspace-files\.txt' -or
-    $azureRunnerSource -notmatch 'System32/tar\.exe') {
-    $failures.Add('Azure snapshot creation must use an LF file list and Windows tar.exe rather than a native pipeline.')
+    $azureRunnerSource -notmatch 'SourceSnapshot\.psm1' -or
+    $azureRunnerSource -notmatch 'ZipFile\]::CreateFromDirectory' -or
+    $snapshotSource -notmatch "'--exclude-standard', '-z'" -or
+    $snapshotSource -notmatch 'Assert-SourceSnapshotPath \$entry.FullName') {
+    $failures.Add('Azure snapshots must use the exact-source module and preserve literal paths through NUL-safe enumeration, ZIP capture and validated reconstruction.')
 }
 $entrypointSource = Get-Content (Join-Path $repoRoot 'infra/buildtest/runner/entrypoint.ps1') -Raw
 if ($entrypointSource -notmatch "playwright\.log" -or
@@ -178,17 +183,17 @@ try {
     Assert-Match 'Validation mode: remote' $result.Output 'Matching remote receipt should resolve remote mode despite ambient configuration.'
     Assert-Match 'skipping redundant remote validation' $result.Output 'The receipt-bypass branch must be genuinely evaluated, not skipped.'
 
-    # #2825: remote validation must dispatch the FULL solution, not the impacted subset.
-    # Strict was measured to exercise ~4,700 of 13,088 tests, so a silent regression to it
-    # would drop roughly two-thirds of coverage while still reporting a green gate. A
-    # strict receipt must NOT satisfy a full gate either, or the bypass reintroduces it.
+    # #3601: remote validation dispatches the complete non-browser CORE suite while browser-
+    # emulated E2E is quarantined for review. Strict was measured to exercise ~4,700 tests, so
+    # a silent regression to it would still drop most coverage. A strict receipt must NOT satisfy
+    # the core gate either.
     $repo = New-TestRepository; $repositories.Add($repo)
     $marker = Join-Path $repo 'commands.log'
     $remote = New-CommandScript $repo 'remote.ps1' $marker
     $local = New-CommandScript $repo 'local.ps1' $marker
     $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local; ValidationMode = 'remote' }
     Assert-Equal 0 $result.ExitCode 'Remote validation should pass.'
-    Assert-Match '-Mode full' (Get-Content "$marker.modes") 'Remote validation must dispatch full-solution mode by default.'
+    Assert-Match '-Mode core' (Get-Content "$marker.modes") 'Remote validation must dispatch fail-closed non-browser core mode by default.'
 
     $repo = New-TestRepository; $repositories.Add($repo)
     $marker = Join-Path $repo 'commands.log'
@@ -196,7 +201,7 @@ try {
     $local = New-CommandScript $repo 'local.ps1' $marker
     Write-Receipt $repo 'strict'
     $result = Invoke-ValidationScript @{ WorktreePath = $repo; AzureValidationScript = $remote; LocalValidationScript = $local; ValidationMode = 'remote' }
-    Assert-Equal $true (Test-Path $marker) 'A strict receipt must not satisfy the full remote gate.'
+    Assert-Equal $true (Test-Path $marker) 'A strict receipt must not satisfy the core remote gate.'
 
     # #2158: REMOTE is the operational default. An unconfigured caller must reach the Azure
     # runner and must NOT touch the local script, because local validation spawns gateway

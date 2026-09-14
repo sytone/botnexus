@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
 using System.IO.Abstractions;
@@ -8,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Extensions;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Hooks;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Media;
@@ -33,6 +34,7 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
     private static readonly Type[] DiscoverableServiceContracts =
     [
         typeof(IChannelAdapter),
+        typeof(IConversationEventSink),
         typeof(IIsolationStrategy),
         typeof(ISessionStore),
         typeof(IGatewayAuthHandler),
@@ -74,6 +76,13 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
     // so pruning can remove both - leaving the factory behind would make it resolve a type that
     // is no longer registered and abort IEnumerable<IHostedService> resolution at host start.
     private readonly Dictionary<Type, List<ServiceDescriptor>> _channelHostedServiceDescriptors = [];
+
+    // Multi-contract implementations use factory aliases that resolve one shared concrete
+    // singleton. ServiceDescriptor does not expose the implementation captured by a factory, so
+    // pruning retains the exact aliases created for each contract/implementation pair. Matching
+    // every factory for the same contract removes unrelated adapters (#4196).
+    private readonly Dictionary<(Type Contract, Type Implementation), List<ServiceDescriptor>>
+        _extensionFactoryDescriptors = [];
 
     public AssemblyLoadContextExtensionLoader(
         IServiceCollection services,
@@ -418,9 +427,14 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
         List<string> registered = [];
         var isChannelExtension = manifest.ExtensionTypes?.Any(
             extensionType => extensionType.Equals("channel", StringComparison.OrdinalIgnoreCase)) is true;
-        foreach (var (contract, implementation) in implementations)
+
+        foreach (var implementationGroup in implementations.GroupBy(item => item.Implementation))
         {
-            if (contract == typeof(IAgentTool) && !HasAutoResolvableConstructor(implementation, out var skipReason))
+            var implementation = implementationGroup.Key;
+            var contracts = implementationGroup.Select(item => item.ServiceContract).Distinct().ToArray();
+
+            if (contracts.Contains(typeof(IAgentTool)) &&
+                !HasAutoResolvableConstructor(implementation, out var skipReason))
             {
                 _logger.LogDebug(
                     "Skipping auto-registration for tool implementation '{ImplementationType}' because no DI-compatible constructor was found ({Reason}).",
@@ -429,45 +443,66 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
                 continue;
             }
 
-            if (_services.Any(descriptor =>
-                    descriptor.ServiceType == contract &&
-                    descriptor.ImplementationType == implementation))
-            {
+            var contractsToRegister = contracts.Where(contract => !_services.Any(descriptor =>
+                descriptor.ServiceType == contract &&
+                (descriptor.ImplementationType == implementation || descriptor.ServiceType == implementation)))
+                .ToArray();
+            if (contractsToRegister.Length == 0)
                 continue;
+
+            ServiceDescriptor? implementationDescriptor = null;
+            if (contractsToRegister.Length > 1)
+            {
+                implementationDescriptor = ServiceDescriptor.Singleton(implementation, implementation);
+                _services.TryAdd(implementationDescriptor);
             }
 
-            if (contract == typeof(IHostedService) && isChannelExtension)
+            foreach (var contract in contractsToRegister)
             {
-                _channelHostedServiceDescriptors[implementation] =
-                    [.. _services.AddChannelHostedService(implementation, manifest.Id)];
-                registered.Add($"{contract.Name}->{implementation.FullName} (channel fault barrier)");
+                if (contract == typeof(IHostedService) && isChannelExtension)
+                {
+                    _channelHostedServiceDescriptors[implementation] =
+                        [.. _services.AddChannelHostedService(implementation, manifest.Id)];
+                    registered.Add($"{contract.Name}->{implementation.FullName} (channel fault barrier)");
+                    _registeredExtensionServices.Add((contract, implementation));
+                    continue;
+                }
+
+                var enumerableContract = contract == typeof(IChannelAdapter) ||
+                    contract == typeof(IConversationEventSink) ||
+                    contract == typeof(IIsolationStrategy) ||
+                    contract == typeof(IAgentChangeNotifier) ||
+                    contract == typeof(IConversationChangeNotifier) ||
+                    contract == typeof(IAgentCanvasNotifier) ||
+                    contract == typeof(IAgentTodoNotifier) ||
+                    contract == typeof(IAgentToolContributor) ||
+                    contract == typeof(IAgentTool) ||
+                    contract == typeof(ICommandContributor) ||
+                    contract == typeof(IMediaHandler) ||
+                    contract == typeof(IEndpointContributor) ||
+                    contract == typeof(IApiContributor) ||
+                    contract == typeof(IHostedService);
+
+                if (contractsToRegister.Length > 1)
+                {
+                    var factoryDescriptor = ServiceDescriptor.Singleton(
+                        contract,
+                        serviceProvider => serviceProvider.GetRequiredService(implementation));
+                    _services.Add(factoryDescriptor);
+                    TrackExtensionFactoryDescriptor(contract, implementation, factoryDescriptor);
+                }
+                else if (enumerableContract)
+                {
+                    _services.AddSingleton(contract, implementation);
+                }
+                else
+                {
+                    _services.TryAddSingleton(contract, implementation);
+                }
+
+                registered.Add($"{contract.Name}->{implementation.FullName}");
                 _registeredExtensionServices.Add((contract, implementation));
-                continue;
             }
-
-            if (contract == typeof(IChannelAdapter) || 
-                contract == typeof(IIsolationStrategy) ||
-                contract == typeof(IAgentChangeNotifier) ||
-                contract == typeof(IConversationChangeNotifier) ||
-                contract == typeof(IAgentCanvasNotifier) ||
-                contract == typeof(IAgentTodoNotifier) ||
-                contract == typeof(IAgentToolContributor) ||
-                contract == typeof(IAgentTool) ||
-                contract == typeof(ICommandContributor) ||
-                contract == typeof(IMediaHandler) ||
-                contract == typeof(IEndpointContributor) ||
-                contract == typeof(IApiContributor) ||
-                contract == typeof(IHostedService))
-            {
-                _services.AddSingleton(contract, implementation);
-            }
-            else
-            {
-                _services.TryAddSingleton(contract, implementation);
-            }
-
-            registered.Add($"{contract.Name}->{implementation.FullName}");
-            _registeredExtensionServices.Add((contract, implementation));
         }
 
         return registered;
@@ -514,10 +549,16 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             for (var i = _services.Count - 1; i >= 0; i--)
             {
                 var descriptor = _services[i];
-                if (descriptor.ServiceType == contract && descriptor.ImplementationType == implementation)
+                _extensionFactoryDescriptors.TryGetValue(
+                    (contract, implementation),
+                    out var factoryDescriptors);
+                if ((descriptor.ServiceType == contract && descriptor.ImplementationType == implementation) ||
+                    (descriptor.ServiceType == implementation && descriptor.ImplementationType == implementation) ||
+                    factoryDescriptors?.Contains(descriptor) is true ||
+                    channelDescriptors?.Contains(descriptor) is true)
+                {
                     _services.RemoveAt(i);
-                else if (channelDescriptors?.Contains(descriptor) is true)
-                    _services.RemoveAt(i);
+                }
             }
 
             const string reason = "no public constructor whose parameters are all resolvable from the host container";
@@ -535,6 +576,21 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
         }
 
         return pruned;
+    }
+
+    private void TrackExtensionFactoryDescriptor(
+        Type contract,
+        Type implementation,
+        ServiceDescriptor descriptor)
+    {
+        var key = (contract, implementation);
+        if (!_extensionFactoryDescriptors.TryGetValue(key, out var descriptors))
+        {
+            descriptors = [];
+            _extensionFactoryDescriptors[key] = descriptors;
+        }
+
+        descriptors.Add(descriptor);
     }
 
     /// <summary>

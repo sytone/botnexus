@@ -65,6 +65,12 @@ public sealed record ChatMessage(string Role, string Content, DateTimeOffset Tim
     /// <summary>Stable identity for markdown caching and tool-call linking.</summary>
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
 
+    /// <summary>
+    /// Stable identity assigned by the conversation-history projection. Null for live rows until a
+    /// REST refresh correlates them with their persisted counterpart.
+    /// </summary>
+    public string? ServerEntryId { get; init; }
+
     /// <summary>Agent that produced this message (for multi-agent conversations).</summary>
     public string? AgentId { get; init; }
 

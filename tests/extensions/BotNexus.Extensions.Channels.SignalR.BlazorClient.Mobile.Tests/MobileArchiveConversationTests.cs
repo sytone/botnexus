@@ -1,6 +1,8 @@
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.Abstractions;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
@@ -18,6 +20,7 @@ public sealed class MobileArchiveConversationTests : IDisposable
     private readonly IClientStateStore _store;
     private readonly IPortalLoadService _portalLoad;
     private readonly IAgentInteractionService _interaction;
+    private readonly IPortalPreferencesService _preferences;
     private readonly AgentState _agentState;
 
     public MobileArchiveConversationTests()
@@ -25,6 +28,8 @@ public sealed class MobileArchiveConversationTests : IDisposable
         _store = Substitute.For<IClientStateStore>();
         _portalLoad = Substitute.For<IPortalLoadService>();
         _interaction = Substitute.For<IAgentInteractionService>();
+        _preferences = Substitute.For<IPortalPreferencesService>();
+        _preferences.Current.Returns(new PortalPreferences());
 
         _portalLoad.IsReady.Returns(true);
         _portalLoad.IsSignalRConnected.Returns(true);
@@ -61,6 +66,8 @@ public sealed class MobileArchiveConversationTests : IDisposable
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.Services.AddSingleton(_interaction);
+        _ctx.Services.AddSingleton(_preferences);
+        _ctx.Services.AddSingleton(Substitute.For<IChannelErrorReporter>());
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
@@ -101,6 +108,41 @@ public sealed class MobileArchiveConversationTests : IDisposable
         var confirmBtn = cut.Find("[data-testid='archive-confirm-btn']");
         Assert.Equal("Archive", confirmBtn.TextContent.Trim());
         Assert.Contains("Quarterly plan", cut.Find(".reset-confirm-overlay").TextContent);
+    }
+
+    [Fact]
+    public async Task Archive_action_skips_overlay_when_confirmation_is_disabled()
+    {
+        _preferences.Current.Returns(new PortalPreferences { ArchiveConfirmEnabled = false });
+        var cut = _ctx.Render<Chat>();
+
+        cut.Find(".overflow-btn").Click();
+        cut.Find("[data-testid='archive-conversation-btn']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.FindAll("[data-testid='archive-confirm-btn']").ShouldBeEmpty();
+            _interaction.Received(1).ArchiveConversationAsync("agent-1", "conv-1");
+        });
+    }
+
+    [Fact]
+    public async Task Mobile_layout_loads_preferences_and_emits_normalized_density()
+    {
+        _preferences.LoadAsync().Returns(_ =>
+        {
+            _preferences.Current.Returns(new PortalPreferences { Density = "COMFORTABLE" });
+            return Task.CompletedTask;
+        });
+
+        var cut = _ctx.Render<BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Layout.MobileLayout>(parameters =>
+            parameters.Add(layout => layout.Body, (RenderFragment)(builder => builder.AddContent(0, "content"))));
+
+        cut.WaitForAssertion(() =>
+        {
+            _preferences.Received(1).LoadAsync();
+            cut.Find("[data-density='comfortable']");
+        });
     }
 
     [Fact]

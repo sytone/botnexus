@@ -1094,7 +1094,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // was attempted - but they can no longer stand alone as an unqualified success.
         var terminalSummary = runFailed
             ? DescribeFailedRun(subAgentId, outcome!, hasFinalResponse ? normalizedResultSummary : null)
-            : hasFinalResponse ? normalizedResultSummary : emptyResponseDiagnostic;
+            : hasFinalResponse
+                ? outcome?.HasRecoveredErrors == true
+                    ? DescribeRecoveredRun(outcome, normalizedResultSummary ?? resultSummary)
+                    : normalizedResultSummary
+                : emptyResponseDiagnostic;
 
         var terminalStatus = hasFinalResponse && !runFailed
             ? SubAgentStatus.Completed
@@ -1620,6 +1624,28 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
 
         return text;
+    }
+
+    /// <summary>
+    /// Builds the bounded recovery evidence delivered with a successful run that contained
+    /// superseded tool failures. The full failed and successful records remain in child history;
+    /// this summary carries only counts, tool names, and correlation ids.
+    /// </summary>
+    internal static string DescribeRecoveredRun(SubAgentRunOutcome outcome, string narratedSummary)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+
+        var recoveries = string.Join(
+            ", ",
+            outcome.RecoveredToolFailures.Select(recovery =>
+                $"{recovery.ToolName} {recovery.FailedToolCallId}->{recovery.RecoveryToolCallId}"));
+
+        return "[completed-with-recovered-errors] "
+            + $"{outcome.RecoveredToolFailureCount} failed tool invocation"
+            + (outcome.RecoveredToolFailureCount == 1 ? " was" : "s were")
+            + $" recovered by an adjacent same-tool retry ({recoveries})."
+            + Environment.NewLine
+            + narratedSummary;
     }
 
     private static string DescribeStatus(SubAgentStatus status)

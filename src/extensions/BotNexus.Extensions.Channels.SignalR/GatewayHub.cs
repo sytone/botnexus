@@ -206,6 +206,22 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     }
 
     /// <summary>
+    /// Delivers a conversation-addressed message with explicit queue, steer, or interrupt intent.
+    /// The gateway resolves that intent against authoritative run state (#3326).
+    /// </summary>
+    public Task<SendMessageResult> DeliverMessage(
+        AgentId agentId,
+        ChannelKey channelType,
+        string content,
+        string conversationId,
+        InboundDeliveryMode deliveryMode)
+    {
+        EnsureControlScope(nameof(DeliverMessage));
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+        return SendMessageCore(agentId, channelType, content, conversationId, deliveryMode: deliveryMode);
+    }
+
+    /// <summary>
     /// Injects a canvas <c>submitToAgent</c> click into a conversation as a genuine USER turn,
     /// stamped with <see cref="MessageKind.CanvasSubmission"/> so the transcript records why the
     /// message exists (#2449).
@@ -230,7 +246,9 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         return SendMessageCore(agentId, channelType, content, conversationId, MessageKind.CanvasSubmission);
     }
 
-    private async Task<SendMessageResult> SendMessageCore(AgentId agentId, ChannelKey channelType, string content, string? conversationId, MessageKind? kind = null)
+    private async Task<SendMessageResult> SendMessageCore(
+        AgentId agentId, ChannelKey channelType, string content, string? conversationId,
+        MessageKind? kind = null, InboundDeliveryMode deliveryMode = InboundDeliveryMode.Auto)
     {
         var typedAgentId = NormalizeAgentId(agentId);
         var typedChannelType = NormalizeChannelKey(channelType);
@@ -254,10 +272,16 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _logger.LogInformation("Hub SendMessage: agent={AgentId} channel={ChannelType} session={SessionId} connection={ConnectionId} content={Content}",
             typedAgentId, typedChannelType, resolution.SessionId, connectionId, GraphemeSafeTruncation.Truncate(content, 50, "..."));
 
-        _ = SafeDispatchAsync(
-            () => DispatchMessageAsync(typedAgentId, resolution.SessionId, content, "message", connectionId, normalizedConversationId, kind),
+        var admission = await DispatchMessageAsync(
             typedAgentId,
-            resolution.SessionId);
+            resolution.SessionId,
+            content,
+            "message",
+            connectionId,
+            normalizedConversationId,
+            kind,
+            deliveryMode).ConfigureAwait(false);
+        EnsureMessageAccepted(admission);
 
         return new SendMessageResult(
             resolution.SessionId.Value,
@@ -358,6 +382,48 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     }
 
     /// <summary>
+    /// Delivers a conversation-addressed message with media and explicit intent (#3326).
+    /// </summary>
+    public async Task<SendMessageResult> DeliverMessageWithMedia(
+        AgentId agentId,
+        ChannelKey channelType,
+        string content,
+        IReadOnlyList<MediaContentPartDto> contentParts,
+        string conversationId,
+        InboundDeliveryMode deliveryMode)
+    {
+        EnsureControlScope(nameof(DeliverMessageWithMedia));
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+        var typedAgentId = NormalizeAgentId(agentId);
+        var typedChannelType = NormalizeChannelKey(channelType);
+        if (string.IsNullOrWhiteSpace(content) && contentParts.Count == 0)
+            throw new ArgumentException("A message must contain text or at least one attachment.", nameof(content));
+
+        var resolution = await ResolveOrCreateSessionAsync(typedAgentId, typedChannelType, conversationId);
+        await SubscribeConversationInternalAsync(resolution.ConversationId);
+        var parts = contentParts.Select(ConvertToDomainContentPart).ToList();
+        var admission = await _app.PostAsync(
+            BuildInboundMessage(
+                typedAgentId,
+                Context.ConnectionId,
+                content ?? string.Empty,
+                "message-with-media",
+                new InboundMessageRoutingHints(
+                    RequestedAgentId: typedAgentId,
+                    RequestedSessionId: resolution.SessionId,
+                    RequestedConversationId: ConversationId.From(conversationId),
+                    DeliveryMode: deliveryMode),
+                parts),
+            Context.ConnectionAborted).ConfigureAwait(false);
+        EnsureMessageAccepted(admission);
+
+        return new SendMessageResult(
+            resolution.SessionId.Value,
+            resolution.AgentId.Value,
+            resolution.ChannelType.Value);
+    }
+
+    /// <summary>
     /// Sends a message with media content parts to an agent.
     /// </summary>
     /// <param name="agentId">The target agent.</param>
@@ -389,18 +455,16 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var connectionId = Context.ConnectionId;
         var parts = contentParts.Select(ConvertToDomainContentPart).ToList();
 
-        _ = SafeDispatchAsync(
-            () => _app.AcceptAsync(
-                BuildInboundMessage(
-                    typedAgentId, connectionId, normalizedContent, "message-with-media",
-                    new InboundMessageRoutingHints(
-                        RequestedAgentId: typedAgentId,
-                        RequestedSessionId: resolution.SessionId,
-                        RequestedConversationId: normalizedConversationId is null ? null : ConversationId.From(normalizedConversationId)),
-                    parts),
-                CancellationToken.None),
-            typedAgentId,
-            resolution.SessionId);
+        var admission = await _app.PostAsync(
+            BuildInboundMessage(
+                typedAgentId, connectionId, normalizedContent, "message-with-media",
+                new InboundMessageRoutingHints(
+                    RequestedAgentId: typedAgentId,
+                    RequestedSessionId: resolution.SessionId,
+                    RequestedConversationId: normalizedConversationId is null ? null : ConversationId.From(normalizedConversationId)),
+                parts),
+            Context.ConnectionAborted).ConfigureAwait(false);
+        EnsureMessageAccepted(admission);
 
         return new SendMessageResult(
             resolution.SessionId.Value,
@@ -408,17 +472,27 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             resolution.ChannelType.Value);
     }
 
-    private Task DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content,
-        string messageType, string senderId, string? conversationId = null, MessageKind? kind = null)
-        => _app.AcceptAsync(
+    private Task<InboundDispatchStatus> DispatchMessageAsync(AgentId typedAgentId, SessionId typedSessionId, string content,
+        string messageType, string senderId, string? conversationId = null, MessageKind? kind = null,
+        InboundDeliveryMode deliveryMode = InboundDeliveryMode.Auto)
+        => _app.PostAsync(
             BuildInboundMessage(
                 typedAgentId, senderId, content, messageType,
                 new InboundMessageRoutingHints(
                     RequestedAgentId: typedAgentId,
                     RequestedSessionId: typedSessionId,
-                    RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId)),
+                    RequestedConversationId: string.IsNullOrWhiteSpace(conversationId) ? null : ConversationId.From(conversationId),
+                    DeliveryMode: deliveryMode),
                 kind: kind),
-            CancellationToken.None);
+            Context.ConnectionAborted);
+
+    private static void EnsureMessageAccepted(InboundDispatchStatus status)
+    {
+        if (status is InboundDispatchStatus.Accepted or InboundDispatchStatus.Steered)
+            return;
+
+        throw new HubException($"Message was not accepted by the inbound queue ({status}). Retry shortly.");
+    }
 
     // Centralizes the channel-invariant InboundMessage fields shared by the SignalR hub dispatch
     // paths: signalr type, authenticated sender, stable per-agent address, and clientKind metadata.

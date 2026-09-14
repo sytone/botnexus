@@ -94,3 +94,29 @@ tampered and extra files, legacy fingerprints and invalid proof/test contracts. 
 credentials/configuration are isolated and the inherited environment is restored exactly;
 task-created fixture directories are removed afterward. No .NET tests, gateway processes,
 Azure calls or deployment are part of this suite.
+
+## Readiness regression evidence
+
+The Linux-only case-sensitive fixtures intentionally fail on a non-Linux host rather than
+skip acceptance coverage. Run the complete suite in a clean Linux filesystem, not a
+case-insensitive host bind mount. A disposable offline container with read-only source
+input and container-private fixture copies avoids both host Git credentials and installed
+PowerShell module state. No .NET test hosts are needed for these transport fixtures.
+
+The readiness repair retains all existing assertions and adds file-to-directory replacement,
+case-only unstaged rename, a genuine two-existing-file case-collision negative, and a
+matching archive/manifest link-attribute negative with a regular-file positive control.
+Only surviving regular files reserve portable names; deleted index entries cannot collide
+with a valid renamed candidate. Link, submodule and unresolved-index guards remain intact.
+
+Failure-result diagnostics still run for failed executions. Source proof and stable-candidate
+checks guard every prospective successful receipt, including legacy results missing proof.
+The existing verdict fixture now imports its actual artifact dependency in its isolated
+runspace. The receipt-selection fixture pins ZIP/NUL-safe reconstruction instead of the
+retired tar list-file representation while retaining its nine receipt-selection scenarios.
+
+Measured in clean Linux PowerShell7.6.2/Pester6.0.1: initial49passed/5failed (two snapshot
+edge cases plus three inherited verdict dependency failures), repaired54passed/0failed/
+0skipped. Each isolated link-guard, collision-order and directory-rejection mutation gives
+53passed/1failed at its specific new test. Receipt-selection scenarios9passed/0failed.
+These are offline fixture results, not a claim of deployed runner or FULL validation.

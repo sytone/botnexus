@@ -130,6 +130,26 @@ public sealed class SignalRHubTests
         Assert.Equal("farnsworth", result[0].AgentId.Value);
     }
 
+    [Theory]
+    [InlineData(InboundDeliveryMode.Auto)]
+    [InlineData(InboundDeliveryMode.Steer)]
+    [InlineData(InboundDeliveryMode.Interrupt)]
+    public async Task GatewayHub_DeliverMessage_PreservesTheClientsDeliveryIntent(InboundDeliveryMode deliveryMode)
+    {
+        var orchestrator = new CapturingInboundMessageOrchestrator();
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1");
+
+        await hub.DeliverMessage(
+            AgentId.From("agent-a"),
+            ChannelKey.From("signalr"),
+            "same message",
+            "conversation-1",
+            deliveryMode);
+
+        orchestrator.Captured.ShouldHaveSingleItem()
+            .RoutingHints!.DeliveryMode.ShouldBe(deliveryMode);
+    }
+
     [Fact]
     public async Task GatewayHub_SendMessage_UsesVisibleSessionForAgentChannel()
     {
@@ -148,6 +168,24 @@ public sealed class SignalRHubTests
         captured.RoutingHints!.RequestedAgentId.ShouldNotBeNull();
         captured.RoutingHints.RequestedAgentId!.Value.Value.ShouldBe("agent-a");
         captured.Content.ShouldBe("hello");
+    }
+
+    [Theory]
+    [InlineData(InboundDispatchStatus.Busy)]
+    [InlineData(InboundDispatchStatus.NoRoute)]
+    [InlineData(InboundDispatchStatus.Stalled)]
+    [InlineData(InboundDispatchStatus.Rejected)]
+    public async Task GatewayHub_SendMessage_WhenDispatchIsNotAccepted_ThrowsInsteadOfReturningSuccess(InboundDispatchStatus status)
+    {
+        var orchestrator = new CapturingInboundMessageOrchestrator
+        {
+            AdmissionStatus = status
+        };
+        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1");
+
+        var act = () => hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "Do not lose this");
+
+        (await act.ShouldThrowAsync<HubException>()).Message.ShouldContain("not accepted", Case.Insensitive);
     }
 
     [Fact]

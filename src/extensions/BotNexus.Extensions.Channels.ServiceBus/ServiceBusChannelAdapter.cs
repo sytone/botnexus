@@ -6,6 +6,7 @@ using Azure.Messaging.ServiceBus;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Channels.Startup;
@@ -42,7 +43,7 @@ namespace BotNexus.Extensions.Channels.ServiceBus;
 /// <see cref="ServiceBusServiceCollectionExtensions.AddBotNexusServiceBusChannel"/>.
 /// </para>
 /// </remarks>
-public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter, IAddressableChannelAdapter
+public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter, IConversationEventSink, IAddressableChannelAdapter
 {
     // Metadata keys stored in InboundMessage.Metadata for use by the outbound path.
     internal const string MetaReplyTo = "servicebus.replyTo";
@@ -1126,4 +1127,23 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
         public long NextSequence { get; set; }
         public bool Completed { get; set; }
     }
+    /// <inheritdoc />
+    public async Task OnConversationEventAsync(
+        ConversationEvent conversationEvent,
+        CancellationToken cancellationToken = default)
+    {
+        if (conversationEvent is not ConversationAgentEvent agentEvent)
+            return;
+
+        foreach (var target in ConversationEventStreamRouting.GetTargets(
+                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
+        {
+            if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
+            {
+                await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+    }
+
 }

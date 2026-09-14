@@ -221,9 +221,11 @@ with a filed issue.
 | # | Difference | Evidence | Reason |
 |---|---|---|---|
 | I-1 | No hover affordances on mobile | Desktop `MainLayout.razor:1141` puts the archive action behind a `title=` tooltip on a hover row; mobile surfaces it as an explicit menu action at `Chat.razor:118` | Touch has no hover state. A hover-revealed control is undiscoverable on a phone. |
-| I-2 | Mobile archive confirm is a full-screen overlay | Mobile `Chat.razor:255-273` | Larger hit targets and an unambiguous confirm/cancel pair, versus desktop's inline row control. |
+| I-2 | Mobile archive confirm is a full-screen overlay when confirmation is enabled | Mobile `Chat.razor` reads the shared `ArchiveConfirmEnabled` preference before showing its overlay | Larger hit targets and an unambiguous confirm/cancel pair suit touch; disabling the shared preference skips the overlay on both surfaces. |
 | I-3 | Mobile has a manual refresh button | `Chat.razor:63, 87` (`ManualRefreshAsync`) | A backgrounded mobile circuit may have missed events. Desktop's circuit is continuous and needs no user-invoked resync. |
-| I-4 | Composer geometry preferences are desktop-only | `PortalPreferences.ExpandingInput` / `ExpandingInputMaxLines` consumed by desktop only | An 8-line expanding textarea is a large-viewport affordance. **Conditional**: this entry is provisional until #3459 either honours these on mobile or confirms the decision — see §3.4 F-6. |
+| I-4 | Composer geometry preferences are desktop-only | Mobile deliberately ignores `ExpandingInput` and `ExpandingInputMaxLines` | Mobile uses a fixed one-row bottom composer to preserve message space and native viewport/keyboard behaviour; the desktop's multi-line geometry is a large-viewport affordance. |
+| I-5 | Debug-mode entry point is desktop-only | Mobile deliberately ignores `DebugModeEnabled` | The desktop preference reveals its multi-panel debug inspector. Mobile has no debug-inspector route or panel (D-4), so consuming the flag would expose no operable surface. |
+| I-6 | Theme preference is desktop-only | Mobile deliberately ignores `Theme` while consuming `Density` | Mobile has its own fixed PWA colour palette and stylesheet rather than the desktop theme-token blocks. Density remains shared because it is a layout preference; theme convergence requires a separate visual-design slice. |
 
 ### 3.4 Drift register — historical findings and current resolution
 
@@ -237,7 +239,7 @@ their historical evidence is preserved, not newly verified or cleared by the F-2
 | F-3 | Four duplicate message-role mappers, one self-declared mirror | §2.3 | [#3456](https://github.com/Sytone/botnexus/issues/3456) |
 | F-4 | Timestamp format implemented 3–4 times, byte-identical across surfaces | `ChatPanel.razor:1003-1004` ≡ mobile `Chat.razor:1029-1030`; partial copy `MainLayout.razor:1311`; variant `CronJobs.razor:461` | [#3457](https://github.com/Sytone/botnexus/issues/3457) |
 | F-5 | Mobile ignores `ConversationRenderProjection`'s `IsReadOnly` / `ShowComposer` / `Badge` / `Group` | Mobile uses only `IsUnattended` (`Chat.razor:940`); its composer gates on `_isSending` alone (lines 221, 223). Desktop uses `IsReadOnly` at 19 sites in `ChatPanel.razor`. A read-only conversation renders a live composer on mobile. | [#3458](https://github.com/Sytone/botnexus/issues/3458) |
-| F-6 | Config-form orchestration mirrored by comment; mobile ignores `IPortalPreferencesService` entirely | Mobile `Settings.razor.cs` says "mirrors the desktop `Configuration` code-behind"; 4 desktop `IPortalPreferencesService` hits, 0 mobile | [#3459](https://github.com/Sytone/botnexus/issues/3459) |
+| F-6 | **Resolved:** config-form orchestration has one `.Core` owner; mobile consumes archive confirmation and density preferences | `PlatformConfigFormModel` owns load/revision/dirty-path/atomic-patch behavior and the non-persisted-section set; `MobileLayout` emits normalized density; `Chat` honours `ArchiveConfirmEnabled`. Deliberately ignored members are recorded in I-4 through I-6. | [#3459](https://github.com/Sytone/botnexus/issues/3459) |
 | F-7 | Mobile `Chat.razor` is an undecomposed 1,126-line monolith, growing | +149 lines since the #2452 measurement; 3 mobile components total vs 25 desktop | [#3460](https://github.com/Sytone/botnexus/issues/3460) |
 
 At the original measurement, F-5 was the only entry with a **user-visible correctness** consequence: mobile offers a send

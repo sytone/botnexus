@@ -195,6 +195,25 @@ public abstract class GitHubToolBase : IAgentTool
     protected static int RequireInt(IReadOnlyDictionary<string, object?> args, string key) =>
         ReadInt(args, key) ?? throw new ArgumentException($"{key} is required.");
 
+    /// <summary>Reads a comma-separated string list, preserving an explicitly empty list.</summary>
+    protected static string[]? ReadStringList(IReadOnlyDictionary<string, object?> args, string key)
+    {
+        if (!args.ContainsKey(key))
+            return null;
+
+        var value = ReadString(args, key);
+        return value is null
+            ? []
+            : value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    /// <summary>Adds a request member only when the caller supplied a value.</summary>
+    protected static void AddIfPresent(IDictionary<string, object?> payload, string key, object? value)
+    {
+        if (value is not null)
+            payload[key] = value;
+    }
+
     /// <summary>
     /// Clamps a caller-supplied page size into the configured bound.
     /// </summary>

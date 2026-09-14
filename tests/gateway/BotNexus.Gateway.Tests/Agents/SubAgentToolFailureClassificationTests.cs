@@ -126,6 +126,125 @@ public sealed class SubAgentToolFailureClassificationTests
     }
 
     [Fact]
+    public async Task CorrectedAdjacentRetry_CompletesWithBoundedRecoveryEvidence()
+    {
+        var manager = CreateManager(out var dispatcher);
+        dispatcher
+            .Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var spawned = await manager.SpawnAsync(CreateSpawnRequest());
+        var response = new AgentResponse
+        {
+            Content = NarratedSummary,
+            ToolCalls =
+            [
+                new AgentToolCallInfo("c1", "shell", IsError: true, ResultContent: "malformed invocation"),
+                new AgentToolCallInfo("c2", "shell", IsError: false, ResultContent: "corrected"),
+                new AgentToolCallInfo("c3", "exec", IsError: false, ResultContent: "38 tests passed")
+            ]
+        };
+
+        var outcome = SubAgentRunOutcome.From(response);
+        await manager.OnCompletedAsync(spawned.SubAgentId, NarratedSummary, outcome);
+
+        var info = await manager.GetAsync(spawned.SubAgentId);
+        info.ShouldNotBeNull();
+        info!.Status.ShouldBe(SubAgentStatus.Completed);
+        info.ResultSummary.ShouldNotBeNull();
+        info.ResultSummary!.ShouldContain("completed-with-recovered-errors");
+        info.ResultSummary.ShouldContain("1 failed tool invocation was recovered");
+        info.ResultSummary.ShouldContain("shell");
+        info.ResultSummary.ShouldContain(NarratedSummary);
+        outcome.FailedToolCount.ShouldBe(1);
+        outcome.RecoveredToolFailureCount.ShouldBe(1);
+        outcome.UnrecoveredToolFailureCount.ShouldBe(0);
+        outcome.HasFailure.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void UnrelatedSuccess_DoesNotRecoverAnEarlierFailure()
+    {
+        var response = new AgentResponse
+        {
+            Content = NarratedSummary,
+            ToolCalls =
+            [
+                new AgentToolCallInfo("c1", "write", IsError: true, ResultContent: "access denied"),
+                new AgentToolCallInfo("c2", "read", IsError: false, ResultContent: "unrelated success")
+            ]
+        };
+
+        var outcome = SubAgentRunOutcome.From(response);
+
+        outcome.FailedToolCount.ShouldBe(1);
+        outcome.RecoveredToolFailureCount.ShouldBe(0);
+        outcome.UnrecoveredToolFailureCount.ShouldBe(1);
+        outcome.HasFailure.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void NonAdjacentSameToolSuccess_DoesNotLaunderAnEarlierFailure()
+    {
+        var response = new AgentResponse
+        {
+            Content = NarratedSummary,
+            ToolCalls =
+            [
+                new AgentToolCallInfo("c1", "shell", IsError: true, ResultContent: "malformed invocation"),
+                new AgentToolCallInfo("c2", "read", IsError: false, ResultContent: "diagnostic"),
+                new AgentToolCallInfo("c3", "shell", IsError: false, ResultContent: "later success")
+            ]
+        };
+
+        var outcome = SubAgentRunOutcome.From(response);
+
+        outcome.RecoveredToolFailureCount.ShouldBe(0);
+        outcome.UnrecoveredToolFailureCount.ShouldBe(1);
+        outcome.HasFailure.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void InterruptedAttempt_IsNotRecoveredByASubsequentSuccess()
+    {
+        var response = new AgentResponse
+        {
+            Content = NarratedSummary,
+            ToolCalls =
+            [
+                new AgentToolCallInfo("c1", "exec", IsError: true, ResultContent: "interrupted", IsIncomplete: true),
+                new AgentToolCallInfo("c2", "exec", IsError: false, ResultContent: "later execution")
+            ]
+        };
+
+        var outcome = SubAgentRunOutcome.From(response);
+
+        outcome.RecoveredToolFailureCount.ShouldBe(0);
+        outcome.UnrecoveredToolFailureCount.ShouldBe(1);
+        outcome.HasFailure.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ProviderError_RemainsTerminal_WhenEveryToolFailureWasRecovered()
+    {
+        var response = new AgentResponse
+        {
+            Content = NarratedSummary,
+            TerminalError = "provider disconnected",
+            ToolCalls =
+            [
+                new AgentToolCallInfo("c1", "read", IsError: true, ResultContent: "bad path"),
+                new AgentToolCallInfo("c2", "read", IsError: false, ResultContent: "corrected")
+            ]
+        };
+
+        var outcome = SubAgentRunOutcome.From(response);
+
+        outcome.RecoveredToolFailureCount.ShouldBe(1);
+        outcome.UnrecoveredToolFailureCount.ShouldBe(0);
+        outcome.HasFailure.ShouldBeTrue();
+    }
+
+    [Fact]
     public void RunOutcome_From_CountsEveryFailedTool_AndKeepsTheLastError()
     {
         var response = new AgentResponse

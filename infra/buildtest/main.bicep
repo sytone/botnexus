@@ -214,6 +214,12 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
         name: 'Consumption'
         workloadProfileType: 'Consumption'
       }
+      {
+        name: 'BuildTestD8'
+        workloadProfileType: 'D8'
+        minimumCount: 0
+        maximumCount: 1
+      }
     ]
     zoneRedundant: false
   }
@@ -231,7 +237,7 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
   }
   properties: {
     environmentId: environment.id
-    workloadProfileName: 'Consumption'
+    workloadProfileName: 'BuildTestD8'
     configuration: {
       triggerType: 'Manual'
       // 20 minutes. A full core run measures ~13-15 min, so this is a realistic budget
@@ -276,8 +282,10 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
           name: 'runner'
           image: '${registry.properties.loginServer}/botnexus-buildtest-runner:${runnerImageTag}'
           resources: {
-            cpu: json('4.0')
-            memory: '8Gi'
+            // D8 provides 8 vCPU / 32 GiB. Give the runner every core but leave 8 GiB for
+            // Container Apps runtime overhead instead of allocating the complete node.
+            cpu: json('8.0')
+            memory: '24Gi'
           }
           env: [
             {

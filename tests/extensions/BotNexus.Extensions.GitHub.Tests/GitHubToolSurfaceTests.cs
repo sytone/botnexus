@@ -49,12 +49,16 @@ public sealed class GitHubToolSurfaceTests
         [
             new GitHubIssueGetTool(api, config),
             new GitHubIssueListTool(api, config),
+            new GitHubIssueCreateTool(api, config),
             new GitHubIssueCommentTool(api, config),
+            new GitHubIssueUpdateTool(api, config),
+            new GitHubPullRequestCreateTool(api, config),
             new GitHubPullRequestGetTool(api, config),
             new GitHubPullRequestListTool(api, config),
             new GitHubPullRequestChecksTool(api, config),
             new GitHubPullRequestDiffTool(api, config),
             new GitHubWorkflowRunsTool(api, config),
+            new GitHubLabelsTool(api, config),
             new GitHubApiTool(api, config),
         ];
     }
@@ -150,19 +154,23 @@ public sealed class GitHubToolSurfaceTests
                  {
                      (new GitHubIssueGetTool(api, config), new() { ["number"] = 1 }),
                      (new GitHubIssueListTool(api, config), new()),
+                     (new GitHubIssueCreateTool(api, config), new() { ["title"] = "title" }),
                      (new GitHubIssueCommentTool(api, config), new() { ["number"] = 1, ["body"] = "hi" }),
+                     (new GitHubIssueUpdateTool(api, config), new() { ["number"] = 1, ["state"] = "closed" }),
+                     (new GitHubPullRequestCreateTool(api, config), new() { ["title"] = "title", ["head"] = "topic" }),
                      (new GitHubPullRequestGetTool(api, config), new() { ["number"] = 1 }),
                      (new GitHubPullRequestListTool(api, config), new()),
                      (new GitHubPullRequestChecksTool(api, config), new() { ["number"] = 1 }),
                      (new GitHubPullRequestDiffTool(api, config), new() { ["number"] = 1 }),
                      (new GitHubWorkflowRunsTool(api, config), new()),
+                     (new GitHubLabelsTool(api, config), new() { ["action"] = "list" }),
                      (new GitHubApiTool(api, config), new() { ["path"] = "user" }),
                  })
         {
             results.Add(await GitHubFixtures.InvokeAsync(invocation.Tool, invocation.Args));
         }
 
-        results.Count.ShouldBe(9, "vacuity guard: every tool must have produced a result to scan");
+        results.Count.ShouldBe(13, "vacuity guard: every tool must have produced a result to scan");
         handler.SawAuthorizationHeader.ShouldBeTrue(
             "vacuity guard: the credential must actually have been attached, or this test proves nothing");
 
@@ -173,7 +181,7 @@ public sealed class GitHubToolSurfaceTests
     }
 
     [Fact]
-    public async Task ToolErrorResults_NeverContainTheInstallationTokenValue()
+    public async Task WriteToolErrorResults_NeverContainTheInstallationTokenValue()
     {
         const string secret = "ghs_never_should_appear_in_an_error";
 
@@ -183,12 +191,27 @@ public sealed class GitHubToolSurfaceTests
             new CachedGitHubCredentialProvider(
                 new FixedTokenSource(new GitHubInstallationToken(secret, DateTimeOffset.UtcNow.AddHours(1)))),
             new GitHubCredentialOptions { ApiBaseAddress = "https://api.github.test/" });
+        var config = GitHubFixtures.Config();
+        var invocations = new (GitHubToolBase Tool, Dictionary<string, object?> Args)[]
+        {
+            (new GitHubIssueCreateTool(api, config), new() { ["title"] = "title" }),
+            (new GitHubIssueCommentTool(api, config), new() { ["number"] = 1, ["body"] = "body" }),
+            (new GitHubIssueUpdateTool(api, config), new() { ["number"] = 1, ["state"] = "closed" }),
+            (new GitHubPullRequestCreateTool(api, config), new() { ["title"] = "title", ["head"] = "topic" }),
+            (new GitHubLabelsTool(api, config), new() { ["action"] = "create", ["name"] = "label", ["color"] = "abcdef" }),
+        };
 
-        var text = await GitHubFixtures.InvokeAsync(
-            new GitHubIssueGetTool(api, GitHubFixtures.Config()), new() { ["number"] = 1 });
+        foreach (var invocation in invocations)
+        {
+            var text = await GitHubFixtures.InvokeAsync(invocation.Tool, invocation.Args);
+            text.ShouldNotContain(secret);
+            var result = JsonDocument.Parse(text).RootElement;
+            result.GetProperty("status").GetInt32().ShouldBe(401);
+            result.GetProperty("repository").GetString().ShouldBe(config.DefaultRepository);
+            result.GetProperty("identity").GetString().ShouldBe(config.Identity);
+        }
 
-        text.ShouldNotContain(secret);
-        JsonDocument.Parse(text).RootElement.GetProperty("status").GetInt32().ShouldBe(401);
+        handler.SawAuthorizationHeader.ShouldBeTrue();
     }
 
     [Fact]
@@ -231,9 +254,9 @@ public sealed class GitHubToolSurfaceTests
 
         contribution.Tools.Select(t => t.Name).ShouldBe(
             [
-                "github_issue_get", "github_issue_list", "github_issue_comment",
-                "github_pr_get", "github_pr_list", "github_pr_checks", "github_pr_diff",
-                "github_workflow_runs", "github_api",
+                "github_issue_get", "github_issue_list", "github_issue_create", "github_issue_comment",
+                "github_issue_update", "github_pr_create", "github_pr_get", "github_pr_list",
+                "github_pr_checks", "github_pr_diff", "github_workflow_runs", "github_labels", "github_api",
             ],
             ignoreOrder: true);
     }

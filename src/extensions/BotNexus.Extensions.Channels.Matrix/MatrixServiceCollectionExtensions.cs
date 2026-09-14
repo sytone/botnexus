@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -61,7 +62,9 @@ public static class MatrixServiceCollectionExtensions
                 Path.Combine(dataRoot, "data", "matrix-sync-cursor.db"));
         });
 
-        services.AddSingleton<IChannelAdapter, MatrixChannelAdapter>();
+        services.AddSingleton<MatrixChannelAdapter>();
+        services.AddSingleton<IChannelAdapter>(sp => sp.GetRequiredService<MatrixChannelAdapter>());
+        services.AddSingleton<IConversationEventSink>(sp => sp.GetRequiredService<MatrixChannelAdapter>());
 
         return services;
     }

@@ -61,12 +61,18 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
     // ── Messaging ─────────────────────────────────────────────────────────
 
-    public Task SendMessageAsync(string agentId, string conversationId, string content)
-        => SendMessageAsync(agentId, conversationId, content, []);
-
     /// <inheritdoc />
-    public async Task SendMessageAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments)
+    public async Task DeliverMessageAsync(
+        string agentId,
+        string conversationId,
+        string content,
+        InboundDeliveryMode deliveryMode = InboundDeliveryMode.Auto,
+        IReadOnlyList<DraftAttachment>? attachments = null)
     {
+        attachments ??= [];
+        if (string.IsNullOrWhiteSpace(content) && attachments.Count == 0)
+            return;
+
         // #3063: the conversation is supplied by the caller, never re-derived from ambient state and
         // never created here. A caller that has no conversation yet must create one first, so a send
         // can no longer materialise a conversation as an invisible side effect.
@@ -78,18 +84,29 @@ public sealed class AgentInteractionService : IAgentInteractionService
         var conv = agent.Conversations.GetValueOrDefault(conversationId);
         if (conv is null) return;
 
-        // Route the local user echo through the single append path so every call site
-        // (send, steer, redirect) adds the user message and notifies identically.
-        AppendTo(conv, "User", content);
+        var localEcho = deliveryMode switch
+        {
+            InboundDeliveryMode.Steer => $"🔀 {content}",
+            InboundDeliveryMode.Interrupt => "[redirect] " + content,
+            _ => content
+        };
+        AppendTo(conv, "User", localEcho);
+
+        if (deliveryMode == InboundDeliveryMode.Steer)
+        {
+            _store.AddSteeringEntry(
+                conversationId,
+                new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.Steer, SteeringEntryStatus.Pending));
+        }
 
         try
         {
             // Always pass the conversation ID — the router handles direct lookup without binding scan.
             // Removed the IsDefault special-case that previously caused duplicate thread bindings and double fan-out.
             var result = attachments.Count == 0
-                ? await _hub.SendMessageAsync(agentId, agent.ChannelType ?? "signalr", content, conversationId)
+                ? await _hub.SendMessageAsync(agentId, agent.ChannelType ?? "signalr", content, conversationId, deliveryMode)
                 : await _hub.SendMessageWithMediaAsync(agentId, agent.ChannelType ?? "signalr", content,
-                    attachments.Select(ToContentPart).ToArray(), conversationId);
+                    attachments.Select(ToContentPart).ToArray(), conversationId, deliveryMode);
             _store.RegisterSession(agentId, result.SessionId, result.ChannelType, conversationId: conversationId);
 
             // Refresh conversation so ActiveSessionId is current
@@ -97,7 +114,13 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
         catch (Exception ex)
         {
-            AppendTo(conv, "Error", $"Send failed: {ex.Message}");
+            var operation = deliveryMode switch
+            {
+                InboundDeliveryMode.Steer => "Steer",
+                InboundDeliveryMode.Interrupt => "Interrupt and steer",
+                _ => "Send"
+            };
+            AppendTo(conv, "Error", $"{operation} failed: {ex.Message}");
         }
     }
 
@@ -222,39 +245,6 @@ public sealed class AgentInteractionService : IAgentInteractionService
         return true;
     }
 
-    public Task SteerAsync(string agentId, string conversationId, string content)
-        => SteerAsync(agentId, conversationId, content, []);
-
-    /// <inheritdoc />
-    public async Task SteerAsync(string agentId, string conversationId, string content, IReadOnlyList<DraftAttachment> attachments)
-    {
-        if (!TryResolveConversationSession(agentId, conversationId, out var conv, out var sessionId))
-            return;
-        var convId = conversationId;
-
-        AppendTo(conv, "User", $"🔀 {content}");
-
-        // Add entry to steering queue panel
-        var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.Steer, SteeringEntryStatus.Pending);
-        _store.AddSteeringEntry(convId, entry);
-
-        try
-        {
-            // #2484: route through the media overload whenever the composer had draft attachments,
-            // exactly as SendMessageAsync does, so steering no longer silently discards them.
-            var result = attachments.Count == 0
-                ? await _hub.SteerAsync(agentId, sessionId, content, convId)
-                : await _hub.SteerWithMediaAsync(agentId, sessionId, content,
-                    attachments.Select(ToContentPart).ToArray(), convId);
-            _store.RegisterSession(agentId, result.SessionId, result.ChannelType, conversationId: convId);
-            await RefreshConversationsForAgentAsync(agentId);
-        }
-        catch (Exception ex)
-        {
-            AppendTo(conv, "Error", $"Steer failed: {ex.Message}");
-        }
-    }
-
     public Task FollowUpAsync(string agentId, string conversationId, string content)
         => FollowUpAsync(agentId, conversationId, content, []);
 
@@ -335,32 +325,6 @@ public sealed class AgentInteractionService : IAgentInteractionService
     // ── Session management ────────────────────────────────────────────────
 
 
-    public Task InterruptAndSteerAsync(string agentId, string conversationId, string message)
-        => InterruptAndSteerAsync(agentId, conversationId, message, []);
-
-    /// <inheritdoc />
-    public async Task InterruptAndSteerAsync(string agentId, string conversationId, string message, IReadOnlyList<DraftAttachment> attachments)
-    {
-        if (string.IsNullOrWhiteSpace(message) && attachments.Count == 0) return;
-        if (!TryResolveConversationSession(agentId, conversationId, out var conv, out var sessionId))
-            return;
-
-        AppendTo(conv, "User", "[redirect] " + message);
-
-        try
-        {
-            var delivered = attachments.Count == 0
-                ? await _hub.InterruptAndSteerAsync(agentId, sessionId, message)
-                : await _hub.InterruptAndSteerWithMediaAsync(agentId, sessionId, message,
-                    attachments.Select(ToContentPart).ToArray());
-            if (!delivered)
-                AppendTo(conv, "Error", "Interrupt not delivered - agent was not running.");
-        }
-        catch (Exception ex)
-        {
-            AppendTo(conv, "Error", "Interrupt and steer failed: " + ex.Message);
-        }
-    }
     public async Task ResetSessionAsync(string agentId, string conversationId)
     {
         if (!TryResolveConversationSession(agentId, conversationId, out var conv, out var sessionId))
@@ -880,7 +844,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// <summary>
     /// #2873: dispatches a gateway-owned slash command to <c>POST /api/commands/execute</c> and
     /// renders the resulting <c>CommandResult</c> locally. Deliberately has NO fall-through to
-    /// <see cref="SendMessageAsync(string, string, string)"/>: the whole defect was that command text
+    /// <see cref="DeliverMessageAsync(string, string, string, InboundDeliveryMode, IReadOnlyList{DraftAttachment}?)"/>: the whole defect was that command text
     /// reached the model, so every failure path here appends a visible Error row instead.
     /// #3211: the conversation is an explicit argument rather than an ambient re-read, so the result
     /// row can never render into a conversation the user is not looking at.
@@ -1066,13 +1030,14 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// entries through <see cref="ToChatMessage(ConversationHistoryEntryDto)"/>. Shared by the
     /// initial load and the scroll-up load-more path so both build identical timelines (#1691).
     /// </summary>
-    private static ChatMessage ProjectConversationEntry(ConversationHistoryEntryDto entry)
+    internal static ChatMessage ProjectConversationEntry(ConversationHistoryEntryDto entry)
     {
         if (entry.Kind == "boundary")
         {
             var label = $"Session \u00b7 {entry.Timestamp.ToLocalTime():MMM d HH:mm} \u00b7 {entry.SessionId}";
             return new ChatMessage("System", string.Empty, entry.Timestamp)
             {
+                ServerEntryId = entry.EntryId,
                 Kind = "boundary",
                 BoundaryLabel = label,
                 BoundarySessionId = entry.SessionId
@@ -1084,6 +1049,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             var label = "Context compacted \u00b7 " + entry.Timestamp.ToLocalTime().ToString("MMM d HH:mm");
             return new ChatMessage("System", entry.Content ?? string.Empty, entry.Timestamp)
             {
+                ServerEntryId = entry.EntryId,
                 Kind = "compaction",
                 BoundaryLabel = label,
                 BoundarySessionId = entry.SessionId,
@@ -1093,7 +1059,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         // #2936: carry the server's folded flag onto the displayable row so the panel can render
         // pre-compaction history collapsed instead of as ordinary live turns.
-        return ToChatMessage(entry) with { IsFolded = entry.IsFolded };
+        return ToChatMessage(entry) with
+        {
+            ServerEntryId = entry.EntryId,
+            IsFolded = entry.IsFolded
+        };
     }
 
     /// <summary>

@@ -315,7 +315,15 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         // Dispatch BeforePromptBuild hooks (e.g. skills injection)
         if (_hookDispatcher is not null)
         {
-            var hookEvent = new BeforePromptBuildEvent(descriptor.AgentId, descriptor, prompt, []);
+            var origin = executionContext is null
+                ? DiagnosticExecutionOrigin.ForDescriptor(descriptor.AgentId)
+                : DiagnosticExecutionOrigin.ForPromptConstruction(
+                    descriptor.AgentId,
+                    executionContext.SessionId,
+                    conversation?.ConversationId,
+                    ResolveChannelParameter(executionContext),
+                    initiatorId: conversation?.Initiator);
+            var hookEvent = new BeforePromptBuildEvent(descriptor.AgentId, descriptor, prompt, [], origin);
             var results = await _hookDispatcher
                 .DispatchAsync<BeforePromptBuildEvent, BeforePromptBuildResult>(hookEvent, cancellationToken)
                 .ConfigureAwait(false);
@@ -339,6 +347,18 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     /// </summary>
     /// <param name="executionContext">The execution context, or <see langword="null"/>.</param>
     /// <returns>The client kind string, or <see langword="null"/> when absent.</returns>
+    private static string? ResolveChannelParameter(AgentExecutionContext executionContext)
+    {
+        if (executionContext.Parameters.TryGetValue("channel", out var raw)
+            && raw is string channel
+            && !string.IsNullOrWhiteSpace(channel))
+        {
+            return channel.Trim();
+        }
+
+        return null;
+    }
+
     private static string? ResolveClientKindParameter(AgentExecutionContext? executionContext)
     {
         if (executionContext is not null

@@ -24,7 +24,7 @@ public partial class Configuration : IDisposable
 
     /// <summary>
     /// Ordered, user-editable top-level sections for the sidebar (key + label). Derived from the
-    /// root schema properties minus <see cref="NonPersistedSections"/>; label from <c>x-ui-label</c>,
+    /// root schema properties minus <see cref="PlatformConfigFormModel.NonPersistedSections"/>; label from <c>x-ui-label</c>,
     /// ordered by <c>x-ui-order</c>.
     /// </summary>
     private IReadOnlyList<(string Key, string Label)> Sections
@@ -35,7 +35,7 @@ public partial class Configuration : IDisposable
             if (props is null)
                 return [];
             return props
-                .Where(kv => kv.Value is JsonObject && !NonPersistedSections.Contains(kv.Key))
+                .Where(kv => kv.Value is JsonObject && !PlatformConfigFormModel.NonPersistedSections.Contains(kv.Key))
                 .Select(kv => (kv.Key, Node: kv.Value!.AsObject()))
                 .OrderBy(x => x.Node["x-ui-order"]?.GetValue<int>() ?? int.MaxValue)
                 .ThenBy(x => x.Key, StringComparer.Ordinal)
@@ -68,22 +68,17 @@ public partial class Configuration : IDisposable
         Nav.NavigateTo($"/configuration/{key}");
     }
 
-    private JsonObject? _config;
-    private JsonObject? _schema;
-    private string? _revision;
-    private readonly ConfigDirtyPathTracker _dirtyPaths = new();
-    private bool _loading = true;
-    private bool _saving;
-    private bool _dirty;
+    private PlatformConfigFormModel? _form;
+    private PlatformConfigFormModel Form => _form ??= new PlatformConfigFormModel(ConfigService);
+    private JsonObject? _config => Form.Config;
+    private JsonObject? _schema => Form.Schema;
+    private bool _loading => Form.IsLoading;
+    private bool _saving => Form.IsSaving;
+    private bool _dirty => Form.IsDirty;
     private string? _statusMessage;
     private string _statusClass = "";
     private PlatformConfigService.ConfigValidationResult? _validationResult;
     private System.Timers.Timer? _statusTimer;
-
-    // Top-level keys that are never persisted from the settings UI: metadata and the agents tree
-    // (agents are managed through the dedicated agent editor, not the platform config form).
-    private static readonly HashSet<string> NonPersistedSections =
-        new(StringComparer.OrdinalIgnoreCase) { "$schema", "version", "agents" };
 
     protected override async Task OnInitializedAsync()
     {
@@ -92,23 +87,10 @@ public partial class Configuration : IDisposable
 
     private async Task LoadConfig()
     {
-        _loading = true;
-        _dirty = false;
-        _dirtyPaths.Reset();
         SetStatus("Loading...", "");
         StateHasChanged();
+        await Form.LoadAsync();
 
-        _schema = await ConfigService.LoadSchemaAsync();
-        _config = await ConfigService.LoadAsync();
-
-        // Load the raw snapshot for its REVISION, not to decide what may be saved (#2059). The
-        // previous code used the raw document's top-level keys as a save filter, which is why a
-        // section absent from disk could never be materialised by editing its defaults. Saving is
-        // now driven by what the operator edited; the revision is what makes that save safe.
-        var snapshot = await ConfigService.LoadSnapshotAsync();
-        _revision = snapshot?.Revision;
-
-        _loading = false;
         if (_config is null || _schema is null)
             SetStatus("Failed to load", "error");
         else
@@ -116,49 +98,30 @@ public partial class Configuration : IDisposable
         StateHasChanged();
     }
 
-    // SchemaForm edits _config in place and raises this on every change; flip the dirty flag so the
-    // Save button enables. We re-render because SchemaForm hands back the same instance reference.
     private void OnConfigChanged(JsonObject updated)
     {
-        _config = updated;
-        _dirty = true;
+        Form.MarkConfigChanged(updated);
         StateHasChanged();
     }
 
-    // Records WHICH path changed (#2059) so the save can patch exactly that and nothing else.
-    private void OnPathChanged(string path) => _dirtyPaths.Mark(path);
+    private void OnPathChanged(string path) => Form.MarkPathChanged(path);
 
     private async Task SaveAll()
     {
-        if (_config is null || !_dirty) return;
-        _saving = true;
+        if (!_dirty) return;
         SetStatus("Saving...", "");
         StateHasChanged();
 
-        // Patch only the edited paths, quoting the revision the form was rendered from. A section
-        // nobody touched is not in the batch and so cannot be reverted to a stale value; the whole
-        // batch commits or none of it does; and a save built on a superseded snapshot comes back as
-        // a conflict instead of silently winning.
-        var operations = _dirtyPaths.BuildOperations(_config);
-        var outcome = await ConfigService.PatchAsync(operations, _revision);
-
-        _saving = false;
+        var outcome = await Form.SaveAsync();
         if (outcome.Success)
         {
-            _dirty = false;
-            _dirtyPaths.Reset();
-            _revision = outcome.Revision;
             SetStatus("Saved successfully", "success", autoHide: true);
-            // Re-read raw and effective config after commit so the form shows what is actually on
-            // disk (defaults materialised, secrets re-redacted) rather than the local edit buffer.
             await LoadConfig();
             return;
         }
 
         if (outcome.IsConflict)
         {
-            // Do NOT clear the dirty paths: the operator's edits are still unsaved and must not be
-            // presented as committed. Reloading here would discard them silently.
             SetStatus(
                 "Configuration changed elsewhere since this page loaded. Reload to see the current values, then re-apply your changes.",
                 "error");

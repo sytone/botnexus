@@ -51,7 +51,7 @@ else
        grouping. Native <optgroup> keeps the OS touch picker rather than replacing it with a
        bottom-sheet. Empty groups are dropped by the helper, so no empty <optgroup> is emitted. *@
     var conversationGroups = PortalConversationGrouping.ForPicker(
-        activeAgent?.Conversations.Values.ToArray().Where(c => c.Status == "Active") ?? [],
+        activeAgent?.Conversations.Values.ToArray().Where(c => ConversationStatusParsing.IsActive(c.Status)) ?? [],
         Store.ActiveSelectionSource,
         _cronConversationIds);
     <div class="mobile-app">
@@ -234,9 +234,17 @@ else
                 @onkeydown="OnKeyDown"
                 disabled="@_isSending">
             </textarea>
-            <button class="send-btn" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
-                &#x21A6;
-            </button>
+            @if (streamState?.IsTurnActive == true)
+            {
+                <button class="send-btn" data-testid="chat-steer-btn" @onclick="SteerMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">Steer</button>
+                <button class="send-btn" data-testid="chat-redirect-btn" @onclick="RedirectMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">Redirect</button>
+            }
+            else
+            {
+                <button class="send-btn" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
+                    &#x21A6;
+                </button>
+            }
         </div>
         @* #1491: when the agent is blocked on an ask_user prompt for the active
            conversation, render the shared AskUserPrompt component as a bottom-sheet
@@ -378,6 +386,9 @@ else
     private IReadOnlySet<string> _cronConversationIds = PortalConversationGrouping.CronConversationIds(null);
 
     private CronApiClient? CronApi => Services.GetService(typeof(CronApiClient)) as CronApiClient;
+    private PortalPreferences Preferences =>
+        (Services.GetService(typeof(IPortalPreferencesService)) as IPortalPreferencesService)?.Current
+        ?? new PortalPreferences();
 
     // Route application guard -- prevents re-applying the same route key twice.
     private string? _appliedRouteKey;
@@ -660,7 +671,7 @@ else
         _menuOpen = false;
         var agent = Store.GetAgent(agentId);
         var firstConv = agent?.Conversations.Values
-            .Where(c => c.Status == "Active")
+            .Where(c => ConversationStatusParsing.IsActive(c.Status))
             .OrderForDisplay()
             .FirstOrDefault();
         if (firstConv is not null)
@@ -684,7 +695,13 @@ else
         await ForceScrollToBottomAsync();
     }
 
-    private async Task SendMessage()
+    private Task SendMessage() => DeliverMessage(InboundDeliveryMode.Auto);
+
+    private Task SteerMessage() => DeliverMessage(InboundDeliveryMode.Steer);
+
+    private Task RedirectMessage() => DeliverMessage(InboundDeliveryMode.Interrupt);
+
+    private async Task DeliverMessage(InboundDeliveryMode deliveryMode)
     {
         if (string.IsNullOrWhiteSpace(_inputText) || Store.ActiveAgentId is null) return;
         // #3063: the send path takes the conversation explicitly; mobile uses the same conversation
@@ -696,7 +713,7 @@ else
         _isSending = true;
         try
         {
-            await Interaction.SendMessageAsync(Store.ActiveAgentId, convId, content);
+            await Interaction.DeliverMessageAsync(Store.ActiveAgentId, convId, content, deliveryMode);
         }
         catch (Exception ex)
         {
@@ -956,10 +973,19 @@ else
     private static bool IsUnattended(ConversationState conversation) =>
         conversation.Project(SelectionSource.UserClick).IsUnattended;
 
-    private void Archive(ConversationState conversation)
+    private async Task Archive(ConversationState conversation)
     {
-        _archiveTarget = conversation;
         _menuOpen = false;
+        if (Preferences.ArchiveConfirmEnabled)
+        {
+            _archiveTarget = conversation;
+            return;
+        }
+
+        if (Store.ActiveAgentId is not { } agentId)
+            return;
+
+        await Interaction.ArchiveConversationAsync(agentId, conversation.ConversationId);
     }
 
     private async Task DoArchive()

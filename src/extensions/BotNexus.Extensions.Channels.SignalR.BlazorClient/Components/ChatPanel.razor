@@ -1725,9 +1725,8 @@ private bool IsStreaming =>
             // #3063: the send path requires the conversation explicitly. convId here is the
             // route-supplied ConversationId parameter (falling back to the agent's selection),
             // which is the same id the rest of this panel renders against.
-            attachments.Count == 0
-                ? Interaction.SendMessageAsync(AgentId, convId, text)
-                : Interaction.SendMessageAsync(AgentId, convId, text, attachments));
+            Interaction.DeliverMessageAsync(
+                AgentId, convId, text, InboundDeliveryMode.Auto, attachments));
 
     private async Task HandleFilesSelected(InputFileChangeEventArgs e)
     {
@@ -1761,9 +1760,8 @@ private bool IsStreaming =>
     private static string FormatBytes(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / (1024d * 1024d):0.#} MB" : $"{Math.Max(1, bytes / 1024d):0.#} KB";
 
     private Task SteerAgent()
-        => DispatchDraftAsync((convId, text, attachments) => attachments.Count == 0
-            ? Interaction.SteerAsync(AgentId, convId, text)
-            : Interaction.SteerAsync(AgentId, convId, text, attachments));
+        => DispatchDraftAsync((convId, text, attachments) => Interaction.DeliverMessageAsync(
+            AgentId, convId, text, InboundDeliveryMode.Steer, attachments));
 
     private Task FollowUpAgent()
         => DispatchDraftAsync((convId, text, attachments) =>
@@ -1784,9 +1782,8 @@ private bool IsStreaming =>
         => DispatchDraftAsync((convId, text, attachments) =>
         {
             UpdateCommandPalette();
-            return attachments.Count == 0
-                ? Interaction.InterruptAndSteerAsync(AgentId, convId, text)
-                : Interaction.InterruptAndSteerAsync(AgentId, convId, text, attachments);
+            return Interaction.DeliverMessageAsync(
+                AgentId, convId, text, InboundDeliveryMode.Interrupt, attachments);
         });
 
     // #1691: invoked from JS (chatScroll.observeTopForLoadMore) when the user scrolls near the top.

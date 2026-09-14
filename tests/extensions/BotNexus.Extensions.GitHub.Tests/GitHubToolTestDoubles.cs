@@ -64,6 +64,21 @@ internal static class GitHubFixtures
         }
         """;
 
+    internal const string ClosedIssue = """
+        {
+          "number": 2735,
+          "title": "Add write-side GitHub agent tools",
+          "state": "closed",
+          "body": "Complete.",
+          "comments": 0,
+          "created_at": "2026-08-02T15:35:07Z",
+          "updated_at": "2026-09-13T12:00:00Z",
+          "html_url": "https://github.com/Sytone/botnexus/issues/2735",
+          "user": { "login": "agent-farnsworth[bot]" },
+          "labels": [ { "name": "type:feature" }, { "name": "area:platform" } ]
+        }
+        """;
+
     internal const string PullRequest = """
         {
           "number": 3300,
@@ -93,6 +108,38 @@ internal static class GitHubFixtures
           "html_url": "https://github.com/Sytone/botnexus/issues/2627#issuecomment-5312211422",
           "user": { "login": "agent-farnsworth" }
         }
+        """;
+
+    internal const string Label = """
+        {
+          "id": 11669630906,
+          "name": "area:tools",
+          "color": "1D76DB",
+          "description": "Agent tools",
+          "default": false,
+          "url": "https://api.github.com/repos/Sytone/botnexus/labels/area:tools"
+        }
+        """;
+
+    internal const string Labels = """
+        [
+          {
+            "id": 10585451671,
+            "name": "type:feature",
+            "color": "DDD1F2",
+            "description": "New capability",
+            "default": false,
+            "url": "https://api.github.com/repos/Sytone/botnexus/labels/type:feature"
+          },
+          {
+            "id": 11669630668,
+            "name": "area:platform",
+            "color": "1D76DB",
+            "description": "Core platform",
+            "default": false,
+            "url": "https://api.github.com/repos/Sytone/botnexus/labels/area:platform"
+          }
+        ]
         """;
 
     internal const string CheckRuns = """

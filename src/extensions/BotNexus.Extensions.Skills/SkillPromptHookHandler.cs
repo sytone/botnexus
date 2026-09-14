@@ -54,6 +54,29 @@ public sealed class SkillPromptHookHandler
         if (descriptor is null)
             return Task.FromResult<BeforePromptBuildResult?>(null);
 
+        // Skill discovery happens while the prompt is assembled. Carry the hook's authoritative
+        // provenance into scanner/discovery logs without relabelling this as a skill invocation.
+        // A real invocation is represented separately by DiagnosticTrigger.ToolInvocation and an
+        // actual tool-call id at the tool hook boundary.
+        using var originScope = _logger.BeginScope(new Dictionary<string, object?>
+        {
+            ["DiagnosticOriginKind"] = hookEvent.Origin.Kind.ToString(),
+            ["DiagnosticTrigger"] = hookEvent.Origin.Trigger.ToString(),
+            ["AgentId"] = hookEvent.Origin.AgentId.Value,
+            ["ConversationId"] = hookEvent.Origin.ConversationId is { } conversationId
+                ? conversationId.Value
+                : null,
+            ["SessionId"] = hookEvent.Origin.SessionId?.Value,
+            ["RunId"] = hookEvent.Origin.RunId?.Value,
+            ["ToolCallId"] = hookEvent.Origin.ToolCallId,
+            ["Channel"] = hookEvent.Origin.Channel,
+            ["TraceId"] = hookEvent.Origin.TraceId,
+            ["SpanId"] = hookEvent.Origin.SpanId,
+            ["CorrelationId"] = hookEvent.Origin.CorrelationId,
+            ["DiagnosticSource"] = hookEvent.Origin.SourceComponent,
+            ["DiagnosticCategory"] = hookEvent.Origin.Category
+        });
+
         var workspacePath = _workspaceManager.GetWorkspacePath(hookEvent.AgentId.Value);
 
         var botnexusHome = Path.Combine(ResolveUserHomePath(), ".botnexus");

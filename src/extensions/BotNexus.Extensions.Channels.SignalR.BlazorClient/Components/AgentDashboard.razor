@@ -86,7 +86,7 @@
     private void NavigateToAgent(AgentState agent)
     {
         var mostRecent = agent.Conversations.Values
-            .Where(c => c.Status == "Active")
+            .Where(c => ConversationStatusParsing.IsActive(c.Status))
             .OrderByDescending(c => c.UpdatedAt)
             .FirstOrDefault();
 
@@ -97,7 +97,7 @@
     }
 
     private static int OpenConversationCount(AgentState agent) =>
-        agent.Conversations.Values.Count(c => c.Status == "Active");
+        agent.Conversations.Values.Count(c => ConversationStatusParsing.IsActive(c.Status));
 
     private static string? LastActivity(AgentState agent)
     {
