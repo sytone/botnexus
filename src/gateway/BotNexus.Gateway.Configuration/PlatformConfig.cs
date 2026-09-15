@@ -227,6 +227,19 @@ public sealed class ProviderConfig
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider", Order = 2)]
     public string? BaseUrl { get; set; }
 
+    /// <summary>
+    /// Maximum idle interval between streaming response chunks, in milliseconds. Null uses the
+    /// platform default of 30000; zero disables the deadline.
+    /// </summary>
+    [Display(
+        Name = "Stream idle timeout",
+        Description = "Maximum milliseconds between streaming response chunks. Leave empty for 30000; set 0 to disable.",
+        GroupName = "Provider",
+        Order = 3)]
+    [Range(0, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "provider", Order = 3)]
+    public int? StreamIdleTimeoutMs { get; set; }
+
     /// <summary>Default model for this provider.</summary>
     [Display(
         Name = "Default model",
