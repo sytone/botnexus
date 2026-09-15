@@ -78,6 +78,27 @@ public delegate Task<BeforeToolCallResult?> BeforeToolCallDelegate(
     CancellationToken cancellationToken);
 
 /// <summary>
+/// Runs durable audit work before the policy-only <see cref="BeforeToolCallDelegate"/> gate.
+/// </summary>
+/// <param name="context">The validated tool-call context to audit.</param>
+/// <param name="cancellationToken">The ambient turn cancellation token.</param>
+/// <returns>An optional interception result.</returns>
+/// <remarks>
+/// The delegate owns its persistence deadline. Returning a blocking result prevents execution;
+/// returning null permits policy evaluation to continue.
+/// </remarks>
+public delegate Task<BeforeToolCallResult?> BeforeToolAuditDelegate(
+    BeforeToolCallContext context,
+    CancellationToken cancellationToken);
+
+/// <summary>
+/// Reports whether a validated, audited tool call will proceed to execution.
+/// </summary>
+/// <param name="toolCallId">Provider tool-call correlation id.</param>
+/// <param name="willExecute">True only after the policy gate permits execution.</param>
+public delegate void ToolCallDispositionDelegate(string toolCallId, bool willExecute);
+
+/// <summary>
 /// Runs after a tool call executes.
 /// </summary>
 /// <param name="context">The after-tool-call context.</param>

@@ -16,6 +16,7 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="GetSteeringMessages">Provides steering messages when configured (drained at turn boundaries).</param>
 /// <param name="GetFollowUpMessages">Provides follow-up messages when configured (drained after runs complete).</param>
 /// <param name="ToolExecutionMode">Controls tool execution ordering (Sequential or Parallel).</param>
+/// <param name="BeforeToolAudit">Optional durable audit hook invoked before the policy-only tool-call hook.</param>
 /// <param name="BeforeToolCall">Optional pre-tool-call hook for validation and blocking.</param>
 /// <param name="BeforeToolCallTimeout">
 /// Wall-clock budget for the <paramref name="BeforeToolCall"/> hook (#2518). The hook is the
@@ -106,7 +107,9 @@ public record AgentLoopConfig(
     string? AuthProfile = null,
     Func<double>? RetryRandomSource = null,
     int? MaxToolOutputBytes = null,
-    BotNexus.Agent.Core.Loop.IHostSuspendDetector? SuspendDetector = null)
+    BotNexus.Agent.Core.Loop.IHostSuspendDetector? SuspendDetector = null,
+    BeforeToolAuditDelegate? BeforeToolAudit = null,
+    ToolCallDispositionDelegate? OnToolCallDisposition = null)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).

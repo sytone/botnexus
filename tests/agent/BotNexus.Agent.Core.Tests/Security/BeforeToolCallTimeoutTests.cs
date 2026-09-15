@@ -271,6 +271,98 @@ public sealed class BeforeToolCallTimeoutTests
         results[0].IsError.ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task AuditRunsBeforePolicyAndTool()
+    {
+        var order = new List<string>();
+        var tool = CreateTool("read", _ =>
+        {
+            order.Add("tool");
+            return Task.FromResult(Ok("executed"));
+        });
+
+        var config = TestHelpers.CreateTestConfig(
+            beforeToolAudit: (_, _) =>
+            {
+                order.Add("audit");
+                return Task.FromResult<BeforeToolCallResult?>(null);
+            },
+            beforeToolCall: (_, _) =>
+            {
+                order.Add("policy");
+                return Task.FromResult<BeforeToolCallResult?>(null);
+            });
+
+        var results = await ExecuteAsync(config, tool, "read", CancellationToken.None);
+
+        results[0].IsError.ShouldBeFalse();
+        order.ShouldBe(["audit", "policy", "tool"]);
+    }
+
+    [Fact]
+    public async Task PolicyTimeoutAfterSuccessfulAudit_RemainsPolicyTimeout()
+    {
+        var auditCompleted = false;
+        var tool = CreateTool("read", _ => Task.FromResult(Ok("executed")));
+        var config = TestHelpers.CreateTestConfig(
+            beforeToolAudit: (_, _) =>
+            {
+                auditCompleted = true;
+                return Task.FromResult<BeforeToolCallResult?>(null);
+            },
+            beforeToolCall: async (_, ct) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false);
+                return null;
+            },
+            beforeToolCallTimeout: ShortBudget);
+
+        var result = (await ExecuteAsync(config, tool, "read", CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10))).ShouldHaveSingleItem();
+
+        auditCompleted.ShouldBeTrue();
+        result.IsError.ShouldBeTrue();
+        result.Result.Content[0].Value.ShouldContain("BeforeToolCall hook timed out");
+        result.Result.Content[0].Value.ShouldNotContain("audit", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task PolicyDenial_NotifiesDispositionThatAuditedCallWillNotExecute()
+    {
+        var dispositions = new List<bool>();
+        var tool = CreateTool("read", _ => Task.FromResult(Ok("executed")));
+        var config = TestHelpers.CreateTestConfig(
+            beforeToolAudit: (_, _) => Task.FromResult<BeforeToolCallResult?>(null),
+            beforeToolCall: (_, _) => Task.FromResult<BeforeToolCallResult?>(new BeforeToolCallResult(Block: true, Reason: "denied")),
+            onToolCallDisposition: (_, willExecute) => dispositions.Add(willExecute));
+
+        var result = (await ExecuteAsync(config, tool, "read", CancellationToken.None)).ShouldHaveSingleItem();
+
+        result.IsError.ShouldBeTrue();
+        dispositions.ShouldBe([false]);
+    }
+
+    [Fact]
+    public async Task PolicyTimeout_NotifiesDispositionThatAuditedCallWillNotExecute()
+    {
+        var dispositions = new List<bool>();
+        var tool = CreateTool("read", _ => Task.FromResult(Ok("executed")));
+        var config = TestHelpers.CreateTestConfig(
+            beforeToolAudit: (_, _) => Task.FromResult<BeforeToolCallResult?>(null),
+            beforeToolCall: async (_, ct) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false);
+                return null;
+            },
+            beforeToolCallTimeout: ShortBudget,
+            onToolCallDisposition: (_, willExecute) => dispositions.Add(willExecute));
+
+        var result = (await ExecuteAsync(config, tool, "read", CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10))).ShouldHaveSingleItem();
+
+        result.IsError.ShouldBeTrue();
+        dispositions.ShouldBe([false]);
+    }
     /// <summary>The shipped default budget is 15 seconds.</summary>
     [Fact]
     public void DefaultBudget_IsFifteenSeconds()

@@ -310,9 +310,31 @@ internal static class ToolExecutor
             return new ToolPreparation(null, BuildErrorResult($"Invalid arguments for '{toolCall.Name}': {ex.Message}"), true);
         }
 
+        var beforeContext = new BeforeToolCallContext(assistantMessage, toolCall, validatedArgs, context);
+        if (config.BeforeToolAudit is not null)
+        {
+            BeforeToolCallResult? auditResult;
+            try
+            {
+                auditResult = await config.BeforeToolAudit(beforeContext, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return new ToolPreparation(
+                    null,
+                    BuildErrorResult($"BeforeToolAudit hook failed: {ex.Message}"),
+                    true);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (auditResult is not null && !auditResult.IsUnambiguousAllow)
+            {
+                return new ToolPreparation(null, BuildErrorResult(auditResult.EffectiveBlockReason), true);
+            }
+        }
+
         if (config.BeforeToolCall is not null)
         {
-            var beforeContext = new BeforeToolCallContext(assistantMessage, toolCall, validatedArgs, context);
             BeforeToolCallResult? beforeResult;
 
             // #2518: the pre-tool-call hook is the pre-execution policy gate (it enforces the
@@ -369,10 +391,17 @@ internal static class ToolExecutor
                         continue;
                     }
 
+                    config.OnToolCallDisposition?.Invoke(toolCall.Id, false);
                     return BuildBeforeToolCallTimeout(config, toolCall, budget, startedAt);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    config.OnToolCallDisposition?.Invoke(toolCall.Id, false);
+                    throw;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    config.OnToolCallDisposition?.Invoke(toolCall.Id, false);
                     return new ToolPreparation(
                         null,
                         BuildErrorResult($"BeforeToolCall hook failed: {ex.Message}"),
@@ -394,6 +423,7 @@ internal static class ToolExecutor
                     }
                     else
                     {
+                        config.OnToolCallDisposition?.Invoke(toolCall.Id, false);
                         return BuildBeforeToolCallTimeout(config, toolCall, budget, startedAt);
                     }
                 }
@@ -411,10 +441,12 @@ internal static class ToolExecutor
             // approval and treating it as one is precisely the auto-approve this gate prevents.
             if (beforeResult is not null && !beforeResult.IsUnambiguousAllow)
             {
+                config.OnToolCallDisposition?.Invoke(toolCall.Id, false);
                 return new ToolPreparation(null, BuildErrorResult(beforeResult.EffectiveBlockReason), true);
             }
         }
 
+        config.OnToolCallDisposition?.Invoke(toolCall.Id, true);
         return new ToolPreparation(
             new PreparedToolCall(toolCall, tool, validatedArgs),
             null,
