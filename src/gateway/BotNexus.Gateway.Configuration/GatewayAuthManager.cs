@@ -260,6 +260,10 @@ public sealed class GatewayAuthManager
     {
         var apiKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
         var options = baseOptions ?? new SimpleStreamOptions();
+        if (options.StreamIdleTimeoutMs is null)
+        {
+            options = options with { StreamIdleTimeoutMs = ResolveStreamIdleTimeoutMs(provider) };
+        }
 
         // Null means no declaration was present, so provider-level ambient resolution remains
         // permitted. An empty string means a declaration was present but unusable and must be
@@ -279,6 +283,21 @@ public sealed class GatewayAuthManager
         }
 
         return options;
+    }
+
+    private int? ResolveStreamIdleTimeoutMs(string provider)
+    {
+        var providers = _platformConfig.CurrentValue.Providers;
+        if (providers is null)
+            return null;
+
+        foreach (var (name, providerConfig) in providers)
+        {
+            if (string.Equals(name, provider, StringComparison.OrdinalIgnoreCase))
+                return providerConfig.ResolveStreamIdleTimeoutMs();
+        }
+
+        return null;
     }
 
     /// <summary>
