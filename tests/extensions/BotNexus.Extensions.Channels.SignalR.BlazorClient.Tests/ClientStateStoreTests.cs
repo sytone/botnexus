@@ -31,6 +31,20 @@ public sealed class ClientStateStoreTests
     }
 
     [Fact]
+    public void SeedAgents_preserves_agent_summary_and_null()
+    {
+        var store = new ClientStateStore();
+
+        store.SeedAgents([
+            new AgentSummary("a-1", "Alpha", Summary: "Current platform work"),
+            new AgentSummary("a-2", "Beta", Summary: null)
+        ]);
+
+        store.GetAgent("a-1")?.Summary.ShouldBe("Current platform work");
+        store.GetAgent("a-2")?.Summary.ShouldBeNull();
+    }
+
+    [Fact]
     public void SeedAgents_updates_existing_agent()
     {
         var store = new ClientStateStore();
@@ -71,6 +85,25 @@ public sealed class ClientStateStoreTests
         // Critical: conversations and active selection must be preserved
         Assert.Single(agent.Conversations);
         Assert.Equal("c-1", agent.ActiveConversationId);
+    }
+
+    [Fact]
+    public void UpsertAgent_merges_summary_without_destroying_local_state()
+    {
+        var store = new ClientStateStore();
+        store.SeedAgents([new AgentSummary("a-1", "Alpha", Summary: "Old summary")]);
+        store.SeedConversations("a-1", [CreateConversation("c-1", "a-1", "General")]);
+
+        store.UpsertAgent(new AgentState
+        {
+            AgentId = "a-1",
+            DisplayName = "Alpha",
+            Summary = "New summary",
+            IsConnected = true
+        });
+
+        store.GetAgent("a-1")?.Summary.ShouldBe("New summary");
+        store.GetAgent("a-1")?.Conversations.ShouldHaveSingleItem();
     }
 
     [Fact]
