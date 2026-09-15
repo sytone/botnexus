@@ -9,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Data.Sqlite;
 using BotNexus.Persistence.Sqlite;
 using Microsoft.Extensions.Logging;
+using BotNexus.Gateway.Telemetry;
 
 namespace BotNexus.Gateway.Conversations;
 
@@ -29,6 +30,7 @@ public sealed class SqliteConversationStore : IConversationStore
     private readonly string _connectionString;
     private readonly ILogger<SqliteConversationStore> _logger;
     private readonly IWorldContext? _worldContext;
+    private readonly StoreMetrics? _storeMetrics;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     // Striped write locks: a fixed pool hashed by conversation id. Bounds the number
     // of sync primitives (no per-conversation SemaphoreSlim leak over the process
@@ -126,11 +128,17 @@ public sealed class SqliteConversationStore : IConversationStore
     /// evicted by LRU; cold reads fall through to SQLite. Defaults to
     /// <see cref="DefaultConversationCacheCapacity"/>.
     /// </param>
-    public SqliteConversationStore(string connectionString, ILogger<SqliteConversationStore> logger, IWorldContext? worldContext, int cacheCapacity = DefaultConversationCacheCapacity)
+    public SqliteConversationStore(
+        string connectionString,
+        ILogger<SqliteConversationStore> logger,
+        IWorldContext? worldContext,
+        int cacheCapacity = DefaultConversationCacheCapacity,
+        StoreMetrics? storeMetrics = null)
     {
         _connectionString = connectionString;
         _logger = logger;
         _worldContext = worldContext;
+        _storeMetrics = storeMetrics;
         _cache = new BoundedLruCache<string, Conversation>(cacheCapacity, StringComparer.Ordinal);
     }
 
@@ -149,18 +157,23 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         using var activity = ActivitySource.StartActivity("conversation.get", ActivityKind.Internal);
         activity?.SetTag("botnexus.conversation.id", conversationId.Value);
+        using var metric = _storeMetrics?.Start("conversation", "get");
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
         var conversationLock = await AcquireConversationLockAsync(conversationId.Value, ct).ConfigureAwait(false);
         try
         {
             if (_cache.TryGet(conversationId.Value, out var cached))
+            {
+                metric?.Complete();
                 return BackfillWorldId(CloneConversation(cached));
+            }
 
             var loaded = await LoadConversationAsync(conversationId, ct).ConfigureAwait(false);
             if (loaded is not null)
                 _cache.Set(conversationId.Value, CloneConversation(loaded));
 
+            metric?.Complete();
             return BackfillWorldId(loaded);
         }
         finally
@@ -173,6 +186,7 @@ public sealed class SqliteConversationStore : IConversationStore
     public async Task<IReadOnlyList<Conversation>> ListAsync(AgentId? agentId = null, CancellationToken ct = default)
     {
         using var activity = ActivitySource.StartActivity("conversation.list", ActivityKind.Internal);
+        using var metric = _storeMetrics?.Start("conversation", "list");
         if (agentId is not null)
             activity?.SetTag("botnexus.agent.id", agentId.Value);
 
@@ -194,7 +208,9 @@ public sealed class SqliteConversationStore : IConversationStore
                 orderedIds.Add(reader.GetString(0));
         }
 
-        return await MaterializeOrderedAsync(connection, orderedIds, ct).ConfigureAwait(false);
+        var conversations = await MaterializeOrderedAsync(connection, orderedIds, ct).ConfigureAwait(false);
+        metric?.Complete(conversations.Count);
+        return conversations;
     }
 
     /// <inheritdoc />
@@ -1018,6 +1034,7 @@ public sealed class SqliteConversationStore : IConversationStore
     public async Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
     {
         using var activity = ActivitySource.StartActivity("conversation.get_summaries", ActivityKind.Internal);
+        using var metric = _storeMetrics?.Start("conversation", "get_summaries");
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
         await using var connection = CreateConnection();
@@ -1071,6 +1088,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 rosters.TryGetValue(conversationId, out var roster) ? roster : []));
         }
 
+        metric?.Complete(summaries.Count);
         return summaries;
     }
 
@@ -1078,6 +1096,7 @@ public sealed class SqliteConversationStore : IConversationStore
     public async Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
     {
         using var activity = ActivitySource.StartActivity("conversation.get_pending_ask_user_checkpoints", ActivityKind.Internal);
+        using var metric = _storeMetrics?.Start("conversation", "get_pending_ask_user_checkpoints");
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
         await using var connection = CreateConnection();
@@ -1105,6 +1124,7 @@ public sealed class SqliteConversationStore : IConversationStore
         }
 
         activity?.SetTag("botnexus.conversation.pending_ask_user_count", checkpoints.Count);
+        metric?.Complete(checkpoints.Count);
         return checkpoints;
     }
 
