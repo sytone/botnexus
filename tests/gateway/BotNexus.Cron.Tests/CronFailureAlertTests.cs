@@ -251,7 +251,12 @@ public sealed class CronFailureAlertTests
 
     private static async Task InvokeRunActionAsync(CronScheduler scheduler, CronJob job, DateTimeOffset triggeredAt)
     {
-        var method = typeof(CronScheduler).GetMethod("RunActionAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+        var method = typeof(CronScheduler).GetMethod(
+            "RunActionAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            [typeof(CronJob), typeof(CronTriggerType), typeof(DateTimeOffset), typeof(CancellationToken)],
+            modifiers: null);
         method.ShouldNotBeNull();
         var task = method!.Invoke(scheduler, [job, CronTriggerType.Scheduled, triggeredAt, CancellationToken.None]) as Task;
         Assert.NotNull(task);
