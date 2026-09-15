@@ -1,3 +1,4 @@
+using BotNexus.Persistence.Sqlite;
 using Microsoft.Data.Sqlite;
 
 namespace BotNexus.Gateway.Conversations;
@@ -51,7 +52,7 @@ public sealed class SqliteConversationAuditLog : IConversationAuditLog, IDisposa
                 migration.CommandText = "ALTER TABLE conversation_audit ADD COLUMN correlation_id TEXT";
                 migration.ExecuteNonQuery();
             }
-            catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
+            catch (SqliteException ex) when (SqliteAdditiveMigration.IsDuplicateColumn(ex))
             {
                 // Existing schema already includes correlation_id.
             }

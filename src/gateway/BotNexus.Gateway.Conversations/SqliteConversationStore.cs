@@ -567,7 +567,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             await migration.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
-        catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
+        catch (SqliteException ex) when (SqliteAdditiveMigration.IsDuplicateColumn(ex))
         {
             // Another process completed the additive migration after the schema probe.
         }
@@ -1388,8 +1388,7 @@ public sealed class SqliteConversationStore : IConversationStore
         {
             await alterCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
-        catch (SqliteException ex) when (ex.SqliteErrorCode == 1 &&
-                                         ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
+        catch (SqliteException ex) when (SqliteAdditiveMigration.IsDuplicateColumn(ex))
         {
             // Cross-process first-boot race: another gateway instance ran EnsureCreatedAsync
             // between our PRAGMA-table_info read and this ALTER. _initLock only serialises within
