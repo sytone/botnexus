@@ -51,6 +51,8 @@ public sealed class SecretFilePermissionFenceArchitectureTests : ArchitectureTes
         "src/gateway/BotNexus.Cli/Commands/Provider/CopilotAuthLoader.cs",
         // secrets.db - the sqlite: secret store, written by `botnexus secret set`.
         "src/gateway/BotNexus.Cli/Commands/SecretCommand.cs",
+        // File-per-secret store behind /api/secrets. Each file contains the raw secret value.
+        "src/gateway/BotNexus.Gateway.Configuration/FileSecretStore.cs",
         // config.db - the SQLite configuration store, a full copy of every config.json value
         // including provider API keys and channel bot tokens, plus its WAL/SHM sidecars (#3414).
         // Narrowed inside the store rather than at its five construction sites, so the seam that
