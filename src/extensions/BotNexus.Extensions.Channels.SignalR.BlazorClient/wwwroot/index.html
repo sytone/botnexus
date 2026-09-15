@@ -69,6 +69,15 @@
             }
             return Promise.resolve(false);
         };
+        window.BotNexus.downloadFile = function (fileName, contentType, base64Content) {
+            var bytes = Uint8Array.from(atob(base64Content), function (c) { return c.charCodeAt(0); });
+            var url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
+            var anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = fileName;
+            anchor.click();
+            URL.revokeObjectURL(url);
+        };
     </script>
     <script src="js/bootDiagnostics.js"></script>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js" autostart="false"></script>

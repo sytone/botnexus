@@ -156,6 +156,15 @@ public static class ExportMarkdownRenderer
             case "assistant":
                 sb.AppendLine($"## 🤖 Assistant [{timestamp}]");
                 sb.AppendLine();
+                if (!string.IsNullOrWhiteSpace(entry.ThinkingContent))
+                {
+                    sb.AppendLine("<details>");
+                    sb.AppendLine("<summary>Thinking</summary>");
+                    sb.AppendLine();
+                    sb.AppendLine(Scrub(entry.ThinkingContent, redact));
+                    sb.AppendLine("</details>");
+                    sb.AppendLine();
+                }
                 sb.AppendLine(content);
                 sb.AppendLine();
                 break;
