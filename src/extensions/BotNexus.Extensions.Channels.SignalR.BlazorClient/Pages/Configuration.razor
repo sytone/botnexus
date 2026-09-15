@@ -53,10 +53,75 @@
                 }
             </nav>
             <div class="config-panel-canvas">
-                @* The selected section is rendered by the generic schema-driven SchemaForm fed by
-                   GET /api/config/schema (config-parity PBI 4/6 of #1579). SectionKey narrows the
-                   render to a single root subtree. *@
-                <SchemaForm Schema="_schema" Value="_config" SectionKey="@ActiveSection" ValueChanged="OnConfigChanged" PathChanged="OnPathChanged" />
+                @if (string.Equals(ActiveSection, SecretsSectionKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    <section class="secrets-config-section" data-testid="secrets-config-section">
+                        <header>
+                            <h3>Secrets</h3>
+                            <p class="text-muted">Values are write-only. Overwriting a key requires its complete new value.</p>
+                        </header>
+
+                        @if (!string.IsNullOrWhiteSpace(_secretsError))
+                        {
+                            <div class="validation-item error" role="alert" data-testid="secrets-error">@_secretsError</div>
+                        }
+
+                        <div class="secrets-add-form">
+                            <label for="secret-key">Key</label>
+                            <input id="secret-key" data-testid="secret-key" autocomplete="off" @bind="_secretKey" />
+                            <label for="secret-value">Complete value</label>
+                            <input id="secret-value" data-testid="secret-value" type="password" autocomplete="new-password" @bind="_secretValue" />
+                            <button type="button"
+                                    class="toolbar-btn primary"
+                                    data-testid="secret-save"
+                                    disabled="@(_secretMutationPending || string.IsNullOrWhiteSpace(_secretKey))"
+                                    @onclick="SaveSecret">
+                                @(_secretMutationPending ? "Saving..." : "Add or overwrite")
+                            </button>
+                        </div>
+
+                        @if (_secretsLoading)
+                        {
+                            <div class="config-loading"><span>Loading secrets...</span></div>
+                        }
+                        else if (_secrets is { Count: 0 })
+                        {
+                            <div class="empty-state">No file-backed secrets are configured.</div>
+                        }
+                        else if (_secrets is not null)
+                        {
+                            <table class="secrets-table">
+                                <thead>
+                                    <tr><th>Key</th><th>Created</th><th>Modified</th><th>Size</th><th></th></tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var secret in _secrets)
+                                    {
+                                        <tr>
+                                            <td>@secret.Key</td>
+                                            <td>@secret.CreatedUtc.ToLocalTime().ToString("g")</td>
+                                            <td>@secret.ModifiedUtc.ToLocalTime().ToString("g")</td>
+                                            <td>@secret.SizeBytes bytes</td>
+                                            <td>
+                                                <button type="button"
+                                                        class="toolbar-btn"
+                                                        aria-label="Delete @secret.Key"
+                                                        disabled="@_secretMutationPending"
+                                                        @onclick="() => DeleteSecret(secret.Key)">Delete</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    </section>
+                }
+                else
+                {
+                    @* The selected schema section is rendered by the generic SchemaForm. Secrets
+                       intentionally bypass it so they can never enter the config save payload. *@
+                    <SchemaForm Schema="_schema" Value="_config" SectionKey="@ActiveSection" ValueChanged="OnConfigChanged" PathChanged="OnPathChanged" />
+                }
             </div>
         </div>
     }
