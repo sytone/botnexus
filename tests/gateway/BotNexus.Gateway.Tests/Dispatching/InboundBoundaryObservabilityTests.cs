@@ -327,6 +327,7 @@ public sealed class InboundBoundaryObservabilityTests
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var queueDelays = new Queue<TaskCompletionSource<bool>>();
+        var runningCompletionObserved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var runningCompletionWaits = 0;
         Task ControlledQueueDelay(TimeSpan _, CancellationToken cancellationToken)
         {
@@ -341,6 +342,7 @@ public sealed class InboundBoundaryObservabilityTests
             CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref runningCompletionWaits);
+            runningCompletionObserved.TrySetResult(true);
             return completion.WaitAsync(cancellationToken);
         }
 
@@ -397,14 +399,7 @@ public sealed class InboundBoundaryObservabilityTests
                 "queue-wait bound, which is what makes this a proof that the bound has elapsed");
 
             await Should.NotThrowAsync(
-                async () => await Task.Run(
-                    async () =>
-                    {
-                        while (Volatile.Read(ref runningCompletionWaits) == 0)
-                        {
-                            await Task.Yield();
-                        }
-                    }).WaitAsync(TimeSpan.FromSeconds(30)),
+                async () => await runningCompletionObserved.Task.WaitAsync(TimeSpan.FromSeconds(30)),
                 $"iteration {iteration}: the head must reach the unbounded post-Started completion wait");
             Volatile.Read(ref runningCompletionWaits).ShouldBe(
                 1,
