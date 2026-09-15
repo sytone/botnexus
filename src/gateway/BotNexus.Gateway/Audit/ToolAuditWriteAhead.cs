@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
@@ -47,8 +48,10 @@ internal sealed class ToolAuditWriteAhead(
     ISessionStore? sessionStore,
     IToolAuditSink auditSink,
     ISecretRedactor redactor,
+    AgentId agentId,
     SessionId sessionId,
-    ILogger logger)
+    ILogger logger,
+    TimeSpan? persistenceDeadline = null)
 {
     /// <summary>
     /// Tools whose execution can change the world outside the transcript. A durability failure on
@@ -62,6 +65,8 @@ internal sealed class ToolAuditWriteAhead(
     /// entry survives here exactly as long as the invocation is unaccounted for, which is what
     /// makes the interrupted set computable without re-reading the transcript.
     /// </summary>
+    private static readonly TimeSpan DefaultPersistenceDeadline = TimeSpan.FromSeconds(5);
+
     private readonly ConcurrentDictionary<string, InFlightCall> _inFlight = new(StringComparer.Ordinal);
 
     private int _interruptionRecorded;
@@ -84,42 +89,176 @@ internal sealed class ToolAuditWriteAhead(
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken)
     {
-        var serializedArguments = redactor.Redact(JsonSerializer.Serialize(arguments));
+        string serializedArguments;
+        using (var serialize = StartStage("audit.serialize", toolCallId, toolName))
+        {
+            try
+            {
+                serializedArguments = redactor.Redact(JsonSerializer.Serialize(arguments));
+                CompleteStage(serialize, "success");
+            }
+            catch (Exception ex)
+            {
+                CompleteStage(serialize, "error", ex);
+                HandleFailure(toolCallId, toolName, ex, "error");
+                return;
+            }
+        }
 
-        // Track the call BEFORE attempting the write. A process that dies during the write is
-        // exactly the case an interrupted record must survive, and a call that is blocked below is
-        // removed again so it is never reported as interrupted.
         _inFlight[toolCallId] = new InFlightCall(toolName, serializedArguments);
+        var deadline = persistenceDeadline ?? DefaultPersistenceDeadline;
+        using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadlineCts.CancelAfter(deadline);
 
         try
         {
             var store = sessionStore
                 ?? throw new InvalidOperationException("Session persistence is unavailable.");
-            var session = await store.GetAsync(sessionId, cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidOperationException($"Session '{sessionId}' does not exist.");
-
-            session.AddEntry(auditSink.ProjectStart(toolCallId, toolName, serializedArguments));
-            await store.SaveAsync(session, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            GatewayTelemetry.ToolAuditWriteAheadFailures.Add(1,
-                new KeyValuePair<string, object?>("botnexus.tool.name", toolName),
-                new KeyValuePair<string, object?>("botnexus.session.id", sessionId.Value));
-            logger.LogError(ex,
-                "Failed to persist tool start for tool '{ToolName}', call '{ToolCallId}', session '{SessionId}'.",
-                toolName, toolCallId, sessionId);
-
-            if (FailClosedTools.Contains(toolName))
+            var entry = auditSink.ProjectStart(toolCallId, toolName, serializedArguments);
+            SessionAppendMutationResult result;
+            using (var persist = StartStage("audit.persist", toolCallId, toolName))
             {
-                // The tool never runs, so it is not in flight and must not later be reported as an
-                // interrupted invocation - it was refused, which is a different fact.
-                _inFlight.TryRemove(toolCallId, out _);
+                try
+                {
+                    if (FailClosedTools.Contains(toolName))
+                    {
+                        // Security-sensitive tools do not abandon a potentially successful write:
+                        // execution remains blocked until durability is known. A truly hard store
+                        // deadline is deliberately left to the store contract in the remaining
+                        // #3896 scope; pretending WaitAsync cancels SQLite would be unsafe.
+                        result = await store.AppendEntriesAsync(sessionId, [entry], deadlineCts.Token)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        // Read-only tools preserve #2615 best-effort availability. Task.Run also
+                        // bounds a store implementation that blocks before returning its Task.
+                        var appendTask = Task.Run(
+                            () => store.AppendEntriesAsync(sessionId, [entry], deadlineCts.Token),
+                            CancellationToken.None);
+                        try
+                        {
+                            result = await appendTask.WaitAsync(deadline, cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (TimeoutException) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            deadlineCts.Cancel();
+                            ObserveAbandoned(appendTask);
+                            throw;
+                        }
+                    }
+                    CompleteStage(persist, ClassifyMutation(result));
+                }
+                catch (OperationCanceledException ex) when (deadlineCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    CompleteStage(persist, "deadline", ex);
+                    throw new AuditDeadlineException(deadline, ex);
+                }
+                catch (TimeoutException ex) when (!cancellationToken.IsCancellationRequested)
+                {
+                    CompleteStage(persist, "deadline", ex);
+                    throw new AuditDeadlineException(deadline, ex);
+                }
+                catch (Exception ex)
+                {
+                    CompleteStage(persist, ClassifyException(ex), ex);
+                    throw;
+                }
+            }
+
+            if (result.Outcome != SessionMutationOutcome.Applied || result.AppendedCount != 1)
+            {
                 throw new InvalidOperationException(
-                    $"Tool '{toolName}' was blocked because its invocation could not be durably recorded.", ex);
+                    $"Session '{sessionId}' could not accept the audit row ({result.Outcome}).");
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The tool never reached policy or execution. Do not later describe this cancelled
+            // audit attempt as an interrupted tool invocation.
+            _inFlight.TryRemove(toolCallId, out _);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            HandleFailure(toolCallId, toolName, ex, ClassifyException(ex));
+        }
     }
+
+    private void HandleFailure(string toolCallId, string toolName, Exception exception, string outcome)
+    {
+        GatewayTelemetry.ToolAuditWriteAheadFailures.Add(1,
+            new KeyValuePair<string, object?>("botnexus.agent.id", agentId.Value),
+            new KeyValuePair<string, object?>("botnexus.tool.name", toolName),
+            new KeyValuePair<string, object?>("botnexus.tool.call_id", toolCallId),
+            new KeyValuePair<string, object?>("botnexus.session.id", sessionId.Value),
+            new KeyValuePair<string, object?>("botnexus.audit.outcome", outcome));
+        logger.LogError(exception,
+            "Tool audit unavailable ({AuditOutcome}) for agent '{AgentId}', session '{SessionId}', tool '{ToolName}', call '{ToolCallId}'.",
+            outcome, agentId, sessionId, toolName, toolCallId);
+
+        // No durable start is known. It must not later be projected as an interrupted execution.
+        _inFlight.TryRemove(toolCallId, out _);
+        if (FailClosedTools.Contains(toolName))
+        {
+            throw new InvalidOperationException(
+                $"Tool '{toolName}' was blocked because audit unavailable: its invocation could not be durably recorded ({outcome}).",
+                exception);
+        }
+    }
+
+    private System.Diagnostics.Activity? StartStage(string name, string toolCallId, string toolName)
+    {
+        var activity = GatewayDiagnostics.Source.StartActivity(name, ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", agentId.Value);
+        activity?.SetTag("botnexus.session.id", sessionId.Value);
+        activity?.SetTag("botnexus.tool.name", toolName);
+        activity?.SetTag("botnexus.tool.call_id", toolCallId);
+        return activity;
+    }
+
+    private static void CompleteStage(System.Diagnostics.Activity? activity, string outcome, Exception? exception = null)
+    {
+        activity?.SetTag("botnexus.audit.outcome", outcome);
+        activity?.SetStatus(
+            string.Equals(outcome, "success", StringComparison.Ordinal)
+                ? ActivityStatusCode.Ok
+                : ActivityStatusCode.Error,
+            exception?.Message);
+    }
+
+    private static string ClassifyMutation(SessionAppendMutationResult result) => result.Outcome switch
+    {
+        SessionMutationOutcome.Applied when result.AppendedCount == 1 => "success",
+        SessionMutationOutcome.NotFound => "error",
+        SessionMutationOutcome.Conflict => "error",
+        _ => "error"
+    };
+
+    private static string ClassifyException(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is AuditDeadlineException or TimeoutException)
+                return "deadline";
+            if (current.Message.Contains("locked", StringComparison.OrdinalIgnoreCase) ||
+                current.Message.Contains("SQLite Error 5", StringComparison.OrdinalIgnoreCase))
+                return "lock";
+        }
+        return "error";
+    }
+
+    private static void ObserveAbandoned(Task task)
+    {
+        _ = task.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private sealed class AuditDeadlineException(TimeSpan deadline, Exception innerException)
+        : TimeoutException($"Audit persistence exceeded its {deadline.TotalSeconds:0.###} second deadline.", innerException);
 
     /// <summary>
     /// Marks a call as accounted for, so it is not later reported as an interrupted invocation.

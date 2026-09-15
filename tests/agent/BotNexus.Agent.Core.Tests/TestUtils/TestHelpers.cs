@@ -34,11 +34,13 @@ internal static class TestHelpers
         LlmModel? model = null,
         ToolExecutionMode toolExecutionMode = ToolExecutionMode.Sequential,
         BeforeToolCallDelegate? beforeToolCall = null,
+        BeforeToolAuditDelegate? beforeToolAudit = null,
         AfterToolCallDelegate? afterToolCall = null,
         TimeSpan? toolTimeout = null,
         TimeSpan? beforeToolCallTimeout = null,
         Action<string>? onDiagnostic = null,
-        BotNexus.Agent.Core.Loop.IHostSuspendDetector? suspendDetector = null)
+        BotNexus.Agent.Core.Loop.IHostSuspendDetector? suspendDetector = null,
+        ToolCallDispositionDelegate? onToolCallDisposition = null)
     {
         return new AgentLoopConfig(
             Model: model ?? CreateTestModel(),
@@ -50,12 +52,14 @@ internal static class TestHelpers
             GetFollowUpMessages: null,
             ToolExecutionMode: toolExecutionMode,
             BeforeToolCall: beforeToolCall,
+            BeforeToolAudit: beforeToolAudit,
             AfterToolCall: afterToolCall,
             GenerationSettings: new SimpleStreamOptions(),
             ToolTimeout: toolTimeout,
             BeforeToolCallTimeout: beforeToolCallTimeout,
             OnDiagnostic: onDiagnostic,
-            SuspendDetector: suspendDetector);
+            SuspendDetector: suspendDetector,
+            OnToolCallDisposition: onToolCallDisposition);
     }
 
     public static AgentOptions CreateTestOptions(

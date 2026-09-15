@@ -282,7 +282,6 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         var sessionLock = await AcquireSessionLockAsync(session.SessionId, cancellationToken).ConfigureAwait(false);
         try
         {
-            _cache.Set(session.SessionId, session);
             var history = session.CaptureHistoryForPersistence();
             if (BeforeHistoryWriteAsync is { } beforeHistoryWrite)
                 await beforeHistoryWrite(history, cancellationToken).ConfigureAwait(false);
@@ -296,6 +295,13 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             }, cancellationToken: cancellationToken).ConfigureAwait(false);
             session.AcknowledgeHistoryPersistence(history, persistence.InsertedRowIds);
             RecordHistoryMutation(activity, history, persistence);
+
+            // Aggregate references can outlive an independent AppendEntriesAsync mutation. Never
+            // repopulate the cache from the caller's snapshot after saving it: SQLite may contain
+            // rows that this aggregate did not observe and deliberately did not own or delete.
+            // Eviction preserves O(delta) writes while making the next read materialize the
+            // authoritative union of durable rows (#3983).
+            _cache.Remove(session.SessionId);
         }
         finally { sessionLock.Dispose(); }
     }
@@ -360,9 +366,10 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
             if (persisted)
             {
-                // Only refresh the cache on a real write. On a rebound, evict any stale entry so a
-                // later read re-materialises the authoritative (deleted/sealed/rebound) state.
-                _cache.Set(session.SessionId, session);
+                // A successful fenced save can still originate from an aggregate retained across
+                // an independent narrow append. Evict after either outcome so the next read sees
+                // every durable row rather than the caller's potentially stale snapshot (#3983).
+                _cache.Remove(session.SessionId);
                 return SessionSaveOutcome.Persisted;
             }
 

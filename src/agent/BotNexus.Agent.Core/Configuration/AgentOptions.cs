@@ -15,6 +15,7 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="GetSteeringMessages">Provides steering messages when configured (combined with Agent.Steer queues).</param>
 /// <param name="GetFollowUpMessages">Provides follow-up messages when configured (combined with Agent.FollowUp queues).</param>
 /// <param name="ToolExecutionMode">Controls tool execution ordering (Sequential or Parallel).</param>
+/// <param name="BeforeToolAudit">Optional durable audit hook invoked before the policy-only tool-call hook.</param>
 /// <param name="BeforeToolCall">Optional pre-tool-call hook for validation and blocking.</param>
 /// <param name="BeforeToolCallTimeout">
 /// Wall-clock budget for the pre-tool-call policy hook (#2518). Defaults to 15 seconds when null.
@@ -85,4 +86,6 @@ public record AgentOptions(
     TimeSpan? BeforeToolCallTimeout = null,
     Loop.IProviderSuspensionRegistry? SuspensionRegistry = null,
     string? AuthProfile = null,
-    int? MaxToolOutputBytes = null);
+    int? MaxToolOutputBytes = null,
+    BeforeToolAuditDelegate? BeforeToolAudit = null,
+    ToolCallDispositionDelegate? OnToolCallDisposition = null);

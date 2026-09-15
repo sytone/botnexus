@@ -42,6 +42,12 @@ public interface IGatewayRestClient
         int offset = 0,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Downloads a whole-conversation transcript with explicit content/privacy options.</summary>
+    Task<ExportDownload?> ExportConversationAsync(
+        string conversationId,
+        ConversationExportRequest request,
+        CancellationToken cancellationToken = default);
+
     /// <summary>GET /api/conversations/{conversationId}</summary>
     Task<ConversationResponseDto?> GetConversationAsync(
         string conversationId,
