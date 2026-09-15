@@ -156,6 +156,10 @@ public sealed class SoulTrigger(
                 foreach (var toolEntry in TriggerToolAuditProjector.ProjectToolEntries(reflectionResponse))
                     previousSession.AddEntry(toolEntry);
                 previousSession.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = reflectionResponse.Content });
+                // Reflection-on-seal is a second blocking run in this trigger. The first one is
+                // recorded at the top of the method; this one was not, so a soul session's last
+                // recorded prompt cost predated its final turn.
+                ProviderTokenUsageRecorder.Record(previousSession, reflectionResponse.Usage);
             }
 
             previousSession.Status = GatewaySessionStatus.Sealed;

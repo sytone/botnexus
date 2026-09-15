@@ -614,6 +614,17 @@ public sealed class GatewaySettingsConfig
         Order = 0)]
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "memory-embeddings", Order = 0)]
     public MemoryEmbeddingsConfig? MemoryEmbeddings { get; set; }
+    /// <summary>
+    /// Gateway-level memory settings, currently the shared stores several agents can share
+    /// knowledge through (#3232). Absent means no shared stores, which is the default.
+    /// </summary>
+    [Display(
+        Name = "Shared memory",
+        Description = "Named memory stores that more than one agent can read or write, each with its own access list.",
+        GroupName = "Memory",
+        Order = 1)]
+    [ConfigField(Group = "memory", Order = 1)]
+    public GatewayMemoryConfig? Memory { get; set; }
     /// <summary>CORS settings for browser-based clients.</summary>
     [Display(
         Name = "CORS",
@@ -730,6 +741,31 @@ public sealed class GatewaySettingsConfig
         Order = 0)]
     [ConfigField(Widget = ConfigFieldWidget.Select, Group = "execution", Order = 0)]
     public string? ShellPreference { get; set; }
+
+    /// <summary>
+    /// Extra environment variable names exposed to <c>bash</c> and <c>exec</c> child processes.
+    /// </summary>
+    /// <remarks>
+    /// Tool subprocesses get an environment built from an allow-list
+    /// (<c>ToolProcessEnvironment.AllowedVariables</c>), not the gateway's own environment. That
+    /// is what stops an agent holding <c>bash</c> from reading the provider keys and <c>env:</c>
+    /// credentials this gateway runs under - <c>ISecretResolver</c> keeps a resolved credential
+    /// out of an agent's context, and this keeps it out of the agent's shell.
+    /// <para>
+    /// This list is the escape hatch, and it is per-NAME on purpose: a toolchain that genuinely
+    /// needs <c>DOTNET_ROOT</c> or <c>NODE_OPTIONS</c> says so here. There is deliberately no
+    /// switch that restores wholesale inheritance, because that is the vulnerability rather than a
+    /// setting. Adding a name that carries authentication material hands it to every agent that
+    /// can run a command.
+    /// </para>
+    /// </remarks>
+    [Display(
+        Name = "Tool environment pass-through",
+        Description = "Extra environment variable names exposed to bash and exec child processes. Tool subprocesses otherwise receive a fixed allow-list that carries no credentials. Do not add anything that authenticates.",
+        GroupName = "Execution",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "execution", Order = 1)]
+    public List<string>? ToolEnvironmentPassThrough { get; set; }
 
     /// <summary>
     /// Custom shell command array for command execution.
@@ -1178,6 +1214,32 @@ public sealed class LocationConfig
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "location", Order = 6)]
     public bool VerifyTls { get; set; } = true;
 
+    /// <summary>
+    /// Agent ids allowed to see this location. Absent means every agent, which is the default and
+    /// the behaviour that shipped; <c>*</c> means the same explicitly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An <b>absent</b> list and an <b>empty</b> one mean different things, deliberately. Absent is
+    /// "unrestricted" - the upgrade default, so adding this field changes nothing. An empty list is
+    /// a list that grants nobody, which is how a location is taken out of circulation without
+    /// deleting its configuration.
+    /// </para>
+    /// <para>
+    /// This governs who may SEE the location. No credential is exposed either way - that boundary
+    /// is held by the projection in <c>ListLocationsTool</c> and enforced by an architecture fence.
+    /// What this stops is an agent that needs one internal API also enumerating the Proxmox host,
+    /// the NAS and the database, endpoints and usernames included.
+    /// </para>
+    /// </remarks>
+    [Display(
+        Name = "Agents",
+        Description = "Agent ids allowed to see this location. Leave empty for every agent. Use * for every agent explicitly.",
+        GroupName = "Location",
+        Order = 20)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "location", Order = 20)]
+    public List<string>? Agents { get; set; }
+
     /// <summary>Human-readable description.</summary>
     [Display(
         Name = "Description",
@@ -1207,6 +1269,92 @@ public sealed class LocationConfig
 }
 
 /// <summary>Configuration for granting communication with another world.</summary>
+/// <summary>
+/// Gateway-level memory settings. Agent-level memory lives on the agent descriptor; this is the
+/// part that is shared BETWEEN agents and so has nowhere else to live.
+/// </summary>
+public sealed class GatewayMemoryConfig
+{
+    /// <summary>
+    /// Named stores more than one agent can use. Empty or absent means every agent's memory is
+    /// private to it, which is the default and stays the default.
+    /// </summary>
+    [Display(
+        Name = "Shared stores",
+        Description = "Named memory stores shared between agents. Each store names who may read it and who may write it.",
+        GroupName = "Memory",
+        Order = 0)]
+    [ConfigField(Group = "memory", Order = 0)]
+    public List<SharedMemoryStoreEntry>? SharedStores { get; set; }
+}
+
+/// <summary>
+/// One shared memory store, as an operator writes it.
+///
+/// <remarks>
+/// Mirrors <c>BotNexus.Memory.SharedMemoryStoreConfig</c>, which the registry consumes.
+/// Deliberately a separate type rather than a reference: BotNexus.Gateway.Configuration does not
+/// depend on BotNexus.Memory, and the config surface is a contract with the operator that should
+/// not move every time an internal record does. A fence test pins the two together.
+/// </remarks>
+/// </summary>
+public sealed class SharedMemoryStoreEntry
+{
+    /// <summary>Unique store name, e.g. "platform-knowledge".</summary>
+    [Display(
+        Name = "Name",
+        Description = "Unique name for this store, e.g. platform-knowledge.",
+        GroupName = "Shared memory store",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "shared-memory-store", Order = 0)]
+    public string? Name { get; set; }
+
+    /// <summary>What this store is for, shown wherever the store is listed.</summary>
+    [Display(
+        Name = "Description",
+        Description = "What this store is for. Shown wherever the store is listed.",
+        GroupName = "Shared memory store",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "shared-memory-store", Order = 1)]
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// Agents allowed to READ this store. "*" means every agent.
+    /// </summary>
+    [Display(
+        Name = "Readers",
+        Description = "Agent ids allowed to read this store. Use * for every agent. Empty means nobody.",
+        GroupName = "Shared memory store",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "shared-memory-store", Order = 2)]
+    public List<string>? Readers { get; set; }
+
+    /// <summary>
+    /// Agents allowed to WRITE to this store. "*" means every agent.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="Readers"/> on purpose, and normally much shorter. A store many
+    /// agents read and one curates is the shape this is for; making everything writable by
+    /// everyone turns shared memory into a channel for one agent to mislead the rest.
+    /// </remarks>
+    [Display(
+        Name = "Writers",
+        Description = "Agent ids allowed to write to this store. Use * for every agent. Empty means nobody.",
+        GroupName = "Shared memory store",
+        Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "shared-memory-store", Order = 3)]
+    public List<string>? Writers { get; set; }
+
+    /// <summary>Days to keep entries. Null keeps them indefinitely.</summary>
+    [Display(
+        Name = "Retention days",
+        Description = "How many days to keep entries in this store. Leave empty to keep them indefinitely.",
+        GroupName = "Shared memory store",
+        Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "shared-memory-store", Order = 4)]
+    public int? RetentionDays { get; set; }
+}
+
 public sealed class CrossWorldPermissionConfig
 {
     /// <summary>Identifier of the target world this permission applies to.</summary>
@@ -1866,13 +2014,37 @@ public sealed class AgentDefinitionConfig
         Order = 7)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 7)]
     public string? Emoji { get; set; }
+    /// <summary>Operator-chosen avatar hue in degrees (0-359); empty generates one from the agent id.</summary>
+    [Display(
+        Name = "Avatar hue",
+        Description = "Avatar colour in degrees (0-359). Leave empty to generate one from the agent id.",
+        GroupName = "Agent",
+        Order = 8)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "agent", Order = 8)]
+    public int? AvatarHue { get; set; }
+    /// <summary>One short line naming what this agent owns.</summary>
+    [Display(
+        Name = "Responsibility",
+        Description = "One short line naming what this agent owns.",
+        GroupName = "Agent",
+        Order = 9)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 9)]
+    public string? Responsibility { get; set; }
+    /// <summary>What this agent must not do.</summary>
+    [Display(
+        Name = "Boundaries",
+        Description = "What this agent must not do.",
+        GroupName = "Agent",
+        Order = 10)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 10)]
+    public string? Boundaries { get; set; }
     /// <summary>Description of the agent's purpose.</summary>
     [Display(
         Name = "Description",
         Description = "Description of the agent's purpose.",
         GroupName = "Agent",
         Order = 8)]
-    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 8)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "agent", Order = 8)]
     public string? Description { get; set; }
 
     /// <summary>Agent-maintained summary of what the agent is currently doing (#3596).</summary>

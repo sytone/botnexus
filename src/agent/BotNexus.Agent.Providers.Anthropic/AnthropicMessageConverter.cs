@@ -383,10 +383,49 @@ internal static class AnthropicMessageConverter
     }
 
     /// <summary>
-    /// Applies cache-control breakpoints to the last <paramref name="maxBreakpoints"/> non-system
-    /// messages (system_and_3 strategy: Anthropic supports 4 breakpoints total; system prompt
-    /// already consumes one, so messages get up to 3).
+    /// Number of content blocks Anthropic will walk backwards from a breakpoint looking for a
+    /// cache entry an earlier request wrote. A breakpoint further than this from the nearest
+    /// existing entry finds nothing and reads no cache at all.
     /// </summary>
+    internal const int LookbackBlocks = 20;
+
+    /// <summary>
+    /// Spacing between the stable anchor breakpoints, in content blocks. Deliberately under
+    /// <see cref="LookbackBlocks"/> so that when conversation growth creates a new anchor, that
+    /// anchor's own lookback still reaches the previous one and the chain holds.
+    /// </summary>
+    internal const int AnchorStrideBlocks = 16;
+
+    /// <summary>
+    /// Places up to <paramref name="maxBreakpoints"/> cache-control breakpoints across the
+    /// converted message list.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The tail always gets one: it writes the entry the next request will read, and its own
+    /// lookback normally reaches the previous request's tail entry, which is what keeps an
+    /// ordinary turn-by-turn conversation fully cached.
+    /// </para>
+    /// <para>
+    /// The remaining breakpoints used to go on the messages immediately before the tail, which
+    /// looks like redundancy and is not. A cache read needs a breakpoint within
+    /// <see cref="LookbackBlocks"/> blocks of a position some earlier request actually wrote, and
+    /// three breakpoints bunched inside a single turn's new content are all equally far from the
+    /// last one. One wide turn -- a parallel tool fan-out appending more than twenty blocks --
+    /// therefore stranded every one of them at once and re-billed the whole conversation.
+    /// </para>
+    /// <para>
+    /// So the spare breakpoints go on <em>anchors</em>: positions measured in blocks from the
+    /// start of the conversation, which do not move as the conversation grows. An anchor chosen
+    /// on one request is chosen again on the next and matches its own entry exactly, so even when
+    /// the tail is stranded the prefix up to the anchor is still served from cache and the damage
+    /// is bounded by the stride rather than by the length of the conversation.
+    /// </para>
+    /// <para>
+    /// Below one stride there are no anchor positions to use and nothing to strand, so short
+    /// conversations keep the original behaviour of stamping the last few messages.
+    /// </para>
+    /// </remarks>
     /// <param name="messages">The converted message list to annotate in-place.</param>
     /// <param name="retention">Cache retention mode. <see cref="CacheRetention.None"/> is a no-op.</param>
     /// <param name="baseUrl">Provider base URL, used for Long-TTL eligibility check.</param>
@@ -397,43 +436,117 @@ internal static class AnthropicMessageConverter
         string baseUrl,
         int maxBreakpoints = 3)
     {
-        if (retention == CacheRetention.None) return;
+        if (retention == CacheRetention.None || maxBreakpoints <= 0 || messages.Count == 0) return;
 
         var cacheControl = BuildCacheControl(retention, baseUrl);
         if (cacheControl is null) return;
 
-        // Walk backwards and annotate up to maxBreakpoints messages (user or assistant).
-        // We skip any entry that already has a cache_control on its last block
-        // to avoid double-stamping on repeated calls.
-        var placed = 0;
-        for (var i = messages.Count - 1; i >= 0 && placed < maxBreakpoints; i--)
+        foreach (var index in SelectBreakpointIndices(messages, maxBreakpoints))
         {
-            var msg = messages[i];
-            var content = msg["content"];
+            StampMessage(messages[index], cacheControl);
+        }
+    }
 
-            if (content is string textContent)
+    /// <summary>
+    /// Chooses which message indices carry a breakpoint, newest first.
+    /// </summary>
+    internal static IReadOnlyList<int> SelectBreakpointIndices(
+        List<Dictionary<string, object?>> messages, int maxBreakpoints)
+    {
+        var lastIndex = messages.Count - 1;
+        var blockEnds = CumulativeBlockEnds(messages);
+        var totalBlocks = blockEnds[lastIndex];
+
+        // Nothing to anchor to yet, and nothing far enough apart to strand: keep the original
+        // behaviour so short conversations are untouched by this.
+        if (totalBlocks <= AnchorStrideBlocks)
+        {
+            var tail = new List<int>();
+            for (var i = lastIndex; i >= 0 && tail.Count < maxBreakpoints; i--)
+                tail.Add(i);
+            return tail;
+        }
+
+        var selected = new List<int> { lastIndex };
+
+        // Anchors sit at fixed multiples of the stride measured from the start of the
+        // conversation, so the same anchor is chosen again on the next request. Walk down from
+        // the tail, taking the closest anchors first: they leave the least uncached.
+        for (var anchorBlock = totalBlocks / AnchorStrideBlocks * AnchorStrideBlocks;
+             anchorBlock > 0 && selected.Count < maxBreakpoints;
+             anchorBlock -= AnchorStrideBlocks)
+        {
+            var index = FindMessageEndingAtOrAfter(blockEnds, anchorBlock);
+            if (index >= 0 && index < lastIndex && !selected.Contains(index))
+                selected.Add(index);
+        }
+
+        return selected;
+    }
+
+    /// <summary>
+    /// Running total of content blocks at the end of each message. Entries for earlier messages
+    /// never change as the conversation grows, which is what makes an anchor position stable.
+    /// </summary>
+    private static int[] CumulativeBlockEnds(List<Dictionary<string, object?>> messages)
+    {
+        var ends = new int[messages.Count];
+        var running = 0;
+
+        for (var i = 0; i < messages.Count; i++)
+        {
+            running += messages[i]["content"] switch
             {
-                // Wrap plain string into a typed block so we can attach cache_control.
-                var block = new Dictionary<string, object?>
+                List<object> blocks => Math.Max(blocks.Count, 1),
+                _ => 1
+            };
+            ends[i] = running;
+        }
+
+        return ends;
+    }
+
+    /// <summary>
+    /// First message whose content ends at or after <paramref name="blockTarget"/>. A breakpoint
+    /// can only sit on a message boundary, so an anchor lands on the message that spans it.
+    /// </summary>
+    private static int FindMessageEndingAtOrAfter(int[] blockEnds, int blockTarget)
+    {
+        for (var i = 0; i < blockEnds.Length; i++)
+        {
+            if (blockEnds[i] >= blockTarget)
+                return i;
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Attaches a breakpoint to a message's last content block, wrapping plain string content into
+    /// a typed block first. A message already carrying one is left alone rather than double-stamped.
+    /// </summary>
+    private static void StampMessage(
+        Dictionary<string, object?> message, Dictionary<string, object?> cacheControl)
+    {
+        switch (message["content"])
+        {
+            case string textContent:
+                message["content"] = new List<object>
                 {
-                    ["type"] = "text",
-                    ["text"] = textContent,
-                    ["cache_control"] = cacheControl
-                };
-                msg["content"] = new List<object> { block };
-                placed++;
-            }
-            else if (content is List<object> blocks && blocks.Count > 0)
-            {
-                if (blocks[^1] is Dictionary<string, object?> lastBlock)
-                {
-                    if (!lastBlock.ContainsKey("cache_control"))
+                    new Dictionary<string, object?>
                     {
-                        lastBlock["cache_control"] = cacheControl;
-                        placed++;
+                        ["type"] = "text",
+                        ["text"] = textContent,
+                        ["cache_control"] = cacheControl
                     }
-                }
-            }
+                };
+                break;
+
+            case List<object> { Count: > 0 } blocks
+                when blocks[^1] is Dictionary<string, object?> lastBlock
+                    && !lastBlock.ContainsKey("cache_control"):
+                lastBlock["cache_control"] = cacheControl;
+                break;
         }
     }
 

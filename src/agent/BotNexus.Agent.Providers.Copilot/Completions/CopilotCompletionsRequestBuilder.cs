@@ -48,6 +48,11 @@ internal static class CopilotCompletionsRequestBuilder
         if (compat.SupportsUsageInStreaming != false)
             payload["stream_options"] = new JsonObject { ["include_usage"] = true };
 
+        // Keeps a conversation routed to the machine holding its cached prefix. Gated to
+        // endpoints known to accept the field -- see PromptCacheRouting.
+        if (PromptCacheRouting.ResolveCacheKey(model, options) is { } promptCacheKey)
+            payload["prompt_cache_key"] = promptCacheKey;
+
         // Reasoning / thinking support
         if (options is CopilotCompletionsOptions { ReasoningEffort: not null } compOptions && model.Reasoning)
         {
