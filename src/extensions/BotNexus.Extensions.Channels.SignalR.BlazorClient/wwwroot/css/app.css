@@ -6128,6 +6128,11 @@ h3.conversation-title.editable:hover {
     background: var(--danger);
 }
 
+.activity-cron-health--disabled,
+.activity-cron-health--expired {
+    background: var(--warning);
+}
+
 /* Unknown is deliberately NOT green. An unrecognised status from a newer gateway means "we cannot
    tell", and rendering that as healthy is exactly the silent-failure this feature exists to end. */
 .activity-cron-health--unknown {
