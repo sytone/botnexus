@@ -83,13 +83,21 @@ public sealed class FileAgentWorkspaceManager : IAgentWorkspaceManager
     }
 
     public string GetWorkspacePath(string agentName)
+        => _fileSystem.Path.Combine(GetAgentRootPath(agentName), "workspace");
+
+    /// <summary>
+    /// Resolves the directory that owns an agent's workspace and data. Persistent agents use the
+    /// profile agents root; ephemeral children keep both beneath the configurable child root so
+    /// terminal cleanup reclaims their workspace and memory store as one directory tree.
+    /// </summary>
+    public string GetAgentRootPath(string agentName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
         var normalizedAgentName = agentName.Trim();
         if (IsSubAgentAgentName(normalizedAgentName))
-            return _fileSystem.Path.Combine(GetSubAgentWorkspaceRoot(), SanitizePathSegment(normalizedAgentName), "workspace");
+            return _fileSystem.Path.Combine(GetSubAgentWorkspaceRoot(), SanitizePathSegment(normalizedAgentName));
 
-        return Path.Combine(_botNexusHome.GetAgentDirectory(normalizedAgentName), "workspace");
+        return _botNexusHome.GetAgentDirectory(normalizedAgentName);
     }
 
     /// <summary>
