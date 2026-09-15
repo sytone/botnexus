@@ -17,7 +17,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\..\BotNexus.Testing\SqlitePoolCleanup.cs" Link="Shared\SqlitePoolCleanup.cs" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Telemetry\BotNexus.Gateway.Telemetry.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Conversations\BotNexus.Gateway.Conversations.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Sessions\BotNexus.Gateway.Sessions.csproj" />
   </ItemGroup>
 
 </Project>

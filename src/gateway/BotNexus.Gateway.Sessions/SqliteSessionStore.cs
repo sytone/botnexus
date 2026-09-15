@@ -18,6 +18,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using BotNexus.Gateway.Abstractions.Concurrency;
 using BotNexus.Persistence.Sqlite;
+using BotNexus.Gateway.Telemetry;
 
 namespace BotNexus.Gateway.Sessions;
 
@@ -124,6 +125,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     private readonly BoundedLruCache<ConversationId, AgentId> _agentIdCache;
     private readonly ILogger<SqliteSessionStore> _logger;
     private readonly ISecretRedactor? _redactor;
+    private readonly StoreMetrics? _storeMetrics;
 
     // Deterministic test seam for #3907. It observes the immutable work item after capture and
     // may gate the write to force a concurrent mutation; production leaves it null.
@@ -157,7 +159,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         ILogger<SqliteSessionStore> logger,
         IConversationStore conversationStore,
         ISecretRedactor? redactor = null,
-        int cacheCapacity = DefaultSessionCacheCapacity)
+        int cacheCapacity = DefaultSessionCacheCapacity,
+        StoreMetrics? storeMetrics = null)
         : base(conversationStore)
     {
         _connectionString = connectionString;
@@ -165,6 +168,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         _conversationStore = conversationStore ?? throw new ArgumentNullException(nameof(conversationStore));
         _legacyResolver = new LegacyConversationResolver(conversationStore, logger: null);
         _redactor = redactor;
+        _storeMetrics = storeMetrics;
         _cache = new BoundedLruCache<SessionId, GatewaySession>(cacheCapacity);
         _agentIdCache = new BoundedLruCache<ConversationId, AgentId>(cacheCapacity);
     }
@@ -174,16 +178,21 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     {
         using var activity = ActivitySource.StartActivity("session.get", ActivityKind.Internal);
         activity?.SetTag("botnexus.session.id", sessionId);
+        using var metric = _storeMetrics?.Start("session", "get");
 
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (_cache.TryGet(sessionId, out var cached))
+        {
+            metric?.Complete();
             return cached;
+        }
 
         var loaded = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (loaded is not null)
             _cache.Set(sessionId, loaded);
 
+        metric?.Complete();
         return loaded;
     }
 
@@ -691,8 +700,10 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         }
     }
 
-    protected override Task<IReadOnlyList<GatewaySession>> EnumerateSessionsAsync(CancellationToken cancellationToken)
-        => RetryOnTransientAsync(async () =>
+    protected override async Task<IReadOnlyList<GatewaySession>> EnumerateSessionsAsync(CancellationToken cancellationToken)
+    {
+        using var metric = _storeMetrics?.Start("session", "list");
+        var result = await RetryOnTransientAsync(async () =>
         {
         // EnumerateSessionsAsync reads across all sessions — safe without per-session lock under WAL
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
@@ -748,7 +759,10 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         }
 
         return (IReadOnlyList<GatewaySession>)sessions;
-        }, cancellationToken: cancellationToken);
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+        metric?.Complete(result.Count);
+        return result;
+    }
 
     /// <summary>
     /// Transcript-free summary read: a single metadata query over <c>sessions</c> with a
