@@ -3,6 +3,7 @@ using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
@@ -23,17 +24,21 @@ namespace BotNexus.Gateway.Sessions;
 /// the originating channel when possible.
 /// </summary>
 /// <remarks>
-/// When <see cref="GatewayOptions.AutoReplayInterruptedTurns"/> is <c>true</c> and the
-/// session is interactive (not cron/soul/subagent), the service additionally re-dispatches
-/// the last user message so the agent can complete the interrupted turn automatically.
-/// A replay counter in session metadata caps retries at <see cref="GatewayOptions.MaxAutoReplayAttempts"/>
-/// to prevent infinite crash loops.
+/// Interactive sessions are replayed when <see cref="GatewayOptions.AutoReplayInterruptedTurns"/>
+/// is <c>true</c>. Agent-only conversations are also replayed when the option is <c>false</c>
+/// because no human participant can act on a resend notification. Cron/soul/subagent sessions
+/// remain excluded. A replay counter in session metadata caps retries at
+/// <see cref="GatewayOptions.MaxAutoReplayAttempts"/> to prevent infinite crash loops.
 /// </remarks>
 public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
 {
     internal const string NotificationContent =
         "⚠️ The gateway was restarted while your last message was being processed. " +
         "Your message was saved — please resend it to continue.";
+
+    internal const string AgentOnlyNotificationContent =
+        "⚠️ The gateway was restarted while the last message was being processed. " +
+        "The message was saved; no human action is required.";
 
     internal const string MetadataKeyReplayCount = "interruption_replay_count";
 
@@ -75,6 +80,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
     private readonly ILogger<InterruptedTurnNotificationService> _logger;
     private readonly IInboundMessageOrchestrator? _orchestrator;
     private readonly GatewayOptions _options;
+    private readonly IConversationStore? _conversations;
 
     /// <summary>
     /// Initializes a new instance without auto-replay support (backwards-compat overload).
@@ -86,7 +92,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         IChannelManager channelManager,
         ILogger<InterruptedTurnNotificationService> logger)
         : this(sessions, agentRegistry, broadcaster, channelManager, logger,
-               orchestrator: null, options: null)
+               orchestrator: null, options: null, conversations: null)
     {
     }
 
@@ -100,7 +106,8 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         IChannelManager channelManager,
         ILogger<InterruptedTurnNotificationService> logger,
         IInboundMessageOrchestrator? orchestrator,
-        IOptions<GatewayOptions>? options)
+        IOptions<GatewayOptions>? options,
+        IConversationStore? conversations = null)
     {
         _sessions = sessions;
         _agentRegistry = agentRegistry;
@@ -109,6 +116,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         _logger = logger;
         _orchestrator = orchestrator;
         _options = options?.Value ?? new GatewayOptions();
+        _conversations = conversations;
     }
 
     /// <inheritdoc />
@@ -155,19 +163,29 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
                     "Session {SessionId} (agent {AgentId}) has unresolved crash sentinels — notifying user",
                     session.SessionId.Value, agentId.Value);
 
+                var isAgentOnlyConversation = await IsAgentOnlyConversationAsync(session, cancellationToken)
+                    .ConfigureAwait(false);
+                var notificationContent = isAgentOnlyConversation
+                    ? AgentOnlyNotificationContent
+                    : NotificationContent;
                 var notification = new SessionEntry
                 {
                     Role = MessageRole.Notification,
-                    Content = NotificationContent,
+                    Content = notificationContent,
                     Timestamp = DateTimeOffset.UtcNow
                 };
 
                 session.AddEntry(notification);
                 session.RemoveCrashSentinels();
 
-                // Attempt auto-replay before saving (replay decision is metadata-driven).
+                // Agent-only conversations have nobody who can act on a resend instruction, so
+                // replay them independently of the human-facing opt-in. The same interactive and
+                // attempt-cap guards still apply. Missing conversation data is conservative: it
+                // does not prove the absence of a human.
                 var didReplay = false;
-                if (_options.AutoReplayInterruptedTurns && session.IsInteractive && _orchestrator is not null)
+                if ((_options.AutoReplayInterruptedTurns || isAgentOnlyConversation)
+                    && session.IsInteractive
+                    && _orchestrator is not null)
                 {
                     didReplay = await TryAutoReplayAsync(session, agentId, cancellationToken).ConfigureAwait(false);
                     if (didReplay)
@@ -192,8 +210,8 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
                     SessionId = session.SessionId.Value,
                     ConversationId = session.ConversationId.IsInitialized() ? session.ConversationId.Value : null,
                     Message = didReplay
-                        ? $"{NotificationContent} (auto-replaying)"
-                        : NotificationContent
+                        ? $"{notificationContent} (auto-replaying)"
+                        : notificationContent
                 }, cancellationToken).ConfigureAwait(false);
 
                 // Deliver via channel adapter when we have enough addressing information.
@@ -208,7 +226,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
                         {
                             ChannelType = session.ChannelType.Value,
                             ChannelAddress = ChannelAddress.From(session.CallerId),
-                            Content = NotificationContent,
+                            Content = notificationContent,
                             SessionId = session.SessionId.Value,
                             ConversationId = session.ConversationId.IsInitialized() ? session.ConversationId.Value : null
                         }, cancellationToken).ConfigureAwait(false);
@@ -238,6 +256,32 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
 
     /// <inheritdoc />
     public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private async Task<bool> IsAgentOnlyConversationAsync(
+        GatewaySession session,
+        CancellationToken cancellationToken)
+    {
+        if (!session.IsInteractive || _conversations is null || !session.ConversationId.IsInitialized())
+            return false;
+
+        try
+        {
+            var conversation = await _conversations.GetAsync(session.ConversationId, cancellationToken)
+                .ConfigureAwait(false);
+            return conversation is not null
+                && conversation.Participants.Count > 0
+                && conversation.Participants.All(static participant =>
+                    participant.CitizenId.Kind != CitizenKind.User);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to resolve conversation {ConversationId} participants during interrupted-turn scan; preserving notify-only behavior",
+                session.ConversationId.Value);
+            return false;
+        }
+    }
 
     private Task<bool> TryAutoReplayAsync(GatewaySession session, AgentId agentId, CancellationToken cancellationToken)
     {

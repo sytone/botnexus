@@ -418,7 +418,8 @@ public static class GatewayServiceCollectionExtensions
             sp.GetRequiredService<IChannelManager>(),
             sp.GetRequiredService<ILogger<InterruptedTurnNotificationService>>(),
             sp.GetService<IInboundMessageOrchestrator>(),
-            sp.GetService<IOptions<GatewayOptions>>()));
+            sp.GetService<IOptions<GatewayOptions>>(),
+            sp.GetService<IConversationStore>()));
         services.AddHostedService<SessionCleanupService>();
         // Session/conversation consistency monitor + safe auto-heal path (#2046).
         services.TryAddSingleton<Sessions.SessionConsistencyChecker>();

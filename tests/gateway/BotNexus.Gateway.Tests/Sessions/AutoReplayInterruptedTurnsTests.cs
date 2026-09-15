@@ -3,6 +3,7 @@ using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
@@ -31,6 +32,7 @@ public sealed class AutoReplayInterruptedTurnsTests
         var session = new GatewaySession
         {
             SessionId = SessionId.From(sessionId),
+            ConversationId = ConversationId.From($"conv-{sessionId}"),
             AgentId = AgentId.From(agentId),
             Status = SessionStatus.Active,
             UpdatedAt = DateTimeOffset.UtcNow,
@@ -97,13 +99,30 @@ public sealed class AutoReplayInterruptedTurnsTests
         return orch;
     }
 
+    private static Mock<IConversationStore> CreateConversationStore(GatewaySession session, bool hasHuman)
+    {
+        var conversation = new Conversation
+        {
+            ConversationId = session.ConversationId,
+            AgentId = session.AgentId,
+            Participants = hasHuman
+                ? [new SessionParticipant { CitizenId = CitizenId.Of(UserId.From("user-a")) }]
+                : [new SessionParticipant { CitizenId = CitizenId.Of(session.AgentId) }]
+        };
+        var store = new Mock<IConversationStore>();
+        store.Setup(s => s.GetAsync(session.ConversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        return store;
+    }
+
     private static InterruptedTurnNotificationService CreateService(
         ISessionStore store,
         IAgentRegistry registry,
         GatewayOptions? options = null,
         IInboundMessageOrchestrator? orchestrator = null,
         IActivityBroadcaster? broadcaster = null,
-        IChannelManager? channelManager = null)
+        IChannelManager? channelManager = null,
+        IConversationStore? conversationStore = null)
     {
         broadcaster ??= Mock.Of<IActivityBroadcaster>();
         channelManager ??= Mock.Of<IChannelManager>();
@@ -114,7 +133,8 @@ public sealed class AutoReplayInterruptedTurnsTests
             channelManager,
             NullLogger<InterruptedTurnNotificationService>.Instance,
             orchestrator,
-            options is not null ? Options.Create(options) : null);
+            options is not null ? Options.Create(options) : null,
+            conversationStore);
     }
 
     // ── Tests ──────────────────────────────────────────────────────────────
@@ -146,6 +166,80 @@ public sealed class AutoReplayInterruptedTurnsTests
         var options = new GatewayOptions { AutoReplayInterruptedTurns = false };
 
         var service = CreateService(store.Object, CreateRegistry("agent-b"), options, orchestrator.Object);
+        await service.StartedAsync(CancellationToken.None);
+
+        orchestrator.Verify(o => o.Post(It.IsAny<InboundMessage>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AutoReplay_WhenDisabled_AndConversationHasNoHuman_PostsLastUserMessage()
+    {
+        var session = CreateSession("sess-agent-only", "agent-only", withSentinel: true,
+            channelType: ChannelKey.From("signalr"), lastUserContent: "continue the work");
+        var store = CreateStore(session);
+        var conversations = CreateConversationStore(session, hasHuman: false);
+        var orchestrator = CreateOrchestrator();
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = false, MaxAutoReplayAttempts = 2 };
+
+        var service = CreateService(store.Object, CreateRegistry("agent-only"), options,
+            orchestrator.Object, conversationStore: conversations.Object);
+        await service.StartedAsync(CancellationToken.None);
+
+        orchestrator.Verify(o => o.Post(It.Is<InboundMessage>(m => m.Content == "continue the work")), Times.Once);
+        session.History.Single(e => e.Role == MessageRole.Notification).Content
+            .Contains("please resend", StringComparison.OrdinalIgnoreCase).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AutoReplay_WhenDisabled_AndConversationHasHuman_RemainsNotifyOnly()
+    {
+        var session = CreateSession("sess-human", "agent-human", withSentinel: true,
+            channelType: ChannelKey.From("signalr"), lastUserContent: "human request");
+        var store = CreateStore(session);
+        var conversations = CreateConversationStore(session, hasHuman: true);
+        var orchestrator = CreateOrchestrator();
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = false, MaxAutoReplayAttempts = 2 };
+
+        var service = CreateService(store.Object, CreateRegistry("agent-human"), options,
+            orchestrator.Object, conversationStore: conversations.Object);
+        await service.StartedAsync(CancellationToken.None);
+
+        orchestrator.Verify(o => o.Post(It.IsAny<InboundMessage>()), Times.Never);
+        session.History.Single(e => e.Role == MessageRole.Notification).Content
+            .Contains("please resend", StringComparison.OrdinalIgnoreCase).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AutoReplay_WhenDisabled_AndAgentOnlyAtMax_FallsBackWithoutHumanInstruction()
+    {
+        var session = CreateSession("sess-agent-max", "agent-max", withSentinel: true,
+            channelType: ChannelKey.From("signalr"), lastUserContent: "retry this", existingReplayCount: 2);
+        var store = CreateStore(session);
+        var conversations = CreateConversationStore(session, hasHuman: false);
+        var orchestrator = CreateOrchestrator();
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = false, MaxAutoReplayAttempts = 2 };
+
+        var service = CreateService(store.Object, CreateRegistry("agent-max"), options,
+            orchestrator.Object, conversationStore: conversations.Object);
+        await service.StartedAsync(CancellationToken.None);
+
+        orchestrator.Verify(o => o.Post(It.IsAny<InboundMessage>()), Times.Never);
+        session.History.Single(e => e.Role == MessageRole.Notification).Content
+            .Contains("please resend", StringComparison.OrdinalIgnoreCase).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AutoReplay_WhenDisabled_AndAgentOnlyCron_RemainsExcluded()
+    {
+        var session = CreateSession("sess-agent-cron", "agent-cron", withSentinel: true,
+            channelType: ChannelKey.From("cron"), lastUserContent: "scheduled work");
+        var store = CreateStore(session);
+        var conversations = CreateConversationStore(session, hasHuman: false);
+        var orchestrator = CreateOrchestrator();
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = false, MaxAutoReplayAttempts = 2 };
+
+        var service = CreateService(store.Object, CreateRegistry("agent-cron"), options,
+            orchestrator.Object, conversationStore: conversations.Object);
         await service.StartedAsync(CancellationToken.None);
 
         orchestrator.Verify(o => o.Post(It.IsAny<InboundMessage>()), Times.Never);

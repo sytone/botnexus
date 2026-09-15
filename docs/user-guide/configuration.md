@@ -144,7 +144,7 @@ botnexus config set gateway.world.id local-gateway
 | `maxCallChainDepth` | int | `10` | Max depth for cross-agent and sub-agent call chains; a deeper chain is refused, not extended |
 | `crossAgentTimeoutSeconds` | int | `120` | Timeout for a cross-agent prompt call |
 | `agentConversationMaxDepth` | int | `3` | Max depth for `agent_converse` call chains; zero or less falls back to the default rather than disabling the guard |
-| `autoReplayInterruptedTurns` | bool | `false` | Re-dispatch the last user message from interactive sessions interrupted by an unclean restart. Off by default; when off the session is notified instead |
+| `autoReplayInterruptedTurns` | bool | `false` | Re-dispatch the last user message from interactive sessions interrupted by an unclean restart. Off by default for conversations with a human participant; agent-only conversations replay regardless because no human can resend |
 | `maxAutoReplayAttempts` | int | `2` | Replay attempts per interrupted session before falling back to notification-only. Counted in session metadata so a crashing message cannot loop |
 | `sessionWarmup.enabled` | bool | `true` | Enable session pre-warming and multi-session subscription |
 | `sessionWarmup.maxSessionsPerAgent` | int | `10` | Max sessions pre-warmed per agent; the bound on resident sessions |
