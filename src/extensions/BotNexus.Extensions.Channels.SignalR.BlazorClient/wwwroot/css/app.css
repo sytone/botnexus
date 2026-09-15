@@ -4269,7 +4269,7 @@ details[open] > .thinking-summary::before {
     border: 0;
 }
 
-/* ── Read-only sub-agent session banner ─────────────────────────────── */
+/* ── Read-only conversation banner ─────────────────────────────────── */
 
 .read-only-banner {
     display: flex;
@@ -4305,6 +4305,17 @@ details[open] > .thinking-summary::before {
 .read-only-status.completed {
     background: var(--color-success-wash);
     color: var(--success);
+}
+
+.read-only-status.failed,
+.read-only-status.killed {
+    background: var(--color-danger-wash);
+    color: var(--danger);
+}
+
+.read-only-status.idle {
+    background: var(--color-surface-2);
+    color: var(--text-secondary);
 }
 
 .read-only-label {
