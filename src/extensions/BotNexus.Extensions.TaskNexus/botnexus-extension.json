@@ -1,7 +1,7 @@
 {
   "id": "botnexus-tasknexus",
   "name": "TaskNexus",
-  "description": "Keeps TaskNexus in sync with the BotNexus agent registry by delivering per-agent webhook bindings on create, rename, and delete. Disabled until extensions.tasknexus.baseUrl is set.",
+  "description": "Keeps TaskNexus in sync by delivering per-agent webhook bindings and secret-free full-roster health snapshots. Disabled until extensions.tasknexus.baseUrl is set.",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.TaskNexus.dll",
   "extensionTypes": ["tool"],
@@ -12,7 +12,7 @@
       "type": "string",
       "required": false,
       "sensitive": false,
-      "description": "Base URL of the TaskNexus instance to notify. Absent means the extension makes no outbound call at all."
+      "description": "Base URL of the TaskNexus instance receiving binding updates and secret-free roster diagnostics. Absent means the extension makes no outbound call at all."
     },
     {
       "id": "callbackOrigin",

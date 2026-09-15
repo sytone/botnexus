@@ -27,7 +27,7 @@ TaskNexus settings are extension-owned raw configuration. They are not represent
 
 | Key | Required | Description |
 |---|---|---|
-| `baseUrl` | Yes to enable delivery | Base URL of the TaskNexus instance. BotNexus posts bindings to `<baseUrl>/api/botnexus/agents`. Omit it to disable all outbound calls. |
+| `baseUrl` | Yes to enable delivery | Base URL of the TaskNexus instance. BotNexus posts bindings to `<baseUrl>/api/botnexus/agents` and roster diagnostics to `<baseUrl>/api/botnexus/roster`. Omit it to disable all outbound calls. |
 | `callbackOrigin` | No | Externally reachable BotNexus gateway origin. When set, it is prepended to the generated `/api/webhooks/{agentId}/{webhookId}` inbound path. When omitted, TaskNexus receives the relative path. |
 
 A SQLite-only configuration home cannot author this extension-owned subtree through the current typed CLI surface. Keep the JSON compatibility source available for this setting until the configuration model exposes it.
@@ -54,16 +54,20 @@ The provisioner invokes the extension when a binding is created or refreshed. Re
 
 Both identifiers are included so a delayed deletion for an old binding cannot erase a newer binding for a recreated agent with the same id.
 
+After startup reconciliation and each create, rename, or removal reaches its terminal state, BotNexus also posts a full diagnostic roster to `/api/botnexus/roster`. A successful heartbeat contains only `status`, `observedAt`, and the canonical `agentId` plus `displayName` for every persistent agent. An empty successful roster is valid and marks all previously observed agents absent. Duplicate identifiers collapse deterministically.
+
+If startup reconciliation fails, BotNexus sends a failure heartbeat containing only `status`, `observedAt`, and the bounded machine code `roster_reconciliation_failed`. Failure heartbeats do not include or change roster membership. Neither heartbeat includes webhook identifiers, callback URLs, secrets, exception text, tokens, or stack traces.
+
 ## Failure and recovery
 
 - Non-success responses and network failures are logged as warnings and dropped.
 - The extension has no retry queue or outbox.
-- Startup reconciliation re-sends bindings for agents currently in the registry. It can repair a missed creation or refresh for an agent that is still registered; it does not replay removals for absent agents.
+- Startup reconciliation re-sends bindings for agents currently in the registry, then sends the complete diagnostic roster. It can repair a missed creation or refresh for an agent that is still registered; the full roster marks absent agents without replaying their old binding deletion.
 - Removal deletes the local webhook registration before notifying TaskNexus. If that outbound `DELETE` fails, there is no retained deletion record for the next startup to replay. A stale TaskNexus binding can require manual or external cleanup using the removed agent id and webhook id; do not delete a recreated agent's newer binding.
 - A missing `baseUrl` is a supported disabled state, not an error.
 
 ## Known limitations
 
 - TaskNexus configuration is not yet writable through the typed `botnexus config set` surface.
-- Delivery is best-effort. Restart reconciliation covers current bindings only, not guaranteed recovery of every missed lifecycle notification.
-- The extension synchronizes webhook bindings only; it does not expose an agent-callable tool.
+- Delivery is best-effort. Restart reconciliation covers current bindings and the complete diagnostic roster, not guaranteed replay of every missed per-binding lifecycle notification.
+- The extension synchronizes webhook bindings and emits roster health; it does not expose an agent-callable tool.

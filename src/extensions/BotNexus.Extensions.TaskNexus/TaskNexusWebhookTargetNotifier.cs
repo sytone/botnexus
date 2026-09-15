@@ -39,6 +39,9 @@ public sealed class TaskNexusWebhookTargetNotifier : IAgentWebhookTargetNotifier
     /// <summary>Configuration key holding the gateway origin TaskNexus should call back to.</summary>
     public const string CallbackOriginKey = "extensions:tasknexus:callbackOrigin";
 
+    /// <summary>The only machine code emitted for a failed full-roster reconciliation.</summary>
+    public const string RosterReconciliationFailedCode = "roster_reconciliation_failed";
+
     private readonly HttpClient _httpClient;
     private readonly string? _baseUrl;
     private readonly string? _callbackOrigin;
@@ -96,6 +99,37 @@ public sealed class TaskNexusWebhookTargetNotifier : IAgentWebhookTargetNotifier
     }
 
     /// <inheritdoc/>
+    public Task NotifyRosterSucceededAsync(
+        IReadOnlyList<AgentRosterEntry> agents,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(agents);
+        return PostRosterAsync(new
+        {
+            status = "success",
+            observedAt,
+            agents = agents.Select(agent => new
+            {
+                agentId = agent.AgentId.Value,
+                displayName = agent.DisplayName
+            }).ToArray()
+        }, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public Task NotifyRosterFailedAsync(
+        string errorCode,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(errorCode, RosterReconciliationFailedCode, StringComparison.Ordinal))
+            throw new ArgumentException("Roster errorCode is not an allowed machine code.", nameof(errorCode));
+
+        return PostRosterAsync(new { status = "failure", observedAt, errorCode }, cancellationToken);
+    }
+
+    /// <inheritdoc/>
     public async Task NotifyRemovedAsync(AgentId agentId, string webhookId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(webhookId);
@@ -128,6 +162,30 @@ public sealed class TaskNexusWebhookTargetNotifier : IAgentWebhookTargetNotifier
             _logger.LogWarning(ex,
                 "Failed to notify TaskNexus that webhook '{WebhookId}' for agent '{AgentId}' was removed.",
                 webhookId, agentId);
+        }
+    }
+
+    private async Task PostRosterAsync(object payload, CancellationToken cancellationToken)
+    {
+        if (_baseUrl is null)
+            return;
+
+        try
+        {
+            using var response = await _httpClient
+                .PostAsJsonAsync($"{_baseUrl}/api/botnexus/roster", payload, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "TaskNexus rejected the agent roster heartbeat with status {StatusCode}.",
+                    (int)response.StatusCode);
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to deliver the agent roster heartbeat to TaskNexus.");
         }
     }
 
