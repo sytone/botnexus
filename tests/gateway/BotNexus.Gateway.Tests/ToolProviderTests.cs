@@ -285,4 +285,44 @@ public class ToolProviderTests
         public PlatformConfig Get(string? name) => value;
         public IDisposable? OnChange(Action<PlatformConfig, string?> listener) => null;
     }
+
+    // ── The provider wiring, not just the rule ────────────────────────────
+
+    [Fact]
+    public async Task The_locations_provider_builds_a_tool_scoped_to_the_calling_agent()
+    {
+        // THIS is the test that would have caught the original defect, and the first version of
+        // this suite did not have it: every other test here constructs ListLocationsTool directly
+        // with an agent id, so they all passed against the unscoped provider. The defect was never
+        // in the rule — it was that no agent id reached the tool at all.
+        var locations = new Dictionary<string, LocationConfig>
+        {
+            ["mine"]     = new() { Type = "api", Endpoint = "https://mine.lan",  Agents = ["agent-a"] },
+            ["not-mine"] = new() { Type = "api", Endpoint = "https://theirs.lan", Agents = ["agent-b"] }
+        };
+
+        var provider = new ListLocationsToolProvider(
+            new StaticOptionsMonitor(new PlatformConfig
+            {
+                Gateway = new GatewaySettingsConfig { Locations = locations }
+            }));
+
+        // Context() builds a descriptor for "agent-a".
+        var tools = await provider.CreateToolsAsync(Context());
+        var tool = tools.ShouldHaveSingleItem().ShouldBeOfType<ListLocationsTool>();
+
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>());
+        var json = string.Concat(result.Content.Select(c => c.Value));
+
+        json.ShouldContain("mine");
+        json.ShouldNotContain("not-mine");
+        json.ShouldNotContain("theirs.lan");
+    }
+
+    private sealed class StaticOptionsMonitor(PlatformConfig value) : IOptionsMonitor<PlatformConfig>
+    {
+        public PlatformConfig CurrentValue => value;
+        public PlatformConfig Get(string? name) => value;
+        public IDisposable? OnChange(Action<PlatformConfig, string?> listener) => null;
+    }
 }

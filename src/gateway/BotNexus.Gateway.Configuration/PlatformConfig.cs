@@ -732,6 +732,21 @@ public sealed class GatewaySettingsConfig
     public string? ShellPreference { get; set; }
 
     /// <summary>
+    /// Extra environment variable names exposed to <c>bash</c> and <c>exec</c> child processes.
+    /// </summary>
+    /// <remarks>
+    /// Tool subprocesses get an environment built from an allow-list, not the gateway's own
+    /// environment. This list is the explicit per-name escape hatch for operator-approved values.
+    /// </remarks>
+    [Display(
+        Name = "Tool environment pass-through",
+        Description = "Extra environment variable names exposed to bash and exec child processes. Do not add authentication material.",
+        GroupName = "Execution",
+        Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "execution", Order = 1)]
+    public List<string>? ToolEnvironmentPassThrough { get; set; }
+
+    /// <summary>
     /// Custom shell command array for command execution.
     /// Element [0] is the executable, remaining elements are base arguments.
     /// The agent's command string is appended as the final argument.
@@ -1177,6 +1192,17 @@ public sealed class LocationConfig
         Order = 6)]
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "location", Order = 6)]
     public bool VerifyTls { get; set; } = true;
+
+    /// <summary>
+    /// Agent ids allowed to see this location. Null means every agent; an empty list means none.
+    /// </summary>
+    [Display(
+        Name = "Agents",
+        Description = "Agent ids allowed to see this location. Omit for every agent; use * for every agent explicitly.",
+        GroupName = "Location",
+        Order = 20)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "location", Order = 20)]
+    public List<string>? Agents { get; set; }
 
     /// <summary>Human-readable description.</summary>
     [Display(
