@@ -50,6 +50,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using BotNexus.Gateway.Configuration.Store;
+using BotNexus.Gateway.Telemetry;
 using Microsoft.FeatureManagement;
 using System.Globalization;
 using System.IO.Abstractions;
@@ -812,7 +813,8 @@ public static class GatewayServiceCollectionExtensions
                     new SqliteSessionStore(
                         connectionString,
                         serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>(),
-                        serviceProvider.GetRequiredService<IConversationStore>()),
+                        serviceProvider.GetRequiredService<IConversationStore>(),
+                        storeMetrics: serviceProvider.GetService<StoreMetrics>()),
                     serviceProvider);
             }));
             return;
@@ -894,7 +896,8 @@ public static class GatewayServiceCollectionExtensions
                 return new SqliteConversationStore(
                     connectionString,
                     serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>(),
-                    serviceProvider.GetService<IWorldContext>());
+                    serviceProvider.GetService<IWorldContext>(),
+                    storeMetrics: serviceProvider.GetService<StoreMetrics>());
             }));
 
             services.AddSingleton<IConversationAuditLog>(
