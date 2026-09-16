@@ -315,10 +315,12 @@ Thirteen carry no tone at all and inherit their context: `attach` `back` `close`
 
 ### Colour policy
 
-No icon hardcodes its stroke. Every root carries `stroke="currentColor"` (or a
-gradient reference) and the artwork tone lives in a generated `.bn-icon-<name>` rule.
-Rendering is identical; the difference is that any context can override it - a
-disabled control, a selected row, a button whose label sets the colour.
+No icon hardcodes its stroke. Every root and descendant stroke uses `currentColor`
+(or references a gradient defined by that icon), and the artwork tone lives in a
+generated `.bn-icon-<name>` rule. The generator rejects descendant `stroke`
+attributes and inline-style declarations that violate this contract. Rendering is
+identical; the difference is that any context can override it - a disabled control,
+a selected row, a button whose label sets the colour.
 
 | Class | Effect |
 |---|---|
@@ -402,8 +404,8 @@ configuration page had an accessible name.
    conversation-row buttons were pinned at `right: 2.95/1.6/0.25rem` and later given
    the 32px `--hit-pointer` minimum without the offsets being revisited. 32 - 21.6
    leaves each button overlapping its neighbour by 10.4px.
-8. No icon hardcodes its stroke. `currentColor` or its own gradient, so a hover,
-   disabled or selected state can reach it.
+8. No icon hardcodes any root or descendant stroke. Use `currentColor` or a gradient
+   defined by that same icon, so a hover, disabled or selected state can reach it.
 
 ### Enforced by tests
 
