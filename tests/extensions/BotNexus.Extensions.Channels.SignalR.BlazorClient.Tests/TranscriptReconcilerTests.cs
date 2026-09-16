@@ -95,6 +95,49 @@ public sealed class TranscriptReconcilerTests
         result.Select(m => m.Content).ShouldBe(["a", "b"]);
     }
 
+    [Fact]
+    public void Reconcile_MissingEqualTimestampPredecessor_PreservesServerOrder()
+    {
+        var at = DateTimeOffset.Parse("2026-09-04T10:05:00Z");
+        var first = new ChatMessage("user", "first", at) { ServerEntryId = "entry-1" };
+        var second = new ChatMessage("assistant", "second", at) { ServerEntryId = "entry-2" };
+
+        var result = TranscriptReconciler.Reconcile([second], [first, second]);
+
+        result.ShouldBe([first, second]);
+    }
+
+    [Fact]
+    public void Reconcile_MissingEqualTimestampMiddle_PreservesServerOrderAndPagedLocalRows()
+    {
+        var at = DateTimeOffset.Parse("2026-09-04T10:05:00Z");
+        var older = Msg("user", "older-page", 4);
+        var first = new ChatMessage("user", "first", at) { ServerEntryId = "entry-1" };
+        var middle = new ChatMessage("assistant", "middle", at) { ServerEntryId = "entry-2" };
+        var last = new ChatMessage("user", "last", at) { ServerEntryId = "entry-3" };
+
+        var result = TranscriptReconciler.Reconcile([older, first, last], [first, middle, last]);
+
+        result.ShouldBe([older, first, middle, last]);
+        TranscriptReconciler.Reconcile(result, [first, middle, last]).ShouldBe(result);
+    }
+
+    [Fact]
+    public void Reconcile_MultipleEqualTimestampHoles_PreservesServerOrder()
+    {
+        var at = DateTimeOffset.Parse("2026-09-04T10:05:00Z");
+        var first = new ChatMessage("user", "first", at) { ServerEntryId = "entry-1" };
+        var second = new ChatMessage("assistant", "second", at) { ServerEntryId = "entry-2" };
+        var third = new ChatMessage("assistant", "third", at) { ServerEntryId = "entry-3" };
+        var last = new ChatMessage("user", "last", at) { ServerEntryId = "entry-4" };
+
+        var result = TranscriptReconciler.Reconcile([last], [first, second, third, last]);
+
+        result.ShouldBe([first, second, third, last]);
+        result.ShouldBeUnique();
+        TranscriptReconciler.Reconcile(result, [first, second, third, last]).ShouldBe(result);
+    }
+
     /// <summary>
     /// An empty local timeline is fully seeded from the server page, in order.
     /// </summary>

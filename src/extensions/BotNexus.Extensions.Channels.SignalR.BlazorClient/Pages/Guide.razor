@@ -95,6 +95,7 @@
     private string? _html;
     private string? _error;
     private bool _isLoading;
+    private long _selectionGeneration;
     private string _query = string.Empty;
 
     // Page bodies, fetched once so search can look inside them. Titles alone are a poor index:
@@ -195,6 +196,7 @@
         if (page.File is null)
             return;
 
+        var selectionGeneration = ++_selectionGeneration;
         _currentId = page.Id;
         _currentTopId = _index.Sections
             .FirstOrDefault(s => s.Id == page.Id || (s.Children?.Any(c => c.Id == page.Id) ?? false))?.Id;
@@ -211,20 +213,30 @@
                 : await Http.GetStringAsync($"guide/{page.File}");
             _bodies[page.Id] = markdown;
 
+            if (selectionGeneration != _selectionGeneration)
+                return;
+
             // Same sanitising renderer the chat transcript uses. It fails closed: with marked or
             // DOMPurify missing it returns escaped text rather than raw HTML.
-            _html = await JS.InvokeAsync<string>("BotNexus.renderMarkdown", markdown);
+            var html = await JS.InvokeAsync<string>("BotNexus.renderMarkdown", markdown);
+            if (selectionGeneration != _selectionGeneration)
+                return;
+
+            _html = html;
         }
         catch (Exception ex)
         {
-            _error = $"Could not load this page: {ex.Message}";
+            if (selectionGeneration == _selectionGeneration)
+                _error = $"Could not load this page: {ex.Message}";
         }
         finally
         {
-            _isLoading = false;
+            if (selectionGeneration == _selectionGeneration)
+                _isLoading = false;
         }
 
-        StateHasChanged();
+        if (selectionGeneration == _selectionGeneration)
+            StateHasChanged();
     }
 
     private sealed class GuideIndex

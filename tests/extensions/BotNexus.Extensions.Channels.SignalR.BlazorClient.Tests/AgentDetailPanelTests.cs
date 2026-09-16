@@ -68,6 +68,39 @@ public sealed class AgentDetailPanelTests : IDisposable
     }
 
     [Fact]
+    public void AgentDetailPanel_icon_only_removal_buttons_have_contextual_accessible_names()
+    {
+        var agent = JsonSerializer.Serialize(new
+        {
+            agentId = "test-agent",
+            displayName = "Test Agent",
+            enabled = true,
+            apiProvider = "openai",
+            modelId = "gpt-4",
+            allowedModelIds = new[] { "model-alpha" },
+            toolIds = new[] { "tool-beta" },
+            fileAccess = new
+            {
+                allowedReadPaths = new[] { "/fictional/read" },
+                allowedWritePaths = Array.Empty<string>(),
+                deniedPaths = Array.Empty<string>()
+            }
+        });
+        _httpHandler.SetupResponse("/api/agents/test-agent", agent);
+        _httpHandler.SetupResponse("/api/agents", "[]");
+        _httpHandler.SetupResponse("/api/providers", "[]");
+        _httpHandler.SetupResponse("/api/models", "[]");
+
+        var cut = _ctx.Render<AgentDetailPanel>(p => p.Add(c => c.AgentId, "test-agent"));
+
+        cut.WaitForState(() => !cut.Markup.Contains("Loading agent"), TimeSpan.FromSeconds(3));
+
+        cut.Find("button[aria-label='Remove allowed model model-alpha']");
+        cut.Find("button[aria-label='Remove tool tool-beta']");
+        cut.Find("button[aria-label='Remove allowed read path /fictional/read']");
+    }
+
+    [Fact]
     public void AgentDetailPanel_SaveButton_Disabled_WhenNotDirty()
     {
         _httpHandler.SetupResponse("/api/agents/test-agent", AgentJson());

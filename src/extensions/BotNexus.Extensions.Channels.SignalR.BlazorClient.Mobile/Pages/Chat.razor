@@ -34,6 +34,9 @@ else
 {
     var activeAgent = Store.ActiveAgentId is not null ? Store.GetAgent(Store.ActiveAgentId) : null;
     var activeConvId = activeAgent?.ActiveConversationId;
+    var activeConversation = ActiveConversation(activeAgent);
+    var showComposer = !(activeAgent?.IsReadOnly ?? false)
+        && (activeConversation?.Project(Store.ActiveSelectionSource).ShowComposer ?? true);
     @* #2320: Store.GetMessages returns a LIVE view over the conversation's backing List, and
        Store.Agents / agent.Conversations are the live dictionaries the SignalR handlers mutate.
        A concurrent AppendMessage / stream commit / PrependMessages / seeding continuation modified
@@ -86,7 +89,7 @@ else
                     <optgroup label="@group.Label">
                         @foreach (var conv in group.Conversations)
                         {
-                            <option value="@conv.ConversationId">@conv.Title</option>
+                            <option value="@conv.ConversationId">@ConversationOptionLabel(conv, activeAgent?.AgentId, Store.ActiveSelectionSource)</option>
                         }
                     </optgroup>
                 }
@@ -208,7 +211,7 @@ else
             }
         </div>
         <!-- SLASH-COMMAND PALETTE -->
-        @if (_showCommandPalette)
+        @if (showComposer && _showCommandPalette)
         {
             <div class="command-palette" data-testid="command-palette">
                 @foreach (var cmd in _filteredCommands)
@@ -223,29 +226,32 @@ else
             </div>
         }
         <!-- BOTTOM BAR -->
-        <div class="bottom-bar">
-            <textarea
-                class="input-textarea"
-                placeholder="/ for commands"
-                rows="1"
-                @bind="_inputText"
-                @bind:event="oninput"
-                @bind:after="UpdateCommandPalette"
-                @onkeydown="OnKeyDown"
-                disabled="@_isSending">
-            </textarea>
-            @if (streamState?.IsTurnActive == true)
-            {
-                <button class="send-btn" data-testid="chat-steer-btn" @onclick="SteerMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">Steer</button>
-                <button class="send-btn" data-testid="chat-redirect-btn" @onclick="RedirectMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">Redirect</button>
-            }
-            else
-            {
-                <button class="send-btn" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
-                    &#x21A6;
-                </button>
-            }
-        </div>
+        @if (showComposer)
+        {
+            <div class="bottom-bar">
+                <textarea
+                    class="input-textarea"
+                    placeholder="/ for commands"
+                    rows="1"
+                    @bind="_inputText"
+                    @bind:event="oninput"
+                    @bind:after="UpdateCommandPalette"
+                    @onkeydown="OnKeyDown"
+                    disabled="@_isSending">
+                </textarea>
+                @if (streamState?.IsTurnActive == true)
+                {
+                    <button class="send-btn" data-testid="chat-steer-btn" @onclick="SteerMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">Steer</button>
+                    <button class="send-btn" data-testid="chat-redirect-btn" @onclick="RedirectMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">Redirect</button>
+                }
+                else
+                {
+                    <button class="send-btn" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
+                        &#x21A6;
+                    </button>
+                }
+            </div>
+        }
         @* #1491: when the agent is blocked on an ask_user prompt for the active
            conversation, render the shared AskUserPrompt component as a bottom-sheet
            above the input bar. Reuses the same component + RespondToAskUserAsync
@@ -704,6 +710,11 @@ else
     private async Task DeliverMessage(InboundDeliveryMode deliveryMode)
     {
         if (string.IsNullOrWhiteSpace(_inputText) || Store.ActiveAgentId is null) return;
+        var agent = Store.GetAgent(Store.ActiveAgentId);
+        var conversation = ActiveConversation(agent);
+        if ((agent?.IsReadOnly ?? false)
+            || conversation?.Project(Store.ActiveSelectionSource).ShowComposer != true)
+            return;
         // #3063: the send path takes the conversation explicitly; mobile uses the same conversation
         // the page is currently rendering rather than letting the service re-derive one.
         if (Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId is not { } convId) return;
@@ -972,6 +983,19 @@ else
     // (they reopen on the next trigger); human/channel conversations are archived.
     private static bool IsUnattended(ConversationState conversation) =>
         conversation.Project(SelectionSource.UserClick).IsUnattended;
+
+    private static string ConversationOptionLabel(
+        ConversationState conversation,
+        string? owningAgentId,
+        SelectionSource selectionSource)
+    {
+        var title = ConversationLabel.DisplayTitle(
+            conversation.Title,
+            conversation.ConversationId,
+            owningAgentId);
+        var badge = conversation.Project(selectionSource).Badge;
+        return badge is null ? title : $"{badge} · {title}";
+    }
 
     private async Task Archive(ConversationState conversation)
     {

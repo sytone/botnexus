@@ -140,6 +140,7 @@ botnexus config set providers.openai.defaultModel gpt-4o-mini
 | `enabled` | `bool` | Whether this provider is active. Disabled providers are hidden from the API. Defaults to `true`. |
 | `apiKey` | `string?` | API key value, or `auth:<name>` to reference an OAuth entry in `auth.json`. |
 | `baseUrl` | `string?` | Base URL override for OpenAI-compatible endpoints, or catalog file path for `integration-mock`. |
+| `streamIdleTimeoutMs` | `int?` | Maximum idle time between streaming response chunks. Omit for the 30,000 ms default, set a positive override per provider, or set `0` to disable the deadline. |
 | `defaultModel` | `string?` | Default model id used when an agent does not specify one. |
 | `models` | `string[]?` | Allowed model ids. `null` means all registered models; `[]` means none. |
 | `input` | `string[]?` | Explicit input modalities (e.g. `["text","image"]`) for models registered from `models`. `null`/`[]` infers modalities from the model family; an explicit declaration always wins. Previously these models were hardcoded text-only, so a vision-capable local model silently discarded every image (#2485). |
@@ -156,8 +157,8 @@ Everything model-shaped on `ProviderConfig` used to mean *chat*: `defaultModel`,
 exactly one `defaultModel` slot for two unrelated model ids — an embedding model was not merely
 awkward to express, it was **unrepresentable**.
 
-Capability settings now live in nested objects. Provider-level fields (`enabled`, `apiKey`,
-`baseUrl`) stay where they are:
+Capability settings now live in nested objects. Provider-level fields (`enabled`, `apiKey`, `baseUrl`,
+`streamIdleTimeoutMs`) stay where they are:
 
 ```bash
 botnexus config set providers.my-ollama.enabled true
@@ -969,7 +970,7 @@ Gateway HTTP server settings.
 | `MaxCallChainDepth` | int | 10 | Maximum allowed depth for cross-agent and sub-agent call chains. A chain that would exceed this depth is refused rather than extended, so a delegation cycle cannot recurse without bound. |
 | `CrossAgentTimeoutSeconds` | int | 120 | Maximum duration, in seconds, for a cross-agent prompt call before it times out. |
 | `AgentConversationMaxDepth` | int | 3 | Maximum depth for `agent_converse` call chains. A value of zero or less falls back to the built-in default rather than disabling the guard. |
-| `AutoReplayInterruptedTurns` | bool | false | When true, the gateway automatically re-dispatches the last user message from interactive sessions interrupted by an unclean restart. Off by default until the replay path is confirmed stable; when off, the interrupted session gets a notification instead of a replay. |
+| `AutoReplayInterruptedTurns` | bool | false | When true, the gateway automatically re-dispatches the last user message from interactive sessions interrupted by an unclean restart. The setting is off by default for conversations with a human participant, which receive a resend notification instead. Agent-only conversations are replayed even when this setting is false because no human is present to resend the message. |
 | `MaxAutoReplayAttempts` | int | 2 | Maximum automatic replay attempts for a single interrupted session before falling back to the notification-only path. The counter lives in session metadata, so a message that always crashes the agent cannot produce an infinite replay loop. |
 | `EnableProviderRequestLogging` | bool | false | When true, every provider HTTP request and response is logged at **Debug** level for observability (issue #453). Auth headers (`x-api-key`, `Authorization`, `Proxy-Authorization`) are always redacted by name, and request/response bodies are additionally passed through the shared `SecretRedactor` so leaked keys/tokens are scrubbed. Non-streamed responses also log a best-effort token `usage` summary and elapsed ms. Streaming (`text/event-stream`) responses log status + headers + duration only — the body is never buffered, so streaming is never broken. Off by default; enable only for debugging unexpected provider responses (never at Info in production). |
 

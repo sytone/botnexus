@@ -198,7 +198,12 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         // Bound the untrusted SSE body before a byte reaches the parser: every byte the StreamReader
         // consumes flows through the ByteCountingStream, so an unbounded body or a never-terminating
         // data: line trips the cap regardless of buffering (#1685). Caller owns the inner stream.
-        using var boundedStream = new ByteCountingStream(responseStream, MaxResponseBytes, MaxFrameBytes, leaveOpen: true);
+        using var boundedStream = new ByteCountingStream(
+            responseStream,
+            MaxResponseBytes,
+            MaxFrameBytes,
+            leaveOpen: true,
+            idleTimeout: StreamIdleTimeout.Resolve(options));
         using var reader = new StreamReader(boundedStream, Encoding.UTF8);
 
         await StreamProcessor.ParseCompatAsync(

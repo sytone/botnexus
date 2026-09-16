@@ -13,6 +13,23 @@ Two pieces address that, introduced by issue #2436 under epic #2431:
 Neither works alone. The instruction without the tool leaves the agent guessing what variants exist;
 the tool without the instruction gives it no reason to call it.
 
+## Base instruction edit guard
+
+The gateway adds an advisory guard to the built-in `write` and `edit` tools. It triggers only when
+the exact target is a base instruction file: `AGENTS.md`, `SOUL.md`, `WORLD.md`, or a file named in
+the agent's `systemPromptFiles`. A workspace file in another directory does not become an instruction
+file merely because it shares the same name.
+
+When the guard triggers, the mutation is not executed yet. The tool result asks the agent to call
+`model_profile`, decide whether the change is `agnostic` or `model-specific`, and retry with that
+value in the optional `instructionScope` argument. This is friction rather than a permanent block:
+once the classification is explicit, the normal write or edit proceeds.
+
+A model variant such as `AGENTS.gpt-5.md` does not trigger the guard because its filename already
+scopes the change. Base-versus-variant recognition uses `ContextFileVariants.GetBaseFileName`, so the
+guard follows the same `<stem>.<suffix>.<ext>` grammar as prompt loading instead of maintaining a
+second parser.
+
 ## The `model-awareness` section
 
 Rendered into the system prompt as `<model_awareness>`, immediately after `<model_guidance>`, so the

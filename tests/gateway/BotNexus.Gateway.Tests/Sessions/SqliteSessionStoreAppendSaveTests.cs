@@ -129,8 +129,10 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveAsync_RepeatedCapturedDelta_IsIdempotentByPersistenceKey()
+    public async Task SaveAsync_RepeatedCapturedDelta_AcknowledgesIdentityWithoutReportingMutation()
     {
+        DiagnosticActivity? stopped = null;
+        using var listener = ListenForLastSave(activity => stopped = activity);
         var store = CreateStore();
         var session = await CreateSavedSessionAsync(store, "idempotent");
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "once" });
@@ -146,6 +148,42 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
         var rows = await ReadHistoryRowsAsync(session.SessionId);
         rows.Count.ShouldBe(firstRows.Count, "replaying a committed delta with the same persistence key must not duplicate it");
         rows.Count(row => row.Content == "once").ShouldBe(1);
+        session.GetHistorySnapshot()[^1].PersistenceId.ShouldBe(firstRows[^1].Id,
+            "a deduplicated replay must still acknowledge the existing durable identity");
+        store.LastHistoryRowsMutated.ShouldBe(0);
+        stopped.ShouldNotBeNull();
+        stopped.GetTagItem("botnexus.session.history.rows.inserted").ShouldBe(0);
+        stopped.GetTagItem("botnexus.session.history.rows.updated").ShouldBe(0,
+            "the persistence-key conflict writes no changed column and is a no-op, not an update");
+        stopped.GetTagItem("botnexus.session.history.rows.deleted").ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task SaveAsync_MixedNewAndRepeatedEntries_ReportsOnlyTheNewInsertion()
+    {
+        DiagnosticActivity? stopped = null;
+        using var listener = ListenForLastSave(activity => stopped = activity);
+        var store = CreateStore();
+        var session = await CreateSavedSessionAsync(store, "mixed-retry");
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "replayed" });
+        var replaySnapshot = session.CaptureHistoryForPersistence();
+        await store.SaveAsync(session);
+        var replayedRowId = (await ReadHistoryRowsAsync(session.SessionId)).Single(row => row.Content == "replayed").Id;
+
+        session.AddEntry(replaySnapshot.Entries.Single() with { PersistenceId = null });
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "new" });
+        await store.SaveAsync(session);
+
+        var rows = await ReadHistoryRowsAsync(session.SessionId);
+        rows.Count.ShouldBe(3);
+        rows.Count(row => row.Content == "replayed").ShouldBe(1);
+        session.GetHistorySnapshot()[^2].PersistenceId.ShouldBe(replayedRowId);
+        session.GetHistorySnapshot()[^1].PersistenceId.ShouldBe(rows.Single(row => row.Content == "new").Id);
+        store.LastHistoryRowsMutated.ShouldBe(1);
+        stopped.ShouldNotBeNull();
+        stopped.GetTagItem("botnexus.session.history.rows.inserted").ShouldBe(1);
+        stopped.GetTagItem("botnexus.session.history.rows.updated").ShouldBe(0);
+        stopped.GetTagItem("botnexus.session.history.rows.deleted").ShouldBe(0);
     }
 
     [Fact]
@@ -441,6 +479,22 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
         var contents = (await ReadHistoryRowsAsync(session.SessionId)).Select(row => row.Content).ToList();
         contents.ShouldBe(["entry-0", "captured", "raced"]);
         contents.Count(content => content == "raced").ShouldBe(1);
+    }
+
+    private static ActivityListener ListenForLastSave(Action<DiagnosticActivity> onStopped)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "BotNexus.Gateway",
+            Sample = (ref ActivityCreationOptions _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName == "session.save")
+                    onStopped(activity);
+            }
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
     }
 
     private static long MeasureCaptureAllocation(int persistedEntryCount)

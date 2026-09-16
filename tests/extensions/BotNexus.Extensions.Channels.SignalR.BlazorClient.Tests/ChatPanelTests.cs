@@ -186,6 +186,180 @@ public sealed class ChatPanelTests : IDisposable
         Assert.Empty(cut.FindAll(".conversation-title.editable"));
     }
 
+    [Theory]
+    [InlineData("Cron", "HumanAgent", "Cron conversation")]
+    [InlineData("Webhook", "HumanAgent", "Webhook conversation")]
+    [InlineData("Agent", "AgentAgent", "Peer-agent conversation")]
+    public void Read_only_origin_banner_uses_typed_conversation_projection(
+        string source,
+        string kind,
+        string expectedLabel)
+    {
+        var agent = CreateAndSeedAgent("agent-1");
+        var conversation = new ConversationState
+        {
+            ConversationId = "observer-conv",
+            Title = "Observed work",
+            Source = ConversationOrigin.ParseSource(source),
+            Kind = ConversationOrigin.ParseKind(kind),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        agent.Conversations[conversation.ConversationId] = conversation;
+        agent.ActiveConversationId = conversation.ConversationId;
+
+        var cut = _ctx.Render<ChatPanel>(p => p
+            .Add(c => c.AgentId, "agent-1")
+            .Add(c => c.ConversationId, conversation.ConversationId));
+
+        var banner = cut.Find(".read-only-banner");
+        Assert.Contains(expectedLabel, banner.TextContent);
+        Assert.Contains("Idle", banner.TextContent);
+        Assert.DoesNotContain("Sub-agent session", banner.TextContent);
+        Assert.DoesNotContain("Completed", banner.TextContent);
+    }
+
+    [Theory]
+    [InlineData(SubAgentObserverStatus.Completed, "Completed", "completed")]
+    [InlineData(SubAgentObserverStatus.Failed, "Failed", "failed")]
+    [InlineData(SubAgentObserverStatus.Killed, "Killed", "killed")]
+    public void Read_only_sub_agent_banner_renders_explicit_terminal_outcome(
+        SubAgentObserverStatus outcome,
+        string expectedText,
+        string expectedClass)
+    {
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-1",
+            DisplayName = "Sub Agent",
+            IsObserverAgent = true,
+            ObserverStatus = outcome,
+            IsConnected = true
+        });
+        var agent = _store.GetAgent("sub-1")!;
+        var conversation = new ConversationState
+        {
+            ConversationId = "subagent-session:sub-1",
+            Title = "Sub-agent session",
+            Source = ConversationSource.Agent,
+            Kind = ConversationKind.AgentSubAgent,
+            IsLocallySynthesised = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        agent.Conversations[conversation.ConversationId] = conversation;
+        agent.ActiveConversationId = conversation.ConversationId;
+        _store.SelectView("sub-1", conversation.ConversationId, SelectionSource.SubAgentView);
+
+        var cut = _ctx.Render<ChatPanel>(p => p
+            .Add(c => c.AgentId, "sub-1")
+            .Add(c => c.ConversationId, conversation.ConversationId));
+
+        var banner = cut.Find(".read-only-banner");
+        Assert.Contains("Sub-agent session", banner.TextContent);
+        Assert.Contains(expectedText, banner.TextContent);
+        Assert.Contains(expectedClass, cut.Find(".read-only-status").ClassList);
+    }
+
+    [Fact]
+    public void Inactive_sub_agent_without_terminal_evidence_renders_idle_not_completed()
+    {
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-1",
+            DisplayName = "Sub Agent",
+            IsObserverAgent = true,
+            ObserverStatus = SubAgentObserverStatus.Unknown,
+            IsConnected = true
+        });
+        var agent = _store.GetAgent("sub-1")!;
+        var conversation = new ConversationState
+        {
+            ConversationId = "subagent-session:sub-1",
+            Title = "Sub-agent session",
+            Source = ConversationSource.Agent,
+            Kind = ConversationKind.AgentSubAgent,
+            IsLocallySynthesised = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        agent.Conversations[conversation.ConversationId] = conversation;
+        agent.ActiveConversationId = conversation.ConversationId;
+        _store.SelectView("sub-1", conversation.ConversationId, SelectionSource.SubAgentView);
+
+        var cut = _ctx.Render<ChatPanel>(p => p
+            .Add(c => c.AgentId, "sub-1")
+            .Add(c => c.ConversationId, conversation.ConversationId));
+
+        var banner = cut.Find(".read-only-banner");
+        Assert.Contains("Idle", banner.TextContent);
+        Assert.DoesNotContain("Completed", banner.TextContent);
+        Assert.DoesNotContain("bn-icon-check", banner.InnerHtml);
+    }
+
+    [Fact]
+    public void Explicit_running_sub_agent_renders_running_while_stream_is_idle()
+    {
+        _store.UpsertAgent(new AgentState
+        {
+            AgentId = "sub-1",
+            DisplayName = "Sub Agent",
+            IsObserverAgent = true,
+            ObserverStatus = SubAgentObserverStatus.Running,
+            IsConnected = true
+        });
+        var agent = _store.GetAgent("sub-1")!;
+        var conversation = new ConversationState
+        {
+            ConversationId = "subagent-session:sub-1",
+            Title = "Sub-agent session",
+            Source = ConversationSource.Agent,
+            Kind = ConversationKind.AgentSubAgent,
+            IsLocallySynthesised = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        agent.Conversations[conversation.ConversationId] = conversation;
+        agent.ActiveConversationId = conversation.ConversationId;
+        _store.SelectView("sub-1", conversation.ConversationId, SelectionSource.SubAgentView);
+
+        var cut = _ctx.Render<ChatPanel>(p => p
+            .Add(c => c.AgentId, "sub-1")
+            .Add(c => c.ConversationId, conversation.ConversationId));
+
+        var banner = cut.Find(".read-only-banner");
+        Assert.Contains("Running", banner.TextContent);
+        Assert.Contains("bn-icon-spin", banner.InnerHtml);
+        Assert.DoesNotContain("Completed", banner.TextContent);
+    }
+
+    [Fact]
+    public void Active_read_only_conversation_renders_running_regardless_of_prior_outcome()
+    {
+        var agent = CreateAndSeedAgent("agent-1");
+        var conversation = new ConversationState
+        {
+            ConversationId = "cron-conv",
+            Title = "Cron work",
+            Source = ConversationSource.Cron,
+            Kind = ConversationKind.HumanAgent,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        conversation.StreamState.IsRunActive = true;
+        agent.Conversations[conversation.ConversationId] = conversation;
+        agent.ActiveConversationId = conversation.ConversationId;
+
+        var cut = _ctx.Render<ChatPanel>(p => p
+            .Add(c => c.AgentId, "agent-1")
+            .Add(c => c.ConversationId, conversation.ConversationId));
+
+        var banner = cut.Find(".read-only-banner");
+        Assert.Contains("Running", banner.TextContent);
+        Assert.Contains("bn-icon-spin", banner.InnerHtml);
+        Assert.DoesNotContain("Completed", banner.TextContent);
+    }
+
     [Fact]
     public void Session_type_poisoning_of_active_user_agent_keeps_composer_interactive()
     {

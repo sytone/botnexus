@@ -16,12 +16,19 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 /// </summary>
 public sealed class IconLibraryTests
 {
-    private static readonly string s_cssPath = Path.Combine(
-        Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!,
-        "wwwroot", "css", "app.css");
+    private static readonly string s_outputPath =
+        Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
+    private static readonly string s_cssPath = Path.Combine(s_outputPath, "wwwroot", "css", "app.css");
+    private static readonly string s_svgPath = Path.Combine(s_outputPath, "assets", "icons", "svg");
 
     private static readonly Regex s_id = new(@"\bid=""([^""]+)""", RegexOptions.Compiled);
     private static readonly Regex s_urlRef = new(@"url\(#([^)]+)\)", RegexOptions.Compiled);
+    private static readonly Regex s_sourceStroke = new(
+        @"<svg\b[^>]*\bstroke=""([^""]+)""",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex s_stopColor = new(
+        @"\bstop-color=""([^""]+)""",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     [Fact]
     public void EveryIconInTheSetIsExposed()
@@ -82,33 +89,78 @@ public sealed class IconLibraryTests
     public void ToneOverridesAreDeclaredAfterThePerIconTones()
     {
         // .bn-icon-inherit and .bn-icon-<name> are both single-class selectors, so source order
-        // is the only thing deciding which wins. Written above the tones they silently lose.
+        // is the only thing deciding which wins. Compare against every expected source tone,
+        // rather than one icon whose alphabetical position can stop being the final rule.
         var css = File.ReadAllText(s_cssPath);
+        var expectedToneNames = ExpectedSourceTones().Select(tone => tone.Name).ToArray();
+        Assert.NotEmpty(expectedToneNames);
 
-        var lastTone = css.LastIndexOf(".bn-icon-activity {", StringComparison.Ordinal);
+        var tonePositions = expectedToneNames
+            .Select(name => (Name: name, Position: css.IndexOf($".bn-icon-{name} {{", StringComparison.Ordinal)))
+            .ToArray();
+        Assert.All(tonePositions, tone => Assert.True(tone.Position >= 0, $"'{tone.Name}' has no CSS tone rule"));
+
+        var lastTone = tonePositions.MaxBy(tone => tone.Position);
         var inherit = css.IndexOf(".bn-icon-inherit {", StringComparison.Ordinal);
         var flat = css.IndexOf(".bn-icon-flat {", StringComparison.Ordinal);
 
-        Assert.True(lastTone >= 0, "no generated per-icon tone found");
-        Assert.True(inherit > lastTone, ".bn-icon-inherit must be declared after the per-icon tones");
-        Assert.True(flat > lastTone, ".bn-icon-flat must be declared after the per-icon tones");
+        Assert.True(inherit > lastTone.Position,
+            $".bn-icon-inherit must be declared after final tone '{lastTone.Name}'");
+        Assert.True(flat > lastTone.Position,
+            $".bn-icon-flat must be declared after final tone '{lastTone.Name}'");
     }
 
     [Fact]
     public void EveryTonedIconHasACssRule()
     {
         var css = File.ReadAllText(s_cssPath);
+        var sourceIcons = SourceIcons();
+        var expectedTones = sourceIcons.Where(icon => icon.Tone is not null).ToArray();
 
-        foreach (var (name, def) in IconLibrary.Icons)
+        Assert.Contains(sourceIcons, icon => icon.Kind == SourceToneKind.Untoned);
+        Assert.Contains(sourceIcons, icon => icon.Kind == SourceToneKind.Flat);
+        Assert.Contains(sourceIcons, icon => icon.Kind == SourceToneKind.Gradient);
+        foreach (var icon in expectedTones)
         {
-            if (def.Stroke.StartsWith("url(#", StringComparison.Ordinal))
-                continue;
-
-            // currentColor icons intentionally have no tone: they inherit their context.
-            var hasRule = css.Contains($".bn-icon-{name} {{ color:", StringComparison.Ordinal);
-            var body = IconLibrary.Icons[name].Body;
-            Assert.True(hasRule || !body.Contains("stop-color", StringComparison.Ordinal),
-                $"'{name}' has no tone rule and no gradient.");
+            Assert.Contains($".bn-icon-{icon.Name} {{ color: {icon.Tone}; }}", css, StringComparison.Ordinal);
         }
+    }
+
+    private static (string Name, string Tone)[] ExpectedSourceTones() =>
+        SourceIcons()
+            .Where(icon => icon.Tone is not null)
+            .Select(icon => (icon.Name, icon.Tone!))
+            .ToArray();
+
+    private static (string Name, string? Tone, SourceToneKind Kind)[] SourceIcons() =>
+        Directory.EnumerateFiles(s_svgPath, "*.svg")
+            .Select(path => (Name: Path.GetFileNameWithoutExtension(path), Svg: File.ReadAllText(path)))
+            .Select(source =>
+            {
+                var stroke = SourceStroke(source.Name, source.Svg);
+                if (stroke.Equals("currentColor", StringComparison.OrdinalIgnoreCase))
+                    return (source.Name, Tone: (string?)null, Kind: SourceToneKind.Untoned);
+
+                if (!stroke.StartsWith("url(#", StringComparison.Ordinal))
+                    return (source.Name, Tone: stroke, Kind: SourceToneKind.Flat);
+
+                var stop = s_stopColor.Match(source.Svg);
+                Assert.True(stop.Success, $"gradient icon '{source.Name}' has no source stop colour");
+                return (source.Name, Tone: (string?)stop.Groups[1].Value, Kind: SourceToneKind.Gradient);
+            })
+            .ToArray();
+
+    private static string SourceStroke(string name, string svg)
+    {
+        var match = s_sourceStroke.Match(svg);
+        Assert.True(match.Success, $"source icon '{name}' has no root stroke metadata");
+        return match.Groups[1].Value;
+    }
+
+    private enum SourceToneKind
+    {
+        Untoned,
+        Flat,
+        Gradient,
     }
 }

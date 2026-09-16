@@ -1550,14 +1550,18 @@ public sealed class ActivityDashboardProjectionTests
         string name = "Daily log analysis",
         string? lastRunStatus = "ok",
         DateTimeOffset? lastRunAt = null,
-        DateTimeOffset? nextRunAt = null) =>
+        DateTimeOffset? nextRunAt = null,
+        bool enabled = true,
+        DateTimeOffset? expiresAt = null) =>
         new()
         {
             Id = id,
             Name = name,
             LastRunStatus = lastRunStatus!,
             LastRunAt = lastRunAt,
-            NextRunAt = nextRunAt
+            NextRunAt = nextRunAt,
+            Enabled = enabled,
+            ExpiresAt = expiresAt
         };
 
     private static ActivityRow ProjectOneWithCron(
@@ -1623,6 +1627,51 @@ public sealed class ActivityDashboardProjectionTests
 
         Assert.Null(map["j1"].Name);
         Assert.Null(map["j1"].LastRunStatus);
+    }
+
+    [Fact]
+    public void Cron_job_expiry_round_trips_and_an_omitted_expiry_remains_null()
+    {
+        var withExpiry = System.Text.Json.JsonSerializer.Deserialize<CronJobDto>(
+            """{"id":"j1","expiresAt":"2026-07-10T12:00:00Z"}""",
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        var withoutExpiry = System.Text.Json.JsonSerializer.Deserialize<CronJobDto>(
+            """{"id":"j2"}""",
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+
+        Assert.NotNull(withExpiry);
+        Assert.Equal(Now, withExpiry.ExpiresAt);
+        Assert.NotNull(withoutExpiry);
+        Assert.Null(withoutExpiry.ExpiresAt);
+    }
+
+    [Fact]
+    public void CronHealthById_carries_enabled_and_expiry()
+    {
+        var expiry = Now.AddHours(1);
+        var health = ActivityDashboardProjection.CronHealthById(
+            [Job("j1", enabled: false, expiresAt: expiry)])["j1"];
+
+        Assert.False(health.Enabled);
+        Assert.Equal(expiry, health.ExpiresAt);
+    }
+
+    [Theory]
+    [InlineData(true, -1, null)]
+    [InlineData(true, 1, null)]
+    [InlineData(true, 0, "expired")]
+    [InlineData(true, -2, "expired")]
+    [InlineData(false, 1, "disabled")]
+    [InlineData(false, -1, "disabled")]
+    public void CronLiveness_classifies_enabled_disabled_and_expired_jobs(
+        bool enabled,
+        int expiryHoursFromNow,
+        string? expected)
+    {
+        var health = ActivityDashboardProjection.CronHealthById(
+            [Job("j1", enabled: enabled, expiresAt: expiryHoursFromNow == -1 ? null : Now.AddHours(expiryHoursFromNow))])["j1"];
+
+        Assert.Equal(expected, ActivityDashboardProjection.CronLiveness(health, Now));
     }
 
     /// <summary>

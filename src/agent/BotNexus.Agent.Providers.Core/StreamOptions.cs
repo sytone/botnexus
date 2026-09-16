@@ -27,6 +27,7 @@ public record class StreamOptions
         MaxRetryDelayMs = original.MaxRetryDelayMs;
         Metadata = original.Metadata is null ? null : new Dictionary<string, object>(original.Metadata);
         StreamSetupTimeoutMs = original.StreamSetupTimeoutMs;
+        StreamIdleTimeoutMs = original.StreamIdleTimeoutMs;
     }
 
     /// <summary>
@@ -87,6 +88,13 @@ public record class StreamOptions
     /// Set to 0 or leave unset to disable (no setup-phase timeout).
     /// </summary>
     public int StreamSetupTimeoutMs { get; init; } = 0;
+
+    /// <summary>
+    /// Gets the maximum idle interval between reads from a streaming response body, in milliseconds.
+    /// A null value uses <see cref="Utilities.BoundedHttpContent.DefaultIdleChunkTimeout"/>;
+    /// zero disables the inter-chunk deadline; positive values override the default.
+    /// </summary>
+    public int? StreamIdleTimeoutMs { get; init; }
 }
 
 /// <summary>

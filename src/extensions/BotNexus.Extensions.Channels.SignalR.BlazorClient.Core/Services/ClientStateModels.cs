@@ -1,6 +1,27 @@
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
+/// Explicit lifecycle evidence available for a locally synthesised sub-agent observer view.
+/// </summary>
+public enum SubAgentObserverStatus
+{
+    /// <summary>No lifecycle outcome has been observed.</summary>
+    Unknown,
+
+    /// <summary>The sub-agent is known to be running.</summary>
+    Running,
+
+    /// <summary>The sub-agent reported successful completion.</summary>
+    Completed,
+
+    /// <summary>The sub-agent reported failure.</summary>
+    Failed,
+
+    /// <summary>The sub-agent was explicitly killed.</summary>
+    Killed
+}
+
+/// <summary>
 /// Tracks an in-progress tool invocation so we can compute duration on completion.
 /// </summary>
 public sealed class ActiveToolCall

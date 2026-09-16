@@ -41,9 +41,10 @@ public readonly record struct ModelVersion(int Major, int Minor) : IComparable<M
 /// Handles every id shape the providers actually see, in BOTH orderings:
 /// family-first (<c>claude-opus-4.6</c>, <c>claude-opus-4-5-20250929</c>, <c>opus-4-6</c>,
 /// <c>copilot/claude-opus-5</c>) and version-first (<c>claude-4.7-opus</c>, the spelling used by
-/// SAP AI Core and several broker gateways). The identical model must classify identically no
-/// matter which broker served it, so both orderings resolve to the same
-/// <see cref="ModelVersion"/>.
+/// SAP AI Core and several broker gateways). Slash-qualified ids are resolved from the final
+/// component because preceding components name brokers or routing layers, not the selected model.
+/// The identical model must classify identically no matter which broker served it, so both
+/// orderings resolve to the same <see cref="ModelVersion"/>.
 /// </para>
 /// <para>
 /// A numeric component of three or more digits is a release DATE stamp, never a version component:
@@ -77,7 +78,7 @@ public static class ModelFamilyVersion
         if (string.IsNullOrWhiteSpace(modelId))
             return false;
 
-        var span = modelId.AsSpan();
+        var span = FinalQualifiedComponent(modelId.AsSpan());
         var searchFrom = 0;
 
         // Scan every occurrence: an id may legitimately mention the token more than once and only
@@ -139,7 +140,7 @@ public static class ModelFamilyVersion
         if (string.IsNullOrWhiteSpace(modelId))
             return false;
 
-        var span = modelId.AsSpan();
+        var span = FinalQualifiedComponent(modelId.AsSpan());
         var searchFrom = 0;
 
         while (searchFrom < span.Length)
@@ -158,6 +159,12 @@ public static class ModelFamilyVersion
         }
 
         return false;
+    }
+
+    private static ReadOnlySpan<char> FinalQualifiedComponent(ReadOnlySpan<char> modelId)
+    {
+        var separator = modelId.LastIndexOf('/');
+        return separator >= 0 ? modelId[(separator + 1)..] : modelId;
     }
 
     // The family token must not be glued to a preceding letter/digit: "opus" in "claude-opus-5" is

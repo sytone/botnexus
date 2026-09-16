@@ -205,6 +205,74 @@ public sealed class ConversationManagementTests
     }
 
     [SkippableFact]
+    public async Task ConversationRowActions_KeyboardFocusRevealsEveryControlInBothThemes()
+    {
+        Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
+
+        using var playwright = await Playwright.CreateAsync();
+        var (browser, skipReason) = await PortalTestHelpers.TryLaunchBrowserAsync(playwright);
+        Skip.If(browser is null, skipReason);
+
+        await using var _ = browser!;
+        var (page, portal, chat) = await PortalTestHelpers.NewChatPageAsync(
+            browser, _fx.GatewayBaseUrl, _fx.AgentIds[1]);
+
+        await portal.ConversationNewBtn.ClickAsync();
+        await chat.ChatInput.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
+
+        var row = page.Locator(".conversation-list-item:has(.conversation-list-item-btn.active)").First;
+        await row.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
+
+        await page.Mouse.MoveAsync(0, 0);
+
+        foreach (var theme in new[] { "dark", "light" })
+        {
+            await page.EvaluateAsync(
+                "theme => theme === 'light' ? document.documentElement.setAttribute('data-theme', 'light') : document.documentElement.removeAttribute('data-theme')",
+                theme);
+
+            var rowLink = row.Locator(".conversation-list-item-btn");
+            await rowLink.FocusAsync();
+
+            var actions = new[]
+            {
+                row.Locator(".conversation-section-btn"),
+                row.Locator(".conversation-pin-btn"),
+                row.Locator(".conversation-archive-btn"),
+            };
+
+            foreach (var action in actions)
+            {
+                await page.Keyboard.PressAsync("Tab");
+                Assert.True(
+                    await action.EvaluateAsync<bool>("element => document.activeElement === element"),
+                    $"{theme} theme did not move keyboard focus to {await action.GetAttributeAsync("class")}.");
+
+                foreach (var visibleAction in actions)
+                {
+                    var box = await visibleAction.BoundingBoxAsync();
+                    Assert.NotNull(box);
+                    Assert.True(box.Width >= 32, $"{theme} theme left a focused-row action only {box.Width}px wide.");
+                    Assert.Equal("1", await visibleAction.EvaluateAsync<string>("element => getComputedStyle(element).opacity"));
+                }
+
+                var outline = await action.EvaluateAsync<string>(
+                    "element => `${getComputedStyle(element).outlineStyle} ${getComputedStyle(element).outlineWidth}`");
+                Assert.DoesNotContain("none", outline, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("0px", outline, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+    }
+
+    [SkippableFact]
     public async Task ArchiveConversation_RemovesFromList()
     {
         Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");

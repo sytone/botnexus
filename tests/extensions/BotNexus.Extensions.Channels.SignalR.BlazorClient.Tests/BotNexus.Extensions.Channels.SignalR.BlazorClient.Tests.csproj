@@ -34,10 +34,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Copy app.css to output for CSS content tests (#935) -->
+    <!-- Copy app.css and source icon metadata to output for generated-contract tests (#935, #3950) -->
     <None Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.SignalR.BlazorClient\wwwroot\css\app.css">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>wwwroot\css\app.css</Link>
+    </None>
+    <None Include="..\..\..\assets\icons\svg\*.svg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>assets\icons\svg\%(Filename)%(Extension)</Link>
     </None>
   </ItemGroup>
 

@@ -38,8 +38,16 @@ public static class TranscriptReconciler
         IReadOnlyList<ChatMessage> server)
     {
         var merged = new List<ChatMessage>(local);
-        foreach (var candidate in MissingRows(local, server))
-            merged.Insert(InsertionIndexFor(merged, candidate.Timestamp), candidate);
+        var aligned = AlignServerRows(local, server);
+        for (var serverIndex = 0; serverIndex < aligned.Count; serverIndex++)
+        {
+            var row = aligned[serverIndex];
+            if (row.LocalRow is not null)
+                continue;
+
+            merged.Insert(InsertionIndexFor(merged, aligned, serverIndex), row.ServerRow);
+            aligned[serverIndex] = row with { LocalRow = row.ServerRow };
+        }
 
         ApplyAuthoritativeToolCompletions(merged, server);
         return merged;
@@ -51,15 +59,15 @@ public static class TranscriptReconciler
     /// the number of rows a reconcile inserted without diffing the two lists itself.
     /// </summary>
     public static int CountMissing(IReadOnlyList<ChatMessage> local, IReadOnlyList<ChatMessage> server) =>
-        MissingRows(local, server).Count;
+        AlignServerRows(local, server).Count(row => row.LocalRow is null);
 
-    private static IReadOnlyList<ChatMessage> MissingRows(
+    private static List<AlignedServerRow> AlignServerRows(
         IReadOnlyList<ChatMessage> local,
         IReadOnlyList<ChatMessage> server)
     {
         var unmatchedLocal = new List<ChatMessage>(local);
         var seenServerKeys = new HashSet<string>(StringComparer.Ordinal);
-        var missing = new List<ChatMessage>();
+        var aligned = new List<AlignedServerRow>(server.Count);
 
         foreach (var candidate in server)
         {
@@ -68,16 +76,14 @@ public static class TranscriptReconciler
                 continue;
 
             var match = unmatchedLocal.FindIndex(localRow => RowsMatch(localRow, candidate));
+            var localRow = match >= 0 ? unmatchedLocal[match] : null;
             if (match >= 0)
-            {
                 unmatchedLocal.RemoveAt(match);
-                continue;
-            }
 
-            missing.Add(candidate);
+            aligned.Add(new AlignedServerRow(candidate, localRow));
         }
 
-        return missing;
+        return aligned;
     }
 
     private static bool RowsMatch(ChatMessage local, ChatMessage server)
@@ -115,10 +121,39 @@ public static class TranscriptReconciler
         }
     }
 
-    // The first position whose timestamp is strictly LATER than the candidate's. Rows sharing a
-    // timestamp therefore land after the ones already present, preserving burst order.
-    private static int InsertionIndexFor(List<ChatMessage> merged, DateTimeOffset timestamp)
+    private static int InsertionIndexFor(
+        List<ChatMessage> merged,
+        IReadOnlyList<AlignedServerRow> aligned,
+        int serverIndex)
     {
+        var timestamp = aligned[serverIndex].ServerRow.Timestamp;
+
+        // A represented successor at the same timestamp is authoritative evidence that this hole
+        // belongs before it. Prefer that anchor over timestamp-only insertion so [B] reconciled
+        // against server [A, B] becomes [A, B], not [B, A].
+        for (var i = serverIndex + 1; i < aligned.Count; i++)
+        {
+            if (aligned[i].ServerRow.Timestamp != timestamp)
+                break;
+
+            var successor = aligned[i].LocalRow;
+            if (successor is not null)
+                return ReferenceIndexOf(merged, successor);
+        }
+
+        // With no represented successor, append after the nearest represented server predecessor
+        // in the same timestamp burst. This retains the server's suffix order while leaving local
+        // rows outside the fetched page untouched.
+        for (var i = serverIndex - 1; i >= 0; i--)
+        {
+            if (aligned[i].ServerRow.Timestamp != timestamp)
+                break;
+
+            var predecessor = aligned[i].LocalRow;
+            if (predecessor is not null)
+                return ReferenceIndexOf(merged, predecessor) + 1;
+        }
+
         for (var i = 0; i < merged.Count; i++)
         {
             if (merged[i].Timestamp > timestamp)
@@ -126,6 +161,17 @@ public static class TranscriptReconciler
         }
 
         return merged.Count;
+    }
+
+    private static int ReferenceIndexOf(List<ChatMessage> rows, ChatMessage target)
+    {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (ReferenceEquals(rows[i], target))
+                return i;
+        }
+
+        throw new InvalidOperationException("An aligned transcript row was not present in the merged timeline.");
     }
 
     private static string? StableKeyOf(ChatMessage message)
@@ -147,4 +193,6 @@ public static class TranscriptReconciler
         message.Role,
         message.BoundarySessionId ?? string.Empty,
         message.Content);
+
+    private sealed record AlignedServerRow(ChatMessage ServerRow, ChatMessage? LocalRow);
 }

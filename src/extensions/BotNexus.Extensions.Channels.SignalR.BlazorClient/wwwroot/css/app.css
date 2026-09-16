@@ -4269,7 +4269,7 @@ details[open] > .thinking-summary::before {
     border: 0;
 }
 
-/* ── Read-only sub-agent session banner ─────────────────────────────── */
+/* ── Read-only conversation banner ─────────────────────────────────── */
 
 .read-only-banner {
     display: flex;
@@ -4305,6 +4305,17 @@ details[open] > .thinking-summary::before {
 .read-only-status.completed {
     background: var(--color-success-wash);
     color: var(--success);
+}
+
+.read-only-status.failed,
+.read-only-status.killed {
+    background: var(--color-danger-wash);
+    color: var(--danger);
+}
+
+.read-only-status.idle {
+    background: var(--color-surface-2);
+    color: var(--text-secondary);
 }
 
 .read-only-label {
@@ -4565,12 +4576,13 @@ details[open] > .thinking-summary::before {
     --row-actions-tint: var(--color-accent-wash-soft);
 }
 
-/* Revealed by hover, by the section menu being open, or by the pin being set - a pinned
-   conversation has to advertise itself with the pointer nowhere near it. The backdrop
-   appears with the buttons: at rest the strip paints nothing at all.
-   The fade runs across padding-left so the timestamp dissolves under the strip rather
-   than being cut off at a hard edge. */
+/* Revealed by hover, keyboard focus within the strip, the section menu being open, or
+   the pin being set - a pinned conversation has to advertise itself with the pointer
+   nowhere near it. The backdrop appears with the buttons: at rest the strip paints
+   nothing at all. The fade runs across padding-left so the timestamp dissolves under
+   the strip rather than being cut off at a hard edge. */
 .conversation-list-item:hover .conversation-row-actions,
+.conversation-row-actions:focus-within,
 .conversation-row-actions:has([aria-expanded="true"]),
 .conversation-row-actions:has(.conversation-pin-btn.pinned) {
     padding-left: var(--row-actions-fade);
@@ -4596,6 +4608,7 @@ details[open] > .thinking-summary::before {
 }
 
 .conversation-list-item:hover .conversation-row-actions > button,
+.conversation-row-actions:focus-within > button,
 .conversation-row-actions > [aria-expanded="true"],
 .conversation-row-actions > .conversation-pin-btn.pinned {
     width: var(--hit-pointer);
@@ -6126,6 +6139,11 @@ h3.conversation-title.editable:hover {
 
 .activity-cron-health--failed {
     background: var(--danger);
+}
+
+.activity-cron-health--disabled,
+.activity-cron-health--expired {
+    background: var(--warning);
 }
 
 /* Unknown is deliberately NOT green. An unrecognised status from a newer gateway means "we cannot

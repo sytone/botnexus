@@ -835,7 +835,24 @@ Triggers an immediate, out-of-schedule execution of a job.
 - `action` = `"run"`
 - `jobId`: Job identifier (required)
 
-Returns the resulting run record serialized as JSON.
+The scheduler stamps the run identity before launching scheduler-owned execution, then returns
+promptly with an acceptance response:
+
+```json
+{
+  "runId": "7d985ca245cd4afeafaf6d933d7e8916",
+  "jobId": "3f1c8b0a9d2e4f5a8b7c6d5e4f3a2b1c",
+  "status": "accepted",
+  "startedAt": "2026-08-13T20:15:30.1234567+00:00",
+  "pollWith": "cron history"
+}
+```
+
+`accepted` means the scheduler owns the run; it is not a terminal run status. The run continues
+after the requesting tool call ends or is cancelled, while remaining subject to the scheduler's
+normal per-job timeout (including the unlimited sentinel), gateway shutdown, operator cancellation,
+and same-job serialization. Use the `history` action with the returned `jobId` to poll for the
+terminal run record.
 
 #### `history`
 

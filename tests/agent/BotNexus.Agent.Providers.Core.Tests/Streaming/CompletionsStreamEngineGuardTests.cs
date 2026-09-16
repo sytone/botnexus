@@ -74,6 +74,45 @@ public class CompletionsStreamEngineGuardTests
     }
 
     [Fact]
+    public async Task Stream_FirstTokenThenStall_SurfacesConfiguredIdleTimeout()
+    {
+        var firstToken = Encoding.UTF8.GetBytes(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n");
+
+        var result = await RunAsync(
+            HttpStatusCode.OK,
+            new FirstChunkThenStallStream(firstToken),
+            new StreamOptions { ApiKey = "test-key", StreamIdleTimeoutMs = 100 });
+
+        result.StopReason.ShouldBe(StopReason.Error);
+        result.ErrorMessage.ShouldNotBeNull();
+        result.ErrorMessage!.ShouldContain("stalled", Case.Insensitive);
+        result.ErrorMessage.ShouldContain("100ms", Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task Stream_IdleTimeoutDisabled_WaitsForCallerCancellation()
+    {
+        var firstToken = Encoding.UTF8.GetBytes(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n");
+        using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+
+        var result = await RunAsync(
+            HttpStatusCode.OK,
+            new FirstChunkThenStallStream(firstToken),
+            new StreamOptions
+            {
+                ApiKey = "test-key",
+                StreamIdleTimeoutMs = 0,
+                CancellationToken = caller.Token
+            });
+
+        result.StopReason.ShouldBe(StopReason.Aborted);
+        result.ErrorMessage.ShouldNotBeNull();
+        result.ErrorMessage!.ShouldNotContain("stalled", Case.Insensitive);
+    }
+
+    [Fact]
     public async Task Stream_NormalWellFormedStream_ParsesUnaffected()
     {
         var body =
@@ -92,7 +131,10 @@ public class CompletionsStreamEngineGuardTests
         result.Content.ShouldNotBeEmpty();
     }
 
-    private static async Task<AssistantMessage> RunAsync(HttpStatusCode status, Stream body)
+    private static async Task<AssistantMessage> RunAsync(
+        HttpStatusCode status,
+        Stream body,
+        StreamOptions? options = null)
     {
         var handler = new StreamingHandler(status, body);
         var profile = new CompletionsTransportProfile(
@@ -108,7 +150,7 @@ public class CompletionsStreamEngineGuardTests
         var stream = CompletionsStreamEngine.StreamAsync(
             profile, new HttpClient(handler), NullLogger.Instance, Model(),
             new Context(SystemPrompt: "guard", Messages: [new UserMessage(new UserMessageContent("guard"), 0)]),
-            new StreamOptions { ApiKey = "test-key" });
+            options ?? new StreamOptions { ApiKey = "test-key" });
         return await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(30));
     }
 
@@ -120,6 +162,37 @@ public class CompletionsStreamEngineGuardTests
             response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
             return Task.FromResult(response);
         }
+    }
+
+    private sealed class FirstChunkThenStallStream(byte[] firstChunk) : Stream
+    {
+        private bool _delivered;
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_delivered)
+            {
+                _delivered = true;
+                firstChunk.CopyTo(buffer);
+                return firstChunk.Length;
+            }
+
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class EndlessLineStream(byte[] chunk, bool repeatChunk, long totalLength = long.MaxValue) : Stream
