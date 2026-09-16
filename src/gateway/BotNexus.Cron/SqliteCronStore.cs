@@ -161,40 +161,35 @@ public sealed class SqliteCronStore(
             migrate.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN time_zone TEXT NULL;
                 """;
-            try { await migrate.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrate, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add system column if missing.
             await using var migrateSystem = connection.CreateCommand();
             migrateSystem.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN system INTEGER NOT NULL DEFAULT 0;
                 """;
-            try { await migrateSystem.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateSystem, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add model column if missing.
             await using var migrateModel = connection.CreateCommand();
             migrateModel.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN model TEXT NULL;
                 """;
-            try { await migrateModel.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateModel, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add template_name column if missing.
             await using var migrateTemplateName = connection.CreateCommand();
             migrateTemplateName.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN template_name TEXT NULL;
                 """;
-            try { await migrateTemplateName.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateTemplateName, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add template_parameters_json column if missing.
             await using var migrateTemplateParameters = connection.CreateCommand();
             migrateTemplateParameters.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN template_parameters_json TEXT NULL;
                 """;
-            try { await migrateTemplateParameters.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateTemplateParameters, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add conversation_id column if missing (P9-D).
             // CronJob.ConversationId is the canonical link from a cron job to its conversation;
@@ -203,8 +198,7 @@ public sealed class SqliteCronStore(
             migrateConversationId.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN conversation_id TEXT NULL;
                 """;
-            try { await migrateConversationId.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateConversationId, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add delete_after_run column if missing (#1561).
             // Opt-in ephemeral-run cleanup flag; pre-existing rows default to 0 (no auto-delete),
@@ -213,8 +207,7 @@ public sealed class SqliteCronStore(
             migrateDeleteAfterRun.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN delete_after_run INTEGER NOT NULL DEFAULT 0;
                 """;
-            try { await migrateDeleteAfterRun.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateDeleteAfterRun, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add schedule_activated_at column if missing (#2554).
             // Pre-existing rows are left NULL, which the read path treats as "unknown" and which
@@ -226,8 +219,7 @@ public sealed class SqliteCronStore(
             migrateScheduleActivatedAt.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN schedule_activated_at TEXT NULL;
                 """;
-            try { await migrateScheduleActivatedAt.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateScheduleActivatedAt, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add the #2557 failure-alert columns if missing.
             // Both are written so that a row predating them reads as "alerts off, no target":
@@ -240,15 +232,13 @@ public sealed class SqliteCronStore(
             migrateFailureAlertsEnabled.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN failure_alerts_enabled INTEGER NOT NULL DEFAULT 0;
                 """;
-            try { await migrateFailureAlertsEnabled.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateFailureAlertsEnabled, ct).ConfigureAwait(false);
 
             await using var migrateFailureAlertConversationId = connection.CreateCommand();
             migrateFailureAlertConversationId.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN failure_alert_conversation_id TEXT NULL;
                 """;
-            try { await migrateFailureAlertConversationId.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateFailureAlertConversationId, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add the #2634 lifecycle columns if missing.
             // Both default to the inert state so a row predating them behaves exactly as today:
@@ -261,15 +251,13 @@ public sealed class SqliteCronStore(
             migrateDeleteJobAfterRun.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN delete_job_after_run INTEGER NOT NULL DEFAULT 0;
                 """;
-            try { await migrateDeleteJobAfterRun.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateDeleteJobAfterRun, ct).ConfigureAwait(false);
 
             await using var migrateExpiresAt = connection.CreateCommand();
             migrateExpiresAt.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN expires_at TEXT NULL;
                 """;
-            try { await migrateExpiresAt.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateExpiresAt, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add execution_class column if missing (#2985).
             // Defaults to 0 (not execution-class) so a row written before the column existed
@@ -282,8 +270,7 @@ public sealed class SqliteCronStore(
             migrateExecutionClass.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN execution_class INTEGER NOT NULL DEFAULT 0;
                 """;
-            try { await migrateExecutionClass.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateExecutionClass, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add backoff_until if missing (#3350). NULLable with no
             // default, and NULL means "not paced": no floor, so an existing row is scheduled purely
@@ -294,8 +281,7 @@ public sealed class SqliteCronStore(
             migrateBackoffUntil.CommandText = """
                 ALTER TABLE cron_jobs ADD COLUMN backoff_until TEXT NULL;
                 """;
-            try { await migrateBackoffUntil.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-            catch (SqliteException) { /* column already exists */ }
+            await SqliteAdditiveMigration.ExecuteAsync(migrateBackoffUntil, ct).ConfigureAwait(false);
 
             // #2641: add the per-run cost columns if missing. ALL of them are NULLable with NO
             // default, which is the whole point: a run recorded before these columns existed
@@ -308,8 +294,7 @@ public sealed class SqliteCronStore(
             {
                 await using var migrateCost = connection.CreateCommand();
                 migrateCost.CommandText = $"ALTER TABLE cron_runs ADD COLUMN {costColumn};";
-                try { await migrateCost.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
-                catch (SqliteException) { /* column already exists */ }
+                await SqliteAdditiveMigration.ExecuteAsync(migrateCost, ct).ConfigureAwait(false);
             }
 
             SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);

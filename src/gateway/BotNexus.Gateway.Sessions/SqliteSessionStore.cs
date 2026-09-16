@@ -1415,13 +1415,9 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                      ("persistence_key", "TEXT")
                  })
         {
-            try
-            {
-                await using var cmd = connection.CreateCommand();
-                cmd.CommandText = $"ALTER TABLE session_history ADD COLUMN {migration.Item1} {migration.Item2}";
-                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch (SqliteException) { /* column already exists */ }
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE session_history ADD COLUMN {migration.Item1} {migration.Item2}";
+            await SqliteAdditiveMigration.ExecuteAsync(cmd, cancellationToken).ConfigureAwait(false);
         }
 
         await using (var persistenceKeyIndex = connection.CreateCommand())
@@ -1437,13 +1433,9 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                      ("conversation_id", "TEXT")
                  })
         {
-            try
-            {
-                await using var cmd = connection.CreateCommand();
-                cmd.CommandText = $"ALTER TABLE sessions ADD COLUMN {migration.Item1} {migration.Item2}";
-                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch (SqliteException) { /* column already exists */ }
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE sessions ADD COLUMN {migration.Item1} {migration.Item2}";
+            await SqliteAdditiveMigration.ExecuteAsync(cmd, cancellationToken).ConfigureAwait(false);
         }
 
         await using var renameStatus = connection.CreateCommand();
