@@ -43,19 +43,24 @@ public sealed class AgentWebhookProvisioner : IHostedService, IAgentWebhookProvi
 
     private readonly IAgentRegistry _registry;
     private readonly IWebhookRegistrationStore _store;
+    private const string ReconciliationFailureCode = "roster_reconciliation_failed";
+
     private readonly IReadOnlyList<IAgentWebhookTargetNotifier> _targets;
     private readonly ILogger<AgentWebhookProvisioner> _logger;
+    private readonly TimeProvider _timeProvider;
 
     public AgentWebhookProvisioner(
         IAgentRegistry registry,
         IWebhookRegistrationStore store,
         IEnumerable<IAgentWebhookTargetNotifier>? targets = null,
-        ILogger<AgentWebhookProvisioner>? logger = null)
+        ILogger<AgentWebhookProvisioner>? logger = null,
+        TimeProvider? timeProvider = null)
     {
         _registry = registry;
         _store = store;
         _targets = targets?.ToArray() ?? [];
         _logger = logger ?? NullLogger<AgentWebhookProvisioner>.Instance;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>Deterministic, agent-id-keyed label for a provisioner-owned registration.</summary>
@@ -67,11 +72,21 @@ public sealed class AgentWebhookProvisioner : IHostedService, IAgentWebhookProvi
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        await _store.InitializeAsync(cancellationToken).ConfigureAwait(false);
-
-        foreach (var descriptor in _registry.GetAll())
+        try
         {
-            await ProvisionAsync(descriptor, cancellationToken).ConfigureAwait(false);
+            await _store.InitializeAsync(cancellationToken).ConfigureAwait(false);
+
+            foreach (var descriptor in _registry.GetAll())
+            {
+                await ProvisionBindingAsync(descriptor, cancellationToken).ConfigureAwait(false);
+            }
+
+            await NotifyRosterSucceededAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            await NotifyRosterFailedAsync(cancellationToken).ConfigureAwait(false);
+            throw;
         }
     }
 
@@ -81,7 +96,12 @@ public sealed class AgentWebhookProvisioner : IHostedService, IAgentWebhookProvi
     public async Task ProvisionAsync(AgentDescriptor descriptor, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
+        await ProvisionBindingAsync(descriptor, cancellationToken).ConfigureAwait(false);
+        await NotifyRosterSucceededAsync(cancellationToken).ConfigureAwait(false);
+    }
 
+    private async Task ProvisionBindingAsync(AgentDescriptor descriptor, CancellationToken cancellationToken)
+    {
         var label = LabelFor(descriptor.AgentId);
         var existing = (await _store.ListAsync(descriptor.AgentId, cancellationToken).ConfigureAwait(false))
             .FirstOrDefault(registration =>
@@ -155,6 +175,51 @@ public sealed class AgentWebhookProvisioner : IHostedService, IAgentWebhookProvi
                 await target
                     .NotifyRemovedAsync(agentId, registration.Id.Value, cancellationToken)
                     .ConfigureAwait(false);
+            }
+        }
+
+        await NotifyRosterSucceededAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task NotifyRosterSucceededAsync(CancellationToken cancellationToken)
+    {
+        var roster = _registry.GetAll()
+            .Where(descriptor => descriptor.Kind != BotNexus.Domain.World.AgentKind.SubAgent)
+            .GroupBy(descriptor => descriptor.AgentId.Value, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderBy(descriptor => descriptor.AgentId.Value, StringComparer.Ordinal)
+                .ThenBy(descriptor => descriptor.DisplayName, StringComparer.Ordinal)
+                .First())
+            .OrderBy(descriptor => descriptor.AgentId.Value, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(descriptor => descriptor.AgentId.Value, StringComparer.Ordinal)
+            .Select(descriptor => new AgentRosterEntry(descriptor.AgentId, descriptor.DisplayName))
+            .ToArray();
+
+        return NotifyTargetsAsync(
+            target => target.NotifyRosterSucceededAsync(
+                roster, _timeProvider.GetUtcNow(), cancellationToken),
+            "full agent roster", cancellationToken);
+    }
+
+    private Task NotifyRosterFailedAsync(CancellationToken cancellationToken) => NotifyTargetsAsync(
+        target => target.NotifyRosterFailedAsync(
+            ReconciliationFailureCode, _timeProvider.GetUtcNow(), cancellationToken),
+        "agent roster failure heartbeat", cancellationToken);
+
+    private async Task NotifyTargetsAsync(
+        Func<IAgentWebhookTargetNotifier, Task> notify,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        foreach (var target in _targets)
+        {
+            try
+            {
+                await notify(target).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex, "Failed to notify a webhook target of the {Operation}.", operation);
             }
         }
     }
