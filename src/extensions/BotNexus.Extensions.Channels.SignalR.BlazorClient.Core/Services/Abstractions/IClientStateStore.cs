@@ -304,6 +304,13 @@ public sealed class AgentState
     /// <summary>Sub-agents spawned by this agent keyed by sub-agent ID.</summary>
     public Dictionary<string, SubAgentInfo> SubAgents { get; } = new();
 
+    /// <summary>
+    /// Explicit lifecycle evidence for a locally synthesised sub-agent observer entry. This remains
+    /// <see cref="SubAgentObserverStatus.Unknown"/> when no terminal event has been observed; an
+    /// inactive stream alone must never be interpreted as successful completion.
+    /// </summary>
+    public SubAgentObserverStatus ObserverStatus { get; set; }
+
     /// <summary>Latest HTML payload published to the Canvas tab for this agent.</summary>
     public string? CanvasHtml { get; set; }
 

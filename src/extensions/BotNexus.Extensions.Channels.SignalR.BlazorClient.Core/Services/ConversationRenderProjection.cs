@@ -134,4 +134,23 @@ public readonly record struct ConversationRenderProjection(
         ConversationListGroup.AgentInitiated => "Read-only",
         _ => null
     };
+
+    /// <summary>
+    /// Human-facing origin label for the read-only observer banner. Unlike <see cref="Badge"/>,
+    /// this distinguishes peer-agent and sub-agent conversations because the banner explains why
+    /// the active transcript cannot accept input.
+    /// </summary>
+    public string ReadOnlyLabel => Kind switch
+    {
+        ConversationKind.AgentSubAgent => "Sub-agent session",
+        ConversationKind.AgentAgent => "Peer-agent conversation",
+        ConversationKind.Ralph => "Ralph conversation",
+        _ => Source switch
+        {
+            ConversationSource.Cron => "Cron conversation",
+            ConversationSource.Webhook => "Webhook conversation",
+            _ when SelectionSource == Services.SelectionSource.SubAgentView => "Sub-agent session",
+            _ => "Read-only conversation"
+        }
+    };
 }

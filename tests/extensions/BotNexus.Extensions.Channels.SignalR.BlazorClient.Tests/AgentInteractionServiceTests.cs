@@ -375,7 +375,8 @@ public sealed class AgentInteractionServiceTests
         {
             SubAgentId = "sub-1",
             Name = "Scout",
-            Task = "Inspect repository"
+            Task = "Inspect repository",
+            Status = "Failed"
         });
 
         await _restClient.Received(1).GetSessionHistoryAsync("sub-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
@@ -384,6 +385,7 @@ public sealed class AgentInteractionServiceTests
         var subAgent = _store.GetAgent("sub-1");
         Assert.NotNull(subAgent);
         Assert.Equal("agent-subagent", subAgent.SessionType);
+        Assert.Equal(SubAgentObserverStatus.Failed, subAgent.ObserverStatus);
         Assert.Equal("subagent-session:sub-1", subAgent.ActiveConversationId);
 
         var conversation = subAgent.Conversations["subagent-session:sub-1"];

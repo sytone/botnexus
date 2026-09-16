@@ -800,10 +800,14 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 // sets IsObserverAgent=true. Real user agents (SeedAgents / PortalLoadService) leave
                 // it false and can never be poisoned into read-only by a session-type event.
                 IsObserverAgent = true,
+                ObserverStatus = ParseObserverStatus(subAgent.Status),
                 IsConnected = true
             });
             _store.RegisterSession(subAgentId, childSessionId);
         }
+
+        if (_store.GetAgent(subAgentId) is { IsObserverAgent: true } observer)
+            observer.ObserverStatus = ParseObserverStatus(subAgent.Status);
 
         // #2247 decision: viewing a sub-agent is an EXPLICIT NON-NAVIGATIONAL OVERLAY, not a route
         // segment. It deliberately does NOT call NavigationManager, so it never rewrites the URL and
@@ -829,6 +833,15 @@ public sealed class AgentInteractionService : IAgentInteractionService
             await LoadSubAgentHistoryAsync(subAgentId);
         }
     }
+
+    private static SubAgentObserverStatus ParseObserverStatus(string? status) => status?.Trim() switch
+    {
+        "Running" => SubAgentObserverStatus.Running,
+        "Completed" => SubAgentObserverStatus.Completed,
+        "Failed" => SubAgentObserverStatus.Failed,
+        "Killed" => SubAgentObserverStatus.Killed,
+        _ => SubAgentObserverStatus.Unknown
+    };
 
     public async Task RespondToAskUserAsync(
         string conversationId,
