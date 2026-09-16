@@ -117,7 +117,7 @@ public sealed class ProcessTool : IAgentTool
             "list" => HandleList(),
             "status" => HandleStatus(arguments),
             "output" => HandleOutput(arguments),
-            "input" => HandleInput(arguments),
+            "input" => await HandleInputAsync(arguments, cancellationToken).ConfigureAwait(false),
             "kill" => HandleKill(arguments),
             _ => TextResult($"Unknown action: {action}. Valid actions: list, status, output, input, kill.")
         };
@@ -193,7 +193,9 @@ public sealed class ProcessTool : IAgentTool
             : output);
     }
 
-    private AgentToolResult HandleInput(IReadOnlyDictionary<string, object?> arguments)
+    private async Task<AgentToolResult> HandleInputAsync(
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken)
     {
         var pid = ReadInt(arguments, "pid");
         if (pid is null)
@@ -209,7 +211,7 @@ public sealed class ProcessTool : IAgentTool
 
         try
         {
-            process.WriteInput(content);
+            await process.WriteInputAsync(content, cancellationToken).ConfigureAwait(false);
             return TextResult($"Sent {content.Length} characters to PID {pid}.");
         }
         catch (InvalidOperationException ex)

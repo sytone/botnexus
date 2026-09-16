@@ -121,7 +121,7 @@ public sealed class ProcessManagerReapTests : IDisposable
     }
 
     [Fact]
-    public void Reap_DisposesEvictedProcesses()
+    public async Task Reap_DisposesEvictedProcesses()
     {
         var manager = NewManager(maxExitedRetained: 1);
 
@@ -133,7 +133,7 @@ public sealed class ProcessManagerReapTests : IDisposable
         manager.Get(evicted.Pid).ShouldBeNull();
 
         // Disposed ManagedProcess throws on input writes (proves Dispose ran / handle released).
-        Should.Throw<ObjectDisposedException>(() => evicted.WriteInput("x"));
+        await Should.ThrowAsync<ObjectDisposedException>(() => evicted.WriteInputAsync("x"));
     }
 
     [Fact]

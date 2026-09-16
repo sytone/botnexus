@@ -114,6 +114,7 @@ public class BackgroundProcess : IDisposable
     private readonly BackgroundOutputBuffer _output = new();
     private readonly Task _completion;
     private readonly object _lifecycle = new();
+    private readonly SemaphoreSlim _inputGate = new(1, 1);
     private volatile bool _disposed;
     private int? _exitCode;
 
@@ -209,13 +210,24 @@ public class BackgroundProcess : IDisposable
         }
     }
 
-    /// <summary>Writes interactive input only to the retained child handle, never a PID reattachment.</summary>
-    public void WriteInput(string content)
+    /// <summary>Writes serialized interactive input to the retained child handle, never a PID reattachment.</summary>
+    public async Task WriteInputAsync(string content, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!IsRunning) throw new InvalidOperationException($"Process {Pid} has already exited.");
-        _process.StandardInput.Write(content);
-        _process.StandardInput.Flush();
+
+        await _inputGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!IsRunning) throw new InvalidOperationException($"Process {Pid} has already exited.");
+            await _process.StandardInput.WriteAsync(content.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await _process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _inputGate.Release();
+        }
     }
 
     /// <summary>Supplied launch input is finite: write it while output drains, then signal EOF.</summary>
