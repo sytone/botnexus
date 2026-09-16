@@ -111,6 +111,16 @@ Secrets are files, not configuration. They do not appear in `GET /api/config`, t
 into the config backup set, and they are not part of the config revision digest. Nothing about a
 secret changes the config document, so nothing about a secret can leak through it.
 
+## Configuration UI
+
+Open **Configuration** and select **Secrets**. This subsection is registered separately from the
+configuration schema, so its keys and values never enter a configuration save payload.
+
+The subsection lists key names, creation and modification times, and byte sizes. Use **Add or
+overwrite** to supply a key and its complete new value, or **Delete** to remove a key. Existing values
+are never shown or pre-filled; overwriting always starts with an empty value field. If the API rejects
+a key, the rejection is shown in the subsection.
+
 ## API
 
 | Method | Route | Purpose |

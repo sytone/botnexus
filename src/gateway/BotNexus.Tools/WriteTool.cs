@@ -88,6 +88,11 @@ public sealed class WriteTool : IAgentTool
                 "append": {
                   "type": "boolean",
                   "description": "When true, append content to the end of the file instead of replacing it. Needs no anchor, never fails on ambiguity, and creates the file if absent. Use this for append-only logs and memory notes instead of an anchored edit."
+                },
+                "instructionScope": {
+                  "type": "string",
+                  "enum": ["agnostic", "model-specific"],
+                  "description": "Classification required when the target is a base instruction file. Omit for ordinary files and model-variant files."
                 }
               },
               "required": ["path", "content"]
@@ -105,14 +110,15 @@ public sealed class WriteTool : IAgentTool
         var content = ReadRequiredString(arguments, "content");
         var append = ReadOptionalBool(arguments, "append");
 
-        IReadOnlyDictionary<string, object?> prepared = new Dictionary<string, object?>(StringComparer.Ordinal)
+        var prepared = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["path"] = path,
             ["content"] = content,
             ["append"] = append
         };
 
-        return Task.FromResult(prepared);
+        CopyInstructionScope(arguments, prepared);
+        return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
     }
 
     /// <inheritdoc />
@@ -170,6 +176,23 @@ public sealed class WriteTool : IAgentTool
     /// already-materialized CLR value, defaulting to <c>false</c> when absent. Providers vary in how
     /// they serialize booleans, so a strict cast would reject valid append calls.
     /// </summary>
+    private static void CopyInstructionScope(
+        IReadOnlyDictionary<string, object?> arguments,
+        IDictionary<string, object?> prepared)
+    {
+        if (!arguments.TryGetValue(InstructionScopeArgument.Name, out var raw) || raw is null)
+            return;
+
+        var value = raw.ToString()?.Trim();
+        if (!InstructionScopeArgument.IsValid(value))
+        {
+            throw new ArgumentException(
+                $"'{InstructionScopeArgument.Name}' must be '{InstructionScopeArgument.Agnostic}' or '{InstructionScopeArgument.ModelSpecific}'.");
+        }
+
+        prepared[InstructionScopeArgument.Name] = value!.ToLowerInvariant();
+    }
+
     private static bool ReadOptionalBool(IReadOnlyDictionary<string, object?> arguments, string key)
     {
         if (!arguments.TryGetValue(key, out var value) || value is null)

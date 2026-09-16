@@ -256,12 +256,16 @@ public sealed record ActivityAgentRef(string AgentId, string? Role = null);
 /// Carried on the record but deliberately not rendered by this slice - a countdown is its own
 /// design question and would need a ticking clock the dashboard does not have.
 /// </param>
+/// <param name="Enabled">Whether the scheduler permits the job to fire.</param>
+/// <param name="ExpiresAt">The hard suppression instant, or <see langword="null"/> for no expiry.</param>
 public sealed record ActivityCronHealth(
     string JobId,
     string? Name,
     string? LastRunStatus,
     DateTimeOffset? LastRunAt = null,
-    DateTimeOffset? NextRunAt = null);
+    DateTimeOffset? NextRunAt = null,
+    bool Enabled = true,
+    DateTimeOffset? ExpiresAt = null);
 
 /// <summary>
 /// A single projected row on the Home / Activity dashboard: one active conversation plus the derived
@@ -589,7 +593,9 @@ public static class ActivityDashboardProjection
                 string.IsNullOrWhiteSpace(job.Name) ? null : job.Name.Trim(),
                 string.IsNullOrWhiteSpace(job.LastRunStatus) ? null : job.LastRunStatus.Trim(),
                 job.LastRunAt,
-                job.NextRunAt);
+                job.NextRunAt,
+                job.Enabled,
+                job.ExpiresAt);
         }
 
         return map;
@@ -748,6 +754,20 @@ public static class ActivityDashboardProjection
             "error" or "failed" or "failure" or "timeout" or "aborted" or "no_tool_calls" => "failed",
             _ => "unknown"
         };
+    }
+
+    /// <summary>
+    /// Classifies whether a resolved cron job can fire again, independently of its last outcome.
+    /// Explicit disablement outranks elapsed expiry; the scheduler's expiry boundary is inclusive.
+    /// </summary>
+    public static string? CronLiveness(ActivityCronHealth health, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(health);
+
+        if (!health.Enabled)
+            return "disabled";
+
+        return health.ExpiresAt is { } expiresAt && now >= expiresAt ? "expired" : null;
     }
 
     /// <summary>

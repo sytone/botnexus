@@ -25,6 +25,11 @@ public sealed record AgentWebhookBinding(
     string InboundPath,
     string Secret);
 
+/// <summary>Secret-free identity included in a full downstream agent-roster snapshot.</summary>
+/// <param name="AgentId">Canonical persistent agent identity.</param>
+/// <param name="DisplayName">Current human-readable name.</param>
+public sealed record AgentRosterEntry(AgentId AgentId, string DisplayName);
+
 /// <summary>
 /// Receives per-agent webhook bindings so a downstream system can be kept in sync with the
 /// BotNexus agent registry.
@@ -64,4 +69,16 @@ public interface IAgentWebhookTargetNotifier
     /// produces no call at all, because there is no binding whose removal could be described.
     /// </remarks>
     Task NotifyRemovedAsync(AgentId agentId, string webhookId, CancellationToken cancellationToken);
+
+    /// <summary>Reports a successful terminal reconciliation with the complete persistent roster.</summary>
+    Task NotifyRosterSucceededAsync(
+        IReadOnlyList<AgentRosterEntry> agents,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <summary>Reports a failed terminal reconciliation using a bounded machine code only.</summary>
+    Task NotifyRosterFailedAsync(
+        string errorCode,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken) => Task.CompletedTask;
 }

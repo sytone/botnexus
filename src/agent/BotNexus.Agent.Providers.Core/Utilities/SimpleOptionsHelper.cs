@@ -36,6 +36,8 @@ public static class SimpleOptionsHelper
             Headers = options?.Headers,
             MaxRetryDelayMs = options?.MaxRetryDelayMs ?? new StreamOptions().MaxRetryDelayMs,
             Metadata = options?.Metadata,
+            StreamSetupTimeoutMs = options?.StreamSetupTimeoutMs ?? 0,
+            StreamIdleTimeoutMs = options?.StreamIdleTimeoutMs,
         };
     }
 

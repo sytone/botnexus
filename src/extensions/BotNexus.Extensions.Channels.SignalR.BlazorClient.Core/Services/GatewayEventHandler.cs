@@ -580,6 +580,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         // Register sub-agent's own session
         _store.MarkSubAgent(payload.SubAgentId);
         _store.RegisterSession(payload.SubAgentId, payload.SubAgentId);
+        SetObserverStatus(payload.SubAgentId, SubAgentObserverStatus.Running);
 
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
@@ -603,6 +604,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             sub.CompletedAt = payload.CompletedAt;
             sub.ResultSummary = payload.ResultSummary;
         }
+        SetObserverStatus(payload.SubAgentId, SubAgentObserverStatus.Completed);
 
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
@@ -626,6 +628,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             sub.CompletedAt = payload.CompletedAt;
             sub.ResultSummary = payload.ResultSummary;
         }
+        SetObserverStatus(payload.SubAgentId, SubAgentObserverStatus.Failed);
 
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
@@ -648,6 +651,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             sub.Status = "Killed";
             sub.CompletedAt = payload.CompletedAt;
         }
+        SetObserverStatus(payload.SubAgentId, SubAgentObserverStatus.Killed);
 
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
@@ -657,6 +661,12 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         }
 
         _store.NotifyChanged();
+    }
+
+    private void SetObserverStatus(string subAgentId, SubAgentObserverStatus status)
+    {
+        if (_store.GetAgent(subAgentId) is { IsObserverAgent: true } observer)
+            observer.ObserverStatus = status;
     }
 
     // ── Steering feedback ──────────────────────────────────────────────────

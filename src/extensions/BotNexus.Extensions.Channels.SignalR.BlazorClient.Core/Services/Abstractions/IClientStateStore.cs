@@ -224,6 +224,9 @@ public sealed class AgentState
     /// <summary>Short description of this agent's purpose.</summary>
     public string? Description { get; set; }
 
+    /// <summary>Agent-maintained summary of its current work and capabilities.</summary>
+    public string? Summary { get; set; }
+
     /// <summary>Whether this is a platform built-in agent (sorts after user agents in UI).</summary>
     public bool IsBuiltIn { get; set; }
 
@@ -300,6 +303,13 @@ public sealed class AgentState
 
     /// <summary>Sub-agents spawned by this agent keyed by sub-agent ID.</summary>
     public Dictionary<string, SubAgentInfo> SubAgents { get; } = new();
+
+    /// <summary>
+    /// Explicit lifecycle evidence for a locally synthesised sub-agent observer entry. This remains
+    /// <see cref="SubAgentObserverStatus.Unknown"/> when no terminal event has been observed; an
+    /// inactive stream alone must never be interpreted as successful completion.
+    /// </summary>
+    public SubAgentObserverStatus ObserverStatus { get; set; }
 
     /// <summary>Latest HTML payload published to the Canvas tab for this agent.</summary>
     public string? CanvasHtml { get; set; }

@@ -54,6 +54,7 @@ public static class TelemetryServiceCollectionExtensions
         // in-Gateway hot-path seams can resolve it regardless of the enabled flag; when
         // telemetry is disabled the instruments simply have no MeterProvider subscribed.
         services.AddSingleton<HotPathMetrics>();
+        services.AddSingleton<StoreMetrics>();
 
         // Proof-of-life smoke counter (botnexus.host.starts) increments on boot.
         services.AddHostedService<HostStartupMetrics>();

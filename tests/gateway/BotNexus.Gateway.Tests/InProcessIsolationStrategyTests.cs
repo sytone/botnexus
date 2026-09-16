@@ -441,7 +441,41 @@ public sealed class InProcessIsolationStrategyTests
         messages[0].ShouldBe(new AgentCoreUserMessage("hello"));
         var folded = options.InitialState!.SystemPrompt ?? string.Empty;
         folded.ShouldNotContain("helpful assistant");
-    }    private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel(
+    }
+
+    [Fact]
+    public void ProviderConfig_ResolvesStreamIdleTimeoutMs()
+    {
+        var config = new ProviderConfig { StreamIdleTimeoutMs = 12_345 };
+
+        config.ResolveStreamIdleTimeoutMs().ShouldBe(12_345);
+    }
+
+    [Fact]
+    public void ResolveStreamIdleTimeoutMs_UsesProviderSpecificValueCaseInsensitively()
+    {
+        var config = new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["Example-Provider"] = new() { StreamIdleTimeoutMs = 12_345 }
+            }
+        };
+
+        var result = InProcessIsolationStrategy.ResolveStreamIdleTimeoutMs(config, "example-provider");
+
+        result.ShouldBe(12_345);
+    }
+
+    [Fact]
+    public void ResolveStreamIdleTimeoutMs_MissingProviderUsesDefaultSentinel()
+    {
+        var result = InProcessIsolationStrategy.ResolveStreamIdleTimeoutMs(new PlatformConfig(), "missing");
+
+        result.ShouldBeNull();
+    }
+
+    private static InProcessIsolationStrategy CreateStrategyWithRegisteredModel(
         IReadOnlyList<IAgentToolContributor>? contributors = null,
         IServiceProvider? serviceProvider = null)
     {

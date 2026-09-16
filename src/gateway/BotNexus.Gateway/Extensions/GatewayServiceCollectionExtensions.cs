@@ -50,6 +50,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using BotNexus.Gateway.Configuration.Store;
+using BotNexus.Gateway.Telemetry;
 using Microsoft.FeatureManagement;
 using System.Globalization;
 using System.IO.Abstractions;
@@ -156,7 +157,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<EmbeddingProviderRegistry>();
         services.TryAddSingleton<IMemoryStoreFactory>(serviceProvider =>
         {
-            var home = serviceProvider.GetRequiredService<BotNexusHome>();
+            var workspaceManager = serviceProvider.GetRequiredService<IAgentWorkspaceManager>();
             var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
             // #2855: built here rather than inside BotNexus.Memory so that project keeps its
             // zero dependency on the provider stack. An absent or disabled section yields
@@ -167,8 +168,11 @@ public static class GatewayServiceCollectionExtensions
                 serviceProvider.GetService<ILoggerFactory>());
             return new EmbeddingAwareMemoryStoreFactory(agentId =>
             {
-                var agentDirectory = home.GetAgentDirectory(agentId);
-                return Path.Combine(agentDirectory, "data", "memory.sqlite");
+                var agentDirectory = workspaceManager is FileAgentWorkspaceManager fileWorkspaces
+                    ? fileWorkspaces.GetAgentRootPath(agentId)
+                    : fileSystem.Path.GetDirectoryName(workspaceManager.GetWorkspacePath(agentId))
+                        ?? throw new InvalidOperationException($"Agent '{agentId}' workspace has no parent directory.");
+                return fileSystem.Path.Combine(agentDirectory, "data", "memory.sqlite");
             }, embeddings, fileSystem);
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
@@ -418,7 +422,8 @@ public static class GatewayServiceCollectionExtensions
             sp.GetRequiredService<IChannelManager>(),
             sp.GetRequiredService<ILogger<InterruptedTurnNotificationService>>(),
             sp.GetService<IInboundMessageOrchestrator>(),
-            sp.GetService<IOptions<GatewayOptions>>()));
+            sp.GetService<IOptions<GatewayOptions>>(),
+            sp.GetService<IConversationStore>()));
         services.AddHostedService<SessionCleanupService>();
         // Session/conversation consistency monitor + safe auto-heal path (#2046).
         services.TryAddSingleton<Sessions.SessionConsistencyChecker>();
@@ -812,7 +817,8 @@ public static class GatewayServiceCollectionExtensions
                     new SqliteSessionStore(
                         connectionString,
                         serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>(),
-                        serviceProvider.GetRequiredService<IConversationStore>()),
+                        serviceProvider.GetRequiredService<IConversationStore>(),
+                        storeMetrics: serviceProvider.GetService<StoreMetrics>()),
                     serviceProvider);
             }));
             return;
@@ -894,7 +900,8 @@ public static class GatewayServiceCollectionExtensions
                 return new SqliteConversationStore(
                     connectionString,
                     serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>(),
-                    serviceProvider.GetService<IWorldContext>());
+                    serviceProvider.GetService<IWorldContext>(),
+                    storeMetrics: serviceProvider.GetService<StoreMetrics>());
             }));
 
             services.AddSingleton<IConversationAuditLog>(

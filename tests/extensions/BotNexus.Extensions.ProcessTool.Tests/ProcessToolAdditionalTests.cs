@@ -423,25 +423,25 @@ public sealed class ProcessManagerAndManagedProcessTests : IDisposable
     }
 
     [Fact]
-    public void WriteInput_AfterExit_ThrowsInvalidOperationException()
+    public async Task WriteInput_AfterExit_ThrowsInvalidOperationException()
     {
         var process = SpawnManagedProcess("echo done", "echo done", redirectInput: true);
         process.WaitForExit(5_000);
 
-        var act = () => process.WriteInput("hello");
+        Func<Task> act = () => process.WriteInputAsync("hello");
 
-        act.ShouldThrow<InvalidOperationException>();
+        await act.ShouldThrowAsync<InvalidOperationException>();
     }
 
     [Fact]
-    public void WriteInput_AfterDispose_ThrowsObjectDisposedException()
+    public async Task WriteInput_AfterDispose_ThrowsObjectDisposedException()
     {
         var process = SpawnManagedProcess("more", "cat", redirectInput: true);
         process.Dispose();
 
-        var act = () => process.WriteInput("hello");
+        Func<Task> act = () => process.WriteInputAsync("hello");
 
-        act.ShouldThrow<ObjectDisposedException>();
+        await act.ShouldThrowAsync<ObjectDisposedException>();
     }
 
     [Fact]

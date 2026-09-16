@@ -211,16 +211,15 @@
                             }
                             @if (ActivityDashboardProjection.CronHealthModifier(row) is { } cronHealthModifier)
                             {
-                                @* #3421: last-run outcome of the job that minted this row. A dot, not a
-                                   badge: it qualifies the attribution beside it rather than classifying
-                                   the row, and the badge row is already carrying its full load. Renders
-                                   only when a job actually resolved, so a row whose id matches nothing
-                                   is byte-identical to its pre-#3421 rendering. *@
-                                <span class="activity-cron-health activity-cron-health--@cronHealthModifier"
+                                var cronLiveness = ActivityDashboardProjection.CronLiveness(row.CronHealth!, _projectionNow);
+                                var cronModifier = cronLiveness ?? cronHealthModifier;
+                                @* #3421/#3563: last outcome and future liveness are independent. Liveness
+                                   wins the glanceable colour while the tooltip preserves both facts. *@
+                                <span class="activity-cron-health activity-cron-health--@cronModifier"
                                       data-testid="activity-cron-health"
-                                      data-health="@cronHealthModifier"
-                                      title="@CronHealthTooltip(row)"
-                                      aria-label="@CronHealthTooltip(row)"></span>
+                                      data-health="@cronModifier"
+                                      title="@CronHealthTooltip(row, cronLiveness)"
+                                      aria-label="@CronHealthTooltip(row, cronLiveness)"></span>
                             }
                             @if (ActivityDashboardProjection.PurposeLabel(row) is { } purposeLabel)
                             {
@@ -277,6 +276,7 @@
     private ElementReference _agentSelect;
     private IReadOnlyList<ActivityRow>? _rows;
     private ActivitySummary? _summary;
+    private DateTimeOffset _projectionNow;
     private bool _isLoading;
     private bool _loadError;
     private CancellationTokenSource? _pollCts;
@@ -314,7 +314,8 @@
                 cronHealth = ActivityDashboardProjection.CronHealthById(null);
             }
 
-            _rows = ActivityDashboardProjection.Project(conversations, _filter, DateTimeOffset.UtcNow, cronHealth);
+            _projectionNow = DateTimeOffset.UtcNow;
+            _rows = ActivityDashboardProjection.Project(conversations, _filter, _projectionNow, cronHealth);
             _summary = ActivityDashboardProjection.Summarize(_rows);
             _loadError = false;
         }
@@ -496,13 +497,20 @@
     private static string DisplayTitle(ActivityRow row) =>
         ConversationLabel.DisplayTitle(row.Title, row.ConversationId, row.OwningAgentId);
 
-    /// <summary>Resolve an agent id to its display name via the store, falling back to a title-cased id.</summary>
+    /// <summary>
+    /// Resolve an agent id to the same normalized emoji/name label used by the portal shell.
+    /// Unknown agents keep their bare id and blank emoji never contributes spacing or a placeholder.
+    /// </summary>
     private string AgentLabel(string agentId)
     {
         var agent = Store.GetAgent(agentId);
-        if (agent is { DisplayName.Length: > 0 })
-            return agent.DisplayName;
-        return agentId;
+        if (agent is not { DisplayName.Length: > 0 })
+            return agentId;
+
+        return PortalText.SingleLine(
+            string.IsNullOrWhiteSpace(agent.Emoji)
+                ? agent.DisplayName
+                : $"{agent.Emoji} {agent.DisplayName}");
     }
 
     /// <summary>
@@ -541,7 +549,7 @@
     /// <see cref="OriginTooltip"/>, because it hangs off a separate element - a reader hovering the
     /// dot is asking "is this job healthy?", not "where did this row come from?".
     /// </summary>
-    private static string CronHealthTooltip(ActivityRow row)
+    private static string CronHealthTooltip(ActivityRow row, string? liveness)
     {
         var health = row.CronHealth;
         if (health is null)
@@ -550,8 +558,14 @@
         var name = string.IsNullOrWhiteSpace(health.Name) ? health.JobId : health.Name;
         var status = string.IsNullOrWhiteSpace(health.LastRunStatus) ? "never run" : health.LastRunStatus;
         var when = health.LastRunAt is { } at ? $" \u00b7 Last run: {at:u}" : string.Empty;
+        var livenessDetail = liveness switch
+        {
+            "disabled" => " \u00b7 Disabled",
+            "expired" => $" \u00b7 Expired: {health.ExpiresAt:u}",
+            _ => string.Empty
+        };
 
-        return $"Cron job: {name} \u00b7 Last run status: {status}{when}";
+        return $"Cron job: {name} \u00b7 Last run status: {status}{when}{livenessDetail}";
     }
 
     private static string FormatRelative(DateTimeOffset ts)

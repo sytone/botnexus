@@ -303,6 +303,48 @@ public sealed class WebhookInboundQueueTests
     }
 
     [Fact]
+    public async Task AdmissionOrderWins_WhenLaterTicketStartsWaitingFirst()
+    {
+        var queue = CreateQueue(depth: 2);
+        var holder = await queue.Admit(Target, Conversation).WaitAsync(CancellationToken.None);
+        var firstTicket = queue.Admit(Target, Conversation);
+        var secondTicket = queue.Admit(Target, Conversation);
+
+        var secondWait = secondTicket.WaitAsync(CancellationToken.None);
+        var firstWait = firstTicket.WaitAsync(CancellationToken.None);
+
+        holder.Dispose();
+        var winner = await Task.WhenAny(firstWait, secondWait).WaitAsync(TestTimeout);
+
+        winner.ShouldBe(firstWait,
+            "execution ownership must follow admission order, not the order callers reach WaitAsync");
+        var firstLease = await firstWait.WaitAsync(TestTimeout);
+        secondWait.IsCompleted.ShouldBeFalse("only the first admitted ticket receives this handoff");
+        firstLease.Dispose();
+        (await secondWait.WaitAsync(TestTimeout)).Dispose();
+    }
+
+    [Fact]
+    public async Task CancellingFirstAdmittedTicket_RemovesItAndAdvancesSuccessor()
+    {
+        var queue = CreateQueue(depth: 2);
+        var holder = await queue.Admit(Target, Conversation).WaitAsync(CancellationToken.None);
+        var cancelledTicket = queue.Admit(Target, Conversation);
+        var successorTicket = queue.Admit(Target, Conversation);
+        using var cts = new CancellationTokenSource();
+
+        var cancelledWait = cancelledTicket.WaitAsync(cts.Token);
+        var successorWait = successorTicket.WaitAsync(CancellationToken.None);
+        await cts.CancelAsync();
+
+        await Should.ThrowAsync<WebhookNotDispatchedException>(
+            async () => await cancelledWait.WaitAsync(TestTimeout));
+        holder.Dispose();
+        using var successorLease = await successorWait.WaitAsync(TestTimeout);
+        queue.WaitingCount(Target).ShouldBe(0);
+    }
+
+    [Fact]
     public async Task WaitersAreServedInFifoOrder_WithNoBarging()
     {
         var queue = CreateQueue(depth: 8);

@@ -96,6 +96,11 @@ public sealed class EditTool : IAgentTool
                   "type": "string",
                   "description": "Optional optimistic-concurrency token from the `read` tool's structured result. When supplied, the edit is rejected with a stale-content outcome if the file changed since it was read. Re-read immediately before editing; never reuse oldText after another edit; never copy oldText from shell output."
                 },
+                "instructionScope": {
+                  "type": "string",
+                  "enum": ["agnostic", "model-specific"],
+                  "description": "Classification required when the target is a base instruction file. Omit for ordinary files and model-variant files."
+                },
                 "edits": {
                   "type": "array",
                   "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Expected shape: { \"path\": \"...\", \"edits\": [ { \"oldText\": \"...\", \"newText\": \"...\" } ] }.",
@@ -143,7 +148,25 @@ public sealed class EditTool : IAgentTool
             prepared["expectedHash"] = expectedHash;
         }
 
+        CopyInstructionScope(arguments, prepared);
         return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
+    }
+
+    private static void CopyInstructionScope(
+        IReadOnlyDictionary<string, object?> arguments,
+        IDictionary<string, object?> prepared)
+    {
+        if (!arguments.TryGetValue(InstructionScopeArgument.Name, out var raw) || raw is null)
+            return;
+
+        var value = raw.ToString()?.Trim();
+        if (!InstructionScopeArgument.IsValid(value))
+        {
+            throw new ArgumentException(
+                $"'{InstructionScopeArgument.Name}' must be '{InstructionScopeArgument.Agnostic}' or '{InstructionScopeArgument.ModelSpecific}'.");
+        }
+
+        prepared[InstructionScopeArgument.Name] = value!.ToLowerInvariant();
     }
 
     /// <summary>
