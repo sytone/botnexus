@@ -35,4 +35,39 @@ public sealed class ConversationListCssTests
         Assert.Contains("text-decoration: none", ruleBlock,
             StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void ConversationRowActions_FocusWithinRevealsStripAndEveryButton()
+    {
+        var content = File.ReadAllText(s_cssPath);
+
+        var backdropRule = FindRuleContaining(
+            content,
+            ".conversation-list-item:hover .conversation-row-actions");
+        backdropRule.ShouldContain(
+            ".conversation-row-actions:focus-within",
+            customMessage: "Keyboard focus must reveal the action-strip backdrop.");
+
+        var buttonRule = FindRuleContaining(
+            content,
+            ".conversation-list-item:hover .conversation-row-actions > button");
+        buttonRule.ShouldContain(
+            ".conversation-row-actions:focus-within > button",
+            customMessage: "Keyboard focus must restore a visible non-zero box for every row action.");
+        buttonRule.ShouldContain("width: var(--hit-pointer)");
+        buttonRule.ShouldContain("min-width: var(--hit-pointer)");
+        buttonRule.ShouldContain("opacity: 1");
+    }
+
+    private static string FindRuleContaining(string content, string selector)
+    {
+        var selectorStart = content.IndexOf(selector, StringComparison.Ordinal);
+        selectorStart.ShouldBeGreaterThanOrEqualTo(0, $"Selector '{selector}' was not found in app.css.");
+
+        var ruleStart = content.LastIndexOf('}', selectorStart) + 1;
+        var ruleEnd = content.IndexOf('}', selectorStart);
+        ruleEnd.ShouldBeGreaterThan(selectorStart, $"Selector '{selector}' has no closing brace.");
+
+        return content[ruleStart..(ruleEnd + 1)];
+    }
 }

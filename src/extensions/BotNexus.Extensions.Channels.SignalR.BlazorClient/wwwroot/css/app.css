@@ -4576,12 +4576,13 @@ details[open] > .thinking-summary::before {
     --row-actions-tint: var(--color-accent-wash-soft);
 }
 
-/* Revealed by hover, by the section menu being open, or by the pin being set - a pinned
-   conversation has to advertise itself with the pointer nowhere near it. The backdrop
-   appears with the buttons: at rest the strip paints nothing at all.
-   The fade runs across padding-left so the timestamp dissolves under the strip rather
-   than being cut off at a hard edge. */
+/* Revealed by hover, keyboard focus within the strip, the section menu being open, or
+   the pin being set - a pinned conversation has to advertise itself with the pointer
+   nowhere near it. The backdrop appears with the buttons: at rest the strip paints
+   nothing at all. The fade runs across padding-left so the timestamp dissolves under
+   the strip rather than being cut off at a hard edge. */
 .conversation-list-item:hover .conversation-row-actions,
+.conversation-row-actions:focus-within,
 .conversation-row-actions:has([aria-expanded="true"]),
 .conversation-row-actions:has(.conversation-pin-btn.pinned) {
     padding-left: var(--row-actions-fade);
@@ -4607,6 +4608,7 @@ details[open] > .thinking-summary::before {
 }
 
 .conversation-list-item:hover .conversation-row-actions > button,
+.conversation-row-actions:focus-within > button,
 .conversation-row-actions > [aria-expanded="true"],
 .conversation-row-actions > .conversation-pin-btn.pinned {
     width: var(--hit-pointer);
