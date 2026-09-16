@@ -1,4 +1,6 @@
+using System.Net;
 using System.Text;
+using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Conversations;
@@ -10,6 +12,7 @@ using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Webhooks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
@@ -156,6 +159,68 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task QueuedCallbackDeadline_DeliversExactlyOneTerminalTimeout_WithoutAgentInvocation()
+    {
+        var registration = await _registrations.CreateAsync(CreateRegistration(WebhookResponseMode.Callback));
+        _webhookId = registration.Id;
+        var queue = new WebhookInboundQueue(new WebhookInboundQueueOptions
+        {
+            MaxQueueDepth = 1,
+            RunTimeout = TimeSpan.FromMilliseconds(100)
+        });
+        using var holder = await queue.Admit(registration.AgentId, registration.PinnedConversationId!.Value)
+            .WaitAsync(CancellationToken.None);
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
+        var callback = new RecordingCallbackHandler();
+        _httpClientFactory = new StubHttpClientFactory(new HttpClient(callback));
+
+        var accepted = await InvokeOnceAsync(
+            registration, orchestrator, queue, callbackUrl: "https://callback.example/webhook");
+
+        accepted.ShouldBeOfType<AcceptedResult>();
+        await callback.Delivered.Task.WaitAsync(TestTimeout);
+        var timedOut = await WaitForStatusAsync(WebhookRunStatus.Timeout);
+
+        timedOut.StartedAt.ShouldBeNull("the queued delivery never acquired its dispatch slot");
+        queue.WaitingCount(registration.AgentId).ShouldBe(0, "terminal timeout releases waiting capacity");
+        callback.RequestCount.ShouldBe(1, "one accepted callback run has one terminal delivery");
+        using var payload = JsonDocument.Parse(callback.Payload.ShouldNotBeNull());
+        payload.RootElement.GetProperty("status").GetString().ShouldBe(nameof(WebhookRunStatus.Timeout));
+        await orchestrator.DidNotReceiveWithAnyArgs().AcceptAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task QueuedCallbackHostShutdown_DoesNotStartUnboundedTerminalDelivery()
+    {
+        var registration = await _registrations.CreateAsync(CreateRegistration(WebhookResponseMode.Callback));
+        _webhookId = registration.Id;
+        var queue = new WebhookInboundQueue(new WebhookInboundQueueOptions
+        {
+            MaxQueueDepth = 1,
+            RunTimeout = TimeSpan.FromMinutes(1)
+        });
+        using var holder = await queue.Admit(registration.AgentId, registration.PinnedConversationId!.Value)
+            .WaitAsync(CancellationToken.None);
+        var orchestrator = Substitute.For<IInboundMessageOrchestrator>();
+        var callback = new RecordingCallbackHandler();
+        _httpClientFactory = new StubHttpClientFactory(new HttpClient(callback));
+        using var stopping = new CancellationTokenSource();
+        stopping.Cancel();
+        var lifetime = Substitute.For<IHostApplicationLifetime>();
+        lifetime.ApplicationStopping.Returns(stopping.Token);
+
+        await InvokeOnceAsync(
+            registration, orchestrator, queue, applicationLifetime: lifetime,
+            callbackUrl: "https://callback.example/webhook");
+        var timedOut = await WaitForStatusAsync(WebhookRunStatus.Timeout);
+
+        timedOut.StartedAt.ShouldBeNull();
+        queue.WaitingCount(registration.AgentId).ShouldBe(0);
+        callback.RequestCount.ShouldBe(0, "shutdown must not start new outbound callback work");
+        await orchestrator.DidNotReceiveWithAnyArgs().AcceptAsync(default!, default);
+    }
+
+    [Fact]
     public async Task UncontendedDelivery_NeverPassesThroughQueued()
     {
         // The queued state must carry information: a state set on every run would be no better than
@@ -237,15 +302,22 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
         WebhookRegistration registration,
         IInboundMessageOrchestrator orchestrator,
         WebhookInboundQueue queue,
-        IWebhookRunStore? runStore = null)
+        IWebhookRunStore? runStore = null,
+        IHostApplicationLifetime? applicationLifetime = null,
+        string? callbackUrl = null)
     {
-        var rawBody = Encoding.UTF8.GetBytes("{\"message\":\"payload\",\"agentAction\":true}");
+        var rawBody = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        {
+            message = "payload",
+            agentAction = true,
+            callbackUrl
+        }));
         var controller = new WebhookInboundController(
             _registrations, runStore ?? _runs, orchestrator,
             Substitute.For<IConversationDispatcher>(),
             _conversations, _sessions,
             _httpClientFactory, NullLogger<WebhookInboundController>.Instance,
-            bodyGuard: null, inboundQueue: queue, applicationLifetime: null)
+            bodyGuard: null, inboundQueue: queue, applicationLifetime: applicationLifetime)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
@@ -309,6 +381,32 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
         }
 
         public bool Post(InboundMessage message) => true;
+    }
+
+    private sealed class StubHttpClientFactory(HttpClient client) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => client;
+    }
+
+    private sealed class RecordingCallbackHandler : HttpMessageHandler
+    {
+        private int _requestCount;
+
+        public int RequestCount => Volatile.Read(ref _requestCount);
+        public string? Payload { get; private set; }
+        public TaskCompletionSource Delivered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _requestCount);
+            Payload = request.Content is null
+                ? null
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            Delivered.TrySetResult();
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }
     }
 
     private sealed class FailingQueuedRunStore(IWebhookRunStore inner) : IWebhookRunStore
