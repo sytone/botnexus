@@ -25,6 +25,12 @@ public sealed class CronScheduler(
     private readonly IOptionsMonitor<CronOptions> _optionsMonitor = optionsMonitor;
     private readonly ILogger<CronScheduler> _logger = logger;
 
+    // #3545: manual runs accepted from a short-lived tool call belong to the scheduler. ExecuteAsync
+    // publishes the BackgroundService stopping token here, so accepted work outlives its caller
+    // without becoming detached from gateway shutdown. Direct unit-test use gets CancellationToken.None.
+    private CancellationToken _schedulerStoppingToken;
+    private readonly ConcurrentDictionary<string, Task> _ownedManualRuns = new(StringComparer.Ordinal);
+
     // #2634: the lifecycle checks (notably expiry) must be assertable without wall-clock waits, so
     // the scheduler reads "now" through an injectable TimeProvider. Optional and defaulting to the
     // system clock, so every existing registration and call site is unaffected.
@@ -132,6 +138,76 @@ public sealed class CronScheduler(
             ?? throw new KeyNotFoundException($"Cron job '{jobId}' was not found.");
 
         return await RunActionAsync(job, CronTriggerType.Manual, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Stamps and accepts a manual run, then executes it as scheduler-owned background work.
+    /// </summary>
+    /// <remarks>
+    /// The caller token governs only acceptance (initialization, job lookup, and the run-start
+    /// write). Once the run identity exists, execution uses the scheduler lifetime instead. The
+    /// existing <see cref="RunActionAsync"/> path still owns the normal timeout or unlimited
+    /// sentinel, active-run registration, operator cancellation, and same-job serialization.
+    /// </remarks>
+    public async Task<CronRun> AcceptRunNowAsync(JobId jobId, CancellationToken cancellationToken = default)
+    {
+        await _cronStore.InitializeAsync(cancellationToken).ConfigureAwait(false);
+
+        var job = await _cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Cron job '{jobId}' was not found.");
+        var triggeredAt = _timeProvider.GetUtcNow();
+
+        // Preserve the authoritative expiry gate before writing a run row. An expired job is not
+        // accepted as background work, matching RunNowAsync's existing suppression behaviour.
+        if (IsExpired(job))
+            return await RunActionAsync(job, CronTriggerType.Manual, triggeredAt, cancellationToken).ConfigureAwait(false);
+
+        var run = await _cronStore.RecordRunStartAsync(job.Id, cancellationToken).ConfigureAwait(false);
+        var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var execution = ExecuteAcceptedManualRunAsync(job, run, triggeredAt, startGate.Task);
+        _ownedManualRuns[run.Id.Value] = execution;
+        startGate.TrySetResult();
+        return run;
+    }
+
+    private async Task ExecuteAcceptedManualRunAsync(
+        CronJob job,
+        CronRun run,
+        DateTimeOffset triggeredAt,
+        Task startGate)
+    {
+        await startGate.ConfigureAwait(false);
+        try
+        {
+            await RunActionAsync(
+                    job,
+                    CronTriggerType.Manual,
+                    triggeredAt,
+                    _schedulerStoppingToken,
+                    run)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_schedulerStoppingToken.IsCancellationRequested)
+        {
+            _logger.LogDebug(
+                "Accepted manual cron run '{RunId}' for job '{JobId}' stopped with the scheduler.",
+                run.Id,
+                job.Id);
+        }
+        catch (Exception ex)
+        {
+            // RunActionAsync records action failures itself. This guard observes failures from the
+            // scheduler plumbing so a fire-and-forget Task can never become unobserved.
+            _logger.LogError(
+                ex,
+                "Accepted manual cron run '{RunId}' for job '{JobId}' failed outside the normal run finalization path.",
+                run.Id,
+                job.Id);
+        }
+        finally
+        {
+            _ownedManualRuns.TryRemove(run.Id.Value, out _);
+        }
     }
 
     /// <summary>
@@ -373,6 +449,7 @@ public sealed class CronScheduler(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _schedulerStoppingToken = stoppingToken;
         await _cronStore.InitializeAsync(stoppingToken).ConfigureAwait(false);
         _logger.LogInformation("Cron scheduler started. Tick interval: {Interval}s", _optionsMonitor.CurrentValue?.TickIntervalSeconds ?? 60);
 
@@ -604,7 +681,19 @@ public sealed class CronScheduler(
             }).ConfigureAwait(false);
     }
 
-    private async Task<CronRun> RunActionAsync(CronJob job, CronTriggerType triggerType, DateTimeOffset triggeredAt, CancellationToken ct)
+    private Task<CronRun> RunActionAsync(
+        CronJob job,
+        CronTriggerType triggerType,
+        DateTimeOffset triggeredAt,
+        CancellationToken ct)
+        => RunActionAsync(job, triggerType, triggeredAt, ct, acceptedRun: null);
+
+    private async Task<CronRun> RunActionAsync(
+        CronJob job,
+        CronTriggerType triggerType,
+        DateTimeOffset triggeredAt,
+        CancellationToken ct,
+        CronRun? acceptedRun)
     {
         // #2634 (fire time -- the AUTHORITATIVE expiry gate). Checked BEFORE the run row is stamped
         // so an expired job produces no run at all and, critically, never invokes its action.
@@ -616,7 +705,7 @@ public sealed class CronScheduler(
         //
         // Suppression only. The stored job is not disabled, not deleted, and not rewritten -- #2634
         // explicitly rules out mutating an existing job implicitly.
-        if (IsExpired(job))
+        if (acceptedRun is null && IsExpired(job))
         {
             _logger.LogInformation(
                 "Cron job '{JobId}' ('{JobName}') is past its expiry ({ExpiresAt:o}); the fire was suppressed and the action was not invoked.",
@@ -635,7 +724,7 @@ public sealed class CronScheduler(
             };
         }
 
-        var run = await _cronStore.RecordRunStartAsync(job.Id, ct).ConfigureAwait(false);
+        var run = acceptedRun ?? await _cronStore.RecordRunStartAsync(job.Id, ct).ConfigureAwait(false);
         var action = ResolveAction(NormalizeActionType(job.ActionType));
 
         // #3160: from here on the run executes under its OWN linked token, not the caller's. That
