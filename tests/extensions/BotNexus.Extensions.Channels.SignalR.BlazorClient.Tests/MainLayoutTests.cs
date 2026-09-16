@@ -66,6 +66,33 @@ public sealed class MainLayoutTests : IDisposable
             .Add(c => c.Body, (Microsoft.AspNetCore.Components.RenderFragment)(_ => { })));
 
     [Fact]
+    public async Task Announcement_dismiss_button_has_contextual_accessible_name()
+    {
+        var cut = RenderLayout();
+        var announcementType = typeof(MainLayout).GetNestedType("Announcement", System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(announcementType);
+        var announcement = Activator.CreateInstance(
+            announcementType,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic,
+            binder: null,
+            args: ["maintenance", "Fictional maintenance notice", "info"],
+            culture: null);
+        Assert.NotNull(announcement);
+        var announcementsField = typeof(MainLayout).GetField("_announcements", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(announcementsField);
+        var announcements = announcementsField.GetValue(cut.Instance) as System.Collections.IList;
+        Assert.NotNull(announcements);
+
+        await cut.InvokeAsync(() =>
+        {
+            announcements.Add(announcement);
+            cut.Render();
+        });
+
+        cut.Find("button.announcement-dismiss[aria-label='Dismiss announcement: Fictional maintenance notice']");
+    }
+
+    [Fact]
     public void Renders_app_shell_container()
     {
         var cut = RenderLayout();
