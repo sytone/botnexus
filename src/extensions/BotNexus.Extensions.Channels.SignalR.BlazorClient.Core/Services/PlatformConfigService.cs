@@ -290,6 +290,72 @@ public sealed class PlatformConfigService
         }
     }
 
+    /// <summary>Lists file-backed secret metadata. Secret values are never returned.</summary>
+    public async Task<IReadOnlyList<SecretListItem>?> ListSecretsAsync()
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<List<SecretListItem>>("/api/secrets", s_jsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Creates or overwrites a file-backed secret with a complete new value.</summary>
+    public async Task<(bool Success, string? Error)> SetSecretAsync(string key, string value)
+    {
+        try
+        {
+            var response = await _http.PutAsJsonAsync(
+                $"/api/secrets/{Uri.EscapeDataString(key)}",
+                new SecretWriteRequest(value),
+                s_jsonOptions);
+            if (response.IsSuccessStatusCode)
+                return (true, null);
+
+            return (false, await ReadApiErrorAsync(response));
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>Deletes a file-backed secret.</summary>
+    public async Task<(bool Success, string? Error)> DeleteSecretAsync(string key)
+    {
+        try
+        {
+            var response = await _http.DeleteAsync($"/api/secrets/{Uri.EscapeDataString(key)}");
+            if (response.IsSuccessStatusCode)
+                return (true, null);
+
+            return (false, await ReadApiErrorAsync(response));
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    private static async Task<string> ReadApiErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            var payload = await response.Content.ReadFromJsonAsync<ApiError>(s_jsonOptions);
+            if (!string.IsNullOrWhiteSpace(payload?.Error))
+                return payload.Error;
+        }
+        catch
+        {
+            // Fall through to the bounded status message for non-JSON proxy responses.
+        }
+
+        return $"HTTP {(int)response.StatusCode}";
+    }
+
     /// <summary>Validate the config file.</summary>
     public async Task<ConfigValidationResult?> ValidateAsync()
     {
@@ -302,6 +368,12 @@ public sealed class PlatformConfigService
             return null;
         }
     }
+
+    /// <summary>Metadata for a file-backed secret. No member contains content-derived data.</summary>
+    public sealed record SecretListItem(string Key, DateTimeOffset CreatedUtc, DateTimeOffset ModifiedUtc, long SizeBytes);
+
+    private sealed record SecretWriteRequest(string Value);
+    private sealed record ApiError(string Error);
 
     /// <summary>A raw config document plus the revision it was read at (#2059).</summary>
     /// <param name="Revision">Compare-and-swap token to quote on the next save.</param>
