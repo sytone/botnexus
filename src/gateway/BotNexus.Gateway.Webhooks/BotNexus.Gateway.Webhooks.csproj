@@ -1,4 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Gateway.Webhooks.Tests" />
+  </ItemGroup>
   <PropertyGroup>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <RootNamespace>BotNexus.Gateway.Webhooks</RootNamespace>
