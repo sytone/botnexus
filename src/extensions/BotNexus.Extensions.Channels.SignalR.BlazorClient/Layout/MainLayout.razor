@@ -72,7 +72,7 @@
             {
                 <div class="announcement-item @ann.Type">
                     <span class="announcement-content">@ann.Text</span>
-                    <button class="announcement-dismiss" @onclick="() => DismissAnnouncement(ann.Id)"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button>
+                    <button class="announcement-dismiss" aria-label="@($"Dismiss announcement: {ann.Text}")" @onclick="() => DismissAnnouncement(ann.Id)"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button>
                 </div>
             }
         </div>
