@@ -23,6 +23,24 @@ public sealed class PromptVariantMajorVersionTests
     }
 
     [Theory]
+    [InlineData("gpt-5-broker/gpt-6-astra", "Zero")]
+    [InlineData("edge/gpt-5-broker/gpt-6.1-astra", "One")]
+    [InlineData("gpt-6-broker/gpt-5", "Five")]
+    [InlineData("edge/gpt-6-broker/gpt-5.1", "Family")]
+    public void ResolveDeclarations_QualifiedModelVersion_IgnoresVersionedBrokerPrefix(
+        string modelId,
+        string mostSpecificRung)
+    {
+        var registry = PromptVariantRegistry.FreezeTypes([typeof(BaseProbe), typeof(MajorProbe), typeof(ExactProbe)]);
+
+        var rungs = registry.ResolveDeclarations(Section, "gpt", modelId);
+
+        rungs[^1].Site.Split('.').Last().ShouldBe(mostSpecificRung);
+        if (mostSpecificRung is "Five" or "Family")
+            rungs.ShouldNotContain(rung => rung.MatchMajorVersion);
+    }
+
+    [Theory]
     [InlineData("gpt-5", "gpt")]
     [InlineData("gpt-5.6-sol", "gpt")]
     [InlineData("gpt-7", "gpt")]

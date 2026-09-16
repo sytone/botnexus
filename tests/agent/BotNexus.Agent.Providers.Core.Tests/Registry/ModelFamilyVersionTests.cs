@@ -27,6 +27,17 @@ public class ModelFamilyVersionTests
     }
 
     [Theory]
+    [InlineData("gpt-5-broker/gpt-6-astra", 6, 0)]
+    [InlineData("edge/gpt-5-broker/gpt-6.1-astra", 6, 1)]
+    [InlineData("gpt-6-broker/gpt-5", 5, 0)]
+    [InlineData("edge/gpt-6-broker/gpt-5.1", 5, 1)]
+    public void TryParse_QualifiedId_UsesTheFinalModelComponent(string modelId, int major, int minor)
+    {
+        Assert.True(ModelFamilyVersion.TryParse(modelId, "gpt", out var version));
+        Assert.Equal(new ModelVersion(major, minor), version);
+    }
+
+    [Theory]
     [InlineData("claude-sonnet-4.6")]
     [InlineData("gpt-5.2")]
     [InlineData("claude-opus")]
