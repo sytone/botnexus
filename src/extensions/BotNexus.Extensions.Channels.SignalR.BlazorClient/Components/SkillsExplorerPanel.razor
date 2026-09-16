@@ -81,6 +81,8 @@
     private readonly CancellationTokenSource _cts = new();
 
     private bool _isLoadingRoot = true;
+    private bool _rootLoadStarted;
+    private bool _disposed;
     private bool _isLoadingFile;
     private string? _rootError;
     private string? _selectedFilePath;
@@ -98,32 +100,66 @@
 
     protected override async Task OnInitializedAsync()
     {
-        // The REST client only learns its base URL when PortalLoadService runs Configure(), so a
-        // load fired before the portal is ready throws from EnsureConfigured and is swallowed by
-        // the catch below as "Unable to load skills directory" - a message that blames the skills
-        // folder for a startup race. /skills is a top-level route, so it is reachable by direct
-        // navigation or refresh, which is exactly when that race is lost. It was also one-shot:
-        // nothing retried once the portal did come up, so the error stayed on screen for good.
-        if (PortalLoad.IsReady)
+        // Skills needs only the independently configured REST client, not successful completion of
+        // chat history, SignalR connection, or subscriptions. PortalLoad configures REST first, so
+        // a later startup failure must not strand this panel behind whole-portal IsReady.
+        if (TryBeginRootLoad())
         {
             await LoadRootAsync();
             return;
         }
 
+        if (TryFinishUnconfiguredFailure())
+            return;
+
         PortalLoad.OnReadyChanged += HandlePortalReady;
+
+        // Close the race between the checks above and event subscription.
+        if (TryBeginRootLoad())
+        {
+            await LoadRootAsync();
+            return;
+        }
+
+        _ = TryFinishUnconfiguredFailure();
     }
 
     private void HandlePortalReady()
     {
-        if (!PortalLoad.IsReady)
+        if (TryBeginRootLoad())
+        {
+            _ = InvokeAsync(async () =>
+            {
+                await LoadRootAsync();
+                if (!_disposed)
+                    StateHasChanged();
+            });
             return;
+        }
+
+        if (TryFinishUnconfiguredFailure())
+            _ = InvokeAsync(StateHasChanged);
+    }
+
+    private bool TryBeginRootLoad()
+    {
+        if (_disposed || _rootLoadStarted || string.IsNullOrWhiteSpace(GatewayRestClient.ApiBaseUrl))
+            return false;
+
+        _rootLoadStarted = true;
+        PortalLoad.OnReadyChanged -= HandlePortalReady;
+        return true;
+    }
+
+    private bool TryFinishUnconfiguredFailure()
+    {
+        if (_disposed || PortalLoad.IsLoading || string.IsNullOrWhiteSpace(PortalLoad.LoadError))
+            return false;
 
         PortalLoad.OnReadyChanged -= HandlePortalReady;
-        _ = InvokeAsync(async () =>
-        {
-            await LoadRootAsync();
-            StateHasChanged();
-        });
+        _isLoadingRoot = false;
+        _rootError = "Unable to load skills because the portal REST client is not configured.";
+        return true;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -136,6 +172,7 @@
 
     public void Dispose()
     {
+        _disposed = true;
         PortalLoad.OnReadyChanged -= HandlePortalReady;
         _cts.Cancel();
         _cts.Dispose();
