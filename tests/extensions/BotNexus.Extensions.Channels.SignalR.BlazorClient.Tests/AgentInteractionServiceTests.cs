@@ -21,6 +21,21 @@ public sealed class AgentInteractionServiceTests
     }
 
     [Fact]
+    public async Task RefreshAgentsAsync_copies_summary_on_add_and_update()
+    {
+        _restClient.GetAgentsAsync(Arg.Any<CancellationToken>()).Returns(
+        [
+            new AgentSummary("agent-1", "Agent 1", Summary: "Updated summary"),
+            new AgentSummary("agent-2", "Agent 2", Summary: "Added summary")
+        ]);
+
+        await _service.RefreshAgentsAsync();
+
+        _store.GetAgent("agent-1")?.Summary.ShouldBe("Updated summary");
+        _store.GetAgent("agent-2")?.Summary.ShouldBe("Added summary");
+    }
+
+    [Fact]
     public async Task CreateConversationAsync_adds_conversation_and_selects_it()
     {
         _restClient.CreateConversationAsync(Arg.Any<CreateConversationRequestDto>(), Arg.Any<CancellationToken>())

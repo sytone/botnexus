@@ -754,6 +754,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
                         DisplayName = agent.DisplayName,
                         Emoji = agent.Emoji,
                         Description = agent.Description,
+                        Summary = agent.Summary,
                         IsBuiltIn = agent.IsBuiltIn,
                         IsConnected = true
                     });
@@ -762,6 +763,9 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 {
                     existing.DisplayName = agent.DisplayName;
                     existing.Emoji = agent.Emoji;
+                    existing.Description = agent.Description;
+                    existing.Summary = agent.Summary;
+                    existing.IsBuiltIn = agent.IsBuiltIn;
                 }
             }
 

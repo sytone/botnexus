@@ -497,13 +497,20 @@
     private static string DisplayTitle(ActivityRow row) =>
         ConversationLabel.DisplayTitle(row.Title, row.ConversationId, row.OwningAgentId);
 
-    /// <summary>Resolve an agent id to its display name via the store, falling back to a title-cased id.</summary>
+    /// <summary>
+    /// Resolve an agent id to the same normalized emoji/name label used by the portal shell.
+    /// Unknown agents keep their bare id and blank emoji never contributes spacing or a placeholder.
+    /// </summary>
     private string AgentLabel(string agentId)
     {
         var agent = Store.GetAgent(agentId);
-        if (agent is { DisplayName.Length: > 0 })
-            return agent.DisplayName;
-        return agentId;
+        if (agent is not { DisplayName.Length: > 0 })
+            return agentId;
+
+        return PortalText.SingleLine(
+            string.IsNullOrWhiteSpace(agent.Emoji)
+                ? agent.DisplayName
+                : $"{agent.Emoji} {agent.DisplayName}");
     }
 
     /// <summary>

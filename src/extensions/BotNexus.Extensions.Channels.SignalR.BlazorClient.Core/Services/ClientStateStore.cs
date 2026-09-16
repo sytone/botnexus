@@ -144,6 +144,7 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
                     DisplayName = a.DisplayName,
                     Emoji = a.Emoji,
                     Description = a.Description,
+                    Summary = a.Summary,
                     IsBuiltIn = a.IsBuiltIn,
                     IsConnected = true
                 };
@@ -153,6 +154,7 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
                 existing.DisplayName = a.DisplayName;
                 existing.Emoji = a.Emoji;
                 existing.Description = a.Description;
+                existing.Summary = a.Summary;
                 existing.IsBuiltIn = a.IsBuiltIn;
             }
         }
@@ -174,6 +176,7 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
             existing.DisplayName = agent.DisplayName;
             existing.Emoji = agent.Emoji;
             existing.Description = agent.Description;
+            existing.Summary = agent.Summary;
             existing.IsConnected = agent.IsConnected;
         }
         else
