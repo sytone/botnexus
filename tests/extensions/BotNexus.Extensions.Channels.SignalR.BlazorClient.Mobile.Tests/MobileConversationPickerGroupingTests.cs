@@ -138,7 +138,7 @@ public sealed class MobileConversationPickerGroupingTests : IDisposable
         // Pinned option is the first option in the whole picker.
         var options = cut.Find("select.conv-select").QuerySelectorAll("option")
             .Select(o => o.TextContent.Trim()).ToList();
-        Assert.Equal(["Pinned One", "Normal", "Nightly"], options);
+        Assert.Equal(["Pinned One", "Normal", "Cron · Nightly"], options);
     }
 
     [Fact]
@@ -155,6 +155,46 @@ public sealed class MobileConversationPickerGroupingTests : IDisposable
         var group = Assert.Single(select.QuerySelectorAll("optgroup"));
         Assert.Equal(PortalConversationGrouping.ConversationsLabel, group.GetAttribute("label"));
         Assert.Equal(2, select.QuerySelectorAll("option").Length);
+    }
+
+    [Fact]
+    public void Mobile_picker_renders_projection_badge_and_normalized_derived_title()
+    {
+        var agent = Agent();
+        const string routingToken = "servicebus:abcdefghijklmnopqrstuvwxyz0123456789";
+        Add(agent, Conv("cron", source: ConversationSource.Cron, title: "Nightly"));
+        Add(agent, Conv("opaque", title: routingToken));
+        Add(agent, Conv("multiline", title: "First\n\tSecond"));
+        BuildStore([agent], "quill");
+
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "quill"));
+        var options = cut.Find("select.conv-select").QuerySelectorAll("option")
+            .ToDictionary(option => option.GetAttribute("value")!, option => option.TextContent.Trim());
+
+        Assert.Equal("Cron · Nightly", options["cron"]);
+        Assert.Equal(ConversationLabel.DisplayTitle(routingToken, "opaque", "quill"), options["opaque"]);
+        Assert.Equal("First Second", options["multiline"]);
+        Assert.DoesNotContain(routingToken, cut.Markup);
+        Assert.DoesNotContain('\n', options["multiline"]);
+    }
+
+    [Theory]
+    [InlineData(false, ConversationKind.HumanAgent, ConversationSource.Channel, true)]
+    [InlineData(false, ConversationKind.AgentSubAgent, ConversationSource.Agent, false)]
+    [InlineData(true, ConversationKind.HumanAgent, ConversationSource.Channel, false)]
+    public void Mobile_composer_follows_agent_and_conversation_read_only_projection(
+        bool observerAgent,
+        ConversationKind kind,
+        ConversationSource source,
+        bool expectedComposer)
+    {
+        var agent = Agent(observerAgent);
+        Add(agent, Conv("normal", kind: kind, source: source));
+        BuildStore([agent], "quill");
+
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "quill"));
+
+        Assert.Equal(expectedComposer, cut.FindAll(".bottom-bar").Count == 1);
     }
 
     // ---- Mobile rendering (sad paths) ----
@@ -207,11 +247,12 @@ public sealed class MobileConversationPickerGroupingTests : IDisposable
 
     // ---- Helpers ----
 
-    private static AgentState Agent() => new()
+    private static AgentState Agent(bool isObserverAgent = false) => new()
     {
         AgentId = "quill",
         DisplayName = "Quill",
         IsConnected = true,
+        IsObserverAgent = isObserverAgent,
         ActiveConversationId = "normal"
     };
 
@@ -223,6 +264,7 @@ public sealed class MobileConversationPickerGroupingTests : IDisposable
         bool isPinned = false,
         bool isDefault = false,
         ConversationSource source = ConversationSource.Channel,
+        ConversationKind kind = ConversationKind.HumanAgent,
         DateTimeOffset? updated = null,
         string? title = null,
         string status = "Active")
@@ -232,6 +274,7 @@ public sealed class MobileConversationPickerGroupingTests : IDisposable
             IsPinned = isPinned,
             IsDefault = isDefault,
             Source = source,
+            Kind = kind,
             UpdatedAt = updated ?? DateTimeOffset.UtcNow,
             Status = status,
             Title = title ?? id
