@@ -44,6 +44,7 @@
             }
 
             <button class="banner-usage-btn"
+                    @ref="_usageBtnRef"
                     @onclick="OpenUsage"
                     title="Provider usage and rate limits"
                     aria-label="Provider usage and rate limits"
@@ -227,6 +228,7 @@
     private List<ToolDto> _tools = [];
     private PortalSettingsPanel? _settingsPanel;
     private ProviderUsagePanel? _usagePanel;
+    private ElementReference _usageBtnRef;
     private bool _showDebugPanel = false;
     private bool _sidebarOpen = false;
     private bool _isMobile = false;
@@ -1469,7 +1471,7 @@
     private void OpenSettings() => _settingsPanel?.Open();
 
     /// <summary>Opens the provider usage popover, which begins polling while it is visible.</summary>
-    private Task OpenUsage() => _usagePanel?.OpenAsync() ?? Task.CompletedTask;
+    private Task OpenUsage() => _usagePanel?.OpenAsync(_usageBtnRef) ?? Task.CompletedTask;
 
     private void ShowUpdateConfirm() => _showUpdateConfirm = true;
     private void CancelUpdate() => _showUpdateConfirm = false;
