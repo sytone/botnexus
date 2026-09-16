@@ -157,7 +157,7 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<EmbeddingProviderRegistry>();
         services.TryAddSingleton<IMemoryStoreFactory>(serviceProvider =>
         {
-            var home = serviceProvider.GetRequiredService<BotNexusHome>();
+            var workspaceManager = serviceProvider.GetRequiredService<IAgentWorkspaceManager>();
             var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
             // #2855: built here rather than inside BotNexus.Memory so that project keeps its
             // zero dependency on the provider stack. An absent or disabled section yields
@@ -168,8 +168,11 @@ public static class GatewayServiceCollectionExtensions
                 serviceProvider.GetService<ILoggerFactory>());
             return new EmbeddingAwareMemoryStoreFactory(agentId =>
             {
-                var agentDirectory = home.GetAgentDirectory(agentId);
-                return Path.Combine(agentDirectory, "data", "memory.sqlite");
+                var agentDirectory = workspaceManager is FileAgentWorkspaceManager fileWorkspaces
+                    ? fileWorkspaces.GetAgentRootPath(agentId)
+                    : fileSystem.Path.GetDirectoryName(workspaceManager.GetWorkspacePath(agentId))
+                        ?? throw new InvalidOperationException($"Agent '{agentId}' workspace has no parent directory.");
+                return fileSystem.Path.Combine(agentDirectory, "data", "memory.sqlite");
             }, embeddings, fileSystem);
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
