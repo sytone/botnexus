@@ -34,11 +34,22 @@ public sealed class BackgroundProcessInteropTests : IDisposable
         return json.RootElement.GetProperty("pid").GetInt32();
     }
 
-    private async Task<string> Call(string action, int pid, CancellationToken token = default, int wait = 0)
+    private async Task<string> Call(
+        string action,
+        int pid,
+        CancellationToken token = default,
+        int wait = 0,
+        string? content = null)
     {
         var tool = (await new ProcessToolContributor().ContributeAsync(Context())).Tools.ShouldHaveSingleItem();
         var result = await tool.ExecuteAsync("manage", new Dictionary<string, object?>
-        { ["action"] = action, ["pid"] = pid, ["timeoutMs"] = wait, ["tail"] = 0 }, token);
+        {
+            ["action"] = action,
+            ["pid"] = pid,
+            ["timeoutMs"] = wait,
+            ["tail"] = 0,
+            ["content"] = content,
+        }, token);
         return result.Content[0].Value;
     }
 
@@ -51,7 +62,7 @@ public sealed class BackgroundProcessInteropTests : IDisposable
         // Initial stdin blocks the final markers until all large output has been drained. Await the
         // producer's input boundary by using a finite initial payload in a second phase is unnecessary:
         // total output fits the pipe only after drains have started, and the child cannot exit first.
-        child.WriteInput("continue\n");
+        await child.WriteInputAsync("continue\n");
         (await Call("status", pid, wait: 30_000)).ShouldContain("Status: exited");
         var output = await Call("output", pid);
         output.ShouldContain("output truncated:");
@@ -91,6 +102,29 @@ public sealed class BackgroundProcessInteropTests : IDisposable
         await Should.ThrowAsync<OperationCanceledException>(() => pending);
         (await Call("status", pid)).ShouldContain("Status: running");
         (await Call("kill", pid)).ShouldContain("terminated");
+    }
+
+    [Fact]
+    public async Task CancelBlockedInput_PropagatesWithoutLosingProcessManagement()
+    {
+        var pid = await Launch("[Console]::WriteLine('ready'); Start-Sleep -Seconds 120");
+        try
+        {
+            using var write = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+            var payload = new string('x', 8 * 1024 * 1024);
+
+            Func<Task> send = async () =>
+                _ = await Call("input", pid, write.Token, content: payload)
+                    .WaitAsync(TimeSpan.FromSeconds(10));
+
+            await Should.ThrowAsync<OperationCanceledException>(send);
+            (await Call("status", pid)).ShouldContain("Status: running");
+        }
+        finally
+        {
+            (await Call("kill", pid)).ShouldContain("terminated");
+            (await Call("status", pid, wait: 30_000)).ShouldContain("Status: exited");
+        }
     }
 
     [Fact]

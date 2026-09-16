@@ -88,6 +88,22 @@ public class SimpleOptionsHelperTests
     }
 
     [Fact]
+    public void BuildBaseOptions_PreservesStreamTimeouts()
+    {
+        var result = SimpleOptionsHelper.BuildBaseOptions(
+            MakeModel(),
+            new SimpleStreamOptions
+            {
+                StreamSetupTimeoutMs = 12_000,
+                StreamIdleTimeoutMs = 34_000
+            },
+            "key");
+
+        result.StreamSetupTimeoutMs.ShouldBe(12_000);
+        result.StreamIdleTimeoutMs.ShouldBe(34_000);
+    }
+
+    [Fact]
     public void ClampReasoning_ConvertsExtraHigh_ToHigh()
     {
         var result = SimpleOptionsHelper.ClampReasoning(ThinkingLevel.ExtraHigh);

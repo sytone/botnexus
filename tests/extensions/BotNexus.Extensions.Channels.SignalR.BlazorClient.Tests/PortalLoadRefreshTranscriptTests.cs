@@ -222,6 +222,102 @@ public sealed class PortalLoadRefreshTranscriptTests
     }
 
     [Fact]
+    public async Task RefreshAsync_PreviouslyEmptyExhaustedConversation_ReopensPagingAndLoadsMissingPrefixOnce()
+    {
+        ArrangeRoster("conv-1");
+        await InitializeAsync("conv-1");
+
+        var conversation = _store.GetConversation("conv-1")!;
+        conversation.LoadedHistoryRows.ShouldBe(0);
+        conversation.HasMoreHistory.ShouldBeFalse();
+
+        var newestPage = Enumerable.Range(5, 20)
+            .Select(i => Entry($"msg-{i}", i, entryId: $"s-1#{i}"))
+            .ToList();
+        _restClient.GetHistoryAsync("conv-1", 20, 0, Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("conv-1", 25, 0, 20, newestPage));
+
+        await _service.RefreshAsync();
+
+        conversation.LoadedHistoryRows.ShouldBe(20);
+        conversation.HasMoreHistory.ShouldBeTrue();
+
+        var olderPage = Enumerable.Range(0, 5)
+            .Select(i => Entry($"msg-{i}", i, entryId: $"s-1#{i}"))
+            .ToList();
+        _restClient.GetHistoryAsync("conv-1", 20, 20, Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("conv-1", 25, 20, 20, olderPage));
+
+        var interaction = new AgentInteractionService(
+            _store,
+            _hub,
+            _restClient,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentInteractionService>.Instance);
+        (await interaction.LoadMoreHistoryAsync("agent-1", "conv-1")).ShouldBe(5);
+
+        await _restClient.Received(1).GetHistoryAsync("conv-1", 20, 20, Arg.Any<CancellationToken>());
+        conversation.Messages.Select(message => message.Content)
+            .ShouldBe(Enumerable.Range(0, 25).Select(i => $"msg-{i}"));
+        conversation.Messages.Select(message => message.ServerEntryId).Distinct().Count().ShouldBe(25);
+        conversation.LoadedHistoryRows.ShouldBe(25);
+        conversation.HasMoreHistory.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task RefreshAsync_RepeatedPageWithNoInsertions_StillReconcilesPagingMetadata()
+    {
+        ArrangeRoster("conv-1");
+        var newestPage = Enumerable.Range(5, 20)
+            .Select(i => Entry($"msg-{i}", i, entryId: $"s-1#{i}"))
+            .ToList();
+        _restClient.GetHistoryAsync("conv-1", 20, 0, Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("conv-1", 20, 0, 20, newestPage));
+
+        await _service.InitializeAsync("http://localhost:5000/hub/gateway");
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _restClient.ClearReceivedCalls();
+
+        var conversation = _store.GetConversation("conv-1")!;
+        conversation.LoadedHistoryRows.ShouldBe(20);
+        conversation.HasMoreHistory.ShouldBeFalse();
+
+        _restClient.GetHistoryAsync("conv-1", 20, 0, Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("conv-1", 25, 0, 20, newestPage));
+
+        await _service.RefreshAsync();
+
+        conversation.Messages.Count.ShouldBe(20);
+        conversation.LoadedHistoryRows.ShouldBe(20);
+        conversation.HasMoreHistory.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task RefreshAsync_PreviouslyNonemptyExhaustedConversation_PreservesContiguousPagingOffset()
+    {
+        ArrangeRoster("conv-1");
+        _restClient.GetHistoryAsync("conv-1", 20, 0, Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("conv-1", 1, 0, 20,
+                [Entry("msg-24", 24, entryId: "s-1#24")]));
+
+        await _service.InitializeAsync("http://localhost:5000/hub/gateway");
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _restClient.ClearReceivedCalls();
+
+        var newestPage = Enumerable.Range(5, 20)
+            .Select(i => Entry($"msg-{i}", i, entryId: $"s-1#{i}"))
+            .ToList();
+        _restClient.GetHistoryAsync("conv-1", 20, 0, Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("conv-1", 25, 0, 20, newestPage));
+
+        await _service.RefreshAsync();
+
+        var conversation = _store.GetConversation("conv-1")!;
+        conversation.Messages.Count.ShouldBe(20);
+        conversation.LoadedHistoryRows.ShouldBe(20);
+        conversation.HasMoreHistory.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task RefreshAsync_CompactionProjection_RemainsOneFoldedCompactionRow()
     {
         ArrangeRoster("conv-1");

@@ -21,6 +21,21 @@ public sealed class AgentInteractionServiceTests
     }
 
     [Fact]
+    public async Task RefreshAgentsAsync_copies_summary_on_add_and_update()
+    {
+        _restClient.GetAgentsAsync(Arg.Any<CancellationToken>()).Returns(
+        [
+            new AgentSummary("agent-1", "Agent 1", Summary: "Updated summary"),
+            new AgentSummary("agent-2", "Agent 2", Summary: "Added summary")
+        ]);
+
+        await _service.RefreshAgentsAsync();
+
+        _store.GetAgent("agent-1")?.Summary.ShouldBe("Updated summary");
+        _store.GetAgent("agent-2")?.Summary.ShouldBe("Added summary");
+    }
+
+    [Fact]
     public async Task CreateConversationAsync_adds_conversation_and_selects_it()
     {
         _restClient.CreateConversationAsync(Arg.Any<CreateConversationRequestDto>(), Arg.Any<CancellationToken>())
@@ -360,7 +375,8 @@ public sealed class AgentInteractionServiceTests
         {
             SubAgentId = "sub-1",
             Name = "Scout",
-            Task = "Inspect repository"
+            Task = "Inspect repository",
+            Status = "Failed"
         });
 
         await _restClient.Received(1).GetSessionHistoryAsync("sub-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
@@ -369,6 +385,7 @@ public sealed class AgentInteractionServiceTests
         var subAgent = _store.GetAgent("sub-1");
         Assert.NotNull(subAgent);
         Assert.Equal("agent-subagent", subAgent.SessionType);
+        Assert.Equal(SubAgentObserverStatus.Failed, subAgent.ObserverStatus);
         Assert.Equal("subagent-session:sub-1", subAgent.ActiveConversationId);
 
         var conversation = subAgent.Conversations["subagent-session:sub-1"];

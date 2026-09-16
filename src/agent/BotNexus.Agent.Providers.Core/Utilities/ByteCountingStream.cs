@@ -47,6 +47,7 @@ public sealed class ByteCountingStream : Stream
     private readonly bool _leaveOpen;
     private readonly long _maxTotalBytes;
     private readonly long _maxFrameBytes;
+    private readonly TimeSpan _idleTimeout;
     private long _totalBytesRead;
     private long _bytesSinceNewline;
 
@@ -66,7 +67,17 @@ public sealed class ByteCountingStream : Stream
     /// When <c>true</c>, disposing this wrapper does not dispose <paramref name="inner"/>. Defaults
     /// to <c>true</c> because the caller typically owns the response-content stream lifetime.
     /// </param>
-    public ByteCountingStream(Stream inner, long maxTotalBytes, long maxFrameBytes, bool leaveOpen = true)
+    /// <param name="idleTimeout">
+    /// Maximum idle interval for each asynchronous read. Null uses
+    /// <see cref="BoundedHttpContent.DefaultIdleChunkTimeout"/>; use
+    /// <see cref="Timeout.InfiniteTimeSpan"/> to disable the deadline.
+    /// </param>
+    public ByteCountingStream(
+        Stream inner,
+        long maxTotalBytes,
+        long maxFrameBytes,
+        bool leaveOpen = true,
+        TimeSpan? idleTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(inner);
         if (!inner.CanRead)
@@ -80,6 +91,7 @@ public sealed class ByteCountingStream : Stream
         _maxTotalBytes = maxTotalBytes;
         _maxFrameBytes = maxFrameBytes;
         _leaveOpen = leaveOpen;
+        _idleTimeout = ResolveIdleTimeout(idleTimeout);
     }
 
     /// <inheritdoc />
@@ -102,20 +114,46 @@ public sealed class ByteCountingStream : Stream
 
     /// <inheritdoc />
     public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-    {
-        var read = await _inner.ReadAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
-        if (read > 0)
-            Account(buffer.AsSpan(offset, read));
-        return read;
-    }
+        => await ReadAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc />
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        if (_idleTimeout == Timeout.InfiniteTimeSpan)
+            return await ReadAndAccountAsync(buffer, cancellationToken).ConfigureAwait(false);
+
+        using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        idleCts.CancelAfter(_idleTimeout);
+        try
+        {
+            return await ReadAndAccountAsync(buffer, idleCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (idleCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new ResponseBodyStalledException(_idleTimeout, _totalBytesRead);
+        }
+    }
+
+    private async ValueTask<int> ReadAndAccountAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
         var read = await _inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         if (read > 0)
             Account(buffer.Span[..read]);
         return read;
+    }
+
+    private static TimeSpan ResolveIdleTimeout(TimeSpan? idleTimeout)
+    {
+        var resolved = idleTimeout ?? BoundedHttpContent.DefaultIdleChunkTimeout;
+        if (resolved != Timeout.InfiniteTimeSpan && resolved <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(idleTimeout),
+                idleTimeout,
+                "Idle timeout must be positive or Timeout.InfiniteTimeSpan.");
+        }
+
+        return resolved;
     }
 
     /// <inheritdoc />

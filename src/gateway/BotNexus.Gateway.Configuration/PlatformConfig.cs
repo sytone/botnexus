@@ -85,6 +85,15 @@ public sealed class PlatformConfig : IValidatableObject
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 7)]
     public Dictionary<string, ProviderConfig>? Providers { get; set; }
 
+    /// <summary>Extension source repositories keyed by their stable registration ID.</summary>
+    [Display(
+        Name = "Extension repositories",
+        Description = "Source repositories registered for extension discovery and updates.",
+        GroupName = "General",
+        Order = 8)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 8)]
+    public Dictionary<string, ExtensionRepositoryRegistration>? ExtensionRepositories { get; set; }
+
     /// <summary>Channel settings keyed by channel name.</summary>
     [Display(
         Name = "Channels",
@@ -196,6 +205,48 @@ public sealed class PlatformConfig : IValidatableObject
 
 }
 
+/// <summary>Persisted registration of a repository that can supply BotNexus extensions.</summary>
+public sealed class ExtensionRepositoryRegistration
+{
+    /// <summary>Absolute HTTP, HTTPS, or SSH repository URL.</summary>
+    [Display(
+        Name = "Repository URL",
+        Description = "Absolute HTTP, HTTPS, or SSH URL of the repository that supplies the extension.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 0)]
+    public string RepositoryUrl { get; set; } = string.Empty;
+
+    /// <summary>Branch, tag, or commit requested when the repository is later materialized.</summary>
+    [Display(
+        Name = "Requested ref",
+        Description = "Branch, tag, or commit to resolve when this repository is reconciled.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 1)]
+    public string RequestedRef { get; set; } = string.Empty;
+
+    /// <summary>Whether extensions from this repository are eligible for use.</summary>
+    [Display(
+        Name = "Enabled",
+        Description = "Whether this repository is eligible for later extension reconciliation.")]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "extension-repository", Order = 2)]
+    [DefaultValue(true)]
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Whether later repository update workflows may refresh this registration.</summary>
+    [Display(
+        Name = "Updates enabled",
+        Description = "Whether later reconciliation may refresh this repository to its requested ref.")]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "extension-repository", Order = 3)]
+    [DefaultValue(true)]
+    public bool UpdatesEnabled { get; set; } = true;
+}
+
+/// <summary>Read model for an extension repository registration and its dictionary key.</summary>
+public sealed record ExtensionRepositoryRegistrationInfo(
+    string Id,
+    string RepositoryUrl,
+    string RequestedRef,
+    bool Enabled,
+    bool UpdatesEnabled);
+
 /// <summary>Provider-specific configuration.</summary>
 public sealed class ProviderConfig
 {
@@ -226,6 +277,19 @@ public sealed class ProviderConfig
         Order = 2)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider", Order = 2)]
     public string? BaseUrl { get; set; }
+
+    /// <summary>
+    /// Maximum idle interval between streaming response chunks, in milliseconds. Null uses the
+    /// platform default of 30000; zero disables the deadline.
+    /// </summary>
+    [Display(
+        Name = "Stream idle timeout",
+        Description = "Maximum milliseconds between streaming response chunks. Leave empty for 30000; set 0 to disable.",
+        GroupName = "Provider",
+        Order = 3)]
+    [Range(0, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "provider", Order = 3)]
+    public int? StreamIdleTimeoutMs { get; set; }
 
     /// <summary>Default model for this provider.</summary>
     [Display(

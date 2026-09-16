@@ -13,6 +13,8 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
 /// </summary>
 public partial class Configuration : IDisposable
 {
+    private const string SecretsSectionKey = "secrets";
+
     /// <summary>
     /// Config section from the route (e.g. <c>/configuration/providers</c>). Selects which root
     /// section the sidebar highlights and which subtree <c>SchemaForm</c> renders (#1892). Null or
@@ -34,13 +36,17 @@ public partial class Configuration : IDisposable
             var props = _schema?["schema"]?["properties"]?.AsObject();
             if (props is null)
                 return [];
-            return props
+            var schemaSections = props
                 .Where(kv => kv.Value is JsonObject && !PlatformConfigFormModel.NonPersistedSections.Contains(kv.Key))
                 .Select(kv => (kv.Key, Node: kv.Value!.AsObject()))
                 .OrderBy(x => x.Node["x-ui-order"]?.GetValue<int>() ?? int.MaxValue)
                 .ThenBy(x => x.Key, StringComparer.Ordinal)
-                .Select(x => (x.Key, Label: x.Node["x-ui-label"]?.GetValue<string>() ?? x.Key))
-                .ToList();
+                .Select(x => (x.Key, Label: x.Node["x-ui-label"]?.GetValue<string>() ?? x.Key));
+
+            // File-backed secrets are deliberately outside the platform config schema and save
+            // payload. Register the operator surface explicitly rather than inventing a schema
+            // property that would couple it to config persistence and revisioning (#3664).
+            return schemaSections.Append((SecretsSectionKey, "Secrets")).ToList();
         }
     }
 
@@ -62,10 +68,12 @@ public partial class Configuration : IDisposable
         }
     }
 
-    private void SelectSection(string key)
+    private async Task SelectSection(string key)
     {
         Section = key;
         Nav.NavigateTo($"/configuration/{key}");
+        if (string.Equals(key, SecretsSectionKey, StringComparison.OrdinalIgnoreCase))
+            await LoadSecrets();
     }
 
     private PlatformConfigFormModel? _form;
@@ -78,6 +86,12 @@ public partial class Configuration : IDisposable
     private string? _statusMessage;
     private string _statusClass = "";
     private PlatformConfigService.ConfigValidationResult? _validationResult;
+    private IReadOnlyList<PlatformConfigService.SecretListItem>? _secrets;
+    private string _secretKey = string.Empty;
+    private string _secretValue = string.Empty;
+    private bool _secretsLoading;
+    private bool _secretMutationPending;
+    private string? _secretsError;
     private System.Timers.Timer? _statusTimer;
 
     protected override async Task OnInitializedAsync()
@@ -95,7 +109,55 @@ public partial class Configuration : IDisposable
             SetStatus("Failed to load", "error");
         else
             SetStatus("Loaded", "success", autoHide: true);
+        if (string.Equals(ActiveSection, SecretsSectionKey, StringComparison.OrdinalIgnoreCase))
+            await LoadSecrets();
         StateHasChanged();
+    }
+
+    private async Task LoadSecrets()
+    {
+        _secretsLoading = true;
+        _secretsError = null;
+        StateHasChanged();
+        _secrets = await ConfigService.ListSecretsAsync();
+        _secretsLoading = false;
+        if (_secrets is null)
+            _secretsError = "Failed to load secrets.";
+        StateHasChanged();
+    }
+
+    private async Task SaveSecret()
+    {
+        _secretMutationPending = true;
+        _secretsError = null;
+        var result = await ConfigService.SetSecretAsync(_secretKey, _secretValue);
+        _secretMutationPending = false;
+        if (!result.Success)
+        {
+            _secretsError = result.Error ?? "Failed to save secret.";
+            StateHasChanged();
+            return;
+        }
+
+        _secretKey = string.Empty;
+        _secretValue = string.Empty;
+        await LoadSecrets();
+    }
+
+    private async Task DeleteSecret(string key)
+    {
+        _secretMutationPending = true;
+        _secretsError = null;
+        var result = await ConfigService.DeleteSecretAsync(key);
+        _secretMutationPending = false;
+        if (!result.Success)
+        {
+            _secretsError = result.Error ?? "Failed to delete secret.";
+            StateHasChanged();
+            return;
+        }
+
+        await LoadSecrets();
     }
 
     private void OnConfigChanged(JsonObject updated)

@@ -82,7 +82,7 @@ public sealed class CronTool(
 
     public Tool Definition => new(
         Name,
-        "Manage scheduled cron jobs. Create, list, update, delete, and run cron jobs. A job is either an 'agent-prompt' job (the default - costs a model turn on every fire, requires 'message' or 'templateName') or a 'command' job (runs 'shellCommand' directly and costs no tokens, requires 'shellCommand').",
+        "Manage scheduled cron jobs. Create, list, update, delete, and run cron jobs. The 'run' action accepts execution asynchronously and returns a runId immediately; use 'history' to poll for completion. A job is either an 'agent-prompt' job (the default - costs a model turn on every fire, requires 'message' or 'templateName') or a 'command' job (runs 'shellCommand' directly and costs no tokens, requires 'shellCommand').",
         JsonDocument.Parse("""
             {
               "type": "object",
@@ -507,8 +507,15 @@ public sealed class CronTool(
             ?? throw new KeyNotFoundException($"Cron job '{jobId.Value}' was not found.");
 
         EnsureCanManage(existing);
-        var run = await scheduler.RunNowAsync(jobId, cancellationToken).ConfigureAwait(false);
-        return TextResult(JsonSerializer.Serialize(run, JsonOptions));
+        var run = await scheduler.AcceptRunNowAsync(jobId, cancellationToken).ConfigureAwait(false);
+        return TextResult(JsonSerializer.Serialize(new
+        {
+            runId = run.Id.Value,
+            jobId = run.JobId.Value,
+            status = "accepted",
+            startedAt = run.StartedAt,
+            pollWith = "cron history"
+        }, JsonOptions));
     }
 
     private async Task<AgentToolResult> HistoryAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)

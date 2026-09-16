@@ -289,12 +289,18 @@ public sealed class PortalLoadService : IPortalLoadService
 
             var serverPage = ToChatMessages(entries);
             var inserted = conversation.ReconcileMessages(snapshot, serverPage);
-            if (inserted == 0)
-                return;
 
             // Repaired rows are real history rows, so the backwards-paging offset must advance by
             // exactly the number inserted or the next scroll-up would re-fetch a page it already has.
             conversation.LoadedHistoryRows += inserted;
+
+            // Refresh is also an authoritative paging-metadata read. In particular, an exhausted
+            // conversation must become pageable again when the server total grows, even when this
+            // page inserts nothing because a preceding refresh already reconciled its rows (#3954).
+            conversation.HasMoreHistory = AgentInteractionService.HasMoreHistory(
+                conversation.LoadedHistoryRows,
+                history.TotalCount,
+                entries.Count);
         }
         catch (Exception ex)
         {

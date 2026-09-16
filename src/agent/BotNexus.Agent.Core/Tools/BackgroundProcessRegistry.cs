@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Text;
 
 namespace BotNexus.Agent.Core.Tools;
@@ -115,6 +114,7 @@ public class BackgroundProcess : IDisposable
     private readonly BackgroundOutputBuffer _output = new();
     private readonly Task _completion;
     private readonly object _lifecycle = new();
+    private readonly SemaphoreSlim _inputGate = new(1, 1);
     private volatile bool _disposed;
     private int? _exitCode;
 
@@ -210,13 +210,24 @@ public class BackgroundProcess : IDisposable
         }
     }
 
-    /// <summary>Writes interactive input only to the retained child handle, never a PID reattachment.</summary>
-    public void WriteInput(string content)
+    /// <summary>Writes serialized interactive input to the retained child handle, never a PID reattachment.</summary>
+    public async Task WriteInputAsync(string content, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!IsRunning) throw new InvalidOperationException($"Process {Pid} has already exited.");
-        _process.StandardInput.Write(content);
-        _process.StandardInput.Flush();
+
+        await _inputGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!IsRunning) throw new InvalidOperationException($"Process {Pid} has already exited.");
+            await _process.StandardInput.WriteAsync(content.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await _process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _inputGate.Release();
+        }
     }
 
     /// <summary>Supplied launch input is finite: write it while output drains, then signal EOF.</summary>
@@ -297,30 +308,61 @@ public class BackgroundOutputBuffer
     /// <summary>Appends bounded reader chunks without requiring a newline.</summary>
     public void AppendChunk(string value)
     {
+        if (value.Length == 0) return;
+
+        var previousLength = _buffer.Length;
+        var addedBytes = Encoding.UTF8.GetByteCount(value);
         _buffer.Append(value);
-        var text = _buffer.ToString();
-        // Count the concatenated bounded payload so the encoding owns split-scalar accounting.
-        // Production appends at most 4096 characters; no independent surrogate policy is needed.
-        RetainedBytes = Encoding.UTF8.GetByteCount(text);
+
+        // Correct the one boundary where independently counting the append differs from counting
+        // the concatenation: a UTF-16 surrogate pair split across calls.
+        if (previousLength > 0 && char.IsSurrogatePair(_buffer[previousLength - 1], _buffer[previousLength]))
+            addedBytes -= 2; // Two replacement scalars (3 + 3 bytes) become one supplementary scalar (4 bytes).
+
+        RetainedBytes += addedBytes;
         if (RetainedBytes <= _maxOutputBytes) return;
+
         var cut = 0;
         long shed = 0;
-        while (cut < text.Length && RetainedBytes - shed > _maxOutputBytes)
+        while (cut < _buffer.Length && RetainedBytes - shed > _maxOutputBytes)
         {
-            var width = StringInfo.GetNextTextElementLength(text.AsSpan(cut));
-            shed += Encoding.UTF8.GetByteCount(text.AsSpan(cut, width));
+            var (width, byteCount) = GetScalarSize(cut);
+            shed += byteCount;
             cut += width;
         }
-        var newline = text.IndexOf('\n', cut);
-        if (newline >= cut && newline - cut <= 8192)
+
+        var newlineSearchEnd = Math.Min(_buffer.Length, cut + 8193);
+        var newline = -1;
+        for (var index = cut; index < newlineSearchEnd; index++)
         {
-            shed += Encoding.UTF8.GetByteCount(text.AsSpan(cut, newline + 1 - cut));
-            cut = newline + 1;
+            if (_buffer[index] != '\n') continue;
+            newline = index;
+            break;
+        }
+        if (newline >= cut)
+        {
+            while (cut <= newline)
+            {
+                var (width, byteCount) = GetScalarSize(cut);
+                shed += byteCount;
+                cut += width;
+            }
         }
         _buffer.Remove(0, cut);
         RetainedBytes -= shed;
         DiscardedBytes += shed;
     }
+
+    private (int Width, int ByteCount) GetScalarSize(int index)
+    {
+        var value = _buffer[index];
+        if (index + 1 < _buffer.Length && char.IsSurrogatePair(value, _buffer[index + 1]))
+            return (2, 4);
+        if (char.IsSurrogate(value)) return (1, 3);
+        if (value <= '\x7f') return (1, 1);
+        return value <= '\x7ff' ? (1, 2) : (1, 3);
+    }
+
     /// <summary>Returns the bounded payload without disclosure for byte-accounting callers.</summary>
     public string RawSnapshot() => _buffer.ToString();
     /// <summary>Uses the common head/tail loss contract rather than a local truncation message.</summary>

@@ -170,6 +170,56 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     }
 
     [Fact]
+    public void Agent_chips_render_normalized_emoji_without_spacing_blank_emoji()
+    {
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["alpha"] = new() { AgentId = "alpha", DisplayName = "Alpha", Emoji = "🚀\n" },
+            ["beta"] = new() { AgentId = "beta", DisplayName = "Beta", Emoji = "   " }
+        };
+        _store.Agents.Returns(agents.AsReadOnly());
+        _store.GetAgent(Arg.Any<string>()).Returns(ci => agents.GetValueOrDefault(ci.ArgAt<string>(0)));
+        SetupConversations(Conv("c1", agentId: "alpha", participants:
+        [
+            new ParticipantDto("Agent", "beta", "peer")
+        ]));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        cut.WaitForState(() => cut.FindAll(".activity-agent-chip").Count == 2);
+        var chips = cut.FindAll(".activity-agent-chip");
+        chips[0].TextContent.ShouldBe("🚀 Alpha");
+        chips[1].TextContent.ShouldBe("Betapeer");
+        chips[1].FirstChild?.TextContent.ShouldBe("Beta");
+    }
+
+    [Fact]
+    public void Agent_filter_option_renders_normalized_emoji()
+    {
+        var agents = new Dictionary<string, AgentState>
+        {
+            ["alpha"] = new() { AgentId = "alpha", DisplayName = "Alpha", Emoji = "🔬\t" }
+        };
+        _store.Agents.Returns(agents.AsReadOnly());
+        _store.GetAgent(Arg.Any<string>()).Returns(ci => agents.GetValueOrDefault(ci.ArgAt<string>(0)));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        cut.Find("[data-testid='activity-filter-agent'] option[value='alpha']").TextContent.ShouldBe("🔬 Alpha");
+    }
+
+    [Fact]
+    public void Unknown_agent_chip_keeps_bare_id_without_placeholder()
+    {
+        SetupConversations(Conv("c1", agentId: "unknown-agent"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        cut.WaitForState(() => cut.FindAll(".activity-agent-chip").Count == 1);
+        cut.Find(".activity-agent-chip").TextContent.ShouldBe("unknown-agent");
+    }
+
+    [Fact]
     public void Clicking_row_navigates_to_conversation()
     {
         var navMan = _ctx.Services.GetRequiredService<NavigationManager>() as BunitNavigationManager;
@@ -1092,6 +1142,39 @@ public sealed class ActivityDashboardComponentTests : IDisposable
             "j1",
             cut.Find("[data-testid='activity-source-id']").GetAttribute("title"),
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Expired_and_disabled_jobs_override_ok_without_losing_last_run_outcome()
+    {
+        SetupConversations(
+            Conv("c-expired", title: "Expired", source: "Cron", sourceId: "expired"),
+            Conv("c-disabled", title: "Disabled", source: "Cron", sourceId: "disabled"),
+            Conv("c-live", title: "Live", source: "Cron", sourceId: "live"));
+        SetupCronJobs("""
+            [
+              {"id":"expired","name":"Expired job","enabled":true,"expiresAt":"2000-01-01T00:00:00Z","lastRunStatus":"ok"},
+              {"id":"disabled","name":"Disabled job","enabled":false,"expiresAt":"2999-01-01T00:00:00Z","lastRunStatus":"ok"},
+              {"id":"live","name":"Live job","enabled":true,"lastRunStatus":"ok"}
+            ]
+            """);
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => Assert.Equal(3, cut.FindAll("[data-testid='activity-cron-health']").Count));
+
+        var dots = cut.FindAll("[data-testid='activity-cron-health']")
+            .ToDictionary(dot => dot.GetAttribute("data-health")!, dot => dot);
+
+        Assert.Contains("expired", dots.Keys);
+        Assert.Contains("disabled", dots.Keys);
+        Assert.Contains("ok", dots.Keys);
+        Assert.DoesNotContain("activity-cron-health--ok", dots["expired"].GetAttribute("class"));
+        Assert.Contains("Last run status: ok", dots["expired"].GetAttribute("title"), StringComparison.Ordinal);
+        Assert.Contains("Expired:", dots["expired"].GetAttribute("title"), StringComparison.Ordinal);
+        Assert.Contains("Last run status: ok", dots["disabled"].GetAttribute("title"), StringComparison.Ordinal);
+        Assert.Contains("Disabled", dots["disabled"].GetAttribute("title"), StringComparison.Ordinal);
+        Assert.DoesNotContain("System", cut.Markup, StringComparison.Ordinal);
     }
 
     /// <summary>

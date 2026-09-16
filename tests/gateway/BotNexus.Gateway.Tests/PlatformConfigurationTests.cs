@@ -12,6 +12,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
 using BotNexus.Gateway.Sessions;
+using BotNexus.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -423,6 +424,49 @@ public sealed class PlatformConfigurationTests
         provider.ApiKey.ShouldBe("test-key");
         provider.BaseUrl.ShouldBe("https://example.test");
         provider.DefaultModel.ShouldBe("model-x");
+    }
+
+    [Fact]
+    public async Task AddBotNexusGateway_SubAgentMemoryStoreUsesConfiguredWorkspaceRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "botnexus-subagent-memory-tests", Guid.NewGuid().ToString("N"));
+        var homePath = Path.Combine(root, "home");
+        var workspaceRoot = Path.Combine(root, "children");
+        var childId = AgentId.From("parent--subagent--coder--memory01");
+        var fileSystem = new FileSystem();
+
+        try
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton<IFileSystem>(fileSystem);
+            services.AddSingleton(new BotNexusHome(fileSystem, homePath));
+            services.Configure<SubAgentOptions>(options => options.WorkspaceRoot = workspaceRoot);
+            services.AddBotNexusGateway();
+
+            await using var provider = services.BuildServiceProvider();
+            var factory = provider.GetRequiredService<IMemoryStoreFactory>();
+            var workspaceManager = provider.GetRequiredService<IAgentWorkspaceManager>();
+            var store = factory.Create(childId);
+            await store.InitializeAsync();
+
+            var childRoot = Path.Combine(workspaceRoot, childId.Value);
+            var storePath = Path.Combine(childRoot, "data", "memory.sqlite");
+            File.Exists(storePath).ShouldBeTrue();
+            Directory.Exists(Path.Combine(homePath, "agents", childId.Value)).ShouldBeFalse(
+                "ephemeral child data must be reclaimed with its configurable workspace root");
+
+            await store.DisposeAsync();
+            SqlitePoolCleanup.ClearPoolFor(storePath);
+            workspaceManager.TryCleanupWorkspace(childId.Value).ShouldBeTrue();
+            Directory.Exists(childRoot).ShouldBeFalse();
+            File.Exists(storePath).ShouldBeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]

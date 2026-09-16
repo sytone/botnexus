@@ -142,28 +142,30 @@
     private ElementReference? _returnFocusTo;
     private bool _activateFocus;
     private bool _focusActive;
+    private CancellationTokenSource? _lifecycle;
+    private long _generation;
+    private bool _disposed;
 
     /// <summary>Opens the panel and starts polling.</summary>
     public async Task OpenAsync(ElementReference? returnFocusTo = null)
     {
+        if (_disposed) return;
+
         _returnFocusTo = returnFocusTo;
+        var request = BeginLifecycle();
         _show = true;
         _activateFocus = true;
         StateHasChanged();
-        await RefreshAsync();
-        // Only while open. Polling a closed panel would burn a request every few seconds for a
-        // view nobody is looking at.
-        _poll = new Timer(async void (_) =>
-        {
-            try { await InvokeAsync(RefreshAsync); }
-            catch { /* a failed poll is shown by the next successful one */ }
-        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        await RefreshAsync(request.Generation, _windowMinutes, request.CancellationToken);
+        if (!Owns(request.Generation, request.CancellationToken)) return;
+
+        StartPolling(request.Generation, request.CancellationToken);
     }
 
     private async Task Close()
     {
         _show = false;
-        StopPolling();
+        InvalidateLifecycle();
         await DeactivateFocusAsync(restoreFocus: true);
         StateHasChanged();
     }
@@ -205,12 +207,16 @@
         if (e.Key == "Escape") await Close();
     }
 
-    private async Task RefreshAsync()
+    private async Task RefreshAsync(long generation, int windowMinutes, CancellationToken cancellationToken)
     {
         try
         {
-            var res = await Http.GetFromJsonAsync<UsageResponse>($"api/providers/usage?windowMinutes={_windowMinutes}");
-            _providers = res?.Providers ?? [];
+            var res = await Http.GetFromJsonAsync<UsageResponse>(
+                $"api/providers/usage?windowMinutes={windowMinutes}",
+                cancellationToken);
+            if (!Owns(generation, cancellationToken) || res?.WindowMinutes != windowMinutes) return;
+
+            _providers = res.Providers;
             _error = null;
 
             // Keep the operator's choice across refreshes; fall back only if it disappeared.
@@ -218,12 +224,15 @@
                 _selectedProvider = _providers.FirstOrDefault()?.Provider;
 
             _current = _providers.FirstOrDefault(p => p.Provider == _selectedProvider);
+            StateHasChanged();
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception ex)
         {
+            if (!Owns(generation, cancellationToken)) return;
             _error = $"Could not load usage: {ex.Message}";
+            StateHasChanged();
         }
-        StateHasChanged();
     }
 
     private async Task SelectProvider(ChangeEventArgs e)
@@ -236,20 +245,64 @@
 
     private async Task SelectWindow(ChangeEventArgs e)
     {
-        if (int.TryParse(e.Value?.ToString(), out var w)) _windowMinutes = w;
-        await RefreshAsync();
+        if (!int.TryParse(e.Value?.ToString(), out var w) || w == _windowMinutes) return;
+
+        _windowMinutes = w;
+        var request = ReplaceRefreshOwnership();
+        await RefreshAsync(request.Generation, w, request.CancellationToken);
     }
 
-    private void StopPolling()
+    private (long Generation, CancellationToken CancellationToken) BeginLifecycle()
     {
+        if (_disposed) return (_generation, new CancellationToken(canceled: true));
+
+        InvalidateLifecycle();
+        _lifecycle = new CancellationTokenSource();
+        return (_generation, _lifecycle.Token);
+    }
+
+    private (long Generation, CancellationToken CancellationToken) ReplaceRefreshOwnership()
+    {
+        var request = BeginLifecycle();
+        if (_show && !request.CancellationToken.IsCancellationRequested)
+            StartPolling(request.Generation, request.CancellationToken);
+        return request;
+    }
+
+    private void StartPolling(long generation, CancellationToken cancellationToken)
+    {
+        // Only while open. Polling a closed panel would burn a request every few seconds for a
+        // view nobody is looking at.
+        _poll = new Timer(async void (_) =>
+        {
+            try
+            {
+                await InvokeAsync(() => RefreshAsync(generation, _windowMinutes, cancellationToken));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+            catch { /* a failed poll is shown by the next successful one */ }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private bool Owns(long generation, CancellationToken cancellationToken) =>
+        !_disposed && _show && !cancellationToken.IsCancellationRequested && generation == _generation;
+
+    private void InvalidateLifecycle()
+    {
+        _generation++;
         _poll?.Dispose();
         _poll = null;
+        _lifecycle?.Cancel();
+        _lifecycle?.Dispose();
+        _lifecycle = null;
     }
 
     public async ValueTask DisposeAsync()
     {
+        if (_disposed) return;
         _show = false;
-        StopPolling();
+        InvalidateLifecycle();
+        _disposed = true;
         await DeactivateFocusAsync(restoreFocus: false);
     }
 

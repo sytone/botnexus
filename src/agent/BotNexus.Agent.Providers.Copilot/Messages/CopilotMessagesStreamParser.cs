@@ -47,14 +47,19 @@ internal static class CopilotMessagesStreamParser
         Func<LlmModel, List<ContentBlock>, Usage, StopReason, string?, string?, AssistantMessage> buildMessage,
         Func<string?, StopReason> mapStopReason,
         CancellationToken ct,
-        Action? onFirstToken = null)
+        Action? onFirstToken = null,
+        TimeSpan? idleTimeout = null)
     {
         // Bound the untrusted SSE body before a single byte reaches the line loop below. Every byte
         // the StreamReader consumes flows through the ByteCountingStream, so an unbounded body or a
         // single never-terminating data: line trips the cap regardless of how the reader buffers
         // internally (#1668). Leave the inner stream open -- the caller owns its lifetime.
         using var boundedStream = new ByteCountingStream(
-            responseStream, MaxResponseBytes, MaxFrameBytes, leaveOpen: true);
+            responseStream,
+            MaxResponseBytes,
+            MaxFrameBytes,
+            leaveOpen: true,
+            idleTimeout: idleTimeout);
         using var reader = new StreamReader(boundedStream, Encoding.UTF8);
 
         var logger = ProviderDiagnostics.CreateLogger(LoggerCategory);

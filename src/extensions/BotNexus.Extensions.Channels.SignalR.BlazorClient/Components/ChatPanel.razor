@@ -230,17 +230,11 @@
 
     @if (IsReadOnly)
     {
-        <div class="read-only-banner" role="status" aria-label="Read-only sub-agent session view">
-            <span class="read-only-badge"><Icon Name="visibility" Size="14" Class="bn-icon-inherit" /> Sub-agent session</span>
-            <span class="read-only-status @(IsStreaming ? "" : "completed")">
-                @if (IsStreaming)
-                {
-                    <Icon Name="running" Size="13" Class="bn-icon-inherit bn-icon-spin" /><text> Running</text>
-                }
-                else
-                {
-                    <Icon Name="check" Size="13" /><text> Completed</text>
-                }
+        var observerStatus = ReadOnlyStatus;
+        <div class="read-only-banner" role="status" aria-label="Read-only conversation view">
+            <span class="read-only-badge"><Icon Name="visibility" Size="14" Class="bn-icon-inherit" /> @ReadOnlyOriginLabel</span>
+            <span class="read-only-status @observerStatus.CssClass">
+                <Icon Name="@observerStatus.Icon" Size="13" Class="@observerStatus.IconClass" /><text> @observerStatus.Label</text>
             </span>
             <span class="read-only-label">Read-only — you can observe but not interact</span>
         </div>
@@ -716,6 +710,19 @@
     private string? ActiveConversationId => ConversationId ?? Agent?.ActiveConversationId;
     private bool HasActiveConversation => ActiveConversation is not null;
     private string? ActiveConversationTitle => ActiveConversation?.Title;
+    private ConversationRenderProjection? ActiveProjection =>
+        ActiveConversation?.Project(Store.ActiveSelectionSource);
+    private string ReadOnlyOriginLabel => ActiveProjection?.ReadOnlyLabel ?? "Read-only conversation";
+    private ReadOnlyBannerStatus ReadOnlyStatus =>
+        IsStreaming || Agent?.ObserverStatus == SubAgentObserverStatus.Running
+            ? new("Running", "running", string.Empty, "bn-icon-inherit bn-icon-spin")
+            : Agent?.ObserverStatus switch
+            {
+                SubAgentObserverStatus.Completed => new("Completed", "check", "completed", string.Empty),
+                SubAgentObserverStatus.Failed => new("Failed", "error", "failed", string.Empty),
+                SubAgentObserverStatus.Killed => new("Killed", "stop", "killed", string.Empty),
+                _ => new("Idle", "visibility", "idle", "bn-icon-inherit")
+            };
 private bool IsStreaming =>
         ActiveConversationId is string activeConvId
             ? Store.GetStreamState(activeConvId).IsTurnActive
@@ -1989,5 +1996,9 @@ private bool IsStreaming =>
         };
     }
 
-    private string GetSubAgentStatus() => IsStreaming ? "⏳ Running" : "✅ Completed";
+    private readonly record struct ReadOnlyBannerStatus(
+        string Label,
+        string Icon,
+        string CssClass,
+        string IconClass);
 }

@@ -194,6 +194,7 @@ public sealed class CronJobDto
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? LastRunAt { get; set; }
     public DateTimeOffset? NextRunAt { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
     public string? LastRunStatus { get; set; }
     public string? LastRunError { get; set; }
     public string? ConversationId { get; set; }

@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using BotNexus.Integration.E2E.Tests.PageObjects;
 using Microsoft.Playwright;
 using Xunit;
@@ -204,6 +206,80 @@ public sealed class MobileChatTests
     // ─────────────────────────────────────────────────────────────────────────
     // Live portal tests
     // ─────────────────────────────────────────────────────────────────────────
+
+    [SkippableFact]
+    [Trait("Category", "Mobile")]
+    [Trait("Area", "ReadOnly")]
+    public async Task MobilePortal_CronConversationShowsBadgeAndNoComposer()
+    {
+        Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
+
+        var jobId = $"mobile-read-only-{Guid.NewGuid():N}";
+        var title = $"Mobile read-only {jobId[^8..]}";
+        using var http = new HttpClient();
+        try
+        {
+            var create = await http.PostAsync(
+                $"{_fx.GatewayBaseUrl}/api/cron",
+                new StringContent(
+                    JsonSerializer.Serialize(new
+                    {
+                        id = jobId,
+                        name = title,
+                        schedule = "0 0 1 1 *",
+                        actionType = "agent-prompt",
+                        agentId = _fx.AgentIds[0],
+                        message = "Return a short acknowledgement.",
+                        enabled = true
+                    }),
+                    Encoding.UTF8,
+                    "application/json"));
+            Assert.True(create.IsSuccessStatusCode, $"Cron creation returned {(int)create.StatusCode}.");
+
+            var run = await http.PostAsync($"{_fx.GatewayBaseUrl}/api/cron/{jobId}/run", content: null);
+            Assert.True(run.IsSuccessStatusCode, $"Cron run returned {(int)run.StatusCode}.");
+
+            using var playwright = await Playwright.CreateAsync();
+            var (browser, page, mobilePage) = await TryLaunchMobileAsync(playwright);
+            Skip.If(browser is null, "Browser not available");
+            await using var _ = browser!;
+
+            await mobilePage!.NavigateAsync(_fx.GatewayBaseUrl);
+            await mobilePage.WaitForReadyAsync();
+
+            var option = page!.Locator("select.conv-select option", new PageLocatorOptions { HasText = $"Cron · {title}" });
+            await option.WaitForAsync(new LocatorWaitForOptions
+            {
+                State = WaitForSelectorState.Attached,
+                Timeout = 30_000
+            });
+            var conversationId = await option.GetAttributeAsync("value");
+            Assert.False(string.IsNullOrWhiteSpace(conversationId));
+
+            await mobilePage.ConvSelect.SelectOptionAsync(conversationId);
+            await page.WaitForFunctionAsync(
+                "() => document.querySelector('.bottom-bar') === null",
+                null,
+                new PageWaitForFunctionOptions { Timeout = 10_000 });
+
+            Assert.Equal(0, await mobilePage.BottomBar.CountAsync());
+            var selectedLabel = await mobilePage.ConvSelect.Locator("option:checked").TextContentAsync();
+            Assert.StartsWith("Cron · ", selectedLabel);
+
+            var repoRoot = RepoLocator.FindRepoRoot();
+            var screenshotRoot = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ARTIFACT_BLOB_URL"))
+                ? Path.Combine(repoRoot, "artifacts")
+                : Path.Combine(Directory.GetParent(repoRoot)!.FullName, "artifacts");
+            Directory.CreateDirectory(screenshotRoot);
+            var screenshot = Path.Combine(screenshotRoot, "issue-3458-mobile-read-only.png");
+            await page.ScreenshotAsync(new PageScreenshotOptions { Path = screenshot, FullPage = true });
+            _output.WriteLine($"Screenshot: {screenshot}");
+        }
+        finally
+        {
+            await http.DeleteAsync($"{_fx.GatewayBaseUrl}/api/cron/{jobId}");
+        }
+    }
 
     /// <summary>
     /// Mobile portal loads, shows agent selector populated with at least one agent.
