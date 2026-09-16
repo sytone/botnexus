@@ -41,6 +41,30 @@ public sealed class PortalLoadRefreshTranscriptTests
         Timestamp = new DateTimeOffset(2026, 9, 4, 10, minute, 0, TimeSpan.Zero)
     };
 
+    private static ConversationHistoryEntryDto ToolEntry(
+        string toolCallId,
+        string result,
+        bool isError,
+        int minute) => new()
+    {
+        Kind = "message",
+        EntryId = $"s-1#{minute}",
+        SessionId = "s-1",
+        Role = "tool",
+        Content = result,
+        Timestamp = new DateTimeOffset(2026, 9, 4, 10, minute, 0, TimeSpan.Zero),
+        ToolName = "read",
+        ToolCallId = toolCallId,
+        ToolArgs = "{\"path\":\"file.txt\"}",
+        ToolIsError = isError
+    };
+
+    private GatewayEventHandler CreateProductionEventHandler() => new(
+        _store,
+        new GatewayHubConnection(),
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayEventHandler>.Instance,
+        _store);
+
     private void ArrangeRoster(params string[] conversationIds)
     {
         _restClient.GetAgentsAsync(Arg.Any<CancellationToken>())
@@ -193,6 +217,59 @@ public sealed class PortalLoadRefreshTranscriptTests
         await _service.RefreshAsync();
 
         _store.GetConversation("conv-1")!.Messages.Select(m => m.Content).ShouldBe(["one", "two", "three"]);
+    }
+
+    [Theory]
+    [InlineData(false, "file body")]
+    [InlineData(true, "access denied")]
+    public async Task RefreshAsync_LostToolEnd_ReplacesCallingRowAndClearsOnlyMatchingActiveCall(
+        bool isError,
+        string result)
+    {
+        ArrangeRoster("conv-1");
+        await InitializeAsync("conv-1");
+
+        var handler = CreateProductionEventHandler();
+        handler.HandleToolStart(new AgentStreamEvent
+        {
+            SessionId = "s-1",
+            ConversationId = "conv-1",
+            ToolCallId = "tool-lost-end",
+            ToolName = "read",
+            ToolArgs = new Dictionary<string, object?> { ["path"] = "file.txt" }
+        });
+        handler.HandleToolStart(new AgentStreamEvent
+        {
+            SessionId = "s-1",
+            ConversationId = "conv-1",
+            ToolCallId = "tool-still-running",
+            ToolName = "grep"
+        });
+
+        var conversation = _store.GetConversation("conv-1")!;
+        conversation.Messages.Count(message => message.ToolCallId == "tool-lost-end").ShouldBe(1);
+        conversation.StreamState.ActiveToolCalls.Keys.ShouldBe(["tool-lost-end", "tool-still-running"], ignoreOrder: true);
+
+        _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("conv-1", 1, 0, 200,
+                [ToolEntry("tool-lost-end", result, isError, 10)]));
+
+        await _service.RefreshAsync();
+
+        var repaired = conversation.Messages.Single(message => message.ToolCallId == "tool-lost-end");
+        repaired.Content.ShouldBe(result);
+        repaired.ToolResult.ShouldBe(result);
+        repaired.ToolIsError.ShouldBe(isError);
+        repaired.ServerEntryId.ShouldBe("s-1#10");
+        conversation.Messages.Count(message => message.ToolCallId == "tool-lost-end").ShouldBe(1);
+        conversation.StreamState.ActiveToolCalls.ContainsKey("tool-lost-end").ShouldBeFalse();
+        conversation.StreamState.ActiveToolCalls.ContainsKey("tool-still-running").ShouldBeTrue();
+
+        await _service.RefreshAsync();
+
+        conversation.Messages.Count(message => message.ToolCallId == "tool-lost-end").ShouldBe(1);
+        conversation.Messages.Single(message => message.ToolCallId == "tool-still-running")
+            .ToolResult.ShouldBeNull();
     }
 
     [Fact]
