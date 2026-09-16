@@ -357,6 +357,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         {
             var agentId = descriptor.AgentId;
+            var baseInstructionEditGuard = new BaseInstructionEditGuard(descriptor, workspacePath);
 
             beforeToolAudit = async (ctx, ct) =>
             {
@@ -370,6 +371,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
             beforeToolCall = async (ctx, ct) =>
             {
+                var classificationPrompt = baseInstructionEditGuard.Evaluate(
+                    ctx.ToolCallRequest.Name,
+                    ctx.ValidatedArgs);
+                if (classificationPrompt is not null)
+                {
+                    return new BotNexus.Agent.Core.Hooks.BeforeToolCallResult(
+                        Block: true,
+                        Reason: classificationPrompt);
+                }
+
                 if (hookDispatcher is null)
                     return null;
 
