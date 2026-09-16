@@ -21,6 +21,12 @@ namespace BotNexus.Gateway.Configuration;
 /// </remarks>
 public static class ProviderConfigCapabilityExtensions
 {
+    /// <summary>Resolves the provider-level streaming idle timeout.</summary>
+    /// <param name="config">The provider configuration.</param>
+    /// <returns>Null for the platform default, zero to disable, or a positive millisecond override.</returns>
+    public static int? ResolveStreamIdleTimeoutMs(this ProviderConfig config)
+        => config?.StreamIdleTimeoutMs;
+
     /// <summary>Resolves the chat API identifier, nested first.</summary>
     /// <param name="config">The provider configuration.</param>
     /// <returns>The chat api, or null when neither shape declares one.</returns>

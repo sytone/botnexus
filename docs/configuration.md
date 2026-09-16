@@ -140,6 +140,7 @@ botnexus config set providers.openai.defaultModel gpt-4o-mini
 | `enabled` | `bool` | Whether this provider is active. Disabled providers are hidden from the API. Defaults to `true`. |
 | `apiKey` | `string?` | API key value, or `auth:<name>` to reference an OAuth entry in `auth.json`. |
 | `baseUrl` | `string?` | Base URL override for OpenAI-compatible endpoints, or catalog file path for `integration-mock`. |
+| `streamIdleTimeoutMs` | `int?` | Maximum idle time between streaming response chunks. Omit for the 30,000 ms default, set a positive override per provider, or set `0` to disable the deadline. |
 | `defaultModel` | `string?` | Default model id used when an agent does not specify one. |
 | `models` | `string[]?` | Allowed model ids. `null` means all registered models; `[]` means none. |
 | `input` | `string[]?` | Explicit input modalities (e.g. `["text","image"]`) for models registered from `models`. `null`/`[]` infers modalities from the model family; an explicit declaration always wins. Previously these models were hardcoded text-only, so a vision-capable local model silently discarded every image (#2485). |
@@ -156,8 +157,8 @@ Everything model-shaped on `ProviderConfig` used to mean *chat*: `defaultModel`,
 exactly one `defaultModel` slot for two unrelated model ids — an embedding model was not merely
 awkward to express, it was **unrepresentable**.
 
-Capability settings now live in nested objects. Provider-level fields (`enabled`, `apiKey`,
-`baseUrl`) stay where they are:
+Capability settings now live in nested objects. Provider-level fields (`enabled`, `apiKey`, `baseUrl`,
+`streamIdleTimeoutMs`) stay where they are:
 
 ```bash
 botnexus config set providers.my-ollama.enabled true

@@ -631,7 +631,10 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 // #1705: apply the effective thinking/context resolved through the centralized
                 // three-layer resolver. Null means "provider default" and leaves the option unset.
                 Reasoning = effectiveModel.Thinking,
-                ContextWindow = effectiveModel.ContextWindow
+                ContextWindow = effectiveModel.ContextWindow,
+                StreamIdleTimeoutMs = ResolveStreamIdleTimeoutMs(
+                    platformConfig?.Value,
+                    descriptor.ApiProvider)
             },
             SteeringMode: QueueMode.All,
             FollowUpMode: QueueMode.All,
@@ -731,6 +734,20 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     /// Returns true when <paramref name="toolIds"/> represents the all-tools wildcard ΓÇö either an
     /// empty list (legacy behaviour) or a list whose sole entry is <c>"*"</c> (intuitive form).
     /// </summary>
+    internal static int? ResolveStreamIdleTimeoutMs(PlatformConfig? config, string provider)
+    {
+        if (config?.Providers is null)
+            return null;
+
+        foreach (var (name, providerConfig) in config.Providers)
+        {
+            if (string.Equals(name, provider, StringComparison.OrdinalIgnoreCase))
+                return providerConfig.ResolveStreamIdleTimeoutMs();
+        }
+
+        return null;
+    }
+
     private static bool IsWildcardToolIds(IReadOnlyList<string> toolIds)
         => toolIds.Count == 0 || (toolIds.Count == 1 && toolIds[0] == "*");
 

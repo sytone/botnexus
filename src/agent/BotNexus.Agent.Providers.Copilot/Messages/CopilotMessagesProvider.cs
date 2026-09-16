@@ -119,6 +119,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
             MaxRetryDelayMs = baseOptions.MaxRetryDelayMs,
             Metadata = baseOptions.Metadata,
             StreamSetupTimeoutMs = baseOptions.StreamSetupTimeoutMs,
+            StreamIdleTimeoutMs = baseOptions.StreamIdleTimeoutMs,
         };
 
         if (options?.Reasoning is { } reasoning)
@@ -268,7 +269,8 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
             BuildMessage,
             MapStopReason,
             ct,
-            onFirstToken);
+            onFirstToken,
+            StreamIdleTimeout.Resolve(options));
 
         setUsage(usage);
         setResponseId(responseId);
