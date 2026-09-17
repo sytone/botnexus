@@ -67,7 +67,7 @@ public sealed class BackgroundProcessRegistry
 
     private void ReapCore()
     {
-        var exited = _processes.Values.Where(p => p.Process.IsComplete && !p.Process.KillUnconfirmed)
+        var exited = _processes.Values.Where(p => p.Process.IsTerminal && !p.Process.KillUnconfirmed)
             .OrderBy(p => p.Process.StartedAt).ToArray();
         foreach (var entry in exited.Take(Math.Max(0, exited.Length - _maxExitedRetained)))
         {
@@ -116,10 +116,22 @@ public class BackgroundProcess : IDisposable
     private readonly object _lifecycle = new();
     private readonly SemaphoreSlim _inputGate = new(1, 1);
     private volatile bool _disposed;
+    private int _captureFailures;
+    private int _captureInterruptions;
     private int? _exitCode;
 
     /// <summary>Adopts a process started by a trusted caller; output must be redirected and unread.</summary>
     public BackgroundProcess(Process process, string command, DateTimeOffset startedAt)
+        : this(process, command, startedAt, process?.StandardOutput, process?.StandardError)
+    {
+    }
+
+    internal BackgroundProcess(
+        Process process,
+        string command,
+        DateTimeOffset startedAt,
+        StreamReader? standardOutput,
+        StreamReader? standardError)
     {
         _process = process ?? throw new ArgumentNullException(nameof(process));
         Pid = process.Id;
@@ -127,7 +139,9 @@ public class BackgroundProcess : IDisposable
         StartedAt = startedAt;
         try { ProcessName = process.ProcessName; }
         catch (InvalidOperationException) { ProcessName = "exited"; }
-        _completion = CompleteAsync(DrainAsync(process.StandardOutput), DrainAsync(process.StandardError));
+        _completion = CompleteAsync(
+            DrainAsync(standardOutput ?? throw new ArgumentNullException(nameof(standardOutput))),
+            DrainAsync(standardError ?? throw new ArgumentNullException(nameof(standardError))));
     }
 
     /// <summary>Captured PID remains available after handle disposal.</summary>
@@ -138,8 +152,17 @@ public class BackgroundProcess : IDisposable
     public DateTimeOffset StartedAt { get; }
     /// <summary>Captured OS name for diagnostics after termination.</summary>
     public string ProcessName { get; }
-    /// <summary>True until both process exit and redirected output drains finish.</summary>
-    public bool IsComplete => _completion.IsCompletedSuccessfully;
+    /// <summary>True only when process exit and both redirected output drains completed successfully.</summary>
+    public bool IsComplete => IsTerminal && !OutputCaptureIncomplete;
+    /// <summary>True when process exit and both drain attempts reached a terminal outcome.</summary>
+    public bool IsTerminal => _completion.IsCompletedSuccessfully;
+    /// <summary>True when final output may be partial because a redirected stream could not be drained.</summary>
+    public bool OutputCaptureIncomplete => Volatile.Read(ref _captureFailures) != 0 || Volatile.Read(ref _captureInterruptions) != 0;
+    /// <summary>Stable, content-safe output-integrity state for status and output consumers.</summary>
+    public string OutputCaptureStatus => !IsTerminal ? "capturing"
+        : Volatile.Read(ref _captureFailures) != 0 ? "incomplete (read failure)"
+        : Volatile.Read(ref _captureInterruptions) != 0 ? "incomplete (stream closed during cleanup)"
+        : "complete";
     /// <summary>An unconfirmed kill pins the registration even if the root has exited.</summary>
     public bool KillUnconfirmed { get; private set; }
     /// <summary>Distinguishes normal completion from a requested termination.</summary>
@@ -160,12 +183,23 @@ public class BackgroundProcess : IDisposable
         // Read fixed-size chunks, not ReadLine: one unbroken line must not bypass the memory cap.
         var buffer = new char[4096];
         var decoder = new BackgroundOutputDecoder();
-        while (true)
+        try
         {
-            var count = await reader.ReadAsync(buffer).ConfigureAwait(false);
-            var clean = decoder.Append(buffer.AsSpan(0, count), final: count == 0);
-            lock (_gate) _output.AppendChunk(clean);
-            if (count == 0) return;
+            while (true)
+            {
+                var count = await reader.ReadAsync(buffer).ConfigureAwait(false);
+                var clean = decoder.Append(buffer.AsSpan(0, count), final: count == 0);
+                lock (_gate) _output.AppendChunk(clean);
+                if (count == 0) return;
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            Interlocked.Increment(ref _captureInterruptions);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        {
+            Interlocked.Increment(ref _captureFailures);
         }
     }
 
@@ -175,14 +209,19 @@ public class BackgroundProcess : IDisposable
         {
             await _process.WaitForExitAsync().ConfigureAwait(false);
             _exitCode = _process.ExitCode;
-            await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
         {
-            // Disposal may close redirected pipes while a drain is pending. Observe both tasks.
-            try { await Task.WhenAll(stdout, stderr).ConfigureAwait(false); }
-            catch (Exception drainError) when (drainError is IOException or ObjectDisposedException or InvalidOperationException) { }
+            Interlocked.Increment(ref _captureInterruptions);
         }
+        catch (IOException)
+        {
+            Interlocked.Increment(ref _captureFailures);
+        }
+
+        // Each drain records its own outcome and returns normally so completion remains a bounded
+        // lifecycle signal rather than silently becoming an output-integrity signal.
+        await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
     }
 
     /// <summary>Waits for exit AND final output; cancellation cancels the wait, not the owned child.</summary>
@@ -205,8 +244,10 @@ public class BackgroundProcess : IDisposable
                 var start = Math.Max(0, count - tailLines.Value);
                 text = string.Join('\n', lines.AsSpan(start, count - start));
             }
-            var banner = _output.FormatBanner();
-            return banner.Length == 0 ? text : $"{banner}\n{text}";
+            var retentionBanner = _output.FormatBanner();
+            var captureBanner = OutputCaptureIncomplete ? $"[output capture {OutputCaptureStatus}]" : string.Empty;
+            var banner = string.Join('\n', new[] { captureBanner, retentionBanner }.Where(value => value.Length != 0));
+            return banner.Length == 0 ? text : text.Length == 0 ? banner : $"{banner}\n{text}";
         }
     }
 
@@ -285,7 +326,7 @@ public class BackgroundProcess : IDisposable
     {
         lock (_lifecycle)
         {
-            if (!IsComplete || KillUnconfirmed) return false;
+            if (!IsTerminal || KillUnconfirmed) return false;
             Dispose();
             return _disposed;
         }
