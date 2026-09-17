@@ -19,6 +19,7 @@ public sealed class IconLibraryTests
     private static readonly string s_outputPath =
         Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
     private static readonly string s_cssPath = Path.Combine(s_outputPath, "wwwroot", "css", "app.css");
+    private static readonly string s_iconReadmePath = Path.Combine(s_outputPath, "assets", "icons", "README.md");
     private static readonly string s_svgPath = Path.Combine(s_outputPath, "assets", "icons", "svg");
 
     private static readonly Regex s_id = new(@"\bid=""([^""]+)""", RegexOptions.Compiled);
@@ -48,6 +49,24 @@ public sealed class IconLibraryTests
         Assert.NotEmpty(IconLibrary.Names);
         Assert.Equal(IconLibrary.Names.Count, IconLibrary.Icons.Count);
         Assert.All(IconLibrary.Names, n => Assert.True(IconLibrary.Icons.ContainsKey(n), n));
+    }
+
+    [Fact]
+    public void AssetReadmeDescribesTheDeliveredDistribution()
+    {
+        var readme = File.ReadAllText(s_iconReadmePath);
+        var sourceIconCount = Directory.EnumerateFiles(s_svgPath, "*.svg").Count();
+
+        Assert.Contains($"set of {sourceIconCount} original", readme, StringComparison.Ordinal);
+        Assert.Contains("`svg/`", readme, StringComparison.Ordinal);
+        Assert.Contains("`preview.png`", readme, StringComparison.Ordinal);
+        Assert.Contains("scripts/generate-icons.py", readme, StringComparison.Ordinal);
+        Assert.Contains("`IconLibrary.g.cs`", readme, StringComparison.Ordinal);
+        Assert.Contains("`Icon`", readme, StringComparison.Ordinal);
+        Assert.DoesNotContain("`png/`", readme, StringComparison.Ordinal);
+        Assert.DoesNotContain("`index.tsx`", readme, StringComparison.Ordinal);
+        Assert.DoesNotContain("## React", readme, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("import {", readme, StringComparison.Ordinal);
     }
 
     [Fact]

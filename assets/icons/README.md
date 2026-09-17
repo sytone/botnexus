@@ -1,72 +1,57 @@
-# App Icons
+# App icons
 
-A production-ready set of 29 original, rounded 24 × 24 interface icons. SVG files are the masters; PNGs are transparent 96 × 96 exports (4×), suitable for high-density web displays.
+This directory contains a set of 44 original interface icons drawn on a rounded 24 × 24 grid. The SVG files are the source artwork for BotNexus's generated Blazor icon library.
 
-## Contents
+## Delivered files
 
-- `svg/` — individual scalable icons
-- `png/` — matching 96 × 96 transparent exports
-- `index.tsx` — typed React components
-- `preview.png` — contact sheet
+- `svg/` — 44 individual SVG source files
+- `preview.png` — a contact sheet of the icon set
+- `README.md` — this guide
 
-## Plain HTML
+This directory does not provide PNG exports or a React component package.
+
+## Use a raw SVG
+
+For plain HTML, reference a file from `svg/`:
 
 ```html
 <img src="/icons/svg/home.svg" width="24" height="24" alt="Home">
 ```
 
-Neutral utility icons use `currentColor` and inherit CSS color when embedded inline. Identity and state icons use the approved semantic palettes.
+Neutral utility icons use `currentColor` and inherit CSS colour when embedded inline. Identity and state icons use the semantic palettes recorded in their SVG source.
 
-## React / TypeScript
+## Generate the Blazor library
 
-Copy `index.tsx` into your project (React 18+), then import components directly:
+From the repository root, run:
 
-```tsx
-import { HomeIcon, AssistantIcon, DeleteIcon } from './icons';
-
-<HomeIcon size={20} className="nav-icon" title="Home" />
-<AssistantIcon size={24} title="Assistant" />
-<DeleteIcon size={20} title="Delete" />
+```shell
+python scripts/generate-icons.py
 ```
 
-All components accept standard `SVGProps<SVGSVGElement>`. Omit `title` for decorative icons; they will be hidden from assistive technology.
+The generator reads every file in `assets/icons/svg/` and writes `src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/Components/IconLibrary.g.cs`. Change the SVG source and rerun the generator instead of editing `IconLibrary.g.cs` by hand.
 
-## Icon names
+BotNexus renders entries from the generated library through the Blazor `Icon` component. Its `Name` parameter is the SVG file name without the `.svg` extension. For example:
 
-- `home` → `HomeIcon`
-- `activity` → `ActivityIcon`
-- `tools` → `ToolsIcon`
-- `chat` → `ChatIcon`
-- `assistant` → `AssistantIcon`
-- `configuration` → `ConfigurationIcon`
-- `skills` → `SkillsIcon`
-- `agents` → `AgentsIcon`
-- `cron-jobs` → `CronJobsIcon`
-- `plugins` → `PluginsIcon`
-- `guide` → `GuideIcon`
-- `bot` → `BotIcon`
-- `conversation` → `ConversationIcon`
-- `workspace` → `WorkspaceIcon`
-- `reports` → `ReportsIcon`
-- `canvas` → `CanvasIcon`
-- `todo` → `TodoIcon`
-- `visibility` → `VisibilityIcon`
-- `pin` → `PinIcon`
-- `delete` → `DeleteIcon`
-- `move` → `MoveIcon`
-- `send` → `SendIcon`
-- `attach` → `AttachIcon`
-- `avoid` → `AvoidIcon`
-- `stop` → `StopIcon`
-- `pause` → `PauseIcon`
-- `light-mode` → `LightModeIcon`
-- `dark-mode` → `DarkModeIcon`
-- `usage` → `UsageIcon`
+```razor
+<Icon Name="home" Size="20" Title="Home" />
+```
+
+Omit `Title` when an icon is decorative or sits beside its own visible label. The component then hides it from assistive technology.
+
+## Verify the inventory
+
+From the repository root, run the generator. Its success message reports the number of SVG files that it read and generated:
+
+```shell
+python scripts/generate-icons.py
+```
+
+The generated-library test `IconLibraryTests.AssetReadmeDescribesTheDeliveredDistribution` also compares this README's count and artifact claims with the copied SVG inventory.
 
 ## Design notes
 
-- 24 × 24 viewBox; transparent backgrounds
+- 24 × 24 viewBox with transparent backgrounds
 - 2 px strokes with round caps and joins
-- Designed for 16, 20, 24, and 32 px UI use
-- Restrained semantic color: blue for communication/actions, green for activity/completion, amber for tools/scheduling/temporary state, red for destructive/blocking actions, and expressive gradients for AI/extension/creative identities
-- Original artwork; no dependency on an external icon font or runtime package
+- Designed for 16, 20, 24, and 32 px user-interface use
+- Restrained semantic colour: blue for communication and actions, green for activity and completion, amber for tools, scheduling, and temporary state, red for destructive or blocking actions, and gradients for AI, extension, and creative identities
+- Original artwork with no dependency on an external icon font or runtime package
