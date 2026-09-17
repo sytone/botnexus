@@ -122,7 +122,7 @@ botnexus --target D:\my-botnexus agent list
 botnexus --target /opt/botnexus-prod validate
 ```
 
-### `--verbose` (or `-v`)
+### `--verbose`
 
 Show additional command output, including file paths and full JSON responses.
 
@@ -237,20 +237,34 @@ If the process exits or crashes, serve waits 5 seconds and restarts automaticall
 
 ```powershell
 botnexus serve [OPTIONS]
-botnexus serve gateway [OPTIONS]
 botnexus serve probe [OPTIONS]
+botnexus serve gateway <COMMAND> [OPTIONS]
 ```
 
-### serve / serve gateway
+### serve
 
-Start the BotNexus Gateway.
+Start the BotNexus Gateway in the foreground with automatic restart after an unexpected exit.
 
 | Option | Default | Description |
 |---|---|---|
 | `--port <PORT>` | `5005` | Port to listen on. |
-| `--path <DIR>` | Install location | Path to the repository root. |
-| `--dev` | off | Use the current working directory as the repo root. |
+| `--source <DIR>` | `~/botnexus` | Path to the repository root. |
 | `--verbose` | — | Show detailed output. |
+
+### serve gateway
+
+Manage the same gateway lifecycle exposed by the top-level [`gateway`](#gateway) group. This is a command group, not a foreground-start alias.
+
+| Child command | Purpose |
+|---|---|
+| `start` | Start the gateway as a detached process. |
+| `stop` | Stop the gateway process. |
+| `status` | Show whether the gateway is running. |
+| `restart` | Stop and start the gateway. |
+| `install` | Install gateway service files for the current operating system. |
+| `uninstall` | Remove installed gateway service files. |
+
+Use the child-specific options documented under [`gateway`](#gateway), for example `botnexus serve gateway start --port 8080`.
 
 ### serve probe
 
@@ -259,9 +273,7 @@ Start the BotNexus Probe diagnostic tool. Probe binds its UI, APIs, static files
 | Option | Default | Description |
 |---|---|---|
 | `--port <PORT>` | `5050` | Port for the Probe web UI. |
-| `--listen-any` | off | Bind every Probe surface to all network interfaces. This explicitly exposes unauthenticated diagnostic data and OTLP ingestion to the network. |
-| `--path <DIR>` | Install location | Path to the repository root. |
-| `--dev` | off | Use the current working directory as the repo root. |
+| `--source <DIR>` | `~/botnexus` | Path to the repository root. |
 | `--gateway-url <URL>` | `http://localhost:5005` | URL of a running BotNexus Gateway. |
 | `--verbose` | — | Show detailed output. |
 
@@ -273,17 +285,16 @@ Start the BotNexus Probe diagnostic tool. Probe binds its UI, APIs, static files
 botnexus serve
 ```
 
-**Start the gateway from a dev clone:**
+**Start the gateway from a different source clone:**
 
 ```powershell
-cd D:\repos\botnexus
-botnexus serve --dev
+botnexus serve --source D:\repos\botnexus
 ```
 
 **Start the gateway on a custom port:**
 
 ```powershell
-botnexus serve gateway --port 8080
+botnexus serve --port 8080
 ```
 
 **Start the probe connected to a running gateway:**
@@ -297,8 +308,8 @@ botnexus serve probe --gateway-url http://localhost:5005
 | Scenario | Command |
 |---|---|
 | Run from the default install clone | `botnexus serve` |
-| Run from your active dev repo | `botnexus serve --dev` |
-| Build and serve in one flow | `botnexus build --dev && botnexus serve --dev` |
+| Run from another source clone | `botnexus serve --source <DIR>` |
+| Build and serve in one flow | `botnexus build --path <DIR> && botnexus serve --source <DIR>` |
 
 Both modes produce Release builds so the gateway DLLs don't collide with Debug builds from your IDE or test runner.
 
@@ -422,6 +433,8 @@ botnexus init --force
 
 ## agent list
 
+The `agent` command group also accepts the alias `agents`.
+
 List all configured agents from `config.json`.
 
 ### Usage
@@ -490,6 +503,10 @@ botnexus agent add <ID> [OPTIONS]
 | `--provider` | `github-copilot` | Agent provider name (must match a configured provider; e.g. `github-copilot`, `openai`, `anthropic`, or any provider added via `botnexus provider add`). |
 | `--model` | `gpt-4.1` | Model name for this agent (e.g., `gpt-4o`, `claude-3-sonnet`). |
 | `--enabled` | `true` | Whether the agent is enabled (`true` or `false`). |
+| `--display-name <NAME>` | Agent ID | Human-readable name shown in clients. |
+| `--description <TEXT>` | — | Description of the agent's purpose. |
+| `--emoji <EMOJI>` | — | Emoji shown with the agent name. |
+| `--disabled` | off | Disable the agent. This takes precedence over `--enabled`. |
 | `--verbose` | — | Show the updated configuration. |
 
 ### Examples
@@ -1871,13 +1888,15 @@ botnexus provider ollama models
 Send a simple chat completion request to verify end-to-end inference.
 
 ```powershell
-botnexus provider ollama test --model llama3
+botnexus provider ollama test
+botnexus provider ollama test --model llama3 --prompt "Reply with ok."
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--url <URL>` | `http://localhost:11434` | Ollama server URL |
-| `--model <ID>` | (required) | Model to test |
+| `--model <ID>` | First available model | Model to test |
+| `--prompt <TEXT>` | `Respond with the single word: ok.` | Prompt to send |
 
 See [Ollama Provider](providers/ollama.md) for full setup and configuration details.
 
@@ -1906,6 +1925,17 @@ botnexus prompt [COMMAND] [OPTIONS]
 - `render` — Render a template to stdout (substitute parameters)
 - `run` — Render and execute a template against the gateway
 - `create samples` — Copy bundled sample templates into `~/.botnexus/prompts/`
+
+### prompt create samples
+
+```powershell
+botnexus prompt create samples [--config <PATH>] [--target <DIR>]
+```
+
+| Option | Description |
+|---|---|
+| `--config <PATH>` | Explicit path to `config.json`. Overrides `--target`; samples are copied to the corresponding BotNexus home. |
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus/`. |
 
 ---
 
@@ -2082,7 +2112,7 @@ Output:
 
 ```text
 [Agent response...]
-Engineering team is on track with all Q1 deliverables. 
+Engineering team is on track with all Q1 deliverables.
 Three items in progress, two completed this week.
 ```
 
@@ -2138,6 +2168,8 @@ Output includes:
 ---
 
 ## satellite
+
+The `satellite` command group also accepts the alias `satellites`. The `satellite remove` command also accepts the alias `delete`.
 
 Manage satellite nodes — remote presence points that extend BotNexus to additional machines (desktop notifications, canvas windows, remote command execution).
 
@@ -2654,16 +2686,19 @@ botnexus debug sessions <COMMAND> [OPTIONS]
 | Command | Description |
 |---------|-------------|
 | `list` | List all sessions with summary info |
-| `get` | Show details for a specific session |
-| `compaction` | Show compaction history for a session |
+| `get <session-id>` | Show details for a specific session |
+| `compaction <session-id>` | Show compaction history for a session |
 | `stats` | Database-wide statistics |
 
 ### Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
-| `--format` | `table` | Output format: `table` or `json` |
+| Option | Applies to | Default | Description |
+|--------|------------|---------|-------------|
+| `--target <DIR>` | all | `~/.botnexus` | BotNexus home directory |
+| `--format` | all | `table` | Output format: `table` or `json` |
+| `--agent <ID>` | `list` | (all) | Filter by agent ID |
+| `--status <STATUS>` | `list` | (all) | Filter by `active`, `sealed`, `expired`, or `all` |
+| `--limit <N>` | `list` | 20 | Maximum sessions to return |
 
 ### Examples
 
@@ -2672,16 +2707,16 @@ botnexus debug sessions <COMMAND> [OPTIONS]
 botnexus debug sessions list
 
 # Get session details
-botnexus debug sessions get --id "session-abc123"
+botnexus debug sessions get "session-abc123"
 
 # Show compaction history
-botnexus debug sessions compaction --id "session-abc123"
+botnexus debug sessions compaction "session-abc123"
 
 # Database statistics
 botnexus debug sessions stats
 
 # JSON output for scripting
-botnexus debug sessions list --format json
+botnexus debug sessions --format json list
 ```
 
 ---
@@ -2808,12 +2843,12 @@ botnexus debug db <COMMAND> [OPTIONS]
 
 ### Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
-| `--db <NAME>` | (all) | Filter to a specific database by name — `sessions`, `cron`, `webhooks`, `skill-usage` (extension optional) |
-| `--include-agents` | off | Also include per-agent memory databases (`agents/<id>/data/memory.sqlite`) |
-| `--format` | `table` | Output format: `table` or `json` |
+| Option | Applies to | Default | Description |
+|--------|------------|---------|-------------|
+| `--target <DIR>` | all | `~/.botnexus` | BotNexus home directory |
+| `--db <NAME>` | `tables`, `schema` | (all) | Filter to a specific database by name — `sessions`, `cron`, `webhooks`, `skill-usage` (extension optional) |
+| `--include-agents` | `tables`, `schema`, `size` | off | Also include per-agent memory databases (`agents/<id>/data/memory.sqlite`) |
+| `--format` | all | `table` | Output format: `table` or `json` |
 
 > `--format` is a `debug db` group option, so it goes **before** the subcommand: `botnexus debug db --format json tables`.
 
@@ -2916,12 +2951,12 @@ botnexus debug cron <COMMAND> [OPTIONS]
 
 ### Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
-| `--job <ID>` | (all) | Filter to a specific job |
-| `--limit <N>` | 20 | Maximum history entries |
-| `--format` | `table` | Output format: `table` or `json` |
+| Option | Applies to | Default | Description |
+|--------|------------|---------|-------------|
+| `--target <DIR>` | all | `~/.botnexus` | BotNexus home directory |
+| `--job <ID>` | `history` | (all) | Filter to a specific job |
+| `--limit <N>` | `history` | 20 | Maximum history entries |
+| `--format` | all | `table` | Output format: `table` or `json` |
 
 ### Examples
 
