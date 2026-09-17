@@ -85,6 +85,18 @@ public sealed class MatrixAccountConfig
     /// senders (other than the account's own echo, which is always suppressed).
     /// </summary>
     public ICollection<string> AllowedUserIds { get; } = [];
+
+    /// <summary>
+    /// Allow-list of Matrix sender domains (server names). Matching is exact and
+    /// case-insensitive. Empty permits every domain not explicitly denied.
+    /// </summary>
+    public ICollection<string> AllowedSenderDomains { get; } = [];
+
+    /// <summary>
+    /// Deny-list of Matrix sender domains (server names). A matching denial takes precedence over
+    /// the domain allow-list.
+    /// </summary>
+    public ICollection<string> DeniedSenderDomains { get; } = [];
 }
 
 /// <summary>
