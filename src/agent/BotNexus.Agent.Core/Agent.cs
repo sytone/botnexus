@@ -644,7 +644,8 @@ public sealed class Agent
             RetryRandomSource: null,
             MaxToolOutputBytes: _options.MaxToolOutputBytes,
             BeforeToolAudit: _options.BeforeToolAudit,
-            OnToolCallDisposition: _options.OnToolCallDisposition);
+            OnToolCallDisposition: _options.OnToolCallDisposition,
+            SanitizeToolResultText: _options.SanitizeToolResultText);
     }
 
     private Func<CancellationToken, Task<AgentContext?>>? BuildMaybeCompactDelegate()

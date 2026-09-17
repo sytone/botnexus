@@ -80,6 +80,10 @@ namespace BotNexus.Agent.Core.Configuration;
 /// tool-result cap. This is a backstop <em>beneath</em> the existing per-tool caps, not a
 /// replacement for them.
 /// </param>
+/// <param name="SanitizeToolResultText">
+/// Optional host-owned sanitizer applied to finalized generic tool text after replacement hooks
+/// and before central budgeting and continuation retention (#4096).
+/// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
 /// It is immutable and passed through the loop to ensure consistent configuration.
@@ -109,7 +113,8 @@ public record AgentLoopConfig(
     int? MaxToolOutputBytes = null,
     BotNexus.Agent.Core.Loop.IHostSuspendDetector? SuspendDetector = null,
     BeforeToolAuditDelegate? BeforeToolAudit = null,
-    ToolCallDispositionDelegate? OnToolCallDisposition = null)
+    ToolCallDispositionDelegate? OnToolCallDisposition = null,
+    Func<string, string>? SanitizeToolResultText = null)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).
