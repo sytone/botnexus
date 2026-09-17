@@ -9,12 +9,15 @@ const listeners = new Map();
 let containerWidth = 2000;
 
 const leftPane = {
+    id: '',
     style: {},
     getBoundingClientRect: () => ({ width: Number.parseInt(leftPane.style.width ?? '0', 10) })
 };
 const splitter = {
     previousElementSibling: leftPane,
     classList: { add() {}, remove() {} },
+    attrs: {},
+    setAttribute(name, value) { this.attrs[name] = String(value); },
     addEventListener(type, handler) { listeners.set(type, handler); },
     removeEventListener(type, handler) {
         if (listeners.get(type) === handler) listeners.delete(type);

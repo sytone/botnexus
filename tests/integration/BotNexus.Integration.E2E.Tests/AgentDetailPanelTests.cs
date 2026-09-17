@@ -179,6 +179,57 @@ public sealed class AgentDetailPanelTests : IAsyncLifetime
     }
 
     // -------------------------------------------------------------------------
+    [SkippableTheory]
+    [InlineData(390)]
+    [InlineData(719)]
+    [Trait("Category", "AgentDetailPanel")]
+    public async Task AgentDetailPanel_NarrowViewport_StacksLabelsAboveControlsWithoutOverflow(int width)
+    {
+        Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
+        var page = await NavigateToAgentDetailAsync(_fx.AgentIds[0]);
+        await page.SetViewportSizeAsync(width, 844);
+
+        var grid = page.Locator(".agents-form-grid").First;
+        await grid.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
+        var label = grid.Locator(":scope > label").First;
+        var control = grid.Locator(":scope > :not(label)").First;
+
+        var columns = await grid.EvaluateAsync<string>("el => getComputedStyle(el).gridTemplateColumns");
+        var labelBox = await label.BoundingBoxAsync();
+        var controlBox = await control.BoundingBoxAsync();
+        var documentWidth = await page.EvaluateAsync<double>("document.documentElement.scrollWidth");
+
+        Assert.NotNull(labelBox);
+        Assert.NotNull(controlBox);
+        Assert.DoesNotContain(" ", columns.Trim(), StringComparison.Ordinal);
+        Assert.True(controlBox!.Y >= labelBox!.Y + labelBox.Height,
+            $"Control should stack below label at {width}px, label={labelBox}, control={controlBox}.");
+        Assert.True(documentWidth <= width,
+            $"Agent editor overflowed at {width}px: document width was {documentWidth}px.");
+    }
+
+    [SkippableFact]
+    [Trait("Category", "AgentDetailPanel")]
+    public async Task AgentDetailPanel_DesktopViewport_KeepsLabelAndControlInTwoColumns()
+    {
+        Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
+        var page = await NavigateToAgentDetailAsync(_fx.AgentIds[0]);
+        await page.SetViewportSizeAsync(1280, 844);
+
+        var grid = page.Locator(".agents-form-grid").First;
+        await grid.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
+        var labelBox = await grid.Locator(":scope > label").First.BoundingBoxAsync();
+        var controlBox = await grid.Locator(":scope > :not(label)").First.BoundingBoxAsync();
+
+        Assert.NotNull(labelBox);
+        Assert.NotNull(controlBox);
+        Assert.True(controlBox!.X >= labelBox!.X + labelBox.Width,
+            $"Control should remain to the right of its label on desktop, label={labelBox}, control={controlBox}.");
+        Assert.True(Math.Abs(controlBox.Y - labelBox.Y) < 20,
+            $"Desktop label and control should remain row-aligned, label={labelBox}, control={controlBox}.");
+    }
+
+    // -------------------------------------------------------------------------
     [SkippableFact]
     [Trait("Category", "AgentDetailPanel")]
     public async Task AgentDetailPanel_SectionToggle_ExpandsAndCollapses()

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
@@ -148,6 +149,25 @@ public sealed class BackgroundProcessInteropTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData("\u001bPpayload\u001b\\", "\u0090payload\u009c")]
+    [InlineData("\u001bXpayload\u001b\\", "\u0098payload\u009c")]
+    [InlineData("\u001b^payload\u001b\\", "\u009epayload\u009c")]
+    [InlineData("\u001b_payload\u001b\\", "\u009fpayload\u009c")]
+    public void Decoder_EscAndC1ControlStrings_MatchAtEveryBoundary(string escString, string c1String)
+    {
+        foreach (var controlString in new[] { escString, c1String })
+        {
+            var text = $"before{controlString}after";
+            for (var split = 0; split <= text.Length; split++)
+            {
+                var decoder = new BackgroundOutputDecoder();
+                var output = decoder.Append(text.AsSpan(0, split)) + decoder.Append(text.AsSpan(split), final: true);
+                output.ShouldBe("beforeafter");
+            }
+        }
+    }
+
     [Fact]
     public void Buffer_SplitSurrogatePair_UsesActualUtf8Bytes()
     {
@@ -159,6 +179,69 @@ public sealed class BackgroundProcessInteropTests : IDisposable
         buffer.DiscardedBytes.ShouldBe(0);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DrainFailure_RetainsCapturedBytesAndIsNotReportedAsSuccessfulCompletion(bool failStdout)
+    {
+        var captured = new FailingReadStream("captured-before-failure", waitForRelease: true);
+        using var root = StartProcess("exit 0");
+        var child = new BackgroundProcess(
+            root,
+            "faulted-drain",
+            DateTimeOffset.UtcNow,
+            failStdout ? new StreamReader(captured) : StreamReader.Null,
+            failStdout ? StreamReader.Null : new StreamReader(captured));
+        var registry = new BackgroundProcessRegistry(maxExitedRetained: 0);
+        registry.Register("owner", child);
+        var tool = new ProcessTool(new ProcessManager(registry, "owner"));
+        captured.Release();
+
+        await child.WaitForCompletionAsync().WaitAsync(TimeSpan.FromSeconds(30));
+
+        child.IsComplete.ShouldBeFalse("a failed output drain cannot be successful completion");
+        child.IsTerminal.ShouldBeTrue("failed capture must still reach a bounded terminal lifecycle state");
+        child.OutputCaptureStatus.ShouldBe("incomplete (read failure)");
+        var output = child.GetOutput();
+        output.ShouldContain("[output capture incomplete (read failure)]");
+        output.ShouldContain("captured-before-failure");
+        var statusResult = await tool.ExecuteAsync("status", new Dictionary<string, object?>
+        {
+            ["action"] = "status",
+            ["pid"] = child.Pid,
+        });
+        statusResult.Content[0].Value.ShouldContain("Output Capture: incomplete (read failure)");
+        var outputResult = await tool.ExecuteAsync("output", new Dictionary<string, object?>
+        {
+            ["action"] = "output",
+            ["pid"] = child.Pid,
+            ["tail"] = 0,
+        });
+        outputResult.Content[0].Value.ShouldContain("[output capture incomplete (read failure)]");
+
+        registry.Reap();
+        registry.Get("owner", child.Pid).ShouldBeNull("terminal failed captures remain subject to bounded retention");
+    }
+
+    [Fact]
+    public async Task DisposedDrain_IsReportedSeparatelyAndReachesTerminalLifecycle()
+    {
+        using var root = StartProcess("exit 0");
+        var child = new BackgroundProcess(
+            root,
+            "disposed-drain",
+            DateTimeOffset.UtcNow,
+            new StreamReader(new FailingReadStream("", disposeInsteadOfFail: true)),
+            StreamReader.Null);
+
+        await child.WaitForCompletionAsync().WaitAsync(TimeSpan.FromSeconds(30));
+
+        child.IsComplete.ShouldBeFalse();
+        child.IsTerminal.ShouldBeTrue();
+        child.OutputCaptureStatus.ShouldBe("incomplete (stream closed during cleanup)");
+        child.GetOutput().ShouldContain("[output capture incomplete (stream closed during cleanup)]");
+    }
+
     [Fact]
     public async Task TailOne_ReturnsLastContentLineRatherThanTrailingSplitSentinel()
     {
@@ -167,6 +250,64 @@ public sealed class BackgroundProcessInteropTests : IDisposable
         var child = BackgroundProcessRegistry.Instance.Get(_owner, pid);
         child.ShouldNotBeNull();
         child.GetOutput(1).TrimEnd('\r').ShouldBe("hello");
+    }
+
+    private static Process StartProcess(string command)
+    {
+        var info = new ProcessStartInfo(OperatingSystem.IsWindows() ? "pwsh" : "/bin/sh")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        if (OperatingSystem.IsWindows())
+        {
+            info.ArgumentList.Add("-NoProfile");
+            info.ArgumentList.Add("-Command");
+        }
+        else
+        {
+            info.ArgumentList.Add("-c");
+        }
+        info.ArgumentList.Add(command);
+        return Process.Start(info) ?? throw new InvalidOperationException("child did not start");
+    }
+
+    private sealed class FailingReadStream(
+        string captured,
+        bool disposeInsteadOfFail = false,
+        bool waitForRelease = false) : Stream
+    {
+        private readonly byte[] _captured = Encoding.UTF8.GetBytes(captured);
+        private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool _returnedCaptured;
+
+        public void Release() => _released.TrySetResult();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (waitForRelease) await _released.Task.WaitAsync(cancellationToken);
+            if (_returnedCaptured || _captured.Length == 0)
+            {
+                if (disposeInsteadOfFail) throw new ObjectDisposedException(nameof(FailingReadStream));
+                throw new IOException("deterministic output capture failure");
+            }
+            _returnedCaptured = true;
+            _captured.CopyTo(buffer);
+            return _captured.Length;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class AllowPaths : IPathValidator

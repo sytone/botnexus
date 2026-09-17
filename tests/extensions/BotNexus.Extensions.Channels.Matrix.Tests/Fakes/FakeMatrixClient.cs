@@ -16,6 +16,22 @@ public sealed record SentMessage(string RoomId, MatrixMessageContent Content);
 /// <param name="Typing">Whether typing was turned on or off.</param>
 public sealed record TypingCall(string RoomId, bool Typing);
 
+/// <summary>A bounded media download requested by the adapter.</summary>
+public sealed class MediaDownloadCall
+{
+    /// <summary>Matrix media origin parsed from the MXC URI.</summary>
+    public required string ServerName { get; init; }
+
+    /// <summary>Opaque media identifier parsed from the MXC URI.</summary>
+    public required string MediaId { get; init; }
+
+    /// <summary>Maximum body size supplied to the client.</summary>
+    public required long MaxBytes { get; init; }
+
+    /// <summary>Whether the adapter-owned media budget cancelled the operation.</summary>
+    public bool CancellationObserved { get; set; }
+}
+
 /// <summary>
 /// In-memory <see cref="IMatrixClient"/> standing in for a homeserver. Sync responses are supplied
 /// as a scripted queue so a test can drive the adapter's loop deterministically, and every write is
@@ -39,6 +55,13 @@ public sealed class FakeMatrixClient : IMatrixClient
 
     /// <summary>The <c>timeout</c> values the adapter supplied on each sync, in order.</summary>
     public List<int> SyncTimeouts { get; } = [];
+
+    /// <summary>Media downloads the adapter requested, in order.</summary>
+    public List<MediaDownloadCall> MediaDownloadCalls { get; } = [];
+
+    /// <summary>Script invoked for media downloads.</summary>
+    public Func<string, string, long, CancellationToken, Task<byte[]>> DownloadMedia { get; set; } =
+        (_, _, _, _) => Task.FromResult(Array.Empty<byte>());
 
     /// <summary>Number of event IDs minted so far, used to make each send's ID unique.</summary>
     private int _eventCounter;
@@ -87,6 +110,40 @@ public sealed class FakeMatrixClient : IMatrixClient
             SentMessages.Add(new SentMessage(roomId, content));
             _eventCounter++;
             return Task.FromResult($"$event{_eventCounter}");
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<string> UploadMediaAsync(
+        byte[] data,
+        string contentType,
+        string fileName,
+        CancellationToken cancellationToken) =>
+        Task.FromResult("mxc://fake.example.com/uploaded");
+
+    /// <inheritdoc />
+    public async Task<byte[]> DownloadMediaAsync(
+        string serverName,
+        string mediaId,
+        long maxBytes,
+        CancellationToken cancellationToken)
+    {
+        var call = new MediaDownloadCall
+        {
+            ServerName = serverName,
+            MediaId = mediaId,
+            MaxBytes = maxBytes,
+        };
+        MediaDownloadCalls.Add(call);
+
+        try
+        {
+            return await DownloadMedia(serverName, mediaId, maxBytes, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            call.CancellationObserved = true;
+            throw;
         }
     }
 

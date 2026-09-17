@@ -1,5 +1,6 @@
 @using System.Text.Json.Nodes
 @using System.Globalization
+@using System.Text
 @using System.Text.RegularExpressions
 @using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
 @inject IModelOptionsProvider ModelOptions
@@ -257,11 +258,18 @@ else
         return string.IsNullOrWhiteSpace(d) ? null : d;
     }
 
+    // IDs are document-global, so a path alone cannot identify fields when two forms render the
+    // same schema. Keep one namespace for this component instance; the readonly value survives
+    // ordinary rerenders while a second instance receives a disjoint namespace.
+    private static int s_instances;
+    private readonly int _instance = Interlocked.Increment(ref s_instances);
+
     /// <summary>
-    /// Stable DOM id for a field, so its label can carry a for= attribute. The JSON path is
-    /// already unique per field; dots are not legal in an id fragment we want to select on.
+    /// Stable DOM id for a field, so its label can carry a for= attribute. Hex-encoding the UTF-8
+    /// path is injective: supported names such as <c>a.b</c> and <c>a-b</c> cannot collapse after
+    /// punctuation replacement, and no configuration-path semantics need to change.
     /// </summary>
-    private static string FieldId(string path) => "cfg-" + path.Replace('.', '-');
+    private string FieldId(string path) => $"cfg-i{_instance.ToString(CultureInfo.InvariantCulture)}-{Convert.ToHexString(Encoding.UTF8.GetBytes(path))}";
 
     /// <summary>
     /// x-ui-group values are kebab-case slugs ("tool-result-persistence"). Render them as prose.
@@ -326,6 +334,10 @@ else
             var dict = Resolve(path) as JsonObject;
             <fieldset class="schema-dict" data-testid="@($"dict-{path}")">
                 <legend>@Label(name, node)</legend>
+                @if (Description(node) is { } dictionaryDescription)
+                {
+                    <p class="schema-collection-description">@dictionaryDescription</p>
+                }
                 @foreach (var entry in dict?.ToList() ?? [])
                 {
                     var key = entry.Key;
@@ -364,6 +376,10 @@ else
             var arr = Resolve(path) as JsonArray ?? [];
             <fieldset class="schema-array" data-testid="@($"array-{path}")">
                 <legend>@Label(name, node)</legend>
+                @if (Description(node) is { } arrayDescription)
+                {
+                    <p class="schema-collection-description">@arrayDescription</p>
+                }
                 @for (var i = 0; i < arr.Count; i++)
                 {
                     var index = i;
