@@ -51,6 +51,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>wwwroot\js\splitter.resize.test.mjs</Link>
     </None>
+    <None Include="..\..\..\assets\icons\README.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>assets\icons\README.md</Link>
+    </None>
   </ItemGroup>
 
 </Project>

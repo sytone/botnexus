@@ -574,10 +574,19 @@ public sealed class ConversationState
                 ? snapshot
                 : _messages;
             var inserted = TranscriptReconciler.CountMissing(local, serverPage);
-            if (inserted == 0)
-                return 0;
-
             var reconciled = TranscriptReconciler.Reconcile(local, serverPage);
+
+            foreach (var completedToolCallId in serverPage
+                .Where(message => message.ToolResult is not null)
+                .Select(message => message.ToolCallId)
+                .OfType<string>())
+            {
+                StreamState.ActiveToolCalls.Remove(completedToolCallId);
+            }
+
+            if (reconciled.SequenceEqual(local))
+                return inserted;
+
             _messages.Clear();
             _messages.AddRange(reconciled);
             RebuildMessageIndex();

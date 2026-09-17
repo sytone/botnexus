@@ -345,6 +345,87 @@ public sealed class WebhookInboundQueueTests
     }
 
     [Fact]
+    public async Task CompletedDeliveries_RetireIdleConversationAndAgentBookkeeping()
+    {
+        var queue = CreateQueue(depth: 2);
+
+        for (var index = 0; index < 100; index++)
+        {
+            var conversation = ConversationId.From($"conv-retired-{index}");
+            var holder = await queue.Admit(Target, conversation).WaitAsync(CancellationToken.None);
+            var queued = queue.Admit(Target, conversation);
+            var queuedWait = queued.WaitAsync(CancellationToken.None);
+
+            holder.Dispose();
+            (await queuedWait.WaitAsync(TestTimeout)).Dispose();
+        }
+
+        queue.RetainedSlotCount.ShouldBe(0,
+            "completed conversations must not remain in the singleton queue indefinitely");
+        queue.RetainedAgentDepthCount.ShouldBe(0,
+            "agents with no queued deliveries must not retain depth bookkeeping indefinitely");
+    }
+
+    [Fact]
+    public async Task RetirementRacingAdmission_PreservesSingleConversationHolder()
+    {
+        var queue = CreateQueue(depth: 2);
+        var holder = await queue.Admit(Target, Conversation).WaitAsync(CancellationToken.None);
+        using var slotResolved = new ManualResetEventSlim();
+        using var continueAdmission = new ManualResetEventSlim();
+        var pauseOnce = 0;
+        queue.SlotResolvedForTesting = () =>
+        {
+            if (Interlocked.Exchange(ref pauseOnce, 1) != 0)
+                return;
+            slotResolved.Set();
+            continueAdmission.Wait(TestTimeout);
+        };
+
+        var contenderTask = Task.Run(() => queue.Admit(Target, Conversation));
+        slotResolved.Wait(TestTimeout).ShouldBeTrue(
+            "the contender must resolve the retiring slot before the holder releases it");
+        holder.Dispose();
+        queue.RetainedSlotCount.ShouldBe(0,
+            "the idle slot must retire while the contender still holds its stale reference");
+        continueAdmission.Set();
+
+        var contender = await contenderTask.WaitAsync(TestTimeout);
+        using var contenderLease = await contender.WaitAsync(CancellationToken.None).WaitAsync(TestTimeout);
+        var follower = queue.Admit(Target, Conversation);
+        follower.IsImmediate.ShouldBeFalse(
+            "the stale contender must retry against the replacement slot rather than bypass it");
+        follower.Dispose();
+
+        queue.SlotResolvedForTesting = null;
+        contenderLease.Dispose();
+        queue.RetainedSlotCount.ShouldBe(0);
+        queue.RetainedAgentDepthCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task CancelledRejectedAndAbandonedAdmissions_DoNotRetainBookkeeping()
+    {
+        var queue = CreateQueue(depth: 1);
+        var holder = await queue.Admit(Target, Conversation).WaitAsync(CancellationToken.None);
+
+        var cancelled = queue.Admit(Target, Conversation);
+        using var cts = new CancellationTokenSource();
+        var cancelledWait = cancelled.WaitAsync(cts.Token);
+        Should.Throw<WebhookBackpressureException>(() => queue.Admit(Target, Conversation));
+        await cts.CancelAsync();
+        await Should.ThrowAsync<WebhookNotDispatchedException>(
+            async () => await cancelledWait.WaitAsync(TestTimeout));
+
+        var abandoned = queue.Admit(Target, Conversation);
+        abandoned.Dispose();
+        holder.Dispose();
+
+        queue.RetainedSlotCount.ShouldBe(0);
+        queue.RetainedAgentDepthCount.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task WaitersAreServedInFifoOrder_WithNoBarging()
     {
         var queue = CreateQueue(depth: 8);

@@ -22,7 +22,7 @@ controllers:
 |------------|---------|
 | `async`    | 202 immediately + `Location` poll URL; agent runs in background (default). |
 | `sync`     | Holds the connection open until the agent completes (≤120s), returns inline. |
-| `callback` | 202 immediately; POSTs the result to a `callbackUrl` on completion. |
+| `callback` | 202 immediately; POSTs the terminal result to a `callbackUrl` on completion or live-host timeout. |
 
 ### Run status
 
@@ -233,7 +233,10 @@ The in-flight delivery does not count against the depth, so an uncontended
 delivery never consumes queue capacity. Admission is decided on the request
 thread, before the `202` is written, so a refusal is an explicit `503` rather
 than a success receipt for work that may never be serviced. Background runs also
-honour host shutdown.
+honour host shutdown. A callback delivery that reaches its deadline while still
+queued records `Timeout` and sends one terminal callback without invoking the
+agent. Host shutdown records the timeout but does not start a new outbound
+callback request, so shutdown remains bounded.
 
 Queue depth transitions are logged as each delivery is admitted, so a growing
 backlog is diagnosable without reading run rows.

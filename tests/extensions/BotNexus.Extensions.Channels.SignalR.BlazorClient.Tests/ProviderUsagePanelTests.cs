@@ -4,6 +4,7 @@ using System.Text;
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Web;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
@@ -22,12 +23,80 @@ public sealed class ProviderUsagePanelTests : IDisposable
     public void Dispose() => _ctx.Dispose();
 
     [Fact]
+    public async Task Opening_activates_modal_focus_with_the_dialog_and_opener()
+    {
+        _handler.Enqueue(60, UsageJson(60, requests: 1));
+        var cut = _ctx.Render<ProviderUsagePanel>();
+        var opener = new ElementReference("usage-opener");
+
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync(opener));
+
+        var invocation = Assert.Single(
+            _ctx.JSInterop.Invocations,
+            call => call.Identifier == "BotNexus.modalFocus.activate");
+        Assert.Equal(2, invocation.Arguments.Count);
+        Assert.IsType<ElementReference>(invocation.Arguments[0]);
+        Assert.Equal(opener, Assert.IsType<ElementReference>(invocation.Arguments[1]));
+        Assert.Equal("dialog", cut.Find("[data-testid='provider-usage-panel']").GetAttribute("role"));
+    }
+
+    [Fact]
+    public async Task Escape_closes_the_modal_and_restores_focus_to_the_opener()
+    {
+        _handler.Enqueue(60, UsageJson(60, requests: 1));
+        var cut = _ctx.Render<ProviderUsagePanel>();
+        var opener = new ElementReference("usage-opener");
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync(opener));
+
+        cut.Find("[data-testid='provider-usage-panel']").KeyDown(Key.Escape);
+
+        Assert.Empty(cut.FindAll("[data-testid='provider-usage-panel']"));
+        var invocation = Assert.Single(
+            _ctx.JSInterop.Invocations,
+            call => call.Identifier == "BotNexus.modalFocus.deactivate");
+        Assert.True(Assert.IsType<bool>(invocation.Arguments[1]));
+    }
+
+    [Fact]
+    public async Task Close_button_deactivates_modal_focus_and_restores_the_opener()
+    {
+        _handler.Enqueue(60, UsageJson(60, requests: 1));
+        var cut = _ctx.Render<ProviderUsagePanel>();
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync(new ElementReference("usage-opener")));
+
+        cut.Find("[data-testid='usage-close']").Click();
+
+        Assert.Empty(cut.FindAll("[data-testid='provider-usage-panel']"));
+        Assert.Contains(
+            _ctx.JSInterop.Invocations,
+            call => call.Identifier == "BotNexus.modalFocus.deactivate"
+                && call.Arguments.Count == 2
+                && call.Arguments[1] is true);
+    }
+
+    [Fact]
+    public async Task Disposal_deactivates_focus_without_restoring_a_stale_opener()
+    {
+        _handler.Enqueue(60, UsageJson(60, requests: 1));
+        var cut = _ctx.Render<ProviderUsagePanel>();
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync(new ElementReference("usage-opener")));
+
+        await cut.Instance.DisposeAsync();
+
+        Assert.Contains(
+            _ctx.JSInterop.Invocations,
+            call => call.Identifier == "BotNexus.modalFocus.deactivate"
+                && call.Arguments.Count == 2
+                && call.Arguments[1] is false);
+    }
+
+    [Fact]
     public async Task Close_during_initial_refresh_cannot_start_polling_after_response_completes()
     {
         var response = _handler.Enqueue(60, UsageJson(60, requests: 1), held: true, ignoreCancellation: true);
         var cut = _ctx.Render<ProviderUsagePanel>();
 
-        var opening = cut.InvokeAsync(cut.Instance.OpenAsync);
+        var opening = cut.InvokeAsync(() => cut.Instance.OpenAsync());
         await response.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
         cut.WaitForAssertion(() => cut.Find("[data-testid='usage-close']").Click());
 
@@ -46,9 +115,9 @@ public sealed class ProviderUsagePanelTests : IDisposable
         var cut = _ctx.Render<ProviderUsagePanel>();
         var component = cut.Instance;
 
-        var opening = cut.InvokeAsync(component.OpenAsync);
+        var opening = cut.InvokeAsync(() => component.OpenAsync());
         await response.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        component.Dispose();
+        await component.DisposeAsync();
 
         response.Release();
         await opening.WaitAsync(TimeSpan.FromSeconds(30));
@@ -64,9 +133,9 @@ public sealed class ProviderUsagePanelTests : IDisposable
         _handler.Enqueue(60, UsageJson(60, requests: 2));
         var cut = _ctx.Render<ProviderUsagePanel>();
 
-        var firstOpen = cut.InvokeAsync(cut.Instance.OpenAsync);
+        var firstOpen = cut.InvokeAsync(() => cut.Instance.OpenAsync());
         await stale.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        await cut.InvokeAsync(cut.Instance.OpenAsync).WaitAsync(TimeSpan.FromSeconds(30));
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync()).WaitAsync(TimeSpan.FromSeconds(30));
         var currentTimer = PollTimer(cut.Instance);
 
         stale.Release();
@@ -85,7 +154,7 @@ public sealed class ProviderUsagePanelTests : IDisposable
         var oldWindow = _handler.Enqueue(15, UsageJson(15, requests: 15), held: true, ignoreCancellation: true);
         var currentWindow = _handler.Enqueue(360, UsageJson(360, requests: 360), held: true, ignoreCancellation: true);
         var cut = _ctx.Render<ProviderUsagePanel>();
-        await cut.InvokeAsync(cut.Instance.OpenAsync).WaitAsync(TimeSpan.FromSeconds(30));
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync()).WaitAsync(TimeSpan.FromSeconds(30));
 
         var firstChange = ChangeWindowAsync(cut, 15);
         await oldWindow.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -111,7 +180,7 @@ public sealed class ProviderUsagePanelTests : IDisposable
         var oldWindow = _handler.Enqueue(15, null, held: true, ignoreCancellation: true, status: HttpStatusCode.InternalServerError);
         var currentWindow = _handler.Enqueue(360, UsageJson(360, requests: 360), held: true, ignoreCancellation: true);
         var cut = _ctx.Render<ProviderUsagePanel>();
-        await cut.InvokeAsync(cut.Instance.OpenAsync).WaitAsync(TimeSpan.FromSeconds(30));
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync()).WaitAsync(TimeSpan.FromSeconds(30));
 
         var firstChange = ChangeWindowAsync(cut, 15);
         await oldWindow.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));

@@ -1,4 +1,7 @@
 using System.CommandLine;
+using System.IO.Abstractions;
+using System.Text.Json.Nodes;
+using BotNexus.Cli;
 using BotNexus.Cli.Commands;
 using BotNexus.Gateway.Configuration;
 
@@ -287,8 +290,52 @@ public sealed class PersistentAgentWorkspaceReconcilerTests : IDisposable
     }
 
     /// <summary>
-    /// Issue #3700 at the classification layer: orphaned means "absent from config.json entirely",
-    /// not "not currently enabled".
+    /// The command must reconcile against effective configuration, not just config.json. A
+    /// store-only disabled declaration protects its workspace while a genuinely absent workspace in
+    /// the same batch is deleted. The prompt names that effective authority.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAgentsAsync_StoreOnlyDisabledAgentSurvivesWhileAbsentAgentIsDeleted()
+    {
+        var disabled = Directory.CreateDirectory(Path.Combine(_root, "agents", "dormant")).FullName;
+        var absent = Directory.CreateDirectory(Path.Combine(_root, "agents", "gone")).FullName;
+        var configPath = Path.Combine(_root, "config.json");
+        var fileSystem = new FileSystem();
+        var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, fileSystem);
+        await ConfigStoreBootstrap.PopulateAsync(
+            storePath,
+            JsonNode.Parse("""{"agents":{"dormant":{"enabled":false}}}""")!.AsObject());
+
+        string? prompt = null;
+        try
+        {
+            var result = await new DoctorCommand().ExecuteAgentsAsync(
+                _root,
+                cleanupOrphans: false,
+                interactive: true,
+                CancellationToken.None,
+                message =>
+                {
+                    prompt = message;
+                    return true;
+                });
+
+            result.ShouldBe(0);
+            Directory.Exists(disabled).ShouldBeTrue();
+            Directory.Exists(absent).ShouldBeFalse();
+            var observedPrompt = prompt.ShouldNotBeNull();
+            observedPrompt.ShouldContain("effective agent configuration");
+            observedPrompt.ShouldNotContain("config.json");
+        }
+        finally
+        {
+            ConfigStoreBootstrap.ReleaseConnections(storePath);
+        }
+    }
+
+    /// <summary>
+    /// Issue #3700 at the classification layer: orphaned means "absent from effective agent
+    /// configuration", not "not currently enabled".
     /// </summary>
     [Fact]
     public void BuildPlan_TreatsDisabledAgentAsRegisteredAndAbsentAgentAsOrphaned()
