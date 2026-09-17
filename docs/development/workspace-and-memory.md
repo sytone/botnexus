@@ -550,148 +550,124 @@ Three tools enable agent interaction with memory:
 
 ### memory_search — Find Knowledge Across Memory
 
-Searches across long-term memory and daily notes for relevant information.
+Searches the agent's persistent memory store and, when configured and permitted, shared memory
+stores. It does not read arbitrary workspace files.
 
 **Signature**:
 ```text
 memory_search(
-  query: string,                    # Search query string (required)
-  topK: integer = 10,               # Maximum number of results (optional)
-  minScore: number                  # Optional relevance floor; see below
+  query: string,                    # Natural-language query (required)
+  topK: integer = 10,               # Maximum results; clamped to configured maximum
+  scope: string = "all",            # "own", "shared", or "all"
+  store: string = null,             # One named shared store; overrides scope
+  minScore: number = null,          # Optional relevance floor
+  filter: object = null             # sourceType, sessionId, afterDate, beforeDate, tags
 )
 ```
 
-**Result format**: each result renders its rank *and* the numeric fused relevance score that
-produced that rank, e.g. `Score: 0.7412 (rank #1)`. Passing `minScore` excludes results below the
-floor, returning an empty set rather than a ranked page of near-misses when nothing qualifies. The
-score is a provider-specific magnitude, not a 0-1 probability — see
-[Hybrid memory retrieval](../features/hybrid-memory-retrieval.md) for how it is computed and how to
-calibrate a floor.
+| Parameter | Contract |
+| --- | --- |
+| `query` | Required and non-blank. |
+| `topK` | Defaults to `MemoryAgentConfig.Search.DefaultTopK` (`10` by default). Values are clamped to at least `1` and at most `MaxTopK` (`100` by default). |
+| `scope` | `own`, `shared`, or `all`; defaults to `all`. Shared results are available only from stores the agent can read. |
+| `store` | Searches only the named shared store, regardless of `scope`. The call reports unavailable configuration, a missing store, or denied read access instead of falling back to another store. |
+| `minScore` | Excludes results below this fused relevance score. Scores are provider-specific magnitudes, not probabilities or a fixed 0–1 scale. |
+| `filter` | Optional object with `sourceType`, `sessionId`, ISO date strings `afterDate` and `beforeDate`, and a string array `tags`. |
 
-**Search Strategy**:
-- Keyword-based search (grep-style, case-insensitive)
-- Searches MEMORY.md and all daily notes
-- Ranks results by recency (today first, then yesterday, then older daily notes, then long-term memory)
-- Returns up to `max_results` matches with context (2 lines before and after)
-- Each result shows file name, line number, and context
+Each result includes content, source type, session, timestamp, provenance, trust tier, and its fused
+score and rank. Results from multiple permitted stores are ranked together and limited to `topK`.
+See [Hybrid memory retrieval](../features/hybrid-memory-retrieval.md) for scoring details.
 
-**Example Usage**:
+**Example usage**:
 ```text
-memory_search("Pacific Time", max_results=5)
-
-Found 2 result(s) for 'Pacific Time':
-
-[1] MEMORY.md (match line 12)
-  10: ## User Preferences
-  11: - Async-first communication
-  12: - User timezone is Pacific Time; avoid scheduling outside 8am-6pm
-  13: - Evidence-based recommendations
-
-[2] memory/2026-04-02.md (match line 3)
-   1: [10:15] Met with user about Q2 planning
-   2: [10:30] Discussed timezone constraints
-   3: [10:35] User confirmed Pacific Time availability
+memory_search(
+  query="Pacific Time",
+  topK=5,
+  scope="own",
+  filter={ sourceType: "tool", tags: ["category:preference"] }
+)
 ```
-
-**Implementation**: `MemorySearchTool.cs`
-- Reads all searchable keys from memory store
-- Filters to MEMORY and daily/* keys only
-- Iterates through files in recency order
-- Returns context around matching lines
 
 ### memory_save — Persist Learnings to Memory
 
-Appends markdown notes to an agent's memory workspace files.
+Appends a note to the agent's memory or writes an entry to a permitted shared store.
 
 **Signature**:
 ```text
 memory_save(
-  content: string,                  # Memory content to append (required)
-  file_path: string = null          # Relative path under memory root (optional)
+  content: string,                  # Non-blank content (required)
+  file_path: string = null,         # Relative note path under the memory root
+  store: string = null,             # Named shared store; takes precedence over file_path
+  category: string = null,          # decision, pattern, fact, procedure, or preference
+  tags: array = null                # Optional string tags
 )
 ```
 
-**Behavior**:
+| Parameter | Contract |
+| --- | --- |
+| `content` | Required and non-blank. |
+| `file_path` | Optional relative note path under the configured memory root. The markdown memory implementation rejects absolute paths and traversal outside that root. Without this parameter, the agent's default memory target is used. |
+| `store` | Writes to this named shared store instead of agent-local memory. The agent must have write access; unavailable configuration, a missing store, or denied access is reported without an agent-local fallback. |
+| `category` | Optional classification: `decision`, `pattern`, `fact`, `procedure`, or `preference`. Agent-local saves encode it as a `category:<value>` tag; shared-store saves also use it as the entry source type. |
+| `tags` | Optional string tags used for classification and filtering. |
 
-1. **Without `file_path`** (legacy / default)
-   - Appends to today's daily note: `memory/{today}.md`
-   - Creates file if missing
-   - Content is appended as-is (plain Markdown, newline-terminated)
+The live memory enablement gate runs before every write. If memory has been disabled, no local or
+shared store is touched. A run that consumed untrusted external content saves a quarantined entry
+with an `untrusted-origin` marker rather than silently treating it as first-party knowledge.
 
-2. **With `file_path`**
-   - Appends to the specified file relative to the memory root
-   - Path must be relative (absolute paths are rejected)
-   - Leading `memory/` prefix is stripped automatically
-   - Path traversal outside the memory root is blocked
-
-**Example Usage**:
+**Example usage**:
 ```text
-memory_save(content="User prefers concise summaries before detail")
-→ "Appended memory note to memory/2026-04-02.md."
+memory_save(
+  content="User prefers concise summaries before detail",
+  category="preference",
+  tags=["communication"]
+)
 
-memory_save(content="Architecture has 17 projects", file_path="architecture.md")
-→ "Appended memory note to memory/architecture.md."
-
-memory_save(content="Stable long-term preference", file_path="../MEMORY.md")
-→ Error: "file_path must remain within the memory root."
+memory_save(
+  content="The release decision was deferred",
+  store="project-decisions",
+  category="decision"
+)
 ```
 
-**Implementation**: `MemorySaveTool.cs`
-- Resolves memory root from workspace path (default: `memory/` subdirectory)
-- Supports per-agent memory path override via `MemoryAgentConfig.Path`
-- Ensures target directory exists before writing
-- Normalizes content with trailing newline
+### memory_get — Retrieve Entries by ID or Session
 
-### memory_get — Read Specific Memory Files
-
-Reads long-term memory or a specific daily notes file, with optional line range selection.
+Retrieves one entry from the agent's memory store, or lists recent entries associated with one
+session. It does not read markdown files or line ranges.
 
 **Signature**:
 ```text
 memory_get(
-  file: string = "memory",          # "memory" (long-term) or date like "YYYY-MM-DD"
-  lines: string = null              # Optional line range like "10-20"
+  id: string = null,                # Exact memory entry ID
+  sessionId: string = null,         # Session whose recent entries should be listed
+  limit: integer = 20               # Session result limit; clamped to configured maximum
 )
 ```
 
-**File Targets**:
-- `file="memory"` → reads `MEMORY.md`
-- `file="2026-04-02"` → reads `memory/2026-04-02.md`
-- `file=""` (empty or omitted) → defaults to `memory` (MEMORY.md)
+Provide a non-blank `id` or `sessionId`; a call with neither is rejected during argument
+preparation. If both are supplied, `id` retrieval takes precedence. `limit` applies only to session
+listing, defaults to `20`, and is clamped from `1` through the configured `MaxLimit` (`100` by
+default). Unlike `memory_search`, `memory_get` reads only the agent's own memory store and has no
+shared-store selector.
 
-**Line Range**:
-- Format: `"{start}-{end}"` (1-indexed)
-- Example: `lines="5-10"` returns lines 5-10 inclusive
-- If omitted, returns full file
-- Validates bounds and returns empty if out of range
-
-**Example Usage**:
+**Example usage**:
 ```text
-memory_get(file="memory")
-# MEMORY.md
+memory_get(id="d2b7b65cd8e94ce1a85a0db6847c16df")
 
-## Notes
-- Pattern: User prefers concise summaries
-- Decision: Always check build status first
-
-## Architecture Learnings
-[full content...]
-
----
-
-memory_get(file="2026-04-01", lines="1-5")
-# memory/2026-04-01.md (lines 1-5)
-
-   1: [08:15] Started architecture review
-   2: [09:30] Analyzed 17 projects, clean dependency inversion
-   3: [10:45] Identified 3 critical gaps
+memory_get(sessionId="session-2026-04-01", limit=5)
 ```
 
-**Implementation**: `MemoryGetTool.cs`
-- Resolves file target and validates date format
-- Reads full file content
-- Parses line range and validates bounds
-- Returns numbered output for easy reference
+An ID lookup returns the entry or `Memory entry not found.` A session lookup returns recent entries
+with ID, timestamp, source, provenance, trust tier, session, and a bounded content preview. The live
+memory enablement gate runs before store access, so disabling memory prevents retrieval immediately.
+
+### Reading markdown memory files
+
+`MEMORY.md` and files under `memory/` are workspace markdown files, not `memory_get` identifiers.
+Use a file-reading tool to read a path or line range from those files. Use `memory_search` when you
+need ranked retrieval from indexed memory-store entries, and use `memory_get` only after you have an
+entry ID or session ID. File names, dates, and line ranges cannot be translated into `id`,
+`sessionId`, or `limit`; they are a different operation.
 
 ---
 
@@ -711,7 +687,7 @@ Consolidation is a **future capability** (Wave 5). During normal turns, `MEMORY.
 
 When consolidation is implemented, the planned flow is:
 
-1. A dedicated consolidation agent reviews daily notes via `memory_get(file="{yesterday}")` or `memory_search()`
+1. A dedicated consolidation agent reviews daily-note files through a file-reading tool or searches indexed entries with `memory_search(query="...")`
 2. The consolidation agent identifies patterns and durable learnings
 3. The consolidation agent writes updated content to `MEMORY.md` (using a privileged write path not available during normal turns)
 4. The scaffolded `AGENTS.md` template reminds agents to use `MEMORY.md` for stable facts and `memory/YYYY-MM-DD.md` for active work context
