@@ -185,6 +185,32 @@ public sealed class SidebarNavigationTests
     }
 
     [SkippableFact]
+    public async Task SidebarSplitter_KeyboardNavigation_ChangesWidthAndAccessibleValue()
+    {
+        Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
+        using var playwright = await Playwright.CreateAsync();
+        var (browser, skipReason) = await PortalTestHelpers.TryLaunchBrowserAsync(playwright);
+        Skip.If(browser is null, skipReason);
+        await using var _ = browser!;
+        var (page, _, _) = await PortalTestHelpers.NewChatPageAsync(browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
+
+        var splitter = page.GetByRole(AriaRole.Separator, new() { Name = "Resize sidebar" });
+        await splitter.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15_000 });
+        await splitter.FocusAsync();
+
+        var before = int.Parse((await splitter.GetAttributeAsync("aria-valuenow"))!);
+        await page.Keyboard.PressAsync("ArrowRight");
+        var after = int.Parse((await splitter.GetAttributeAsync("aria-valuenow"))!);
+
+        Assert.Equal(before + 10, after);
+        Assert.True(await splitter.EvaluateAsync<bool>("element => element === document.activeElement"));
+        var controlledPaneId = await splitter.GetAttributeAsync("aria-controls");
+        Assert.False(string.IsNullOrWhiteSpace(controlledPaneId));
+        Assert.Equal(after + "px", await page.Locator("#" + controlledPaneId).EvaluateAsync<string>("element => element.style.width"));
+        Assert.Equal(after.ToString(), await page.EvaluateAsync<string>("() => localStorage.getItem('bn-sidebar-width')"));
+    }
+
+    [SkippableFact]
     public async Task BannerSettingsButton_HasMeaningfulContent_NotLiteralX()
     {
         // Regression test for issue #630: settings button renders 'x' instead of icon
