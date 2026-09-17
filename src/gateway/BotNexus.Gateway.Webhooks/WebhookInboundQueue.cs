@@ -74,6 +74,12 @@ public sealed class WebhookInboundQueue
     public int WaitingCount(AgentId targetId)
         => _depths.TryGetValue(targetId.Value, out var depth) ? Volatile.Read(ref depth.Waiting) : 0;
 
+    internal int RetainedSlotCount => _slots.Count;
+
+    internal int RetainedAgentDepthCount => _depths.Count;
+
+    internal Action? SlotResolvedForTesting { get; set; }
+
     /// <summary>The configured bound, guaranteed to be at least 1.</summary>
     public int MaxQueueDepth => _options.Value.EffectiveMaxQueueDepth;
 
@@ -107,33 +113,60 @@ public sealed class WebhookInboundQueue
     /// </exception>
     public WebhookQueueTicket Admit(AgentId targetId, ConversationId conversationId)
     {
-        var slot = _slots.GetOrAdd(conversationId.Value, static _ => new Slot());
-        var depth = _depths.GetOrAdd(targetId.Value, static _ => new AgentDepth());
-        int waitingAfterAdmission;
-
-        WebhookQueueWaiter? waiter = null;
-        lock (slot.SyncRoot)
+        var conversationKey = conversationId.Value;
+        while (true)
         {
-            if (!slot.Occupied && slot.Waiters.Count == 0)
+            var slot = _slots.GetOrAdd(conversationKey, static key => new Slot(key));
+            SlotResolvedForTesting?.Invoke();
+            int waitingAfterAdmission;
+            WebhookQueueWaiter? waiter = null;
+
+            lock (slot.SyncRoot)
             {
-                slot.Occupied = true;
-                return new WebhookQueueTicket(this, slot, targetId, waiter: null);
+                if (!_slots.TryGetValue(conversationKey, out var current)
+                    || !ReferenceEquals(current, slot))
+                {
+                    continue;
+                }
+
+                if (!slot.Occupied && slot.Waiters.Count == 0)
+                {
+                    slot.Occupied = true;
+                    slot.Admissions++;
+                    return new WebhookQueueTicket(this, slot, targetId, waiter: null);
+                }
+
+                var depth = ReserveDepth(targetId, MaxQueueDepth, out waitingAfterAdmission);
+                slot.Admissions++;
+                waiter = new WebhookQueueWaiter(slot, depth, targetId);
+                waiter.Node = slot.Waiters.AddLast(waiter);
             }
 
-            var maxDepth = MaxQueueDepth;
+            RaiseWaitingCountChanged(targetId, waitingAfterAdmission);
+            return new WebhookQueueTicket(this, slot, targetId, waiter);
+        }
+    }
+
+    private AgentDepth ReserveDepth(AgentId targetId, int maxDepth, out int waitingAfterAdmission)
+    {
+        while (true)
+        {
+            var depth = _depths.GetOrAdd(targetId.Value, static key => new AgentDepth(key));
             lock (depth.SyncRoot)
             {
+                if (!_depths.TryGetValue(depth.Key, out var current)
+                    || !ReferenceEquals(current, depth))
+                {
+                    continue;
+                }
+
                 if (depth.Waiting >= maxDepth)
                     throw new WebhookBackpressureException(targetId, maxDepth);
+
                 waitingAfterAdmission = ++depth.Waiting;
+                return depth;
             }
-
-            waiter = new WebhookQueueWaiter(slot, depth, targetId);
-            waiter.Node = slot.Waiters.AddLast(waiter);
         }
-
-        RaiseWaitingCountChanged(targetId, waitingAfterAdmission);
-        return new WebhookQueueTicket(this, slot, targetId, waiter);
     }
 
     /// <summary>
@@ -152,11 +185,13 @@ public sealed class WebhookInboundQueue
         }
     }
 
-    internal sealed class Slot
+    internal sealed class Slot(string key)
     {
         public readonly object SyncRoot = new();
         public readonly LinkedList<WebhookQueueWaiter> Waiters = new();
+        public string Key { get; } = key;
         public bool Occupied;
+        public int Admissions;
     }
 
     internal sealed class WebhookQueueWaiter(Slot slot, AgentDepth depth, AgentId targetId)
@@ -170,9 +205,10 @@ public sealed class WebhookInboundQueue
     }
 
     /// <summary>Per-agent backlog counter: the unit the bound and the depth signal apply to.</summary>
-    internal sealed class AgentDepth
+    internal sealed class AgentDepth(string key)
     {
         public readonly object SyncRoot = new();
+        public string Key { get; } = key;
         public int Waiting;
     }
 
@@ -205,13 +241,15 @@ public sealed class WebhookInboundQueue
                 slot.Waiters.RemoveFirst();
                 next.Node = null;
                 next.Granted = true;
-                lock (next.Depth.SyncRoot)
-                    waitingAfterExit = --next.Depth.Waiting;
+                waitingAfterExit = ReleaseDepth(next.Depth);
             }
             else
             {
                 slot.Occupied = false;
             }
+
+            if (--slot.Admissions == 0)
+                _slots.TryRemove(new KeyValuePair<string, Slot>(slot.Key, slot));
         }
 
         if (next is not null)
@@ -235,12 +273,24 @@ public sealed class WebhookInboundQueue
 
             waiter.Slot.Waiters.Remove(waiter.Node);
             waiter.Node = null;
-            lock (waiter.Depth.SyncRoot)
-                waitingAfterExit = --waiter.Depth.Waiting;
+            waitingAfterExit = ReleaseDepth(waiter.Depth);
+            if (--waiter.Slot.Admissions == 0)
+                _slots.TryRemove(new KeyValuePair<string, Slot>(waiter.Slot.Key, waiter.Slot));
         }
 
         RaiseWaitingCountChanged(waiter.TargetId, waitingAfterExit);
         waiter.Turn.TrySetException(new WebhookNotDispatchedException(waiter.TargetId));
+    }
+
+    private int ReleaseDepth(AgentDepth depth)
+    {
+        lock (depth.SyncRoot)
+        {
+            var waiting = --depth.Waiting;
+            if (waiting == 0)
+                _depths.TryRemove(new KeyValuePair<string, AgentDepth>(depth.Key, depth));
+            return waiting;
+        }
     }
 }
 

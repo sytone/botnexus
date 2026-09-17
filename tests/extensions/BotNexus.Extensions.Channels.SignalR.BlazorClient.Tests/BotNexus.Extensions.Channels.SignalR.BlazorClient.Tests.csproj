@@ -43,6 +43,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>assets\icons\svg\%(Filename)%(Extension)</Link>
     </None>
+    <None Include="..\..\..\assets\icons\README.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>assets\icons\README.md</Link>
+    </None>
   </ItemGroup>
 
 </Project>

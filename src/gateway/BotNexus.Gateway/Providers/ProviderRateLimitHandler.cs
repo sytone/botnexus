@@ -95,13 +95,17 @@ public sealed class ProviderRateLimitHandler : DelegatingHandler
         if (string.IsNullOrWhiteSpace(host))
             return null;
 
-        if (host.EndsWith("anthropic.com", StringComparison.OrdinalIgnoreCase)) return "anthropic";
-        if (host.EndsWith("openai.com", StringComparison.OrdinalIgnoreCase)) return "openai";
-        if (host.EndsWith("githubcopilot.com", StringComparison.OrdinalIgnoreCase)) return "github-copilot";
-        if (host.EndsWith("models.github.ai", StringComparison.OrdinalIgnoreCase)) return "github-models";
-        if (host.EndsWith("inference.ai.azure.com", StringComparison.OrdinalIgnoreCase)) return "github-models";
+        if (IsDomainOrSubdomain(host, "anthropic.com")) return "anthropic";
+        if (IsDomainOrSubdomain(host, "openai.com")) return "openai";
+        if (IsDomainOrSubdomain(host, "githubcopilot.com")) return "github-copilot";
+        if (IsDomainOrSubdomain(host, "models.github.ai")) return "github-models";
+        if (IsDomainOrSubdomain(host, "inference.ai.azure.com")) return "github-models";
         return null;
     }
+
+    private static bool IsDomainOrSubdomain(string host, string domain) =>
+        host.Equals(domain, StringComparison.OrdinalIgnoreCase) ||
+        host.EndsWith($".{domain}", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Parses rate-limit headers into a snapshot, handling both reported dialects.

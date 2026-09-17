@@ -66,7 +66,11 @@ public sealed class MatrixChannelAdapterTests
         string msgType = "m.text",
         string room = Room,
         MatrixRelatesTo? relatesTo = null,
-        string nextBatch = "batch-1") =>
+        string nextBatch = "batch-1",
+        string? mediaUrl = null,
+        string? fileName = null,
+        string? mimeType = null,
+        long? size = null) =>
         new()
         {
             NextBatch = nextBatch,
@@ -91,6 +95,11 @@ public sealed class MatrixChannelAdapterTests
                                         MsgType = msgType,
                                         Body = body,
                                         RelatesTo = relatesTo,
+                                        Url = mediaUrl,
+                                        FileName = fileName,
+                                        Info = mimeType is null && size is null
+                                            ? null
+                                            : new MatrixMediaInfo { MimeType = mimeType, Size = size },
                                     },
                                 },
                             ],
@@ -252,13 +261,117 @@ public sealed class MatrixChannelAdapterTests
     }
 
     [Fact]
-    public async Task Inbound_ImageMessage_IsSkippedBecauseMediaIsDeferred()
+    public async Task Inbound_ImageMessage_DispatchesCaptionAndBinaryContentPart()
     {
-        var adapter = CreateAdapter(BuildOptions(), new FakeMatrixClientFactory());
+        byte[] bytes = [0x89, 0x50, 0x4E, 0x47];
+        var factory = new FakeMatrixClientFactory();
+        factory.ClientFor("farnsworth").DownloadMedia = (_, _, _, _) => Task.FromResult(bytes);
+        var adapter = CreateAdapter(BuildOptions(), factory);
 
-        var dispatcher = await ProcessAsync(adapter, SyncWithMessage(HumanUser, "photo.png", msgType: "m.image"));
+        var dispatcher = await ProcessAsync(
+            adapter,
+            SyncWithMessage(
+                HumanUser,
+                "diagram caption",
+                msgType: "m.image",
+                mediaUrl: "mxc://media.example.com/image-1",
+                fileName: "diagram.png",
+                mimeType: "image/png",
+                size: bytes.Length));
 
-        Dispatched(dispatcher).ShouldBeEmpty();
+        var message = Dispatched(dispatcher).ShouldHaveSingleItem();
+        message.Content.ShouldBe("diagram caption");
+        var part = message.ContentParts.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBeOfType<BinaryContentPart>();
+        part.MimeType.ShouldBe("image/png");
+        part.Data.ShouldBe(bytes);
+        part.FileName.ShouldBe("diagram.png");
+
+        var download = factory.ClientFor("farnsworth").MediaDownloadCalls.ShouldHaveSingleItem();
+        download.ServerName.ShouldBe("media.example.com");
+        download.MediaId.ShouldBe("image-1");
+    }
+
+    [Fact]
+    public async Task Inbound_FileMessage_DispatchesBodyAndBinaryContentPart()
+    {
+        byte[] bytes = [0x25, 0x50, 0x44, 0x46];
+        var factory = new FakeMatrixClientFactory();
+        factory.ClientFor("farnsworth").DownloadMedia = (_, _, _, _) => Task.FromResult(bytes);
+        var adapter = CreateAdapter(BuildOptions(), factory);
+
+        var dispatcher = await ProcessAsync(
+            adapter,
+            SyncWithMessage(
+                HumanUser,
+                "quarterly report",
+                msgType: "m.file",
+                mediaUrl: "mxc://media.example.com/report-7",
+                fileName: "report.pdf",
+                mimeType: "application/pdf",
+                size: bytes.Length));
+
+        var message = Dispatched(dispatcher).ShouldHaveSingleItem();
+        message.Content.ShouldBe("quarterly report");
+        var part = message.ContentParts.ShouldNotBeNull().ShouldHaveSingleItem().ShouldBeOfType<BinaryContentPart>();
+        part.MimeType.ShouldBe("application/pdf");
+        part.Data.ShouldBe(bytes);
+        part.FileName.ShouldBe("report.pdf");
+    }
+
+    [Fact]
+    public async Task Inbound_MediaAdvertisedAboveCap_DoesNotDownloadAndStillDispatchesText()
+    {
+        var options = BuildOptions();
+        options.MaxMediaBytes = 3;
+        var factory = new FakeMatrixClientFactory();
+        var adapter = CreateAdapter(options, factory);
+
+        var dispatcher = await ProcessAsync(
+            adapter,
+            SyncWithMessage(
+                HumanUser,
+                "oversized attachment",
+                msgType: "m.file",
+                mediaUrl: "mxc://media.example.com/large-1",
+                fileName: "large.bin",
+                mimeType: "application/octet-stream",
+                size: 4));
+
+        factory.ClientFor("farnsworth").MediaDownloadCalls.ShouldBeEmpty();
+        var message = Dispatched(dispatcher).ShouldHaveSingleItem();
+        message.Content.ShouldBe("oversized attachment");
+        message.ContentParts.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Inbound_MediaDownloadExceedingAdapterBudget_StillDispatchesTextWithoutContentParts()
+    {
+        var options = BuildOptions();
+        options.MediaDownloadTimeoutSeconds = 1;
+        var factory = new FakeMatrixClientFactory();
+        var client = factory.ClientFor("farnsworth");
+        client.DownloadMedia = async (_, _, _, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return [];
+        };
+        var adapter = CreateAdapter(options, factory);
+
+        var dispatcher = await ProcessAsync(
+            adapter,
+            SyncWithMessage(
+                HumanUser,
+                "slow attachment",
+                msgType: "m.image",
+                mediaUrl: "mxc://media.example.com/slow-1",
+                fileName: "slow.png",
+                mimeType: "image/png",
+                size: 4));
+
+        client.MediaDownloadCalls.ShouldHaveSingleItem().CancellationObserved.ShouldBeTrue();
+        var message = Dispatched(dispatcher).ShouldHaveSingleItem();
+        message.Content.ShouldBe("slow attachment");
+        message.ContentParts.ShouldBeNull();
     }
 
     [Fact]
@@ -688,9 +801,7 @@ public sealed class MatrixChannelAdapterTests
         adapter.ChannelType.ShouldBe(ChannelKey.From("matrix"));
         adapter.SupportsStreaming.ShouldBeTrue();
 
-        // Inbound media needs the content repository, which is deferred out of this slice, so the
-        // adapter must not advertise a capability it cannot honour.
-        adapter.SupportsInboundImages.ShouldBeFalse();
+        adapter.SupportsInboundImages.ShouldBeTrue();
         adapter.SupportsToolDisplay.ShouldBeFalse();
     }
 

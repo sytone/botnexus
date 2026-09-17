@@ -31,9 +31,33 @@ CSS_OUT = os.path.join(
 CSS_BEGIN = "/* BEGIN generated icon tones -- scripts/generate-icons.py */"
 CSS_END = "/* END generated icon tones */"
 
+STROKE_ATTRIBUTE = re.compile(r'\bstroke\s*=\s*(["\'])(.*?)\1', re.I | re.S)
+STYLE_ATTRIBUTE = re.compile(r'\bstyle\s*=\s*(["\'])(.*?)\1', re.I | re.S)
+STYLE_STROKE = re.compile(r'(?:^|;)\s*stroke\s*:\s*([^;]+)', re.I)
+LOCAL_GRADIENT = re.compile(r'url\(#([^)]+)\)')
+
 
 def pascal(name):
     return "".join(p.capitalize() for p in re.split(r"[-_]", name))
+
+
+def validate_descendant_strokes(name, body):
+    """Reject artwork whose own stroke prevents the root override contract."""
+    gradient_ids = set(re.findall(
+        r'<(?:linear|radial)Gradient\b[^>]*\bid=["\']([^"\']+)["\']', body, re.I))
+    strokes = [match.group(2) for match in STROKE_ATTRIBUTE.finditer(body)]
+    for style in STYLE_ATTRIBUTE.finditer(body):
+        strokes.extend(match.group(1) for match in STYLE_STROKE.finditer(style.group(2)))
+
+    for stroke in (value.strip() for value in strokes):
+        if stroke.lower() == "currentcolor":
+            continue
+        gradient = LOCAL_GRADIENT.fullmatch(stroke)
+        if gradient and gradient.group(1) in gradient_ids:
+            continue
+        raise SystemExit(
+            "%s: descendant stroke %r must be currentColor or a locally defined gradient"
+            % (name, stroke))
 
 
 def parse(path, name):
@@ -57,6 +81,8 @@ def parse(path, name):
                       r"\g<1>%s\g<2>" % unique, body)
         body = body.replace("url(#%s)" % gid, "url(#%s)" % unique)
         stroke = stroke.replace("url(#%s)" % gid, "url(#%s)" % unique)
+
+    validate_descendant_strokes(name, body)
 
     if stroke.startswith("url("):
         # A gradient carries no single colour. Keep the first stop as the tone so a
