@@ -249,6 +249,9 @@
        it for classification would dilute that. Kept desaturated so a screen
        showing several at once stays calm. */
     --cat-live: #2ea36a;
+    /* Text-bearing Live badges need a darker fill than the brighter indicator/category color.
+       White on this value is 5.32:1, clearing the 4.5:1 normal-text threshold. */
+    --color-live-fill: #1f7a4d;
     --cat-pinned: #a3823c;
     --cat-agent: #6c6c80;
     --cat-subagent: #4f8570;
@@ -387,6 +390,7 @@
 
     /* Category palette, darkened so each still reads against a white surface. */
     --cat-live: #1a7f52;
+    --color-live-fill: #1a7f52;
     --cat-pinned: #8a6a24;
     --cat-agent: #5b6472;
     --cat-subagent: #3d6b58;
@@ -6259,7 +6263,7 @@ h3.conversation-title.editable:hover {
    animated treatment on the page - motion reads as "happening now" in a way no static
    colour does, and nothing else here moves, so it cannot be mistaken for decoration. */
 .activity-badge-live {
-    background: var(--accent-live);
+    background: var(--color-live-fill);
     color: var(--color-on-solid);
 }
 
