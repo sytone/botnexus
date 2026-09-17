@@ -334,6 +334,10 @@ else
             var dict = Resolve(path) as JsonObject;
             <fieldset class="schema-dict" data-testid="@($"dict-{path}")">
                 <legend>@Label(name, node)</legend>
+                @if (Description(node) is { } dictionaryDescription)
+                {
+                    <p class="schema-collection-description">@dictionaryDescription</p>
+                }
                 @foreach (var entry in dict?.ToList() ?? [])
                 {
                     var key = entry.Key;
@@ -372,6 +376,10 @@ else
             var arr = Resolve(path) as JsonArray ?? [];
             <fieldset class="schema-array" data-testid="@($"array-{path}")">
                 <legend>@Label(name, node)</legend>
+                @if (Description(node) is { } arrayDescription)
+                {
+                    <p class="schema-collection-description">@arrayDescription</p>
+                }
                 @for (var i = 0; i < arr.Count; i++)
                 {
                     var index = i;

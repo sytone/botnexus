@@ -382,7 +382,8 @@ envelope. Style the classes it emits; do not fork it:
 
 `schema-form` `schema-group` `schema-group-title` `schema-object` `schema-subgroup`
 `schema-subgroup-title` `schema-field` `schema-field-label` `schema-field-control`
-`schema-field-description` `schema-field-error` `schema-array` `schema-dict`
+`schema-field-description` `schema-collection-description` `schema-field-error` `schema-array`
+`schema-dict`
 
 The schema already carries `x-ui-label`, `x-ui-description`, `x-ui-group` and
 `x-ui-order`. Render all four. Descriptions and grouping were computed and thrown away
