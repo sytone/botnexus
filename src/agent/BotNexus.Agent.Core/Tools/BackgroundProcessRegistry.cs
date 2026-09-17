@@ -417,6 +417,7 @@ public sealed class BackgroundOutputDecoder
             if (c == '\x1b') { _state = EscapeState.Escape; continue; }
             if (c == '\x9b') { _state = EscapeState.Csi; continue; }
             if (c == '\x9d') { _state = EscapeState.String; _osc = true; continue; }
+            if (c is '\x90' or '\x98' or '\x9e' or '\x9f') { _state = EscapeState.String; _osc = false; continue; }
             if (c is >= '\x80' and <= '\x9f') continue;
             output.Append(c);
         }

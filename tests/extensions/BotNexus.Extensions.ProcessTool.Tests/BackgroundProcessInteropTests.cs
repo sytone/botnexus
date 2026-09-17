@@ -148,6 +148,25 @@ public sealed class BackgroundProcessInteropTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData("\u001bPpayload\u001b\\", "\u0090payload\u009c")]
+    [InlineData("\u001bXpayload\u001b\\", "\u0098payload\u009c")]
+    [InlineData("\u001b^payload\u001b\\", "\u009epayload\u009c")]
+    [InlineData("\u001b_payload\u001b\\", "\u009fpayload\u009c")]
+    public void Decoder_EscAndC1ControlStrings_MatchAtEveryBoundary(string escString, string c1String)
+    {
+        foreach (var controlString in new[] { escString, c1String })
+        {
+            var text = $"before{controlString}after";
+            for (var split = 0; split <= text.Length; split++)
+            {
+                var decoder = new BackgroundOutputDecoder();
+                var output = decoder.Append(text.AsSpan(0, split)) + decoder.Append(text.AsSpan(split), final: true);
+                output.ShouldBe("beforeafter");
+            }
+        }
+    }
+
     [Fact]
     public void Buffer_SplitSurrogatePair_UsesActualUtf8Bytes()
     {
