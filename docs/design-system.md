@@ -232,11 +232,12 @@ Anything past ~200ms on UI chrome reads as sluggish, not smooth.
 
 ### Contrast
 
-**Both themes are verified against WCAG AA (4.5:1 for body text, 3:1 for large).**
-This is checked by measurement, not by eye — picking values by eye is exactly how
-the first cut of the light theme shipped five failures.
+The documented body-text pairings and text-bearing Live badge are measured against
+WCAG AA (4.5:1 for normal text, 3:1 for large text). This is checked by measurement,
+not by eye — picking values by eye is exactly how the first cut of the light theme
+shipped five failures. This is not an exhaustive audit of every component state.
 
-Four token corrections came out of that audit:
+Five token corrections came out of the measured coverage:
 
 | Token | Was | Now | Why |
 |---|---|---|---|
@@ -244,11 +245,13 @@ Four token corrections came out of that audit:
 | `--color-ink-faint` (light) | `#6e7c8a` | `#626e7b` | failed on all three light surfaces (3.80–4.27) |
 | `--color-accent` (light) | `#0b7f99` | `#0a7790` | failed as text on canvas (4.37) and surface-2 (4.14) |
 | `--color-danger-fill` | *(new)* | `#ce433d` dark | white on `#f85149` was only 3.35:1 |
+| `--color-live-fill` (dark) | *(new)* | `#1f7a4d` | white on the brighter `--cat-live` was only 3.20:1 at the 12px caption size |
 
 `--color-danger-fill` exists because a **solid danger button** carrying
 `--color-on-solid` needs a darker red than the same colour used as an 8px dot or
 a 1px border, where text contrast does not apply. `--color-danger` stays bright
-for those.
+for those. `--color-live-fill` applies the same separation to the text-bearing
+Live badge while `--cat-live` remains the brighter indicator and row-rail colour.
 
 When auditing, composite translucent backgrounds over what sits behind them. A
 naive walk that returns `rgba(…, 0.05)` as the background compares a colour
