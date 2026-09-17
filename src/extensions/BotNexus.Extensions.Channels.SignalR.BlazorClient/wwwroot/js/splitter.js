@@ -28,8 +28,14 @@ window.BotNexus.splitter = (function () {
         }
 
         var savedPx = parseInt(localStorage.getItem(storageKey), 10);
-        var initialPx = (!isNaN(savedPx) && savedPx > 0) ? savedPx : defaultFromFraction;
-        applyWidth(container, leftPane, initialPx, minPx, maxFraction);
+        var preferredPx = (!isNaN(savedPx) && savedPx > 0) ? savedPx : defaultFromFraction;
+        applyWidth(container, leftPane, preferredPx, minPx, maxFraction);
+
+        // Clean up before replacing an existing instance so re-initialization cannot accumulate
+        // document handlers or container observers.
+        if (_instances[containerId]) {
+            _instances[containerId]();
+        }
 
         var dragging = false;
         var startX = 0;
@@ -50,8 +56,8 @@ window.BotNexus.splitter = (function () {
             if (!dragging) return;
             var delta = e.clientX - startX;
             var newPx = Math.round(startWidth + delta);
-            newPx = applyWidth(container, leftPane, newPx, minPx, maxFraction);
-            localStorage.setItem(storageKey, String(newPx));
+            preferredPx = applyWidth(container, leftPane, newPx, minPx, maxFraction);
+            localStorage.setItem(storageKey, String(preferredPx));
         }
 
         function onMouseUp() {
@@ -75,8 +81,8 @@ window.BotNexus.splitter = (function () {
             if (!dragging || e.touches.length !== 1) return;
             var delta = e.touches[0].clientX - startX;
             var newPx = Math.round(startWidth + delta);
-            newPx = applyWidth(container, leftPane, newPx, minPx, maxFraction);
-            localStorage.setItem(storageKey, String(newPx));
+            preferredPx = applyWidth(container, leftPane, newPx, minPx, maxFraction);
+            localStorage.setItem(storageKey, String(preferredPx));
             e.preventDefault();
         }
 
@@ -92,10 +98,14 @@ window.BotNexus.splitter = (function () {
         document.addEventListener('touchmove', onTouchMove, { passive: false });
         document.addEventListener('touchend', onTouchEnd);
 
-        // Clean up on re-init for the same container
-        if (_instances[containerId]) {
-            _instances[containerId]();
-        }
+        // Keep the visible width within the current container while retaining the user's
+        // preferred width for a later expansion. ResizeObserver follows the actual flex
+        // container rather than only the viewport, so embedded splitter consumers are covered.
+        var resizeObserver = new ResizeObserver(function () {
+            applyWidth(container, leftPane, preferredPx, minPx, maxFraction);
+        });
+        resizeObserver.observe(container);
+
         _instances[containerId] = function () {
             splitter.removeEventListener('mousedown', onMouseDown);
             document.removeEventListener('mousemove', onMouseMove);
@@ -103,13 +113,15 @@ window.BotNexus.splitter = (function () {
             splitter.removeEventListener('touchstart', onTouchStart);
             document.removeEventListener('touchmove', onTouchMove);
             document.removeEventListener('touchend', onTouchEnd);
+            resizeObserver.disconnect();
         };
     }
 
     function applyWidth(container, leftPane, desiredPx, minPx, maxFraction) {
         var containerWidth = container.getBoundingClientRect().width;
-        var maxPx = Math.floor(containerWidth * maxFraction);
-        var clamped = Math.max(minPx, Math.min(desiredPx, maxPx));
+        var maxPx = Math.max(0, Math.floor(containerWidth * maxFraction));
+        // If a container is too narrow to satisfy both bounds, containment wins over minPx.
+        var clamped = Math.min(Math.max(minPx, desiredPx), maxPx);
         leftPane.style.flex = '0 0 ' + clamped + 'px';
         leftPane.style.width = clamped + 'px';
         return clamped;
