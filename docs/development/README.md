@@ -41,6 +41,7 @@ These are deeper explanations, also grouped under **Architecture → Runtime and
 - **[triggers-and-federation.md](triggers-and-federation.md)** — Cron, soul, and cross-world agent communication
 - **[webui-connection.md](webui-connection.md)** — SignalR hub, subscribe-all model, multi-session UI
 - **[app-integration-surfaces.md](app-integration-surfaces.md)** — The four surfaces an external app attaches through, and which parts of the plugin system are wired
+- **[search-contributor-contract.md](search-contributor-contract.md)** — Extension-facing search source, result, relevance, and provenance-trust contract
 - **[portal-surface-parity.md](portal-surface-parity.md)** — Desktop vs mobile portal inventory, deliberate-difference register, and alignment plan
 - **[debugging.md](debugging.md)** - Debugging the Gateway, extensions, and WebUI
 - **[workspace-and-memory.md](workspace-and-memory.md)** — Workspace isolation, memory management, context files
