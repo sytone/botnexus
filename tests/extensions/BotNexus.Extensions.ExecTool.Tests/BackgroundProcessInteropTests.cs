@@ -80,7 +80,7 @@ public sealed class BackgroundProcessInteropTests
         var type = assembly.GetType(name, throwOnError: true);
         type.ShouldNotBeNull();
         var instance = name.Contains("ExecTool", StringComparison.Ordinal)
-            ? Activator.CreateInstance(type, new object?[] { null })
+            ? Activator.CreateInstance(type, new object?[] { null, null })
             : Activator.CreateInstance(type);
         var contributor = instance.ShouldBeAssignableTo<IAgentToolContributor>();
         contributor.ShouldNotBeNull();

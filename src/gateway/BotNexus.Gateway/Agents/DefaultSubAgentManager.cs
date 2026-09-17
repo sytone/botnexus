@@ -28,6 +28,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 {
     private readonly IAgentSupervisor _supervisor;
     private readonly IAgentRegistry _registry;
+    private readonly IOptions<AgentExchangeOptions>? _exchangeOptions;
     private readonly IActivityBroadcaster _activity;
     private readonly IChannelDispatcher _dispatcher;
     private readonly IAgentWorkspaceManager? _workspaceManager;
@@ -87,8 +88,13 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         ISecurityEventSink? securityEvents = null,
         IConversationStore? conversationStore = null,
         ModelRegistry? modelRegistry = null,
-        IToolAuditSink? toolAudit = null)
+        IToolAuditSink? toolAudit = null,
+        IOptions<AgentExchangeOptions>? exchangeOptions = null)
     {
+        // #3232: the operator's stated access policy. Optional so every existing construction
+        // site - and every test - keeps working; absent means `open`, which is the default and
+        // the behaviour that shipped.
+        _exchangeOptions = exchangeOptions;
         _supervisor = supervisor;
         _registry = registry;
         _activity = activity;
@@ -307,6 +313,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         var uniqueId = Guid.NewGuid().ToString("N");
         var subAgentId = uniqueId;
         var childSessionId = SessionId.ForSubAgent(request.ParentSessionId, uniqueId);
+
+        ValidateDelegationGrant(request, parentDescriptor);
 
         // Resolve the Embody | Mirror discriminated union into a side-effect-free plan
         // (descriptor + minted child id + customisation overrides). See ResolveSpawnPlan.
@@ -680,6 +688,57 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                     $"Unknown SubAgentSpawnMode subclass '{request.Mode.GetType().FullName}'. "
                     + "Embody and Mirror are the only legal modes — see SubAgentSpawnMode.");
         }
+    }
+
+    /// <summary>
+    /// Rejects a Mirror spawn whose target the parent was never granted.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The gap this closes: <c>agent_converse</c> honoured <c>gateway:agentExchange:accessPolicy</c>
+    /// and <c>spawn_subagent</c> did not - so an operator who wrote <c>whitelist</c> got the policy
+    /// they stated applied to one of the two ways an agent reaches another agent.
+    /// </para>
+    /// <para>
+    /// Delegation is the stronger of the two. A Mirror spawn runs the TARGET's descriptor verbatim,
+    /// so the child holds the target's tools rather than the parent's - which means an agent whose
+    /// own policy denies a tool could obtain it by mirroring an agent that has it.
+    /// <see cref="ValidateToolGrants"/> does not catch that: it inspects the tools a spawn REQUESTS,
+    /// and a Mirror spawn requests none.
+    /// </para>
+    /// <para>
+    /// EMBODY spawns are not checked, and should not be: they clone the parent's own descriptor,
+    /// reach no other agent, and so have no grant to verify.
+    /// </para>
+    /// <para>
+    /// Under the default <c>open</c> policy this is a no-op, so nothing changes for an install that
+    /// never stated a policy.
+    /// </para>
+    /// </remarks>
+    /// <param name="request">The spawn request; only <see cref="Mirror"/> mode is subject to this.</param>
+    /// <param name="parentDescriptor">The parent, whose grants are the authority.</param>
+    /// <exception cref="UnauthorizedAccessException">Thrown when the grant is absent.</exception>
+    internal void ValidateDelegationGrant(SubAgentSpawnRequest request, AgentDescriptor parentDescriptor)
+    {
+        if (_exchangeOptions?.Value.IsOpen != false)
+            return;
+
+        if (request.Mode is not Mirror mirror)
+            return;
+
+        var target = _registry.Get(mirror.TargetAgentId);
+        if (DelegationPolicy.IsGranted(parentDescriptor, mirror.TargetAgentId.Value, target))
+            return;
+
+        _logger.LogWarning(
+            "Sub-agent spawn refused: agent '{Parent}' is not granted '{Target}' (policy=whitelist).",
+            request.ParentAgentId.Value,
+            mirror.TargetAgentId.Value);
+
+        throw new UnauthorizedAccessException(
+            $"Agent '{request.ParentAgentId}' is not allowed to run '{mirror.TargetAgentId}' as a sub-agent. "
+            + "Add it to that agent's subAgents list, grant a matching subAgentRoles role, or set "
+            + "gateway:agentExchange:accessPolicy to 'open'.");
     }
 
     /// <summary>

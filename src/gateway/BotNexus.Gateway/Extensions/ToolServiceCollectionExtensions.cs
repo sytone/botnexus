@@ -19,6 +19,13 @@ public static class ToolServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddBotNexusTools(this IServiceCollection services)
     {
+        // One source of truth for both spawn sites: the built-in shell tool below and the exec
+        // extension, which injects this same interface. See IToolEnvironmentPolicy for why they
+        // must not be allowed to answer differently.
+        services.AddSingleton<IToolEnvironmentPolicy>(sp =>
+            new ConfiguredToolEnvironmentPolicy(
+                sp.GetService<IOptions<PlatformConfig>>()?.Value?.Gateway?.ToolEnvironmentPassThrough));
+
         services.AddSingleton<IAgentToolFactory>(sp =>
         {
             var config = sp.GetService<IOptions<PlatformConfig>>()?.Value;
@@ -26,7 +33,13 @@ public static class ToolServiceCollectionExtensions
             var shellCommand = config?.Gateway?.ShellCommand;
             // Resolve the platform config path so file tools can deny direct writes to it (issue #633).
             var configPath = PlatformConfigLoader.GetDefaultConfigPath(new System.IO.Abstractions.FileSystem());
-            return new DefaultAgentToolFactory(preference, configPath, shellCommand, BuildReadToolOptions(config));
+            var passThrough = sp.GetRequiredService<IToolEnvironmentPolicy>().PassThroughVariables;
+            return new DefaultAgentToolFactory(
+                preference,
+                configPath,
+                shellCommand,
+                BuildReadToolOptions(config),
+                passThrough);
         });
 
         // Tool registry collects extension IAgentTool registrations.
