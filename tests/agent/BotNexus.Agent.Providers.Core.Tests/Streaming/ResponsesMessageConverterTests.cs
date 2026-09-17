@@ -175,6 +175,79 @@ public class ResponsesMessageConverterTests
         output!["output"]!.GetValue<string>().ShouldBe("the result");
     }
 
+    public static TheoryData<IReadOnlyList<ContentBlock>, string> EmptyToolResults => new()
+    {
+        { Array.Empty<ContentBlock>(), string.Empty },
+        { new ContentBlock[] { new TextContent(string.Empty) }, string.Empty },
+        { new ContentBlock[] { new TextContent("   ") }, "   " },
+        { new ContentBlock[] { new TextContent("\n") }, "\n" },
+    };
+
+    [Theory]
+    [MemberData(nameof(EmptyToolResults))]
+    public void ConvertMessages_EmptyTextOnlyToolResult_PreservesOutputAndCallId(
+        IReadOnlyList<ContentBlock> content,
+        string expectedOutput)
+    {
+        var assistant = new AssistantMessage(
+            Content: [new ToolCallContent("call_empty|fc_empty", "do_thing", new Dictionary<string, object?>())],
+            Api: "openai-responses", Provider: "openai", ModelId: "gpt-5",
+            Usage: Usage.Empty(), StopReason: StopReason.ToolUse,
+            ErrorMessage: null, ResponseId: null, Timestamp: Ts);
+        var toolResult = new ToolResultMessage(
+            ToolCallId: "call_empty|fc_empty", ToolName: "do_thing",
+            Content: content, IsError: false, Timestamp: Ts);
+
+        var result = ResponsesMessageConverter.ConvertMessages([assistant, toolResult], Model());
+
+        var output = result.Single(n => n!["type"]!.GetValue<string>() == "function_call_output");
+        output!["call_id"]!.GetValue<string>().ShouldBe("call_empty");
+        output!["output"]!.GetValue<string>().ShouldBe(expectedOutput);
+        output["output"]!.GetValue<string>().ShouldNotContain("image", Case.Insensitive);
+    }
+
+    [Fact]
+    public void ConvertMessages_ToolResultImageOnVisionModel_EmitsImagePart()
+    {
+        var assistant = new AssistantMessage(
+            Content: [new ToolCallContent("call_image|fc_image", "screenshot", new Dictionary<string, object?>())],
+            Api: "openai-responses", Provider: "openai", ModelId: "gpt-5",
+            Usage: Usage.Empty(), StopReason: StopReason.ToolUse,
+            ErrorMessage: null, ResponseId: null, Timestamp: Ts);
+        var toolResult = new ToolResultMessage(
+            ToolCallId: "call_image|fc_image", ToolName: "screenshot",
+            Content: [new ImageContent("AAAA", "image/png")], IsError: false, Timestamp: Ts);
+
+        var result = ResponsesMessageConverter.ConvertMessages([assistant, toolResult], Model("text", "image"));
+
+        var output = result.Single(n => n!["type"]!.GetValue<string>() == "function_call_output");
+        output!["call_id"]!.GetValue<string>().ShouldBe("call_image");
+        var parts = output["output"]!.AsArray();
+        parts.Count.ShouldBe(1);
+        parts[0]!["type"]!.GetValue<string>().ShouldBe("input_image");
+        parts[0]!["image_url"]!.GetValue<string>().ShouldBe("data:image/png;base64,AAAA");
+    }
+
+    [Fact]
+    public void ConvertMessages_ToolResultImageOnTextModel_ProducesNoFalseImageClaim()
+    {
+        var assistant = new AssistantMessage(
+            Content: [new ToolCallContent("call_denied|fc_denied", "screenshot", new Dictionary<string, object?>())],
+            Api: "openai-responses", Provider: "openai", ModelId: "gpt-5",
+            Usage: Usage.Empty(), StopReason: StopReason.ToolUse,
+            ErrorMessage: null, ResponseId: null, Timestamp: Ts);
+        var toolResult = new ToolResultMessage(
+            ToolCallId: "call_denied|fc_denied", ToolName: "screenshot",
+            Content: [new ImageContent("AAAA", "image/png")], IsError: false, Timestamp: Ts);
+
+        var result = ResponsesMessageConverter.ConvertMessages([assistant, toolResult], Model("text"));
+
+        var output = result.Single(n => n!["type"]!.GetValue<string>() == "function_call_output");
+        output!["call_id"]!.GetValue<string>().ShouldBe("call_denied");
+        output!["output"]!.GetValue<string>().ShouldBeEmpty();
+        output["output"]!.GetValue<string>().ShouldNotContain("image", Case.Insensitive);
+    }
+
     [Fact]
     public void ConvertMessages_DanglingFunctionCallInOlderTurn_IsDropped()
     {
