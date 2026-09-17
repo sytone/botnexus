@@ -35,6 +35,79 @@ public sealed class ApiKeyGatewayAuthHandlerTests
         result.Identity!.CallerId.ShouldBe("gateway-api-key");
     }
 
+    [Theory]
+    [InlineData("undefined")]
+    [InlineData(" NULL ")]
+    public async Task AuthenticateAsync_WithPlaceholderLegacyKey_FailsClosed(string placeholder)
+    {
+        var handler = new ApiKeyGatewayAuthHandler(placeholder, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = placeholder }));
+
+        result.IsAuthenticated.ShouldBeFalse();
+        result.FailureReason.ShouldBe("Gateway API key configuration is invalid. Supply a non-placeholder key.");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_WithPlaceholderNamedKeyInMixedConfig_FailsClosed()
+    {
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                ApiKeys = new Dictionary<string, ApiKeyConfig>
+                {
+                    ["valid"] = new() { ApiKey = "valid-secret", TenantId = "tenant-a" },
+                    ["invalid"] = new() { ApiKey = "undefined", TenantId = "tenant-b" }
+                }
+            }
+        };
+        var handler = new ApiKeyGatewayAuthHandler(config, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = "valid-secret" }));
+
+        result.IsAuthenticated.ShouldBeFalse();
+        result.FailureReason.ShouldBe("Gateway API key configuration is invalid. Supply a non-placeholder key.");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_WithPlaceholderEnabledSatelliteKey_FailsClosed()
+    {
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                Satellites = new Dictionary<string, SatelliteConfig>
+                {
+                    ["sat-1"] = new() { Enabled = true, ApiKey = "null" }
+                }
+            }
+        };
+        var handler = new ApiKeyGatewayAuthHandler(config, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = "null" }));
+
+        result.IsAuthenticated.ShouldBeFalse();
+        result.FailureReason.ShouldBe("Gateway API key configuration is invalid. Supply a non-placeholder key.");
+    }
+
+    [Fact]
+    public async Task AuthenticateAsync_HotReloadToPlaceholderKey_FailsClosed()
+    {
+        var monitor = new MutableOptionsMonitor(new PlatformConfig { ApiKey = "valid-secret" });
+        var handler = new ApiKeyGatewayAuthHandler(monitor, NullLogger<ApiKeyGatewayAuthHandler>.Instance);
+        monitor.Current = new PlatformConfig { ApiKey = "undefined" };
+
+        var result = await handler.AuthenticateAsync(
+            CreateContext(new Dictionary<string, string> { ["X-Api-Key"] = "valid-secret" }));
+
+        result.IsAuthenticated.ShouldBeFalse();
+        result.FailureReason.ShouldBe("Gateway API key configuration is invalid. Supply a non-placeholder key.");
+    }
+
     [Fact]
     public async Task AuthenticateAsync_WithMissingHeaders_ReturnsFailure()
     {
@@ -329,6 +402,17 @@ public sealed class ApiKeyGatewayAuthHandlerTests
             Path = "/api/messages",
             Method = "POST"
         };
+
+    private sealed class MutableOptionsMonitor(PlatformConfig initial) : IOptionsMonitor<PlatformConfig>
+    {
+        public PlatformConfig Current { get; set; } = initial;
+
+        public PlatformConfig CurrentValue => Current;
+
+        public PlatformConfig Get(string? name) => CurrentValue;
+
+        public IDisposable? OnChange(Action<PlatformConfig, string?> listener) => null;
+    }
 
     private sealed class ThrowingOptionsMonitor(PlatformConfig initial) : IOptionsMonitor<PlatformConfig>
     {
