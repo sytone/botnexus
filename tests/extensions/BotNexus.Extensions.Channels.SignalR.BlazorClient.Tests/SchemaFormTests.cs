@@ -166,6 +166,78 @@ public sealed class SchemaFormTests : IDisposable
         Assert.Equal(2, cut.FindAll("[data-testid^='field-models['] input").Count);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Renders_array_node_description_when_empty_or_populated(bool populated)
+    {
+        var models = new JsonObject
+        {
+            ["type"] = "array",
+            ["x-ui-label"] = "Models",
+            ["x-ui-description"] = "Models available to this provider.",
+            ["items"] = new JsonObject { ["type"] = "string", ["x-ui-widget"] = "text" },
+        };
+        var values = populated ? new JsonArray("gpt") : [];
+        var cut = Render(Envelope(new JsonObject { ["models"] = models }), new JsonObject { ["models"] = values });
+
+        var description = cut.Find("[data-testid='array-models'] > .schema-collection-description");
+        Assert.Equal("Models available to this provider.", description.TextContent);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Renders_dictionary_node_description_when_empty_or_populated(bool populated)
+    {
+        var providers = new JsonObject
+        {
+            ["type"] = "object",
+            ["x-ui-label"] = "Providers",
+            ["x-ui-description"] = "Provider settings keyed by name.",
+            ["additionalProperties"] = new JsonObject { ["type"] = "string", ["x-ui-widget"] = "text" },
+        };
+        var values = populated ? new JsonObject { ["openai"] = "configured" } : [];
+        var cut = Render(Envelope(new JsonObject { ["providers"] = providers }), new JsonObject { ["providers"] = values });
+
+        var description = cut.Find("[data-testid='dict-providers'] > .schema-collection-description");
+        Assert.Equal("Provider settings keyed by name.", description.TextContent);
+    }
+
+    [Fact]
+    public void Collection_description_uses_x_ui_precedence_and_keeps_item_help_separate()
+    {
+        var models = new JsonObject
+        {
+            ["type"] = "array",
+            ["x-ui-label"] = "Models",
+            ["description"] = "Ordinary collection help.",
+            ["x-ui-description"] = "Preferred collection help.",
+            ["items"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["x-ui-widget"] = "text",
+                ["description"] = "Item help.",
+            },
+        };
+        var fallbackProviders = new JsonObject
+        {
+            ["type"] = "object",
+            ["x-ui-label"] = "Providers",
+            ["description"] = "Ordinary dictionary help.",
+            ["additionalProperties"] = new JsonObject { ["type"] = "string", ["x-ui-widget"] = "text" },
+        };
+        var cut = Render(
+            Envelope(new JsonObject { ["models"] = models, ["providers"] = fallbackProviders }),
+            new JsonObject { ["models"] = new JsonArray("gpt"), ["providers"] = new JsonObject() });
+
+        Assert.Equal("Preferred collection help.", cut.Find("[data-testid='array-models'] > .schema-collection-description").TextContent);
+        Assert.DoesNotContain("Ordinary collection help.", cut.Markup);
+        Assert.Equal("Ordinary dictionary help.", cut.Find("[data-testid='dict-providers'] > .schema-collection-description").TextContent);
+        Assert.Single(cut.FindAll("[data-testid='array-models'] .schema-field-description"));
+        Assert.Equal("Item help.", cut.Find("[data-testid='field-models[0]'] .schema-field-description").TextContent);
+    }
+
     // -- 3. Grouping + ordering ---------------------------------------------
 
     [Fact]
