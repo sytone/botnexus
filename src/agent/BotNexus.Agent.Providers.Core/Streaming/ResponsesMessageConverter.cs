@@ -277,7 +277,7 @@ public static class ResponsesMessageConverter
         }
         else
         {
-            output = JsonValue.Create((string.IsNullOrWhiteSpace(textResult) ? "(see attached image)" : textResult).SanitizeSurrogates())!;
+            output = JsonValue.Create(textResult.SanitizeSurrogates())!;
         }
 
         return new JsonObject
