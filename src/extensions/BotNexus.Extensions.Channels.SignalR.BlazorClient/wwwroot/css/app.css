@@ -7628,20 +7628,29 @@ h3.conversation-title.editable:hover {
 /* Below this the two-column row leaves the control too little room to be usable, so the
    label sits above its input instead. Mobile Settings renders this same component. */
 @media (max-width: 720px) {
-    .schema-field {
+    .schema-field,
+    .agents-form-grid {
         grid-template-columns: minmax(0, 1fr);
         gap: 0.2rem;
+        min-width: 0;
     }
 
-    .schema-field-label {
+    .schema-field-label,
+    .agents-form-grid label {
         padding-top: 0;
     }
 
     .schema-field-control > input[type="text"],
     .schema-field-control > input[type="password"],
     .schema-field-control > input[type="number"],
-    .schema-field-control > select {
+    .schema-field-control > select,
+    .agents-form-grid .cfg-input,
+    .agents-form-grid .cfg-textarea {
         max-width: 100%;
+    }
+
+    .agents-form-grid > div {
+        min-width: 0;
     }
 }
 
