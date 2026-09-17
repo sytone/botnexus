@@ -167,26 +167,60 @@ public sealed class TranscriptReconcilerTests
 
     /// <summary>
     /// Tool rows are keyed by their tool-call id, so the same tool call arriving from REST does
-    /// not duplicate the row already rendered from the live SignalR ToolStart/ToolEnd pair even
-    /// though the REST copy carries the stripped result as its content.
+    /// not duplicate the row already rendered from the live SignalR ToolStart/ToolEnd pair. A
+    /// terminal REST row repairs only an incomplete local ToolStart placeholder; a locally
+    /// completed ToolEnd row remains newer live state and therefore wins over a stale page.
     /// </summary>
     [Fact]
-    public void Reconcile_ToolRowsAreDedupedByToolCallId()
+    public void Reconcile_TerminalServerToolRepairsIncompleteLocalRowWithoutChangingIdentity()
     {
         var at = new DateTimeOffset(2026, 9, 4, 10, 7, 0, TimeSpan.Zero);
-        var local = new List<ChatMessage>
+        var local = new ChatMessage("Tool", "⏳ Calling read…", at)
         {
-            new("assistant", "live text", at) { ToolName = "read", ToolCallId = "tc-1", IsToolCall = true }
+            Id = "local-row",
+            ToolName = "read",
+            ToolCallId = "tc-1",
+            IsToolCall = true
         };
-        var server = new List<ChatMessage>
+        var server = new ChatMessage("Tool", "rest text", at)
         {
-            new("assistant", "rest text", at) { ToolName = "read", ToolCallId = "tc-1", IsToolCall = true }
+            ServerEntryId = "s-1#1",
+            ToolName = "read",
+            ToolCallId = "tc-1",
+            ToolResult = "rest text",
+            IsToolCall = true
         };
 
-        var result = TranscriptReconciler.Reconcile(local, server);
+        var result = TranscriptReconciler.Reconcile([local], [server]);
 
-        result.Count.ShouldBe(1);
-        result[0].Content.ShouldBe("live text");
+        var repaired = result.ShouldHaveSingleItem();
+        repaired.Id.ShouldBe("local-row");
+        repaired.ServerEntryId.ShouldBe("s-1#1");
+        repaired.Content.ShouldBe("rest text");
+        repaired.ToolResult.ShouldBe("rest text");
+        TranscriptReconciler.CountMissing([local], [server]).ShouldBe(0);
+    }
+
+    [Fact]
+    public void Reconcile_CompletedLocalToolIsNotOverwrittenByStaleServerPage()
+    {
+        var at = new DateTimeOffset(2026, 9, 4, 10, 7, 0, TimeSpan.Zero);
+        var local = new ChatMessage("Tool", "✅ read completed", at)
+        {
+            ToolName = "read",
+            ToolCallId = "tc-1",
+            ToolResult = "newer live result",
+            IsToolCall = true
+        };
+        var staleServer = new ChatMessage("Tool", "stale result", at)
+        {
+            ToolName = "read",
+            ToolCallId = "tc-1",
+            ToolResult = "stale result",
+            IsToolCall = true
+        };
+
+        TranscriptReconciler.Reconcile([local], [staleServer]).ShouldBe([local]);
     }
 
     [Fact]
