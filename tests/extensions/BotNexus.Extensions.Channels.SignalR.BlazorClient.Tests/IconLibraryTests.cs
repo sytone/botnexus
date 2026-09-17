@@ -22,9 +22,21 @@ public sealed class IconLibraryTests
     private static readonly string s_svgPath = Path.Combine(s_outputPath, "assets", "icons", "svg");
 
     private static readonly Regex s_id = new(@"\bid=""([^""]+)""", RegexOptions.Compiled);
+    private static readonly Regex s_gradientId = new(
+        @"<(?:linear|radial)Gradient\b[^>]*\bid=""([^""]+)""",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex s_urlRef = new(@"url\(#([^)]+)\)", RegexOptions.Compiled);
     private static readonly Regex s_sourceStroke = new(
         @"<svg\b[^>]*\bstroke=""([^""]+)""",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex s_strokeAttribute = new(
+        @"\bstroke\s*=\s*[""'](?<value>[^""']+)[""']",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex s_styleAttribute = new(
+        @"\bstyle\s*=\s*[""'](?<value>[^""']*)[""']",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex s_styleStroke = new(
+        @"(?:^|;)\s*stroke\s*:\s*(?<value>[^;]+)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex s_stopColor = new(
         @"\bstop-color=""([^""]+)""",
@@ -74,15 +86,44 @@ public sealed class IconLibraryTests
     [Fact]
     public void EveryIconStrokeIsOverridableOrItsOwnGradient()
     {
-        // A hard-coded stroke cannot answer a hover, disabled or selected state. The generator
-        // moves flat colours out to a CSS tone and leaves currentColor behind; only a gradient
-        // is allowed to name itself, and .bn-icon-flat exists to override that one.
-        foreach (var (name, def) in IconLibrary.Icons)
+        // Descendant presentation and style declarations override inheritance, so inspect them
+        // alongside the generated root metadata rather than assuming the root describes all art.
+        foreach (var (_, def) in IconLibrary.Icons)
         {
-            var ok = def.Stroke.Equals("currentColor", StringComparison.Ordinal)
-                     || def.Stroke.StartsWith("url(#", StringComparison.Ordinal);
-            Assert.True(ok, $"'{name}' strokes with '{def.Stroke}', which no rule can override.");
+            Assert.Empty(UnsupportedStrokes(def.Stroke, def.Body));
         }
+    }
+
+    [Theory]
+    [InlineData("<path stroke=\"#ff0000\" />")]
+    [InlineData("<path style=\"fill: none; stroke: #ff0000; stroke-width: 2\" />")]
+    public void DescendantHardCodedStrokeIsRejected(string body)
+    {
+        var unsupported = UnsupportedStrokes("currentColor", body);
+
+        Assert.Single(unsupported);
+        Assert.Equal("#ff0000", unsupported[0]);
+    }
+
+    [Fact]
+    public void DescendantCurrentColorAndLocalGradientAreAccepted()
+    {
+        const string body = """
+            <defs><linearGradient id="local"><stop stop-color="#fff" /></linearGradient></defs>
+            <path stroke="currentColor" />
+            <path style="stroke: url(#local)" />
+            """;
+
+        Assert.Empty(UnsupportedStrokes("currentColor", body));
+    }
+
+    [Fact]
+    public void DescendantGradientMustBeDefinedByTheSameIcon()
+    {
+        var unsupported = UnsupportedStrokes("currentColor", "<path stroke=\"url(#other-icon)\" />");
+
+        Assert.Single(unsupported);
+        Assert.Equal("url(#other-icon)", unsupported[0]);
     }
 
     [Fact]
@@ -124,6 +165,33 @@ public sealed class IconLibraryTests
         {
             Assert.Contains($".bn-icon-{icon.Name} {{ color: {icon.Tone}; }}", css, StringComparison.Ordinal);
         }
+    }
+
+    private static string[] UnsupportedStrokes(string rootStroke, string body)
+    {
+        var definedIds = s_gradientId.Matches(body)
+            .Select(match => match.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+        var strokes = new List<string> { rootStroke };
+        strokes.AddRange(s_strokeAttribute.Matches(body).Select(match => match.Groups["value"].Value));
+        strokes.AddRange(
+            s_styleAttribute.Matches(body)
+                .SelectMany(style => s_styleStroke.Matches(style.Groups["value"].Value))
+                .Select(match => match.Groups["value"].Value));
+
+        return strokes
+            .Select(stroke => stroke.Trim())
+            .Where(stroke => !stroke.Equals("currentColor", StringComparison.OrdinalIgnoreCase))
+            .Where(stroke => !IsLocalGradient(stroke, definedIds))
+            .ToArray();
+    }
+
+    private static bool IsLocalGradient(string stroke, IReadOnlySet<string> definedIds)
+    {
+        var reference = s_urlRef.Match(stroke);
+        return reference.Success
+               && reference.Value.Equals(stroke, StringComparison.Ordinal)
+               && definedIds.Contains(reference.Groups[1].Value);
     }
 
     private static (string Name, string Tone)[] ExpectedSourceTones() =>
