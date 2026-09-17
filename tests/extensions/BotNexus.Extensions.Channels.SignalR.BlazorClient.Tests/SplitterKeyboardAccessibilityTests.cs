@@ -105,6 +105,11 @@ public sealed class SplitterKeyboardAccessibilityTests
               getItem: function (key) { return values[key] || null; },
               setItem: function (key, value) { values[key] = String(value); }
             };
+            globalThis.ResizeObserver = function (callback) {
+              this.callback = callback;
+              this.observe = function () {};
+              this.disconnect = function () {};
+            };
             require({{JsonSerializer.Serialize(SplitterJsPath)}});
             window.BotNexus.splitter.init('container', 'width-key', 240, 180, 0.4);
             function state() {
