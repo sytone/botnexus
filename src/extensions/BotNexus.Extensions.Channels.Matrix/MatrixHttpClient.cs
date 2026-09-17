@@ -136,6 +136,71 @@ public sealed class MatrixHttpClient : IMatrixClient
     }
 
     /// <inheritdoc />
+    public async Task<string> UploadMediaAsync(
+        byte[] data,
+        string contentType,
+        string fileName,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+
+        var url = $"/_matrix/media/v3/upload?filename={Uri.EscapeDataString(fileName)}";
+        using var content = new ByteArrayContent(data);
+        content.Headers.ContentType = MediaTypeHeaderValue.Parse(MatrixMediaContentType.Resolve(contentType));
+        using var response = await _http.PostAsync(url, content, cancellationToken);
+        await EnsureSuccessAsync(response, "upload media", cancellationToken);
+
+        var body = await response.Content.ReadFromJsonAsync<MatrixUploadResponse>(JsonOptions, cancellationToken);
+        return body?.ContentUri ?? string.Empty;
+    }
+
+    /// <inheritdoc />
+    public async Task<byte[]> DownloadMediaAsync(
+        string serverName,
+        string mediaId,
+        long maxBytes,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(serverName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(mediaId);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
+        if (maxBytes > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(maxBytes), "A byte-array media response cannot exceed Int32.MaxValue bytes.");
+
+        var url = $"/_matrix/client/v1/media/download/{Uri.EscapeDataString(serverName)}/{Uri.EscapeDataString(mediaId)}";
+        using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        await EnsureSuccessAsync(response, "download media", cancellationToken);
+
+        if (response.Content.Headers.ContentLength is { } advertisedLength && advertisedLength > maxBytes)
+            throw new InvalidDataException($"Matrix media response advertised {advertisedLength} bytes, exceeding the {maxBytes}-byte cap.");
+
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var destination = new MemoryStream(
+            response.Content.Headers.ContentLength is { } length
+                ? (int)Math.Min(length, maxBytes)
+                : 0);
+        var buffer = new byte[Math.Min(81_920, (int)maxBytes + 1)];
+        long total = 0;
+        while (true)
+        {
+            var remainingProbe = maxBytes - total + 1;
+            var requested = (int)Math.Min(buffer.Length, remainingProbe);
+            var read = await source.ReadAsync(buffer.AsMemory(0, requested), cancellationToken);
+            if (read == 0)
+                break;
+
+            total += read;
+            if (total > maxBytes)
+                throw new InvalidDataException($"Matrix media response exceeded the {maxBytes}-byte cap while streaming.");
+
+            destination.Write(buffer, 0, read);
+        }
+
+        return destination.ToArray();
+    }
+
+    /// <inheritdoc />
     public async Task JoinRoomAsync(string roomId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(roomId);
@@ -203,6 +268,12 @@ public sealed class MatrixHttpClient : IMatrixClient
     /// </summary>
     private string? Redact(string? text)
         => _secretRedactor is null || string.IsNullOrEmpty(text) ? text : _secretRedactor.Redact(text);
+
+    private sealed class MatrixUploadResponse
+    {
+        [JsonPropertyName("content_uri")]
+        public string? ContentUri { get; set; }
+    }
 
     private sealed class MatrixErrorBody
     {

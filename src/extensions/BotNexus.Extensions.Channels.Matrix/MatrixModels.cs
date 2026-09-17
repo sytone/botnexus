@@ -99,6 +99,18 @@ public sealed class MatrixMessageContent
     [JsonPropertyName("formatted_body")]
     public string? FormattedBody { get; set; }
 
+    /// <summary>Unencrypted Matrix content URI for an image or file attachment.</summary>
+    [JsonPropertyName("url")]
+    public string? Url { get; set; }
+
+    /// <summary>Optional sender-supplied filename distinct from the fallback <see cref="Body"/>.</summary>
+    [JsonPropertyName("filename")]
+    public string? FileName { get; set; }
+
+    /// <summary>Advertised media metadata. It is used only for early rejection, never admission.</summary>
+    [JsonPropertyName("info")]
+    public MatrixMediaInfo? Info { get; set; }
+
     /// <summary>Event relationship, used for <c>m.replace</c> edits and <c>m.thread</c> replies.</summary>
     [JsonPropertyName("m.relates_to")]
     public MatrixRelatesTo? RelatesTo { get; set; }
@@ -109,6 +121,18 @@ public sealed class MatrixMessageContent
     /// </summary>
     [JsonPropertyName("m.new_content")]
     public MatrixMessageContent? NewContent { get; set; }
+}
+
+/// <summary>Metadata accompanying an unencrypted Matrix image or file.</summary>
+public sealed class MatrixMediaInfo
+{
+    /// <summary>Sender-advertised MIME type.</summary>
+    [JsonPropertyName("mimetype")]
+    public string? MimeType { get; set; }
+
+    /// <summary>Sender-advertised byte count.</summary>
+    [JsonPropertyName("size")]
+    public long? Size { get; set; }
 }
 
 /// <summary>An event relationship.</summary>
