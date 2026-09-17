@@ -58,6 +58,7 @@ These are deeper explanations, also grouped under **Architecture → Runtime and
 - **[azure-build-test-runner.md](azure-build-test-runner.md)** — Selectable strict validation and optional Azure Container Apps execution
 - **[stale-base-merges.md](stale-base-merges.md)** — #3173 base-freshness gate: why a green PR on a stale base can still redden `main`, and how inherited red is told apart from introduced red
 - **[git-worktree-config-hardening.md](git-worktree-config-hardening.md)** — #1602 core.bare guard, hooks, and worktree config hygiene
+- **[release-history-manifest.md](release-history-manifest.md)** — Canonical release-history producer, schema, consumer, and missing-artifact contract
 
 ### Security
 
