@@ -58,6 +58,13 @@ documentation, where its first satisfying branch is "this PR also changes docume
 green from the day it landed without once being able to fail, which is indistinguishable from a
 working gate.
 
+`DocsImpactWorkflowArchitectureTests` pins the repaired contract: the workflow remains unfiltered
+at the pull-request level, reruns when the PR body is edited, retains all three sensitive-source
+predicates, and preserves the docs-change, explicit-justification, and failure outcomes. A synthetic
+copy of the original docs-only trigger proves the regression detector rejects the broken shape.
+These checks protect the workflow mechanics; they do not decide whether the resulting documentation
+is accurate or understandable. That still requires the review described below.
+
 ### Tuning the rules
 
 - **Fact registry** — `scripts/repo/docs-lint-facts.json`. Each entry carries an `id`, the `defect`
