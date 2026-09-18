@@ -28,7 +28,13 @@ window.BotNexus.splitter = (function () {
         }
 
         var savedPx = parseInt(localStorage.getItem(storageKey), 10);
-        var initialPx = (!isNaN(savedPx) && savedPx > 0) ? savedPx : defaultFromFraction;
+        var preferredPx = (!isNaN(savedPx) && savedPx > 0) ? savedPx : defaultFromFraction;
+
+        // Clean up before replacing an existing instance so re-initialization cannot accumulate
+        // document handlers or container observers.
+        if (_instances[containerId]) {
+            _instances[containerId]();
+        }
 
         if (!leftPane.id) {
             leftPane.id = containerId + '-start-pane';
@@ -38,21 +44,21 @@ window.BotNexus.splitter = (function () {
         splitter.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight Home End');
 
         function updateAccessibleValues(currentPx) {
-            var maxPx = Math.max(minPx, Math.floor(container.getBoundingClientRect().width * maxFraction));
-            splitter.setAttribute('aria-valuemin', String(minPx));
+            var maxPx = Math.max(0, Math.floor(container.getBoundingClientRect().width * maxFraction));
+            splitter.setAttribute('aria-valuemin', String(Math.min(minPx, maxPx)));
             splitter.setAttribute('aria-valuemax', String(maxPx));
             splitter.setAttribute('aria-valuenow', String(currentPx));
             splitter.setAttribute('aria-valuetext', currentPx + ' pixels');
         }
 
         function resizeAndPersist(desiredPx) {
-            var newPx = applyWidth(container, leftPane, desiredPx, minPx, maxFraction);
-            localStorage.setItem(storageKey, String(newPx));
-            updateAccessibleValues(newPx);
-            return newPx;
+            preferredPx = applyWidth(container, leftPane, desiredPx, minPx, maxFraction);
+            localStorage.setItem(storageKey, String(preferredPx));
+            updateAccessibleValues(preferredPx);
+            return preferredPx;
         }
 
-        initialPx = applyWidth(container, leftPane, initialPx, minPx, maxFraction);
+        var initialPx = applyWidth(container, leftPane, preferredPx, minPx, maxFraction);
         updateAccessibleValues(initialPx);
 
         var dragging = false;
@@ -119,7 +125,7 @@ window.BotNexus.splitter = (function () {
                     desiredPx = minPx;
                     break;
                 case 'End':
-                    desiredPx = Math.max(minPx, Math.floor(container.getBoundingClientRect().width * maxFraction));
+                    desiredPx = Math.max(0, Math.floor(container.getBoundingClientRect().width * maxFraction));
                     break;
                 default:
                     return;
@@ -136,10 +142,15 @@ window.BotNexus.splitter = (function () {
         document.addEventListener('touchend', onTouchEnd);
         splitter.addEventListener('keydown', onKeyDown);
 
-        // Clean up on re-init for the same container
-        if (_instances[containerId]) {
-            _instances[containerId]();
-        }
+        // Keep the visible width within the current container while retaining the user's
+        // preferred width for a later expansion. ResizeObserver follows the actual flex
+        // container rather than only the viewport, so embedded splitter consumers are covered.
+        var resizeObserver = new ResizeObserver(function () {
+            var currentPx = applyWidth(container, leftPane, preferredPx, minPx, maxFraction);
+            updateAccessibleValues(currentPx);
+        });
+        resizeObserver.observe(container);
+
         _instances[containerId] = function () {
             splitter.removeEventListener('mousedown', onMouseDown);
             document.removeEventListener('mousemove', onMouseMove);
@@ -148,13 +159,15 @@ window.BotNexus.splitter = (function () {
             document.removeEventListener('touchmove', onTouchMove);
             document.removeEventListener('touchend', onTouchEnd);
             splitter.removeEventListener('keydown', onKeyDown);
+            resizeObserver.disconnect();
         };
     }
 
     function applyWidth(container, leftPane, desiredPx, minPx, maxFraction) {
         var containerWidth = container.getBoundingClientRect().width;
-        var maxPx = Math.max(minPx, Math.floor(containerWidth * maxFraction));
-        var clamped = Math.max(minPx, Math.min(desiredPx, maxPx));
+        var maxPx = Math.max(0, Math.floor(containerWidth * maxFraction));
+        // If a container is too narrow to satisfy both bounds, containment wins over minPx.
+        var clamped = Math.min(Math.max(minPx, desiredPx), maxPx);
         leftPane.style.flex = '0 0 ' + clamped + 'px';
         leftPane.style.width = clamped + 'px';
         return clamped;

@@ -43,6 +43,14 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>assets\icons\svg\%(Filename)%(Extension)</Link>
     </None>
+    <None Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.SignalR.BlazorClient\wwwroot\js\splitter.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>wwwroot\js\splitter.js</Link>
+    </None>
+    <None Include="splitter.resize.test.mjs">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>wwwroot\js\splitter.resize.test.mjs</Link>
+    </None>
     <None Include="..\..\..\assets\icons\README.md">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>assets\icons\README.md</Link>
