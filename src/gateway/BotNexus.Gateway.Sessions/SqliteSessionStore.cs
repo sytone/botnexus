@@ -130,6 +130,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     // Deterministic test seam for #3907. It observes the immutable work item after capture and
     // may gate the write to force a concurrent mutation; production leaves it null.
     internal Func<SessionHistoryPersistenceSnapshot, CancellationToken, Task>? BeforeHistoryWriteAsync { get; set; }
+    internal Func<IReadOnlyList<SessionEntry>, CancellationToken, Task>? AfterAppendHistoryCommittedAsync { get; set; }
     internal int LastHistoryRowsMutated { get; private set; }
     internal bool LastHistoryWriteReconciled { get; private set; }
 
@@ -455,6 +456,14 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
 
         using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
+
+        // Redact and key the operation batch once, before any I/O attempt. A transforming redactor
+        // returns cloned entries; rebuilding that batch inside the retry would assign fresh keys after
+        // an ambiguous commit and defeat the unique(session_id, persistence_key) idempotency guard.
+        var redacted = RedactForAppend(entries);
+        foreach (var entry in redacted)
+            entry.PersistenceKey ??= Guid.NewGuid().ToString("N");
+
         return await RetryOnTransientAsync(async () =>
         {
             await using var connection = CreateConnection();
@@ -467,13 +476,11 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             if (SessionMutationPolicy.IsTerminal(status.Value))
                 return new SessionAppendMutationResult(SessionMutationOutcome.Conflict, 0);
 
-            // Redact through a throwaway GatewaySession so appended content goes through the same
-            // secret-redaction path as the whole-aggregate save.
-            var redacted = RedactForAppend(entries);
-
             if (redacted.Count > 0)
             {
                 await InsertHistoryAsync(connection, sessionId, redacted, cancellationToken).ConfigureAwait(false);
+                if (AfterAppendHistoryCommittedAsync is { } afterAppendHistoryCommittedAsync)
+                    await afterAppendHistoryCommittedAsync(redacted, cancellationToken).ConfigureAwait(false);
                 await TouchUpdatedAtAsync(connection, sessionId, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
             }
 

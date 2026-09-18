@@ -100,6 +100,12 @@ public sealed class MatrixChannelOptions
     /// <summary>Default minimum interval between streaming edit updates, in milliseconds.</summary>
     public const int DefaultStreamingBufferMs = 750;
 
+    /// <summary>Default maximum accepted Matrix attachment size (20 MiB).</summary>
+    public const long DefaultMaxMediaBytes = 20L * 1024 * 1024;
+
+    /// <summary>Default wall-clock budget for one Matrix media download.</summary>
+    public const int DefaultMediaDownloadTimeoutSeconds = 30;
+
     /// <summary>
     /// Base URL of the Matrix homeserver shared by every configured account, e.g.
     /// <c>https://matrix.example.com</c>.
@@ -149,6 +155,31 @@ public sealed class MatrixChannelOptions
     public int StreamingBufferMs { get; set; } = DefaultStreamingBufferMs;
 
     /// <summary>
+    /// Maximum attachment bytes accepted from Matrix. The HTTP client enforces this while reading,
+    /// so an absent or dishonest advertised size cannot bypass the bound.
+    /// </summary>
+    [Display(
+        Name = "Maximum media bytes",
+        Description = "Maximum size of an inbound Matrix image or file attachment.",
+        GroupName = "Matrix",
+        Order = 3)]
+    [DefaultValue(DefaultMaxMediaBytes)]
+    [Range(1, long.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "matrix", Order = 3)]
+    public long MaxMediaBytes { get; set; } = DefaultMaxMediaBytes;
+
+    /// <summary>Wall-clock timeout in seconds for one inbound media download.</summary>
+    [Display(
+        Name = "Media download timeout (seconds)",
+        Description = "Wall-clock budget for downloading one inbound Matrix attachment.",
+        GroupName = "Matrix",
+        Order = 4)]
+    [DefaultValue(DefaultMediaDownloadTimeoutSeconds)]
+    [Range(1, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "matrix", Order = 4)]
+    public int MediaDownloadTimeoutSeconds { get; set; } = DefaultMediaDownloadTimeoutSeconds;
+
+    /// <summary>
     /// Resolves the effective <c>/sync</c> timeout, substituting the default for a non-positive
     /// configured value.
     /// </summary>
@@ -160,4 +191,13 @@ public sealed class MatrixChannelOptions
     /// </summary>
     public int ResolveStreamingBufferMs() =>
         StreamingBufferMs >= 0 ? StreamingBufferMs : DefaultStreamingBufferMs;
+
+    /// <summary>Resolves a positive media ceiling even when configuration binding is bypassed.</summary>
+    public long ResolveMaxMediaBytes() => MaxMediaBytes > 0 ? MaxMediaBytes : DefaultMaxMediaBytes;
+
+    /// <summary>Resolves a positive media wall-clock budget for fail-safe cancellation.</summary>
+    public int ResolveMediaDownloadTimeoutSeconds() =>
+        MediaDownloadTimeoutSeconds > 0
+            ? MediaDownloadTimeoutSeconds
+            : DefaultMediaDownloadTimeoutSeconds;
 }

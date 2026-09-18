@@ -76,6 +76,41 @@ public sealed class PlatformConfigValidatorTests
     }
 
     [Fact]
+    public void Validate_PlaceholderGatewayCredentials_ReturnsCredentialFreeErrors()
+    {
+        var config = new PlatformConfig
+        {
+            ApiKey = " undefined ",
+            Gateway = new GatewaySettingsConfig
+            {
+                ApiKeys = new Dictionary<string, ApiKeyConfig>
+                {
+                    ["tenant-a"] = new()
+                    {
+                        ApiKey = "NULL",
+                        TenantId = "tenant-a",
+                        Permissions = ["chat:send"]
+                    }
+                },
+                Satellites = new Dictionary<string, SatelliteConfig>
+                {
+                    ["sat-1"] = new() { Enabled = true, ApiKey = "null" },
+                    ["sat-disabled"] = new() { Enabled = false, ApiKey = "undefined" }
+                }
+            }
+        };
+
+        var errors = PlatformConfigValidator.Validate(config);
+
+        errors.ShouldContain("apiKey must not be a placeholder. Supply a valid gateway API key or remove the setting for intentional development mode.");
+        errors.ShouldContain("gateway.apiKeys.tenant-a.apiKey must not be a placeholder. Supply a valid API key.");
+        errors.ShouldContain("gateway.satellites.sat-1.apiKey must not be a placeholder. Supply a valid satellite API key.");
+        errors.ShouldNotContain(e => e.Contains("sat-disabled", StringComparison.Ordinal));
+        errors.ShouldAllBe(error => !error.Contains("undefined", StringComparison.OrdinalIgnoreCase));
+        errors.ShouldAllBe(error => !error.Contains("NULL", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Validate_ProviderWithNonHttpBaseUrl_ReturnsBaseUrlError()
     {
         var config = new PlatformConfig

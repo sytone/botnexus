@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
+using Bunit.TestDoubles;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 
@@ -12,7 +14,14 @@ public sealed class GuideTests : IDisposable
     private const string IndexJson = """
         {
           "sections": [
-            { "id": "alpha", "file": "alpha.md", "title": "Alpha" },
+            {
+              "id": "alpha",
+              "file": "alpha.md",
+              "title": "Alpha",
+              "children": [
+                { "id": "alpha-child", "file": "alpha-child.md", "title": "Alpha child" }
+              ]
+            },
             { "id": "beta", "file": "beta.md", "title": "Beta" },
             { "id": "gamma", "file": "gamma.md", "title": "Gamma" }
           ]
@@ -27,9 +36,11 @@ public sealed class GuideTests : IDisposable
     {
         _http.SetBody("/guide/guide-index.json", IndexJson, "application/json");
         _http.SetBody("/guide/alpha.md", "# Alpha");
+        _http.SetBody("/guide/alpha-child.md", "# Alpha child");
         _http.SetBody("/guide/beta.md", "# Beta");
         _http.SetBody("/guide/gamma.md", "# Gamma");
         _js.SetRendered("# Alpha", "<h1>Alpha</h1>");
+        _js.SetRendered("# Alpha child", "<h1>Alpha child</h1>");
         _js.SetRendered("# Beta", "<h1>Beta</h1>");
         _js.SetRendered("# Gamma", "<h1>Gamma</h1>");
 
@@ -186,6 +197,56 @@ public sealed class GuideTests : IDisposable
         cut.Find("[data-testid='guide-nav-beta']").ClassList.ShouldContain("active");
         cut.Find("[data-testid='guide-content']").InnerHtml.ShouldContain("<h1>Beta</h1>");
         _js.Invocations.ShouldContain("# Beta");
+    }
+
+    [Fact]
+    public async Task Contents_selection_updates_route_for_top_level_and_child_sections()
+    {
+        var cut = _ctx.Render<Guide>(parameters => parameters.Add(component => component.SectionId, "alpha"));
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>() as BunitNavigationManager;
+
+        await cut.Find("[data-testid='guide-nav-beta']").ClickAsync(new());
+
+        nav.ShouldNotBeNull();
+        nav.Uri.ShouldBe("http://localhost/guide/beta");
+        cut.Find("[data-testid='guide-nav-beta']").ClassList.ShouldContain("active");
+        cut.Find("[data-testid='guide-content']").InnerHtml.ShouldContain("<h1>Beta</h1>");
+
+        await cut.Find("[data-testid='guide-nav-alpha']").ClickAsync(new());
+        await cut.Find("[data-testid='guide-nav-alpha-child']").ClickAsync(new());
+
+        nav.Uri.ShouldBe("http://localhost/guide/alpha-child");
+        cut.Find("[data-testid='guide-nav-alpha-child']").ClassList.ShouldContain("active");
+        cut.Find("[data-testid='guide-content']").InnerHtml.ShouldContain("<h1>Alpha child</h1>");
+        nav.History.Count.ShouldBe(3);
+        nav.History.Select(entry => entry.Options.ReplaceHistoryEntry).ShouldAllBe(replace => !replace);
+    }
+
+    [Fact]
+    public void Route_changes_restore_the_requested_section_without_adding_history()
+    {
+        var cut = _ctx.Render<Guide>(parameters => parameters.Add(component => component.SectionId, "alpha"));
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>() as BunitNavigationManager;
+
+        cut.Render(parameters => parameters.Add(component => component.SectionId, "beta"));
+
+        nav.ShouldNotBeNull();
+        nav.History.ShouldBeEmpty();
+        cut.Find("[data-testid='guide-nav-beta']").ClassList.ShouldContain("active");
+        cut.Find("[data-testid='guide-content']").InnerHtml.ShouldContain("<h1>Beta</h1>");
+    }
+
+    [Fact]
+    public void Invalid_route_falls_back_to_the_first_section_and_replaces_the_broken_url()
+    {
+        var cut = _ctx.Render<Guide>(parameters => parameters.Add(component => component.SectionId, "missing"));
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>() as BunitNavigationManager;
+
+        nav.ShouldNotBeNull();
+        nav.Uri.ShouldBe("http://localhost/guide/alpha");
+        cut.Find("[data-testid='guide-nav-alpha']").ClassList.ShouldContain("active");
+        cut.Find("[data-testid='guide-content']").InnerHtml.ShouldContain("<h1>Alpha</h1>");
+        nav.History.ShouldHaveSingleItem().Options.ReplaceHistoryEntry.ShouldBeTrue();
     }
 
     private IRenderedComponent<Guide> RenderGuide()

@@ -232,11 +232,12 @@ Anything past ~200ms on UI chrome reads as sluggish, not smooth.
 
 ### Contrast
 
-**Both themes are verified against WCAG AA (4.5:1 for body text, 3:1 for large).**
-This is checked by measurement, not by eye — picking values by eye is exactly how
-the first cut of the light theme shipped five failures.
+The documented body-text pairings and text-bearing Live badge are measured against
+WCAG AA (4.5:1 for normal text, 3:1 for large text). This is checked by measurement,
+not by eye — picking values by eye is exactly how the first cut of the light theme
+shipped five failures. This is not an exhaustive audit of every component state.
 
-Four token corrections came out of that audit:
+Five token corrections came out of the measured coverage:
 
 | Token | Was | Now | Why |
 |---|---|---|---|
@@ -244,11 +245,13 @@ Four token corrections came out of that audit:
 | `--color-ink-faint` (light) | `#6e7c8a` | `#626e7b` | failed on all three light surfaces (3.80–4.27) |
 | `--color-accent` (light) | `#0b7f99` | `#0a7790` | failed as text on canvas (4.37) and surface-2 (4.14) |
 | `--color-danger-fill` | *(new)* | `#ce433d` dark | white on `#f85149` was only 3.35:1 |
+| `--color-live-fill` (dark) | *(new)* | `#1f7a4d` | white on the brighter `--cat-live` was only 3.20:1 at the 12px caption size |
 
 `--color-danger-fill` exists because a **solid danger button** carrying
 `--color-on-solid` needs a darker red than the same colour used as an 8px dot or
 a 1px border, where text contrast does not apply. `--color-danger` stays bright
-for those.
+for those. `--color-live-fill` applies the same separation to the text-bearing
+Live badge while `--cat-live` remains the brighter indicator and row-rail colour.
 
 When auditing, composite translucent backgrounds over what sits behind them. A
 naive walk that returns `rgba(…, 0.05)` as the background compares a colour
@@ -315,10 +318,12 @@ Thirteen carry no tone at all and inherit their context: `attach` `back` `close`
 
 ### Colour policy
 
-No icon hardcodes its stroke. Every root carries `stroke="currentColor"` (or a
-gradient reference) and the artwork tone lives in a generated `.bn-icon-<name>` rule.
-Rendering is identical; the difference is that any context can override it - a
-disabled control, a selected row, a button whose label sets the colour.
+No icon hardcodes its stroke. Every root and descendant stroke uses `currentColor`
+(or references a gradient defined by that icon), and the artwork tone lives in a
+generated `.bn-icon-<name>` rule. The generator rejects descendant `stroke`
+attributes and inline-style declarations that violate this contract. Rendering is
+identical; the difference is that any context can override it - a disabled control,
+a selected row, a button whose label sets the colour.
 
 | Class | Effect |
 |---|---|
@@ -377,7 +382,8 @@ envelope. Style the classes it emits; do not fork it:
 
 `schema-form` `schema-group` `schema-group-title` `schema-object` `schema-subgroup`
 `schema-subgroup-title` `schema-field` `schema-field-label` `schema-field-control`
-`schema-field-description` `schema-field-error` `schema-array` `schema-dict`
+`schema-field-description` `schema-collection-description` `schema-field-error` `schema-array`
+`schema-dict`
 
 The schema already carries `x-ui-label`, `x-ui-description`, `x-ui-group` and
 `x-ui-order`. Render all four. Descriptions and grouping were computed and thrown away
@@ -402,8 +408,8 @@ configuration page had an accessible name.
    conversation-row buttons were pinned at `right: 2.95/1.6/0.25rem` and later given
    the 32px `--hit-pointer` minimum without the offsets being revisited. 32 - 21.6
    leaves each button overlapping its neighbour by 10.4px.
-8. No icon hardcodes its stroke. `currentColor` or its own gradient, so a hover,
-   disabled or selected state can reach it.
+8. No icon hardcodes any root or descendant stroke. Use `currentColor` or a gradient
+   defined by that same icon, so a hover, disabled or selected state can reach it.
 
 ### Enforced by tests
 

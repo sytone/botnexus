@@ -56,7 +56,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
     private const string GatewayTarget = "gateway";
 
     private readonly Lock _sync = new();
-    private IReadOnlyDictionary<string, GatewayCallerIdentity> _identitiesByApiKey;
+    private CredentialSnapshot _credentialSnapshot;
     private readonly IReadOnlyList<string>? _staticAllowedOrigins;
     private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
     private readonly IFeatureManager? _featureManager;
@@ -103,7 +103,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         _securityEvents = securityEvents;
         _featureManager = featureManager;
         _staticAllowedOrigins = null;
-        _identitiesByApiKey = BuildIdentityMap(apiKey, apiKeys: null);
+        _credentialSnapshot = BuildCredentialSnapshot(apiKey, apiKeys: null);
     }
 
     /// <summary>
@@ -125,7 +125,7 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         _featureManager = featureManager;
         _staticAllowedOrigins = ResolveAllowedOrigins(platformConfig.Gateway?.Cors?.AllowedOrigins);
         _staticFeatureFlags = platformConfig.FeatureManagement;
-        _identitiesByApiKey = BuildIdentityMap(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys, platformConfig.Gateway?.Satellites);
+        _credentialSnapshot = BuildCredentialSnapshot(platformConfig.ApiKey, platformConfig.Gateway?.ApiKeys, platformConfig.Gateway?.Satellites);
     }
 
     /// <summary>
@@ -146,9 +146,10 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         _securityEvents = securityEvents;
         _featureManager = featureManager;
         _staticAllowedOrigins = null;
-        _identitiesByApiKey = BuildIdentityMap(
+        _credentialSnapshot = BuildCredentialSnapshot(
             platformConfig.CurrentValue.ApiKey,
-            platformConfig.CurrentValue.Gateway?.ApiKeys);
+            platformConfig.CurrentValue.Gateway?.ApiKeys,
+            platformConfig.CurrentValue.Gateway?.Satellites);
     }
 
     /// <inheritdoc />
@@ -160,8 +161,17 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var identitiesByApiKey = GetIdentityMap();
+        var credentialSnapshot = GetCredentialSnapshot();
+        if (credentialSnapshot.HasInvalidPlaceholder)
+        {
+            _logger.LogError(
+                "Gateway API key configuration contains an explicit placeholder. Supply a valid key; remove all key settings only for intentional development mode.");
+            EmitOutcome(success: false, actorId: "invalid-configuration");
+            return GatewayAuthResult.Failure(
+                "Gateway API key configuration is invalid. Supply a non-placeholder key.");
+        }
 
+        var identitiesByApiKey = credentialSnapshot.IdentitiesByApiKey;
         if (identitiesByApiKey.Count == 0)
         {
             // DNS-rebind / CSRF hardening (#1931): in dev/no-key mode we still grant a full
@@ -295,14 +305,19 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             DevOriginEnforcementFeature);
     }
 
-    private static Dictionary<string, GatewayCallerIdentity> BuildIdentityMap(
+    private static CredentialSnapshot BuildCredentialSnapshot(
         string? legacyApiKey,
         Dictionary<string, ApiKeyConfig>? apiKeys,
         Dictionary<string, SatelliteConfig>? satellites = null)
     {
         var map = new Dictionary<string, GatewayCallerIdentity>(StringComparer.Ordinal);
+        var hasInvalidPlaceholder = GatewayApiKeyRules.IsExplicitPlaceholder(legacyApiKey)
+            || (apiKeys?.Values.Any(key => GatewayApiKeyRules.IsExplicitPlaceholder(key.ApiKey)) ?? false)
+            || (satellites?.Values.Any(satellite =>
+                satellite.Enabled && GatewayApiKeyRules.IsExplicitPlaceholder(satellite.ApiKey)) ?? false);
 
-        if (!string.IsNullOrWhiteSpace(legacyApiKey))
+        if (!string.IsNullOrWhiteSpace(legacyApiKey) &&
+            !GatewayApiKeyRules.IsExplicitPlaceholder(legacyApiKey))
         {
             map[legacyApiKey] = new GatewayCallerIdentity
             {
@@ -318,8 +333,11 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         {
             foreach (var (keyId, keyConfig) in apiKeys)
             {
-                if (string.IsNullOrWhiteSpace(keyConfig.ApiKey))
+                if (string.IsNullOrWhiteSpace(keyConfig.ApiKey) ||
+                    GatewayApiKeyRules.IsExplicitPlaceholder(keyConfig.ApiKey))
+                {
                     continue;
+                }
 
                 var callerId = !string.IsNullOrWhiteSpace(keyConfig.CallerId)
                     ? keyConfig.CallerId
@@ -344,8 +362,12 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
         {
             foreach (var (satId, satConfig) in satellites)
             {
-                if (!satConfig.Enabled || string.IsNullOrWhiteSpace(satConfig.ApiKey))
+                if (!satConfig.Enabled ||
+                    string.IsNullOrWhiteSpace(satConfig.ApiKey) ||
+                    GatewayApiKeyRules.IsExplicitPlaceholder(satConfig.ApiKey))
+                {
                     continue;
+                }
 
                 map[satConfig.ApiKey] = new GatewayCallerIdentity
                 {
@@ -359,26 +381,26 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             }
         }
 
-        return map;
+        return new CredentialSnapshot(map, hasInvalidPlaceholder);
     }
 
-    private IReadOnlyDictionary<string, GatewayCallerIdentity> GetIdentityMap()
+    private CredentialSnapshot GetCredentialSnapshot()
     {
         if (_platformConfig is null)
-            return _identitiesByApiKey;
+            return _credentialSnapshot;
 
         try
         {
             var currentConfig = _platformConfig.CurrentValue;
-            var rebuilt = BuildIdentityMap(
+            var rebuilt = BuildCredentialSnapshot(
                 currentConfig.ApiKey,
                 currentConfig.Gateway?.ApiKeys,
                 currentConfig.Gateway?.Satellites);
 
             lock (_sync)
             {
-                _identitiesByApiKey = rebuilt;
-                return _identitiesByApiKey;
+                _credentialSnapshot = rebuilt;
+                return _credentialSnapshot;
             }
         }
         catch (OptionsValidationException ex)
@@ -390,10 +412,22 @@ public sealed class ApiKeyGatewayAuthHandler : IGatewayAuthHandler
             _logger.LogError(
                 ex,
                 "Platform configuration reload is invalid; gateway authentication is using the last valid credential snapshot.");
+            if (ex.Failures.Any(failure =>
+                failure.Contains(GatewayApiKeyRules.PlaceholderValidationMarker, StringComparison.Ordinal)))
+            {
+                return new CredentialSnapshot(
+                    new Dictionary<string, GatewayCallerIdentity>(StringComparer.Ordinal),
+                    HasInvalidPlaceholder: true);
+            }
+
             lock (_sync)
-                return _identitiesByApiKey;
+                return _credentialSnapshot;
         }
     }
+
+    private sealed record CredentialSnapshot(
+        IReadOnlyDictionary<string, GatewayCallerIdentity> IdentitiesByApiKey,
+        bool HasInvalidPlaceholder);
 
     /// <summary>
     /// Enforces the browser-Origin allow-list used to guard the dev-mode admin grant against

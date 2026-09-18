@@ -249,6 +249,9 @@
        it for classification would dilute that. Kept desaturated so a screen
        showing several at once stays calm. */
     --cat-live: #2ea36a;
+    /* Text-bearing Live badges need a darker fill than the brighter indicator/category color.
+       White on this value is 5.32:1, clearing the 4.5:1 normal-text threshold. */
+    --color-live-fill: #1f7a4d;
     --cat-pinned: #a3823c;
     --cat-agent: #6c6c80;
     --cat-subagent: #4f8570;
@@ -387,6 +390,7 @@
 
     /* Category palette, darkened so each still reads against a white surface. */
     --cat-live: #1a7f52;
+    --color-live-fill: #1a7f52;
     --cat-pinned: #8a6a24;
     --cat-agent: #5b6472;
     --cat-subagent: #3d6b58;
@@ -1760,10 +1764,16 @@ html, body, #app {
 }
 
 .panel-splitter:hover::after,
-.panel-splitter.dragging::after {
+.panel-splitter.dragging::after,
+.panel-splitter:focus-visible::after {
     left: 2px;
     width: 4px;
     background: var(--accent);
+}
+
+.panel-splitter:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
 }
 
 .panel-splitter.dragging {
@@ -6253,7 +6263,7 @@ h3.conversation-title.editable:hover {
    animated treatment on the page - motion reads as "happening now" in a way no static
    colour does, and nothing else here moves, so it cannot be mistaken for decoration. */
 .activity-badge-live {
-    background: var(--accent-live);
+    background: var(--color-live-fill);
     color: var(--color-on-solid);
 }
 
@@ -7394,7 +7404,8 @@ h3.conversation-title.editable:hover {
     clear: both;
 }
 
-.schema-object-description {
+.schema-object-description,
+.schema-collection-description {
     margin: 0 0 0.75rem;
     font-size: var(--text-caption);
     line-height: var(--text-caption-lh);
@@ -7628,20 +7639,29 @@ h3.conversation-title.editable:hover {
 /* Below this the two-column row leaves the control too little room to be usable, so the
    label sits above its input instead. Mobile Settings renders this same component. */
 @media (max-width: 720px) {
-    .schema-field {
+    .schema-field,
+    .agents-form-grid {
         grid-template-columns: minmax(0, 1fr);
         gap: 0.2rem;
+        min-width: 0;
     }
 
-    .schema-field-label {
+    .schema-field-label,
+    .agents-form-grid label {
         padding-top: 0;
     }
 
     .schema-field-control > input[type="text"],
     .schema-field-control > input[type="password"],
     .schema-field-control > input[type="number"],
-    .schema-field-control > select {
+    .schema-field-control > select,
+    .agents-form-grid .cfg-input,
+    .agents-form-grid .cfg-textarea {
         max-width: 100%;
+    }
+
+    .agents-form-grid > div {
+        min-width: 0;
     }
 }
 

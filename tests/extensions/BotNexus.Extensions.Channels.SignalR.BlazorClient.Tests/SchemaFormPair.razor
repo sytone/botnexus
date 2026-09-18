@@ -1,0 +1,26 @@
+@using System.Text.Json.Nodes
+
+<div data-testid="first-form">
+    <SchemaForm Schema="Schema" Value="FirstValue" />
+</div>
+<div data-testid="second-form">
+    <SchemaForm Schema="Schema" Value="SecondValue" />
+</div>
+<button data-testid="rerender-forms" @onclick="Rerender">Rerender</button>
+
+@code {
+    [Parameter, EditorRequired]
+    public JsonObject Schema { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public JsonObject FirstValue { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public JsonObject SecondValue { get; set; } = default!;
+
+    private void Rerender()
+    {
+        FirstValue["name"] = "first-updated";
+        SecondValue["name"] = "second-updated";
+    }
+}

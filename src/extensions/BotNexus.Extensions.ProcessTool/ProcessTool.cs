@@ -136,7 +136,7 @@ public sealed class ProcessTool : IAgentTool
         sb.AppendLine("--- | ------- | ------ | ------- | ---------");
         foreach (var p in processes)
         {
-            var status = p.IsRunning ? "running" : "exited";
+            var status = p.IsRunning ? "running" : p.OutputCaptureIncomplete ? "exited (output incomplete)" : "exited";
             var exitCode = p.ExitCode?.ToString() ?? "-";
             sb.AppendLine($"{p.Pid} | {p.Command} | {status} | {p.StartedAt:u} | {exitCode}");
         }
@@ -168,6 +168,7 @@ public sealed class ProcessTool : IAgentTool
         sb.AppendLine($"Started: {process.StartedAt:u}");
         if (exitCode is not null)
             sb.AppendLine($"Exit Code: {exitCode}");
+        sb.AppendLine($"Output Capture: {process.OutputCaptureStatus}");
 
         return TextResult(sb.ToString());
     }
@@ -189,7 +190,7 @@ public sealed class ProcessTool : IAgentTool
         var output = process.GetOutput(tail);
 
         return TextResult(string.IsNullOrEmpty(output)
-            ? $"No output captured for PID {pid}."
+            ? $"No output captured for PID {pid}. Output Capture: {process.OutputCaptureStatus}."
             : output);
     }
 

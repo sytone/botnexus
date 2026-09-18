@@ -49,7 +49,7 @@
                         <button class="guide-nav-item @(s.Id == _currentId ? "active" : "")"
                                 data-testid="guide-nav-@s.Id"
                                 title="@s.Blurb"
-                                @onclick="() => SelectAsync(s.Id)">
+                                @onclick="() => SelectFromContentsAsync(s.Id)">
                             <span class="guide-nav-title t-label">@s.Title</span>
                             @if (!string.IsNullOrWhiteSpace(s.Blurb))
                             {
@@ -62,7 +62,8 @@
                             @foreach (var c in s.Children)
                             {
                                 <button class="guide-nav-item is-child @(c.Id == _currentId ? "active" : "")"
-                                        @onclick="() => SelectAsync(c.Id)">
+                                        data-testid="guide-nav-@c.Id"
+                                        @onclick="() => SelectFromContentsAsync(c.Id)">
                                     <span class="guide-nav-title t-caption">@c.Title</span>
                                 </button>
                             }
@@ -124,14 +125,28 @@
             return;
         }
 
-        await SelectAsync(SectionId ?? _index?.Sections.FirstOrDefault()?.Id);
+        var initialId = ResolvePage(SectionId)?.Id ?? _index?.Sections.FirstOrDefault()?.Id;
+        if (initialId is not null && !string.Equals(SectionId, initialId, StringComparison.OrdinalIgnoreCase))
+            NavigateToSection(initialId, replaceHistoryEntry: true);
+
+        await SelectAsync(initialId);
     }
 
     // A deep link arriving while the page is already open changes the parameter, not the component.
     protected override async Task OnParametersSetAsync()
     {
-        if (_index is not null && SectionId is { Length: > 0 } && SectionId != _currentId)
-            await SelectAsync(SectionId);
+        if (_index is null)
+            return;
+
+        var requestedId = ResolvePage(SectionId)?.Id ?? _index.Sections.FirstOrDefault()?.Id;
+        if (requestedId is null)
+            return;
+
+        if (!string.Equals(SectionId, requestedId, StringComparison.OrdinalIgnoreCase))
+            NavigateToSection(requestedId, replaceHistoryEntry: true);
+
+        if (!string.Equals(requestedId, _currentId, StringComparison.OrdinalIgnoreCase))
+            await SelectAsync(requestedId);
     }
 
     private IReadOnlyList<GuideSection> Matches
@@ -217,19 +232,43 @@
         }
     }
 
-    private async Task SelectAsync(string? id)
+    private async Task SelectFromContentsAsync(string id)
+    {
+        var page = ResolvePage(id);
+        if (page is null)
+            return;
+
+        // Start selection first so a synchronous route callback observes the new current section and
+        // does not create a duplicate request. Explicit contents navigation remains a history entry.
+        var selection = SelectAsync(page.Value.Id);
+        NavigateToSection(page.Value.Id, replaceHistoryEntry: false);
+        await selection;
+    }
+
+    private void NavigateToSection(string id, bool replaceHistoryEntry) =>
+        Nav.NavigateTo($"guide/{Uri.EscapeDataString(id)}", replace: replaceHistoryEntry);
+
+    private (string Id, string File)? ResolvePage(string? id)
     {
         if (_index is null || string.IsNullOrWhiteSpace(id))
-            return;
+            return null;
 
         var page = AllPages().FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
-        if (page.File is null)
+        return page.File is null ? null : page;
+    }
+
+    private async Task SelectAsync(string? id)
+    {
+        var page = ResolvePage(id);
+        if (page is null)
             return;
 
+        var resolvedPage = page.Value;
+
         var selectionGeneration = ++_selectionGeneration;
-        _currentId = page.Id;
-        _currentTopId = _index.Sections
-            .FirstOrDefault(s => s.Id == page.Id || (s.Children?.Any(c => c.Id == page.Id) ?? false))?.Id;
+        _currentId = resolvedPage.Id;
+        _currentTopId = _index!.Sections
+            .FirstOrDefault(s => s.Id == resolvedPage.Id || (s.Children?.Any(c => c.Id == resolvedPage.Id) ?? false))?.Id;
 
         _isLoading = true;
         _error = null;
@@ -238,10 +277,10 @@
 
         try
         {
-            var markdown = _bodies.TryGetValue(page.Id, out var cached)
+            var markdown = _bodies.TryGetValue(resolvedPage.Id, out var cached)
                 ? cached
-                : await Http.GetStringAsync($"guide/{page.File}");
-            _bodies[page.Id] = markdown;
+                : await Http.GetStringAsync($"guide/{resolvedPage.File}");
+            _bodies[resolvedPage.Id] = markdown;
 
             if (selectionGeneration != _selectionGeneration)
                 return;

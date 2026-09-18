@@ -702,15 +702,16 @@ workspace directory under `~/.botnexus/agents/nexus-trailguide/`, its memory fil
 skills stored there — that content is left untouched on disk, and re-enabling the agent picks
 it back up unchanged.
 
-::: warning `doctor agents --cleanup-orphans` does not spare disabled agents
-`botnexus doctor agents` classifies a workspace as *orphaned* by comparing the directories
-under the agents root against the **enabled** agents in `config.json`. A disabled agent's
-workspace therefore shows up as orphaned, and running the command with `--cleanup-orphans`
-(or approving the interactive prompt) **will delete it**.
+::: warning Review orphan cleanup before approving it
+`botnexus doctor agents` compares workspace directories with every agent declaration in the
+effective configuration. This includes disabled agents. When `config.db` exists, its SQLite
+values are authoritative; otherwise BotNexus uses `config.json`.
 
-Without that flag the command only prints the plan and deletes nothing, so an ordinary
-`botnexus doctor` run is safe. If you keep an agent disabled but want its workspace, do not
-opt in to orphan cleanup.
+A disabled agent's workspace is reported as `declared` and is not deleted. A workspace is
+`orphaned` only when its agent id is absent from the effective configuration. Without
+`--cleanup-orphans`, the command prints the plan and deletes nothing. Before approving cleanup,
+check that each listed workspace belongs to an agent you intended to remove from the effective
+configuration.
 :::
 
 ---
@@ -741,15 +742,17 @@ Disabled agents:
 - Cannot receive messages
 - Retain their configuration for later re-enabling
 - **Keep their workspace directory.** `botnexus doctor agents --cleanup-orphans` deletes only
-  workspaces whose agent id is absent from `config.json` entirely; a disabled agent is still a
-  declared agent and is reported as `declared`, never `orphaned`.
+  workspaces whose agent id is absent from the effective configuration. This includes authoritative
+  SQLite declarations in `config.db`, not only entries in `config.json`. A disabled agent is still
+  declared and is reported as `declared`, never `orphaned`.
 
 ### Removal
 
-Remove an agent by:
-1. Deleting it from `config.json`
-2. Removing its JSON file from `~/.botnexus/agents/`
-3. Configuration reload applies changes
+Remove an agent from the effective configuration. If `config.db` exists, update the agent through
+a supported configuration command or disable the store before editing `config.json`; deleting only
+the JSON mirror does not remove an authoritative SQLite declaration. If you also created a separate
+agent JSON file under `~/.botnexus/agents/`, remove that declaration too. Configuration reload then
+applies the change.
 
 Session history is preserved in `~/.botnexus/sessions.sqlite` (session data only — agent memory is stored as workspace Markdown files).
 

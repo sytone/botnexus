@@ -212,6 +212,52 @@ public class AgentTests
     }
 
     [Fact]
+    public async Task PromptAsync_WhenProviderReturnsSensitive_CompletesNormallyWithoutToolDispatch()
+    {
+        var message = new BotNexus.Agent.Providers.Core.Models.AssistantMessage(
+            Content: [new BotNexus.Agent.Providers.Core.Models.TextContent("safe prefix")],
+            Api: "test-api",
+            Provider: "test-provider",
+            ModelId: "test-model",
+            Usage: BotNexus.Agent.Providers.Core.Models.Usage.Empty(),
+            StopReason: BotNexus.Agent.Providers.Core.Models.StopReason.Sensitive,
+            ErrorMessage: "Content filtered by provider",
+            ResponseId: "resp-sensitive",
+            Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        using var provider = TestHelpers.RegisterProvider(
+            new TestApiProvider(
+                "test-api",
+                simpleStreamFactory: (_, _, _) =>
+                {
+                    var stream = new LlmStream();
+                    stream.Push(new StartEvent(message));
+                    stream.Push(new DoneEvent(BotNexus.Agent.Providers.Core.Models.StopReason.Sensitive, message));
+                    stream.End(message);
+                    return stream;
+                }));
+        var agent = new BotNexus.Agent.Core.Agent(
+            TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api")));
+        var events = new List<AgentEvent>();
+        using var subscription = agent.Subscribe((@event, _) =>
+        {
+            events.Add(@event);
+            return Task.CompletedTask;
+        });
+
+        var runResult = await agent.PromptAsync("filter this");
+
+        runResult.OfType<UserMessage>().ShouldHaveSingleItem().Content.ShouldBe("filter this");
+        var completed = runResult.OfType<AssistantAgentMessage>().ShouldHaveSingleItem();
+        completed.FinishReason.ShouldBe(BotNexus.Agent.Providers.Core.Models.StopReason.Sensitive);
+        completed.ErrorMessage.ShouldBe("Content filtered by provider");
+        events.OfType<ToolExecutionStartEvent>().ShouldBeEmpty();
+        events.OfType<TurnEndEvent>().ShouldHaveSingleItem().Message.FinishReason
+            .ShouldBe(BotNexus.Agent.Providers.Core.Models.StopReason.Sensitive);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem();
+        agent.State.ErrorMessage.ShouldBe("Content filtered by provider");
+    }
+
+    [Fact]
     public async Task PromptAsync_WhenRunFails_AddsSyntheticErrorAssistantMessageAndEmitsAgentEnd()
     {
         using var provider = TestHelpers.RegisterProvider(

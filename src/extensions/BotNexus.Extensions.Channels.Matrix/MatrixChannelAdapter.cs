@@ -19,15 +19,15 @@ namespace BotNexus.Extensions.Channels.Matrix;
 /// <remarks>
 /// <para>
 /// First vertical slice of #1201. In scope: per-agent account configuration, <c>/sync</c> long
-/// polling with since-token continuity, <c>m.room.message</c> send and receive, Markdown to
-/// <c>org.matrix.custom.html</c> formatting, streaming via <c>m.replace</c> edits, typing
-/// indicators, and auto-join on invite.
+/// polling with since-token continuity, <c>m.room.message</c> send and receive, bounded
+/// unencrypted image/file downloads, Markdown to <c>org.matrix.custom.html</c> formatting,
+/// streaming via <c>m.replace</c> edits, typing indicators, and auto-join on invite.
 /// </para>
 /// <para>
-/// Explicitly deferred: end-to-end encryption (needs device-key management), federation-specific
-/// trust decisions, media upload via the content repository, read receipts, and Spaces mapping.
-/// The <see cref="IMatrixClient"/> seam carries only the endpoints this slice uses, so a deferred
-/// capability is a missing member rather than a silent no-op.
+/// Explicitly deferred: end-to-end encryption (including encrypted file descriptors),
+/// federation-specific trust decisions, read receipts, and Spaces mapping. The client seam also
+/// exposes authenticated media upload for callers even though the outbound message model does not
+/// yet carry content parts.
 /// </para>
 /// </remarks>
 public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter, IConversationEventSink
@@ -125,11 +125,8 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
     /// <inheritdoc />
     public override bool SupportsToolDisplay => false;
 
-    /// <summary>
-    /// Inbound image handling requires the Matrix content repository download path, deferred out of
-    /// this slice, so the adapter must not advertise a capability it cannot honour.
-    /// </summary>
-    public override bool SupportsInboundImages => false;
+    /// <summary>Inbound unencrypted Matrix images are downloaded into bounded binary parts.</summary>
+    public override bool SupportsInboundImages => true;
 
     /// <summary>
     /// Matrix rooms are a user-visible surface, so the delimited internal runtime-context envelope
@@ -655,18 +652,21 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
         if (string.Equals(content.RelatesTo?.RelType, "m.replace", StringComparison.Ordinal))
             return;
 
-        // This slice handles text-shaped messages only; media requires the content repository,
-        // which is deferred. Anything else is skipped rather than dispatched as an empty turn.
-        if (!string.Equals(content.MsgType, "m.text", StringComparison.Ordinal)
-            && !string.Equals(content.MsgType, "m.notice", StringComparison.Ordinal)
-            && !string.Equals(content.MsgType, "m.emote", StringComparison.Ordinal))
-        {
+        var isMedia = string.Equals(content.MsgType, "m.image", StringComparison.Ordinal)
+            || string.Equals(content.MsgType, "m.file", StringComparison.Ordinal);
+        var isText = string.Equals(content.MsgType, "m.text", StringComparison.Ordinal)
+            || string.Equals(content.MsgType, "m.notice", StringComparison.Ordinal)
+            || string.Equals(content.MsgType, "m.emote", StringComparison.Ordinal);
+        if (!isText && !isMedia)
             return;
-        }
 
         var body = content.Body;
-        if (string.IsNullOrWhiteSpace(body))
+        if (string.IsNullOrWhiteSpace(body) && !isMedia)
             return;
+
+        IReadOnlyList<MessageContentPart>? contentParts = isMedia
+            ? await TryDownloadMediaAsync(runtime, roomId, evt, content, cancellationToken)
+            : null;
 
         var threadRootEventId = string.Equals(content.RelatesTo?.RelType, "m.thread", StringComparison.Ordinal)
             ? content.RelatesTo!.EventId
@@ -683,7 +683,8 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
                 SenderId = sender,
                 Sender = CitizenId.Of(UserId.From(sender)),
                 ChannelAddress = MatrixChannelAddress.Encode(roomId, threadRootEventId),
-                Content = body,
+                Content = body ?? string.Empty,
+                ContentParts = contentParts,
                 Timestamp = evt.OriginServerTs is { } ts
                     ? DateTimeOffset.FromUnixTimeMilliseconds(ts)
                     : DateTimeOffset.UtcNow,
@@ -700,6 +701,88 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
                 },
             },
             cancellationToken);
+    }
+
+    /// <summary>
+    /// Downloads one unencrypted MXC attachment without allowing malformed/arbitrary URLs,
+    /// advertised oversize bodies, streaming oversize bodies, or slow responses to fail the text
+    /// turn that carries it.
+    /// </summary>
+    private async Task<IReadOnlyList<MessageContentPart>?> TryDownloadMediaAsync(
+        MatrixAccountRuntime runtime,
+        string roomId,
+        MatrixEvent evt,
+        MatrixMessageContent content,
+        CancellationToken cancellationToken)
+    {
+        if (!MatrixContentUri.TryParse(content.Url, out var mediaUri))
+        {
+            _logger.LogWarning(
+                "{DisplayName} account '{AccountName}' skipped attachment in room '{RoomId}' event '{EventId}': the URL is not a valid unencrypted mxc:// URI; proceeding with text only",
+                DisplayName,
+                runtime.AccountName,
+                roomId,
+                evt.EventId);
+            return null;
+        }
+
+        var maxBytes = Options.ResolveMaxMediaBytes();
+        if (content.Info?.Size is { } advertisedSize && advertisedSize > maxBytes)
+        {
+            _logger.LogWarning(
+                "{DisplayName} account '{AccountName}' skipped attachment in room '{RoomId}' event '{EventId}': advertised size {AdvertisedBytes} exceeds the {MaxMediaBytes}-byte cap; proceeding with text only",
+                DisplayName,
+                runtime.AccountName,
+                roomId,
+                evt.EventId,
+                advertisedSize,
+                maxBytes);
+            return null;
+        }
+
+        var timeoutSeconds = Options.ResolveMediaDownloadTimeoutSeconds();
+        using var mediaCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        mediaCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
+        try
+        {
+            var data = await runtime.Client.DownloadMediaAsync(
+                mediaUri.ServerName,
+                mediaUri.MediaId,
+                maxBytes,
+                mediaCts.Token);
+            return
+            [
+                new BinaryContentPart
+                {
+                    MimeType = MatrixMediaContentType.Resolve(content.Info?.MimeType),
+                    Data = data,
+                    FileName = string.IsNullOrWhiteSpace(content.FileName) ? null : content.FileName,
+                },
+            ];
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "{DisplayName} account '{AccountName}' attachment download in room '{RoomId}' event '{EventId}' exceeded the {TimeoutSeconds}s budget; proceeding with text only",
+                DisplayName,
+                runtime.AccountName,
+                roomId,
+                evt.EventId,
+                timeoutSeconds);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "{DisplayName} account '{AccountName}' failed to download attachment in room '{RoomId}' event '{EventId}'; proceeding with text only",
+                DisplayName,
+                runtime.AccountName,
+                roomId,
+                evt.EventId);
+            return null;
+        }
     }
 
     /// <summary>
