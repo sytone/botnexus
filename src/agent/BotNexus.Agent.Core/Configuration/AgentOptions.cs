@@ -58,6 +58,9 @@ namespace BotNexus.Agent.Core.Configuration;
 /// (#3162). Flows to the loop config. Null means the platform default; a non-positive value
 /// disables the backstop.
 /// </param>
+/// <param name="SanitizeToolResultText">
+/// Optional host-owned sanitizer for finalized generic tool text before budgeting and retention.
+/// </param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
 /// InitialState is used to seed AgentState - changes to InitialState after construction have no effect.
@@ -88,4 +91,5 @@ public record AgentOptions(
     string? AuthProfile = null,
     int? MaxToolOutputBytes = null,
     BeforeToolAuditDelegate? BeforeToolAudit = null,
-    ToolCallDispositionDelegate? OnToolCallDisposition = null);
+    ToolCallDispositionDelegate? OnToolCallDisposition = null,
+    Func<string, string>? SanitizeToolResultText = null);
