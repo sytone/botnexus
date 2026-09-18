@@ -5,6 +5,7 @@
 @inject HttpClient Http
 @inject IJSRuntime JS
 @inject NavigationManager Nav
+@implements IDisposable
 
 <PageTitle>BotNexus &mdash; Guide</PageTitle>
 
@@ -31,9 +32,13 @@
                 {
                     <div class="workspace-state t-caption">
                         Nothing matches “@_query”.
-                        @if (!_fullTextLoaded)
+                        @if (_indexingTask is { IsCompleted: false })
                         {
                             <span> Still indexing page contents…</span>
+                        }
+                        else if (!_fullTextLoaded)
+                        {
+                            <span> Search again to retry missing page contents.</span>
                         }
                     </div>
                 }
@@ -103,7 +108,10 @@
     // the answer to "why is my agent 404ing" is in a page called "Troubleshooting", which the
     // word "404" would never match.
     private readonly Dictionary<string, string> _bodies = new(StringComparer.OrdinalIgnoreCase);
+    private readonly CancellationTokenSource _disposeCancellation = new();
+    private Task? _indexingTask;
     private bool _fullTextLoaded;
+    private bool _disposed;
 
     protected override async Task OnInitializedAsync()
     {
@@ -174,21 +182,43 @@
 
     private async Task LoadAllBodiesAsync()
     {
-        _fullTextLoaded = true;
+        var indexingTask = _indexingTask ??= IndexMissingBodiesAsync(_disposeCancellation.Token);
+        StateHasChanged();
+
+        try
+        {
+            await indexingTask;
+        }
+        finally
+        {
+            if (ReferenceEquals(_indexingTask, indexingTask))
+                _indexingTask = null;
+        }
+    }
+
+    private async Task IndexMissingBodiesAsync(CancellationToken cancellationToken)
+    {
+        var failed = false;
         foreach (var (id, file) in AllPages())
         {
             if (_bodies.ContainsKey(id))
                 continue;
+
             try
             {
-                _bodies[id] = await Http.GetStringAsync($"guide/{file}");
+                _bodies[id] = await Http.GetStringAsync($"guide/{file}", cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch
             {
-                // A page that will not load is simply not searchable. The nav still lists it, and
-                // selecting it surfaces the real error.
+                failed = true;
             }
         }
+
+        _fullTextLoaded = !failed && AllPages().All(page => _bodies.ContainsKey(page.Id));
         StateHasChanged();
     }
 
@@ -276,6 +306,16 @@
 
         if (selectionGeneration == _selectionGeneration)
             StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        _disposeCancellation.Cancel();
+        _disposeCancellation.Dispose();
     }
 
     private sealed class GuideIndex
