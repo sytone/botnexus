@@ -108,6 +108,11 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "prev_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve immutable release source
+        id: release_source
+        shell: bash
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Write version to summary
         run: |
           echo "## Release" >> "$GITHUB_STEP_SUMMARY"
@@ -231,11 +236,27 @@ jobs:
 
           echo "Updated docs/releases/index.md"
 
+      - name: Generate release history manifest
+        shell: pwsh
+        run: |
+          $arguments = @{
+            Version = '${{ steps.version.outputs.version }}'
+            Tag = '${{ steps.version.outputs.tag }}'
+            Commit = '${{ steps.release_source.outputs.commit }}'
+            ReleasedAt = Get-Date -AsUTC -Format 'yyyy-MM-dd'
+            NotesPath = '/tmp/release-body.md'
+            ExistingManifestPath = 'docs/public/releases/release-history.json'
+            OutputPath = 'docs/public/releases/release-history.json'
+            ReleaseUrl = 'https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}'
+            DocumentationUrl = 'https://sytone.github.io/botnexus/releases/${{ steps.version.outputs.tag }}/'
+          }
+          ./scripts/repo/New-ReleaseHistoryManifest.ps1 @arguments
+
       - name: Commit release artifacts
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           TAG="${{ steps.version.outputs.tag }}"
-          git add Directory.Build.props CHANGELOG.md docs/releases/
+          git add Directory.Build.props CHANGELOG.md docs/releases/ docs/public/releases/release-history.json
           git diff --staged --quiet || git commit -m "chore(release): bump version to ${VERSION} [skip ci]"
 
       - name: Tag release
