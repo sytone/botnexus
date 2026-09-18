@@ -183,7 +183,24 @@ public static class SkillScriptPreflight
             return false;
         }
 
-        foreach (var node in ast.FindAll(n => n is CommandAst, searchNestedScriptBlocks: true))
+        // Issue #4081: only the first top-level statement can have a target whose availability is
+        // decidable before execution. Earlier statements may create a later target, while commands
+        // nested in control flow may never run. Preserve the existing assignment/call-operator
+        // shape, but do not inspect control-flow statements or anything after statement one.
+        if (ast.EndBlock.Statements.Count == 0)
+        {
+            return false;
+        }
+
+        var firstStatement = ast.EndBlock.Statements[0];
+        if (firstStatement is not PipelineAst
+            && firstStatement is not PipelineChainAst
+            && firstStatement is not AssignmentStatementAst)
+        {
+            return false;
+        }
+
+        foreach (var node in firstStatement.FindAll(n => n is CommandAst, searchNestedScriptBlocks: false))
         {
             if (node is CommandAst commandAst && TryBindFileArgument(commandAst, out path))
             {

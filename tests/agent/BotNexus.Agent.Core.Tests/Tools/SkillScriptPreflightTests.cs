@@ -329,6 +329,16 @@ public class SkillScriptPreflightTests
         path.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData("Set-Content -LiteralPath 'tmp/probe.ps1' -Value 'Write-Output 4081'; pwsh -NoProfile -File 'tmp/probe.ps1'")]
+    [InlineData("if ($false) { pwsh -NoProfile -File 'tmp/missing.ps1' }; Write-Output 'ok'")]
+    public void TryGetFileTargetFromCommandLine_CompoundOrNestedInvocation_FailsOpen(string command)
+    {
+        SkillScriptPreflight.TryGetFileTargetFromCommandLine(command, out var path).ShouldBeFalse();
+
+        path.ShouldBeEmpty();
+    }
+
     [Fact]
     public void TryGetFileTargetFromCommandLine_MissingScriptAfterSeparator_StillRefusesWithACleanPath()
     {

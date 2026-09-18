@@ -169,6 +169,23 @@ public sealed class ShellToolSkillScriptPreflightTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_CreatesScriptBeforeInvokingIt_Executes()
+    {
+        Directory.CreateDirectory(_root);
+        var tool = new ShellTool(shellPreference: ShellPreference.Pwsh, workingDirectory: _root);
+        const string scriptName = "created-probe.ps1";
+
+        var result = await tool.ExecuteAsync(
+            "create-then-run",
+            new Dictionary<string, object?>
+            {
+                ["command"] = $"Set-Content -LiteralPath '{scriptName}' -Value \"Write-Output 'created-ok'\"; pwsh -NoProfile -File '{scriptName}'"
+            });
+
+        result.Content[0].Value.ShouldContain("created-ok");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_MissingScriptFollowedByASeparator_StillRefusesWithACleanPath()
     {
         // Clause 6. The fix must not weaken the guard: a genuinely absent script is still refused.
