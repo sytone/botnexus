@@ -129,11 +129,13 @@ exit 0
             [int]$PR = 9001,
             [string]$ScriptPath = $script:ScriptPath,
             [string[]]$Actions = @('none'),
+            [int]$ChildTimeoutMilliseconds = 15000,
+            [int]$TerminationTimeoutMilliseconds = 5000,
             [switch]$KeepStubDir
         )
-        $stub    = New-GhStubDir -Mode $Mode
-        $outPath = [IO.Path]::GetTempFileName()
-        $errPath = [IO.Path]::GetTempFileName()
+        $stub = New-GhStubDir -Mode $Mode
+        $p = $null
+        $resourcesSafeToDelete = $true
         try {
             $psi = [Diagnostics.ProcessStartInfo]::new()
             $psi.FileName  = (Get-Process -Id $PID).Path
@@ -152,16 +154,97 @@ exit 0
             $psi.Environment['CI_PR_COMMENT_STUB_ACTIONS'] = ConvertTo-Json -Compress -InputObject @($Actions)
 
             $p = [Diagnostics.Process]::Start($psi)
-            $stdout = $p.StandardOutput.ReadToEnd()
-            $stderr = $p.StandardError.ReadToEnd()
-            $p.WaitForExit()
+            $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+            $stderrTask = $p.StandardError.ReadToEndAsync()
+            $timedOut = -not $p.WaitForExit($ChildTimeoutMilliseconds)
+            $terminated = $true
+
+            if ($timedOut) {
+                try { $p.Kill($true) } catch { $terminated = $false }
+                if ($terminated) { $terminated = $p.WaitForExit($TerminationTimeoutMilliseconds) }
+            }
+
+            $streamsDrained = $terminated -and [Threading.Tasks.Task]::WaitAll(
+                [Threading.Tasks.Task[]]@($stdoutTask, $stderrTask),
+                $TerminationTimeoutMilliseconds)
+            $resourcesSafeToDelete = $terminated -and $streamsDrained
+
+            if ($timedOut -or -not $resourcesSafeToDelete) {
+                $detail = if ($timedOut) {
+                    "CI comment child timed out after ${ChildTimeoutMilliseconds}ms; terminated=$terminated; streamsDrained=$streamsDrained."
+                } else {
+                    "CI comment child exited but redirected stream cleanup did not complete within ${TerminationTimeoutMilliseconds}ms; terminated=$terminated; streamsDrained=$streamsDrained."
+                }
+                $exception = if ($timedOut) { [TimeoutException]::new($detail) } else { [InvalidOperationException]::new($detail) }
+                $exception.Data['ChildId'] = $p.Id
+                $exception.Data['StubDir'] = $stub.Dir
+                $exception.Data['Terminated'] = $terminated
+                $exception.Data['StreamsDrained'] = $streamsDrained
+                throw $exception
+            }
+
+            $stdout = $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
             [pscustomobject]@{ ExitCode = $p.ExitCode; StdOut = $stdout; StdErr = $stderr; StubDir = $stub.Dir }
         } finally {
-            Remove-Item -LiteralPath $outPath, $errPath -Force -ErrorAction SilentlyContinue
-            if (-not $KeepStubDir) {
+            if ($p) { $p.Dispose() }
+            if (-not $KeepStubDir -and $resourcesSafeToDelete) {
                 Remove-Item -LiteralPath $stub.Dir -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+}
+
+Describe 'Invoke-CiPrComment owns redirected child lifetime (#4053)' {
+    BeforeAll {
+        $script:FloodScript = Join-Path ([IO.Path]::GetTempPath()) ("ci-comment-flood-" + [Guid]::NewGuid().ToString('N') + '.ps1')
+        $script:HangScript = Join-Path ([IO.Path]::GetTempPath()) ("ci-comment-hang-" + [Guid]::NewGuid().ToString('N') + '.ps1')
+        Set-Content -LiteralPath $script:FloodScript -Encoding UTF8 -Value @'
+[Console]::Error.Write('e' * 262144)
+[Console]::Out.Write('stdout-retained')
+exit 23
+'@
+        Set-Content -LiteralPath $script:HangScript -Encoding UTF8 -Value @'
+while ($true) { Start-Sleep -Milliseconds 100 }
+'@
+    }
+    AfterAll {
+        Remove-Item -LiteralPath $script:FloodScript, $script:HangScript -Force -ErrorAction SilentlyContinue
+        if ($script:TimeoutStubDir) {
+            Remove-Item -LiteralPath $script:TimeoutStubDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'concurrently retains both streams when stderr exceeds a pipe buffer' {
+        $result = Invoke-CiPrComment -Mode 'fixture' -ScriptPath $script:FloodScript -ChildTimeoutMilliseconds 5000
+        $result.ExitCode | Should -Be 23
+        $result.StdOut | Should -BeExactly 'stdout-retained'
+        $result.StdErr.Length | Should -Be 262144
+    }
+
+    It 'bounds a nonterminating child and reports completed termination and drain cleanup' {
+        $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            Invoke-CiPrComment -Mode 'fixture' -ScriptPath $script:HangScript -ChildTimeoutMilliseconds 250 -KeepStubDir
+            throw 'Expected the nonterminating fixture to time out.'
+        } catch [TimeoutException] {
+            $stopwatch.Stop()
+            $script:TimeoutStubDir = $_.Exception.Data['StubDir']
+            $_.Exception.Message | Should -Match 'timed out after 250ms'
+            $_.Exception.Data['Terminated'] | Should -BeTrue
+            $_.Exception.Data['StreamsDrained'] | Should -BeTrue
+            Get-Process -Id $_.Exception.Data['ChildId'] -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+            $stopwatch.Elapsed.TotalSeconds | Should -BeLessThan 5
+        }
+    }
+
+    It 'pins concurrent drains, a bounded wait, process-tree termination, and disposal' {
+        $definition = (Get-Command Invoke-CiPrComment).Definition
+        $definition | Should -Match 'StandardOutput\.ReadToEndAsync\(\)'
+        $definition | Should -Match 'StandardError\.ReadToEndAsync\(\)'
+        $definition | Should -Match 'WaitForExit\(\$ChildTimeoutMilliseconds\)'
+        $definition | Should -Match 'Kill\(\$true\)'
+        $definition | Should -Match '\.Dispose\(\)'
     }
 }
 

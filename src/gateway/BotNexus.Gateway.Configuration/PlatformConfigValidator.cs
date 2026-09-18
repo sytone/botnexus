@@ -337,7 +337,7 @@ public static class PlatformConfigValidator
         ValidateChannels(config.Channels, errors);
         ValidateAgents(config.Agents, errors);
         ValidateAgentDefaults(config.AgentDefaults, errors);
-        ValidateApiKeys(config.Gateway?.ApiKeys, errors);
+        ValidateGatewayCredentials(config, errors);
         ValidatePromptTemplates(config.PromptTemplates, errors);
         ValidateCron(config.Cron, errors);
         ValidateSecretRedaction(config.Gateway?.SecretRedaction, errors);
@@ -730,6 +730,31 @@ public static class PlatformConfigValidator
         value.Equals("summary", StringComparison.OrdinalIgnoreCase) ||
         value.Equals("none", StringComparison.OrdinalIgnoreCase);
 
+    private static void ValidateGatewayCredentials(PlatformConfig config, List<string> errors)
+    {
+        if (GatewayApiKeyRules.IsExplicitPlaceholder(config.ApiKey))
+        {
+            errors.Add(
+                $"apiKey {GatewayApiKeyRules.PlaceholderValidationMarker} "
+                + "Supply a valid gateway API key or remove the setting for intentional development mode.");
+        }
+
+        ValidateApiKeys(config.Gateway?.ApiKeys, errors);
+
+        if (config.Gateway?.Satellites is null)
+            return;
+
+        foreach (var (satelliteId, satellite) in config.Gateway.Satellites)
+        {
+            if (satellite.Enabled && GatewayApiKeyRules.IsExplicitPlaceholder(satellite.ApiKey))
+            {
+                errors.Add(
+                    $"gateway.satellites.{satelliteId}.apiKey {GatewayApiKeyRules.PlaceholderValidationMarker} "
+                    + "Supply a valid satellite API key.");
+            }
+        }
+    }
+
     private static void ValidateApiKeys(Dictionary<string, ApiKeyConfig>? apiKeys, List<string> errors)
     {
         if (apiKeys is null)
@@ -747,6 +772,12 @@ public static class PlatformConfigValidator
 
             if (string.IsNullOrWhiteSpace(keyConfig.ApiKey))
                 errors.Add($"{keyPath}.apiKey is required.");
+            else if (GatewayApiKeyRules.IsExplicitPlaceholder(keyConfig.ApiKey))
+            {
+                errors.Add(
+                    $"{keyPath}.apiKey {GatewayApiKeyRules.PlaceholderValidationMarker} "
+                    + "Supply a valid API key.");
+            }
 
             if (string.IsNullOrWhiteSpace(keyConfig.TenantId))
                 errors.Add($"{keyPath}.tenantId is required.");

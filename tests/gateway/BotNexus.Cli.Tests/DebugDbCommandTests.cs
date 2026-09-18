@@ -1,5 +1,7 @@
+using System.Text.Json;
 using BotNexus.Cli.Commands;
 using Microsoft.Data.Sqlite;
+using Spectre.Console;
 
 namespace BotNexus.Cli.Tests;
 
@@ -149,8 +151,12 @@ public sealed class DebugDbCommandTests : IDisposable
     [Fact]
     public void ExecuteTables_filters_by_db_name()
     {
-        var result = DebugDbCommand.ExecuteTables(_tempDir, "sessions", "json");
-        Assert.Equal(0, result);
+        using var output = new StringWriter();
+
+        var result = DebugDbCommand.ExecuteTables(_tempDir, "sessions", "json", output: output);
+
+        result.ShouldBe(0);
+        JsonDocument.Parse(output.ToString()).RootElement.GetArrayLength().ShouldBe(2);
     }
 
     [Fact]
@@ -198,6 +204,52 @@ public sealed class DebugDbCommandTests : IDisposable
         Assert.Equal(0, result);
     }
 
+    [Theory]
+    [InlineData(40)]
+    [InlineData(240)]
+    public void ExecuteSchema_json_round_trips_long_unicode_ddl_at_any_console_width(int width)
+    {
+        const string ddl = "CREATE TABLE long_schema (id TEXT PRIMARY KEY,\nlabel TEXT NOT NULL DEFAULT 'café 東京', description TEXT NOT NULL DEFAULT 'a deliberately long value that exceeds a narrow terminal width')";
+        var databasePath = Path.Combine(_tempDir, "long-schema.db");
+        CreateDb(databasePath, ddl + ";");
+
+        using var output = new StringWriter();
+        var originalConsole = AnsiConsole.Console;
+        try
+        {
+            AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
+            {
+                Out = new AnsiConsoleOutput(output),
+                Ansi = AnsiSupport.No,
+                Interactive = InteractionSupport.No
+            });
+            AnsiConsole.Console.Profile.Width = width;
+
+            var result = DebugDbCommand.ExecuteSchema(_tempDir, "long-schema", "json", output: output);
+
+            result.ShouldBe(0);
+            using var document = JsonDocument.Parse(output.ToString());
+            document.RootElement[0].GetProperty("ddl").GetString().ShouldBe(ddl);
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+        }
+    }
+
+    [Fact]
+    public void ExecuteSchema_json_keeps_missing_database_diagnostic_out_of_stdout()
+    {
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        var result = DebugDbCommand.ExecuteSchema(_tempDir, "missing-store", "json", output: output, error: error);
+
+        result.ShouldBe(0);
+        JsonDocument.Parse(output.ToString()).RootElement.GetArrayLength().ShouldBe(0);
+        error.ToString().ShouldContain("Skipping missing-store: file not found.");
+    }
+
     [Fact]
     public void ExecuteSchema_returns_error_for_missing_directory()
     {
@@ -217,8 +269,12 @@ public sealed class DebugDbCommandTests : IDisposable
     [Fact]
     public void ExecuteSize_returns_sizes_for_all_db_files()
     {
-        var result = DebugDbCommand.ExecuteSize(_tempDir, "json");
-        Assert.Equal(0, result);
+        using var output = new StringWriter();
+
+        var result = DebugDbCommand.ExecuteSize(_tempDir, "json", output: output);
+
+        result.ShouldBe(0);
+        JsonDocument.Parse(output.ToString()).RootElement.GetArrayLength().ShouldBeGreaterThan(0);
     }
 
     [Fact]
@@ -229,10 +285,16 @@ public sealed class DebugDbCommandTests : IDisposable
     }
 
     [Fact]
-    public void ExecuteSize_returns_error_for_missing_directory()
+    public void ExecuteSize_json_keeps_missing_directory_diagnostic_out_of_stdout()
     {
-        var result = DebugDbCommand.ExecuteSize(Path.Combine(_tempDir, "nonexistent"), "table");
-        Assert.Equal(1, result);
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        var result = DebugDbCommand.ExecuteSize(Path.Combine(_tempDir, "nonexistent"), "json", output: output, error: error);
+
+        result.ShouldBe(1);
+        output.ToString().ShouldBeEmpty();
+        error.ToString().ShouldContain("BotNexus home directory not found:");
     }
 
     // ─── utility methods ───────────────────────────────────────────────────

@@ -49,6 +49,7 @@ public static class TranscriptReconciler
             aligned[serverIndex] = row with { LocalRow = row.ServerRow };
         }
 
+        ApplyAuthoritativeToolCompletions(merged, server);
         return merged;
     }
 
@@ -93,6 +94,31 @@ public static class TranscriptReconciler
             return string.Equals(localStableKey, serverStableKey, StringComparison.Ordinal);
 
         return CompatibleKeyOf(local) == CompatibleKeyOf(server);
+    }
+
+    private static void ApplyAuthoritativeToolCompletions(
+        List<ChatMessage> merged,
+        IReadOnlyList<ChatMessage> server)
+    {
+        var seenToolCalls = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var candidate in server)
+        {
+            if (string.IsNullOrEmpty(candidate.ToolCallId)
+                || candidate.ToolResult is null
+                || !seenToolCalls.Add(candidate.ToolCallId))
+            {
+                continue;
+            }
+
+            var index = merged.FindIndex(message =>
+                string.Equals(message.ToolCallId, candidate.ToolCallId, StringComparison.Ordinal));
+            if (index < 0 || merged[index].ToolResult is not null)
+                continue;
+
+            // Keep the client row identity so render caches and ToolStart bookkeeping remain stable,
+            // while the persisted row supplies the authoritative terminal payload and server identity.
+            merged[index] = candidate with { Id = merged[index].Id };
+        }
     }
 
     private static int InsertionIndexFor(

@@ -28,16 +28,24 @@ This is the **first vertical slice** of the Matrix adapter. The following are im
 - Typing indicators while a turn is running
 - Auto-join on room invite (configurable)
 - Room and user allow-lists
+- Bounded inbound unencrypted `m.image` and `m.file` attachments
+- Authenticated Matrix media upload and download client operations
 
 The following are **deliberately deferred** and are not implemented here:
 
-- **End-to-end encryption** — requires device-key management (libolm/vodozemac)
-- **Federation-specific trust decisions** — remote-homeserver verification policy
-- **Media** — image/file upload and download via the Matrix content repository
+- **End-to-end encryption**, including encrypted media descriptors - requires device-key management
+  (libolm/vodozemac)
+- **Federation-specific trust decisions** - remote-homeserver verification policy
 - **Read receipts** and Matrix **Spaces** mapping
 
-The `IMatrixClient` seam carries only the endpoints this slice uses, so a deferred capability is a
-missing interface member rather than a silent runtime no-op.
+Media support is deliberately bounded. The adapter downloads only validated `mxc://` references
+from unencrypted `m.image` and `m.file` events; it never follows arbitrary HTTP(S) URLs. The client
+uses the current authenticated download endpoint
+`GET /_matrix/client/v1/media/download/{serverName}/{mediaId}` and streams the body through the
+configured byte ceiling. Upload uses an authenticated raw-body
+`POST /_matrix/media/v3/upload?filename=...` and returns the homeserver's `content_uri`. The upload
+API is available at the client seam, while outbound attachment dispatch remains deferred because the
+outbound message model has no content-parts contract.
 
 ## Configuration
 
@@ -50,6 +58,8 @@ Bind under `channels:matrix`. Each entry under `agents` is one Matrix account ow
       "homeserver": "https://matrix.example.com",
       "syncTimeoutMs": 30000,
       "streamingBufferMs": 750,
+      "maxMediaBytes": 20971520,
+      "mediaDownloadTimeoutSeconds": 30,
       "agents": {
         "farnsworth": {
           "userId": "@farnsworth:example.com",
@@ -75,6 +85,8 @@ Bind under `channels:matrix`. Each entry under `agents` is one Matrix account ow
 | `homeserver` | string | — | Base URL of the homeserver shared by every account. |
 | `syncTimeoutMs` | integer | `30000` | `/sync` long-poll timeout. A non-positive value falls back to the default rather than busy-spinning. |
 | `streamingBufferMs` | integer | `750` | Minimum interval between streaming edits. `0` means edit on every delta. |
+| `maxMediaBytes` | integer | `20971520` (20 MiB) | Maximum inbound attachment size. Non-positive values fail safe to the default. |
+| `mediaDownloadTimeoutSeconds` | integer | `30` | Wall-clock budget per media download. Non-positive values fail safe to the default. |
 | `agents` | map | — | Per-agent accounts, keyed by agent name. |
 
 ### Per-account keys
@@ -109,8 +121,11 @@ logs.
 
 - **Inbound.** Each account runs its own `/sync` long poll. `m.room.message` events in joined rooms
   are translated into an `InboundMessage` and dispatched through `IChannelDispatcher`. The account's
-  own messages are suppressed (they echo back on the next sync), as are `m.replace` edits — an edit
-  is not a new user turn.
+  own messages are suppressed (they echo back on the next sync), as are `m.replace` edits - an edit
+  is not a new user turn. Unencrypted image/file events preserve their caption/body and add a
+  `BinaryContentPart`; a missing or invalid MIME type becomes `application/octet-stream`. An
+  advertised oversize attachment is rejected before any download, and timeout/download failures
+  drop only the attachment so the text still reaches the agent.
 - **Outbound.** `SendAsync` decodes the room from the channel address and sends an `m.room.message`
   with a plain `body` plus an HTML `formatted_body` when the Markdown actually produced markup.
 - **Streaming.** The first delta sends a message; subsequent deltas edit that event in place via an
@@ -127,7 +142,7 @@ logs.
 | `SupportsStreaming` | `true` | Send-then-edit via `m.replace`. |
 | `SupportsThinkingDisplay` | `false` | Thinking deltas are not rendered into rooms. |
 | `SupportsToolDisplay` | `false` | Tool activity is not rendered into rooms. |
-| `SupportsInboundImages` | `false` | Media needs the content repository — deferred. |
+| `SupportsInboundImages` | `true` | Bounded unencrypted media from validated `mxc://` URIs. |
 | `StripsRuntimeContext` | `true` | Matrix rooms are a user-visible surface. |
 
 ## Failure handling
@@ -139,6 +154,11 @@ exponential backoff.
 
 The `since` token is advanced **only after** a batch has been fully processed, so a crash mid-batch
 replays that batch rather than skipping the events it contained.
+
+Media has independent failure containment: the sender-advertised size is used only for early
+rejection, the HTTP stream enforces `maxMediaBytes` even when `Content-Length` is absent or false,
+and a linked `mediaDownloadTimeoutSeconds` wall-clock budget prevents slow-drip responses. A media
+failure is logged and the caption/body is still dispatched.
 
 ## Sync continuity across restarts
 

@@ -453,12 +453,12 @@ public sealed class WebhookInboundController(
             }
             catch (WebhookNotDispatchedException ex)
             {
-                await MarkTimedOutAsync(run, agentId, ex.Message);
+                await MarkCallbackTimedOutAsync(run, agentId, callbackUrl, shutdown, ex.Message);
             }
             catch (OperationCanceledException)
             {
-                await MarkTimedOutAsync(
-                    run, agentId,
+                await MarkCallbackTimedOutAsync(
+                    run, agentId, callbackUrl, shutdown,
                     $"Callback webhook run exceeded its {runTimeout.TotalSeconds:0}s ceiling or the gateway is shutting down.");
             }
             catch (Exception ex)
@@ -527,6 +527,24 @@ public sealed class WebhookInboundController(
 
         logger.LogWarning(
             "Webhook run '{RunId}' for agent '{AgentId}' timed out: {Error}", run.Id, agentId.Value, error);
+    }
+
+    /// <summary>
+    /// Persists the callback run's terminal timeout before attempting delivery. A live-host deadline
+    /// still owes the accepted caller one terminal callback; host shutdown does not start new
+    /// outbound work and remains bounded by the existing shutdown token.
+    /// </summary>
+    private async Task MarkCallbackTimedOutAsync(
+        WebhookRun run,
+        AgentId agentId,
+        string? callbackUrl,
+        CancellationToken shutdown,
+        string error)
+    {
+        await MarkTimedOutAsync(run, agentId, error);
+
+        if (!shutdown.IsCancellationRequested && !string.IsNullOrWhiteSpace(callbackUrl))
+            await DeliverCallbackAsync(run.Id, callbackUrl, shutdown);
     }
 
     private async Task ExecuteAgentAsync(

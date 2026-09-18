@@ -34,6 +34,34 @@ public interface IMatrixClient
     Task<string> SendMessageAsync(string roomId, MatrixMessageContent content, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Uploads a raw media body to the authenticated Matrix content repository.
+    /// </summary>
+    /// <param name="data">Exact bytes to upload.</param>
+    /// <param name="contentType">MIME type to send, falling back safely when invalid.</param>
+    /// <param name="fileName">Client-supplied filename hint.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The homeserver-issued <c>mxc://</c> content URI.</returns>
+    Task<string> UploadMediaAsync(
+        byte[] data,
+        string contentType,
+        string fileName,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Downloads authenticated Matrix media while enforcing a streaming byte ceiling.
+    /// </summary>
+    /// <param name="serverName">Media origin from a validated MXC URI.</param>
+    /// <param name="mediaId">Opaque media identifier from a validated MXC URI.</param>
+    /// <param name="maxBytes">Maximum response body size.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The downloaded bytes.</returns>
+    Task<byte[]> DownloadMediaAsync(
+        string serverName,
+        string mediaId,
+        long maxBytes,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Joins a room via <c>POST /_matrix/client/v3/rooms/{roomId}/join</c>.
     /// </summary>
     /// <param name="roomId">Room ID to join.</param>

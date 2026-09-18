@@ -2,6 +2,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Data.Sqlite;
@@ -43,8 +44,8 @@ public sealed class SqliteSessionStoreAtomicMutationTests : IDisposable
         }.ToString();
     }
 
-    private SqliteSessionStore CreateStore()
-        => new(_connectionString, NullLogger<SqliteSessionStore>.Instance, _conversations);
+    private SqliteSessionStore CreateStore(ISecretRedactor? redactor = null)
+        => new(_connectionString, NullLogger<SqliteSessionStore>.Instance, _conversations, redactor);
 
     /// <summary>
     /// Seeds one persisted session with a single transcript entry and one metadata key so every
@@ -285,6 +286,41 @@ public sealed class SqliteSessionStoreAtomicMutationTests : IDisposable
     }
 
     [Fact]
+    public async Task AppendEntries_TransformingRedaction_PostCommitRetryKeepsOneStablePersistenceIdentity()
+    {
+        const string secret = "token=secret-bearing-value";
+        var sessionId = await ArrangeSessionAsync("s-redacted-retry", "agent-redacted-retry");
+        var store = CreateStore(new ReplacingRedactor(secret));
+        var attemptKeys = new List<string>();
+        var attempts = 0;
+        store.AfterAppendHistoryCommittedAsync = (entries, _) =>
+        {
+            attemptKeys.Add(entries.Single().PersistenceKey ?? throw new InvalidOperationException("Append entry was not keyed before commit."));
+            attempts++;
+            return attempts == 1
+                ? Task.FromException(new SqliteException("injected post-commit IOERR", 10))
+                : Task.CompletedTask;
+        };
+
+        var result = await store.AppendEntriesAsync(
+            sessionId,
+            [new SessionEntry { Role = MessageRole.User, Content = secret }]);
+
+        result.Outcome.ShouldBe(SessionMutationOutcome.Applied);
+        attempts.ShouldBe(2, "the injected post-commit IOERR must force exactly one retry");
+        attemptKeys.Count.ShouldBe(2);
+        attemptKeys.Distinct().Count().ShouldBe(1, "one logical append must keep one persistence identity across retries");
+
+        var cold = await CreateStore().GetAsync(sessionId);
+        cold.ShouldNotBeNull();
+        var appended = cold.GetHistorySnapshot().Where(entry => entry.Content != "seed").ToList();
+        appended.Count.ShouldBe(1, "the retry must not insert a second logical redacted row");
+        appended[0].Content.ShouldBe("[REDACTED]");
+        appended[0].Content.ShouldNotContain(secret);
+        appended[0].PersistenceKey.ShouldBe(attemptKeys[0]);
+    }
+
+    [Fact]
     public async Task SameInstance_SharedObjectRace_AppendAndMetadataBothSurvive()
     {
         // Same-instance case: BOTH actors are served the SAME cached GatewaySession object by one
@@ -342,6 +378,14 @@ public sealed class SqliteSessionStoreAtomicMutationTests : IDisposable
         cold.GetHistorySnapshot().Select(e => e.Content).ShouldBe(["seed", "warm-append"]);
         cold.Metadata["warmKey"]?.ToString().ShouldBe("warmValue");
         cold.Status.ShouldBe(SessionStatus.Suspended);
+    }
+
+    private sealed class ReplacingRedactor(string secret) : ISecretRedactor
+    {
+        public string Redact(string input)
+            => input.Contains(secret, StringComparison.Ordinal) ? "[REDACTED]" : input;
+
+        public string RedactForExternalDelivery(string input) => Redact(input);
     }
 
     public void Dispose()

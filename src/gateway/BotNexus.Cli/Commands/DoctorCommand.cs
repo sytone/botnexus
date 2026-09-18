@@ -96,7 +96,7 @@ internal sealed class DoctorCommand
 
     /// <summary>
     /// Reconciles the persistent agent workspaces under the resolved agents root against all agents
-    /// declared in <c>config.json</c>, prints the plan, and (only when approved) deletes
+    /// declared in effective configuration, prints the plan, and (only when approved) deletes
     /// orphaned directories. Approval comes either from <paramref name="cleanupOrphans"/> (the explicit
     /// opt-in flag) or, in an interactive terminal, from the <paramref name="confirm"/> prompt. In a
     /// non-interactive terminal without the flag the method is strictly non-destructive. Returns 0 when
@@ -104,7 +104,7 @@ internal sealed class DoctorCommand
     /// and 2 for an execution error (missing/unreadable config, unsafe symlink, or a failed deletion) -
     /// distinguishing findings from errors as the issue requires.
     /// </summary>
-    /// <param name="home">The resolved BotNexus home whose <c>config.json</c> and agents root are used.</param>
+    /// <param name="home">The resolved BotNexus home whose effective configuration and agents root are used.</param>
     /// <param name="cleanupOrphans">Explicit opt-in to delete orphaned directories without prompting.</param>
     /// <param name="interactive">Whether the current terminal can prompt the user.</param>
     /// <param name="cancellationToken">Cancellation for config loading.</param>
@@ -170,7 +170,7 @@ internal sealed class DoctorCommand
         if (!approved && interactive)
         {
             approved = (confirm ?? (message => AnsiConsole.Confirm(message, defaultValue: false)))(
-                $"Delete the {orphans.Length} enumerated orphaned workspace(s)? No config.json entry declares them.");
+                $"Delete the {orphans.Length} enumerated orphaned workspace(s)? Effective agent configuration does not declare them.");
         }
 
         if (!approved)

@@ -1,13 +1,15 @@
 @using System.Net.Http.Json
 @using System.Globalization
 @inject HttpClient Http
-@implements IDisposable
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 
 @if (_show)
 {
-    <div class="usage-overlay" @onclick="Close" @onkeydown="HandleKeyDown" tabindex="-1">
-        <div class="usage-panel material-overlay" role="dialog" aria-modal="true"
-             aria-labelledby="usage-title" data-testid="provider-usage-panel" @onclick:stopPropagation="true">
+    <div class="usage-overlay" @onclick="Close">
+        <div class="usage-panel material-overlay" role="dialog" aria-modal="true" tabindex="-1"
+             aria-labelledby="usage-title" data-testid="provider-usage-panel" @ref="_dialogRef"
+             @onkeydown="HandleKeyDown" @onclick:stopPropagation="true">
 
             <div class="usage-header">
                 <h3 id="usage-title" class="t-heading">Provider usage</h3>
@@ -136,17 +138,23 @@
     private List<ProviderUsage> _providers = [];
     private ProviderUsage? _current;
     private Timer? _poll;
+    private ElementReference _dialogRef;
+    private ElementReference? _returnFocusTo;
+    private bool _activateFocus;
+    private bool _focusActive;
     private CancellationTokenSource? _lifecycle;
     private long _generation;
     private bool _disposed;
 
     /// <summary>Opens the panel and starts polling.</summary>
-    public async Task OpenAsync()
+    public async Task OpenAsync(ElementReference? returnFocusTo = null)
     {
         if (_disposed) return;
 
+        _returnFocusTo = returnFocusTo;
         var request = BeginLifecycle();
         _show = true;
+        _activateFocus = true;
         StateHasChanged();
         await RefreshAsync(request.Generation, _windowMinutes, request.CancellationToken);
         if (!Owns(request.Generation, request.CancellationToken)) return;
@@ -154,16 +162,49 @@
         StartPolling(request.Generation, request.CancellationToken);
     }
 
-    private void Close()
+    private async Task Close()
     {
         _show = false;
         InvalidateLifecycle();
+        await DeactivateFocusAsync(restoreFocus: true);
         StateHasChanged();
     }
 
-    private void HandleKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (e.Key == "Escape") Close();
+        if (!_activateFocus || !_show) return;
+
+        _activateFocus = false;
+        try
+        {
+            await JS.InvokeVoidAsync("BotNexus.modalFocus.activate", _dialogRef, _returnFocusTo);
+            _focusActive = true;
+        }
+        catch (JSException)
+        {
+            // The modal remains usable by pointer if the browser tears down during navigation.
+        }
+    }
+
+    private async ValueTask DeactivateFocusAsync(bool restoreFocus)
+    {
+        if (!_focusActive && !_activateFocus) return;
+
+        _activateFocus = false;
+        _focusActive = false;
+        try
+        {
+            await JS.InvokeVoidAsync("BotNexus.modalFocus.deactivate", _dialogRef, restoreFocus);
+        }
+        catch (JSException)
+        {
+            // The element or JS runtime may already be unavailable during disposal/navigation.
+        }
+    }
+
+    private async Task HandleKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") await Close();
     }
 
     private async Task RefreshAsync(long generation, int windowMinutes, CancellationToken cancellationToken)
@@ -256,12 +297,13 @@
         _lifecycle = null;
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
         _show = false;
         InvalidateLifecycle();
         _disposed = true;
+        await DeactivateFocusAsync(restoreFocus: false);
     }
 
     /// <summary>Bar width, floored so a non-zero value is never invisible.</summary>

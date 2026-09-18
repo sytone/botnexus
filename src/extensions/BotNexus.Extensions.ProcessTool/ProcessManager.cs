@@ -34,7 +34,7 @@ public sealed class ProcessManager
     public BackgroundProcess? Get(int pid) => _registry.Get(_owner, pid);
     /// <summary>Lists this owner's retained processes after bounded completed-entry cleanup.</summary>
     public IReadOnlyList<ManagedProcessInfo> List() => _registry.List(_owner)
-        .Select(p => new ManagedProcessInfo(p.Pid, p.Command, p.IsRunning, p.StartedAt, p.ExitCode)).ToArray();
+        .Select(p => new ManagedProcessInfo(p.Pid, p.Command, p.IsRunning, p.StartedAt, p.ExitCode, p.OutputCaptureIncomplete)).ToArray();
     /// <summary>Requests termination without discarding an unconfirmed registration.</summary>
     public bool Kill(int pid)
     {
@@ -50,4 +50,10 @@ public sealed class ProcessManager
 }
 
 /// <summary>Immutable status projection without granting access to process handles.</summary>
-public sealed record ManagedProcessInfo(int Pid, string Command, bool IsRunning, DateTimeOffset StartedAt, int? ExitCode);
+public sealed record ManagedProcessInfo(
+    int Pid,
+    string Command,
+    bool IsRunning,
+    DateTimeOffset StartedAt,
+    int? ExitCode,
+    bool OutputCaptureIncomplete = false);

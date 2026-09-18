@@ -327,7 +327,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
             "length" => (StopReason.Length, null),
             "function_call" => (StopReason.ToolUse, null),
             "tool_calls" => (StopReason.ToolUse, null),
-            "content_filter" => (StopReason.Error, "Provider finish_reason: content_filter"),
+            "content_filter" => (StopReason.Sensitive, "Content filtered by provider"),
             null => hasToolCalls ? (StopReason.ToolUse, null) : (StopReason.Stop, null),
             _ => (StopReason.Error, $"Provider finish_reason: {reason}")
         };
