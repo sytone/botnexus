@@ -27,8 +27,8 @@ public sealed class GuideTests : IDisposable
     {
         _http.SetBody("/guide/guide-index.json", IndexJson, "application/json");
         _http.SetBody("/guide/alpha.md", "# Alpha");
-        _http.SetBody("/guide/beta.md", "beta body");
-        _http.SetBody("/guide/gamma.md", "gamma body");
+        _http.SetBody("/guide/beta.md", "# Beta");
+        _http.SetBody("/guide/gamma.md", "# Gamma");
         _js.SetRendered("# Alpha", "<h1>Alpha</h1>");
         _js.SetRendered("# Beta", "<h1>Beta</h1>");
         _js.SetRendered("# Gamma", "<h1>Gamma</h1>");
@@ -85,6 +85,7 @@ public sealed class GuideTests : IDisposable
     {
         var cut = RenderGuide();
         var betaResponse = _http.HoldNext("/guide/beta.md");
+        _http.SetBody("/guide/gamma.md", "gamma body");
 
         var first = cut.Find("[data-testid='guide-search']").InputAsync(new() { Value = "beta body" });
         await _http.WaitForRequestAsync("/guide/beta.md", 1);
