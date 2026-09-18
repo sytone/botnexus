@@ -1,3 +1,5 @@
+using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Security;
 
 namespace BotNexus.Gateway.Tests.Security;
@@ -34,6 +36,28 @@ public sealed class SecretRedactorTests
         var input = $"key={key}";
         _sut.Redact(input).ShouldNotContain(key);
         _sut.Redact(input).ShouldContain("[REDACTED]");
+    }
+
+    [Fact]
+    public void ToolResultSanitizer_UsesSharedVocabularyAcrossAdjacentTextBlocks()
+    {
+        const string token = "github_pat_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789_ABCDEF123456789012345678";
+        var splitAt = token.Length / 2;
+        var result = new AgentToolResult(
+        [
+            new AgentToolContent(AgentToolContentType.Text, $"prefix {token[..splitAt]}"),
+            new AgentToolContent(AgentToolContentType.Text, $"{token[splitAt..]} suffix"),
+            new AgentToolContent(AgentToolContentType.Image, "data:image/png;base64,AAAA")
+        ]);
+
+        var sanitized = ToolResultSanitizer.Apply(result, _sut.Redact);
+
+        var text = string.Concat(sanitized.Content
+            .Where(block => block.Type == AgentToolContentType.Text)
+            .Select(block => block.Value));
+        text.ShouldBe("prefix [REDACTED] suffix");
+        sanitized.Content.ShouldContain(block =>
+            block.Type == AgentToolContentType.Image && block.Value == "data:image/png;base64,AAAA");
     }
 
     [Theory]
