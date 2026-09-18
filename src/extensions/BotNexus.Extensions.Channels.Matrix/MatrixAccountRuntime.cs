@@ -27,11 +27,15 @@ namespace BotNexus.Extensions.Channels.Matrix;
 /// <param name="AutoJoin">Whether the account accepts room invites automatically.</param>
 /// <param name="AllowedRoomIds">Room allow-list. Empty permits all joined rooms.</param>
 /// <param name="AllowedUserIds">Sender allow-list. Empty permits all senders.</param>
+/// <param name="AllowedSenderDomains">Sender-domain allow-list. Empty permits every non-denied domain.</param>
+/// <param name="DeniedSenderDomains">Sender-domain deny-list. A match takes precedence.</param>
 internal sealed record MatrixAccountIdentity(
     string UserId,
     bool AutoJoin,
     IReadOnlyList<string> AllowedRoomIds,
-    IReadOnlyList<string> AllowedUserIds)
+    IReadOnlyList<string> AllowedUserIds,
+    IReadOnlySet<string> AllowedSenderDomains,
+    IReadOnlySet<string> DeniedSenderDomains)
 {
     /// <summary>
     /// Projects a configuration entry, copying the allow-lists so a later mutation of the bound
@@ -47,7 +51,9 @@ internal sealed record MatrixAccountIdentity(
             config.UserId ?? string.Empty,
             config.AutoJoin,
             [.. config.AllowedRoomIds],
-            [.. config.AllowedUserIds]);
+            [.. config.AllowedUserIds],
+            NormalizeDomains(config.AllowedSenderDomains),
+            NormalizeDomains(config.DeniedSenderDomains));
     }
 
     /// <summary>Whether this account may act in the supplied room. An empty allow-list permits all.</summary>
@@ -56,11 +62,52 @@ internal sealed record MatrixAccountIdentity(
         AllowedRoomIds.Count == 0
         || AllowedRoomIds.Contains(roomId, StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Whether this account may process a message from the supplied sender.</summary>
+    /// <summary>
+    /// Whether this account may process a message from the supplied sender. The existing user
+    /// allow-list and the domain policy are independent gates; both must admit the sender. Domain
+    /// matching is exact and case-insensitive, and a denial takes precedence over an allowance.
+    /// When no domain policy is configured, the historical user-only behavior is preserved.
+    /// </summary>
     /// <param name="userId">Fully-qualified Matrix user ID of the sender.</param>
-    public bool IsUserAllowed(string userId) =>
-        AllowedUserIds.Count == 0
-        || AllowedUserIds.Contains(userId, StringComparer.OrdinalIgnoreCase);
+    public bool IsUserAllowed(string userId)
+    {
+        if (AllowedUserIds.Count > 0
+            && !AllowedUserIds.Contains(userId, StringComparer.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (AllowedSenderDomains.Count == 0 && DeniedSenderDomains.Count == 0)
+            return true;
+
+        if (!TryGetSenderDomain(userId, out var domain))
+            return false;
+
+        if (DeniedSenderDomains.Contains(domain))
+            return false;
+
+        return AllowedSenderDomains.Count == 0 || AllowedSenderDomains.Contains(domain);
+    }
+
+    private static IReadOnlySet<string> NormalizeDomains(IEnumerable<string> domains) =>
+        domains
+            .Where(domain => !string.IsNullOrWhiteSpace(domain))
+            .Select(domain => domain.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static bool TryGetSenderDomain(string userId, out string domain)
+    {
+        domain = string.Empty;
+        if (string.IsNullOrWhiteSpace(userId) || userId[0] != '@')
+            return false;
+
+        var separator = userId.IndexOf(':', 1);
+        if (separator <= 1 || separator == userId.Length - 1)
+            return false;
+
+        domain = userId[(separator + 1)..];
+        return !string.IsNullOrWhiteSpace(domain);
+    }
 
     /// <summary>Whether the supplied room is explicitly named in this account's allow-list.</summary>
     /// <param name="roomId">Matrix room ID.</param>

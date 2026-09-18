@@ -27,7 +27,7 @@ This is the **first vertical slice** of the Matrix adapter. The following are im
 - Streaming responses via in-place `m.replace` edits
 - Typing indicators while a turn is running
 - Auto-join on room invite (configurable)
-- Room and user allow-lists
+- Room, user, and sender-domain federation policies
 - Bounded inbound unencrypted `m.image` and `m.file` attachments
 - Authenticated Matrix media upload and download client operations
 
@@ -35,7 +35,8 @@ The following are **deliberately deferred** and are not implemented here:
 
 - **End-to-end encryption**, including encrypted media descriptors - requires device-key management
   (libolm/vodozemac)
-- **Federation-specific trust decisions** - remote-homeserver verification policy
+- **Federation identity verification** - cryptographic or remote-homeserver verification beyond
+  the configured sender-domain admission policy
 - **Read receipts** and Matrix **Spaces** mapping
 
 Media support is deliberately bounded. The adapter downloads only validated `mxc://` references
@@ -65,7 +66,9 @@ Bind under `channels:matrix`. Each entry under `agents` is one Matrix account ow
           "userId": "@farnsworth:example.com",
           "accessToken": "syt_...",
           "agentId": "farnsworth",
-          "autoJoin": true
+          "autoJoin": true,
+          "allowedSenderDomains": ["example.com"],
+          "deniedSenderDomains": ["blocked.example"]
         },
         "nova": {
           "userId": "@nova:example.com",
@@ -99,7 +102,18 @@ Bind under `channels:matrix`. Each entry under `agents` is one Matrix account ow
 | `homeserver` | string | the shared value | Per-account homeserver override. |
 | `autoJoin` | boolean | `true` | Whether the account accepts room invites automatically. |
 | `allowedRoomIds` | string[] | empty | Room allow-list. Empty permits all joined rooms. |
-| `allowedUserIds` | string[] | empty | Sender allow-list. Empty permits all senders. |
+| `allowedUserIds` | string[] | empty | Exact sender-user allow-list. Empty permits all senders that pass the domain policy. |
+| `allowedSenderDomains` | string[] | empty | Exact sender-domain allow-list. Empty permits every domain not explicitly denied. |
+| `deniedSenderDomains` | string[] | empty | Exact sender-domain deny-list. A matching denial takes precedence over an allowance. |
+
+Sender-domain policy is evaluated at the same inbound admission seam as `allowedUserIds`; it does
+not replace or bypass the per-user gate. A sender must pass both configured policies. Domains are
+taken from a syntactically complete Matrix user ID (`@localpart:domain`), trimmed when configured,
+and compared case-insensitively as complete strings. They are not suffix patterns: `example.com`
+does not match `example.com.evil` or `notexample.com`. If either domain list is configured, a
+malformed sender ID is rejected. If both domain lists are absent or empty, the adapter preserves the
+previous user-only behavior, including leaving malformed-sender handling to the existing admission
+path. Blank configured domain entries are ignored.
 
 An account missing its homeserver, user ID or access token is **skipped with a warning** — one bad
 entry does not prevent the other accounts from starting.

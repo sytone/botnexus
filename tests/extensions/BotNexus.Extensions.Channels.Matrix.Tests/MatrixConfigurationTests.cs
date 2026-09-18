@@ -24,6 +24,8 @@ public sealed class MatrixConfigurationTests
                 ["channels:matrix:agents:farnsworth:userId"] = "@farnsworth:example.com",
                 ["channels:matrix:agents:farnsworth:accessToken"] = "syt_a",
                 ["channels:matrix:agents:farnsworth:autoJoin"] = "true",
+                ["channels:matrix:agents:farnsworth:allowedSenderDomains:0"] = "example.com",
+                ["channels:matrix:agents:farnsworth:deniedSenderDomains:0"] = "blocked.example",
                 ["channels:matrix:agents:nova:userId"] = "@nova:example.com",
                 ["channels:matrix:agents:nova:accessToken"] = "syt_b",
                 ["channels:matrix:agents:nova:autoJoin"] = "false",
@@ -38,6 +40,8 @@ public sealed class MatrixConfigurationTests
         options.Agents.Count.ShouldBe(2);
         options.Agents["farnsworth"].UserId.ShouldBe("@farnsworth:example.com");
         options.Agents["farnsworth"].AutoJoin.ShouldBeTrue();
+        options.Agents["farnsworth"].AllowedSenderDomains.ShouldBe(["example.com"]);
+        options.Agents["farnsworth"].DeniedSenderDomains.ShouldBe(["blocked.example"]);
         options.Agents["nova"].AccessToken.ShouldBe("syt_b");
         options.Agents["nova"].AutoJoin.ShouldBeFalse();
     }
