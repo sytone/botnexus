@@ -670,6 +670,11 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // ON (256 KiB) when the section is absent; disabled (0) only when Enabled=false or
             // MaxBytes<=0, matching the toolResultPersistence convention.
             MaxToolOutputBytes: ResolveMaxToolOutputBytes(platformConfig?.Value.Gateway?.ToolOutputBudget),
+            // #4096: the host owns the shared secret vocabulary. Agent.Core owns the finalized
+            // result seam but cannot depend upward on Gateway.Security, so thread the base redactor
+            // into that seam. Do not use RedactForExternalDelivery: model-visible tool results must
+            // retain actionable local login instructions.
+            SanitizeToolResultText: (_serviceProvider.GetService<ISecretRedactor>() ?? new SecretRedactor()).Redact,
             BeforeToolAudit: beforeToolAudit,
             OnToolCallDisposition: onToolCallDisposition);
 

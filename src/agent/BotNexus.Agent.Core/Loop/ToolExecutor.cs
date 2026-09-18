@@ -92,7 +92,7 @@ internal static class ToolExecutor
                     .ConfigureAwait(false);
             }
 
-            result = ApplyOutputBudget(result, config, preparation.Prepared?.Tool);
+            result = FinalizeToolResult(result, config, preparation.Prepared?.Tool);
 
             await emit(new ToolExecutionEndEvent(
                 toolCall.Id,
@@ -152,7 +152,7 @@ internal static class ToolExecutor
 
             if (preparation.Prepared is null)
             {
-                var immediateResult = ApplyOutputBudget(preparation.Result!, config, tool: null);
+                var immediateResult = FinalizeToolResult(preparation.Result!, config, tool: null);
                 await emit(new ToolExecutionEndEvent(
                     toolCall.Id,
                     toolCall.Name,
@@ -640,7 +640,7 @@ internal static class ToolExecutor
                 .ConfigureAwait(false);
         }
 
-        result = ApplyOutputBudget(result, config, outcome.Tool);
+        result = FinalizeToolResult(result, config, outcome.Tool);
 
         await emit(new ToolExecutionEndEvent(
             outcome.ToolCall.Id,
@@ -733,11 +733,14 @@ internal static class ToolExecutor
     /// already bounded its own output never reaches this budget.
     /// </para>
     /// </remarks>
-    private static AgentToolResult ApplyOutputBudget(
+    private static AgentToolResult FinalizeToolResult(
         AgentToolResult result,
         AgentLoopConfig config,
         IAgentTool? tool)
-        => ToolOutputBudget.Apply(result, config.EffectiveMaxToolOutputBytes, tool);
+    {
+        var sanitized = ToolResultSanitizer.Apply(result, config.SanitizeToolResultText);
+        return ToolOutputBudget.Apply(sanitized, config.EffectiveMaxToolOutputBytes, tool);
+    }
 
     /// <summary>
     /// Records the content-source classification of a resolved tool into the ambient turn taint
