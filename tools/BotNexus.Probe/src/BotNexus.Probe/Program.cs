@@ -22,10 +22,25 @@ static async Task<int> RunHostAsync(ProbeOptions options)
     var builder = WebApplication.CreateBuilder();
     builder.WebHost.ConfigureKestrel(kestrel =>
     {
-        kestrel.ListenAnyIP(options.Port);
+        if (options.ListenAny)
+        {
+            kestrel.ListenAnyIP(options.Port);
+        }
+        else
+        {
+            kestrel.ListenLocalhost(options.Port);
+        }
+
         if (options.OtlpPort is int otlpPort)
         {
-            kestrel.ListenAnyIP(otlpPort);
+            if (options.ListenAny)
+            {
+                kestrel.ListenAnyIP(otlpPort);
+            }
+            else
+            {
+                kestrel.ListenLocalhost(otlpPort);
+            }
         }
     });
 
@@ -80,6 +95,11 @@ static void PrintStartupBanner(ProbeOptions options)
 {
     Console.WriteLine("BotNexus Probe started");
     Console.WriteLine($"  UI: http://localhost:{options.Port}");
+    Console.WriteLine($"  Exposure: {(options.ListenAny ? "all network interfaces" : "loopback only")}");
+    if (options.ListenAny)
+    {
+        Console.WriteLine("⚠️  Probe has no authentication. --listen-any exposes diagnostics, logs, sessions, gateway data, static UI, and OTLP ingestion to the network.");
+    }
     Console.WriteLine($"  Logs: {options.LogsPath}");
     Console.WriteLine($"  Sessions: {options.SessionsPath}");
     Console.WriteLine($"  Session DB: {options.SessionDbPath}");
@@ -101,6 +121,7 @@ static ProbeOptions ParseArgs(string[] args)
     var sessions = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".botnexus", "sessions");
     var sessionDb = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".botnexus", "sessions.db");
     int? otlpPort = null;
+    var listenAny = false;
 
     for (var index = 0; index < args.Length; index++)
     {
@@ -137,10 +158,13 @@ static ProbeOptions ParseArgs(string[] args)
                 otlpPort = parsedOtlpPort;
                 index++;
                 break;
+            case "--listen-any":
+                listenAny = true;
+                break;
         }
     }
 
-    return new ProbeOptions(port, gateway, logs, sessions, sessionDb, otlpPort);
+    return new ProbeOptions(port, gateway, logs, sessions, sessionDb, otlpPort, listenAny);
 }
 
 static SessionDbReader? TryCreateSessionDbReader(string sessionDbPath)

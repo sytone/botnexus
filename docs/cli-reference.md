@@ -252,11 +252,12 @@ Start the BotNexus Gateway.
 
 ### serve probe
 
-Start the BotNexus Probe diagnostic tool.
+Start the BotNexus Probe diagnostic tool. Probe binds its UI, APIs, static files, gateway proxy, and optional OTLP receiver to loopback by default because these diagnostic surfaces are not authenticated.
 
 | Option | Default | Description |
 |---|---|---|
 | `--port <PORT>` | `5050` | Port for the Probe web UI. |
+| `--listen-any` | off | Bind every Probe surface to all network interfaces. This explicitly exposes unauthenticated diagnostic data and OTLP ingestion to the network. |
 | `--path <DIR>` | Install location | Path to the repository root. |
 | `--dev` | off | Use the current working directory as the repo root. |
 | `--gateway-url <URL>` | `http://localhost:5005` | URL of a running BotNexus Gateway. |

@@ -19,6 +19,7 @@ public sealed class ProbeOptionsTests
         parsed.SessionDbPath.ShouldContain(".botnexus");
         parsed.SessionDbPath.ShouldContain("sessions.db");
         parsed.OtlpPort.ShouldBeNull();
+        parsed.ListenAny.ShouldBeFalse();
     }
 
     [Fact]
@@ -30,7 +31,8 @@ public sealed class ProbeOptionsTests
             "--logs", "C:\\logs",
             "--sessions", "C:\\sessions",
             "--session-db", "C:\\sessions.db",
-            "--otlp-port", "4318"
+            "--otlp-port", "4318",
+            "--listen-any"
         ]);
 
         parsed.Port.ShouldBe(6060);
@@ -39,12 +41,13 @@ public sealed class ProbeOptionsTests
         parsed.SessionsPath.ShouldBe("C:\\sessions");
         parsed.SessionDbPath.ShouldBe("C:\\sessions.db");
         parsed.OtlpPort.ShouldBe(4318);
+        parsed.ListenAny.ShouldBeTrue();
     }
 
     [Fact]
     public void ProbeOptions_RecordStoresProvidedValues()
     {
-        var options = new ProbeOptions(5051, "http://gateway", "C:\\l", "C:\\s", "C:\\sessions.db", 4318);
+        var options = new ProbeOptions(5051, "http://gateway", "C:\\l", "C:\\s", "C:\\sessions.db", 4318, true);
 
         options.Port.ShouldBe(5051);
         options.GatewayUrl.ShouldBe("http://gateway");
@@ -52,6 +55,7 @@ public sealed class ProbeOptionsTests
         options.SessionsPath.ShouldBe("C:\\s");
         options.SessionDbPath.ShouldBe("C:\\sessions.db");
         options.OtlpPort.ShouldBe(4318);
+        options.ListenAny.ShouldBeTrue();
     }
 
     private static ProbeOptions InvokeParseArgs(string[] args)

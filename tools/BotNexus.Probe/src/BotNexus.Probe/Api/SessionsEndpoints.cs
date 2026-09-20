@@ -279,19 +279,47 @@ public static class SessionsEndpoints
 
     private static string? FindSessionFile(string sessionsPath, string sessionId)
     {
-        if (!Directory.Exists(sessionsPath))
+        if (!Directory.Exists(sessionsPath) || !IsValidSessionId(sessionId))
         {
             return null;
         }
 
-        var exact = Path.Combine(sessionsPath, $"{sessionId}.jsonl");
-        if (File.Exists(exact))
+        var root = Path.GetFullPath(sessionsPath);
+        var candidate = Path.GetFullPath(Path.Combine(root, $"{sessionId}.jsonl"));
+        if (!IsContainedPath(root, candidate))
         {
-            return exact;
+            return null;
         }
 
-        return Directory.EnumerateFiles(sessionsPath, "*.jsonl", SearchOption.TopDirectoryOnly)
+        if (File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        return Directory.EnumerateFiles(root, "*.jsonl", SearchOption.TopDirectoryOnly)
             .FirstOrDefault(path => Path.GetFileNameWithoutExtension(path).Contains(sessionId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsValidSessionId(string sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId) || sessionId is "." or ".." || Path.IsPathRooted(sessionId))
+        {
+            return false;
+        }
+
+        if (sessionId.Contains('/') || sessionId.Contains('\\') || sessionId.Contains(':'))
+        {
+            return false;
+        }
+
+        return sessionId.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
+    }
+
+    private static bool IsContainedPath(string root, string candidate)
+    {
+        var rootWithSeparator = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return candidate.StartsWith(rootWithSeparator, comparison);
     }
 
     private static bool Contains(string? value, string query)

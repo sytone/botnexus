@@ -26,26 +26,9 @@ public sealed class TestTempDirectory : IDisposable
 
     public void Dispose()
     {
-        if (!Directory.Exists(Path))
+        if (Directory.Exists(Path))
         {
-            return;
-        }
-
-        for (var attempt = 0; attempt < 5; attempt++)
-        {
-            try
-            {
-                Directory.Delete(Path, recursive: true);
-                return;
-            }
-            catch (IOException) when (attempt < 4)
-            {
-                Thread.Sleep(50 * (attempt + 1));
-            }
-            catch (UnauthorizedAccessException) when (attempt < 4)
-            {
-                Thread.Sleep(50 * (attempt + 1));
-            }
+            Directory.Delete(Path, recursive: true);
         }
     }
 }
