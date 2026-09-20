@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using BotNexus.Gateway.Webhooks;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BotNexus.Gateway.Tests.Controllers;
 
@@ -23,10 +24,20 @@ public sealed class WebhookCallbackTransportSecurityTests
     private const string PublicAddress = "203.0.113.7";
     private const string ResponseBody = "callback-policy-fixture";
 
-    [Fact]
-    public async Task SendAsync_PrivateDnsAnswer_IsRejectedBeforeNumericalConnect()
+    public static IEnumerable<object[]> ForbiddenResolvedAddresses()
     {
-        await using var harness = new Harness((_, _) => Answer("10.0.0.1"));
+        yield return ["10.0.0.1"];
+        yield return ["100.64.0.1"];
+        yield return ["fc00::1"];
+        yield return ["::ffff:169.254.169.254"];
+        yield return ["2002:a9fe:a9fe::1"];
+    }
+
+    [Theory]
+    [MemberData(nameof(ForbiddenResolvedAddresses))]
+    public async Task SendAsync_ForbiddenResolvedAddress_IsRejectedBeforeNumericalConnect(string address)
+    {
+        await using var harness = new Harness((_, _) => Answer(address));
 
         var exception = await Should.ThrowAsync<HttpRequestException>(() => harness.PostAsync());
 
@@ -34,6 +45,22 @@ public sealed class WebhookCallbackTransportSecurityTests
         harness.Resolutions.ShouldBe(["callback.policy.test"]);
         harness.Fixture.Endpoints.ShouldBeEmpty();
         harness.Fixture.Requests.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task NamedWebhookCallbackClient_UsesGuardedProductionTransport()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBotNexusWebhooks(Path.Combine(Path.GetTempPath(), $"webhook-callback-{Guid.NewGuid():N}.db"));
+        await using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+        using var client = factory.CreateClient("WebhookCallback");
+
+        var exception = await Should.ThrowAsync<HttpRequestException>(() =>
+            client.PostAsync("http://127.0.0.1/callback", new StringContent("{}")));
+
+        exception.Message.ShouldContain("SSRF", Case.Insensitive);
     }
 
     [Theory]
@@ -55,17 +82,21 @@ public sealed class WebhookCallbackTransportSecurityTests
         harness.Fixture.Requests.ShouldBeEmpty();
     }
 
-    [Fact]
-    public async Task SendAsync_PublicDnsAnswer_BindsSocketToValidatedNumericalEndpoint()
+    [Theory]
+    [InlineData(PublicAddress)]
+    [InlineData("2001:db8::7")]
+    [InlineData("::ffff:203.0.113.7")]
+    [InlineData("2002:cb00:7107::1")]
+    public async Task SendAsync_PublicDnsAnswer_BindsSocketToValidatedNumericalEndpoint(string address)
     {
-        await using var harness = new Harness((_, _) => Answer(PublicAddress));
+        await using var harness = new Harness((_, _) => Answer(address));
 
         using var response = await harness.PostAsync();
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         harness.Resolutions.ShouldBe(["callback.policy.test"]);
         var endpoint = harness.Fixture.Endpoints.ShouldHaveSingleItem();
-        endpoint.Address.ShouldBe(IPAddress.Parse(PublicAddress));
+        endpoint.Address.ShouldBe(IPAddress.Parse(address));
         endpoint.Port.ShouldBe(8087);
         var request = harness.Fixture.Requests.ShouldHaveSingleItem();
         request.ShouldStartWith("POST /result HTTP/1.1\r\n");
