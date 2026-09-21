@@ -114,7 +114,8 @@ public record AgentLoopConfig(
     BotNexus.Agent.Core.Loop.IHostSuspendDetector? SuspendDetector = null,
     BeforeToolAuditDelegate? BeforeToolAudit = null,
     ToolCallDispositionDelegate? OnToolCallDisposition = null,
-    Func<string, string>? SanitizeToolResultText = null)
+    Func<string, string>? SanitizeToolResultText = null,
+    BotNexus.Agent.Core.Tools.SatelliteToolExecutionOptions? SatelliteToolExecution = null)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).
