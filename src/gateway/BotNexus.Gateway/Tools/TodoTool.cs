@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
@@ -365,6 +366,39 @@ public sealed class TodoTool(
             // Tolerate a corrupt/legacy payload rather than throwing on a hot tool path.
             return [];
         }
+    }
+
+    /// <summary>
+    /// Evaluates persisted checklist state at the authoritative run-finalization boundary.
+    /// A pending ask-user record is the only stop disposition this storage model can prove today;
+    /// free-text assistant claims never park the run.
+    /// </summary>
+    internal static RunCompletionDecision EvaluateRunCompletion(Conversation? conversation)
+    {
+        if (conversation is null)
+            return RunCompletionDecision.Completed;
+
+        var openItemIds = Parse(conversation.TodoJson)
+            .Where(item => item.Status is "pending" or "in_progress")
+            .Select(item => item.Id)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToList();
+        if (openItemIds.Count == 0)
+            return RunCompletionDecision.Completed;
+
+        if (!string.IsNullOrWhiteSpace(conversation.PendingAskUserJson))
+        {
+            return RunCompletionDecision.Parked(
+                RunStopReason.UserInput,
+                openItemIds,
+                "A pending ask_user request is persisted on the conversation.",
+                "user",
+                "the pending ask_user request receives a response");
+        }
+
+        return RunCompletionDecision.Continue(
+            openItemIds,
+            "The current conversation has pending or in-progress execution-checklist items and no structured stop disposition.");
     }
 
     private static string NormalizeStatus(string? status)

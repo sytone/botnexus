@@ -500,6 +500,7 @@ public sealed class Agent
         lock (_stateLock)
         {
             _state.SetErrorMessage(null);
+            _state.SetLastCompletion(null);
         }
 
         try
@@ -530,7 +531,15 @@ public sealed class Agent
             try
             {
                 await HandleEventAsync(
-                        new AgentEndEvent([abortedMessage], null, DateTimeOffset.UtcNow),
+                        new AgentEndEvent(
+                            [abortedMessage],
+                            null,
+                            DateTimeOffset.UtcNow,
+                            new RunCompletionResult(
+                                RunCompletionStatus.Cancelled,
+                                [],
+                                RunStopReason.Cancellation,
+                                "The run was cancelled.")),
                         CancellationToken.None)
                     .ConfigureAwait(false);
             }
@@ -560,7 +569,14 @@ public sealed class Agent
             try
             {
                 await HandleEventAsync(
-                        new AgentEndEvent([failureMessage], null, DateTimeOffset.UtcNow),
+                        new AgentEndEvent(
+                            [failureMessage],
+                            null,
+                            DateTimeOffset.UtcNow,
+                            new RunCompletionResult(
+                                RunCompletionStatus.Failed,
+                                [],
+                                Detail: ex.Message)),
                         CancellationToken.None)
                     .ConfigureAwait(false);
             }
@@ -645,7 +661,9 @@ public sealed class Agent
             MaxToolOutputBytes: _options.MaxToolOutputBytes,
             BeforeToolAudit: _options.BeforeToolAudit,
             OnToolCallDisposition: _options.OnToolCallDisposition,
-            SanitizeToolResultText: _options.SanitizeToolResultText);
+            SanitizeToolResultText: _options.SanitizeToolResultText,
+            EvaluateRunCompletion: _options.EvaluateRunCompletion,
+            MaxCompletionContinuations: _options.MaxCompletionContinuations);
     }
 
     private Func<CancellationToken, Task<AgentContext?>>? BuildMaybeCompactDelegate()
@@ -797,9 +815,10 @@ public sealed class Agent
                 case TurnEndEvent turnEnd when !string.IsNullOrWhiteSpace(turnEnd.Message.ErrorMessage):
                     _state.SetErrorMessage(turnEnd.Message.ErrorMessage);
                     break;
-                case AgentEndEvent:
+                case AgentEndEvent agentEnd:
                     _state.SetStreamingMessage(null);
                     _state.SetIsRunning(false);
+                    _state.SetLastCompletion(agentEnd.Completion);
                     break;
                 case AgentStartEvent:
                     _state.SetIsRunning(true);

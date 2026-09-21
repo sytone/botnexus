@@ -61,6 +61,8 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="SanitizeToolResultText">
 /// Optional host-owned sanitizer for finalized generic tool text before budgeting and retention.
 /// </param>
+/// <param name="EvaluateRunCompletion">Optional authoritative host completion evaluator.</param>
+/// <param name="MaxCompletionContinuations">Bound on automatic completion-gate continuation turns.</param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
 /// InitialState is used to seed AgentState - changes to InitialState after construction have no effect.
@@ -92,4 +94,6 @@ public record AgentOptions(
     int? MaxToolOutputBytes = null,
     BeforeToolAuditDelegate? BeforeToolAudit = null,
     ToolCallDispositionDelegate? OnToolCallDisposition = null,
-    Func<string, string>? SanitizeToolResultText = null);
+    Func<string, string>? SanitizeToolResultText = null,
+    Loop.EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
+    int MaxCompletionContinuations = 2);

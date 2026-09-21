@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Isolation;
@@ -280,12 +281,24 @@ public sealed class InProcessIsolationStrategyMapAgentEventTests
     public void MapAgentEvent_AgentEnd_MapsToRunEnded()
     {
         // AgentEndEvent fires once when the entire loop settles -> RunEnded (the authoritative idle signal).
-        var evt = new AgentEndEvent(new List<AgentMessage>(), null, Now);
+        var evt = new AgentEndEvent(
+            new List<AgentMessage>(),
+            null,
+            Now,
+            new RunCompletionResult(
+                RunCompletionStatus.IncompleteWithoutStopReason,
+                ["publish"],
+                Detail: "Work remains actionable.",
+                ContinuationAttempts: 2));
 
         var result = InProcessAgentHandle.MapAgentEvent(evt, MessageId);
 
         result.ShouldNotBeNull();
         result!.Type.ShouldBe(AgentStreamEventType.RunEnded);
         result.MessageId.ShouldBe(MessageId);
+        result.Completion.ShouldNotBeNull();
+        result.Completion.Status.ShouldBe(nameof(RunCompletionStatus.IncompleteWithoutStopReason));
+        result.Completion.OpenItemIds.ShouldBe(["publish"]);
+        result.Completion.ContinuationAttempts.ShouldBe(2);
     }
 }

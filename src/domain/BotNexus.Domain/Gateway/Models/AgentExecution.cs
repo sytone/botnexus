@@ -62,6 +62,8 @@ public sealed record AgentResponse
     /// unchanged.
     /// </remarks>
     public string? TerminalError { get; init; }
+    /// <summary>Authoritative completion disposition for this run, when the strategy reports one.</summary>
+    public RunCompletionSignal? Completion { get; init; }
 }
 /// <summary>
 /// Token usage information for an agent response.
@@ -205,6 +207,8 @@ public sealed record AgentStreamEvent
     /// post-turn claim auditor flagged unbacked artifact claims in the agent's final message (#1600).
     /// </summary>
     public ClaimAuditSignal? ClaimAudit { get; init; }
+    /// <summary>Authoritative run completion disposition carried by <see cref="AgentStreamEventType.RunEnded"/>.</summary>
+    public RunCompletionSignal? Completion { get; init; }
 }
 /// <summary>
 /// Types of streaming events from an agent.
@@ -264,6 +268,19 @@ public enum AgentStreamEventType
     /// </summary>
     ClaimAudit
 }
+
+/// <summary>
+/// Channel-neutral run completion disposition. Values originate in the core loop's finalization gate.
+/// </summary>
+public sealed record RunCompletionSignal(
+    string Status,
+    IReadOnlyList<string> OpenItemIds,
+    string? StopReason,
+    string? Detail,
+    string? Evidence,
+    string? ContinuationOwner,
+    string? WakeCondition,
+    int ContinuationAttempts);
 
 /// <summary>
 /// A structured, client-visible summary of a post-turn claim-audit finding (#1600). Surfaced on an

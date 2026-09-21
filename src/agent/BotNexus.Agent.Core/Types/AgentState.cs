@@ -1,3 +1,4 @@
+using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Providers.Core.Models;
 
@@ -123,6 +124,9 @@ public class AgentState
     /// </remarks>
     public string? ErrorMessage { get; private set; }
 
+    /// <summary>Gets the authoritative disposition from the most recently settled run.</summary>
+    public RunCompletionResult? LastCompletion { get; private set; }
+
     /// <summary>
     /// Sets whether an agent run is currently active.
     /// </summary>
@@ -153,4 +157,7 @@ public class AgentState
     /// </summary>
     /// <param name="errorMessage">The latest error message or <see langword="null"/> to clear.</param>
     public void SetErrorMessage(string? errorMessage) => ErrorMessage = errorMessage;
+
+    /// <summary>Stores the authoritative disposition when a run settles.</summary>
+    public void SetLastCompletion(RunCompletionResult? completion) => LastCompletion = completion;
 }

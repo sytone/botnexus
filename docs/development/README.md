@@ -32,6 +32,7 @@ This directory contains detailed documentation for developers working on or exte
 These are deeper explanations, also grouped under **Architecture → Runtime and data flows** in the sidebar. Read them when you need to understand a component, not as prerequisites for your first build.
 
 - **[agent-execution.md](agent-execution.md)** — Agent lifecycle, isolation strategies, instance management
+- **[agent-run-completion.md](agent-run-completion.md)** — Completion, continuation, parked work, and incomplete outcomes
 - **[llm-request-lifecycle.md](llm-request-lifecycle.md)** — How user messages become LLM API calls (stateless context)
 - **[message-flow.md](message-flow.md)** — Channel dispatch, routing, session lifecycle
 - **[prompt-pipeline.md](prompt-pipeline.md)** — System prompt construction and caching
