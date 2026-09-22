@@ -9,6 +9,14 @@ namespace BotNexus.Extensions.ExecTool.Tests;
 /// real environment block is case-insensitive - an override differing only in casing from an
 /// inherited variable did not replace it. These tests observe what the CHILD actually sees, so they
 /// fail if the site is changed back to a direct <c>startInfo.Environment[key] = value</c> write.
+/// <para>
+/// The probe variable now reaches the child through the operator pass-through list rather than
+/// through blanket inheritance: tool subprocesses build their environment from an allow-list
+/// (<c>ToolProcessEnvironment</c>) so an agent cannot read the gateway's credentials out of its
+/// own shell. The casing collision #2892 describes is unchanged - a caller override still has to
+/// replace, rather than duplicate, an entry already in the block - so these tests still cover it,
+/// they just populate the block the way the tool now populates it.
+/// </para>
 /// </summary>
 [Collection(ExecToolBackgroundRegistryCollection.Name)]
 public class ExecToolEnvKeyCasingTests : IDisposable
@@ -16,7 +24,13 @@ public class ExecToolEnvKeyCasingTests : IDisposable
     private const string InheritedName = "BN2892_CASING_PROBE";
     private const string OverrideName = "bn2892_casing_probe";
 
-    private readonly ExecTool _tool = new(workingDirectory: null, fileSystem: new MockFileSystem());
+    // The probe is opted in explicitly: without it the allow-list would (correctly) withhold a
+    // variable named BN2892_* from the child, and there would be no inherited entry for the
+    // caller's differently-cased override to collide with - which is the whole subject here.
+    private readonly ExecTool _tool = new(
+        workingDirectory: null,
+        fileSystem: new MockFileSystem(),
+        environmentPassThrough: [InheritedName]);
 
     public ExecToolEnvKeyCasingTests() =>
         Environment.SetEnvironmentVariable(InheritedName, "inherited");
@@ -59,19 +73,35 @@ public class ExecToolEnvKeyCasingTests : IDisposable
     }
 
     /// <summary>
-    /// Guards against a "fix" that drops inherited variables wholesale: an unrelated inherited
-    /// variable must still reach the child.
+    /// The inverse of what this test used to assert, deliberately.
     /// </summary>
+    /// <remarks>
+    /// It previously guarded that an unrelated INHERITED variable still reached the child. That
+    /// guarantee was the vulnerability: the gateway's environment carries provider API keys and
+    /// whatever an operator exported for their <c>env:</c> credential references, and every agent
+    /// holding <c>exec</c> could read all of it. A variable the operator has not opted in must now
+    /// be absent from the child, and this asserts it at the process boundary - on a tool built the
+    /// way agents get one, with no pass-through.
+    /// </remarks>
     [Fact]
-    public async Task ExecuteAsync_EnvOverride_DoesNotDiscardUnrelatedInheritedVariables()
+    public async Task ExecuteAsync_DoesNotHandTheChildAnUnrelatedInheritedVariable()
     {
         const string unrelated = "BN2892_UNRELATED_PROBE";
-        Environment.SetEnvironmentVariable(unrelated, "kept");
+        var strictTool = new ExecTool(workingDirectory: null, fileSystem: new MockFileSystem());
+
+        Environment.SetEnvironmentVariable(unrelated, "leaked");
         try
         {
-            var result = await _tool.ExecuteAsync("casing", BuildArgs(), CancellationToken.None);
+            var result = await strictTool.ExecuteAsync("casing", BuildArgs(), CancellationToken.None);
+            var text = Flatten(result.Content);
 
-            Flatten(result.Content).ShouldContain("kept");
+            // A variable the operator did not pass through must not reach a tool subprocess -
+            // neither its value nor its name.
+            text.ShouldNotContain("leaked");
+            text.ShouldNotContain(unrelated);
+
+            // ...while the allow-list still admits what a command needs, or nothing would run.
+            text.ShouldContain("PATH=");
         }
         finally
         {

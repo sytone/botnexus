@@ -467,6 +467,12 @@ public sealed class LocationsController(
                 CredentialRef = existing.CredentialRef,
                 VerifyTls = existing.VerifyTls,
                 Tags = existing.Tags,
+                // #3232: the per-agent access list, preserved for the same reason and with more
+                // force. It is not modelled by UpsertLocationRequest, and dropping it would not
+                // merely lose a setting - an absent list means EVERY agent, so a PUT that only
+                // touched the description would silently re-expose a location that had been
+                // narrowed to one agent. Widening access is the worst direction for a silent bug.
+                Agents = existing.Agents,
             };
 
     private static string? ResolveStoredValue(LocationConfig config)
