@@ -15,6 +15,8 @@ are source-aligned excerpts, not replacement interface definitions or a benchmar
 | `BotNexus.Agent.Core.Agent` | Own agent state and message queues |
 | `AgentLoopRunner` / `ToolExecutor` | Run model turns and execute requested tools |
 
+For the finalization contract that distinguishes completed, continuing, parked, and incomplete runs, see [Agent run completion](agent-run-completion.md).
+
 ## Agent Descriptor Loading
 
 ### AgentDescriptor Model

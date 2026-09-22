@@ -132,6 +132,8 @@ public static class AgentLoopRunner
     {
         var messages = currentContext.Messages.ToList();
         IReadOnlyList<AgentMessage> followUpSeed = [];
+        var completionContinuationAttempts = 0;
+        RunCompletionDecision? lastCompletionDecision = null;
 
         // #2519: taint accumulation is scoped to the whole RUN, not to each provider turn. The
         // laundering path this closes is inherently multi-turn - the model fetches a page on one
@@ -274,7 +276,21 @@ public static class AgentLoopRunner
                     metrics.AddTokens(assistantMessage.Usage?.InputTokens, assistantMessage.Usage?.OutputTokens);
                     await emit(new TurnEndEvent(assistantMessage, [], DateTimeOffset.UtcNow)).ConfigureAwait(false);
                     var endTime = DateTimeOffset.UtcNow;
-                    await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), metrics.ToMetrics(endTime), endTime)).ConfigureAwait(false);
+                    var status = assistantMessage.FinishReason == StopReason.Aborted
+                        ? RunCompletionStatus.Cancelled
+                        : RunCompletionStatus.Failed;
+                    var stopReason = assistantMessage.FinishReason == StopReason.Aborted
+                        ? RunStopReason.Cancellation
+                        : (RunStopReason?)null;
+                    await emit(new AgentEndEvent(
+                        messages.Skip(runStartIndex).ToList(),
+                        metrics.ToMetrics(endTime),
+                        endTime,
+                        new RunCompletionResult(
+                            status,
+                            [],
+                            stopReason,
+                            assistantMessage.ErrorMessage))).ConfigureAwait(false);
                     return;
                 }
 
@@ -358,11 +374,74 @@ public static class AgentLoopRunner
                 continue;
             }
 
+            if (config.EvaluateRunCompletion is not null)
+            {
+                lastCompletionDecision = await config.EvaluateRunCompletion(cancellationToken).ConfigureAwait(false);
+                if (lastCompletionDecision.Status == RunCompletionStatus.Working)
+                {
+                    if (completionContinuationAttempts >= config.EffectiveMaxCompletionContinuations)
+                    {
+                        break;
+                    }
+
+                    completionContinuationAttempts++;
+                    followUpSeed = [BuildCompletionContinuation(lastCompletionDecision, completionContinuationAttempts)];
+                    continue;
+                }
+            }
+
             break;
         }
 
+        var completion = BuildCompletionResult(lastCompletionDecision, completionContinuationAttempts);
         var endTime2 = DateTimeOffset.UtcNow;
-        await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), metrics.ToMetrics(endTime2), endTime2)).ConfigureAwait(false);
+        await emit(new AgentEndEvent(
+            messages.Skip(runStartIndex).ToList(),
+            metrics.ToMetrics(endTime2),
+            endTime2,
+            completion)).ConfigureAwait(false);
+    }
+
+    private static BotNexus.Agent.Core.Types.UserMessage BuildCompletionContinuation(RunCompletionDecision decision, int attempt)
+    {
+        var openItems = decision.OpenItemIds.Count == 0
+            ? "(identities unavailable)"
+            : string.Join(", ", decision.OpenItemIds);
+        var detail = string.IsNullOrWhiteSpace(decision.Detail) ? string.Empty : $"\nEvaluator detail: {decision.Detail}";
+        return new BotNexus.Agent.Core.Types.UserMessage(
+            $"[Runtime completion gate: continuation {attempt}]\n" +
+            "The prior assistant response was progress, not successful completion. " +
+            "Continue the same authorized loop now. Do not repeat the progress summary.\n" +
+            $"Open actionable checklist items: {openItems}.{detail}");
+    }
+
+    private static RunCompletionResult BuildCompletionResult(
+        RunCompletionDecision? decision,
+        int continuationAttempts)
+    {
+        if (decision is null || decision.Status == RunCompletionStatus.Completed)
+        {
+            return RunCompletionResult.Completed with { ContinuationAttempts = continuationAttempts };
+        }
+
+        if (decision.Status == RunCompletionStatus.Parked)
+        {
+            return new RunCompletionResult(
+                RunCompletionStatus.Parked,
+                decision.OpenItemIds,
+                decision.StopReason,
+                decision.Detail,
+                decision.Evidence,
+                decision.ContinuationOwner,
+                decision.WakeCondition,
+                continuationAttempts);
+        }
+
+        return new RunCompletionResult(
+            RunCompletionStatus.IncompleteWithoutStopReason,
+            decision.OpenItemIds,
+            Detail: decision.Detail,
+            ContinuationAttempts: continuationAttempts);
     }
 
     /// <summary>

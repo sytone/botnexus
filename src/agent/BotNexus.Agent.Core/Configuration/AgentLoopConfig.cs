@@ -84,6 +84,15 @@ namespace BotNexus.Agent.Core.Configuration;
 /// Optional host-owned sanitizer applied to finalized generic tool text after replacement hooks
 /// and before central budgeting and continuation retention (#4096).
 /// </param>
+/// <param name="EvaluateRunCompletion">
+/// Optional authoritative host evaluation invoked before a normal run end. It may accept completion,
+/// park the run with a structured stop disposition, or require another bounded continuation turn.
+/// Null preserves ordinary simple-run behavior.
+/// </param>
+/// <param name="MaxCompletionContinuations">
+/// Maximum automatic turns added when <paramref name="EvaluateRunCompletion"/> reports actionable
+/// work. Exhausting the bound records an incomplete outcome rather than successful completion.
+/// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
 /// It is immutable and passed through the loop to ensure consistent configuration.
@@ -114,7 +123,9 @@ public record AgentLoopConfig(
     BotNexus.Agent.Core.Loop.IHostSuspendDetector? SuspendDetector = null,
     BeforeToolAuditDelegate? BeforeToolAudit = null,
     ToolCallDispositionDelegate? OnToolCallDisposition = null,
-    Func<string, string>? SanitizeToolResultText = null)
+    Func<string, string>? SanitizeToolResultText = null,
+    EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
+    int MaxCompletionContinuations = 2)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).
@@ -146,4 +157,7 @@ public record AgentLoopConfig(
     /// the default because "no retry ceiling" is never a safe outcome.
     /// </summary>
     public int EffectiveMaxToolOutputBytes => MaxToolOutputBytes ?? ToolOutputBudget.DefaultMaxBytes;
+
+    /// <summary>The non-negative automatic continuation bound.</summary>
+    public int EffectiveMaxCompletionContinuations => Math.Max(0, MaxCompletionContinuations);
 }

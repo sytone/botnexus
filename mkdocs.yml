@@ -136,6 +136,7 @@ nav:
       - Developer Guide: getting-started-dev.md
       - Overview: development/README.md
       - Agent Execution: development/agent-execution.md
+      - Agent Run Completion: development/agent-run-completion.md
       - Message Flow: development/message-flow.md
       - LLM Request Lifecycle: development/llm-request-lifecycle.md
       - Prompt Pipeline: development/prompt-pipeline.md
