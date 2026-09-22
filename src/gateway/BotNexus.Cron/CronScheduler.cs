@@ -45,6 +45,11 @@ public sealed class CronScheduler(
     // possible but are cleaned up by the next scheduler-startup migration sweep.
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _jobLocks = new(StringComparer.Ordinal);
 
+    // #4283: a timed-out action may ignore cancellation and continue using its execution scope.
+    // Such a run retains same-job ownership until the action really exits; repeat manual fires fail
+    // closed and scheduled fires skip instead of parking a tick or overlapping the abandoned work.
+    private readonly ConcurrentDictionary<string, byte> _quarantinedJobs = new(StringComparer.Ordinal);
+
     // #3160: THE registry of runs currently in flight in this process, keyed by RUN id.
     //
     // _jobLocks above looks like the right shape for this and is not: it is a serialisation mutex
@@ -724,6 +729,39 @@ public sealed class CronScheduler(
             };
         }
 
+        if (_quarantinedJobs.ContainsKey(job.Id.Value))
+        {
+            const string reason = "A previous timed-out action is still exiting; overlapping execution was suppressed.";
+            _logger.LogWarning(
+                "Cron job '{JobId}' ('{JobName}') is quarantined by an action that ignored timeout cancellation; this fire was suppressed.",
+                job.Id,
+                job.Name);
+
+            // A suppressed due/manual occurrence is still an observable scheduler decision. Persist
+            // it instead of returning an invented in-memory row: otherwise history cannot explain
+            // why the occurrence did not execute, which is the exact blind spot exposed by #4283.
+            var skipped = acceptedRun ?? await _cronStore.RecordRunStartAsync(job.Id, ct).ConfigureAwait(false);
+            await _cronStore.RecordRunCompleteAsync(
+                skipped.Id,
+                CronRunStatus.Skipped,
+                reason,
+                ct: CancellationToken.None).ConfigureAwait(false);
+            await FinalizeRunAsync(
+                job.Id,
+                job,
+                triggeredAt,
+                CronRunStatus.Skipped,
+                reason,
+                ct: CancellationToken.None).ConfigureAwait(false);
+
+            return skipped with
+            {
+                CompletedAt = _timeProvider.GetUtcNow(),
+                Status = CronRunStatus.Skipped,
+                Error = reason
+            };
+        }
+
         var run = acceptedRun ?? await _cronStore.RecordRunStartAsync(job.Id, ct).ConfigureAwait(false);
         var action = ResolveAction(NormalizeActionType(job.ActionType));
 
@@ -734,7 +772,7 @@ public sealed class CronScheduler(
         // host cancellation exactly: a gateway shutdown still cancels `ct`, which still cancels
         // this. Registration happens immediately after the run row is stamped, so the window in
         // which a run exists but is uncancellable is a single store write rather than a whole turn.
-        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var runCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var activeRun = new ActiveCronRun(job.Id, runCts);
         _activeRuns[run.Id.Value] = activeRun;
         var runCt = runCts.Token;
@@ -780,13 +818,43 @@ public sealed class CronScheduler(
         // "failed before a context existed" (nothing to record) from "failed after doing work"
         // (record it) - the difference between an honest NULL and a fabricated zero.
         CronExecutionContext? executionContext = null;
+        IServiceScope? executionScope = null;
+        Task? abandonedAction = null;
+        CancellationTokenSource? abandonedTimeoutSource = null;
         try
         {
+            // A concurrent trigger can pass the pre-lock quarantine check while the first run is
+            // publishing its timeout outcome, then queue on this semaphore. Recheck after acquiring
+            // the lock so that trigger fails closed instead of starting after the abandoned action.
+            if (_quarantinedJobs.ContainsKey(job.Id.Value))
+            {
+                const string reason = "A previous timed-out action is still exiting; overlapping execution was suppressed.";
+                await _cronStore.RecordRunCompleteAsync(
+                    run.Id,
+                    CronRunStatus.Skipped,
+                    reason,
+                    ct: CancellationToken.None).ConfigureAwait(false);
+                await FinalizeRunAsync(
+                    job.Id,
+                    job,
+                    triggeredAt,
+                    CronRunStatus.Skipped,
+                    reason,
+                    ct: CancellationToken.None).ConfigureAwait(false);
+                return run with
+                {
+                    CompletedAt = _timeProvider.GetUtcNow(),
+                    Status = CronRunStatus.Skipped,
+                    Error = reason
+                };
+            }
+
             // Re-read the job inside the lock — another in-process run may have already
             // pinned ConversationId between the time we entered RunActionAsync and now.
             var jobForRun = await _cronStore.GetAsync(job.Id, ct).ConfigureAwait(false) ?? job;
 
-            using var scope = _scopeFactory.CreateScope();
+            var scope = _scopeFactory.CreateScope();
+            executionScope = scope;
             var context = new CronExecutionContext
             {
                 Job = jobForRun,
@@ -812,8 +880,13 @@ public sealed class CronScheduler(
                 // the body (no doubled try/try) so the terminal-status mapping is a flat decision.
                 // #3160: the action runs under the run-scoped token so an operator delete/disable
                 // can reach it. `runCt` is linked to `ct`, so host cancellation is unchanged.
-                var timeoutError = await ExecuteActionWithTimeoutAsync(action, context, timeoutSeconds, runCt)
+                var actionResult = await ExecuteActionWithTimeoutAsync(action, context, timeoutSeconds, runCt)
                     .ConfigureAwait(false);
+                abandonedAction = actionResult.AbandonedAction;
+                abandonedTimeoutSource = actionResult.AbandonedTimeoutSource;
+                if (abandonedAction is not null)
+                    _quarantinedJobs[job.Id.Value] = 0;
+                var timeoutError = actionResult.TimeoutError;
 
                 if (timeoutError is not null)
                 {
@@ -924,7 +997,12 @@ public sealed class CronScheduler(
             }
             finally
             {
-                await MaybeDeleteEphemeralRunSessionAsync(jobForRun, context, scope.ServiceProvider).ConfigureAwait(false);
+                if (abandonedAction is null)
+                {
+                    await MaybeDeleteEphemeralRunSessionAsync(jobForRun, context, scope.ServiceProvider).ConfigureAwait(false);
+                    scope.Dispose();
+                    executionScope = null;
+                }
             }
         }
         catch (Exception ex) when (!runCt.IsCancellationRequested)
@@ -973,18 +1051,78 @@ public sealed class CronScheduler(
             // catch. Removal driven from the success path only would reproduce the original defect,
             // where a job whose agent turn ended early was never cleaned up.
             //
-            // Ordering: the lock is released first so the delete cannot deadlock against a
-            // same-job waiter, and the delete is best-effort (never throws out of the finally).
-            jobLock.Release();
+            if (abandonedAction is not null && executionContext is not null && executionScope is not null)
+            {
+                // The quarantine dictionary is the retained same-job ownership signal. Release the
+                // semaphore so a trigger that queued just before quarantine was published can wake,
+                // recheck, and terminate as skipped rather than inheriting the original deadlock.
+                jobLock.Release();
+                _ = CompleteAbandonedActionAsync(
+                    abandonedAction,
+                    job,
+                    executionContext,
+                    executionScope,
+                    abandonedTimeoutSource,
+                    run.Id,
+                    activeRun);
+            }
+            else
+            {
+                executionScope?.Dispose();
 
-            // #3160: deregister BEFORE MaybeDeleteOneShotJobAsync. That call routes through
-            // DeleteJobAsync, which now waits for this job's active runs to observe cancellation -
-            // and this run IS one of them. Releasing afterwards would have the run wait on itself
-            // for the full grace period on every one-shot job. Ordering here is load-bearing, not
-            // cosmetic.
-            ReleaseActiveRun(run.Id, activeRun);
+                // Ordering: the lock is released first so the delete cannot deadlock against a
+                // same-job waiter, and the delete is best-effort (never throws out of the finally).
+                jobLock.Release();
 
-            await MaybeDeleteOneShotJobAsync(job).ConfigureAwait(false);
+                // #3160: deregister BEFORE MaybeDeleteOneShotJobAsync. That call routes through
+                // DeleteJobAsync, which now waits for this job's active runs to observe cancellation -
+                // and this run IS one of them. Releasing afterwards would have the run wait on itself
+                // for the full grace period on every one-shot job. Ordering here is load-bearing, not
+                // cosmetic.
+                ReleaseActiveRun(run.Id, activeRun);
+
+                await MaybeDeleteOneShotJobAsync(job).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task CompleteAbandonedActionAsync(
+        Task actionTask,
+        CronJob job,
+        CronExecutionContext context,
+        IServiceScope scope,
+        CancellationTokenSource? timeoutSource,
+        RunId runId,
+        ActiveCronRun activeRun)
+    {
+        try
+        {
+            await actionTask.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // The run is already durably timed_out. Observe and log a late action failure without
+            // rewriting that terminal result or allowing an unobserved task exception.
+            _logger.LogWarning(
+                ex,
+                "Timed-out cron action exited with an error after quarantine. JobId: {JobId}, RunId: {RunId}",
+                job.Id,
+                runId);
+        }
+        finally
+        {
+            try
+            {
+                await MaybeDeleteEphemeralRunSessionAsync(job, context, scope.ServiceProvider).ConfigureAwait(false);
+            }
+            finally
+            {
+                timeoutSource?.Dispose();
+                scope.Dispose();
+                _quarantinedJobs.TryRemove(job.Id.Value, out _);
+                ReleaseActiveRun(runId, activeRun);
+                await MaybeDeleteOneShotJobAsync(job).ConfigureAwait(false);
+            }
         }
     }
 
@@ -1581,13 +1719,19 @@ public sealed class CronScheduler(
     /// when the host token (<paramref name="ct"/>) was cancelled (gateway shutdown / scheduler stop /
     /// explicit cancel) so the caller can record the abort and propagate cancellation.
     /// </summary>
-    private async Task<string?> ExecuteActionWithTimeoutAsync(
+    private readonly record struct ActionExecutionResult(
+        string? TimeoutError,
+        Task? AbandonedAction,
+        CancellationTokenSource? AbandonedTimeoutSource = null);
+
+    private async Task<ActionExecutionResult> ExecuteActionWithTimeoutAsync(
         ICronAction action,
         CronExecutionContext context,
         int? timeoutSeconds,
         CancellationToken ct)
     {
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var retainTimeoutSource = false;
 
         // #2904: a null timeout is the explicit "unlimited" sentinel. Arming no CancelAfter is the
         // whole point - the linked source still exists so the ambient token (gateway shutdown /
@@ -1601,19 +1745,62 @@ public sealed class CronScheduler(
         var startedAt = _timeProvider.GetUtcNow();
         try
         {
-            await action.ExecuteAsync(context, timeoutCts.Token).ConfigureAwait(false);
-            return null;
+            var actionTask = action.ExecuteAsync(context, timeoutCts.Token);
+            if (timeoutSeconds is null)
+            {
+                await actionTask.ConfigureAwait(false);
+                return new ActionExecutionResult(null, null);
+            }
+
+            var timeoutSignal = Task.Delay(Timeout.InfiniteTimeSpan, timeoutCts.Token);
+            var completed = await Task.WhenAny(actionTask, timeoutSignal).ConfigureAwait(false);
+            if (completed == actionTask || ct.IsCancellationRequested)
+            {
+                // Host/operator cancellation keeps its established semantics: wait for the action
+                // to observe cancellation so teardown and active-run cancellation remain ordered.
+                await actionTask.ConfigureAwait(false);
+                return new ActionExecutionResult(null, null);
+            }
+
+            // Give a cancellation-cooperative action a small bounded window to unwind. This keeps
+            // the established cooperative path (scope disposal and active-run release before the
+            // caller returns) while still bounding an action that ignores cancellation.
+            var cooperativeExit = await Task.WhenAny(actionTask, Task.Delay(TimeSpan.FromMilliseconds(100))).ConfigureAwait(false);
+            if (cooperativeExit == actionTask)
+            {
+                try
+                {
+                    await actionTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    // Expected per-job timeout cancellation.
+                }
+
+                _logger.LogWarning(
+                    "Cron job timed out after {TimeoutSeconds}s. JobId: {JobId}, ActionType: {ActionType}",
+                    timeoutSeconds, context.Job.Id, context.Job.ActionType);
+                return new ActionExecutionResult($"Job exceeded {timeoutSeconds}s timeout", null);
+            }
+
+            _logger.LogWarning(
+                "Cron job timed out after {TimeoutSeconds}s and did not stop after cancellation; it was quarantined. JobId: {JobId}, ActionType: {ActionType}",
+                timeoutSeconds, context.Job.Id, context.Job.ActionType);
+            retainTimeoutSource = true;
+            return new ActionExecutionResult($"Job exceeded {timeoutSeconds}s timeout", actionTask, timeoutCts);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
             _logger.LogWarning(
                 "Cron job timed out after {TimeoutSeconds}s. JobId: {JobId}, ActionType: {ActionType}",
                 timeoutSeconds, context.Job.Id, context.Job.ActionType);
-            return $"Job exceeded {timeoutSeconds}s timeout";
+            return new ActionExecutionResult($"Job exceeded {timeoutSeconds}s timeout", null);
         }
         finally
         {
             context.RecordDuration((long)(_timeProvider.GetUtcNow() - startedAt).TotalMilliseconds);
+            if (!retainTimeoutSource)
+                timeoutCts.Dispose();
         }
     }
 
