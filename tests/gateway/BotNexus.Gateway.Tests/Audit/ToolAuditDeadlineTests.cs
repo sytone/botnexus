@@ -98,7 +98,12 @@ public sealed class ToolAuditDeadlineTests
         {
             ShouldListenTo = source => source.Name == GatewayDiagnostics.SourceName,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
-            ActivityStopped = activity => stopped.Enqueue(activity)
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName.StartsWith("audit.", StringComparison.Ordinal)
+                    && Equals(activity.GetTagItem("botnexus.tool.call_id"), "call-telemetry"))
+                    stopped.Enqueue(activity);
+            }
         };
         ActivitySource.AddActivityListener(listener);
 
@@ -112,7 +117,7 @@ public sealed class ToolAuditDeadlineTests
         await Create(store.Object).PersistStartAsync(
             "call-telemetry", "read", Args("path", "do-not-emit-this-argument"), CancellationToken.None);
 
-        var stages = stopped.Where(activity => activity.OperationName.StartsWith("audit.", StringComparison.Ordinal)).ToArray();
+        var stages = stopped.ToArray();
         stages.Select(activity => activity.OperationName).ShouldBe(["audit.serialize", "audit.persist"], ignoreOrder: true);
         stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.agent.id"), "agent-a"));
         stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.session.id"), "session-a"));
