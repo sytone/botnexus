@@ -129,7 +129,7 @@ still invalid
 
         var entries = await CollectAsync(_parser.ParseFileAsync(filePath, new LogQuery(From: from, To: to)));
 
-        entries.Select(e => e.Message).Should().Equal("start", "middle");
+        entries.Select(e => e.Message).ShouldBe(["start", "middle"]);
     }
 
     [Fact]
@@ -175,7 +175,7 @@ TimeoutException
         var entries = await CollectAsync(_parser.ParseDirectoryAsync(temp.Path, new LogQuery()));
 
         entries.Count().ShouldBe(2);
-        entries.Select(e => e.SourceFile).ShouldContain(["a.log", "b.log"]);
+        entries.Select(e => e.SourceFile).ShouldBe(["a.log", "b.log"], ignoreOrder: true);
     }
 
     [Fact]
