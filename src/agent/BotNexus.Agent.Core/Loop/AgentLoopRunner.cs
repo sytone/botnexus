@@ -150,18 +150,6 @@ public static class AgentLoopRunner
 
         while (true)
         {
-            // #1710: re-check auto-compaction at the top of every outer iteration. A single long
-            // dispatch (cron / autonomous follow-up loop) can blow past the token threshold mid-run;
-            // pre-turn ShouldCompact at the gateway never sees it, so the transcript grew unbounded
-            // until provider overflow. The hook compacts off-loop and resyncs history; best-effort so
-            // a compactor failure never aborts the run.
-            var refreshedContext = await MaybeCompactAsync(config, cancellationToken).ConfigureAwait(false);
-            if (refreshedContext is not null)
-            {
-                currentContext = refreshedContext;
-                messages = refreshedContext.Messages.ToList();
-            }
-
             var pendingMessages = followUpSeed.Count > 0
                 ? followUpSeed.ToList()
                 : (config.SkipInitialSteeringPoll
@@ -182,6 +170,22 @@ public static class AgentLoopRunner
             while (hasMoreToolCalls || pendingMessages.Count > 0 || deferredMessages.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                // #1710/#4302: give every provider turn a durable compaction opportunity. This
+                // boundary is after the preceding tool batch and its result persistence have fully
+                // completed, but before the next provider context is built, so it cannot split an
+                // assistant-call/tool-result pair. It also covers the first turn and outer-loop
+                // follow-ups without a second cadence path. When compaction applies, replace the
+                // live in-memory snapshot so the provider sees the summary and retained tail rather
+                // than the stale pre-compaction tool chain (#4121).
+                var refreshedContext = await MaybeCompactAsync(config, cancellationToken).ConfigureAwait(false);
+                if (refreshedContext is not null)
+                {
+                    currentContext = refreshedContext;
+                    messages = refreshedContext.Messages.ToList();
+                    config.OnDiagnostic?.Invoke(
+                        "Proactive durable compaction applied before the next provider turn; live context resynchronized.");
+                }
 
                 // Release deferred (defer-while-busy) messages only once the original run is idle:
                 // no more tool calls in flight and nothing else already queued for this turn.
@@ -574,9 +578,12 @@ public static class AgentLoopRunner
         {
             throw;
         }
-        catch
+        catch (Exception ex)
         {
-            // Compaction is best-effort: a failure must never abort the run.
+            // Compaction is best-effort: a failure must never abort the run, but it must be an
+            // explicit bounded outcome rather than an invisible skipped guard (#4302).
+            config.OnDiagnostic?.Invoke(
+                $"Proactive durable compaction failed before a provider turn; continuing with the existing bounded overflow recovery. {ex.Message}");
             return null;
         }
     }
@@ -672,6 +679,8 @@ public static class AgentLoopRunner
             {
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 overflowRecovered = true;
+                config.OnDiagnostic?.Invoke(
+                    "Reactive lossy context-overflow truncation applied after provider rejection; this is not durable compaction.");
                 var compacted = CompactForOverflow(messages);
                 messages.Clear();
                 messages.AddRange(compacted);
