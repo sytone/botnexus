@@ -15,6 +15,39 @@ public sealed record MemoryEntry
     public DateTimeOffset? ExpiresAt { get; init; }
     public bool IsArchived { get; init; }
 
+    /// <summary>Semantic role, when the writer supplied one; absent legacy values remain unknown.</summary>
+    public string? Role { get; init; }
+
+    /// <summary>Writer-supplied category, kept separate from the write mechanism in <see cref="SourceType"/>.</summary>
+    public string? Category { get; init; }
+
+    /// <summary>Canonical JSON array of tags, when durable tags were captured independently of legacy metadata.</summary>
+    public string? TagsJson { get; init; }
+
+    /// <summary>Optimistic-concurrency revision. Newly created and upgraded legacy records start at one.</summary>
+    public int Revision { get; init; } = 1;
+
+    /// <summary>When this record left the live corpus, or null while live.</summary>
+    public DateTimeOffset? ArchivedAt { get; init; }
+
+    /// <summary>Record whose assertion this record corrects, when explicitly known.</summary>
+    public string? CorrectsId { get; init; }
+
+    /// <summary>Older record replaced by this record, when explicitly known.</summary>
+    public string? SupersedesId { get; init; }
+
+    /// <summary>Newer record that replaced this record, when explicitly known.</summary>
+    public string? SupersededById { get; init; }
+
+    /// <summary>Kind of durable source locator, such as a legacy daily note; null means uncaptured.</summary>
+    public string? OriginKind { get; init; }
+
+    /// <summary>Opaque source locator interpreted according to <see cref="OriginKind"/>.</summary>
+    public string? OriginReference { get; init; }
+
+    /// <summary>Optional embedding lifecycle state; the embedding remains non-authoritative.</summary>
+    public string? EmbeddingStatus { get; init; }
+
     /// <summary>
     /// Where this entry's content came from - one of <see cref="MemoryProvenance"/> (#2480).
     /// </summary>
