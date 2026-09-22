@@ -18,7 +18,9 @@ public sealed class IconLibraryTests
 {
     private static readonly string s_outputPath =
         Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
-    private static readonly string s_cssPath = Path.Combine(s_outputPath, "wwwroot", "css", "app.css");
+    private static readonly string s_cssPath = Path.GetFullPath(Path.Combine(
+        s_outputPath, "..", "..", "..", "..", "..", "..", "src", "extensions",
+        "BotNexus.Extensions.Channels.SignalR.BlazorClient.Core", "wwwroot", "css", "icons.css"));
     private static readonly string s_iconReadmePath = Path.Combine(s_outputPath, "assets", "icons", "README.md");
     private static readonly string s_svgPath = Path.Combine(s_outputPath, "assets", "icons", "svg");
 

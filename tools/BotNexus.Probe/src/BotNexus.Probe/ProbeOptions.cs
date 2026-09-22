@@ -6,4 +6,5 @@ public sealed record ProbeOptions(
     string LogsPath,
     string SessionsPath,
     string SessionDbPath,
-    int? OtlpPort);
+    int? OtlpPort,
+    bool ListenAny);

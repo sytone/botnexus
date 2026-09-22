@@ -27,6 +27,66 @@ window.BotNexus.escapeHtml = function (value) {
  * names the missing dependency. Unsanitized HTML is never returned.
  */
 window.BotNexus.renderMarkdown = function (markdown) {
+    return window.BotNexus.renderMarkdownWithLinks(markdown, null);
+};
+
+/**
+ * Renders Guide markdown while translating links to indexed Guide documents into
+ * in-app routes. Unknown and external targets retain the shared renderer's safe
+ * new-tab behaviour; fragment-only links stay within the current article.
+ */
+window.BotNexus.renderGuideMarkdown = function (markdown, currentFile, pages) {
+    var pageByFile = Object.create(null);
+    (pages || []).forEach(function (page) {
+        if (page && page.file && page.id) {
+            pageByFile[window.BotNexus.normalizeGuidePath(page.file).toLowerCase()] = page.id;
+        }
+    });
+
+    return window.BotNexus.renderMarkdownWithLinks(markdown, function (href) {
+        if (!href || href.charAt(0) === "#") {
+            return { href: href, external: false };
+        }
+
+        // Absolute, protocol-relative, root-relative and non-HTTP schemes are not
+        // Guide document references. The shared external-link policy applies.
+        if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.indexOf("//") === 0 || href.charAt(0) === "/") {
+            return { href: href, external: true };
+        }
+
+        var hashIndex = href.indexOf("#");
+        var fragment = hashIndex >= 0 ? href.substring(hashIndex) : "";
+        var pathAndQuery = hashIndex >= 0 ? href.substring(0, hashIndex) : href;
+        var queryIndex = pathAndQuery.indexOf("?");
+        var path = queryIndex >= 0 ? pathAndQuery.substring(0, queryIndex) : pathAndQuery;
+        var baseSegments = window.BotNexus.normalizeGuidePath(currentFile || "").split("/");
+        baseSegments.pop();
+        var resolvedFile = window.BotNexus.normalizeGuidePath(baseSegments.concat(path.split("/")).join("/"));
+        var sectionId = pageByFile[resolvedFile.toLowerCase()];
+
+        return sectionId
+            ? { href: "/guide/" + encodeURIComponent(sectionId) + fragment, external: false }
+            : { href: href, external: true };
+    });
+};
+
+window.BotNexus.normalizeGuidePath = function (path) {
+    var segments = String(path || "").replace(/\\/g, "/").split("/");
+    var normalized = [];
+    segments.forEach(function (segment) {
+        if (!segment || segment === ".") {
+            return;
+        }
+        if (segment === "..") {
+            normalized.pop();
+            return;
+        }
+        normalized.push(segment);
+    });
+    return normalized.join("/");
+};
+
+window.BotNexus.renderMarkdownWithLinks = function (markdown, resolveLink) {
     var markedAvailable = typeof marked !== 'undefined';
     var purifyAvailable = typeof DOMPurify !== 'undefined';
 
@@ -47,8 +107,14 @@ window.BotNexus.renderMarkdown = function (markdown) {
     var renderer = new marked.Renderer();
     var linkRenderer = renderer.link.bind(renderer);
     renderer.link = function (token) {
-        var html = linkRenderer(token);
-        return html.replace(/^<a /, '<a target="_blank" rel="noopener noreferrer" ');
+        var resolution = resolveLink
+            ? resolveLink(token.href)
+            : { href: token.href, external: true };
+        var resolvedToken = Object.assign({}, token, { href: resolution.href });
+        var html = linkRenderer(resolvedToken);
+        return resolution.external
+            ? html.replace(/^<a /, '<a target="_blank" rel="noopener noreferrer" ')
+            : html;
     };
 
     var parsed = marked.parse(markdown, { breaks: true, gfm: true, renderer: renderer });

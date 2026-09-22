@@ -285,9 +285,14 @@
             if (selectionGeneration != _selectionGeneration)
                 return;
 
-            // Same sanitising renderer the chat transcript uses. It fails closed: with marked or
-            // DOMPurify missing it returns escaped text rather than raw HTML.
-            var html = await JS.InvokeAsync<string>("BotNexus.renderMarkdown", markdown);
+            // Guide links need the current source path and complete index to resolve relative
+            // documents into in-app routes. The renderer still shares the chat sanitization path
+            // and fails closed when marked or DOMPurify is unavailable.
+            var html = await JS.InvokeAsync<string>(
+                "BotNexus.renderGuideMarkdown",
+                markdown,
+                resolvedPage.File,
+                AllPages().Select(page => new GuideLinkTarget(page.Id, page.File)).ToArray());
             if (selectionGeneration != _selectionGeneration)
                 return;
 
@@ -317,6 +322,10 @@
         _disposeCancellation.Cancel();
         _disposeCancellation.Dispose();
     }
+
+    private sealed record GuideLinkTarget(
+        [property: JsonPropertyName("id")] string Id,
+        [property: JsonPropertyName("file")] string File);
 
     private sealed class GuideIndex
     {

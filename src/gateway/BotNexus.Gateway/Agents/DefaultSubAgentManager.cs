@@ -241,6 +241,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         SessionId childSessionId,
         AgentId childAgentId,
         string? name,
+        AdmissionResources resources,
         CancellationToken ct)
     {
         var childConversationId = ConversationId.Create();
@@ -278,8 +279,13 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         if (_sessionStore is not null)
         {
-            var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false)
-                ?? await _sessionStore.GetOrCreateAsync(childSessionId, childAgentId, ct).ConfigureAwait(false);
+            var childSession = await _sessionStore.GetAsync(childSessionId, ct).ConfigureAwait(false);
+            if (childSession is null)
+            {
+                childSession = await _sessionStore.GetOrCreateAsync(childSessionId, childAgentId, ct).ConfigureAwait(false);
+                resources.SessionCreated = true;
+            }
+
             childSession.ConversationId = childConversationId;
             childSession.SessionType = SessionType.AgentSubAgent;
             await _sessionStore.SaveAsync(childSession, ct).ConfigureAwait(false);
@@ -384,131 +390,163 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             }
         }
 
-        if (!_registry.Contains(childAgentId))
-        {
-            _registry.Register(baseDescriptor with
-            {
-                AgentId = childAgentId,
-                DisplayName = $"{baseDescriptor.DisplayName} ({archetype.Value})",
-                Kind = AgentKind.SubAgent,
-                // #2136: apply the archetype/customisation tool restriction and any system-prompt
-                // override onto the parent clone. A null toolIds means "inherit the parent's tools".
-                ToolIds = toolIds is { Count: > 0 } ? toolIds : baseDescriptor.ToolIds,
-                SystemPrompt = string.IsNullOrWhiteSpace(plan.SystemPromptOverride)
-                    ? baseDescriptor.SystemPrompt
-                    : plan.SystemPromptOverride,
-                // #2647: the authoritative state the child dispatches against. Sourced from the single
-                // resolution above - the same values the SubAgentInfo record reports.
-                ModelId = effectiveModel ?? baseDescriptor.ModelId,
-                ApiProvider = effectiveProvider,
-                FileAccess = childFileAccess ?? baseFileAccess
-            });
-        }
+        var resources = new AdmissionResources();
+        IAgentHandle? handle = null;
+        ConversationId? childConversationId = null;
+        var timeoutSeconds = 0;
+        var maxTurns = 0;
+        SubAgentBudgetClamp? budgetClamp = null;
+        SubAgentInfo? info = null;
+        SubAgentRecord? record = null;
 
-        // Register first: the existing registry liveness probe must own the directory as soon as
-        // it exists. Provision once here, before any handle/tool exposure; path resolution and
-        // tool retries must never resurrect a terminal workspace. Custom workspace managers keep
-        // their existing lifecycle; this is the file-backed production manager's admission seam.
-        if (_workspaceManager is FileAgentWorkspaceManager fileWorkspaces)
+        try
         {
-            try
+            if (!_registry.Contains(childAgentId))
             {
+                _registry.Register(baseDescriptor with
+                {
+                    AgentId = childAgentId,
+                    DisplayName = $"{baseDescriptor.DisplayName} ({archetype.Value})",
+                    Kind = AgentKind.SubAgent,
+                    // #2136: apply the archetype/customisation tool restriction and any system-prompt
+                    // override onto the parent clone. A null toolIds means "inherit the parent's tools".
+                    ToolIds = toolIds is { Count: > 0 } ? toolIds : baseDescriptor.ToolIds,
+                    SystemPrompt = string.IsNullOrWhiteSpace(plan.SystemPromptOverride)
+                        ? baseDescriptor.SystemPrompt
+                        : plan.SystemPromptOverride,
+                    // #2647: the authoritative state the child dispatches against. Sourced from the single
+                    // resolution above - the same values the SubAgentInfo record reports.
+                    ModelId = effectiveModel ?? baseDescriptor.ModelId,
+                    ApiProvider = effectiveProvider,
+                    FileAccess = childFileAccess ?? baseFileAccess
+                });
+                resources.DescriptorRegistered = true;
+            }
+
+            // Register first: the existing registry liveness probe must own the directory as soon as
+            // it exists. Provision once here, before any handle/tool exposure; path resolution and
+            // tool retries must never resurrect a terminal workspace. Custom workspace managers keep
+            // their existing lifecycle; this is the file-backed production manager's admission seam.
+            if (_workspaceManager is FileAgentWorkspaceManager fileWorkspaces)
+            {
+                var workspaceExisted = Directory.Exists(fileWorkspaces.GetWorkspacePath(childAgentId.Value));
                 fileWorkspaces.ProvisionSubAgentWorkspace(childAgentId.Value);
+                resources.WorkspaceProvisioned = !workspaceExisted;
             }
-            catch
-            {
-                _registry.Unregister(childAgentId);
-                throw;
-            }
-        }
 
-        // Materialize and persist the child conversation + session before handle creation. Handle
-        // creation can reach the model immediately, so this is the last safe point to guarantee that
-        // every later tool write-ahead has a durable parent row (#2113). Since #2338 the child owns
-        // its own conversation rather than inheriting the parent's.
-        var childConversationId = await MintChildConversationAsync(request, childSessionId, childAgentId, name, ct).ConfigureAwait(false);
-
-        // #2847: install the inherited deny-list BEFORE the handle exists. This used to sit 67
-        // lines lower, after record construction and an awaited SaveSubAgentSessionAsync - so the
-        // child agent had a live runtime handle, and the comment directly above says handle
-        // creation "can reach the model immediately", while carrying no inherited restrictions at
-        // all. The gap was bounded by disk I/O rather than instruction count, making it schedulable
-        // rather than theoretical, and a sub-agent spawned by a restricted parent could invoke a
-        // parent-denied tool inside it. Tool restriction is the control that stops a restricted
-        // agent escalating by spawning an unrestricted child, so it must be bound to the execution
-        // identity at creation, not applied afterwards.
-        //
-        // Registration is UNCONDITIONAL, including for an empty list. The previous
-        // `if (count > 0)` guard left the child's policy slot absent rather than explicitly empty,
-        // which is a different state from "deliberately unrestricted" and was asymmetric with
-        // RemoveDynamicDenyList, which always removes. Always writing the slot means the child's
-        // authority is a decision that was recorded, not an absence that happens to read the same.
-        // ParentAgentId is a required non-nullable AgentId on the request, so it needs no guard;
-        // only the optional policy provider does. (.Value here is AgentId's underlying string, not
-        // a Nullable unwrap - the same accessor the original registration used.)
-        if (_policyProvider is not null)
-        {
-            _policyProvider.SetDynamicDenyList(
+            // Materialize and persist the child conversation + session before handle creation. Handle
+            // creation can reach the model immediately, so this is the last safe point to guarantee that
+            // every later tool write-ahead has a durable parent row (#2113). Since #2338 the child owns
+            // its own conversation rather than inheriting the parent's.
+            childConversationId = await MintChildConversationAsync(
+                request,
+                childSessionId,
                 childAgentId,
-                _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value));
+                name,
+                resources,
+                ct).ConfigureAwait(false);
+
+            // #2847: install the inherited deny-list BEFORE the handle exists. This used to sit 67
+            // lines lower, after record construction and an awaited SaveSubAgentSessionAsync - so the
+            // child agent had a live runtime handle, and the comment directly above says handle
+            // creation "can reach the model immediately", while carrying no inherited restrictions at
+            // all. The gap was bounded by disk I/O rather than instruction count, making it schedulable
+            // rather than theoretical, and a sub-agent spawned by a restricted parent could invoke a
+            // parent-denied tool inside it. Tool restriction is the control that stops a restricted
+            // agent escalating by spawning an unrestricted child, so it must be bound to the execution
+            // identity at creation, not applied afterwards.
+            //
+            // Registration is UNCONDITIONAL, including for an empty list. The previous
+            // `if (count > 0)` guard left the child's policy slot absent rather than explicitly empty,
+            // which is a different state from "deliberately unrestricted" and was asymmetric with
+            // RemoveDynamicDenyList, which always removes. Always writing the slot means the child's
+            // authority is a decision that was recorded, not an absence that happens to read the same.
+            // ParentAgentId is a required non-nullable AgentId on the request, so it needs no guard;
+            // only the optional policy provider does. (.Value here is AgentId's underlying string, not
+            // a Nullable unwrap - the same accessor the original registration used.)
+            if (_policyProvider is not null && resources.DescriptorRegistered)
+            {
+                _policyProvider.SetDynamicDenyList(
+                    childAgentId,
+                    _policyProvider.GetEffectiveDenyList(request.ParentAgentId.Value));
+                resources.PolicyRegistered = true;
+            }
+
+            handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
+            resources.HandleCreated = true;
+
+            // Clamp the agent-supplied timeout to the configured ceiling. Depth and concurrency are
+            // already bounded above; without this the timeout (the only budget wired to a real
+            // cancellation token) could be set arbitrarily high, letting a background sub-agent run
+            // effectively forever. Mirrors the runaway-cost guard the agent_converse tool applies.
+            timeoutSeconds = budgetPolicy.ResolveTimeoutSeconds(request.TimeoutSeconds);
+
+            // Clamp the requested turn budget too, then enforce it: the resolved value is threaded
+            // into the run alongside timeoutSeconds and bounds the live per-turn counter, so a run
+            // that exceeds it terminates as BudgetExhausted (#2656). The ceiling here remains the
+            // request-shape guard it has always been (#1344).
+            maxTurns = budgetPolicy.ResolveMaxTurns(request.MaxTurns);
+
+            // #2789: when either budget was actually reduced, surface the reduction on the record the
+            // caller reads. Resolved BEFORE the SubAgentInfo is built and reusing the very locals that
+            // are threaded into RunSubAgentAsync below, so the disclosed effective values cannot drift
+            // from the budget the run is given. Null when nothing was clamped - the disclosure has to
+            // be a signal, not a field that is always there and therefore always ignored.
+            budgetClamp = request.TimeoutSeconds > timeoutSeconds || request.MaxTurns > maxTurns
+                ? new SubAgentBudgetClamp(
+                    budgetPolicy.Tier,
+                    request.MaxTurns,
+                    maxTurns,
+                    request.TimeoutSeconds,
+                    timeoutSeconds)
+                : null;
+
+            info = new SubAgentInfo
+            {
+                SubAgentId = subAgentId,
+                ParentSessionId = request.ParentSessionId,
+                ChildSessionId = childSessionId,
+                ChildConversationId = childConversationId.Value,
+                Name = name,
+                ParentAgentId = request.ParentAgentId.Value,
+                ChildAgentId = childAgentId.Value,
+                Task = request.Task,
+                // #2647: reported value is the SAME single resolution written onto the descriptor above.
+                Model = effectiveModel,
+                Archetype = archetype,
+                Status = SubAgentStatus.Running,
+                StartedAt = DateTimeOffset.UtcNow,
+                TurnsUsed = 0,
+                // #2789: null unless a ceiling actually reduced the request.
+                BudgetClamp = budgetClamp
+            };
+
+            var admissionRecord = new SubAgentRecord(info, request.ParentAgentId, childAgentId);
+            if (!_records.TryAdd(subAgentId, admissionRecord))
+                throw new InvalidOperationException($"Sub-agent '{subAgentId}' already exists.");
+
+            record = admissionRecord;
+        }
+        catch
+        {
+            await RollbackAdmissionAsync(
+                childAgentId,
+                childSessionId,
+                resources).ConfigureAwait(false);
+            throw;
         }
 
-        var handle = await _supervisor.GetOrCreateAsync(childAgentId, childSessionId, ct);
-
-        // Clamp the agent-supplied timeout to the configured ceiling. Depth and concurrency are
-        // already bounded above; without this the timeout (the only budget wired to a real
-        // cancellation token) could be set arbitrarily high, letting a background sub-agent run
-        // effectively forever. Mirrors the runaway-cost guard the agent_converse tool applies.
-        var timeoutSeconds = budgetPolicy.ResolveTimeoutSeconds(request.TimeoutSeconds);
-
-        // Clamp the requested turn budget too, then enforce it: the resolved value is threaded
-        // into the run alongside timeoutSeconds and bounds the live per-turn counter, so a run
-        // that exceeds it terminates as BudgetExhausted (#2656). The ceiling here remains the
-        // request-shape guard it has always been (#1344).
-        var maxTurns = budgetPolicy.ResolveMaxTurns(request.MaxTurns);
-
-        // #2789: when either budget was actually reduced, surface the reduction on the record the
-        // caller reads. Resolved BEFORE the SubAgentInfo is built and reusing the very locals that
-        // are threaded into RunSubAgentAsync below, so the disclosed effective values cannot drift
-        // from the budget the run is given. Null when nothing was clamped - the disclosure has to
-        // be a signal, not a field that is always there and therefore always ignored.
-        var budgetClamp = request.TimeoutSeconds > timeoutSeconds || request.MaxTurns > maxTurns
-            ? new SubAgentBudgetClamp(
-                budgetPolicy.Tier,
-                request.MaxTurns,
-                maxTurns,
-                request.TimeoutSeconds,
-                timeoutSeconds)
-            : null;
-
-        var info = new SubAgentInfo
-        {
-            SubAgentId = subAgentId,
-            ParentSessionId = request.ParentSessionId,
-            ChildSessionId = childSessionId,
-            ChildConversationId = childConversationId,
-            Name = name,
-            ParentAgentId = request.ParentAgentId.Value,
-            ChildAgentId = childAgentId.Value,
-            Task = request.Task,
-            // #2647: reported value is the SAME single resolution written onto the descriptor above.
-            Model = effectiveModel,
-            Archetype = archetype,
-            Status = SubAgentStatus.Running,
-            StartedAt = DateTimeOffset.UtcNow,
-            TurnsUsed = 0,
-            // #2789: null unless a ceiling actually reduced the request.
-            BudgetClamp = budgetClamp
-        };
-
-        var record = new SubAgentRecord(info, request.ParentAgentId, childAgentId);
-        if (!_records.TryAdd(subAgentId, record))
-            throw new InvalidOperationException($"Sub-agent '{subAgentId}' already exists.");
+        var admittedHandle = handle
+            ?? throw new InvalidOperationException($"Sub-agent '{subAgentId}' was admitted without a runtime handle.");
+        var admittedRecord = record
+            ?? throw new InvalidOperationException($"Sub-agent '{subAgentId}' was admitted without a management record.");
+        var admittedInfo = info
+            ?? throw new InvalidOperationException($"Sub-agent '{subAgentId}' was admitted without run metadata.");
 
         // Persist the sub-agent session row to sessions.db (best-effort; non-SQLite stores no-op).
         if (_sessionStore is not null)
         {
-            try { await _sessionStore.SaveSubAgentSessionAsync(info, ct).ConfigureAwait(false); }
+            try { await _sessionStore.SaveSubAgentSessionAsync(admittedInfo, ct).ConfigureAwait(false); }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to persist sub-agent session row for '{SubAgentId}'.", subAgentId);
@@ -538,9 +576,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // classification tests flaky on a loaded CI runner (#2979). A test asserting "empty
         // response before the deadline" must not have to WIN A RACE against a real 1s timer.
         var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds), _timeProvider);
-        record.TimeoutCts = timeoutCts;
+        admittedRecord.TimeoutCts = timeoutCts;
 
-        _ = Task.Run(() => RunSubAgentAsync(subAgentId, handle, request.Task, timeoutSeconds, maxTurns), CancellationToken.None);
+        _ = Task.Run(() => RunSubAgentAsync(subAgentId, admittedHandle, request.Task, timeoutSeconds, maxTurns), CancellationToken.None);
 
         _logger.LogInformation(
             "Spawned sub-agent '{SubAgentId}' for parent session '{ParentSessionId}' in child session '{ChildSessionId}'.",
@@ -551,7 +589,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         await PublishLifecycleActivityAsync(
             GatewayActivityType.SubAgentSpawned,
             "subagent_spawned",
-            info,
+            admittedInfo,
             request.ParentAgentId.Value,
             $"Sub-agent '{subAgentId}' spawned.");
 
@@ -562,7 +600,82 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // Opportunistically age out finished records so the registry stays bounded without a timer.
         ReapCompletedRecords();
 
-        return info;
+        return admittedInfo;
+    }
+
+    private async Task RollbackAdmissionAsync(
+        AgentId childAgentId,
+        SessionId childSessionId,
+        AdmissionResources resources)
+    {
+        if (resources.HandleCreated)
+        {
+            try
+            {
+                await _supervisor.StopAsync(childAgentId, childSessionId, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed stopping child agent '{ChildAgentId}' while rolling back sub-agent admission.", childAgentId);
+            }
+        }
+
+        if (resources.PolicyRegistered)
+        {
+            try
+            {
+                _policyProvider?.RemoveDynamicDenyList(childAgentId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed removing the dynamic policy for child agent '{ChildAgentId}' while rolling back sub-agent admission.", childAgentId);
+            }
+        }
+
+        if (resources.SessionCreated && _sessionStore is not null)
+        {
+            try
+            {
+                await _sessionStore.DeleteAsync(childSessionId, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed deleting child session '{ChildSessionId}' while rolling back sub-agent admission.", childSessionId);
+            }
+        }
+
+        if (resources.WorkspaceProvisioned && _workspaceManager is not null)
+        {
+            try
+            {
+                _workspaceManager.TryCleanupWorkspace(childAgentId.Value);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed cleaning child workspace for agent '{ChildAgentId}' while rolling back sub-agent admission.", childAgentId);
+            }
+        }
+
+        if (resources.DescriptorRegistered)
+        {
+            try
+            {
+                _registry.Unregister(childAgentId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed unregistering child agent '{ChildAgentId}' while rolling back sub-agent admission.", childAgentId);
+            }
+        }
+    }
+
+    private sealed class AdmissionResources
+    {
+        public bool DescriptorRegistered { get; set; }
+        public bool WorkspaceProvisioned { get; set; }
+        public bool SessionCreated { get; set; }
+        public bool PolicyRegistered { get; set; }
+        public bool HandleCreated { get; set; }
     }
 
     /// <summary>

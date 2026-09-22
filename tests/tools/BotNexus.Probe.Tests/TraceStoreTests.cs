@@ -28,7 +28,7 @@ public sealed class TraceStoreTests
         var traces = store.GetTraces(10);
         traces.Count().ShouldBe(2);
         traces.ShouldNotContain(first);
-        traces.ShouldContain([second, third]);
+        traces.ShouldBe([second, third], ignoreOrder: true);
     }
 
     [Fact]
@@ -40,7 +40,7 @@ public sealed class TraceStoreTests
 
         store.AddSpans([older, newer]);
 
-        store.GetTraces(2).Select(s => s.SpanId).Should().Equal("newer", "older");
+        store.GetTraces(2).Select(s => s.SpanId).ShouldBe(["newer", "older"]);
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public sealed class TraceStoreTests
 
         var trace = store.GetTraceById("trace-1");
 
-        trace.Select(s => s.SpanId).Should().Equal("s1", "s2");
+        trace.Select(s => s.SpanId).ShouldBe(["s1", "s2"]);
     }
 
     [Fact]

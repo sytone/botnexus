@@ -79,7 +79,7 @@ not-json
 
         var docs = await CollectDocumentsAsync(_reader.ReadAsync(temp.File("paging.jsonl"), skip: 1, take: 2));
 
-        docs.Select(d => d.RootElement.GetProperty("n").GetInt32()).Should().Equal(2, 3);
+        docs.Select(d => d.RootElement.GetProperty("n").GetInt32()).ShouldBe([2, 3]);
     }
 
     [Fact]

@@ -141,6 +141,43 @@ public class AgentLoopRunnerEdgeCaseTests
     }
 
     [Fact]
+    public async Task RunAsync_CopilotResponsesInvalidRequestBodyOverflow_CompactsAndRetries()
+    {
+        var attempts = 0;
+        using var _ = RegisterProvider("copilot-responses-overflow-test", (_, _, _) =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1)
+            {
+                throw new InvalidOperationException(
+                    "invalid_request_body: Your input exceeds the context window of this model. Please adjust your input and try again.");
+            }
+
+            return TestStreamFactory.CreateTextResponse("recovered");
+        });
+
+        var diagnostics = new List<string>();
+        var config = CreateConfig("copilot-responses-overflow-test") with
+        {
+            OnDiagnostic = diagnostics.Add
+        };
+        var context = new AgentContext(
+            null,
+            Enumerable.Range(0, 20).Select(index => (AgentMessage)new AgentUserMessage($"message-{index}")).ToList(),
+            []);
+
+        var result = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("trigger")],
+            context,
+            config,
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        attempts.ShouldBe(2);
+        result.OfType<AssistantAgentMessage>().ShouldContain(message => message.Content == "recovered");
+        diagnostics.ShouldContain(message => message.Contains("Reactive lossy context-overflow truncation", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task RunAsync_ContextOverflow_OnlyRecoversOnce()
     {
         var attempts = 0;

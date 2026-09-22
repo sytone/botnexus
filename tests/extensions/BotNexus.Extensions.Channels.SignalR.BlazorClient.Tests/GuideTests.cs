@@ -190,13 +190,18 @@ public sealed class GuideTests : IDisposable
     }
 
     [Fact]
-    public void Route_parameter_selects_requested_page_through_sanitized_renderer()
+    public void Route_parameter_selects_requested_page_through_guide_renderer_with_link_context()
     {
         var cut = _ctx.Render<Guide>(parameters => parameters.Add(component => component.SectionId, "beta"));
 
         cut.Find("[data-testid='guide-nav-beta']").ClassList.ShouldContain("active");
         cut.Find("[data-testid='guide-content']").InnerHtml.ShouldContain("<h1>Beta</h1>");
         _js.Invocations.ShouldContain("# Beta");
+        _js.LastIdentifier.ShouldBe("BotNexus.renderGuideMarkdown");
+        var arguments = _js.LastArguments;
+        arguments.ShouldNotBeNull();
+        arguments.Length.ShouldBe(3);
+        arguments[1].ShouldBe("beta.md");
     }
 
     [Fact]
@@ -326,6 +331,8 @@ public sealed class GuideTests : IDisposable
         private readonly ConcurrentDictionary<string, TaskCompletionSource> _invoked = new(StringComparer.Ordinal);
 
         public ConcurrentBag<string> Invocations { get; } = [];
+        public string? LastIdentifier { get; private set; }
+        public object?[]? LastArguments { get; private set; }
 
         public void SetRendered(string markdown, string html) => _results[markdown] = html;
 
@@ -354,8 +361,9 @@ public sealed class GuideTests : IDisposable
             object?[]? args,
             CancellationToken cancellationToken)
         {
-            identifier.ShouldBe("BotNexus.renderMarkdown");
-            var markdown = args?.ShouldHaveSingleItem()?.ToString() ?? string.Empty;
+            LastIdentifier = identifier;
+            LastArguments = args;
+            var markdown = args is { Length: > 0 } ? args[0]?.ToString() ?? string.Empty : string.Empty;
             Invocations.Add(markdown);
             _invoked.GetOrAdd(markdown, _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
 

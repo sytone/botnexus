@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Diagnostics;
+using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Agent.Core.Types;
@@ -29,6 +30,7 @@ public sealed record AgentStartEvent(DateTimeOffset Timestamp) : AgentEvent(Agen
 /// </summary>
 /// <param name="Messages">The new messages produced during this run.</param>
 /// <param name="Timestamp">The event timestamp.</param>
+/// <param name="Completion">The authoritative completion, parked, incomplete, or failed disposition.</param>
 /// <remarks>
 /// <para>
 /// The final event for a run. The agent becomes idle after all listeners settle.
@@ -38,8 +40,15 @@ public sealed record AgentStartEvent(DateTimeOffset Timestamp) : AgentEvent(Agen
 /// Emitted after all turns and tool executions complete, or after an error/abort.
 /// </para>
 /// </remarks>
-public sealed record AgentEndEvent(IReadOnlyList<AgentMessage> Messages, RunMetrics? Metrics, DateTimeOffset Timestamp)
-    : AgentEvent(AgentEventType.AgentEnd, Timestamp);
+public sealed record AgentEndEvent(
+    IReadOnlyList<AgentMessage> Messages,
+    RunMetrics? Metrics,
+    DateTimeOffset Timestamp,
+    RunCompletionResult? CompletionResult = null)
+    : AgentEvent(AgentEventType.AgentEnd, Timestamp)
+{
+    public RunCompletionResult Completion { get; init; } = CompletionResult ?? RunCompletionResult.Completed;
+}
 
 /// <summary>
 /// Raised when a new turn starts.

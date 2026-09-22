@@ -20,7 +20,7 @@ public sealed class SessionDbReaderTests
 
         var detail = await reader.GetSessionAsync("s-1");
         detail.ShouldNotBeNull();
-        detail!.ChannelType.ShouldBe("signalr");
+        detail.ChannelType.ShouldBe("signalr");
 
         var history = await reader.GetHistoryAsync("s-1");
         history.Count().ShouldBe(2);
@@ -28,7 +28,7 @@ public sealed class SessionDbReaderTests
 
         var matches = await reader.SearchHistoryAsync("world", "s-1");
         matches.ShouldHaveSingleItem();
-        matches[0].Content.ShouldContain("world");
+        matches[0].Content.ShouldBe("hello world");
     }
 
     [Fact]

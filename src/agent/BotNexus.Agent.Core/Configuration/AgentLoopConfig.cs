@@ -49,11 +49,11 @@ namespace BotNexus.Agent.Core.Configuration;
 /// lack a backing tool call, and a <see cref="BotNexus.Agent.Core.Types.ClaimAuditEvent"/> is emitted on detection.
 /// </param>
 /// <param name="MaybeCompactAsync">
-/// Optional best-effort auto-compaction hook (#1710). When set it is awaited at the top of each
-/// outer-loop iteration (after a turn settles, before the next steering drain) so a single long
-/// dispatch -- cron or an autonomous follow-up loop -- re-checks the compaction threshold instead
-/// of growing the transcript unbounded until provider overflow. Failures are swallowed and the
-/// loop continues. Null means no mid-loop re-check (prior behaviour).
+/// Optional best-effort auto-compaction hook (#1710/#4302). When set it is awaited before every
+/// provider turn, after any preceding tool batch and its results have completed, so both inner tool
+/// chains and outer follow-up iterations re-check the compaction threshold before growing further.
+/// A returned context replaces the loop's live snapshot. Failures are diagnosed and the loop
+/// continues to its bounded reactive overflow fallback. Null means no mid-loop re-check.
 /// </param>
 /// <param name="OnDiagnostic">
 /// Optional non-fatal diagnostic sink. Used to surface hook-budget breaches (#2518) so a slow or
@@ -83,6 +83,15 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="SanitizeToolResultText">
 /// Optional host-owned sanitizer applied to finalized generic tool text after replacement hooks
 /// and before central budgeting and continuation retention (#4096).
+/// </param>
+/// <param name="EvaluateRunCompletion">
+/// Optional authoritative host evaluation invoked before a normal run end. It may accept completion,
+/// park the run with a structured stop disposition, or require another bounded continuation turn.
+/// Null preserves ordinary simple-run behavior.
+/// </param>
+/// <param name="MaxCompletionContinuations">
+/// Maximum automatic turns added when <paramref name="EvaluateRunCompletion"/> reports actionable
+/// work. Exhausting the bound records an incomplete outcome rather than successful completion.
 /// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
@@ -115,7 +124,9 @@ public record AgentLoopConfig(
     BeforeToolAuditDelegate? BeforeToolAudit = null,
     ToolCallDispositionDelegate? OnToolCallDisposition = null,
     Func<string, string>? SanitizeToolResultText = null,
-    BotNexus.Agent.Core.Tools.SatelliteToolExecutionOptions? SatelliteToolExecution = null)
+    BotNexus.Agent.Core.Tools.SatelliteToolExecutionOptions? SatelliteToolExecution = null,
+    EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
+    int MaxCompletionContinuations = 2)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).
@@ -147,4 +158,7 @@ public record AgentLoopConfig(
     /// the default because "no retry ceiling" is never a safe outcome.
     /// </summary>
     public int EffectiveMaxToolOutputBytes => MaxToolOutputBytes ?? ToolOutputBudget.DefaultMaxBytes;
+
+    /// <summary>The non-negative automatic continuation bound.</summary>
+    public int EffectiveMaxCompletionContinuations => Math.Max(0, MaxCompletionContinuations);
 }

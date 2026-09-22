@@ -7,6 +7,7 @@ using BotNexus.Agent.Core;
 using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Resolution;
 using BotNexus.Cron;
@@ -604,6 +605,22 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             _logger.LogDebug(ex, "Could not resolve auth profile id for provider '{Provider}'.", model.Provider);
         }
 
+        BotNexus.Agent.Core.Loop.EvaluateRunCompletionDelegate? evaluateRunCompletion = null;
+        var completionConversationStore = _serviceProvider.GetService<IConversationStore>();
+        var completionConversationId = completionConversationStore is null
+            ? null
+            : await GetConversationIdAsync(completionConversationStore, sessionStore).ConfigureAwait(false);
+        if (completionConversationStore is not null && completionConversationId is not null)
+        {
+            evaluateRunCompletion = async completionCancellationToken =>
+            {
+                var conversation = await completionConversationStore
+                    .GetAsync(completionConversationId.Value, completionCancellationToken)
+                    .ConfigureAwait(false);
+                return TodoTool.EvaluateRunCompletion(conversation);
+            };
+        }
+
         var options = new AgentOptions(
             InitialState: new AgentInitialState(
                 SystemPrompt: resumeSystemPrompt,
@@ -657,6 +674,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             ToolTimeout: ResolveToolTimeout(descriptor),
             ClaimAudit: ResolveClaimAuditOptions(platformConfig?.Value.Gateway?.ClaimAudit),
             MaybeCompactAsync: maybeCompactAsync,
+            EvaluateRunCompletion: evaluateRunCompletion,
             // #3015: the exhaustion lane's memory. The registry is a gateway singleton so a
             // suspension recorded on one turn is still visible on the next -- pre-#3015 all retry
             // state lived in a local attempt counter and died with the call, which is precisely why
@@ -1308,7 +1326,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         try
         {
             var messages = await _agent.PromptAsync(message, cancellationToken);
-            var response = BuildResponse(messages);
+            var response = BuildResponse(messages, _agent.State.LastCompletion);
 
             activity?.SetStatus(ActivityStatusCode.Ok);
             return response;
@@ -1346,7 +1364,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         try
         {
             var messages = await _agent.PromptAsync(message.ToCore(), cancellationToken);
-            var response = BuildResponse(messages);
+            var response = BuildResponse(messages, _agent.State.LastCompletion);
 
             activity?.SetStatus(ActivityStatusCode.Ok);
             return response;
@@ -1379,7 +1397,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// such as the cron trigger can persist a tool timeline with parity to the interactive streaming path
     /// (issue #2118). Tool calls are surfaced in execution order.
     /// </summary>
-    private static AgentResponse BuildResponse(IReadOnlyList<AgentMessage> messages)
+    private static AgentResponse BuildResponse(
+        IReadOnlyList<AgentMessage> messages,
+        RunCompletionResult? completion)
     {
         var lastAssistant = messages.OfType<AssistantAgentMessage>().LastOrDefault();
         return new AgentResponse
@@ -1394,9 +1414,21 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             // said little. Gated strictly on StopReason.Error for the same reason MapTurnError is:
             // an aborted turn also carries an ErrorMessage, and keying on a non-empty message alone
             // would promote every ordinary cancellation into a fault.
-            TerminalError = DescribeTerminalError(lastAssistant)
+            TerminalError = DescribeTerminalError(lastAssistant),
+            Completion = completion is null ? null : ProjectCompletion(completion)
         };
     }
+
+    private static RunCompletionSignal ProjectCompletion(RunCompletionResult completion)
+        => new(
+            completion.Status.ToString(),
+            completion.OpenItemIds,
+            completion.StopReason?.ToString(),
+            completion.Detail,
+            completion.Evidence,
+            completion.ContinuationOwner,
+            completion.WakeCondition,
+            completion.ContinuationAttempts);
 
     /// <summary>
     /// Returns the provider error to report for a run's terminal assistant message, or
@@ -1483,7 +1515,10 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             RunUsage = AggregateRunUsage(snapshot),
             TurnCount = snapshot.OfType<AssistantAgentMessage>().Count(),
             ToolCalls = BuildToolCalls(snapshot, _agent.State.PendingToolCalls),
-            TerminalError = DescribeTerminalError(lastAssistant)
+            TerminalError = DescribeTerminalError(lastAssistant),
+            Completion = _agent.State.LastCompletion is { } completion
+                ? ProjectCompletion(completion)
+                : null
         };
         return new AgentPromptInterruptedException(partial, oce.CancellationToken);
     }
@@ -1705,8 +1740,13 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             // tool-end -> next message-start) that individual MessageStart/ToolStart events leave open.
             AgentStartEvent
                 => new AgentStreamEvent { Type = AgentStreamEventType.RunStarted, MessageId = messageId },
-            AgentEndEvent
-                => new AgentStreamEvent { Type = AgentStreamEventType.RunEnded, MessageId = messageId },
+            AgentEndEvent end
+                => new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.RunEnded,
+                    MessageId = messageId,
+                    Completion = ProjectCompletion(end.Completion)
+                },
             MessageStartEvent start when start.Message is AssistantAgentMessage
                 => new AgentStreamEvent { Type = AgentStreamEventType.MessageStart, MessageId = messageId },
             MessageUpdateEvent update when update.ContentDelta is not null => update.IsThinking

@@ -1,6 +1,8 @@
+using System.Text.Json;
 using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tests.TestUtils;
+using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -13,14 +15,37 @@ using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 /// Tests for the optional mid-loop auto-compaction hook (#1710). A single long
 /// dispatch (cron/autonomous follow-up loop) used to grow unbounded because
 /// ShouldCompact ran only pre-turn at the gateway; the agent loop never re-checked
-/// between outer iterations. The fix adds an optional best-effort
-/// <see cref="AgentLoopConfig.MaybeCompactAsync"/> awaited at the top of the outer
-/// loop, so a long dispatch gets a compaction opportunity between turns and the
-/// loop continues even if the hook throws.
+/// between provider turns. The optional best-effort
+/// <see cref="AgentLoopConfig.MaybeCompactAsync"/> is awaited after completed tool
+/// results and before every provider call, so inner tool chains and outer follow-ups
+/// share one safe compaction boundary and the loop continues if the hook throws.
 /// </summary>
 [Collection(ApiProviderRegistryCollection.Name)]
 public class AgentLoopRunnerMaybeCompactTests
 {
+    private sealed class LargeResultTool : IAgentTool
+    {
+        private static readonly JsonElement Schema = JsonDocument.Parse(
+            """{ "type": "object", "properties": {} }""").RootElement.Clone();
+
+        public string Name => "large_result";
+        public string Label => "Large result";
+        public Tool Definition => new(Name, "Returns a large bounded synthetic result", Schema);
+
+        public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(arguments);
+
+        public Task<AgentToolResult> ExecuteAsync(
+            string toolCallId,
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default,
+            AgentToolUpdateCallback? onUpdate = null)
+            => Task.FromResult(new AgentToolResult(
+                [new AgentToolContent(AgentToolContentType.Text, new string('x', 32_000))]));
+    }
+
     [Fact]
     public async Task RunAsync_InvokesMaybeCompact_AtLeastOncePerRun()
     {
@@ -43,7 +68,7 @@ public class AgentLoopRunnerMaybeCompactTests
             CancellationToken.None);
 
         compactCalls.ShouldBeGreaterThanOrEqualTo(1,
-            "the loop must re-check compaction at the top of the outer while(true)");
+            "the loop must re-check compaction before its provider turn");
     }
 
     [Fact]
@@ -80,11 +105,51 @@ public class AgentLoopRunnerMaybeCompactTests
             _ => Task.CompletedTask,
             CancellationToken.None);
 
-        // First iteration + the follow-up-driven second iteration each re-check at the
-        // top of the outer loop, so a long multi-turn dispatch cannot blow past the
-        // threshold unchecked.
+        // First iteration + the follow-up-driven second iteration each reach the shared
+        // pre-provider boundary, so a long multi-turn dispatch cannot blow past the threshold.
         compactCalls.ShouldBeGreaterThanOrEqualTo(2,
             "each outer-loop iteration must re-check compaction so a long dispatch is bounded");
+    }
+
+    [Fact]
+    public async Task RunAsync_ToolResultCrossesThreshold_CompactsBeforeNextProviderTurn()
+    {
+        const string apiId = "maybe-compact-inner-tool-turn";
+        var providerContexts = new List<Context>();
+        var providerCall = 0;
+        using var provider = RegisterProvider(apiId, (_, context, _) =>
+        {
+            providerContexts.Add(context);
+            return Interlocked.Increment(ref providerCall) == 1
+                ? TestStreamFactory.CreateToolCallResponse(("call-1", "large_result", new Dictionary<string, object?>()))
+                : TestStreamFactory.CreateTextResponse("done");
+        });
+
+        var tool = new LargeResultTool();
+        var compactChecks = 0;
+        var refreshed = new AgentContext(
+            "durable compaction summary",
+            [new AgentUserMessage("retained tail")],
+            [tool]);
+        var config = CreateConfig(apiId, _ => Task.FromResult<AgentContext?>(
+            Interlocked.Increment(ref compactChecks) == 1 ? null : refreshed));
+
+        _ = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("start below threshold")],
+            new AgentContext("original prompt", [], [tool]),
+            config,
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        compactChecks.ShouldBe(2,
+            "the loop must re-check after completed tool results and before the provider continuation");
+        providerContexts.Count.ShouldBe(2);
+        providerContexts[1].SystemPrompt.ShouldBe("durable compaction summary");
+        providerContexts[1].Messages.OfType<BotNexus.Agent.Providers.Core.Models.UserMessage>()
+            .Select(message => message.Content.Text)
+            .ShouldBe(["retained tail"]);
+        providerContexts[1].Messages.OfType<ToolResultMessage>().ShouldBeEmpty(
+            "the next provider request must use the refreshed compacted snapshot, not stale tool output");
     }
 
     [Fact]
@@ -118,13 +183,17 @@ public class AgentLoopRunnerMaybeCompactTests
     }
 
     [Fact]
-    public async Task RunAsync_WhenMaybeCompactThrows_SwallowsAndContinues()
+    public async Task RunAsync_WhenMaybeCompactThrows_DiagnosesAndContinues()
     {
         using var provider = RegisterProvider("maybe-compact-throws", (_, _, _) =>
             TestStreamFactory.CreateTextResponse("survived"));
 
+        var diagnostics = new List<string>();
         var config = CreateConfig("maybe-compact-throws",
-            _ => Task.FromException<AgentContext?>(new InvalidOperationException("compactor boom")));
+            _ => Task.FromException<AgentContext?>(new InvalidOperationException("compactor boom"))) with
+        {
+            OnDiagnostic = diagnostics.Add
+        };
         var context = new AgentContext(null, [], []);
 
         var result = await AgentLoopRunner.RunAsync(
@@ -137,6 +206,9 @@ public class AgentLoopRunnerMaybeCompactTests
         result.OfType<AssistantAgentMessage>()
             .ShouldContain(m => m.Content == "survived",
                 "a compactor failure must be best-effort: the loop continues to a normal turn");
+        diagnostics.ShouldContain(message =>
+            message.Contains("Proactive durable compaction failed", StringComparison.Ordinal)
+            && message.Contains("compactor boom", StringComparison.Ordinal));
     }
 
     [Fact]

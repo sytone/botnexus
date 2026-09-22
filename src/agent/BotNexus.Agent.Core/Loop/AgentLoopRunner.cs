@@ -132,6 +132,8 @@ public static class AgentLoopRunner
     {
         var messages = currentContext.Messages.ToList();
         IReadOnlyList<AgentMessage> followUpSeed = [];
+        var completionContinuationAttempts = 0;
+        RunCompletionDecision? lastCompletionDecision = null;
 
         // #2519: taint accumulation is scoped to the whole RUN, not to each provider turn. The
         // laundering path this closes is inherently multi-turn - the model fetches a page on one
@@ -148,18 +150,6 @@ public static class AgentLoopRunner
 
         while (true)
         {
-            // #1710: re-check auto-compaction at the top of every outer iteration. A single long
-            // dispatch (cron / autonomous follow-up loop) can blow past the token threshold mid-run;
-            // pre-turn ShouldCompact at the gateway never sees it, so the transcript grew unbounded
-            // until provider overflow. The hook compacts off-loop and resyncs history; best-effort so
-            // a compactor failure never aborts the run.
-            var refreshedContext = await MaybeCompactAsync(config, cancellationToken).ConfigureAwait(false);
-            if (refreshedContext is not null)
-            {
-                currentContext = refreshedContext;
-                messages = refreshedContext.Messages.ToList();
-            }
-
             var pendingMessages = followUpSeed.Count > 0
                 ? followUpSeed.ToList()
                 : (config.SkipInitialSteeringPoll
@@ -180,6 +170,22 @@ public static class AgentLoopRunner
             while (hasMoreToolCalls || pendingMessages.Count > 0 || deferredMessages.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                // #1710/#4302: give every provider turn a durable compaction opportunity. This
+                // boundary is after the preceding tool batch and its result persistence have fully
+                // completed, but before the next provider context is built, so it cannot split an
+                // assistant-call/tool-result pair. It also covers the first turn and outer-loop
+                // follow-ups without a second cadence path. When compaction applies, replace the
+                // live in-memory snapshot so the provider sees the summary and retained tail rather
+                // than the stale pre-compaction tool chain (#4121).
+                var refreshedContext = await MaybeCompactAsync(config, cancellationToken).ConfigureAwait(false);
+                if (refreshedContext is not null)
+                {
+                    currentContext = refreshedContext;
+                    messages = refreshedContext.Messages.ToList();
+                    config.OnDiagnostic?.Invoke(
+                        "Proactive durable compaction applied before the next provider turn; live context resynchronized.");
+                }
 
                 // Release deferred (defer-while-busy) messages only once the original run is idle:
                 // no more tool calls in flight and nothing else already queued for this turn.
@@ -274,7 +280,21 @@ public static class AgentLoopRunner
                     metrics.AddTokens(assistantMessage.Usage?.InputTokens, assistantMessage.Usage?.OutputTokens);
                     await emit(new TurnEndEvent(assistantMessage, [], DateTimeOffset.UtcNow)).ConfigureAwait(false);
                     var endTime = DateTimeOffset.UtcNow;
-                    await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), metrics.ToMetrics(endTime), endTime)).ConfigureAwait(false);
+                    var status = assistantMessage.FinishReason == StopReason.Aborted
+                        ? RunCompletionStatus.Cancelled
+                        : RunCompletionStatus.Failed;
+                    var stopReason = assistantMessage.FinishReason == StopReason.Aborted
+                        ? RunStopReason.Cancellation
+                        : (RunStopReason?)null;
+                    await emit(new AgentEndEvent(
+                        messages.Skip(runStartIndex).ToList(),
+                        metrics.ToMetrics(endTime),
+                        endTime,
+                        new RunCompletionResult(
+                            status,
+                            [],
+                            stopReason,
+                            assistantMessage.ErrorMessage))).ConfigureAwait(false);
                     return;
                 }
 
@@ -358,11 +378,74 @@ public static class AgentLoopRunner
                 continue;
             }
 
+            if (config.EvaluateRunCompletion is not null)
+            {
+                lastCompletionDecision = await config.EvaluateRunCompletion(cancellationToken).ConfigureAwait(false);
+                if (lastCompletionDecision.Status == RunCompletionStatus.Working)
+                {
+                    if (completionContinuationAttempts >= config.EffectiveMaxCompletionContinuations)
+                    {
+                        break;
+                    }
+
+                    completionContinuationAttempts++;
+                    followUpSeed = [BuildCompletionContinuation(lastCompletionDecision, completionContinuationAttempts)];
+                    continue;
+                }
+            }
+
             break;
         }
 
+        var completion = BuildCompletionResult(lastCompletionDecision, completionContinuationAttempts);
         var endTime2 = DateTimeOffset.UtcNow;
-        await emit(new AgentEndEvent(messages.Skip(runStartIndex).ToList(), metrics.ToMetrics(endTime2), endTime2)).ConfigureAwait(false);
+        await emit(new AgentEndEvent(
+            messages.Skip(runStartIndex).ToList(),
+            metrics.ToMetrics(endTime2),
+            endTime2,
+            completion)).ConfigureAwait(false);
+    }
+
+    private static BotNexus.Agent.Core.Types.UserMessage BuildCompletionContinuation(RunCompletionDecision decision, int attempt)
+    {
+        var openItems = decision.OpenItemIds.Count == 0
+            ? "(identities unavailable)"
+            : string.Join(", ", decision.OpenItemIds);
+        var detail = string.IsNullOrWhiteSpace(decision.Detail) ? string.Empty : $"\nEvaluator detail: {decision.Detail}";
+        return new BotNexus.Agent.Core.Types.UserMessage(
+            $"[Runtime completion gate: continuation {attempt}]\n" +
+            "The prior assistant response was progress, not successful completion. " +
+            "Continue the same authorized loop now. Do not repeat the progress summary.\n" +
+            $"Open actionable checklist items: {openItems}.{detail}");
+    }
+
+    private static RunCompletionResult BuildCompletionResult(
+        RunCompletionDecision? decision,
+        int continuationAttempts)
+    {
+        if (decision is null || decision.Status == RunCompletionStatus.Completed)
+        {
+            return RunCompletionResult.Completed with { ContinuationAttempts = continuationAttempts };
+        }
+
+        if (decision.Status == RunCompletionStatus.Parked)
+        {
+            return new RunCompletionResult(
+                RunCompletionStatus.Parked,
+                decision.OpenItemIds,
+                decision.StopReason,
+                decision.Detail,
+                decision.Evidence,
+                decision.ContinuationOwner,
+                decision.WakeCondition,
+                continuationAttempts);
+        }
+
+        return new RunCompletionResult(
+            RunCompletionStatus.IncompleteWithoutStopReason,
+            decision.OpenItemIds,
+            Detail: decision.Detail,
+            ContinuationAttempts: continuationAttempts);
     }
 
     /// <summary>
@@ -495,9 +578,12 @@ public static class AgentLoopRunner
         {
             throw;
         }
-        catch
+        catch (Exception ex)
         {
-            // Compaction is best-effort: a failure must never abort the run.
+            // Compaction is best-effort: a failure must never abort the run, but it must be an
+            // explicit bounded outcome rather than an invisible skipped guard (#4302).
+            config.OnDiagnostic?.Invoke(
+                $"Proactive durable compaction failed before a provider turn; continuing with the existing bounded overflow recovery. {ex.Message}");
             return null;
         }
     }
@@ -593,6 +679,8 @@ public static class AgentLoopRunner
             {
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 overflowRecovered = true;
+                config.OnDiagnostic?.Invoke(
+                    "Reactive lossy context-overflow truncation applied after provider rejection; this is not durable compaction.");
                 var compacted = CompactForOverflow(messages);
                 messages.Clear();
                 messages.AddRange(compacted);
