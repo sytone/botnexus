@@ -85,6 +85,11 @@ public static class WebhookServiceCollectionExtensions
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<AgentWebhookProvisioner>());
         services.TryAddSingleton<IAgentWebhookProvisioner>(sp => sp.GetRequiredService<AgentWebhookProvisioner>());
 
+        // Callback delivery must use the guarded primary handler so DNS validation and the
+        // numerical connection are one operation rather than a time-of-check/time-of-use pair.
+        services.AddHttpClient("WebhookCallback")
+            .ConfigurePrimaryHttpMessageHandler(() => new WebhookCallbackHttpTransport());
+
         return services;
     }
 }
