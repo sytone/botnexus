@@ -98,20 +98,11 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
     public async Task SaveAsync_RecordsBoundedHistoryMutationTagsOnExistingActivity()
     {
         DiagnosticActivity? stopped = null;
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = source => source.Name == "BotNexus.Gateway",
-            Sample = (ref ActivityCreationOptions _) => ActivitySamplingResult.AllData,
-            ActivityStopped = activity =>
-            {
-                if (activity.OperationName == "session.save")
-                    stopped = activity;
-            }
-        };
-        ActivitySource.AddActivityListener(listener);
+        var sessionId = SessionId.From("telemetry");
+        using var listener = ListenForSave(sessionId, activity => stopped = activity);
 
         var store = CreateStore();
-        var session = await CreateSavedSessionAsync(store, "telemetry");
+        var session = await CreateSavedSessionAsync(store, sessionId.Value);
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "delta" });
         await store.SaveAsync(session);
 
@@ -132,9 +123,10 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
     public async Task SaveAsync_RepeatedCapturedDelta_AcknowledgesIdentityWithoutReportingMutation()
     {
         DiagnosticActivity? stopped = null;
-        using var listener = ListenForLastSave(activity => stopped = activity);
+        var sessionId = SessionId.From("idempotent");
+        using var listener = ListenForSave(sessionId, activity => stopped = activity);
         var store = CreateStore();
-        var session = await CreateSavedSessionAsync(store, "idempotent");
+        var session = await CreateSavedSessionAsync(store, sessionId.Value);
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "once" });
         var snapshot = session.CaptureHistoryForPersistence();
         snapshot.Entries.ShouldHaveSingleItem();
@@ -162,9 +154,10 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
     public async Task SaveAsync_MixedNewAndRepeatedEntries_ReportsOnlyTheNewInsertion()
     {
         DiagnosticActivity? stopped = null;
-        using var listener = ListenForLastSave(activity => stopped = activity);
+        var sessionId = SessionId.From("mixed-retry");
+        using var listener = ListenForSave(sessionId, activity => stopped = activity);
         var store = CreateStore();
-        var session = await CreateSavedSessionAsync(store, "mixed-retry");
+        var session = await CreateSavedSessionAsync(store, sessionId.Value);
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "replayed" });
         var replaySnapshot = session.CaptureHistoryForPersistence();
         await store.SaveAsync(session);
@@ -481,7 +474,32 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
         contents.Count(content => content == "raced").ShouldBe(1);
     }
 
-    private static ActivityListener ListenForLastSave(Action<DiagnosticActivity> onStopped)
+    [Fact]
+    public void ListenForSave_OverlappingUnrelatedSave_CapturesOnlyOwnedSession()
+    {
+        var ownedSessionId = SessionId.From("owned");
+        DiagnosticActivity? stopped = null;
+        using var listener = ListenForSave(ownedSessionId, activity => stopped = activity);
+        using var source = new ActivitySource("BotNexus.Gateway");
+        using var owned = source.StartActivity("session.save");
+        owned.ShouldNotBeNull();
+        owned.SetTag("botnexus.session.id", ownedSessionId);
+        owned.SetTag("botnexus.session.history.rows.inserted", 0);
+
+        using (var unrelated = source.StartActivity("session.save"))
+        {
+            unrelated.ShouldNotBeNull();
+            unrelated.SetTag("botnexus.session.id", SessionId.From("unrelated"));
+            owned.Stop();
+        }
+
+        stopped.ShouldBeSameAs(owned);
+        if (stopped is null)
+            throw new InvalidOperationException("The owned save activity was not captured.");
+        stopped.GetTagItem("botnexus.session.history.rows.inserted").ShouldBe(0);
+    }
+
+    private static ActivityListener ListenForSave(SessionId sessionId, Action<DiagnosticActivity> onStopped)
     {
         var listener = new ActivityListener
         {
@@ -489,7 +507,8 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
             Sample = (ref ActivityCreationOptions _) => ActivitySamplingResult.AllData,
             ActivityStopped = activity =>
             {
-                if (activity.OperationName == "session.save")
+                if (activity.OperationName == "session.save"
+                    && Equals(activity.GetTagItem("botnexus.session.id"), sessionId))
                     onStopped(activity);
             }
         };
