@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <PackageReference Include="OpenTelemetry.Api" />
+    <PackageReference Include="Vogen" />
     <!--
       The AUTHORITATIVE PowerShell parser (issue #3576). PowerShellPreflight used to be a hand-rolled
       scanner precisely to avoid this dependency, but a 7-day replay showed it admitted 85 of 102
