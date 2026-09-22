@@ -57,6 +57,36 @@ window.chatScroll = {
         if (element) { element.style.height = ''; element.style.overflowY = ''; }
     },
 
+    /** Focuses and traps keyboard focus inside the expanded composer dialog. */
+    openComposerDialog: function (dialog, input) {
+        if (!dialog || typeof dialog.addEventListener !== 'function') return;
+        if (!dialog._composerFocusTrapBound) {
+            dialog.addEventListener('keydown', function (event) {
+                if (event.key !== 'Tab') return;
+                var focusable = Array.from(dialog.querySelectorAll(
+                    'button:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+                    .filter(function (element) { return element.getClientRects().length > 0; });
+                if (focusable.length === 0) return;
+                var first = focusable[0];
+                var last = focusable[focusable.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            });
+            dialog._composerFocusTrapBound = true;
+        }
+        if (input && typeof input.focus === 'function') input.focus();
+    },
+
+    /** Returns focus to the control that opened the expanded composer. */
+    closeComposerDialog: function (trigger) {
+        if (trigger && typeof trigger.focus === 'function') trigger.focus();
+    },
+
     /**
      * Prevents the default Enter key behaviour (newline insertion) on a textarea
      * so that Blazor's onkeydown handler can send the message without a stray newline.
