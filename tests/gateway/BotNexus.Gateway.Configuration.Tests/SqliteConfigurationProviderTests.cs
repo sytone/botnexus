@@ -22,16 +22,20 @@ public sealed class SqliteConfigurationProviderTests
     private sealed class FakeStore : IConfigStore
     {
         private IReadOnlyDictionary<string, ConfigEntry> _entries = new Dictionary<string, ConfigEntry>();
+        private long _revision;
 
         public Exception? ReadFailure { get; set; }
 
         public void SetDocument(JsonObject document)
-            => _entries = ConfigDocumentFlattener.Flatten(document);
+        {
+            _entries = ConfigDocumentFlattener.Flatten(document);
+            _revision++;
+        }
 
-        public Task<IReadOnlyDictionary<string, ConfigEntry>> ReadEntriesAsync(CancellationToken cancellationToken = default)
+        public Task<ConfigStoreSnapshot> ReadSnapshotAsync(CancellationToken cancellationToken = default)
             => ReadFailure is not null
-                ? Task.FromException<IReadOnlyDictionary<string, ConfigEntry>>(ReadFailure)
-                : Task.FromResult(_entries);
+                ? Task.FromException<ConfigStoreSnapshot>(ReadFailure)
+                : Task.FromResult(new ConfigStoreSnapshot(_revision, _entries));
 
         public Task WriteDocumentAsync(JsonObject document, CancellationToken cancellationToken = default)
         {
@@ -63,6 +67,7 @@ public sealed class SqliteConfigurationProviderTests
             }
 
             _entries = next;
+            _revision++;
             return Task.CompletedTask;
         }
     }
@@ -184,6 +189,61 @@ public sealed class SqliteConfigurationProviderTests
         provider.NotifyChanged();
 
         monitor.CurrentValue.DefaultAgentId.ShouldBe("after");
+    }
+
+    /// <summary>
+    /// #4329: a canonical write made through a separate store instance advances one logical revision,
+    /// and the already-running provider reloads that complete revision exactly once. A second check
+    /// of the same revision must not emit another options callback.
+    /// </summary>
+    [Fact]
+    public async Task ExternalStoreWrite_ReloadsOptionsOncePerCommittedRevision()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"botnexus-config-provider-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            var readerStore = new SqliteConfigStore($"Data Source={dbPath}");
+            var writerStore = new SqliteConfigStore($"Data Source={dbPath}");
+            await writerStore.WriteDocumentAsync(Document("""{ "gateway": { "defaultAgentId": "before" } }"""));
+
+            using var provider = new SqliteConfigurationProvider(readerStore, startChangeDetection: false);
+            provider.Load();
+
+            var config = new ConfigurationRoot([provider]);
+            var services = new ServiceCollection();
+            services.AddSingleton<IConfiguration>(config);
+            services.AddOptions<GatewayOptions>().Bind(config.GetSection("gateway"));
+            using var sp = services.BuildServiceProvider();
+
+            var monitor = sp.GetRequiredService<IOptionsMonitor<GatewayOptions>>();
+            var notifications = 0;
+            using var subscription = monitor.OnChange(_ => notifications++);
+            monitor.CurrentValue.DefaultAgentId.ShouldBe("before");
+
+            await writerStore.ApplyChangesAsync(new ConfigChangeSet(
+                [new ConfigEntry("gateway.defaultAgentId", ConfigValueState.Value, "\"after\"")],
+                []));
+
+            (await provider.CheckForChangesAsync()).ShouldBeTrue();
+            monitor.CurrentValue.DefaultAgentId.ShouldBe("after");
+            notifications.ShouldBe(1);
+
+            (await provider.CheckForChangesAsync()).ShouldBeFalse();
+            notifications.ShouldBe(1, "the same committed revision must not produce a reload storm");
+        }
+        finally
+        {
+            SqlitePoolCleanup.ClearPoolFor(dbPath);
+            foreach (var suffix in new[] { "", "-wal", "-shm" })
+            {
+                var path = dbPath + suffix;
+                if (File.Exists(path))
+                {
+                    try { File.Delete(path); } catch (IOException) { /* best effort in temp */ }
+                }
+            }
+        }
     }
 
     /// <summary>

@@ -168,6 +168,33 @@ public sealed class SqliteConfigStoreTests : IDisposable
             "a removed key must not survive the next import as a stale row");
     }
 
+    /// <summary>
+    /// #4329: one committed mutation advances one monotonic revision, while an empty change set is
+    /// not a logical write and must not wake every options subscriber.
+    /// </summary>
+    [Fact]
+    public async Task CommittedMutation_AdvancesRevisionOnce_AndEmptyChangeDoesNotAdvance()
+    {
+        var store = CreateStore();
+        await store.WriteDocumentAsync(Obj("""{ "gateway": { "port": 8080 } }"""));
+        var initial = await store.ReadSnapshotAsync();
+
+        await store.ApplyChangesAsync(new ConfigChangeSet(
+            [
+                new ConfigEntry("gateway.port", ConfigValueState.Value, "9090"),
+                new ConfigEntry("gateway.enabled", ConfigValueState.Value, "true"),
+            ],
+            []));
+        var changed = await store.ReadSnapshotAsync();
+
+        changed.Revision.ShouldBe(initial.Revision + 1);
+        changed.Entries["gateway.port"].Value.ShouldBe("9090");
+        changed.Entries["gateway.enabled"].Value.ShouldBe("true");
+
+        await store.ApplyChangesAsync(new ConfigChangeSet([], []));
+        (await store.ReadSnapshotAsync()).Revision.ShouldBe(changed.Revision);
+    }
+
     /// <summary>Opening an existing database again is safe - schema creation is idempotent.</summary>
     [Fact]
     public async Task ReopeningAnExistingDatabase_IsIdempotent()

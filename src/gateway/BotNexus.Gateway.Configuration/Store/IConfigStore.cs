@@ -2,6 +2,11 @@ using System.Text.Json.Nodes;
 
 namespace BotNexus.Gateway.Configuration.Store;
 
+/// <summary>A transactionally coherent configuration revision and its complete flattened entries.</summary>
+/// <param name="Revision">Monotonic revision advanced in the same transaction as each mutation.</param>
+/// <param name="Entries">The complete entry snapshot at <paramref name="Revision"/>.</param>
+public sealed record ConfigStoreSnapshot(long Revision, IReadOnlyDictionary<string, ConfigEntry> Entries);
+
 /// <summary>
 /// Persists a configuration document and reads it back as flattened entries (#2646 PBI 1).
 ///
@@ -16,8 +21,18 @@ namespace BotNexus.Gateway.Configuration.Store;
 /// </summary>
 public interface IConfigStore
 {
+    /// <summary>
+    /// Whether this store can be mutated by another process and therefore needs bounded revision
+    /// detection. Test doubles and process-local stores remain passive by default.
+    /// </summary>
+    bool SupportsExternalChangeDetection => false;
+
+    /// <summary>Reads the current revision and every stored entry in one coherent snapshot.</summary>
+    Task<ConfigStoreSnapshot> ReadSnapshotAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Reads every stored entry, keyed by canonical dotted path.</summary>
-    Task<IReadOnlyDictionary<string, ConfigEntry>> ReadEntriesAsync(CancellationToken cancellationToken = default);
+    async Task<IReadOnlyDictionary<string, ConfigEntry>> ReadEntriesAsync(CancellationToken cancellationToken = default)
+        => (await ReadSnapshotAsync(cancellationToken).ConfigureAwait(false)).Entries;
 
     /// <summary>
     /// Replaces the stored configuration with <paramref name="document"/>.
