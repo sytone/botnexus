@@ -33,3 +33,32 @@ The message does not assert prior creation, successful use, or deletion, and doe
 `FileAgentWorkspaceManagerTests` covers absent and repeated cleanup without directory recreation. `ReclaimedWorkspacePreflightTests` covers both a never-created directory and a genuinely created/deleted directory while requiring the same factual, history-unknown diagnostic. Existing lifecycle, liveness and policy tests remain in place.
 
 Validation runs remotely in `core` mode; local builds compile the affected projects without starting test hosts.
+
+## Timeout and budget recovery artifacts
+
+When a run ends by timeout or turn-budget exhaustion, the gateway inspects only caller-supplied
+`grantedWritePaths`. A grant qualifies only when it is itself the Git worktree root; nested grants
+are not traversed upward. The Git subprocess sequence shares one short deadline. Tracked changes
+are redacted through the mandatory gateway secret redactor before persistence, and the configured
+byte ceiling is checked against both process output and the final redacted UTF-8 payload. Untracked
+files are represented only by a bounded list of repository-relative names.
+
+Artifacts default to `botnexus-subagent-recovery` under the operating-system temporary directory,
+not under `.botnexus`. `gateway.subAgents.worktreeSnapshot.artifactRoot` may override that location,
+but any path inside the verified `BotNexusHome` configuration or data roots is rejected; an existing
+reparse/symlink root is also rejected. Writes use an unpredictable unique name, a `CreateNew`
+staging file, and an atomic same-directory move. The shared cross-platform permissions helper
+narrows each file to owner access, and failed or cancelled writes remove their staging file.
+
+Terminal status and snapshot metadata become visible together in one atomic record update. If an
+explicit kill or another terminal disposition wins while capture is running, the newly written
+artifact is deleted rather than left orphaned. Snapshot failures never replace the authoritative
+`TimedOut` or `BudgetExhausted` disposition.
+
+Retention is active independently of capture. `SubAgentWorktreeSnapshotRetentionHostedService`
+runs once at gateway startup and then every
+`gateway.subAgents.worktreeSnapshot.sweepInterval` (default one hour). Each pass examines only
+`*.patch` files directly under the validated artifact root, deletes files older than `retention`
+(default 24 hours), enforces `maxRetainedArtifacts` (default 100), and inspects at most
+`maxSweepFiles` entries (default 1000). This keeps startup and periodic work bounded and prevents
+any traversal into grants, network trees, or `.botnexus`.

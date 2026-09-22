@@ -36,6 +36,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly DefaultToolPolicyProvider? _policyProvider;
     private readonly TimeProvider _timeProvider;
     private readonly ISessionStore? _sessionStore;
+    private readonly ISubAgentWorktreeSnapshotService? _worktreeSnapshotService;
 
     /// <summary>
     /// The single execution-layer tool-audit sink (#2614 AC4).
@@ -87,7 +88,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         ISecurityEventSink? securityEvents = null,
         IConversationStore? conversationStore = null,
         ModelRegistry? modelRegistry = null,
-        IToolAuditSink? toolAudit = null)
+        IToolAuditSink? toolAudit = null,
+        ISubAgentWorktreeSnapshotService? worktreeSnapshotService = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -103,6 +105,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _conversationStore = conversationStore;
         _modelRegistry = modelRegistry;
         _toolAudit = toolAudit ?? DefaultToolAuditSink.Instance;
+        _worktreeSnapshotService = worktreeSnapshotService;
     }
 
     /// <summary>
@@ -521,7 +524,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 BudgetClamp = budgetClamp
             };
 
-            var admissionRecord = new SubAgentRecord(info, request.ParentAgentId, childAgentId);
+            var admissionRecord = new SubAgentRecord(
+                info,
+                request.ParentAgentId,
+                childAgentId,
+                request.GrantedWritePaths is { Count: > 0 } ? [.. request.GrantedWritePaths] : []);
             if (!_records.TryAdd(subAgentId, admissionRecord))
                 throw new InvalidOperationException($"Sub-agent '{subAgentId}' already exists.");
 
@@ -1675,20 +1682,41 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         SubAgentStatus status,
         string diagnostic)
     {
-        if (TryUpdateSubAgent(
-                subAgentId,
-                current => current.Status == SubAgentStatus.Running
-                    ? current with
-                    {
-                        Status = status,
-                        CompletedAt = DateTimeOffset.UtcNow,
-                        ResultSummary = diagnostic
-                    }
-                    : current,
-                out var updated) && updated.Status == status)
+        if (!_records.TryGetValue(subAgentId, out var record))
+            return;
+
+        SubAgentWorktreeSnapshot? snapshot = null;
+        if (status is SubAgentStatus.TimedOut or SubAgentStatus.BudgetExhausted
+            && _worktreeSnapshotService is not null)
         {
-            await OnCompletedAsync(subAgentId, diagnostic);
+            try
+            {
+                snapshot = await _worktreeSnapshotService
+                    .CaptureAsync(subAgentId, record.GrantedWritePaths, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed capturing a recovery snapshot for sub-agent '{SubAgentId}'; terminal status '{Status}' remains authoritative.",
+                    subAgentId,
+                    status);
+                snapshot = new SubAgentWorktreeSnapshot(
+                    SubAgentWorktreeSnapshotOutcome.ProcessFailed, null, null, 0, [], false);
+            }
         }
+
+        // Publish the terminal disposition and its recovery evidence in one compare-and-swap. A
+        // concurrent kill therefore sees Running until capture finishes and can win cleanly; no
+        // observer can see timeout/budget status without the corresponding snapshot result.
+        if (!record.TryPublishTerminal(status, diagnostic, snapshot, out _))
+        {
+            if (snapshot?.ArtifactPath is { } orphanedArtifact && _worktreeSnapshotService is not null)
+                await _worktreeSnapshotService.DeleteArtifactAsync(orphanedArtifact, CancellationToken.None).ConfigureAwait(false);
+            return;
+        }
+
+        await OnCompletedAsync(subAgentId, diagnostic);
     }
 
     /// <summary>
@@ -2022,7 +2050,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     /// the maps can no longer drift apart — the drift between <c>_childAgentIds</c> and the live
     /// entry is exactly what forced the old synthetic-child-id fallback in <c>OnCompletedAsync</c>.
     /// </summary>
-    private sealed class SubAgentRecord(SubAgentInfo info, AgentId parentAgentId, AgentId childAgentId)
+    private sealed class SubAgentRecord(
+        SubAgentInfo info,
+        AgentId parentAgentId,
+        AgentId childAgentId,
+        IReadOnlyList<string> grantedWritePaths)
     {
         // Process-wide monotonic spawn counter. Assigned once per record at construction so every
         // record carries a strictly-increasing "spawn age" that is independent of wall-clock
@@ -2050,6 +2082,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         /// <summary>Child agent id captured at spawn. Immutable for the record's lifetime.</summary>
         public AgentId ChildAgentId { get; } = childAgentId;
+
+        /// <summary>Caller-granted writable paths captured immutably at spawn.</summary>
+        public IReadOnlyList<string> GrantedWritePaths { get; } = grantedWritePaths;
 
         /// <summary>
         /// The timeout cancellation source. Set once after the spawn budget is resolved and the
@@ -2114,6 +2149,37 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
 
         /// <summary>Returns true exactly once — the first caller wins the completion gate.</summary>
+        /// <summary>Atomically publishes a terminal disposition together with its recovery evidence.</summary>
+        public bool TryPublishTerminal(
+            SubAgentStatus status,
+            string diagnostic,
+            SubAgentWorktreeSnapshot? snapshot,
+            out SubAgentInfo updatedInfo)
+        {
+            while (true)
+            {
+                var current = Info;
+                if (current.Status != SubAgentStatus.Running)
+                {
+                    updatedInfo = current;
+                    return false;
+                }
+
+                var terminal = current with
+                {
+                    Status = status,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                    ResultSummary = diagnostic,
+                    WorktreeSnapshot = snapshot
+                };
+                if (ReferenceEquals(Interlocked.CompareExchange(ref _info, terminal, current), current))
+                {
+                    updatedInfo = terminal;
+                    return true;
+                }
+            }
+        }
+
         public bool TryBeginCompletion() => Interlocked.CompareExchange(ref _completionProcessed, 1, 0) == 0;
 
         /// <summary>Returns true exactly once — the first caller wins the child-cleanup gate.</summary>

@@ -95,6 +95,12 @@ public sealed record SubAgentInfo
     public SubAgentBudgetClamp? BudgetClamp { get; init; }
 
     /// <summary>
+    /// Gets bounded recovery evidence captured from a caller-granted Git worktree when this run
+    /// ended by timeout or turn-budget exhaustion. Null for every other terminal disposition.
+    /// </summary>
+    public SubAgentWorktreeSnapshot? WorktreeSnapshot { get; init; }
+
+    /// <summary>
     /// Gets whether the completion follow-up actually reached the parent session (#3703).
     /// <para>
     /// <b>Why this is separate from <see cref="Status"/>.</b> A run can finish its work perfectly
