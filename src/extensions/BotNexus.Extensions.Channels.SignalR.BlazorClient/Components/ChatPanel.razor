@@ -573,6 +573,15 @@
                           placeholder="@InputPlaceholder"
                           disabled="@(!IsConnected)" />
 
+                <button class="expand-composer-btn" type="button"
+                        data-testid="chat-expand"
+                        @ref="_expandComposerButton"
+                        @onclick="OpenExpandedComposer"
+                        title="Expand composer"
+                        aria-label="Expand composer">
+                    <span aria-hidden="true">↗</span>
+                </button>
+
                 <div class="attachment-composer">
                     <label class="attach-btn" data-testid="chat-attach" title="Attach files" aria-label="Attach files">&#x1F4CE;<InputFile class="attachment-input" OnChange="HandleFilesSelected" multiple /></label>
                     @foreach (var attachment in _attachments)
@@ -620,6 +629,62 @@
             }
         </div>
     }
+
+    @if (_expandedComposerOpen)
+    {
+        <div class="expanded-composer-overlay"
+             data-testid="expanded-composer-overlay"
+             @onkeydown="ExpandedComposerKeyDown">
+            <div class="expanded-composer-dialog"
+                 data-testid="expanded-composer"
+                 role="dialog"
+                 aria-modal="true"
+                 aria-labelledby="expanded-composer-title"
+                 @ref="_expandedComposerDialog">
+                <div class="expanded-composer-header">
+                    <h2 id="expanded-composer-title">Compose message</h2>
+                    <button type="button" class="expanded-composer-close"
+                            data-testid="expanded-composer-close"
+                            aria-label="Close expanded composer"
+                            @onclick="CloseExpandedComposer">
+                        <Icon Name="close" Size="16" Class="bn-icon-inherit" />
+                    </button>
+                </div>
+                <textarea class="expanded-composer-input"
+                          data-testid="expanded-composer-input"
+                          @ref="_expandedInputElement"
+                          @bind="_inputText"
+                          @bind:event="oninput"
+                          @bind:after="HandleExpandedInputChanged"
+                          placeholder="Write a message. Enter inserts a new line."
+                          disabled="@(!IsConnected)" />
+                <div class="expanded-attachment-composer">
+                    <label class="attach-btn" data-testid="expanded-chat-attach" title="Attach files" aria-label="Attach files">&#x1F4CE;<InputFile class="attachment-input" OnChange="HandleFilesSelected" multiple /></label>
+                    @foreach (var attachment in _attachments)
+                    {
+                        <span class="attachment-chip" data-testid="expanded-attachment-chip"><span class="attachment-name">@attachment.FileName</span><span class="attachment-size">@FormatBytes(attachment.Size)</span><button type="button" data-testid="expanded-attachment-remove" aria-label="@($"Remove {attachment.FileName}")" @onclick="() => RemoveAttachment(attachment)"><Icon Name="close" Size="12" Class="bn-icon-inherit" /></button></span>
+                    }
+                    @if (_attachmentError is not null) { <div class="attachment-error" role="alert">@_attachmentError</div> }
+                </div>
+                @if (_expandedComposerError is not null)
+                {
+                    <div class="expanded-composer-error" data-testid="expanded-composer-error" role="alert">@_expandedComposerError</div>
+                }
+                <div class="expanded-composer-actions">
+                    @if (IsStreaming)
+                    {
+                        <button class="steer-btn" data-testid="expanded-composer-steer" @onclick="ExpandedSteerAsync" disabled="@(!HasDraft)">🔀 Steer</button>
+                        <button class="interrupt-steer-btn" data-testid="expanded-composer-redirect" @onclick="ExpandedRedirectAsync" disabled="@(!HasDraft)">Redirect</button>
+                        <button class="followup-btn" data-testid="expanded-composer-followup" @onclick="ExpandedFollowUpAsync" disabled="@(!HasDraft)"><Icon Name="add" Size="14" /> Follow Up</button>
+                    }
+                    else
+                    {
+                        <button class="send-btn" data-testid="expanded-composer-send" @onclick="ExpandedSendAsync" disabled="@(!IsConnected || !HasDraft)">Send</button>
+                    }
+                </div>
+            </div>
+        </div>
+    }
 </div>
 
 <AgentConfigPanel @ref="_configPanel" AgentId="@AgentId" />
@@ -660,9 +725,11 @@
     /// </summary>
     protected override void OnParametersSet()
     {
-        if (!string.Equals(ConversationId, _lastParameterConversationId, StringComparison.Ordinal))
+        var conversationId = ActiveConversationId;
+        if (!string.Equals(conversationId, _lastParameterConversationId, StringComparison.Ordinal))
         {
-            _lastParameterConversationId = ConversationId;
+            PreserveAndSwitchDraft(conversationId);
+            _lastParameterConversationId = conversationId;
             _forceScrollNext = true;
         }
     }
@@ -673,6 +740,10 @@
     {
         if (PendingAskUserPrompt is null)
             _askUserError = null;
+
+        var conversationId = ActiveConversationId;
+        if (!string.Equals(conversationId, _draftConversationId, StringComparison.Ordinal))
+            PreserveAndSwitchDraft(conversationId);
 
         _ = InvokeAsync(StateHasChanged);
     }
@@ -778,6 +849,9 @@ private bool IsStreaming =>
     private string ExpandingInputClass => Prefs?.Current?.ExpandingInput == true ? "expanding" : string.Empty;
 
     private string _inputText = "";
+    private sealed record ConversationDraft(string Text, IReadOnlyList<DraftAttachment> Attachments);
+    private readonly Dictionary<string, ConversationDraft> _draftsByConversation = new(StringComparer.Ordinal);
+    private string? _draftConversationId;
     // ── #2918 prompt-history recall ─────────────────────────────────────
     // Session-scoped, in-memory, component-local, and keyed by the conversation this panel is
     // rendering. It is deliberately NOT a shared DI service: #3062 made the conversation id a
@@ -802,6 +876,14 @@ private bool IsStreaming =>
     private bool _pendingCaretToEnd;
     private readonly List<DraftAttachment> _attachments = [];
     private string? _attachmentError;
+    private bool _expandedComposerOpen;
+    private string? _expandedComposerConversationId;
+    private string? _expandedComposerError;
+    private ElementReference _expandComposerButton;
+    private ElementReference _expandedComposerDialog;
+    private ElementReference _expandedInputElement;
+    private bool _expandedComposerFocusPending;
+    private bool _expandedPasteBound;
     private DotNetObjectReference<ChatPanel>? _attachmentPasteRef;
     private bool _attachmentPasteBound;
     private ElementReference _messagesContainer;
@@ -810,6 +892,8 @@ private bool IsStreaming =>
     private bool _isLoadingMore;
     private bool _loadMoreObserverBound;
     private DotNetObjectReference<ChatPanel>? _loadMoreRef;
+
+    private bool HasDraft => !string.IsNullOrWhiteSpace(_inputText) || _attachments.Count > 0;
 
     private async Task HandleInputChanged()
     {
@@ -822,6 +906,93 @@ private bool IsStreaming =>
         // Update command palette on every input change so typing slash triggers it.
         UpdateCommandPalette();
     }
+
+    private Task HandleExpandedInputChanged()
+    {
+        ResetHistoryNavigation();
+        _expandedComposerError = null;
+        return Task.CompletedTask;
+    }
+
+    private void PreserveAndSwitchDraft(string? conversationId)
+    {
+        if (_draftConversationId is not null)
+            _draftsByConversation[_draftConversationId] = new(_inputText, _attachments.ToArray());
+
+        _draftConversationId = conversationId;
+        _inputText = "";
+        _attachments.Clear();
+        if (conversationId is not null && _draftsByConversation.TryGetValue(conversationId, out var draft))
+        {
+            _inputText = draft.Text;
+            _attachments.AddRange(draft.Attachments);
+        }
+
+        _attachmentError = null;
+        _expandedComposerError = null;
+        _expandedComposerOpen = false;
+        _expandedComposerConversationId = null;
+        _expandedPasteBound = false;
+    }
+
+    private void OpenExpandedComposer()
+    {
+        if (ActiveConversationId is not { } conversationId)
+            return;
+
+        if (!string.Equals(_draftConversationId, conversationId, StringComparison.Ordinal))
+            PreserveAndSwitchDraft(conversationId);
+        _expandedComposerConversationId = conversationId;
+        _expandedComposerError = null;
+        _expandedComposerOpen = true;
+        _expandedComposerFocusPending = true;
+    }
+
+    private async Task CloseExpandedComposer()
+    {
+        _expandedComposerOpen = false;
+        _expandedComposerConversationId = null;
+        _expandedComposerError = null;
+        _expandedPasteBound = false;
+        try { await JS.InvokeVoidAsync("chatScroll.closeComposerDialog", _expandComposerButton); } catch { }
+    }
+
+    private async Task ExpandedComposerKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            await CloseExpandedComposer();
+    }
+
+    private async Task RunExpandedDispatchAsync(Func<string, string, IReadOnlyList<DraftAttachment>, Task> dispatch)
+    {
+        if (!_expandedComposerOpen
+            || !string.Equals(_expandedComposerConversationId, ActiveConversationId, StringComparison.Ordinal))
+        {
+            await CloseExpandedComposer();
+            return;
+        }
+
+        try
+        {
+            if (await DispatchDraftAsync(dispatch))
+                await CloseExpandedComposer();
+        }
+        catch (Exception ex)
+        {
+            _expandedComposerError = ex.Message;
+        }
+    }
+
+    private Task ExpandedSendAsync() => RunExpandedDispatchAsync((convId, text, attachments) =>
+        Interaction.DeliverMessageAsync(AgentId, convId, text, InboundDeliveryMode.Auto, attachments));
+    private Task ExpandedSteerAsync() => RunExpandedDispatchAsync((convId, text, attachments) =>
+        Interaction.DeliverMessageAsync(AgentId, convId, text, InboundDeliveryMode.Steer, attachments));
+    private Task ExpandedRedirectAsync() => RunExpandedDispatchAsync((convId, text, attachments) =>
+        Interaction.DeliverMessageAsync(AgentId, convId, text, InboundDeliveryMode.Interrupt, attachments));
+    private Task ExpandedFollowUpAsync() => RunExpandedDispatchAsync((convId, text, attachments) =>
+        attachments.Count == 0
+            ? Interaction.FollowUpAsync(AgentId, convId, text)
+            : Interaction.FollowUpAsync(AgentId, convId, text, attachments));
 
     private async Task ToggleExpandingInput()
         => await Prefs.SetExpandingInputAsync(!Prefs.Current.ExpandingInput);
@@ -1381,6 +1552,19 @@ private bool IsStreaming =>
                 catch { /* textarea detached before the caret could be placed */ }
             }
 
+            if (_expandedComposerOpen && _expandedComposerFocusPending)
+            {
+                _expandedComposerFocusPending = false;
+                try { await JS.InvokeVoidAsync("chatScroll.openComposerDialog", _expandedComposerDialog, _expandedInputElement); } catch { }
+            }
+
+            if (_expandedComposerOpen && !_expandedPasteBound)
+            {
+                _attachmentPasteRef ??= DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("chatAttachments.bindPaste", _expandedInputElement, _attachmentPasteRef);
+                _expandedPasteBound = true;
+            }
+
             // Focus-trap entry: when the tool pop-out modal opens, move focus into the
             // dialog so Esc / Tab are captured and screen readers land inside it.
             if (_toolModalOpen && !_toolModalFocused)
@@ -1815,20 +1999,36 @@ private bool IsStreaming =>
     // #3211: every action path takes the conversation explicitly. DispatchDraftAsync hands the
     // route-owned ActiveConversationId to the dispatch lambda, so steer/follow-up/redirect can no
     // longer land on a conversation other than the one this panel is rendering.
-    private async Task DispatchDraftAsync(Func<string, string, IReadOnlyList<DraftAttachment>, Task> dispatch)
+    private async Task<bool> DispatchDraftAsync(Func<string, string, IReadOnlyList<DraftAttachment>, Task> dispatch)
     {
-        if (ActiveConversationId is not { } convId) return;
+        if (ActiveConversationId is not { } convId) return false;
         var text = _inputText?.Trim() ?? string.Empty;
-        if ((string.IsNullOrEmpty(text) && _attachments.Count == 0) || !IsConnected) return;
+        if ((string.IsNullOrEmpty(text) && _attachments.Count == 0) || !IsConnected) return false;
         var attachments = _attachments.ToArray();
-        // #2918: record against the SAME route-owned conversation this send is dispatched to.
-        RecordPromptHistory(convId, text);
-        _inputText = ""; _attachments.Clear(); _attachmentError = null; _showCommandPalette = false; _forceScrollNext = true;
         await dispatch(convId, text, attachments);
+        // Consume the logical draft only after delivery accepts it. A rejected delivery remains
+        // fully retryable in either composer and must not create a phantom prompt-history entry.
+        RecordPromptHistory(convId, text);
+        _draftsByConversation.Remove(convId);
+
+        // Delivery is asynchronous. A conversation switch or further edit during the await must
+        // never let this old completion clear whichever draft is current now.
+        if (string.Equals(_draftConversationId, convId, StringComparison.Ordinal)
+            && string.Equals(_inputText?.Trim(), text, StringComparison.Ordinal)
+            && _attachments.SequenceEqual(attachments))
+        {
+            _inputText = "";
+            _attachments.Clear();
+            _attachmentError = null;
+            _showCommandPalette = false;
+            _forceScrollNext = true;
+        }
+
+        return true;
     }
 
-    private Task SendMessage()
-        => DispatchDraftAsync((convId, text, attachments) =>
+    private async Task SendMessage()
+        => _ = await DispatchDraftAsync((convId, text, attachments) =>
             // #3063: the send path requires the conversation explicitly. convId here is the
             // route-supplied ConversationId parameter (falling back to the agent's selection),
             // which is the same id the rest of this panel renders against.
@@ -1866,12 +2066,12 @@ private bool IsStreaming =>
     private void RemoveAttachment(DraftAttachment attachment) { _attachments.Remove(attachment); _attachmentError = null; }
     private static string FormatBytes(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / (1024d * 1024d):0.#} MB" : $"{Math.Max(1, bytes / 1024d):0.#} KB";
 
-    private Task SteerAgent()
-        => DispatchDraftAsync((convId, text, attachments) => Interaction.DeliverMessageAsync(
+    private async Task SteerAgent()
+        => _ = await DispatchDraftAsync((convId, text, attachments) => Interaction.DeliverMessageAsync(
             AgentId, convId, text, InboundDeliveryMode.Steer, attachments));
 
-    private Task FollowUpAgent()
-        => DispatchDraftAsync((convId, text, attachments) =>
+    private async Task FollowUpAgent()
+        => _ = await DispatchDraftAsync((convId, text, attachments) =>
         {
             UpdateCommandPalette();
             return attachments.Count == 0
@@ -1885,8 +2085,8 @@ private bool IsStreaming =>
         await Interaction.AbortAsync(AgentId, convId);
     }
 
-    private Task InterruptAndSteer()
-        => DispatchDraftAsync((convId, text, attachments) =>
+    private async Task InterruptAndSteer()
+        => _ = await DispatchDraftAsync((convId, text, attachments) =>
         {
             UpdateCommandPalette();
             return Interaction.DeliverMessageAsync(
