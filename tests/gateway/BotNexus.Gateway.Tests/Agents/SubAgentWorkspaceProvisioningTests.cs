@@ -6,10 +6,13 @@ using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Security;
+using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 
@@ -18,6 +21,85 @@ namespace BotNexus.Gateway.Tests.Agents;
 /// <summary>Exercises production spawn, workspace storage and tool construction without an LLM.</summary>
 public sealed class SubAgentWorkspaceProvisioningTests
 {
+    [Fact]
+    public async Task Spawn_HandleConstructionFails_RollsBackAdmissionOwnedResourcesAndPreservesOriginalFailure()
+    {
+        await using var fixture = new SpawnFixture(admissionFailure: AdmissionFailure.HandleConstruction);
+
+        Func<Task> spawn = async () => await fixture.SpawnAsync(shared: true);
+        var failure = await Should.ThrowAsync<AdmissionAbortedException>(spawn);
+
+        failure.ShouldBeSameAs(fixture.AbortException);
+        fixture.AssertAdmissionRolledBack();
+        fixture.StopCount.ShouldBe(0);
+        fixture.ParentResourcesShouldRemain();
+    }
+
+    [Fact]
+    public async Task Spawn_CancelledDuringHandleConstruction_RollsBackAdmissionOwnedResourcesAndPreservesCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        await using var fixture = new SpawnFixture(
+            admissionFailure: AdmissionFailure.Cancellation,
+            cancellationSource: cts);
+
+        Func<Task> spawn = async () => await fixture.SpawnAsync(ct: cts.Token);
+        var failure = await Should.ThrowAsync<OperationCanceledException>(spawn);
+
+        failure.CancellationToken.ShouldBe(cts.Token);
+        fixture.AssertAdmissionRolledBack();
+        fixture.StopCount.ShouldBe(0);
+        fixture.ParentResourcesShouldRemain();
+    }
+
+    [Fact]
+    public async Task Spawn_ChildSessionSaveFails_RollsBackCreatedSessionWithoutConstructingHandle()
+    {
+        await using var fixture = new SpawnFixture(admissionFailure: AdmissionFailure.SessionSave);
+
+        Func<Task> spawn = async () => await fixture.SpawnAsync();
+        var failure = await Should.ThrowAsync<AdmissionAbortedException>(spawn);
+
+        failure.ShouldBeSameAs(fixture.AbortException);
+        fixture.AssertAdmissionRolledBack(expectPolicyRegistration: false);
+        fixture.StopCount.ShouldBe(0);
+        fixture.ParentResourcesShouldRemain();
+    }
+
+    [Fact]
+    public async Task Spawn_RollbackFailure_IsLoggedWithoutHidingOriginalFailure()
+    {
+        await using var fixture = new SpawnFixture(
+            admissionFailure: AdmissionFailure.HandleConstruction,
+            throwDuringRollback: true);
+
+        Func<Task> spawn = async () => await fixture.SpawnAsync();
+        var failure = await Should.ThrowAsync<AdmissionAbortedException>(spawn);
+
+        failure.ShouldBeSameAs(fixture.AbortException);
+        fixture.Warnings.ShouldContain(w =>
+            w.Contains("rolling back sub-agent admission", StringComparison.Ordinal)
+            && w.Contains("rollback unregister failed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Spawn_HandleConstructionFails_PreservesMirrorTargetSharedWorkspaceAndPreExistingChildResources()
+    {
+        await using var fixture = new SpawnFixture(
+            admissionFailure: AdmissionFailure.HandleConstruction,
+            preExistingChildResources: true,
+            mirrorTarget: true);
+
+        Func<Task> spawn = async () => await fixture.SpawnAsync(shared: true);
+        await Should.ThrowAsync<AdmissionAbortedException>(spawn);
+
+        fixture.AssertAdmissionRolledBack(
+            expectWorkspaceAndSession: true,
+            expectPolicyRegistration: false);
+        fixture.ParentResourcesShouldRemain();
+        fixture.MirrorTargetShouldRemain();
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -202,21 +284,105 @@ public sealed class SubAgentWorkspaceProvisioningTests
         internal Task? CompletionRace { get; private set; }
         internal ConcurrentQueue<string> Warnings { get; } = new();
 
-        internal SpawnFixture(bool throwOnCancellation = false, bool raceCompletion = false)
+        private readonly AdmissionFailure _admissionFailure;
+        private readonly bool _preExistingChildResources;
+        private readonly AgentId? _mirrorTarget;
+        private readonly InMemorySessionStore _sessions = new();
+        private readonly ISessionStore _sessionStore;
+        private readonly DefaultToolPolicyProvider _policyProvider;
+        internal AdmissionAbortedException AbortException { get; } = new("handle construction aborted");
+        internal AgentId? AttemptedChildAgentId { get; private set; }
+        internal SessionId? AttemptedChildSessionId { get; private set; }
+        internal ConcurrentQueue<AgentId> PoliciesSet { get; } = new();
+        internal ConcurrentQueue<AgentId> PoliciesRemoved { get; } = new();
+
+        internal SpawnFixture(
+            bool throwOnCancellation = false,
+            bool raceCompletion = false,
+            AdmissionFailure admissionFailure = AdmissionFailure.None,
+            bool preExistingChildResources = false,
+            bool mirrorTarget = false,
+            bool throwDuringRollback = false,
+            CancellationTokenSource? cancellationSource = null)
         {
+            _admissionFailure = admissionFailure;
+            _preExistingChildResources = preExistingChildResources;
             var fileSystem = new FileSystem();
             Workspaces = new FileAgentWorkspaceManager(new BotNexusHome(fileSystem, Path.Combine(_root, "home")), fileSystem,
                 Options.Create(new SubAgentOptions { WorkspaceRoot = Path.Combine(_root, "children") }));
             ParentWorkspace = Workspaces.GetWorkspacePath(Parent.Value);
             File.WriteAllText(Path.Combine(ParentWorkspace, "private.txt"), "parent-private");
             _descriptors[Parent] = new AgentDescriptor { AgentId = Parent, DisplayName = "Parent", ModelId = "test", ApiProvider = "test" };
+            if (mirrorTarget)
+            {
+                _mirrorTarget = AgentId.From("provision-mirror-target");
+                _descriptors[_mirrorTarget.Value] = new AgentDescriptor
+                {
+                    AgentId = _mirrorTarget.Value,
+                    DisplayName = "Mirror target",
+                    ModelId = "test",
+                    ApiProvider = "test"
+                };
+                File.WriteAllText(Path.Combine(Workspaces.GetWorkspacePath(_mirrorTarget.Value.Value), "target.txt"), "target");
+            }
+
+            _sessions.GetOrCreateAsync(ParentSession, Parent).GetAwaiter().GetResult();
+            var sessionStore = new Mock<ISessionStore>();
+            sessionStore.Setup(store => store.GetAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+                .Returns<SessionId, CancellationToken>(_sessions.GetAsync);
+            sessionStore.Setup(store => store.GetOrCreateAsync(It.IsAny<SessionId>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+                .Returns<SessionId, AgentId, CancellationToken>(_sessions.GetOrCreateAsync);
+            sessionStore.Setup(store => store.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+                .Returns<GatewaySession, CancellationToken>((session, ct) =>
+                {
+                    if (_admissionFailure == AdmissionFailure.SessionSave && session.SessionId != ParentSession)
+                        throw AbortException;
+                    return _sessions.SaveAsync(session, ct);
+                });
+            sessionStore.Setup(store => store.DeleteAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+                .Returns<SessionId, CancellationToken>(_sessions.DeleteAsync);
+            sessionStore.Setup(store => store.SaveSubAgentSessionAsync(It.IsAny<SubAgentInfo>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            _sessionStore = sessionStore.Object;
+            _policyProvider = new DefaultToolPolicyProvider(
+                new TestOptionsMonitor<PlatformConfig>(new PlatformConfig()),
+                NullLogger<DefaultToolPolicyProvider>.Instance);
+            _policyProvider.OnDynamicDenyListSet = (id, _) => PoliciesSet.Enqueue(id);
+            _policyProvider.OnDynamicDenyListRemoved = id => PoliciesRemoved.Enqueue(id);
             Registry.Setup(r => r.Get(It.IsAny<AgentId>())).Returns<AgentId>(id => _descriptors.GetValueOrDefault(id));
-            Registry.Setup(r => r.Contains(It.IsAny<AgentId>())).Returns<AgentId>(_descriptors.ContainsKey);
-            Registry.Setup(r => r.Register(It.IsAny<AgentDescriptor>())).Callback<AgentDescriptor>(d => _descriptors[d.AgentId] = d);
+            Registry.Setup(r => r.Contains(It.IsAny<AgentId>())).Returns<AgentId>(id =>
+            {
+                if (_preExistingChildResources && id != Parent && id != _mirrorTarget && !_descriptors.ContainsKey(id))
+                {
+                    AttemptedChildAgentId = id;
+                    AttemptedChildSessionId = ChildSessionFor(id);
+                    _descriptors[id] = new AgentDescriptor
+                    {
+                        AgentId = id,
+                        DisplayName = "Pre-existing child",
+                        ModelId = "test",
+                        ApiProvider = "test"
+                    };
+                    Directory.CreateDirectory(Workspaces.GetWorkspacePath(id.Value));
+                    File.WriteAllText(Path.Combine(Workspaces.GetWorkspacePath(id.Value), "pre-existing.txt"), "keep");
+                    _sessions.GetOrCreateAsync(AttemptedChildSessionId.Value, id).GetAwaiter().GetResult();
+                    _policyProvider.SetDynamicDenyList(id, ["pre-existing-tool"]);
+                }
+
+                return _descriptors.ContainsKey(id);
+            });
+            Registry.Setup(r => r.Register(It.IsAny<AgentDescriptor>())).Callback<AgentDescriptor>(d =>
+            {
+                _descriptors[d.AgentId] = d;
+                AttemptedChildAgentId = d.AgentId;
+                AttemptedChildSessionId = ChildSessionFor(d.AgentId);
+            });
             Registry.Setup(r => r.Unregister(It.IsAny<AgentId>())).Callback<AgentId>(id =>
             {
                 _descriptors.TryRemove(id, out _);
                 _unregistered.TrySetResult();
+                if (throwDuringRollback && id != Parent)
+                    throw new InvalidOperationException("rollback unregister failed");
             });
             var handle = new Mock<IAgentHandle>();
             handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -244,13 +410,22 @@ public sealed class SubAgentWorkspaceProvisioningTests
                 });
             var supervisor = new Mock<IAgentSupervisor>();
             supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
-                .Returns<AgentId, SessionId, CancellationToken>((id, _, _) =>
+                .Returns<AgentId, SessionId, CancellationToken>((id, sessionId, ct) =>
                 {
                     if (id == Parent)
                         return Task.FromResult(handle.Object);
                     ChildDescriptor = _descriptors[id];
                     Workspace = Workspaces.GetWorkspacePath(id.Value);
                     ExistsAtHandleCreation = Directory.Exists(Workspace);
+                    AttemptedChildAgentId = id;
+                    AttemptedChildSessionId = sessionId;
+                    if (_admissionFailure == AdmissionFailure.HandleConstruction)
+                        throw AbortException;
+                    if (_admissionFailure == AdmissionFailure.Cancellation)
+                    {
+                        cancellationSource.ShouldNotBeNull().Cancel();
+                        return Task.FromCanceled<IAgentHandle>(ct);
+                    }
                     Tools = new DefaultAgentToolFactory(shellCommand: OperatingSystem.IsWindows()
                         ? ["pwsh", "-NoProfile", "-Command"] : ["bash", "-c"])
                         .CreateTools(WorkingDir.From(Workspace), new DefaultPathValidator(ChildDescriptor.FileAccess, Workspace));
@@ -268,19 +443,75 @@ public sealed class SubAgentWorkspaceProvisioningTests
                 }).Returns(ValueTask.CompletedTask);
             Manager = new DefaultSubAgentManager(supervisor.Object, Registry.Object, activity.Object,
                 Mock.Of<IChannelDispatcher>(), new TestOptionsMonitor<GatewayOptions>(new GatewayOptions()),
-                new AuditLogger(Audits, Warnings), workspaceManager: Workspaces);
+                new AuditLogger(Audits, Warnings), workspaceManager: Workspaces,
+                policyProvider: _policyProvider, sessionStore: _sessionStore);
         }
 
-        internal async Task<SubAgentInfo> SpawnAsync(bool shared = false)
+        internal async Task<SubAgentInfo> SpawnAsync(
+            bool shared = false,
+            CancellationToken ct = default)
         {
-            var info = await Manager.SpawnAsync(new SubAgentSpawnRequest
+            var request = new SubAgentSpawnRequest
             {
                 ParentAgentId = Parent, ParentSessionId = ParentSession, Task = "cwd probe",
-                Mode = new Embody(SubAgentArchetype.General), ShareWorkspace = shared,
+                Mode = _mirrorTarget is { } target
+                    ? new Mirror(target)
+                    : new Embody(SubAgentArchetype.General),
+                ShareWorkspace = shared,
                 InheritedConversationId = ConversationId.From("provision-parent-conversation")
-            });
+            };
+            var info = await Manager.SpawnAsync(request, ct);
             _subAgentId = info.SubAgentId;
             return info;
+        }
+
+        internal void AssertAdmissionRolledBack(
+            bool expectWorkspaceAndSession = false,
+            bool expectPolicyRegistration = true)
+        {
+            var child = AttemptedChildAgentId.ShouldNotBeNull();
+            var childSession = AttemptedChildSessionId.ShouldNotBeNull();
+            Registry.Object.Contains(child).ShouldBe(expectWorkspaceAndSession);
+            Directory.Exists(Workspaces.GetWorkspacePath(child.Value)).ShouldBe(expectWorkspaceAndSession);
+            (_sessions.GetAsync(childSession).GetAwaiter().GetResult() is not null).ShouldBe(expectWorkspaceAndSession);
+            if (expectWorkspaceAndSession)
+                _policyProvider.GetEffectiveDenyList(child.Value).ShouldContain("pre-existing-tool");
+            else
+                _policyProvider.GetEffectiveDenyList(child.Value).ShouldBeEmpty();
+            if (expectPolicyRegistration)
+            {
+                PoliciesSet.ShouldContain(child);
+                PoliciesRemoved.ShouldContain(child);
+            }
+            else
+            {
+                if (!expectWorkspaceAndSession)
+                    PoliciesSet.ShouldNotContain(child);
+                PoliciesRemoved.ShouldNotContain(child);
+            }
+            Manager.ListAsync(ParentSession).GetAwaiter().GetResult().ShouldBeEmpty();
+            if (expectWorkspaceAndSession)
+                File.ReadAllText(Path.Combine(Workspaces.GetWorkspacePath(child.Value), "pre-existing.txt")).ShouldBe("keep");
+        }
+
+        internal void ParentResourcesShouldRemain()
+        {
+            Registry.Object.Contains(Parent).ShouldBeTrue();
+            File.ReadAllText(Path.Combine(ParentWorkspace, "private.txt")).ShouldBe("parent-private");
+            _sessions.GetAsync(ParentSession).GetAwaiter().GetResult().ShouldNotBeNull();
+        }
+
+        internal void MirrorTargetShouldRemain()
+        {
+            var target = _mirrorTarget.ShouldNotBeNull();
+            Registry.Object.Contains(target).ShouldBeTrue();
+            File.ReadAllText(Path.Combine(Workspaces.GetWorkspacePath(target.Value), "target.txt")).ShouldBe("target");
+        }
+
+        private static SessionId ChildSessionFor(AgentId childAgentId)
+        {
+            var uniqueId = childAgentId.Value[(childAgentId.Value.LastIndexOf("--", StringComparison.Ordinal) + 2)..];
+            return SessionId.ForSubAgent(ParentSession, uniqueId);
         }
 
         internal Task WaitForCleanupAsync() => _terminal.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -299,6 +530,10 @@ public sealed class SubAgentWorkspaceProvisioningTests
             if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
         }
     }
+
+    private enum AdmissionFailure { None, SessionSave, HandleConstruction, Cancellation }
+
+    private sealed class AdmissionAbortedException(string message) : Exception(message);
 
     private sealed class AuditLogger(ConcurrentQueue<string> audits, ConcurrentQueue<string> warnings) : ILogger<DefaultSubAgentManager>
     {
