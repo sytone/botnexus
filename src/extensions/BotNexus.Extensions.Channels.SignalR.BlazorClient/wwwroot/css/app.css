@@ -7490,7 +7490,6 @@ h3.conversation-title.editable:hover {
 .schema-field-control > input:focus,
 .schema-field-control > select:focus {
     border-color: var(--accent);
-    outline: none;
 }
 
 /* A checkbox is its own control; stretching it to the field width would be absurd. */
