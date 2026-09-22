@@ -76,7 +76,7 @@ internal static class ToolExecutor
 
             var (result, isError) = preparation.Prepared is null
                 ? (preparation.Result!, preparation.IsError)
-                : await ExecutePreparedToolCallAsync(preparation.Prepared, emit, cancellationToken, config.ToolTimeout).ConfigureAwait(false);
+                : await ExecutePreparedToolCallAsync(preparation.Prepared, emit, cancellationToken, config.ToolTimeout, config.SatelliteToolExecution).ConfigureAwait(false);
 
             if (preparation.Prepared is not null)
             {
@@ -180,7 +180,8 @@ internal static class ToolExecutor
                     item.Prepared,
                     emit,
                     cancellationToken,
-                    config.ToolTimeout)
+                    config.ToolTimeout,
+                    config.SatelliteToolExecution)
                 .ConfigureAwait(false);
             var outcome = new ToolExecutionOutcome(
                 item.Index,
@@ -520,7 +521,8 @@ internal static class ToolExecutor
         PreparedToolCall prepared,
         Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken,
-        TimeSpan? toolTimeout = null)
+        TimeSpan? toolTimeout = null,
+        SatelliteToolExecutionOptions? satelliteExecution = null)
     {
         AgentToolResult result;
         var isError = false;
@@ -561,11 +563,29 @@ internal static class ToolExecutor
 
         try
         {
-            executionTask = prepared.Tool.ExecuteAsync(
-                prepared.ToolCall.Id,
-                prepared.ValidatedArgs,
-                effectiveToken,
-                EmitUpdate);
+            var toolClass = satelliteExecution?.ClassifyTool(prepared.ToolCall.Name)
+                ?? SatelliteToolClass.LocalOnly;
+            if (toolClass == SatelliteToolClass.Unsupported)
+            {
+                result = BuildErrorResult(
+                    $"Tool '{prepared.ToolCall.Name}' is unsupported in the required satellite execution environment.");
+                isError = true;
+                Interlocked.Exchange(ref terminalState, 1);
+                return (result, isError);
+            }
+
+            executionTask = toolClass == SatelliteToolClass.RemoteCapable
+                ? ExecuteSatelliteToolAsync(
+                    satelliteExecution!,
+                    prepared,
+                    effectiveTimeout,
+                    effectiveToken,
+                    EmitUpdate)
+                : prepared.Tool.ExecuteAsync(
+                    prepared.ToolCall.Id,
+                    prepared.ValidatedArgs,
+                    effectiveToken,
+                    EmitUpdate);
 
             // CancelAfter only requests cooperative cancellation. WaitAsync supplies the hard
             // executor-side bound: a tool that blocks or ignores its token can no longer hold the
@@ -600,6 +620,12 @@ internal static class ToolExecutor
             Interlocked.Exchange(ref terminalState, 1);
             throw;
         }
+        catch (SatelliteToolExecutionException ex)
+        {
+            Interlocked.Exchange(ref terminalState, 1);
+            result = ex.Result;
+            isError = true;
+        }
         catch (Exception ex)
         {
             Interlocked.Exchange(ref terminalState, 1);
@@ -613,6 +639,38 @@ internal static class ToolExecutor
         }
 
         return (result, isError);
+    }
+
+    private static async Task<AgentToolResult> ExecuteSatelliteToolAsync(
+        SatelliteToolExecutionOptions satelliteExecution,
+        PreparedToolCall prepared,
+        TimeSpan? timeout,
+        CancellationToken cancellationToken,
+        AgentToolUpdateCallback? onUpdate)
+    {
+        var request = new SatelliteToolRequest(
+            ProtocolVersion: 1,
+            Scope: satelliteExecution.Scope,
+            ToolCallId: prepared.ToolCall.Id,
+            ToolName: prepared.ToolCall.Name,
+            Arguments: prepared.ValidatedArgs,
+            Environment: satelliteExecution.Environment,
+            PolicyProvenance: satelliteExecution.PolicyProvenance,
+            Timeout: timeout);
+        var remoteResult = await satelliteExecution.Executor
+            .ExecuteAsync(request, cancellationToken, onUpdate)
+            .ConfigureAwait(false);
+        if (remoteResult.IsError)
+        {
+            throw new SatelliteToolExecutionException(remoteResult.Result);
+        }
+
+        return remoteResult.Result;
+    }
+
+    private sealed class SatelliteToolExecutionException(AgentToolResult result) : Exception
+    {
+        public AgentToolResult Result { get; } = result;
     }
 
     private static async Task<ToolResultAgentMessage> FinalizeToolOutcomeAsync(

@@ -124,6 +124,7 @@ public record AgentLoopConfig(
     BeforeToolAuditDelegate? BeforeToolAudit = null,
     ToolCallDispositionDelegate? OnToolCallDisposition = null,
     Func<string, string>? SanitizeToolResultText = null,
+    BotNexus.Agent.Core.Tools.SatelliteToolExecutionOptions? SatelliteToolExecution = null,
     EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
     int MaxCompletionContinuations = 2)
 {

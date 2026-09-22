@@ -40,7 +40,8 @@ internal static class TestHelpers
         TimeSpan? beforeToolCallTimeout = null,
         Action<string>? onDiagnostic = null,
         BotNexus.Agent.Core.Loop.IHostSuspendDetector? suspendDetector = null,
-        ToolCallDispositionDelegate? onToolCallDisposition = null)
+        ToolCallDispositionDelegate? onToolCallDisposition = null,
+        BotNexus.Agent.Core.Tools.SatelliteToolExecutionOptions? satelliteToolExecution = null)
     {
         return new AgentLoopConfig(
             Model: model ?? CreateTestModel(),
@@ -59,7 +60,8 @@ internal static class TestHelpers
             BeforeToolCallTimeout: beforeToolCallTimeout,
             OnDiagnostic: onDiagnostic,
             SuspendDetector: suspendDetector,
-            OnToolCallDisposition: onToolCallDisposition);
+            OnToolCallDisposition: onToolCallDisposition,
+            SatelliteToolExecution: satelliteToolExecution);
     }
 
     public static AgentOptions CreateTestOptions(
