@@ -58,15 +58,21 @@ public sealed class SqliteMemoryStore(
                 return;
 
             _fileSystem.Directory.CreateDirectory(Path.GetDirectoryName(_dbPath) ?? ".");
-            await using var connection = CreateConnection();
-            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await SqliteRetryHelper.ExecuteWithRetryAsync(async token =>
+            {
+                await using var connection = CreateConnection();
+                await connection.OpenAsync(token).ConfigureAwait(false);
 
-            // #1436: filesystem-aware journal mode (WAL on local disk, DELETE on network
-            // mounts) with bounded wal_autocheckpoint, consolidated into the shared helper.
-            await _walMaintenance.ApplyJournalModeAsync(connection, _dbPath, cancellationToken: ct).ConfigureAwait(false);
+                // Journal mode must be selected outside a transaction. The schema transaction
+                // then takes SQLite's cross-connection write lock before inspecting or changing
+                // schema state, so independent store instances cannot interleave transitions.
+                await _walMaintenance.ApplyJournalModeAsync(connection, _dbPath, cancellationToken: token)
+                    .ConfigureAwait(false);
+                await using var transaction = connection.BeginTransaction(deferred: false);
 
-            await using var command = connection.CreateCommand();
-            command.CommandText = """
+                await using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
                 CREATE TABLE IF NOT EXISTS memories (
                     rowid INTEGER PRIMARY KEY AUTOINCREMENT,
                     id TEXT NOT NULL UNIQUE,
@@ -83,28 +89,23 @@ public sealed class SqliteMemoryStore(
                     is_archived INTEGER NOT NULL DEFAULT 0,
                     provenance TEXT NULL,
                     origin_conversation_id TEXT NULL,
-                    origin_session_id TEXT NULL
+                    origin_session_id TEXT NULL,
+                    role TEXT NULL,
+                    category TEXT NULL,
+                    tags_json TEXT NULL,
+                    revision INTEGER NOT NULL DEFAULT 1,
+                    archived_at TEXT NULL,
+                    corrects_id TEXT NULL,
+                    supersedes_id TEXT NULL,
+                    superseded_by_id TEXT NULL,
+                    origin_kind TEXT NULL,
+                    origin_reference TEXT NULL,
+                    embedding_status TEXT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_memories_agent_id ON memories(agent_id);
                 CREATE INDEX IF NOT EXISTS idx_memories_session_id ON memories(session_id);
                 CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at);
-
-                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
-                USING fts5(content, content='memories', content_rowid='rowid');
-
-                CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-                    INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-                    INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
-                END;
 
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER NOT NULL
@@ -128,6 +129,7 @@ public sealed class SqliteMemoryStore(
                     failure_count INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT NULL,
                     next_attempt_at TEXT NULL,
+                    claim_revision INTEGER NULL,
                     PRIMARY KEY (job_id, memory_id),
                     FOREIGN KEY (job_id) REFERENCES memory_reembedding_job(job_id) ON DELETE CASCADE
                 );
@@ -139,21 +141,19 @@ public sealed class SqliteMemoryStore(
                 SELECT 1
                 WHERE NOT EXISTS (SELECT 1 FROM schema_version);
                 """;
-            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
 
-            // #2480: an agent DB created before provenance existed has a `memories` table without
-            // these columns, and CREATE TABLE IF NOT EXISTS above is a no-op against it. Adding
-            // them here - additively, nullably, after the fact - is what makes a pre-provenance DB
-            // open successfully instead of failing on the first SELECT naming a missing column.
-            // Deliberately no backfill UPDATE: NULL is the honest record that provenance was never
-            // captured for those rows, and it reads back as the fail-safe `unknown`.
-            await EnsureProvenanceColumnsAsync(connection, ct).ConfigureAwait(false);
+                // CREATE TABLE IF NOT EXISTS is a no-op for an older memories table. Add every
+                // durable column and complete the FTS transition under the same SQLite write lock.
+                await EnsureDurableRecordColumnsAsync(connection, transaction, token).ConfigureAwait(false);
+                await EnsureReembeddingItemColumnsAsync(connection, transaction, token).ConfigureAwait(false);
+                await UpgradeSearchContractAsync(connection, transaction, token).ConfigureAwait(false);
+                await transaction.CommitAsync(token).ConfigureAwait(false);
 
-            // #3244: report the scan ceiling being exceeded ONCE, here, rather than per query.
-            // Store open is the only place where the condition is a store-level fact rather than a
-            // per-search accident, and a per-query warning on a hot path would be noise an operator
-            // learns to ignore - which is how the condition stayed invisible for so long.
-            await WarnIfEmbeddedRowsExceedScanCeilingAsync(connection, ct).ConfigureAwait(false);
+                // #3244: report the scan ceiling being exceeded once per store open.
+                await WarnIfEmbeddedRowsExceedScanCeilingAsync(connection, token).ConfigureAwait(false);
+                return true;
+            }, ct).ConfigureAwait(false);
 
             _initialized = true;
         }
@@ -163,8 +163,96 @@ public sealed class SqliteMemoryStore(
         }
     }
 
-    private static readonly string[] ProvenanceColumns =
-        ["provenance", "origin_conversation_id", "origin_session_id"];
+    private static readonly (string Name, string Definition)[] DurableRecordColumns =
+    [
+        ("provenance", "TEXT NULL"),
+        ("origin_conversation_id", "TEXT NULL"),
+        ("origin_session_id", "TEXT NULL"),
+        ("role", "TEXT NULL"),
+        ("category", "TEXT NULL"),
+        ("tags_json", "TEXT NULL"),
+        ("revision", "INTEGER NOT NULL DEFAULT 1"),
+        ("archived_at", "TEXT NULL"),
+        ("corrects_id", "TEXT NULL"),
+        ("supersedes_id", "TEXT NULL"),
+        ("superseded_by_id", "TEXT NULL"),
+        ("origin_kind", "TEXT NULL"),
+        ("origin_reference", "TEXT NULL"),
+        ("embedding_status", "TEXT NULL")
+    ];
+
+    private static async Task EnsureReembeddingItemColumnsAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "ALTER TABLE memory_reembedding_items ADD COLUMN claim_revision INTEGER NULL";
+        try
+        {
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
+        {
+            // A concurrent opener or a current schema already supplied the additive claim column.
+        }
+    }
+
+    private static async Task UpgradeSearchContractAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT COALESCE(MAX(version), 0) FROM schema_version";
+        var version = Convert.ToInt32(await command.ExecuteScalarAsync(ct).ConfigureAwait(false), CultureInfo.InvariantCulture);
+        if (version >= 2)
+        {
+            // Version two is normally all-or-nothing because its transition is transactional.
+            // IF NOT EXISTS also repairs a database left incomplete by an older non-atomic opener.
+            command.CommandText = """
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
+                USING fts5(content, content='memories', content_rowid='rowid');
+                CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories WHEN new.is_archived = 0 BEGIN
+                    INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
+                END;
+                CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories WHEN old.is_archived = 0 BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+                END;
+                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, content)
+                    SELECT 'delete', old.rowid, old.content WHERE old.is_archived = 0;
+                    INSERT INTO memories_fts(rowid, content)
+                    SELECT new.rowid, new.content WHERE new.is_archived = 0;
+                END;
+                """;
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            return;
+        }
+
+        command.CommandText = """
+            DROP TRIGGER IF EXISTS memories_ai;
+            DROP TRIGGER IF EXISTS memories_ad;
+            DROP TRIGGER IF EXISTS memories_au;
+            DROP TABLE IF EXISTS memories_fts;
+            CREATE VIRTUAL TABLE memories_fts USING fts5(content, content='memories', content_rowid='rowid');
+            INSERT INTO memories_fts(rowid, content)
+            SELECT rowid, content FROM memories WHERE is_archived = 0;
+            CREATE TRIGGER memories_ai AFTER INSERT ON memories WHEN new.is_archived = 0 BEGIN
+                INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
+            END;
+            CREATE TRIGGER memories_ad AFTER DELETE ON memories WHEN old.is_archived = 0 BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+            END;
+            CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, content)
+                SELECT 'delete', old.rowid, old.content WHERE old.is_archived = 0;
+                INSERT INTO memories_fts(rowid, content)
+                SELECT new.rowid, new.content WHERE new.is_archived = 0;
+            END;
+            DELETE FROM schema_version;
+            INSERT INTO schema_version(version) VALUES (2);
+            """;
+        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Counts live embedded rows at store open and warns once if they exceed the vector scan
@@ -214,25 +302,28 @@ public sealed class SqliteMemoryStore(
     }
 
     /// <summary>
-    /// Lazily adds the additive nullable provenance columns to an existing <c>memories</c> table.
+    /// Lazily adds the durable-record columns to an existing <c>memories</c> table.
     /// </summary>
     /// <remarks>
-    /// The upstream lesson this implements (#2480) is that a store must never reject an older DB at
-    /// open. Each column is added independently and a duplicate-column error is swallowed, so the
-    /// upgrade is idempotent and safe against a concurrent process that added the column first.
+    /// A store must never reject an older DB at open. Each column is added independently and a
+    /// duplicate-column error is swallowed, so the upgrade is idempotent and safe against a
+    /// concurrent process that added the column first. Nullable semantic columns intentionally
+    /// preserve missing evidence rather than assigning a role, origin, or provenance retroactively.
     /// </remarks>
-    private static async Task EnsureProvenanceColumnsAsync(SqliteConnection connection, CancellationToken ct)
+    private static async Task EnsureDurableRecordColumnsAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CancellationToken ct)
     {
         HashSet<string> existing = new(StringComparer.OrdinalIgnoreCase);
         await using (var probe = connection.CreateCommand())
         {
+            probe.Transaction = transaction;
             probe.CommandText = "PRAGMA table_info(memories);";
             await using var reader = await probe.ExecuteReaderAsync(ct).ConfigureAwait(false);
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
                 existing.Add(reader.GetString(1));
         }
 
-        foreach (var column in ProvenanceColumns)
+        foreach (var (column, definition) in DurableRecordColumns)
         {
             if (existing.Contains(column))
                 continue;
@@ -240,12 +331,15 @@ public sealed class SqliteMemoryStore(
             try
             {
                 await using var alter = connection.CreateCommand();
-                alter.CommandText = $"ALTER TABLE memories ADD COLUMN {column} TEXT NULL;";
+                alter.Transaction = transaction;
+                alter.CommandText = $"ALTER TABLE memories ADD COLUMN {column} {definition};";
                 await alter.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
-            catch (SqliteException)
+            catch (SqliteException ex) when (
+                ex.SqliteErrorCode == 1
+                && ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
             {
-                // Another process won the race and added it. The end state is what matters.
+                // A supported pre-transaction opener may already have supplied the column.
             }
         }
     }
@@ -259,7 +353,7 @@ public sealed class SqliteMemoryStore(
         {
             var id = string.IsNullOrWhiteSpace(entry.Id) ? Guid.NewGuid().ToString("N") : entry.Id;
             var createdAt = entry.CreatedAt == default ? DateTimeOffset.UtcNow : entry.CreatedAt;
-            var toInsert = entry with { Id = id, CreatedAt = createdAt };
+            var toInsert = entry with { Id = id, CreatedAt = createdAt, Revision = 1 };
 
             // Populate the embedding BLOB on write. A failure here must never fail the write:
             // TryGenerateAsync returns null instead of throwing, and the row is simply stored
@@ -278,11 +372,15 @@ public sealed class SqliteMemoryStore(
                 INSERT INTO memories (
                     id, agent_id, session_id, turn_index, source_type, content, metadata_json,
                     embedding, created_at, updated_at, expires_at, is_archived,
-                    provenance, origin_conversation_id, origin_session_id)
+                    provenance, origin_conversation_id, origin_session_id, role, category, tags_json,
+                    revision, archived_at, corrects_id, supersedes_id, superseded_by_id,
+                    origin_kind, origin_reference, embedding_status)
                 VALUES (
                     $id, $agentId, $sessionId, $turnIndex, $sourceType, $content, $metadataJson,
                     $embedding, $createdAt, $updatedAt, $expiresAt, $isArchived,
-                    $provenance, $originConversationId, $originSessionId)
+                    $provenance, $originConversationId, $originSessionId, $role, $category, $tagsJson,
+                    $revision, $archivedAt, $correctsId, $supersedesId, $supersededById,
+                    $originKind, $originReference, $embeddingStatus)
                 """;
             BindParameters(command, toInsert);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -307,7 +405,9 @@ public sealed class SqliteMemoryStore(
             command.CommandText = """
                 SELECT id, agent_id, session_id, turn_index, source_type, content, metadata_json,
                        embedding, created_at, updated_at, expires_at, is_archived,
-                       provenance, origin_conversation_id, origin_session_id
+                       provenance, origin_conversation_id, origin_session_id,
+                       role, category, tags_json, revision, archived_at, corrects_id, supersedes_id,
+                       superseded_by_id, origin_kind, origin_reference, embedding_status
                 FROM memories
                 WHERE id = $id
                 """;
@@ -334,7 +434,9 @@ public sealed class SqliteMemoryStore(
             command.CommandText = """
                 SELECT id, agent_id, session_id, turn_index, source_type, content, metadata_json,
                        embedding, created_at, updated_at, expires_at, is_archived,
-                       provenance, origin_conversation_id, origin_session_id
+                       provenance, origin_conversation_id, origin_session_id,
+                       role, category, tags_json, revision, archived_at, corrects_id, supersedes_id,
+                       superseded_by_id, origin_kind, origin_reference, embedding_status
                 FROM memories
                 WHERE session_id = $sessionId
                 ORDER BY created_at DESC
@@ -422,6 +524,171 @@ public sealed class SqliteMemoryStore(
         {
             // FTS syntax or corruption — fall back to LIKE search
             return await SearchWithLikeFallbackAsync(sanitized, limit, filter, lambda, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<MemoryMutationResult> UpdateAsync(
+        string id,
+        int expectedRevision,
+        MemoryUpdate update,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        ArgumentNullException.ThrowIfNull(update);
+        if (expectedRevision < 1)
+            throw new ArgumentOutOfRangeException(nameof(expectedRevision));
+
+        await InitializeAsync(ct).ConfigureAwait(false);
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await SqliteRetryHelper.ExecuteWithRetryAsync(async token =>
+            {
+                await using var connection = CreateConnection();
+                await connection.OpenAsync(token).ConfigureAwait(false);
+                await using var transaction = connection.BeginTransaction(deferred: false);
+                await using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = $"""
+                    UPDATE memories
+                    SET content = CASE WHEN $contentSpecified = 1 THEN $content ELSE content END,
+                        role = CASE WHEN $roleSpecified = 1 THEN $role ELSE role END,
+                        category = CASE WHEN $categorySpecified = 1 THEN $category ELSE category END,
+                        tags_json = CASE WHEN $tagsSpecified = 1 THEN $tags ELSE tags_json END,
+                        corrects_id = CASE WHEN $correctsSpecified = 1 THEN $corrects ELSE corrects_id END,
+                        supersedes_id = CASE WHEN $supersedesSpecified = 1 THEN $supersedes ELSE supersedes_id END,
+                        superseded_by_id = CASE WHEN $supersededBySpecified = 1 THEN $supersededBy ELSE superseded_by_id END,
+                        embedding = CASE WHEN $contentSpecified = 1 THEN NULL ELSE embedding END,
+                        embedding_status = CASE
+                            WHEN $contentSpecified = 1 THEN NULL
+                            WHEN $embeddingStatusSpecified = 1 THEN $embeddingStatus
+                            ELSE embedding_status END,
+                        updated_at = $updatedAt,
+                        revision = revision + 1
+                    WHERE id = $id AND revision = $expectedRevision
+                    RETURNING {MemoryColumnList};
+                    """;
+                command.Parameters.AddWithValue("$id", id);
+                command.Parameters.AddWithValue("$expectedRevision", expectedRevision);
+                command.Parameters.AddWithValue("$contentSpecified", update.Content is null ? 0 : 1);
+                command.Parameters.AddWithValue("$content", (object?)update.Content ?? DBNull.Value);
+                AddUpdateParameter(command, "$role", update.Role);
+                AddUpdateParameter(command, "$category", update.Category);
+                AddUpdateParameter(command, "$tags", update.TagsJson);
+                AddUpdateParameter(command, "$corrects", update.CorrectsId);
+                AddUpdateParameter(command, "$supersedes", update.SupersedesId);
+                AddUpdateParameter(command, "$supersededBy", update.SupersededById);
+                AddUpdateParameter(command, "$embeddingStatus", update.EmbeddingStatus);
+                command.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
+                MemoryEntry? updated = null;
+                await using (var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false))
+                {
+                    if (await reader.ReadAsync(token).ConfigureAwait(false))
+                        updated = ReadMemory(reader);
+                }
+
+                var result = updated is not null
+                    ? new MemoryMutationResult(MemoryMutationStatus.Applied, updated)
+                    : await ReadMutationMissAsync(connection, transaction, id, expectedRevision, archive: false, token)
+                        .ConfigureAwait(false);
+                await transaction.CommitAsync(token).ConfigureAwait(false);
+                return result;
+            }, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<MemoryMutationResult> ArchiveAsync(string id, int expectedRevision, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        if (expectedRevision < 1)
+            throw new ArgumentOutOfRangeException(nameof(expectedRevision));
+
+        await InitializeAsync(ct).ConfigureAwait(false);
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await SqliteRetryHelper.ExecuteWithRetryAsync(async token =>
+            {
+                await using var connection = CreateConnection();
+                await connection.OpenAsync(token).ConfigureAwait(false);
+                await using var transaction = connection.BeginTransaction(deferred: false);
+                await using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = $"""
+                    UPDATE memories
+                    SET is_archived = 1, archived_at = $now, updated_at = $now, revision = revision + 1
+                    WHERE id = $id AND revision = $expectedRevision AND is_archived = 0
+                    RETURNING {MemoryColumnList};
+                    """;
+                command.Parameters.AddWithValue("$id", id);
+                command.Parameters.AddWithValue("$expectedRevision", expectedRevision);
+                command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+                MemoryEntry? archived = null;
+                await using (var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false))
+                {
+                    if (await reader.ReadAsync(token).ConfigureAwait(false))
+                        archived = ReadMemory(reader);
+                }
+
+                var result = archived is not null
+                    ? new MemoryMutationResult(MemoryMutationStatus.Applied, archived)
+                    : await ReadMutationMissAsync(connection, transaction, id, expectedRevision, archive: true, token)
+                        .ConfigureAwait(false);
+                await transaction.CommitAsync(token).ConfigureAwait(false);
+                return result;
+            }, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<MemoryMutationResult> DeleteAsync(string id, int expectedRevision, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        if (expectedRevision < 1)
+            throw new ArgumentOutOfRangeException(nameof(expectedRevision));
+
+        await InitializeAsync(ct).ConfigureAwait(false);
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await SqliteRetryHelper.ExecuteWithRetryAsync(async token =>
+            {
+                await using var connection = CreateConnection();
+                await connection.OpenAsync(token).ConfigureAwait(false);
+                await using var transaction = connection.BeginTransaction(deferred: false);
+                await using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = "DELETE FROM memories WHERE id = $id AND revision = $expectedRevision";
+                command.Parameters.AddWithValue("$id", id);
+                command.Parameters.AddWithValue("$expectedRevision", expectedRevision);
+                MemoryMutationResult result;
+                if (await command.ExecuteNonQueryAsync(token).ConfigureAwait(false) == 1)
+                {
+                    result = new MemoryMutationResult(MemoryMutationStatus.Applied, null);
+                }
+                else
+                {
+                    result = await ReadMutationMissAsync(
+                        connection, transaction, id, expectedRevision, archive: false, token).ConfigureAwait(false);
+                }
+
+                await transaction.CommitAsync(token).ConfigureAwait(false);
+                return result;
+            }, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
         }
     }
 
@@ -649,7 +916,7 @@ public sealed class SqliteMemoryStore(
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                SELECT m.id, m.content, i.failure_count
+                SELECT m.id, m.content, i.failure_count, m.revision
                 FROM memory_reembedding_items i
                 INNER JOIN memories m ON m.id = i.memory_id
                 WHERE i.job_id = $jobId
@@ -665,15 +932,15 @@ public sealed class SqliteMemoryStore(
             await using (var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
             {
                 while (await reader.ReadAsync(ct).ConfigureAwait(false))
-                    claimed.Add(new ReembeddingItem(reader.GetString(0), reader.GetString(1), reader.GetInt32(2)));
+                    claimed.Add(new ReembeddingItem(reader.GetString(0), reader.GetString(1), reader.GetInt32(2), reader.GetInt32(3)));
             }
 
             foreach (var item in claimed)
             {
                 await ExecuteReembeddingCommandAsync(connection, transaction,
-                    "UPDATE memory_reembedding_items SET next_attempt_at = $leaseUntil WHERE job_id = $jobId AND memory_id = $memoryId",
-                    [("$leaseUntil", now.Add(ReembeddingClaimLease).ToString("O")), ("$jobId", jobId),
-                     ("$memoryId", item.MemoryId)], ct).ConfigureAwait(false);
+                    "UPDATE memory_reembedding_items SET next_attempt_at = $leaseUntil, claim_revision = $claimRevision WHERE job_id = $jobId AND memory_id = $memoryId",
+                    [("$leaseUntil", now.Add(ReembeddingClaimLease).ToString("O")), ("$claimRevision", item.Revision),
+                     ("$jobId", jobId), ("$memoryId", item.MemoryId)], ct).ConfigureAwait(false);
             }
 
             await transaction.CommitAsync(ct).ConfigureAwait(false);
@@ -689,6 +956,7 @@ public sealed class SqliteMemoryStore(
     public async Task CompleteReembeddingItemAsync(
         string jobId,
         string memoryId,
+        int claimedRevision,
         byte[] embedding,
         CancellationToken ct = default)
     {
@@ -710,14 +978,15 @@ public sealed class SqliteMemoryStore(
             var changed = await ExecuteReembeddingCommandAsync(connection, transaction,
                 """
                 UPDATE memories
-                SET embedding = $embedding
-                WHERE id = $memoryId AND is_archived = 0
+                SET embedding = $embedding, embedding_status = 'ready'
+                WHERE id = $memoryId AND is_archived = 0 AND revision = $claimedRevision
                   AND EXISTS (
                       SELECT 1 FROM memory_reembedding_items
                       WHERE job_id = $jobId AND memory_id = $memoryId
-                        AND next_attempt_at IS NOT NULL)
+                        AND next_attempt_at IS NOT NULL AND claim_revision = $claimedRevision)
                 """,
-                [("$embedding", embedding), ("$memoryId", memoryId), ("$jobId", jobId)], ct).ConfigureAwait(false);
+                [("$embedding", embedding), ("$memoryId", memoryId), ("$jobId", jobId),
+                 ("$claimedRevision", claimedRevision)], ct).ConfigureAwait(false);
             if (changed == 1)
             {
                 await ExecuteReembeddingCommandAsync(connection, transaction,
@@ -758,7 +1027,7 @@ public sealed class SqliteMemoryStore(
             var changed = await ExecuteReembeddingCommandAsync(connection, transaction,
                 """
                 UPDATE memory_reembedding_items
-                SET failure_count = failure_count + 1, last_error = $error, next_attempt_at = NULL
+                SET failure_count = failure_count + 1, last_error = $error, next_attempt_at = NULL, claim_revision = NULL
                 WHERE job_id = $jobId AND memory_id = $memoryId
                   AND next_attempt_at IS NOT NULL
                 """,
@@ -950,6 +1219,48 @@ public sealed class SqliteMemoryStore(
         return await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
+    private const string MemoryColumnList = """
+        id, agent_id, session_id, turn_index, source_type, content, metadata_json,
+        embedding, created_at, updated_at, expires_at, is_archived,
+        provenance, origin_conversation_id, origin_session_id, role, category, tags_json,
+        revision, archived_at, corrects_id, supersedes_id, superseded_by_id,
+        origin_kind, origin_reference, embedding_status
+        """;
+
+    private static void AddUpdateParameter(
+        SqliteCommand command,
+        string parameterName,
+        MemoryUpdateValue<string?> update)
+    {
+        command.Parameters.AddWithValue(parameterName + "Specified", update.IsSpecified ? 1 : 0);
+        command.Parameters.AddWithValue(parameterName, (object?)update.Value ?? DBNull.Value);
+    }
+
+    private static async Task<MemoryMutationResult> ReadMutationMissAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string id,
+        int expectedRevision,
+        bool archive,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"SELECT {MemoryColumnList} FROM memories WHERE id = $id";
+        command.Parameters.AddWithValue("$id", id);
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        if (!await reader.ReadAsync(ct).ConfigureAwait(false))
+            return new MemoryMutationResult(MemoryMutationStatus.NotFound, null);
+
+        var current = ReadMemory(reader);
+        var status = archive && current.IsArchived
+            ? MemoryMutationStatus.AlreadyArchived
+            : current.Revision != expectedRevision
+                ? MemoryMutationStatus.RevisionConflict
+                : MemoryMutationStatus.NotFound;
+        return new MemoryMutationResult(status, current);
+    }
+
     public ValueTask DisposeAsync()
     {
         _writeLock.Dispose();
@@ -981,6 +1292,8 @@ public sealed class SqliteMemoryStore(
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
                    m.provenance, m.origin_conversation_id, m.origin_session_id,
+                   m.role, m.category, m.tags_json, m.revision, m.archived_at, m.corrects_id,
+                   m.supersedes_id, m.superseded_by_id, m.origin_kind, m.origin_reference, m.embedding_status,
                    -bm25(memories_fts) AS bm25_rank,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories_fts
@@ -1009,8 +1322,8 @@ public sealed class SqliteMemoryStore(
             var entry = ReadMemory(reader);
             // bm25() is negative-is-better, so the query already negates it; clamp because
             // the ranker normalises by magnitude and a negative lexical score is meaningless.
-            var bm25Rank = reader.IsDBNull(15) ? 0d : Math.Max(0d, reader.GetDouble(15));
-            var ageDays = reader.IsDBNull(16) ? 0d : Math.Max(0d, reader.GetDouble(16));
+            var bm25Rank = reader.IsDBNull(26) ? 0d : Math.Max(0d, reader.GetDouble(26));
+            var ageDays = reader.IsDBNull(27) ? 0d : Math.Max(0d, reader.GetDouble(27));
             if (!candidates.ContainsKey(entry.Id))
                 candidates[entry.Id] = new MemoryRankingCandidate(entry, bm25Rank, Similarity: null, ageDays);
         }
@@ -1232,6 +1545,8 @@ public sealed class SqliteMemoryStore(
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
                    m.provenance, m.origin_conversation_id, m.origin_session_id,
+                   m.role, m.category, m.tags_json, m.revision, m.archived_at, m.corrects_id,
+                   m.supersedes_id, m.superseded_by_id, m.origin_kind, m.origin_reference, m.embedding_status,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories m
             WHERE m.is_archived = 0
@@ -1274,7 +1589,7 @@ public sealed class SqliteMemoryStore(
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
                 var entry = ReadMemory(reader);
-                var ageDays = reader.IsDBNull(15) ? 0d : Math.Max(0d, reader.GetDouble(15));
+                var ageDays = reader.IsDBNull(26) ? 0d : Math.Max(0d, reader.GetDouble(26));
                 var textScore = terms.Count(term => entry.Content.Contains(term, StringComparison.OrdinalIgnoreCase));
                 candidates[entry.Id] = new MemoryRankingCandidate(entry, textScore, Similarity: null, ageDays);
             }
@@ -1401,6 +1716,8 @@ public sealed class SqliteMemoryStore(
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
                    m.provenance, m.origin_conversation_id, m.origin_session_id,
+                   m.role, m.category, m.tags_json, m.revision, m.archived_at, m.corrects_id,
+                   m.supersedes_id, m.superseded_by_id, m.origin_kind, m.origin_reference, m.embedding_status,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories m
             WHERE m.is_archived = 0
@@ -1451,7 +1768,7 @@ public sealed class SqliteMemoryStore(
             if (similarity is null)
                 continue;
 
-            var ageDays = reader.IsDBNull(15) ? 0d : Math.Max(0d, reader.GetDouble(15));
+            var ageDays = reader.IsDBNull(26) ? 0d : Math.Max(0d, reader.GetDouble(26));
             candidates[entry.Id] = candidates.TryGetValue(entry.Id, out var existing)
                 ? existing with { Similarity = similarity }
                 : new MemoryRankingCandidate(entry, LexicalScore: 0d, similarity, ageDays);
@@ -1499,7 +1816,7 @@ public sealed class SqliteMemoryStore(
                 var parameterName = $"$tag{i}";
                 sql.AppendLine("  AND EXISTS (");
                 sql.AppendLine("      SELECT 1");
-                sql.AppendLine("      FROM json_each(COALESCE(m.metadata_json, '{}'), '$.tags') t");
+                sql.AppendLine("      FROM json_each(CASE WHEN m.tags_json IS NOT NULL THEN m.tags_json ELSE COALESCE(json_extract(m.metadata_json, '$.tags'), '[]') END) t");
                 sql.AppendLine($"      WHERE t.value = {parameterName}");
                 sql.AppendLine("  )");
                 command.Parameters.AddWithValue(parameterName, filter.Tags[i]);
@@ -1526,6 +1843,17 @@ public sealed class SqliteMemoryStore(
         command.Parameters.AddWithValue("$provenance", MemoryProvenance.Normalize(entry.Provenance));
         command.Parameters.AddWithValue("$originConversationId", (object?)entry.OriginConversationId ?? DBNull.Value);
         command.Parameters.AddWithValue("$originSessionId", (object?)entry.OriginSessionId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$role", (object?)entry.Role ?? DBNull.Value);
+        command.Parameters.AddWithValue("$category", (object?)entry.Category ?? DBNull.Value);
+        command.Parameters.AddWithValue("$tagsJson", (object?)entry.TagsJson ?? DBNull.Value);
+        command.Parameters.AddWithValue("$revision", entry.Revision);
+        command.Parameters.AddWithValue("$archivedAt", (object?)entry.ArchivedAt?.ToString("O") ?? DBNull.Value);
+        command.Parameters.AddWithValue("$correctsId", (object?)entry.CorrectsId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$supersedesId", (object?)entry.SupersedesId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$supersededById", (object?)entry.SupersededById ?? DBNull.Value);
+        command.Parameters.AddWithValue("$originKind", (object?)entry.OriginKind ?? DBNull.Value);
+        command.Parameters.AddWithValue("$originReference", (object?)entry.OriginReference ?? DBNull.Value);
+        command.Parameters.AddWithValue("$embeddingStatus", (object?)entry.EmbeddingStatus ?? DBNull.Value);
     }
 
     private static MemoryEntry ReadMemory(SqliteDataReader reader)
@@ -1549,7 +1877,18 @@ public sealed class SqliteMemoryStore(
             // fail-safe, non-first-party default.
             Provenance = reader.IsDBNull(12) ? null : reader.GetString(12),
             OriginConversationId = reader.IsDBNull(13) ? null : reader.GetString(13),
-            OriginSessionId = reader.IsDBNull(14) ? null : reader.GetString(14)
+            OriginSessionId = reader.IsDBNull(14) ? null : reader.GetString(14),
+            Role = reader.IsDBNull(15) ? null : reader.GetString(15),
+            Category = reader.IsDBNull(16) ? null : reader.GetString(16),
+            TagsJson = reader.IsDBNull(17) ? null : reader.GetString(17),
+            Revision = reader.GetInt32(18),
+            ArchivedAt = reader.IsDBNull(19) ? null : DateTimeOffset.Parse(reader.GetString(19), CultureInfo.InvariantCulture),
+            CorrectsId = reader.IsDBNull(20) ? null : reader.GetString(20),
+            SupersedesId = reader.IsDBNull(21) ? null : reader.GetString(21),
+            SupersededById = reader.IsDBNull(22) ? null : reader.GetString(22),
+            OriginKind = reader.IsDBNull(23) ? null : reader.GetString(23),
+            OriginReference = reader.IsDBNull(24) ? null : reader.GetString(24),
+            EmbeddingStatus = reader.IsDBNull(25) ? null : reader.GetString(25)
         };
     }
 }

@@ -122,7 +122,7 @@ public sealed class SqliteMemoryStoreReembeddingTests : IAsyncLifetime
             var job = await store.EnsureReembeddingJobAsync(CurrentIdentity);
             var claimed = await store.ClaimReembeddingBatchAsync(job.JobId, batchSize: 1);
 
-            await store.CompleteReembeddingItemAsync(job.JobId, claimed[0].MemoryId, replacement);
+            await store.CompleteReembeddingItemAsync(job.JobId, claimed[0].MemoryId, claimed[0].Revision, replacement);
 
             var actual = await store.GetByIdAsync(original.Id);
             actual.ShouldNotBeNull();
@@ -147,6 +147,29 @@ public sealed class SqliteMemoryStoreReembeddingTests : IAsyncLifetime
             progress.CoveredCount.ShouldBe(1);
             progress.PendingCount.ShouldBe(0);
             progress.FailedCount.ShouldBe(0);
+        });
+    }
+
+    [Fact]
+    public async Task CompleteReembeddingItem_ContentChangedAfterClaim_DoesNotAttachStaleVector()
+    {
+        var replacement = EmbeddingBlob.Encode(CurrentIdentity, [0f, 0f, 1f, 0f]);
+
+        await WithStoreAsync(async store =>
+        {
+            await store.InsertAsync(Entry("changed"));
+            var job = await store.EnsureReembeddingJobAsync(CurrentIdentity);
+            var claim = (await store.ClaimReembeddingBatchAsync(job.JobId, batchSize: 1)).ShouldHaveSingleItem();
+            claim.Revision.ShouldBe(1);
+            _ = await store.UpdateAsync("changed", 1, new MemoryUpdate { Content = "new content" });
+
+            await store.CompleteReembeddingItemAsync(job.JobId, claim.MemoryId, claim.Revision, replacement);
+
+            var actual = await store.GetByIdAsync("changed");
+            actual.ShouldNotBeNull();
+            actual.Content.ShouldBe("new content");
+            actual.Embedding.ShouldBeNull();
+            actual.EmbeddingStatus.ShouldNotBe("ready");
         });
     }
 
