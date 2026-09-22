@@ -137,6 +137,72 @@ public sealed class GitHubToolsTests
     }
 
     [Fact]
+    public async Task IssueList_DefaultProjectionIsCompactAndNamesItsFields()
+    {
+        var api = new RecordingGitHubApiClient().Returns($"[{GitHubFixtures.Issue}]");
+        var tool = new GitHubIssueListTool(api, GitHubFixtures.Config());
+
+        var json = await GitHubFixtures.InvokeJsonAsync(tool, new());
+
+        var fields = json.GetProperty("fields").EnumerateArray().Select(field => field.GetString()).ToArray();
+        fields.ShouldBe([
+            "itemKey", "number", "title", "state", "author", "labels", "commentCount",
+            "createdAt", "updatedAt", "url", "isPullRequest",
+        ]);
+        var issue = json.GetProperty("issues")[0];
+        issue.GetProperty("itemKey").GetString().ShouldBe("issue:2627");
+        issue.GetProperty("commentCount").GetInt32().ShouldBe(4);
+        issue.TryGetProperty("body", out _).ShouldBeFalse(
+            "a census must not import issue bodies unless the caller explicitly selects body");
+        json.GetProperty("projectedBytes").GetInt32().ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task IssueList_ProjectsOnlyAllowListedFieldsSelectedByTheCaller()
+    {
+        var api = new RecordingGitHubApiClient().Returns($"[{GitHubFixtures.Issue}]");
+        var tool = new GitHubIssueListTool(api, GitHubFixtures.Config());
+
+        var json = await GitHubFixtures.InvokeJsonAsync(
+            tool, new() { ["fields"] = new[] { "number", "title", "body" } });
+
+        var issue = json.GetProperty("issues")[0];
+        issue.EnumerateObject().Select(property => property.Name).ShouldBe(["number", "title", "body"]);
+        issue.GetProperty("body").GetString().ShouldBe("Agents shell out to gh.");
+        json.GetProperty("fields").EnumerateArray().Select(field => field.GetString())
+            .ShouldBe(["number", "title", "body"]);
+    }
+
+    [Fact]
+    public async Task IssueList_RejectsUnknownFieldsBeforeCallingGitHub()
+    {
+        var api = new RecordingGitHubApiClient();
+        var tool = new GitHubIssueListTool(api, GitHubFixtures.Config());
+
+        var ex = await Should.ThrowAsync<ArgumentException>(() => tool.PrepareArgumentsAsync(
+            new Dictionary<string, object?> { ["fields"] = new[] { "number", "repository.owner.login" } }));
+
+        ex.Message.ShouldContain("repository.owner.login");
+        api.Calls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void IssueList_FieldSchemaPublishesABoundedAllowList()
+    {
+        var fields = new GitHubIssueListTool(new RecordingGitHubApiClient(), GitHubFixtures.Config())
+            .Definition.Parameters.GetProperty("properties").GetProperty("fields");
+
+        fields.GetProperty("type").GetString().ShouldBe("array");
+        fields.GetProperty("maxItems").GetInt32().ShouldBe(12);
+        var allowed = fields.GetProperty("items").GetProperty("enum").EnumerateArray()
+            .Select(field => field.GetString()).ToArray();
+        allowed.ShouldContain("body");
+        allowed.ShouldContain("commentCount");
+        allowed.ShouldNotContain("comments");
+        allowed.ShouldNotContain("patch");
+    }
+
+    [Fact]
     public async Task IssueList_WhenPerPageExceedsTheBound_ClampsAndSaysSo()
     {
         // Clamping silently would let a caller that asked for 500 conclude the repository has 10
