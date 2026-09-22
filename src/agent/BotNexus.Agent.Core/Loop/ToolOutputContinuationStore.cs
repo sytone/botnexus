@@ -68,6 +68,16 @@ public sealed class ToolOutputContinuationStore
     /// <summary>Default maximum total retained bytes across all entries (32 MiB).</summary>
     public const long DefaultMaxTotalBytes = 32L * 1024 * 1024;
 
+    // Static fields initialize in declaration order. The compatibility scope must exist before
+    // Shared invokes the parameterless constructor; declaring it afterward poisons the type
+    // initializer with a null scope and breaks every ordinary tool result in the process.
+    private static readonly ToolResultScope LegacyScope = new(
+        "legacy-world",
+        "legacy-agent",
+        "legacy-conversation",
+        "legacy-session",
+        "legacy-continuation-policy");
+
     /// <summary>
     /// The ambient store used by <see cref="ToolOutputBudget"/> when no explicit store is supplied.
     /// </summary>
@@ -80,18 +90,36 @@ public sealed class ToolOutputContinuationStore
     /// </remarks>
     public static ToolOutputContinuationStore Shared { get; } = new();
 
-    private readonly int _maxEntries;
-    private readonly long _maxTotalBytes;
-    private readonly Lock _gate = new();
-    private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
-    private readonly Queue<string> _order = new();
-    private long _totalBytes;
+    private readonly ToolResultStore _store;
+    private readonly ToolResultScope _scope;
+    private readonly int _maxAliases;
+    private readonly Lock _aliasGate = new();
+    private readonly Dictionary<string, ToolResultId> _aliases = new(StringComparer.Ordinal);
+    private readonly Queue<string> _aliasOrder = new();
 
-    /// <summary>Creates a store with the given capacity bounds.</summary>
+    /// <summary>Creates a compatibility store with the given capacity bounds.</summary>
     public ToolOutputContinuationStore(int maxEntries = DefaultMaxEntries, long maxTotalBytes = DefaultMaxTotalBytes)
+        : this(
+            new ToolResultStore(new ToolResultStoreOptions(
+                maxEntries > 0 ? maxEntries : DefaultMaxEntries,
+                maxTotalBytes > 0 ? maxTotalBytes : DefaultMaxTotalBytes,
+                maxTotalBytes > 0 ? maxTotalBytes : DefaultMaxTotalBytes)),
+            LegacyScope,
+            maxEntries > 0 ? maxEntries : DefaultMaxEntries)
     {
-        _maxEntries = maxEntries > 0 ? maxEntries : DefaultMaxEntries;
-        _maxTotalBytes = maxTotalBytes > 0 ? maxTotalBytes : DefaultMaxTotalBytes;
+    }
+
+    /// <summary>Creates a text continuation adapter over the shared typed result store.</summary>
+    public ToolOutputContinuationStore(ToolResultStore store, ToolResultScope scope)
+        : this(store, scope, DefaultMaxEntries)
+    {
+    }
+
+    private ToolOutputContinuationStore(ToolResultStore store, ToolResultScope scope, int maxAliases)
+    {
+        _store = store ?? throw new ArgumentNullException(nameof(store));
+        _scope = scope ?? throw new ArgumentNullException(nameof(scope));
+        _maxAliases = maxAliases;
     }
 
     /// <summary>
@@ -104,18 +132,33 @@ public sealed class ToolOutputContinuationStore
         ArgumentNullException.ThrowIfNull(fullText);
 
         var bytes = Encoding.UTF8.GetBytes(fullText);
-        var token = $"toc_{Guid.NewGuid():n}";
-        var entry = new Entry(bytes, toolName);
+        var receipt = _store.Store(
+            bytes,
+            new ToolResultDescriptor(
+                ToolResultKind.Text,
+                "text/plain; charset=utf-8",
+                Schema: null,
+                ToolResultProvenance.Unknown,
+                toolName ?? "unknown-tool",
+                "legacy-continuation",
+                Count: null,
+                ToolResultCompleteness.Complete,
+                ToolResultRetention.Volatile),
+            _scope);
 
-        lock (_gate)
+        // Preserve the established continuation-handle contract while the typed store retains its
+        // distinct tr_ identity. Exposing tr_ here would make existing tools and persisted guidance
+        // parse an empty handle, even though the payload was stored successfully.
+        var handle = $"toc_{Guid.NewGuid():N}";
+        lock (_aliasGate)
         {
-            _entries[token] = entry;
-            _order.Enqueue(token);
-            _totalBytes += bytes.LongLength;
-            Evict();
+            while (_aliases.Count >= _maxAliases && _aliasOrder.TryDequeue(out var oldest))
+                _aliases.Remove(oldest);
+            _aliases.Add(handle, receipt.ResultId);
+            _aliasOrder.Enqueue(handle);
         }
 
-        return token;
+        return handle;
     }
 
     /// <summary>
@@ -126,16 +169,30 @@ public sealed class ToolOutputContinuationStore
     /// <param name="maxBytes">Maximum UTF-8 bytes to return; non-positive means the whole remainder.</param>
     public ToolOutputContinuationSlice Read(string? handle, long offset, int maxBytes)
     {
-        Entry? entry;
-        lock (_gate)
+        if (handle is null)
+            return new ToolOutputContinuationSlice(ToolOutputContinuationStatus.UnknownHandle, string.Empty, 0, 0, false);
+
+        ToolResultId resultId;
+        lock (_aliasGate)
         {
-            if (handle is null || !_entries.TryGetValue(handle, out entry))
-            {
+            if (!_aliases.TryGetValue(handle, out resultId))
                 return new ToolOutputContinuationSlice(ToolOutputContinuationStatus.UnknownHandle, string.Empty, 0, 0, false);
-            }
         }
 
-        var total = entry.Bytes.LongLength;
+        var receiptResult = _store.GetReceipt(resultId, _scope);
+        if (receiptResult.Status != ToolResultReadStatus.Ok || receiptResult.Receipt is null)
+        {
+            return new ToolOutputContinuationSlice(ToolOutputContinuationStatus.UnknownHandle, string.Empty, 0, 0, false);
+        }
+
+        var result = _store.Read(resultId, receiptResult.Receipt.Revision, _scope);
+        if (result.Status != ToolResultReadStatus.Ok)
+        {
+            return new ToolOutputContinuationSlice(ToolOutputContinuationStatus.UnknownHandle, string.Empty, 0, 0, false);
+        }
+
+        var bytes = result.Payload.ToArray();
+        var total = bytes.LongLength;
         if (offset < 0 || offset > total)
         {
             return new ToolOutputContinuationSlice(ToolOutputContinuationStatus.OffsetOutOfRange, string.Empty, offset, total, false);
@@ -143,8 +200,8 @@ public sealed class ToolOutputContinuationStore
 
         var available = total - offset;
         var take = maxBytes > 0 ? Math.Min(maxBytes, available) : available;
-        var count = RuneSafeLength(entry.Bytes.AsSpan((int)offset, (int)take));
-        var text = Encoding.UTF8.GetString(entry.Bytes, (int)offset, count);
+        var count = RuneSafeLength(bytes.AsSpan((int)offset, (int)take));
+        var text = Encoding.UTF8.GetString(bytes, (int)offset, count);
         var next = offset + count;
 
         return new ToolOutputContinuationSlice(
@@ -180,17 +237,4 @@ public sealed class ToolOutputContinuationStore
         return consumed;
     }
 
-    private void Evict()
-    {
-        while (_order.Count > 0 && (_entries.Count > _maxEntries || _totalBytes > _maxTotalBytes))
-        {
-            var oldest = _order.Dequeue();
-            if (_entries.Remove(oldest, out var removed))
-            {
-                _totalBytes -= removed.Bytes.LongLength;
-            }
-        }
-    }
-
-    private sealed record Entry(byte[] Bytes, string? ToolName);
 }
