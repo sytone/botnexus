@@ -72,6 +72,22 @@ internal sealed class DebugSessionsCommand
             return Task.CompletedTask;
         });
 
+        // ── retention preview ──
+        var olderThanDaysOption = new Option<int>("--older-than-days", () => 30, "Minimum age of successful historical tool invocations.");
+        var retentionCommand = new Command("retention-preview", "Report tool payload retention candidates without modifying the store.")
+        {
+            olderThanDaysOption
+        };
+        retentionCommand.SetHandler(context =>
+        {
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var format = context.ParseResult.GetValueForOption(formatOption) ?? "table";
+            var olderThanDays = context.ParseResult.GetValueForOption(olderThanDaysOption);
+            var dbPath = ResolveSessionsDb(target);
+            context.ExitCode = ExecuteRetentionPreview(dbPath, olderThanDays, format);
+            return Task.CompletedTask;
+        });
+
         // ── stats ──
         var statsCommand = new Command("stats", "Show aggregate session statistics.");
         statsCommand.SetHandler(context =>
@@ -86,6 +102,7 @@ internal sealed class DebugSessionsCommand
         command.AddCommand(listCommand);
         command.AddCommand(getCommand);
         command.AddCommand(compactionCommand);
+        command.AddCommand(retentionCommand);
         command.AddCommand(statsCommand);
         return command;
     }
@@ -331,6 +348,44 @@ internal sealed class DebugSessionsCommand
             AnsiConsole.WriteLine();
         }
 
+        return 0;
+    }
+
+    internal static int ExecuteRetentionPreview(string dbPath, int olderThanDays, string format)
+    {
+        if (!File.Exists(dbPath))
+        {
+            ReportMissingStore(dbPath);
+            return 1;
+        }
+
+        ToolRetentionReport report;
+        try
+        {
+            report = ToolRetentionPreview.CreateReport(dbPath, olderThanDays);
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{CliText.SafeDisplay(ex.Message)}[/]");
+            return 1;
+        }
+
+        if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
+        {
+            AnsiConsole.Write(new Text(JsonSerializer.Serialize(report, JsonOpts)));
+            AnsiConsole.WriteLine();
+            return 0;
+        }
+
+        AnsiConsole.MarkupLine("[bold]Historical Tool Retention Preview[/]");
+        AnsiConsole.MarkupLine($"  Cutoff:                 [bold]{report.Cutoff:O}[/]");
+        AnsiConsole.MarkupLine($"  Candidate invocations:  [bold]{report.CandidateInvocations:N0}[/]");
+        AnsiConsole.MarkupLine($"  Candidate rows:         [bold]{report.CandidateRows:N0}[/]");
+        AnsiConsole.MarkupLine($"  Content bytes:          [bold]{report.CandidateContentBytes:N0}[/]");
+        AnsiConsole.MarkupLine($"  Stored argument bytes:  [bold]{report.DuplicatedCandidateArgumentBytes:N0}[/]");
+        AnsiConsole.MarkupLine($"  Unique argument bytes:  [bold]{report.CandidateArgumentBytes:N0}[/]");
+        AnsiConsole.MarkupLine($"  Estimated reclaimable:  [bold]{report.EstimatedReclaimableBytes:N0}[/]");
+        AnsiConsole.MarkupLine("[dim]Read-only preview. Physical SQLite reclamation is a separate operator-controlled operation.[/]");
         return 0;
     }
 
