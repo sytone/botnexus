@@ -14,6 +14,7 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
 public partial class Configuration : IDisposable
 {
     private const string SecretsSectionKey = "secrets";
+    private const string ExtensionRepositoriesSectionKey = "extension-repositories";
 
     /// <summary>
     /// Config section from the route (e.g. <c>/configuration/providers</c>). Selects which root
@@ -46,7 +47,10 @@ public partial class Configuration : IDisposable
             // File-backed secrets are deliberately outside the platform config schema and save
             // payload. Register the operator surface explicitly rather than inventing a schema
             // property that would couple it to config persistence and revisioning (#3664).
-            return schemaSections.Append((SecretsSectionKey, "Secrets")).ToList();
+            return schemaSections
+                .Append((ExtensionRepositoriesSectionKey, "Extension Repositories"))
+                .Append((SecretsSectionKey, "Secrets"))
+                .ToList();
         }
     }
 

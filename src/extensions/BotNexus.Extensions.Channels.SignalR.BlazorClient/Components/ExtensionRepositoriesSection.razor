@@ -1,0 +1,69 @@
+@inject PlatformConfigService ConfigService
+
+<section class="extension-repositories-section" data-testid="extension-repositories-section">
+  <header><h3>Extension Repositories</h3><p class="text-muted">Register repositories that can supply gateway extensions.</p></header>
+  <div class="validation-item warning"><strong>Full gateway trust:</strong> repository content can run inside the gateway process with the gateway's permissions. Review and trust the source before registering it.</div>
+  @if (!string.IsNullOrWhiteSpace(_error)) { <div class="validation-item error" role="alert">@_error</div> }
+  <div class="repository-form">
+    <label>ID <input data-testid="repository-id" @bind="_id" disabled="@(_editingId is not null)" /></label>
+    <label>Repository URL <input data-testid="repository-url" @bind="_url" /></label>
+    <label>Requested ref <input data-testid="repository-ref" @bind="_requestedRef" /></label>
+    <label><input type="checkbox" @bind="_updatesEnabled" /> Allow updates</label>
+    <label><input data-testid="trust-ack" type="checkbox" @bind="_trustAcknowledged" /> I understand this repository receives full gateway trust.</label>
+    <button type="button" class="toolbar-btn primary" data-testid="repository-add" disabled="@(!_trustAcknowledged || _pending)" @onclick="Save">@(_editingId is null ? "Register repository" : "Save repository")</button>
+    @if (_editingId is not null) { <button type="button" class="toolbar-btn" @onclick="CancelEdit">Cancel</button> }
+  </div>
+
+  @if (_loading) { <div class="config-loading">Loading extension repositories...</div> }
+  else if (_repositories is { Count: 0 }) { <div class="empty-state">No extension repositories are registered.</div> }
+  else if (_repositories is not null)
+  {
+    @foreach (var repository in _repositories)
+    {
+      <article class="repository-card">
+        <header><strong>@repository.Id</strong><span>@(repository.Enabled ? "Enabled" : "Disabled")</span></header>
+        <div>@repository.RepositoryUrl</div><div>Requested ref: @repository.RequestedRef</div>
+        <dl class="repository-status">
+          <dt>Status</dt><dd>Not yet reconciled</dd><dt>Resolved commit</dt><dd>@Unavailable(repository.ResolvedCommit)</dd><dt>Clone path</dt><dd>@Unavailable(repository.ClonePath)</dd>
+          <dt>Last attempt</dt><dd>@Unavailable(repository.LastAttemptUtc)</dd><dt>Last success</dt><dd>@Unavailable(repository.LastSuccessUtc)</dd>
+          <dt>Deployed version</dt><dd>@Unavailable(repository.DeployedVersion)</dd><dt>Latest named failure</dt><dd>@Unavailable(repository.LatestFailure)</dd>
+        </dl>
+        <div class="repository-actions">
+          <button type="button" class="toolbar-btn" @onclick="() => Edit(repository)">Edit</button>
+          <button type="button" class="toolbar-btn" data-testid="@($"toggle-{repository.Id}")" @onclick="() => Toggle(repository)">@(repository.Enabled ? "Disable" : "Enable")</button>
+          <button type="button" class="toolbar-btn" @onclick="() => Remove(repository.Id)">Remove</button>
+          <button type="button" class="toolbar-btn" data-testid="@($"sync-{repository.Id}")" disabled title="A reconciler has not been implemented.">Sync Now</button>
+          <span class="text-muted">Unavailable until reconciliation</span>
+        </div>
+      </article>
+    }
+  }
+</section>
+
+@code {
+  private IReadOnlyList<PlatformConfigService.ExtensionRepositoryItem>? _repositories;
+  private string _id = string.Empty, _url = string.Empty, _requestedRef = "main";
+  private string? _editingId, _error; private bool _updatesEnabled = true, _trustAcknowledged, _pending, _loading;
+  protected override async Task OnInitializedAsync() => await Load();
+  private async Task Load() { _loading = true; _repositories = await ConfigService.ListExtensionRepositoriesAsync(); _loading = false; _error = _repositories is null ? "Failed to load extension repositories." : null; }
+  private async Task Save()
+  {
+    _error = Validate(); if (_error is not null) return; _pending = true;
+    var result = _editingId is null
+      ? await ConfigService.AddExtensionRepositoryAsync(new(_id, _url, _requestedRef, true, _updatesEnabled))
+      : await ConfigService.UpdateExtensionRepositoryAsync(_editingId, new(_url, _requestedRef, _updatesEnabled));
+    _pending = false; if (!result.Success) { _error = result.Error; return; } CancelEdit(); await Load();
+  }
+  private string? Validate()
+  {
+    if (!_trustAcknowledged) return "Acknowledge the full gateway trust warning before registering.";
+    if (string.IsNullOrWhiteSpace(_id) || _id.Split('-').Any(segment => segment.Length == 0 || !segment.All(c => char.IsLower(c) || char.IsDigit(c)))) return "Repository ID must use lowercase alphanumeric segments separated by single hyphens.";
+    if (!Uri.TryCreate(_url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https" or "ssh")) return "Repository URL must be an absolute HTTP, HTTPS, or SSH URL.";
+    if (string.IsNullOrWhiteSpace(_requestedRef) || _requestedRef.Any(char.IsWhiteSpace) || _requestedRef.StartsWith('-')) return "Requested ref is invalid."; return null;
+  }
+  private void Edit(PlatformConfigService.ExtensionRepositoryItem r) { _editingId = r.Id; _id = r.Id; _url = r.RepositoryUrl; _requestedRef = r.RequestedRef; _updatesEnabled = r.UpdatesEnabled; _trustAcknowledged = false; }
+  private void CancelEdit() { _editingId = null; _id = _url = string.Empty; _requestedRef = "main"; _updatesEnabled = true; _trustAcknowledged = false; }
+  private async Task Toggle(PlatformConfigService.ExtensionRepositoryItem r) { await ConfigService.SetExtensionRepositoryEnabledAsync(r.Id, !r.Enabled); await Load(); }
+  private async Task Remove(string id) { await ConfigService.RemoveExtensionRepositoryAsync(id); await Load(); }
+  private static string Unavailable(object? value) => value?.ToString() ?? "Unavailable — not yet reconciled";
+}

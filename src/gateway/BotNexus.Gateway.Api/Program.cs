@@ -205,6 +205,7 @@ builder.Services.AddDiagnosticsHardening();
 builder.Services.AddProviderHealthCheck();
 builder.Services.AddBotNexusCron();
 builder.Services.AddPlatformConfiguration(resolvedConfigPath, builder.Configuration);
+builder.Services.AddSingleton(new ExtensionRepositoryRegistryService(resolvedConfigPath, new System.IO.Abstractions.FileSystem()));
 builder.Services.Configure<CronOptions>(options =>
 {
     options.PromptTemplates = startupPlatformConfig.PromptTemplates?

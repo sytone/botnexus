@@ -53,7 +53,11 @@
                 }
             </nav>
             <div class="config-panel-canvas">
-                @if (string.Equals(ActiveSection, SecretsSectionKey, StringComparison.OrdinalIgnoreCase))
+                @if (string.Equals(ActiveSection, ExtensionRepositoriesSectionKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    <ExtensionRepositoriesSection />
+                }
+                else if (string.Equals(ActiveSection, SecretsSectionKey, StringComparison.OrdinalIgnoreCase))
                 {
                     <section class="secrets-config-section" data-testid="secrets-config-section">
                         <header>
