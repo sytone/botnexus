@@ -43,6 +43,14 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>assets\icons\svg\%(Filename)%(Extension)</Link>
     </None>
+    <None Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.SignalR.BlazorClient\wwwroot\js\chat.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>wwwroot\js\chat.js</Link>
+    </None>
+    <None Include="prompt-template-composer.test.mjs">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>wwwroot\js\prompt-template-composer.test.mjs</Link>
+    </None>
     <None Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.SignalR.BlazorClient\wwwroot\js\splitter.js">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>wwwroot\js\splitter.js</Link>

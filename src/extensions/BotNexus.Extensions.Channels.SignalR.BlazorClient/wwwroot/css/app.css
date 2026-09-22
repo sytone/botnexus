@@ -7738,3 +7738,83 @@ h3.conversation-title.editable:hover {
     align-items: center;
     gap: 0.5rem;
 }
+
+/* For an icon standing in for work in progress -- the refresh control while it refreshes. */
+.bn-icon-spin {
+    animation: bn-icon-spin 0.9s linear infinite;
+}
+
+@keyframes bn-icon-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bn-icon-spin {
+        animation: none;
+    }
+}
+
+/* BEGIN generated icon tones -- scripts/generate-icons.py */
+/* The tone each icon was drawn in. Kept here rather than on the element so any
+   context can override it -- a disabled control, a selected nav row, a button
+   that needs the icon to match its label. */
+.bn-icon-activity { color: #22C55E; }
+.bn-icon-add { color: #3B82F6; }
+.bn-icon-agents { color: #3B82F6; }
+.bn-icon-assistant { color: #8B5CF6; }
+.bn-icon-avoid { color: #EF4444; }
+.bn-icon-bot { color: #06B6D4; }
+.bn-icon-canvas { color: #8B5CF6; }
+.bn-icon-chat { color: #3B82F6; }
+.bn-icon-check { color: #22C55E; }
+.bn-icon-conversation { color: #3B82F6; }
+.bn-icon-cron-jobs { color: #F59E0B; }
+.bn-icon-dark-mode { color: #6366F1; }
+.bn-icon-delete { color: #EF4444; }
+.bn-icon-error { color: #EF4444; }
+.bn-icon-folder { color: #F59E0B; }
+.bn-icon-guide { color: #3B82F6; }
+.bn-icon-help { color: #3B82F6; }
+.bn-icon-light-mode { color: #F59E0B; }
+.bn-icon-pause { color: #F59E0B; }
+.bn-icon-pin { color: #F59E0B; }
+.bn-icon-plugins { color: #14B8A6; }
+.bn-icon-reports { color: #14B8A6; }
+.bn-icon-send { color: #3B82F6; }
+.bn-icon-skills { color: #8B5CF6; }
+.bn-icon-stop { color: #EF4444; }
+.bn-icon-thinking { color: #8B5CF6; }
+.bn-icon-todo { color: #22C55E; }
+.bn-icon-tools { color: #F59E0B; }
+.bn-icon-usage { color: #22C55E; }
+.bn-icon-warning { color: #F59E0B; }
+.bn-icon-workspace { color: #6366F1; }
+
+/* Drop a gradient for the icon's flat tone, for a context with its own colour.
+   Beats the root's stroke="url(#...)" because any declaration outranks a
+   presentation attribute, and the children inherit stroke from the root. */
+.bn-icon-flat { stroke: currentColor; }
+
+/* Where an icon must read as part of its label rather than as its own object. */
+.bn-icon-inherit { color: inherit; stroke: currentColor; }
+/* END generated icon tones */
+
+
+/* Prompt-template composer picker (#4299). */
+.prompt-template-open-btn { align-self: center; padding: .45rem .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text); cursor: pointer; }
+.prompt-template-overlay { position: fixed; inset: 0; z-index: 220; display: grid; place-items: center; padding: 1rem; background: var(--color-scrim); }
+.prompt-template-dialog { width: min(680px, 96vw); max-height: min(720px, 90vh); overflow: auto; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-secondary); box-shadow: var(--shadow-overlay); }
+.prompt-template-dialog header, .prompt-template-dialog footer { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
+.prompt-template-dialog h3, .prompt-template-dialog h4, .prompt-template-dialog p { margin-top: 0; }
+.prompt-template-dialog header button, .prompt-template-dialog footer button, .prompt-template-back { padding: .45rem .7rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); color: var(--text); cursor: pointer; }
+.prompt-template-search { box-sizing: border-box; width: 100%; margin-bottom: .75rem; padding: .55rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-primary); color: var(--text); }
+.prompt-template-list { display: grid; gap: .35rem; max-height: 320px; overflow: auto; }
+.prompt-template-option { display: grid; grid-template-columns: 1fr auto; gap: .15rem .75rem; padding: .65rem; text-align: left; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); color: var(--text); cursor: pointer; }
+.prompt-template-option span { grid-column: 1 / -1; color: var(--text-muted); }
+.prompt-template-option.selected, .prompt-template-option:focus-visible { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.prompt-template-parameters { display: grid; gap: .65rem; margin: .75rem 0; }
+.prompt-template-parameters label { display: grid; gap: .2rem; }
+.prompt-template-parameters input { padding: .5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-primary); color: var(--text); }
+.prompt-template-preview { max-height: 240px; overflow: auto; padding: .75rem; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-primary); }
+.prompt-template-validation { color: var(--error); }
+.prompt-template-dialog footer { justify-content: flex-end; }
