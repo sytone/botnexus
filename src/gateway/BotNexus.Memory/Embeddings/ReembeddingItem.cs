@@ -4,4 +4,5 @@ namespace BotNexus.Memory.Embeddings;
 /// <param name="MemoryId">Identifier used to complete or fail this exact memory row.</param>
 /// <param name="Content">Stored content to send to the embedding provider.</param>
 /// <param name="FailureCount">Failures already recorded for this row and target.</param>
-public sealed record ReembeddingItem(string MemoryId, string Content, int FailureCount);
+/// <param name="Revision">Content revision captured by this claim; completion must still match it.</param>
+public sealed record ReembeddingItem(string MemoryId, string Content, int FailureCount, int Revision);
