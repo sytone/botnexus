@@ -16,6 +16,20 @@ namespace BotNexus.Extensions.GitHub;
 /// </remarks>
 internal static class GitHubProjections
 {
+    /// <summary>The bounded field catalogue accepted by issue census projections.</summary>
+    internal static readonly string[] IssueListFields =
+    [
+        "itemKey", "number", "title", "state", "author", "body", "labels", "commentCount",
+        "createdAt", "updatedAt", "url", "isPullRequest",
+    ];
+
+    /// <summary>The compact field set returned by issue census operations unless explicitly overridden.</summary>
+    internal static readonly string[] DefaultIssueListFields =
+    [
+        "itemKey", "number", "title", "state", "author", "labels", "commentCount",
+        "createdAt", "updatedAt", "url", "isPullRequest",
+    ];
+
     /// <summary>Projects an issue or pull-request object.</summary>
     internal static Dictionary<string, object?> Issue(JsonElement element) => new(StringComparer.Ordinal)
     {
@@ -34,6 +48,31 @@ internal static class GitHubProjections
         ["isPullRequest"] = element.ValueKind == JsonValueKind.Object
             && element.TryGetProperty("pull_request", out _),
     };
+
+    /// <summary>Projects only the selected fields for an issue census row.</summary>
+    internal static Dictionary<string, object?> IssueListItem(JsonElement element, IReadOnlyList<string> fields)
+    {
+        var number = Int(element, "number");
+        var isPullRequest = element.ValueKind == JsonValueKind.Object
+            && element.TryGetProperty("pull_request", out _);
+        var values = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["itemKey"] = number is null ? null : $"{(isPullRequest ? "pull-request" : "issue")}:{number}",
+            ["number"] = number,
+            ["title"] = Str(element, "title"),
+            ["state"] = Str(element, "state"),
+            ["author"] = Str(Obj(element, "user"), "login"),
+            ["body"] = Str(element, "body"),
+            ["labels"] = Labels(element),
+            ["commentCount"] = Int(element, "comments"),
+            ["createdAt"] = Str(element, "created_at"),
+            ["updatedAt"] = Str(element, "updated_at"),
+            ["url"] = Str(element, "html_url"),
+            ["isPullRequest"] = isPullRequest,
+        };
+
+        return fields.ToDictionary(field => field, field => values[field], StringComparer.Ordinal);
+    }
 
     /// <summary>Projects the pull-request-specific fields on top of the shared issue shape.</summary>
     internal static Dictionary<string, object?> PullRequest(JsonElement element)
