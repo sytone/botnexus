@@ -11,10 +11,12 @@ using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Events;
+using BotNexus.Gateway.Abstractions.Evaluations;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Evaluations;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
 using ConversationId = BotNexus.Domain.Primitives.ConversationId;
@@ -22,6 +24,7 @@ using MessageRole = BotNexus.Domain.Primitives.MessageRole;
 using SessionId = BotNexus.Domain.Primitives.SessionId;
 using UserId = BotNexus.Domain.Primitives.UserId;
 using SessionParticipant = BotNexus.Domain.Primitives.SessionParticipant;
+using RunId = BotNexus.Domain.Primitives.RunId;
 using BotNexus.Domain.World;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using SessionType = BotNexus.Domain.Primitives.SessionType;
@@ -74,6 +77,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly Sessions.ISessionTurnTracker _turnTracker;
     private readonly ChannelStartupReport _startupReport;
     private readonly IConversationEventPublisher? _conversationEventPublisher;
+    private readonly PostRunEvaluationDispatcher? _postRunEvaluationDispatcher;
 
     /// <summary>
     /// The single execution-layer tool-audit sink (#2614), used by the blocking branch of
@@ -113,10 +117,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         ISessionContextWindowResolver? contextWindowResolver = null,
         Audit.IToolAuditSink? toolAudit = null,
         Sessions.IContextExhaustionNotifier? contextExhaustionNotifier = null,
-        IConversationEventPublisher? conversationEventPublisher = null)
+        IConversationEventPublisher? conversationEventPublisher = null,
+        PostRunEvaluationDispatcher? postRunEvaluationDispatcher = null)
     {
         _toolAudit = toolAudit ?? Audit.DefaultToolAuditSink.Instance;
         _conversationEventPublisher = conversationEventPublisher;
+        _postRunEvaluationDispatcher = postRunEvaluationDispatcher;
         _contextWindowResolver = contextWindowResolver;
         // #3535: a run that ends on an empty assistant completion because the context window is
         // exhausted must say so instead of presenting as a blank turn. Built from the collaborators
@@ -570,6 +576,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 }, cancellationToken);
 
                 var sessionSaved = false;
+                AgentResponse? blockingResponse = null;
+                var evaluationRunId = RunId.Create();
                 var agentDescriptor = _registry?.Get(typedAgentId);
                 var resolvedChannel = ResolveChannelAdapter(message.ChannelType);
                 var shouldStream = resolvedChannel is not null && message.StreamResponse switch
@@ -660,7 +668,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     var maxPersistedToolResultBytes = toolResultCfg is { Enabled: true, MaxBytes: > 0 }
                         ? toolResultCfg.MaxBytes
                         : 0;
-                    await StreamingSessionHelper.ProcessAndSaveAsync(
+                    var streamingResult = await StreamingSessionHelper.ProcessAndSaveAsync(
                         handle.StreamAsync(userMessage, cancellationToken),
                         session,
                         _sessions,
@@ -742,6 +750,26 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         _sessionLifecycleEvents,
                         finalSaveFence: runFence,
                         cancellationToken: cancellationToken);
+
+                    DispatchPostRunEvaluation(
+                        streamingResult.FinalSaveOutcome,
+                        RunOutcomeSnapshot.FromStreamingResult(
+                            evaluationRunId,
+                            typedSessionId,
+                            session.ConversationId,
+                            typedAgentId,
+                            DateTimeOffset.UtcNow,
+                            streamingResult.AssistantContent,
+                            streamingResult.Completion,
+                            streamingResult.Usage,
+                            streamingResult.TurnCount,
+                            streamingResult.ToolInvocations.Select(tool => new RunOutcomeTool(
+                                tool.ToolCallId,
+                                tool.ToolName,
+                                tool.Arguments,
+                                tool.ResultContent,
+                                tool.IsError,
+                                tool.IsIncomplete))));
                     }
                     finally
                     {
@@ -761,6 +789,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     try
                     {
                         response = await handle.PromptAsync(userMessage, cancellationToken);
+                        blockingResponse = response;
 
                         // #2522 residual: the blocking branch must stamp the provider's reported
                         // prompt-token count just as the streaming branch does at MessageEnd,
@@ -843,6 +872,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
                 if (!sessionSaved)
                 {
+                    SessionSaveOutcome? finalizerOutcome = null;
                     // Isolate transcript write from delivery success: a SaveAsync failure
                     // must not propagate as a delivery failure — the channel send already
                     // succeeded and retrying the outer operation would duplicate the reply
@@ -855,7 +885,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         // #1518: fenced finalizer write. If the session was deleted, sealed by a
                         // reset, or rebound while this (non-streaming) turn ran, the save no-ops
                         // instead of resurrecting/clobbering the row.
-                        var finalizerOutcome = await _sessions.SaveAsync(session, runFence, cancellationToken);
+                        finalizerOutcome = await _sessions.SaveAsync(session, runFence, cancellationToken);
                         if (finalizerOutcome == SessionSaveOutcome.Rebound)
                         {
                             _logger.LogInformation(
@@ -882,6 +912,19 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                             "Session transcript save failed after successful channel send for session '{SessionId}'. " +
                             "Delivery was successful; transcript may be missing the last assistant turn.",
                             sessionId);
+                    }
+
+                    if (finalizerOutcome is { } persistedOutcome && blockingResponse is { } settledResponse)
+                    {
+                        DispatchPostRunEvaluation(
+                            persistedOutcome,
+                            RunOutcomeSnapshot.FromAgentResponse(
+                                evaluationRunId,
+                                typedSessionId,
+                                session.ConversationId,
+                                typedAgentId,
+                                DateTimeOffset.UtcNow,
+                                settledResponse));
                     }
                 }
 
@@ -1027,6 +1070,22 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     /// transform of the inputs into the resolution outputs the caller then applies, so the
     /// extraction preserves the exact prior behaviour and mutation order.
     /// </summary>
+    private void DispatchPostRunEvaluation(
+        SessionSaveOutcome finalizerOutcome,
+        RunOutcomeSnapshot snapshot)
+    {
+        if (_postRunEvaluationDispatcher is null)
+            return;
+
+        var admission = _postRunEvaluationDispatcher.DispatchAfterFinalizer(finalizerOutcome, snapshot);
+        if (admission is PostRunEvaluationAdmission.Saturated)
+        {
+            _logger.LogWarning(
+                "Post-run evaluation queue is saturated; run {RunId} was not admitted",
+                snapshot.RunId.Value);
+        }
+    }
+
     private async Task<ResolvedConversationSession> ResolveConversationSessionAsync(
         InboundMessage message,
         AgentId typedAgentId,

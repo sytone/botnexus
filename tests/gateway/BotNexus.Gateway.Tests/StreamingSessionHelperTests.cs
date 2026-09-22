@@ -7,6 +7,53 @@ namespace BotNexus.Gateway.Tests;
 
 public sealed class StreamingSessionHelperTests
 {
+    [Fact]
+    public async Task ProcessAndSaveAsync_MultipleTurnEnds_ReturnsCompleteRunAssistantContent()
+    {
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-multiple-turns"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+
+        var result = await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "first" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, Usage = new AgentResponseUsage(5, 2) },
+                new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd },
+                new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "second" },
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, Usage = new AgentResponseUsage(4, 3) },
+                new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd },
+                new AgentStreamEvent { Type = AgentStreamEventType.RunEnded }
+            ]),
+            session,
+            store.Object);
+
+        result.AssistantContent.ShouldBe($"first{Environment.NewLine}second");
+        result.Usage.ShouldBe(new AgentResponseUsage(9, 5));
+        result.TurnCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_RunEndedCompletion_SurvivesInResultWithUsageEvidence()
+    {
+        var session = new GatewaySession { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-completion"), AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1") };
+        var store = new Mock<ISessionStore>();
+        var completion = new RunCompletionSignal("Parked", ["open"], "UserInput", "detail", "evidence", "user", "reply", 1);
+
+        var result = await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent { Type = AgentStreamEventType.MessageEnd, Usage = new AgentResponseUsage(5, 2) },
+                new AgentStreamEvent { Type = AgentStreamEventType.RunEnded, Completion = completion }
+            ]),
+            session,
+            store.Object);
+
+        result.Completion.ShouldBe(completion);
+        result.Usage.ShouldBe(new AgentResponseUsage(5, 2));
+        result.TurnCount.ShouldBe(1);
+        result.FinalSaveOutcome.ShouldBe(SessionSaveOutcome.Persisted);
+    }
+
     /// <summary>
     /// Minimal capturing logger so the #2921 silent-stop warning can be asserted on directly
     /// rather than inferred. Records level plus the formatted message.
