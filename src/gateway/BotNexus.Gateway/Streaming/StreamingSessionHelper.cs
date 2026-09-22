@@ -53,6 +53,7 @@ public static class StreamingSessionHelper
             ? k
             : null;
         var streamedContent = new StringBuilder();
+        var runAssistantContent = new StringBuilder();
         var streamedHistory = new List<SessionEntry>();
         var allHistoryEntries = new List<SessionEntry>();
         var hadThinkingContent = false;
@@ -80,6 +81,9 @@ public static class StreamingSessionHelper
         // hand back the SAME record shape produced by the SAME policy.
         var toolInvocationBuilders = new List<ToolInvocationBuilder>();
         var toolInvocationIndex = new Dictionary<string, ToolInvocationBuilder>(StringComparer.Ordinal);
+        RunCompletionSignal? runCompletion = null;
+        AgentResponseUsage? runUsage = null;
+        var turnCount = 0;
 
         // Apply stall watchdog if configured — wraps the stream with inactivity timeout.
         var effectiveStream = options.StallWatchdog is not null
@@ -103,6 +107,8 @@ public static class StreamingSessionHelper
                     break;
                 case AgentStreamEventType.MessageEnd:
                     hadMessageEnd = true;
+                    turnCount++;
+                    runUsage = AddUsage(runUsage, evt.Usage);
                     // #3336: the provider's own final text for this message wins over the text we
                     // assembled from deltas, mirroring StreamAssemblyConformance.Reconcile at the
                     // parser seam. The deltas were already emitted (and already rendered live), so
@@ -133,6 +139,9 @@ public static class StreamingSessionHelper
                     // key) stops rendering "unavailable". Diagnostic only - no compaction
                     // behaviour is gated on it.
                     ProviderTokenUsageRecorder.Record(session, evt.Usage);
+                    break;
+                case AgentStreamEventType.RunEnded:
+                    runCompletion = evt.Completion;
                     break;
                 case AgentStreamEventType.ToolStart when evt.ToolCallId is not null || evt.ToolName is not null:
                     var startEntry = auditSink.ProjectStart(
@@ -260,6 +269,9 @@ public static class StreamingSessionHelper
                     streamedHistory.Clear();
                     if (streamedContent.Length > 0)
                     {
+                        if (runAssistantContent.Length > 0)
+                            runAssistantContent.AppendLine();
+                        runAssistantContent.Append(streamedContent);
                         turnSnapshot.Add(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString(), ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null, Kind = assistantKind });
                         emittedAssistantContent = true;
                         thinkingBuffer.Clear();
@@ -448,7 +460,40 @@ public static class StreamingSessionHelper
                 completedAt: builder.Completed ? builder.CompletedAt : null))
             .ToList();
 
-        return new StreamingSessionResult(streamedContent.ToString(), allHistoryEntries, toolInvocations);
+        if (streamedContent.Length > 0)
+        {
+            if (runAssistantContent.Length > 0)
+                runAssistantContent.AppendLine();
+            runAssistantContent.Append(streamedContent);
+        }
+
+        return new StreamingSessionResult(
+            runAssistantContent.ToString(),
+            allHistoryEntries,
+            toolInvocations,
+            runCompletion,
+            runUsage,
+            turnCount,
+            finalOutcome);
+    }
+
+    private static AgentResponseUsage? AddUsage(AgentResponseUsage? aggregate, AgentResponseUsage? next)
+    {
+        if (next is null)
+            return aggregate;
+
+        static int? Add(int? left, int? right)
+        {
+            if (left is null && right is null)
+                return null;
+            return (int)Math.Min(int.MaxValue, (long)(left ?? 0) + (right ?? 0));
+        }
+
+        return new AgentResponseUsage(
+            Add(aggregate?.InputTokens, next.InputTokens),
+            Add(aggregate?.OutputTokens, next.OutputTokens),
+            Add(aggregate?.CacheRead, next.CacheRead),
+            Add(aggregate?.CacheWrite, next.CacheWrite));
     }
 
     /// <summary>
@@ -546,10 +591,18 @@ public sealed record StreamingSessionOptions(
 /// projects - so a streamed run and a blocking run of the same tool sequence are observably
 /// equivalent rather than two parallel shapes.
 /// </param>
+/// <param name="Completion">Authoritative completion signal carried by the run-ended event.</param>
+/// <param name="Usage">Usage aggregated across every streamed assistant message.</param>
+/// <param name="TurnCount">Number of completed streamed assistant messages.</param>
+/// <param name="FinalSaveOutcome">Outcome of the authoritative final transcript save.</param>
 public sealed record StreamingSessionResult(
     string AssistantContent,
     IReadOnlyList<SessionEntry> HistoryEntries,
-    IReadOnlyList<ToolInvocationRecord>? ToolInvocations = null)
+    IReadOnlyList<ToolInvocationRecord>? ToolInvocations = null,
+    RunCompletionSignal? Completion = null,
+    AgentResponseUsage? Usage = null,
+    int TurnCount = 0,
+    SessionSaveOutcome FinalSaveOutcome = SessionSaveOutcome.Persisted)
 {
     /// <summary>
     /// The run's tool timeline in execution order; never null, empty when the run used no tools.

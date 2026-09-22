@@ -41,6 +41,8 @@ using BotNexus.Gateway.Providers;
 using BotNexus.Gateway.Abstractions.Providers;
 using BotNexus.Gateway.Contracts.Events;
 using BotNexus.Gateway.Events;
+using BotNexus.Gateway.Evaluations;
+using BotNexus.Gateway.Abstractions.Evaluations;
 using BotNexus.Agent.Providers.Core.Embeddings;
 using BotNexus.Memory;
 using Microsoft.Extensions.Configuration;
@@ -406,6 +408,16 @@ public static class GatewayServiceCollectionExtensions
         // #2447: startup outcomes are published into a singleton report so the API layer can
         // answer "which configured adapters actually started" without reaching into the host.
         services.TryAddSingleton<BotNexus.Gateway.Channels.Startup.ChannelStartupReport>();
+
+        // Best-effort asynchronous post-run evaluation foundation (#4319). The coordinator is a
+        // singleton hosted service so GatewayHost and the background worker share one bounded queue.
+        services.TryAddSingleton(new PostRunEvaluationOptions());
+        services.TryAddSingleton<PostRunEvaluationCoordinator>();
+        services.TryAddSingleton<IPostRunEvaluationCoordinator>(serviceProvider =>
+            serviceProvider.GetRequiredService<PostRunEvaluationCoordinator>());
+        services.TryAddSingleton<PostRunEvaluationDispatcher>();
+        services.AddSingleton<IHostedService>(serviceProvider =>
+            serviceProvider.GetRequiredService<PostRunEvaluationCoordinator>());
 
         // Gateway host
         services.TryAddSingleton<GatewayHost>();
