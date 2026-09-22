@@ -242,6 +242,15 @@ public static class GatewayServiceCollectionExtensions
                 serviceProvider.GetRequiredService<ILogger<SubAgentWorktreeSnapshotService>>()));
         services.AddHostedService<SubAgentWorktreeSnapshotRetentionHostedService>();
         services.AddSingleton<ISubAgentManager, DefaultSubAgentManager>();
+        // Managed task-flow hosts supply the durable ledger-backed IManagedTaskAttemptStore.
+        // Use a factory so the ordinary gateway can validate its service graph without that optional
+        // host capability; resolving the executor still fails explicitly when no ledger is supplied.
+        services.TryAddSingleton<IManagedTaskExecutor>(serviceProvider =>
+        {
+            var attempts = serviceProvider.GetRequiredService<IManagedTaskAttemptStore>();
+            var subAgents = serviceProvider.GetRequiredService<ISubAgentManager>();
+            return new LocalManagedTaskExecutor(subAgents, attempts);
+        });
         services.TryAddSingleton<SessionLifecycleEvents>();
         services.TryAddSingleton<ISessionLifecycleEvents>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionLifecycleEvents>());
