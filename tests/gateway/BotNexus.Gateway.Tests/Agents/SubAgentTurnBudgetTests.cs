@@ -54,6 +54,27 @@ public sealed class SubAgentTurnBudgetTests
         timeoutResult.ResultSummary.ShouldNotContain("turn budget");
     }
 
+    [Fact]
+    public async Task RunSubAgent_BudgetSnapshotFailure_PreservesBudgetExhaustedStatus()
+    {
+        var handle = new TurnDrivingHandle(turnsToAttempt: 50);
+        var snapshotService = new Mock<ISubAgentWorktreeSnapshotService>();
+        snapshotService
+            .Setup(service => service.CaptureAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("snapshot unavailable"));
+        var manager = CreateManager(handle, out _, snapshotService: snapshotService.Object);
+
+        var spawned = await manager.SpawnAsync(CreateRequest(maxTurns: 2, timeoutSeconds: 30) with
+        {
+            GrantedWritePaths = ["granted"]
+        });
+        var result = await AwaitTerminalAsync(manager, spawned.SubAgentId);
+
+        result.Status.ShouldBe(SubAgentStatus.BudgetExhausted);
+        result.WorktreeSnapshot.ShouldNotBeNull();
+        result.WorktreeSnapshot.Outcome.ShouldBe(SubAgentWorktreeSnapshotOutcome.ProcessFailed);
+    }
+
     /// <summary>AC3: a completed multi-turn run reports a non-zero TurnsUsed via ISubAgentManager.</summary>
     [Fact]
     public async Task RunSubAgent_CompletedMultiTurnRun_ReportsNonZeroTurnsUsed()
@@ -143,7 +164,8 @@ public sealed class SubAgentTurnBudgetTests
         out Mock<IChannelDispatcher> dispatcher,
         int timeoutSeconds = 30,
         int maxTurnsCeiling = 30,
-        ILogger<DefaultSubAgentManager>? logger = null)
+        ILogger<DefaultSubAgentManager>? logger = null,
+        ISubAgentWorktreeSnapshotService? snapshotService = null)
     {
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor
@@ -178,7 +200,8 @@ public sealed class SubAgentTurnBudgetTests
             Mock.Of<IActivityBroadcaster>(),
             dispatcher.Object,
             new TestOptionsMonitor<GatewayOptions>(options),
-            logger ?? NullLogger<DefaultSubAgentManager>.Instance);
+            logger ?? NullLogger<DefaultSubAgentManager>.Instance,
+            worktreeSnapshotService: snapshotService);
     }
 
     /// <summary>

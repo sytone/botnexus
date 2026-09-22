@@ -83,6 +83,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<SessionCleanupOptions>();
         services.AddOptions<ConversationRetentionOptions>();
         services.AddOptions<SubAgentWorkspaceSweepOptions>();
+        services.AddOptions<SubAgentWorktreeSnapshotOptions>();
         services.AddOptions<SessionWarmupOptions>();
         services.AddOptions<DelayToolOptions>();
         services.AddOptions<AgentSummaryOptions>();
@@ -106,6 +107,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<AgentExchangeBudgetOptions>(config.GetSection("gateway:agentExchange"));
             services.Configure<ConversationRetentionOptions>(config.GetSection("gateway:conversations"));
             services.Configure<SubAgentWorkspaceSweepOptions>(config.GetSection("gateway:subAgentWorkspace"));
+            services.Configure<SubAgentWorktreeSnapshotOptions>(config.GetSection("gateway:subAgents:worktreeSnapshot"));
             services.Configure<LivenessWatchdogOptions>(config.GetSection("gateway:livenessWatchdog"));
             services.Configure<SessionConsistencyOptions>(config.GetSection("gateway:sessionConsistency"));
             services.Configure<SqliteWalCheckpointOptions>(o =>
@@ -228,6 +230,17 @@ public static class GatewayServiceCollectionExtensions
                 // a peer world reflecting X-Cross-World-Key into its error page leaks the shared key.
                 serviceProvider.GetService<ISecretRedactor>()));
         services.AddSingleton<IChannelAdapter>(serviceProvider => serviceProvider.GetRequiredService<CrossWorldChannelAdapter>());
+        services.TryAddSingleton<IGitSnapshotProcessRunner, GitSnapshotProcessRunner>();
+        services.TryAddSingleton<ISubAgentWorktreeSnapshotService>(serviceProvider =>
+            new SubAgentWorktreeSnapshotService(
+                serviceProvider.GetRequiredService<IFileSystem>(),
+                serviceProvider.GetRequiredService<IOptions<SubAgentWorktreeSnapshotOptions>>(),
+                serviceProvider.GetRequiredService<IGitSnapshotProcessRunner>(),
+                serviceProvider.GetRequiredService<ISecretRedactor>(),
+                serviceProvider.GetRequiredService<BotNexusHome>(),
+                serviceProvider.GetService<TimeProvider>() ?? TimeProvider.System,
+                serviceProvider.GetRequiredService<ILogger<SubAgentWorktreeSnapshotService>>()));
+        services.AddHostedService<SubAgentWorktreeSnapshotRetentionHostedService>();
         services.AddSingleton<ISubAgentManager, DefaultSubAgentManager>();
         services.TryAddSingleton<SessionLifecycleEvents>();
         services.TryAddSingleton<ISessionLifecycleEvents>(serviceProvider =>
