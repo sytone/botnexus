@@ -25,7 +25,15 @@ Set the provider on your agent in `config.json`:
 }
 ```
 
-`provider` names the model-registry provider instance; `copilot` is also a supported alias for `github-copilot`. `model` is the registered model ID, not an API name. These are platform configuration keys; tool and template contracts can separately use `apiProvider` and `modelId`.
+`provider` names the model-registry provider instance. `model` is the registered model ID, not an API name. These are platform configuration keys; tool and template contracts can separately use `apiProvider` and `modelId`.
+
+### Accounts, provider instances and the `copilot` alias
+
+Current BotNexus supports one canonical GitHub Copilot account per gateway. The canonical provider instance and auth entry are both named `github-copilot`. `copilot` is an alias that resolves to that same model-registry provider; it is not a second provider instance, credential or subscription.
+
+BotNexus does not support two independently authenticated Copilot accounts in one gateway today. Adding `providers.copilot`, adding another name such as `providers.copilot-work`, or pointing a custom entry at `auth:<name>` does not reproduce the complete built-in contract: canonical login and diagnostics, model discovery, all three Copilot API contracts, endpoint refresh, health and quota state remain tied to `github-copilot`.
+
+First-class named built-in instances are planned in [#4191](https://github.com/sytone/botnexus/issues/4191). Until that runtime work is delivered and tested, use separate BotNexus homes and gateway processes when agents must use separate Copilot subscriptions. Do not manually craft `auth.json` entries as a workaround. There is no automatic account fallback or rotation.
 
 ### Authentication
 
@@ -41,7 +49,7 @@ The CLI diagnostics have a different entry point: `CopilotAuthLoader` loads the 
 
 ### CLI Setup
 
-Use BotNexus's device-code login to create the `github-copilot` entry in its `auth.json` store (normally under the BotNexus home directory). `botnexus provider copilot login` is an alias for `botnexus provider setup --provider github-copilot`; follow the displayed authorization URL and code. Treat the auth file as a secret and do not commit it.
+Use BotNexus's device-code login to create the `github-copilot` entry in its `auth.json` store (normally under the BotNexus home directory). `botnexus provider copilot login` is an alias for `botnexus provider setup --provider github-copilot`; follow the displayed authorization URL and code. Rerunning either setup command overwrites the existing `github-copilot` auth entry with the newly authorized account. It does not add another Copilot account. Treat the auth file as a secret and do not commit it.
 
 ```bash
 # Authorize BotNexus and save its OAuth credentials
@@ -53,6 +61,8 @@ botnexus provider copilot whoami
 # List the models your account is entitled to
 botnexus provider copilot models
 ```
+
+`whoami`, `models`, `quota`, and `test` read only the canonical `github-copilot` auth entry in the selected BotNexus home. `whoami` validates account identity, plan and endpoint; `models` validates the discovered catalog for that account; `quota` reads its reported quota snapshots; and `test` sends one request through the selected built-in model transport. `botnexus provider list` is different: it reports saved provider configuration and does not validate credentials or connectivity.
 
 See the [CLI Reference](../cli-reference.md#provider-copilot) for the full `provider copilot` diagnostic subcommand group (`login`, `whoami`, `models`, `quota`, `test`).
 
