@@ -95,6 +95,64 @@ public sealed class ToolResultStoreTests
     }
 
     [Fact]
+    public void DurableStore_RestartPreservesScopedResultOutsideMetadata()
+    {
+        using var directory = new TemporaryDirectory();
+        var scope = Scope("conversation-a", "session-a");
+        var descriptor = Descriptor() with { Retention = ToolResultRetention.Durable };
+        var secret = "complete-redacted-payload-not-metadata";
+        var first = new DurableToolResultStore(directory.Path);
+
+        var receipt = first.Store(Encoding.UTF8.GetBytes(secret), descriptor, scope);
+        var restarted = new DurableToolResultStore(directory.Path);
+        var read = restarted.Read(receipt.ResultId, receipt.Revision, scope);
+
+        read.Status.ShouldBe(ToolResultReadStatus.Ok);
+        Encoding.UTF8.GetString(read.Payload.Span).ShouldBe(secret);
+        read.Receipt.ShouldNotBeNull();
+        read.Receipt.ResultId.ShouldBe(receipt.ResultId);
+        read.Receipt.Revision.ShouldBe(receipt.Revision);
+        read.Receipt.IntegritySha256.ShouldBe(receipt.IntegritySha256);
+        read.Receipt.Provenance.ShouldBe(receipt.Provenance);
+        Directory.GetFiles(directory.Path, "*.payload").ShouldHaveSingleItem();
+        var metadata = File.ReadAllText(Directory.GetFiles(directory.Path, "*.json").ShouldHaveSingleItem());
+        metadata.ShouldNotContain(secret);
+    }
+
+    [Fact]
+    public void DurableStore_RestartRetainsScopeIntegrityAndExpiryOutcomes()
+    {
+        using var directory = new TemporaryDirectory();
+        var now = new DateTimeOffset(2026, 9, 22, 0, 0, 0, TimeSpan.Zero);
+        var options = new ToolResultStoreOptions(DefaultRetention: TimeSpan.FromMinutes(5));
+        var scope = Scope("conversation-a", "session-a");
+        var first = new DurableToolResultStore(directory.Path, options, () => now);
+        var receipt = first.Store(
+            Encoding.UTF8.GetBytes("value"),
+            Descriptor() with { Retention = ToolResultRetention.Durable },
+            scope);
+
+        var restarted = new DurableToolResultStore(directory.Path, options, () => now);
+        restarted.Read(receipt.ResultId, receipt.Revision, Scope("conversation-b", "session-b")).Status
+            .ShouldBe(ToolResultReadStatus.AccessDenied);
+        restarted.Read(receipt.ResultId, receipt.Revision + 1, scope).Status
+            .ShouldBe(ToolResultReadStatus.StaleRevision);
+
+        File.WriteAllText(Path.Combine(directory.Path, $"{receipt.ResultId.Value}.payload"), "corrupt");
+        restarted.Read(receipt.ResultId, receipt.Revision, scope).Status
+            .ShouldBe(ToolResultReadStatus.Corrupt);
+
+        var expiring = first.Store(
+            Encoding.UTF8.GetBytes("expires"),
+            Descriptor() with { Retention = ToolResultRetention.Durable },
+            scope);
+        now = now.AddMinutes(6);
+        var afterExpiry = new DurableToolResultStore(directory.Path, options, () => now);
+        afterExpiry.Read(expiring.ResultId, expiring.Revision, scope).Status
+            .ShouldBe(ToolResultReadStatus.Expired);
+    }
+
+    [Fact]
     public void ContinuationStore_SharedInitializesBeforeAnyExplicitInstance()
     {
         var handle = ToolOutputContinuationStore.Shared.Store("shared", "example_tool");
@@ -133,6 +191,19 @@ public sealed class ToolResultStoreTests
 
     private static ToolResultScope Scope(string conversation, string session) =>
         new("world-a", "agent-a", conversation, session, "policy-a");
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public TemporaryDirectory()
+        {
+            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"botnexus-result-store-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Path { get; }
+
+        public void Dispose() => Directory.Delete(Path, recursive: true);
+    }
 
     private static ToolResultDescriptor Descriptor() => new(
         ToolResultKind.Text,
