@@ -271,4 +271,30 @@ public sealed class TranscriptReconcilerTests
         TranscriptReconciler.CountMissing([], [serverRow, serverRow]).ShouldBe(1);
         TranscriptReconciler.Reconcile([], [serverRow, serverRow]).ShouldBe([serverRow]);
     }
+
+    [Fact]
+    public void Reconcile_AuthoritativeCompletion_updates_running_lifecycle_without_changing_identity()
+    {
+        var startedAt = DateTimeOffset.Parse("2026-09-16T20:41:03Z");
+        var completedAt = startedAt.AddSeconds(14);
+        var live = new ChatMessage("Tool", "calling", startedAt)
+        {
+            Id = "live-id", IsToolCall = true, ToolName = "read", ToolCallId = "call-refresh",
+            ToolStartedAt = startedAt
+        };
+        var persisted = new ChatMessage("Tool", "ok", startedAt)
+        {
+            ServerEntryId = "entry-result", IsToolCall = true, ToolName = "read", ToolCallId = "call-refresh",
+            ToolResult = "ok", ToolStartedAt = startedAt, ToolCompletedAt = completedAt,
+            ToolDuration = TimeSpan.FromSeconds(14)
+        };
+
+        var result = TranscriptReconciler.Reconcile([live], [persisted]).ShouldHaveSingleItem();
+
+        result.Id.ShouldBe("live-id");
+        result.ToolStartedAt.ShouldBe(startedAt);
+        result.ToolCompletedAt.ShouldBe(completedAt);
+        result.ToolDuration.ShouldBe(TimeSpan.FromSeconds(14));
+    }
+
 }

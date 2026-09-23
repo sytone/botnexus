@@ -363,6 +363,28 @@
                     @if (_expandedTools.Contains(msg.Id))
                     {
                         <div class="tool-details">
+                            <div class="tool-lifecycle">
+                                <div><span class="tool-lifecycle-label">Started:</span>
+                                    @if (msg.ToolStartedAt is { } startedAt)
+                                    {
+                                        <time data-testid="tool-started-at" datetime="@startedAt.ToString("O")">@FormatLifecycleTimestamp(startedAt)</time>
+                                    }
+                                    else
+                                    {
+                                        <span>Unavailable</span>
+                                    }
+                                </div>
+                                <div><span class="tool-lifecycle-label">Returned:</span>
+                                    @if (msg.ToolCompletedAt is { } completedAt)
+                                    {
+                                        <time data-testid="tool-completed-at" datetime="@completedAt.ToString("O")">@FormatLifecycleTimestamp(completedAt)</time>
+                                    }
+                                    else
+                                    {
+                                        <span>In progress</span>
+                                    }
+                                </div>
+                            </div>
                             @if (msg.ToolArgs is not null)
                             {
                                 <div class="tool-section">
@@ -1340,6 +1362,9 @@ private bool IsStreaming =>
     private static string FormatDuration(TimeSpan d) => d.TotalSeconds < 1
         ? $"{d.TotalMilliseconds:0}ms"
         : $"{d.TotalSeconds:0.0}s";
+
+    private static string FormatLifecycleTimestamp(DateTimeOffset timestamp) =>
+        timestamp.ToLocalTime().ToString("MMM d, yyyy, h:mm:ss tt");
 
     private static string FormatTimestamp(DateTimeOffset ts)
     {

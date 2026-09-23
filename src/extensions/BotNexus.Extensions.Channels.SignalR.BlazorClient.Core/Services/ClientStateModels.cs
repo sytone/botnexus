@@ -113,7 +113,13 @@ public sealed record ChatMessage(string Role, string Content, DateTimeOffset Tim
     /// <summary>Whether the tool call ended in error.</summary>
     public bool? ToolIsError { get; init; }
 
-    /// <summary>Elapsed wall-clock time for the tool invocation.</summary>
+    /// <summary>Authoritative instant at which the tool invocation started, when observed.</summary>
+    public DateTimeOffset? ToolStartedAt { get; init; }
+
+    /// <summary>Authoritative instant at which the tool invocation returned, when observed.</summary>
+    public DateTimeOffset? ToolCompletedAt { get; init; }
+
+    /// <summary>Elapsed wall-clock time derived from the observed lifecycle instants.</summary>
     public TimeSpan? ToolDuration { get; init; }
 
     /// <summary>Thinking content attached to this assistant message (from ThinkingDelta events).</summary>

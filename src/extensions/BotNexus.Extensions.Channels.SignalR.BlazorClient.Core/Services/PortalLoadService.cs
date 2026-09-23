@@ -252,7 +252,7 @@ public sealed class PortalLoadService : IPortalLoadService
     /// made refresh reconciliation disagree with the already displayed transcript.
     /// </summary>
     private static List<ChatMessage> ToChatMessages(IReadOnlyList<ConversationHistoryEntryDto> entries) =>
-        entries.Select(AgentInteractionService.ProjectConversationEntry).ToList();
+        AgentInteractionService.ProjectConversationEntries(entries);
 
     /// <summary>
     /// Re-fetches the ACTIVE conversation's transcript over REST and reconciles it into the

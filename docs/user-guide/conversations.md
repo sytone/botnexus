@@ -61,6 +61,16 @@ This means **the first message from a new channel auto-attaches to the agent's d
 
 ---
 
+## Tool lifecycle times
+
+Expanding a tool call in the desktop or mobile portal shows its labelled **Started** and
+**Returned** local date/time, including seconds. **In progress** means authoritative history has
+a start but no terminal tool result; it does not diagnose why the tool has not returned.
+**Unavailable** means a visible result has no corresponding start row, so the portal does not
+invent one.
+
+---
+
 ## Conversations across sessions
 
 Sessions come and go; the conversation persists. This has practical implications:

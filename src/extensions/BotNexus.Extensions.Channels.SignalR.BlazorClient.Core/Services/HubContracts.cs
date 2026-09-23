@@ -57,6 +57,9 @@ public sealed record AgentStreamEvent
     [JsonPropertyName("conversationId")]
     public string? ConversationId { get; init; }
 
+    [JsonPropertyName("timestamp")]
+    public DateTimeOffset Timestamp { get; init; }
+
     // #1651: role the buffered/relayed content should render under. Present on the
     // non-streaming SendAsync fan-out for an agent-post the gateway stamped with a specific
     // role; null for ordinary streamed content, where the client keeps its "Assistant" default.

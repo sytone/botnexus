@@ -609,7 +609,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             // Prepend the older page above the current view. The store's PrependMessages keeps the
             // id->index map consistent; the component layer preserves the visual scroll position so
             // the viewport does not jump (#1691).
-            var older = entries.Select(ProjectConversationEntry).ToList();
+            var older = ProjectConversationEntries(entries);
             _store.PrependMessages(conversationId, older);
 
             conv.LoadedHistoryRows += entries.Count;
@@ -1001,7 +1001,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         conv.ClearMessages();
         if (sessionResponse?.Entries is { Count: > 0 })
         {
-            foreach (var message in sessionResponse.Entries.Select(ToChatMessage))
+            foreach (var message in ProjectSessionEntries(sessionResponse.Entries))
                 conv.AppendMessage(message);
         }
 
@@ -1024,8 +1024,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         if (response?.Entries is { Count: > 0 } entries)
         {
-            foreach (var entry in entries)
-                conv.AppendMessage(ProjectConversationEntry(entry));
+            foreach (var message in ProjectConversationEntries(entries))
+                conv.AppendMessage(message);
 
             // The endpoint pages backwards into older history. The server-reported total decides
             // whether older rows remain; the short-page heuristic survives only as the fallback for
@@ -1039,6 +1039,74 @@ public sealed class AgentInteractionService : IAgentInteractionService
         // Sync session ID
         if (agent.ActiveConversationId == conversationId && conv.ActiveSessionId is not null)
             agent.SessionId = conv.ActiveSessionId;
+    }
+
+    /// <summary>
+    /// Projects a conversation history page while joining typed tool start/result rows by call id.
+    /// Unmatched halves and unrelated rows remain visible; no adjacency assumption is made.
+    /// </summary>
+    internal static List<ChatMessage> ProjectConversationEntries(
+        IReadOnlyList<ConversationHistoryEntryDto> entries)
+    {
+        var projected = new List<ChatMessage>(entries.Count);
+        var starts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var entry in entries)
+        {
+            var isStart = string.Equals(entry.MessageKind, "tool-start", StringComparison.OrdinalIgnoreCase);
+            var isResult = string.Equals(entry.MessageKind, "tool-result", StringComparison.OrdinalIgnoreCase);
+            if (isStart && !string.IsNullOrEmpty(entry.ToolCallId))
+            {
+                starts[entry.ToolCallId] = projected.Count;
+                projected.Add(ProjectConversationEntry(entry) with
+                {
+                    ToolResult = null,
+                    ToolStartedAt = entry.Timestamp,
+                    ToolCompletedAt = null,
+                    ToolDuration = null
+                });
+                continue;
+            }
+
+            if (isResult && !string.IsNullOrEmpty(entry.ToolCallId)
+                && starts.TryGetValue(entry.ToolCallId, out var startIndex))
+            {
+                var start = projected[startIndex];
+                projected[startIndex] = start with
+                {
+                    ToolName = start.ToolName ?? entry.ToolName,
+                    ToolArgs = start.ToolArgs ?? entry.ToolArgs,
+                    ToolResult = AnsiStripper.Strip(entry.Content),
+                    ToolIsError = entry.ToolIsError,
+                    ToolCompletedAt = entry.Timestamp,
+                    ToolDuration = NonNegativeDuration(start.ToolStartedAt, entry.Timestamp)
+                };
+                starts.Remove(entry.ToolCallId);
+                continue;
+            }
+
+            var message = ProjectConversationEntry(entry);
+            if (isResult)
+            {
+                message = message with
+                {
+                    ToolStartedAt = null,
+                    ToolCompletedAt = entry.Timestamp,
+                    ToolDuration = null
+                };
+            }
+            projected.Add(message);
+        }
+
+        return projected;
+    }
+
+    private static TimeSpan? NonNegativeDuration(DateTimeOffset? startedAt, DateTimeOffset? completedAt)
+    {
+        if (startedAt is null || completedAt is null)
+            return null;
+        var duration = completedAt.Value - startedAt.Value;
+        return duration < TimeSpan.Zero ? TimeSpan.Zero : duration;
     }
 
     /// <summary>
@@ -1162,7 +1230,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             conv.ClearMessages();
             if (response?.Entries is { Count: > 0 })
             {
-                foreach (var message in response.Entries.Select(ToChatMessage))
+                foreach (var message in ProjectSessionEntries(response.Entries))
                     conv.AppendMessage(message);
             }
 
@@ -1261,6 +1329,54 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
     // #3456: role normalisation is owned by MessageRole. Do not reintroduce a local switch here.
     private static string MapRole(string role) => MessageRole.Normalize(role);
+
+    /// <summary>
+    /// Projects typed session history tool rows into the same lifecycle model used by conversation
+    /// history, retaining incomplete starts, orphan results, and unrelated interleaved rows.
+    /// </summary>
+    internal static List<ChatMessage> ProjectSessionEntries(IReadOnlyList<SessionHistoryEntryDto> entries)
+    {
+        var projected = new List<ChatMessage>(entries.Count);
+        var starts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var entry in entries)
+        {
+            var isStart = string.Equals(entry.MessageKind, "tool-start", StringComparison.OrdinalIgnoreCase);
+            var isResult = string.Equals(entry.MessageKind, "tool-result", StringComparison.OrdinalIgnoreCase);
+            if (isStart && !string.IsNullOrEmpty(entry.ToolCallId))
+            {
+                starts[entry.ToolCallId] = projected.Count;
+                projected.Add(ToChatMessage(entry) with
+                {
+                    ToolResult = null,
+                    ToolStartedAt = entry.Timestamp
+                });
+                continue;
+            }
+
+            if (isResult && !string.IsNullOrEmpty(entry.ToolCallId)
+                && starts.TryGetValue(entry.ToolCallId, out var startIndex))
+            {
+                var start = projected[startIndex];
+                projected[startIndex] = start with
+                {
+                    ToolName = start.ToolName ?? entry.ToolName,
+                    ToolArgs = start.ToolArgs ?? entry.ToolArgs,
+                    ToolResult = AnsiStripper.Strip(entry.Content),
+                    ToolIsError = entry.ToolIsError,
+                    ToolCompletedAt = entry.Timestamp,
+                    ToolDuration = NonNegativeDuration(start.ToolStartedAt, entry.Timestamp)
+                };
+                starts.Remove(entry.ToolCallId);
+                continue;
+            }
+
+            var message = ToChatMessage(entry);
+            projected.Add(isResult
+                ? message with { ToolCompletedAt = entry.Timestamp, ToolDuration = null }
+                : message);
+        }
+        return projected;
+    }
 
     /// <summary>
     /// Single source of truth for projecting a session-history transcript entry into a

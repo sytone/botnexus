@@ -235,7 +235,9 @@ The local records tabulated below live in `HubContracts.cs` and carry explicit
   returned by `GetAgents` and `GetAgentStatus`.
 
 These source links identify the shared contracts; the tables here do not enumerate all
-of their nested payloads or custom serialization behavior.
+of their nested payloads or custom serialization behavior. Every `AgentStreamEvent` includes an
+authoritative `timestamp`; clients use the `ToolStart` and `ToolEnd` timestamps as the lifecycle
+instants rather than stamping browser receipt time.
 
 ### Method return types
 

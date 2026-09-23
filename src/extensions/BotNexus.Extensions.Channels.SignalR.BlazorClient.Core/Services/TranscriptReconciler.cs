@@ -115,9 +115,21 @@ public static class TranscriptReconciler
             if (index < 0 || merged[index].ToolResult is not null)
                 continue;
 
-            // Keep the client row identity so render caches and ToolStart bookkeeping remain stable,
-            // while the persisted row supplies the authoritative terminal payload and server identity.
-            merged[index] = candidate with { Id = merged[index].Id };
+            // Keep the live client identity so render caches and ToolStart bookkeeping remain stable.
+            // The server contributes authoritative terminal data and a stable history identity.
+            var live = merged[index];
+            merged[index] = live with
+            {
+                ServerEntryId = candidate.ServerEntryId ?? live.ServerEntryId,
+                Content = candidate.Content,
+                ToolName = candidate.ToolName ?? live.ToolName,
+                ToolArgs = candidate.ToolArgs ?? live.ToolArgs,
+                ToolResult = candidate.ToolResult,
+                ToolIsError = candidate.ToolIsError,
+                ToolStartedAt = candidate.ToolStartedAt ?? live.ToolStartedAt,
+                ToolCompletedAt = candidate.ToolCompletedAt,
+                ToolDuration = candidate.ToolDuration
+            };
         }
     }
 

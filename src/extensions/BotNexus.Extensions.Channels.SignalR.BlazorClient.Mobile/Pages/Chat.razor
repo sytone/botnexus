@@ -321,6 +321,28 @@ else
                 <span class="tool-modal-name">&#x1F527; @_modalToolMessage.ToolName</span>
                 <button class="tool-modal-close" @onclick="CloseToolModal" aria-label="Close"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button>
             </div>
+            <div class="tool-modal-section tool-modal-lifecycle">
+                <div><span class="tool-modal-section-label">Started:</span>
+                    @if (_modalToolMessage.ToolStartedAt is { } startedAt)
+                    {
+                        <time data-testid="mobile-tool-started-at" datetime="@startedAt.ToString("O")">@FormatLifecycleTimestamp(startedAt)</time>
+                    }
+                    else
+                    {
+                        <span>Unavailable</span>
+                    }
+                </div>
+                <div><span class="tool-modal-section-label">Returned:</span>
+                    @if (_modalToolMessage.ToolCompletedAt is { } completedAt)
+                    {
+                        <time data-testid="mobile-tool-completed-at" datetime="@completedAt.ToString("O")">@FormatLifecycleTimestamp(completedAt)</time>
+                    }
+                    else
+                    {
+                        <span data-testid="mobile-tool-completed-at">In progress</span>
+                    }
+                </div>
+            </div>
             @if (!string.IsNullOrEmpty(_modalToolMessage.ToolArgs))
             {
                 <div class="tool-modal-section">
@@ -1090,6 +1112,9 @@ else
     // #1690: mirror desktop ChatPanel.FormatTimestamp so older messages show a date,
     // not just a time. Same-day messages render time only; prior-day messages prefix
     // the date. Identical format to the desktop client for parity.
+    private static string FormatLifecycleTimestamp(DateTimeOffset timestamp) =>
+        timestamp.ToLocalTime().ToString("MMM d, yyyy, h:mm:ss tt");
+
     private static string FormatTimestamp(DateTimeOffset ts)
     {
         var local = ts.ToLocalTime();

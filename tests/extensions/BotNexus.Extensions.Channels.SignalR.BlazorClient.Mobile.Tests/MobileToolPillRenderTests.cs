@@ -146,4 +146,27 @@ public sealed class MobileToolPillRenderTests : IDisposable
         var ex = Record.Exception(() => _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1")));
         Assert.Null(ex);
     }
+
+    [Fact]
+    public void Tool_modal_renders_compact_local_lifecycle_times_and_pending_return()
+    {
+        var startedAt = DateTimeOffset.Parse("2026-09-16T20:41:03Z");
+        var messages = new List<ChatMessage>
+        {
+            new("tool", string.Empty, startedAt)
+            {
+                IsToolCall = true, ToolName = "read", ToolArgs = "{}", ToolStartedAt = startedAt
+            }
+        };
+        _store.GetMessages("conv-1").Returns(messages.AsReadOnly());
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        cut.Find(".tool-pill").Click();
+
+        var started = cut.Find("[data-testid='mobile-tool-started-at']");
+        started.TextContent.ShouldContain(startedAt.ToLocalTime().ToString("MMM d, yyyy, h:mm:ss tt"));
+        started.GetAttribute("datetime").ShouldBe(startedAt.ToString("O"));
+        cut.Find("[data-testid='mobile-tool-completed-at']").TextContent.ShouldContain("In progress");
+    }
+
 }

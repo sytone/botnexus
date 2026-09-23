@@ -2410,6 +2410,21 @@ html, body, #app {
     text-align: center;
 }
 
+.tool-lifecycle {
+    display: grid;
+    gap: 0.25rem;
+    padding: 0.65rem 0.75rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.tool-lifecycle-label {
+    display: inline-block;
+    min-width: 4.75rem;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
 .tool-details {
     margin-top: 0.5rem;
     border-top: 1px dashed var(--border);

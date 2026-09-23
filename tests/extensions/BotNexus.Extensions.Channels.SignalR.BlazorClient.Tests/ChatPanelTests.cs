@@ -2057,4 +2057,58 @@ public sealed class ChatPanelTests : IDisposable
         Assert.True(seenAnyBlock, $"CSS rule for selector '{selector}' was not found.");
         Assert.True(found, $"No '{selector}' rule declares '{declaration}'.");
     }
+
+    [Fact]
+    public void Expanded_tool_details_render_local_lifecycle_times_and_machine_readable_iso_values()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        var startedAt = DateTimeOffset.Parse("2026-09-16T20:41:03Z");
+        var completedAt = startedAt.AddSeconds(14);
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", startedAt)
+        {
+            IsToolCall = true, ToolName = "read", ToolArgs = "{}", ToolResult = "ok",
+            ToolStartedAt = startedAt, ToolCompletedAt = completedAt
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find(".tool-header").Click();
+
+        var started = cut.Find("[data-testid='tool-started-at']");
+        var returned = cut.Find("[data-testid='tool-completed-at']");
+        started.TextContent.ShouldContain(startedAt.ToLocalTime().ToString("MMM d, yyyy, h:mm:ss tt"));
+        returned.TextContent.ShouldContain(completedAt.ToLocalTime().ToString("MMM d, yyyy, h:mm:ss tt"));
+        started.GetAttribute("datetime").ShouldBe(startedAt.ToString("O"));
+        returned.GetAttribute("datetime").ShouldBe(completedAt.ToString("O"));
+    }
+
+    [Fact]
+    public void Expanded_running_and_orphan_tool_details_do_not_fabricate_missing_instants()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        var at = DateTimeOffset.Parse("2026-09-16T20:41:03Z");
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", at)
+        {
+            Id = "running", IsToolCall = true, ToolName = "read", ToolStartedAt = at
+        });
+        _store.AppendMessage("conv-1", new ChatMessage("Tool", "", at.AddMinutes(1))
+        {
+            Id = "orphan", IsToolCall = true, ToolName = "write", ToolResult = "ok",
+            ToolCompletedAt = at.AddMinutes(1)
+        });
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.FindAll(".tool-header")[0].Click();
+        cut.FindAll(".tool-header")[1].Click();
+
+        var lifecycle = cut.FindAll(".tool-lifecycle");
+        lifecycle[0].TextContent.ShouldContain("Returned:");
+        lifecycle[0].TextContent.ShouldContain("In progress");
+        lifecycle[1].TextContent.ShouldContain("Started:");
+        lifecycle[1].TextContent.ShouldContain("Unavailable");
+    }
+
 }

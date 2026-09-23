@@ -483,6 +483,19 @@ body {
     margin-bottom: 8px;
 }
 
+.tool-modal-lifecycle {
+    display: grid;
+    gap: 0.35rem;
+    overflow-wrap: anywhere;
+    font-size: 0.8rem;
+}
+
+.tool-modal-lifecycle .tool-modal-section-label {
+    display: inline-block;
+    min-width: 4.6rem;
+    margin-bottom: 0;
+}
+
 .tool-modal-content {
     margin: 0;
     font-size: 12px;

@@ -1207,4 +1207,71 @@ public sealed class GatewayEventHandlerTests
         Assert.False(conv.StreamState.IsTurnActive);
         Assert.False(agent.IsStreaming);
     }
+
+    [Fact]
+    public void HandleToolStart_preserves_authoritative_event_timestamp_while_running()
+    {
+        var startedAt = DateTimeOffset.Parse("2026-09-16T20:41:03.1234567Z");
+
+        _handler.HandleToolStart(new AgentStreamEvent
+        {
+            SessionId = "sess-1",
+            ToolCallId = "tool-timestamp",
+            ToolName = "read",
+            Timestamp = startedAt
+        });
+
+        var message = _store.GetAgent("agent-1")!.Conversations["conv-1"].Messages.ShouldHaveSingleItem();
+        message.ToolStartedAt.ShouldBe(startedAt);
+        message.ToolCompletedAt.ShouldBeNull();
+        message.ToolDuration.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void HandleToolEnd_preserves_authoritative_success_or_error_timestamp_and_derives_duration(bool isError)
+    {
+        var startedAt = DateTimeOffset.Parse("2026-09-16T20:41:03Z");
+        var completedAt = startedAt.AddSeconds(14);
+        _handler.HandleToolStart(new AgentStreamEvent
+        {
+            SessionId = "sess-1", ToolCallId = "tool-terminal", ToolName = "shell", Timestamp = startedAt
+        });
+
+        _handler.HandleToolEnd(new AgentStreamEvent
+        {
+            SessionId = "sess-1", ToolCallId = "tool-terminal", ToolName = "shell",
+            ToolResult = isError ? "boom" : "ok", ToolIsError = isError, Timestamp = completedAt
+        });
+
+        var message = _store.GetAgent("agent-1")!.Conversations["conv-1"].Messages.ShouldHaveSingleItem();
+        message.ToolStartedAt.ShouldBe(startedAt);
+        message.ToolCompletedAt.ShouldBe(completedAt);
+        message.ToolDuration.ShouldBe(TimeSpan.FromSeconds(14));
+        message.ToolIsError.ShouldBe(isError);
+    }
+
+    [Fact]
+    public void HandleToolEnd_when_terminal_clock_precedes_start_clamps_duration_to_zero()
+    {
+        var startedAt = DateTimeOffset.Parse("2026-09-16T20:41:17Z");
+        var completedAt = startedAt.AddSeconds(-14);
+        _handler.HandleToolStart(new AgentStreamEvent
+        {
+            SessionId = "sess-1", ToolCallId = "tool-skew", ToolName = "read", Timestamp = startedAt
+        });
+
+        _handler.HandleToolEnd(new AgentStreamEvent
+        {
+            SessionId = "sess-1", ToolCallId = "tool-skew", ToolName = "read",
+            ToolResult = "ok", Timestamp = completedAt
+        });
+
+        var message = _store.GetAgent("agent-1")!.Conversations["conv-1"].Messages.ShouldHaveSingleItem();
+        message.ToolStartedAt.ShouldBe(startedAt);
+        message.ToolCompletedAt.ShouldBe(completedAt);
+        message.ToolDuration.ShouldBe(TimeSpan.Zero);
+    }
+
 }

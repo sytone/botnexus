@@ -262,11 +262,12 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             ? JsonSerializer.Serialize(evt.ToolArgs, s_jsonOptions)
             : null;
 
-        var msg = new ChatMessage("Tool", $"⏳ Calling {evt.ToolName}…", DateTimeOffset.UtcNow)
+        var msg = new ChatMessage("Tool", $"⏳ Calling {evt.ToolName}…", evt.Timestamp)
         {
             ToolName = evt.ToolName,
             ToolCallId = toolCallId,
             ToolArgs = argsJson,
+            ToolStartedAt = evt.Timestamp,
             IsToolCall = true
         };
 
@@ -275,7 +276,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         {
             ToolCallId = toolCallId,
             ToolName = evt.ToolName ?? "unknown",
-            StartedAt = DateTimeOffset.UtcNow,
+            StartedAt = evt.Timestamp,
             MessageId = msg.Id
         };
 
@@ -296,11 +297,13 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         var toolCallId = evt.ToolCallId;
         TimeSpan? duration = null;
+        DateTimeOffset? startedAt = null;
         string? messageId = null;
 
         if (toolCallId is not null && conv.StreamState.ActiveToolCalls.TryGetValue(toolCallId, out var activeTool))
         {
-            duration = DateTimeOffset.UtcNow - activeTool.StartedAt;
+            startedAt = activeTool.StartedAt;
+            duration = NonNegativeDuration(activeTool.StartedAt, evt.Timestamp);
             messageId = activeTool.MessageId;
             conv.StreamState.ActiveToolCalls.Remove(toolCallId);
         }
@@ -318,6 +321,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
                     Content = evt.ToolIsError == true ? $"❌ {evt.ToolName} failed" : $"✅ {evt.ToolName} completed",
                     ToolResult = AnsiStripper.Strip(evt.ToolResult),
                     ToolIsError = evt.ToolIsError,
+                    ToolStartedAt = original.ToolStartedAt ?? startedAt,
+                    ToolCompletedAt = evt.Timestamp,
                     ToolDuration = duration
                 });
 
@@ -330,13 +335,14 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         // Fallback: new message
         conv.AppendMessage(new ChatMessage("Tool",
             evt.ToolIsError == true ? $"❌ {evt.ToolName} failed" : $"✅ {evt.ToolName} completed",
-            DateTimeOffset.UtcNow)
+            evt.Timestamp)
         {
             ToolName = evt.ToolName,
             ToolCallId = toolCallId,
             ToolResult = AnsiStripper.Strip(evt.ToolResult),
             IsToolCall = true,
             ToolIsError = evt.ToolIsError,
+            ToolCompletedAt = evt.Timestamp,
             ToolDuration = duration
         });
 
@@ -346,6 +352,12 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         agent.ProcessingStage = agent.IsStreaming ? "🤖 Agent is responding…" : null;
         _store.NotifyChanged();
+    }
+
+    private static TimeSpan NonNegativeDuration(DateTimeOffset startedAt, DateTimeOffset completedAt)
+    {
+        var duration = completedAt - startedAt;
+        return duration < TimeSpan.Zero ? TimeSpan.Zero : duration;
     }
 
     // Agents use this exact string to indicate they have nothing to say in a turn.
