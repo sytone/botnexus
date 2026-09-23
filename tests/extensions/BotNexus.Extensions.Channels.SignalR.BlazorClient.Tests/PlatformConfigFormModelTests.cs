@@ -11,7 +11,7 @@ public sealed class PlatformConfigFormModelTests
     public void Non_persisted_sections_are_owned_once_and_pinned()
     {
         PlatformConfigFormModel.NonPersistedSections.Order(StringComparer.OrdinalIgnoreCase)
-            .ShouldBe(new[] { "$schema", "agents", "version" });
+            .ShouldBe(new[] { "$schema", "agents", "extensionRepositories", "version" });
     }
 
     [Fact]

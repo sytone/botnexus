@@ -11,7 +11,7 @@ public sealed class PlatformConfigFormModel
 
     /// <summary>Top-level schema sections that platform config forms must never persist.</summary>
     public static IReadOnlySet<string> NonPersistedSections { get; } =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "$schema", "version", "agents" };
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "$schema", "version", "agents", "extensionRepositories" };
 
     /// <summary>Creates a form model over the platform config API.</summary>
     public PlatformConfigFormModel(PlatformConfigService configService) => _configService = configService;
