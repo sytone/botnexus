@@ -282,7 +282,7 @@ public sealed class GatewayPidIdentityTests : IDisposable
 
             status.State.ShouldBe(GatewayState.NotRunning);
             status.Pid.ShouldBeNull();
-            File.Exists(PidFilePath).ShouldBeFalse();
+            File.Exists(PidFilePath).ShouldBeTrue("status must not delete identity evidence");
 
             victim.Refresh();
             victim.HasExited.ShouldBeFalse();

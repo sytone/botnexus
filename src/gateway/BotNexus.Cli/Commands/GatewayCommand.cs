@@ -343,6 +343,11 @@ internal sealed class GatewayCommand
     private async Task<int> StatusAsync(string home, bool verbose, CancellationToken cancellationToken)
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
+        var repoRoot = CliPaths.ResolveSource(explicitSource: null);
+        var gatewayBinaryPath = ResolveGatewayBinaryPath(repoRoot);
+        var healthUrl = GatewayProbeUrlResolver.ResolveFromConfig(
+            fallbackPort: 5005,
+            configPath: Path.Combine(home, "config.json")) + "/health";
         GatewayStatus status;
 
         if (interactive)
@@ -353,13 +358,13 @@ internal sealed class GatewayCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Checking gateway status...", async ctx =>
                 {
-                    capturedStatus = await _processManager.GetStatusAsync(home, cancellationToken);
+                    capturedStatus = await _processManager.GetStatusAsync(home, gatewayBinaryPath, healthUrl, cancellationToken);
                 });
             status = capturedStatus;
         }
         else
         {
-            status = await _processManager.GetStatusAsync(home, cancellationToken);
+            status = await _processManager.GetStatusAsync(home, gatewayBinaryPath, healthUrl, cancellationToken);
         }
 
         AnsiConsole.WriteLine();
@@ -488,6 +493,9 @@ internal sealed class GatewayCommand
             return $"{(int)uptime.TotalMinutes}m {uptime.Seconds}s";
         return $"{uptime.Seconds}s";
     }
+
+    internal static string ResolveGatewayBinaryPath(string repoRoot) =>
+        Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
 
     private static async Task<int> InstallServiceAsync(string repoRoot, string home, int port, bool verbose, CancellationToken cancellationToken)
     {
