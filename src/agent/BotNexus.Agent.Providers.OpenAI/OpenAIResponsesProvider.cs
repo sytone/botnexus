@@ -73,31 +73,8 @@ public sealed class OpenAIResponsesProvider(
         return Stream(model, context, responsesOptions);
     }
 
-    private static ResponsesTransportProfile BuildProfile(ILogger logger, ISecretRedactor? secretRedactor) => new(
-        Api: "openai-responses",
-        ActivityName: "provider.openai-responses.stream",
-        BuildPayload: static (model, systemPrompt, messages, tools, options) =>
-            OpenAIResponsesRequestBuilder.Build(
-                model, systemPrompt, messages, tools, options,
-                ResponsesMessageConverter.ConvertMessages, ResponsesMessageConverter.ConvertTools),
-        Parse: (stream, reader, model, options, api, emitError, ct) =>
-            ResponsesStreamParser.ParseAsync(
-                stream, reader, model, options, api, logger, emitError,
-                onParsedEvent: null,
-                resolveConfiguredServiceTier: static o => o is OpenAIResponsesOptions ro ? ro.ServiceTier : null,
-                ct),
-        DecorateHeaders: static (request, model, messages, _) =>
-        {
-            if (string.Equals(model.Provider, "github-copilot", StringComparison.OrdinalIgnoreCase))
-            {
-                var hasImages = CopilotHeaders.HasVisionInput(messages);
-                foreach (var (key, value) in CopilotHeaders.BuildDynamicHeaders(messages, hasImages))
-                    request.Headers.TryAddWithoutValidation(key, value);
-            }
-        },
-        ThrowForError: static (response, errorBody, redactor) =>
-            ProviderHttpErrorHelper.ThrowForFailedResponse(response, errorBody, "OpenAI", redactor),
-        SecretRedactor: secretRedactor);
+    private static ResponsesTransportProfile BuildProfile(ILogger logger, ISecretRedactor? secretRedactor) =>
+        OpenAIResponsesTransport.CreateProfile(logger, secretRedactor: secretRedactor);
 
     private static string MapThinkingLevel(ThinkingLevel level) => level switch
     {
