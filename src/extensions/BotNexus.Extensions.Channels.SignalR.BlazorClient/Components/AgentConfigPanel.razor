@@ -3,7 +3,9 @@
 @inject IClientStateStore Store
 @inject IGatewayRestClient RestClient
 @implements IDisposable
+@using System.Globalization
 @using System.Text.Json
+@using System.Text.Json.Nodes
 
 @* #2795: every displayed value comes from the ONE AgentConfigSnapshot below, and the Copy button
    serialises that same snapshot. There is no second field list for the copy path. *@
@@ -60,6 +62,55 @@
                         }
                     }
 
+                    @if (_toolExtensions.Count > 0)
+                    {
+                        <section class="agent-extension-config" aria-labelledby="agent-extensions-title">
+                            <h4 id="agent-extensions-title">Agent extensions</h4>
+                            <p class="agent-extension-help">Grant installed tool extensions to this agent and configure their manifest-declared settings. Changes apply to new agent handles.</p>
+                            @foreach (var extension in _toolExtensions)
+                            {
+                                <div class="agent-extension-card" data-extension="@extension.Id">
+                                    <label class="agent-extension-grant">
+                                        <input type="checkbox"
+                                               checked="@IsExtensionGranted(extension.Id)"
+                                               @onchange="e => SetExtensionGrant(extension, e.Value is true)" />
+                                        <span>Grant @extension.Name to this agent</span>
+                                    </label>
+                                    <span class="agent-extension-state">Installed and loaded</span>
+                                    @if (IsExtensionGranted(extension.Id))
+                                    {
+                                        @foreach (var field in extension.ConfigSchema ?? [])
+                                        {
+                                            <div class="config-field agent-extension-field" data-extension-field="@field.Id">
+                                                <label for="@ExtensionFieldId(extension.Id, field.Id)">@ExtensionFieldLabel(field.Id)</label>
+                                                @if (IsBooleanField(field))
+                                                {
+                                                    <input id="@ExtensionFieldId(extension.Id, field.Id)"
+                                                           type="checkbox"
+                                                           checked="@GetBooleanExtensionValue(extension.Id, field)"
+                                                           @onchange="e => SetExtensionValue(extension.Id, field, e.Value is true)" />
+                                                }
+                                                else
+                                                {
+                                                    <input id="@ExtensionFieldId(extension.Id, field.Id)"
+                                                           class="config-select"
+                                                           type="@(field.Sensitive ? "password" : IsIntegerField(field) ? "number" : "text")"
+                                                           value="@GetTextExtensionValue(extension.Id, field)"
+                                                           required="@field.Required"
+                                                           @onchange="e => SetExtensionValue(extension.Id, field, e.Value?.ToString())" />
+                                                }
+                                                @if (!string.IsNullOrWhiteSpace(field.Description))
+                                                {
+                                                    <small>@field.Description</small>
+                                                }
+                                            </div>
+                                        }
+                                    }
+                                </div>
+                            }
+                        </section>
+                    }
+
                     @if (_error is not null)
                     {
                         <div class="config-error">@_error</div>
@@ -95,6 +146,12 @@
                     {
                         <button class="config-save-btn" @onclick="SaveModel" disabled="@_saving">
                             @(_saving ? "Saving…" : "Save Model")
+                        </button>
+                    }
+                    @if (_dirtyExtensions.Count > 0)
+                    {
+                        <button class="config-save-btn config-save-extensions-btn" @onclick="SaveExtensions" disabled="@_saving">
+                            @(_saving ? "Saving…" : "Save Extensions")
                         </button>
                     }
                     <button class="cancel-btn" @onclick="Close">Close</button>
@@ -138,6 +195,10 @@
     private List<string> _availableModels = [];
     private string _selectedModel = "";
     private Dictionary<string, bool> _inheritedFields = new(StringComparer.OrdinalIgnoreCase);
+    private List<ExtensionDetailDto> _toolExtensions = [];
+    private readonly Dictionary<string, JsonObject> _extensionValues = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _grantedExtensions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _dirtyExtensions = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The loaded conversation row, source of the persisted tool overlay (#3271).</summary>
     private ConversationResponseDto? _conversation;
@@ -178,10 +239,24 @@
                 // why the shared type itself cannot be referenced from a WASM client.
                 _descriptor = await Http.GetFromJsonAsync<AgentDescriptorDto>($"{apiBase}agents/{AgentId}");
                 _selectedModel = _descriptor?.ModelId ?? "";
+                LoadExtensionValues();
             }
             catch
             {
                 _descriptor = null;
+            }
+
+            try
+            {
+                _toolExtensions = (await RestClient.GetExtensionDetailsAsync())
+                    .Where(extension => extension.Enabled
+                        && extension.ExtensionTypes?.Contains("tool", StringComparer.OrdinalIgnoreCase) == true)
+                    .OrderBy(extension => extension.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+            catch
+            {
+                _toolExtensions = [];
             }
 
             try
@@ -309,6 +384,160 @@
     {
         if (e.Key == "Escape")
             Close();
+    }
+
+    private void LoadExtensionValues()
+    {
+        _extensionValues.Clear();
+        _grantedExtensions.Clear();
+        _dirtyExtensions.Clear();
+        if (_descriptor is null)
+            return;
+
+        foreach (var (extensionId, value) in _descriptor.ExtensionConfig)
+        {
+            if (JsonNode.Parse(value.GetRawText()) is not JsonObject config)
+                continue;
+            _grantedExtensions.Add(extensionId);
+            _extensionValues[extensionId] = config;
+        }
+    }
+
+    private bool IsExtensionGranted(string extensionId) => _grantedExtensions.Contains(extensionId);
+
+    private void SetExtensionGrant(ExtensionDetailDto extension, bool granted)
+    {
+        if (granted)
+        {
+            _grantedExtensions.Add(extension.Id);
+            if (!_extensionValues.ContainsKey(extension.Id))
+                _extensionValues[extension.Id] = new JsonObject();
+        }
+        else
+        {
+            _grantedExtensions.Remove(extension.Id);
+        }
+        _dirtyExtensions.Add(extension.Id);
+    }
+
+    private static bool IsBooleanField(ExtensionConfigFieldDto field) =>
+        field.Type is "bool" or "boolean";
+
+    private static bool IsIntegerField(ExtensionConfigFieldDto field) =>
+        field.Type is "integer" or "number";
+
+    private static string ExtensionFieldLabel(string path) =>
+        path[(path.LastIndexOf('.') + 1)..];
+
+    private static string ExtensionFieldId(string extensionId, string path) =>
+        $"extension-{extensionId}-{path.Replace('.', '-')}";
+
+    private bool GetBooleanExtensionValue(string extensionId, ExtensionConfigFieldDto field)
+    {
+        var node = ResolveExtensionValue(extensionId, field.Id);
+        if (node is JsonValue value && value.TryGetValue<bool>(out var result))
+            return result;
+        return bool.TryParse(field.Default, out var defaultValue) && defaultValue;
+    }
+
+    private string GetTextExtensionValue(string extensionId, ExtensionConfigFieldDto field)
+    {
+        var node = ResolveExtensionValue(extensionId, field.Id);
+        if (node is JsonValue value)
+        {
+            if (value.TryGetValue<string>(out var text)) return text;
+            if (value.TryGetValue<int>(out var number)) return number.ToString(CultureInfo.InvariantCulture);
+            if (value.TryGetValue<long>(out var longNumber)) return longNumber.ToString(CultureInfo.InvariantCulture);
+        }
+        return field.Default ?? string.Empty;
+    }
+
+    private JsonNode? ResolveExtensionValue(string extensionId, string path)
+    {
+        if (!_extensionValues.TryGetValue(extensionId, out var root))
+            return null;
+        JsonNode? current = root;
+        foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (current is not JsonObject obj || !obj.TryGetPropertyValue(segment, out current))
+                return null;
+        }
+        return current;
+    }
+
+    private void SetExtensionValue(string extensionId, ExtensionConfigFieldDto field, object? rawValue)
+    {
+        if (!_extensionValues.TryGetValue(extensionId, out var root))
+        {
+            root = new JsonObject();
+            _extensionValues[extensionId] = root;
+        }
+
+        var segments = field.Id.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var current = root;
+        for (var i = 0; i < segments.Length - 1; i++)
+        {
+            if (current[segments[i]] is not JsonObject child)
+            {
+                child = new JsonObject();
+                current[segments[i]] = child;
+            }
+            current = child;
+        }
+
+        var leaf = segments[^1];
+        if (IsBooleanField(field))
+            current[leaf] = JsonValue.Create(rawValue is true);
+        else if (IsIntegerField(field) && long.TryParse(rawValue?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var number))
+            current[leaf] = JsonValue.Create(number);
+        else if (string.IsNullOrEmpty(rawValue?.ToString()))
+            current.Remove(leaf);
+        else
+            current[leaf] = JsonValue.Create(rawValue.ToString());
+        _dirtyExtensions.Add(extensionId);
+    }
+
+    private async Task SaveExtensions()
+    {
+        if (RestClient.ApiBaseUrl is null || _dirtyExtensions.Count == 0)
+            return;
+
+        _saving = true;
+        _error = null;
+        try
+        {
+            foreach (var extensionId in _dirtyExtensions.ToArray())
+            {
+                var path = $"{RestClient.ApiBaseUrl}agents/{Uri.EscapeDataString(AgentId)}/extensions/{Uri.EscapeDataString(extensionId)}";
+                HttpResponseMessage response;
+                if (_grantedExtensions.Contains(extensionId))
+                {
+                    var config = _extensionValues.TryGetValue(extensionId, out var value)
+                        ? value
+                        : new JsonObject();
+                    response = await Http.PutAsJsonAsync(path, config);
+                }
+                else
+                {
+                    response = await Http.DeleteAsync(path);
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _error = $"Extension save failed: {response.StatusCode}";
+                    return;
+                }
+                _dirtyExtensions.Remove(extensionId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = $"Extension save failed: {ex.Message}";
+        }
+        finally
+        {
+            _saving = false;
+        }
     }
 
     private async Task SaveModel()

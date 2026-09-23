@@ -219,6 +219,75 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>
+    /// Grants or configures one extension for an agent without requiring clients to round-trip the
+    /// complete descriptor. The extension object is replaced atomically; every unrelated agent
+    /// property and extension entry is copied from the currently registered descriptor.
+    /// </summary>
+    [HttpPut("{agentId}/extensions/{extensionId}")]
+    [ProducesResponseType(typeof(AgentDescriptor), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<AgentDescriptor>> PutExtensionConfig(
+        string agentId,
+        string extensionId,
+        [FromBody] System.Text.Json.JsonElement config,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseAgentId(agentId, out var typedAgentId, out var routeError))
+            return BadRequest(new { error = routeError });
+        if (string.IsNullOrWhiteSpace(extensionId) || extensionId.Length > 128)
+            return BadRequest(new { error = "Extension ID must be between 1 and 128 characters." });
+        if (config.ValueKind != System.Text.Json.JsonValueKind.Object)
+            return BadRequest(new { error = "Extension configuration must be a JSON object." });
+
+        var previous = _registry.Get(typedAgentId!.Value);
+        if (previous is null)
+            return NotFound();
+
+        var extensions = new Dictionary<string, System.Text.Json.JsonElement>(
+            previous.ExtensionConfig,
+            StringComparer.OrdinalIgnoreCase)
+        {
+            [extensionId] = config.Clone()
+        };
+        return await Update(
+            agentId,
+            previous with { ExtensionConfig = extensions },
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Revokes one extension grant without changing any unrelated agent property or extension.
+    /// </summary>
+    [HttpDelete("{agentId}/extensions/{extensionId}")]
+    [ProducesResponseType(typeof(AgentDescriptor), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<AgentDescriptor>> DeleteExtensionConfig(
+        string agentId,
+        string extensionId,
+        CancellationToken cancellationToken)
+    {
+        if (!TryParseAgentId(agentId, out var typedAgentId, out var routeError))
+            return BadRequest(new { error = routeError });
+        if (string.IsNullOrWhiteSpace(extensionId) || extensionId.Length > 128)
+            return BadRequest(new { error = "Extension ID must be between 1 and 128 characters." });
+
+        var previous = _registry.Get(typedAgentId!.Value);
+        if (previous is null)
+            return NotFound();
+
+        var extensions = new Dictionary<string, System.Text.Json.JsonElement>(
+            previous.ExtensionConfig,
+            StringComparer.OrdinalIgnoreCase);
+        extensions.Remove(extensionId);
+        return await Update(
+            agentId,
+            previous with { ExtensionConfig = extensions },
+            cancellationToken);
+    }
+
+    /// <summary>
     /// Updates an existing agent descriptor.
     /// </summary>
     /// <remarks>

@@ -71,6 +71,13 @@ public sealed record AgentDescriptorDto
 
     /// <summary>Maps <c>AgentDescriptor.FileAccess</c> (nested object; null means workspace-only).</summary>
     public AgentFileAccessDto? FileAccess { get; init; }
+
+    /// <summary>
+    /// Maps <c>AgentDescriptor.ExtensionConfig</c>. Presence of an extension ID is the per-agent
+    /// grant; the value is its complete extension-owned configuration object.
+    /// </summary>
+    public IReadOnlyDictionary<string, JsonElement> ExtensionConfig { get; init; } =
+        new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>Nested <c>AgentDescriptor.Memory</c> shape (<c>MemoryAgentConfig</c>).</summary>
