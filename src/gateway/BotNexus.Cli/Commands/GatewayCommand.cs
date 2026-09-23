@@ -49,13 +49,18 @@ internal sealed class GatewayCommand
         });
 
         // Stop command
-        var stopCommand = new Command("stop", "Stop the gateway process");
+        var stopCommand = new Command("stop", "Stop the gateway process")
+        {
+            sourceOption
+        };
         stopCommand.SetHandler(async context =>
         {
+            var source = context.ParseResult.GetValueForOption(sourceOption);
             var target = context.ParseResult.GetValueForOption(targetOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
+            var repoRoot = CliPaths.ResolveSource(source);
             var home = CliPaths.ResolveTarget(target);
-            context.ExitCode = await StopAsync(home, verbose, context.GetCancellationToken());
+            context.ExitCode = await StopAsync(repoRoot, home, verbose, context.GetCancellationToken());
         });
 
         // Status command
@@ -306,9 +311,13 @@ internal sealed class GatewayCommand
         return lastExitCode;
     }
 
-    private async Task<int> StopAsync(string home, bool verbose, CancellationToken cancellationToken)
+    internal static string ResolveGatewayBinaryPath(string repoRoot)
+        => Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
+
+    private async Task<int> StopAsync(string repoRoot, string home, bool verbose, CancellationToken cancellationToken)
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
+        var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
         GatewayStopResult result;
 
         if (interactive)
@@ -319,25 +328,26 @@ internal sealed class GatewayCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedResult = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
+                    capturedResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
                 });
             result = capturedResult;
         }
         else
         {
-            result = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
+            result = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
         }
 
-        if (result.Success)
+        if (result.Outcome == GatewayStopOutcome.Stopped)
         {
             AnsiConsole.MarkupLine($"[green]✓[/] {CliText.SafeDisplay(result.Message ?? "Gateway stopped")}");
             return 0;
         }
-        else
-        {
-            AnsiConsole.MarkupLine($"[red]✗[/] {CliText.SafeDisplay(result.Message ?? "Failed to stop gateway")}");
-            return 1;
-        }
+
+        var message = result.Message ?? (result.Outcome == GatewayStopOutcome.NotRunning
+            ? "No running gateway could be identified"
+            : "Failed to stop gateway");
+        AnsiConsole.MarkupLine($"[red]✗[/] {CliText.SafeDisplay(message)}");
+        return 1;
     }
 
     private async Task<int> StatusAsync(string home, bool verbose, CancellationToken cancellationToken)
@@ -451,6 +461,7 @@ internal sealed class GatewayCommand
     private async Task<int> RestartAsync(string repoRoot, string home, int port, bool verbose, CancellationToken cancellationToken)
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
+        var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
 
         // Stop
         GatewayStopResult stopResult;
@@ -462,20 +473,29 @@ internal sealed class GatewayCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedStop = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
+                    capturedStop = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
                 });
             stopResult = capturedStop;
         }
         else
         {
             AnsiConsole.MarkupLine("[blue][[gateway]][/] Stopping gateway...");
-            stopResult = await _processManager.StopAsync(home, cancellationToken: cancellationToken);
+            stopResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
         }
 
-        if (stopResult.Success)
+        if (stopResult.Outcome == GatewayStopOutcome.Stopped)
+        {
             AnsiConsole.MarkupLine("[green]✓[/] Gateway stopped");
+        }
+        else if (stopResult.Outcome == GatewayStopOutcome.NotRunning)
+        {
+            AnsiConsole.MarkupLine("[dim]○ Gateway is not running[/]");
+        }
         else
-            AnsiConsole.MarkupLine($"[yellow]⚠[/] Stop result: {CliText.SafeDisplay(stopResult.Message ?? "unknown")}");
+        {
+            AnsiConsole.MarkupLine($"[red]✗[/] Stop failed: {CliText.SafeDisplay(stopResult.Message ?? "unknown")}");
+            return 1;
+        }
 
         await Task.Delay(1000, cancellationToken);
 

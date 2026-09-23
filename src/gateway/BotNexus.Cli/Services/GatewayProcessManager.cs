@@ -17,6 +17,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     // Timeout for WaitForExit after Kill(). Defaults to 5 seconds in production;
     // injectable for tests to simulate the timeout path without actually waiting.
     private readonly TimeSpan _waitForExitTimeout;
+    private readonly TimeSpan _gracefulStopTimeout;
     // Allows tests to inject a custom WaitForExit implementation to simulate timeout scenarios
     // without relying on OS-level process termination timing.
     private readonly Func<Process, int, bool>? _waitForExitOverride;
@@ -33,6 +34,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         ILogger<GatewayProcessManager> logger,
         TimeSpan? waitForExitTimeout = null,
         Func<Process, int, bool>? waitForExitOverride = null,
+        TimeSpan? gracefulStopTimeout = null,
         HttpClient? probeClient = null,
         Func<IEnumerable<IGatewayProcessHandle>>? processEnumerator = null)
     {
@@ -40,6 +42,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         _healthChecker = healthChecker;
         _logger = logger;
         _waitForExitTimeout = waitForExitTimeout ?? TimeSpan.FromSeconds(5);
+        _gracefulStopTimeout = gracefulStopTimeout ?? TimeSpan.FromSeconds(10);
         _waitForExitOverride = waitForExitOverride;
         _probeClient = probeClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
     }
@@ -307,8 +310,8 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     }
 
     /// <summary>
-    /// Stops the gateway process by sending a hard kill signal, waiting up to 5 seconds
-    /// for exit, then cleaning up the PID file.
+    /// Stops the gateway process by requesting graceful termination, waiting up to 10 seconds,
+    /// then escalating to a hard kill and waiting up to 5 seconds before cleaning up the PID file.
     /// <para>
     /// The PID is only signalled after its recorded identity has been verified against the live
     /// process (issue #2369). A recycled or unverifiable PID is cleaned up and reported as
@@ -351,11 +354,32 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         }
 
         var pid = discoveredByPath ? handle.Id : record!.Pid;
-        _logger.LogInformation(
-            "Killing gateway process {Pid} ({Source})", pid, discoveredByPath ? "discovered by binary path" : "from PID file");
+        var source = discoveredByPath ? "discovered by binary path" : "from PID file";
+        var escalated = false;
 
         try
         {
+            if (handle.RequestGracefulStop())
+            {
+                _logger.LogInformation(
+                    "Requested graceful stop for gateway process {Pid} ({Source})", pid, source);
+                var gracefulTimeoutMs = (int)_gracefulStopTimeout.TotalMilliseconds;
+                if (await Task.Run(() => handle.WaitForExit(gracefulTimeoutMs), cancellationToken))
+                {
+                    await CleanupPidFileAsync(pidFilePath);
+                    return new GatewayStopResult(
+                        Success: true,
+                        Message: $"Gateway stopped (PID {pid})",
+                        Outcome: GatewayStopOutcome.Stopped);
+                }
+
+                escalated = true;
+                _logger.LogWarning(
+                    "Gateway process {Pid} did not exit within graceful timeout {Timeout}s; escalating to a forced kill",
+                    pid,
+                    _gracefulStopTimeout.TotalSeconds);
+            }
+
             handle.Kill();
         }
         catch (InvalidOperationException ex)
@@ -369,14 +393,13 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         }
         catch (Win32Exception ex)
         {
-            _logger.LogError(ex, "Failed to kill gateway process {Pid}", pid);
+            _logger.LogError(ex, "Failed to stop gateway process {Pid}", pid);
             return new GatewayStopResult(
                 Success: false,
-                Message: $"Failed to kill gateway process {pid}: {ex.Message}",
+                Message: $"Failed to stop gateway process {pid}: {ex.Message}",
                 Outcome: GatewayStopOutcome.Failed);
         }
 
-        // Wait for process to exit after kill
         var timeoutMs = (int)_waitForExitTimeout.TotalMilliseconds;
         var exited = await Task.Run(() => handle.WaitForExit(timeoutMs), cancellationToken);
         if (!exited)
@@ -399,7 +422,9 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
 
         return new GatewayStopResult(
             Success: true,
-            Message: $"Gateway stopped (PID {pid})",
+            Message: escalated
+                ? $"Gateway stopped (PID {pid}) after graceful timeout {_gracefulStopTimeout.TotalSeconds}s and forced kill"
+                : $"Gateway stopped (PID {pid})",
             Outcome: GatewayStopOutcome.Stopped);
     }
 
