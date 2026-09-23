@@ -706,31 +706,33 @@ cooldown), not under `agents`.
 
 ### Providers: ProvidersConfig
 
-Dictionary mapping provider names to provider configurations. Keys are case-insensitive and match extension folder names under `extensions/providers/{name}/`.
+Dictionary mapping provider-instance names to `ProviderConfig` objects. Keys are case-insensitive model-registry identities; they are not extension folder names. Built-in LLM providers are registered directly in `Program.cs`.
 
 ```json
 {
   "providers": {
-    "github-copilot": { ... },
-    "openai": { ... },
-    "anthropic": { ... },
-    "my-compatible-endpoint": { ... }
+    "github-copilot": { "apiKey": "auth:github-copilot" },
+    "openai": { "apiKey": "auth:openai" },
+    "anthropic": { "apiKey": "auth:anthropic" },
+    "my-compatible-endpoint": {
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKey": "auth:compatible-endpoint",
+      "chat": {
+        "api": "openai-compat",
+        "models": ["my-model"]
+      }
+    }
   }
 }
 ```
 
+The provider-instance key is what an agent stores in `agents.<id>.provider`. `api` selects the registered wire contract; it does not name an account. `apiKey` can hold a literal credential or an `auth:<entry>` reference. Keep credentials under providers, not agents.
+
+Named compatible endpoints can coexist because each entry explicitly supplies its endpoint, credential reference, API contract and model list. That does not make arbitrary names complete instances of a built-in provider. In particular, Copilot login, discovery and diagnostics currently target the canonical `github-copilot` instance. See [GitHub Copilot accounts and aliases](providers/github-copilot.md#accounts-provider-instances-and-the-copilot-alias).
+
 #### ProviderConfig: Common Properties
 
-All providers inherit these properties:
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `Auth` | string | `"apikey"` | Authentication type: `"apikey"` or `"oauth"` |
-| `ApiKey` | string | `""` | API key (used if Auth="apikey"; ignored for OAuth) |
-| `ApiBase` | string | null | Custom API base URL (useful for proxies, Azure endpoints) |
-| `DefaultModel` | string | null | Default model for this provider (e.g., gpt-4o, gpt-4-turbo) |
-| `TimeoutSeconds` | int | 120 | Request timeout in seconds |
-| `MaxRetries` | int | 3 | Number of retries on transient failure |
+The current common fields are `enabled`, `apiKey`, `baseUrl`, `streamIdleTimeoutMs`, and the nested `chat` and `embeddings` capability objects. Deprecated flat chat fields remain readable during migration and are listed in the [canonical field table](#canonical-shape), but nested capability fields take precedence per field. Retired authentication-mode, API-base, provider-timeout, retry-count, and OAuth-client-id fields are not properties on the current `ProviderConfig`.
 
 #### Copilot Provider: Supported Models
 
@@ -818,24 +820,15 @@ botnexus config set agents.coder.provider copilot
 
 #### Copilot Provider (OAuth Device Code Flow)
 
-**Folder:** `extensions/providers/copilot/`  
-**Auth:** OAuth (no API key required)
+Run the supported login command before using a Copilot agent:
 
 ```bash
-botnexus config set providers.copilot.defaultModel gpt-4o
+botnexus provider setup --provider github-copilot
 ```
 
-**How it works:**
-1. On first use, agent prompts user to visit `https://github.com/login/device` and enter a code
-2. Token cached at `~/.botnexus/tokens/copilot.json` (encrypted on supported platforms)
-3. On subsequent runs, cached token is reused automatically
-4. Token is automatically refreshed if expired
+The command performs the device-code flow immediately, saves or replaces the canonical `github-copilot` entry in `auth.json`, and writes `providers.github-copilot.apiKey` as `auth:github-copilot` through the active configuration backend. Agents do not trigger login on first use. The gateway refreshes an expiring stored OAuth session when the retained credential permits it.
 
-**Properties:**
-- `Auth`: Must be `"oauth"` (required)
-- `DefaultModel`: Any supported Copilot model ID (e.g., `claude-opus-4.6`, `gpt-5.4`, `gpt-4o`)
-- `ApiBase`: GitHub Copilot endpoint (fixed: `https://api.individual.githubcopilot.com`)
-- `OAuthClientId`: GitHub app client ID (defaults to official BotNexus client ID)
+`copilot` is a model-registry alias for `github-copilot`, not another account. Named independently authenticated built-in Copilot instances are planned but not implemented; use separate BotNexus homes/gateways if two subscriptions must remain isolated. See the [Copilot provider guide](providers/github-copilot.md#accounts-provider-instances-and-the-copilot-alias).
 
 **Copilot API Headers:**
 
@@ -854,23 +847,23 @@ These headers identify the client to the Copilot API and enable proper rate limi
 
 #### OpenAI Provider
 
-**Folder:** `extensions/providers/openai/`  
-**Auth:** API Key
+Use the setup wizard so the API key is entered at a secret prompt rather than exposed in shell history:
 
 ```bash
-botnexus config set providers.openai.apiKey sk-...
-botnexus config set providers.openai.defaultModel gpt-4-turbo
+botnexus provider setup --provider openai
 ```
+
+The wizard writes the built-in `openai` provider instance and its selected default model. See the [OpenAI provider guide](providers/openai.md) for credential resolution and registered model IDs.
 
 #### Anthropic Provider
 
-**Folder:** `extensions/providers/anthropic/`  
-**Auth:** API Key
+Use the setup wizard so the API key is entered at a secret prompt rather than exposed in shell history:
 
 ```bash
-botnexus config set providers.anthropic.apiKey sk-ant-...
-botnexus config set providers.anthropic.defaultModel claude-3-5-sonnet-20241022
+botnexus provider setup --provider anthropic
 ```
+
+The wizard writes the built-in `anthropic` provider instance and its selected default model. See the [Anthropic provider guide](providers/anthropic.md) for credential resolution and registered model IDs.
 
 
 ---
@@ -2076,14 +2069,7 @@ public class CopilotExtensionRegistrar : IExtensionRegistrar
 
 ### Extension Config Keys
 
-Configuration keys in `Providers`, `Channels`, `Tools.Extensions`, and `Tools.McpServers` must match the folder name under `extensions/{type}/{name}/`.
-
-**Examples:**
-- Config key `"copilot"` → loads from `extensions/providers/copilot/`
-- Config key `"telegram"` → loads from `extensions/channels/telegram/`
-- Config key `"github"` → loads from `extensions/tools/github/`
-
-Keys are **case-insensitive** for matching but should use kebab-case by convention.
+Do not apply one naming rule to unrelated extension systems. LLM provider keys are model-registry provider-instance identities and are consumed by the built-in provider registration in `Program.cs`; they do not load folders under `extensions/providers`. Channel, tool, and extension-owned configuration follows the contract of that extension and may use its registration ID. Consult the owning extension guide before creating a key.
 
 ### Extension-Specific Configuration
 
