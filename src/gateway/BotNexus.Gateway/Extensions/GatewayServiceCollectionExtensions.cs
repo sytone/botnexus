@@ -177,7 +177,11 @@ public static class GatewayServiceCollectionExtensions
                     : fileSystem.Path.GetDirectoryName(workspaceManager.GetWorkspacePath(agentId))
                         ?? throw new InvalidOperationException($"Agent '{agentId}' workspace has no parent directory.");
                 return fileSystem.Path.Combine(agentDirectory, "data", "memory.sqlite");
-            }, embeddings, fileSystem);
+            },
+            embeddings,
+            fileSystem,
+            serviceProvider.GetService<ILoggerFactory>(),
+            serviceProvider.GetRequiredService<IAgentRegistry>());
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
@@ -653,6 +657,13 @@ public static class GatewayServiceCollectionExtensions
             serviceProvider.GetRequiredService<BotNexusHome>(),
             serviceProvider.GetRequiredService<IFileSystem>(),
             serviceProvider.GetRequiredService<ILogger<PlatformAgentReconciliationService>>()));
+
+        // Reconcile config-defined model registrations before agent descriptors consume the live
+        // registry. Both services subscribe to the same options monitor; registration order keeps
+        // the catalogue revision ahead of agent validation for each reload.
+        services.TryAddSingleton<ConfigDefinedModelRegistryReconciler>();
+        services.AddSingleton<IHostedService>(serviceProvider =>
+            serviceProvider.GetRequiredService<ConfigDefinedModelRegistryReconciler>());
 
         // #2136: the six worker archetypes (researcher, coder, planner, reviewer, writer, analyst)
         // are no longer registered as named conversational agents. They are resolved at spawn time

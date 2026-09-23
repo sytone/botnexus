@@ -1,0 +1,1356 @@
+{
+  "schemaVersion": "1.0.0",
+  "releases": [
+    {
+      "version": "0.46.0",
+      "tag": "v0.46.0",
+      "commit": "018c68b6c519acf04f4161f7caa60682167a6d44",
+      "releasedAt": "2026-09-23",
+      "releaseUrl": "https://github.com/sytone/botnexus/releases/tag/v0.46.0",
+      "documentationUrl": "https://sytone.github.io/botnexus/releases/v0.46.0/",
+      "categories": [
+        {
+          "name": "Features",
+          "changes": [
+            {
+              "summary": "**#3297:** Carry reasoning tokens as a distinct usage field (#3478)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Discover anthropic models from the api (#1) (#3555)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**secrets:** Credential primitives, a location registry, and sqlite/keyring backends (#3556)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**extensions:** Add keyboard prompt-history recall to chat composer (#2919)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3596:** Add an agent-updatable summary alongside the description (#3645)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3528:** Add a file-backed secrets directory with a write-only api (#3666)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3291:** Add non-terminal warning event to the llm event contract (#3862)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#2682:** Generate a SHA-256 plugin trust catalog at install (#3868)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#2854:** Split providerconfig into per-capability objects (#3869)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**webui:** Add generated portal icon set (#4085)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**webui:** Portal design system, form layout, and the icon set (#3557)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3917:** Add gpt-6 internal prompt guidance and major overlays (#3920)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Preserve diagnostic execution origin (#4179)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tools:** Add github write-side tools (#4184)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**persistence:** Adopt schema versioning across core stores (#4185)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**plugins:** Complete plugin agent source integration (#3870)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Route client delivery intent through gateway (#4190)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**memory:** Add resumable re-embedding store state (#4205)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Add conversation export options (#4202)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**mobile:** Honor conversation render projection (#4203)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Guard base instruction file edits (#4206)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**telemetry:** Record sqlite store operations (#4207)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Emit tasknexus roster heartbeats (#4210)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Add file-backed secrets UI (#4211)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Manage extension repository registrations (#4218)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Define search contributor contract (#4248)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Add bounded Matrix media (#4249)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Add shared release target resolver (#4251)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Enforce Matrix sender domain policy (#4250)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**release:** Publish canonical release history manifest (#4252)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Add satellite tool routing contract (#4312)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Preview historical tool retention (#4322)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**memory:** Add revision-aware sqlite memory records (#4323)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Add expanded message composer (#4326)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Add post-run evaluation foundation (#4330)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**github:** Add compact selectable issue lists (#4332)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tools:** Add typed scoped result store (#4334)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Preserve timed-out worktree snapshots (#4335)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Add managed task local executor (#4336)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Manage extension repositories (#4340)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Add bounded diagnostic capture policy (#4341)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tools:** Persist durable scoped results (#4342)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Atomically deploy registered extensions (#4344)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Build out-of-tree extension projects (#4345)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Bug Fixes",
+          "changes": [
+            {
+              "summary": "**#3547:** Stop agent writes deleting unmodelled config keys (#3558)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3467:** Drop streamed tool calls with no function name (#3477)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3384:** Recognise supervisor stop as deliberate teardown (#3480)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3472:** Match natural-language capacity prose as transient (#3482)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3468:** Gate memory injection on the turn tool policy (#3483)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3388:** Stamp only PackageVersion when packing the e2e cli (#3488)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Surface provider errors that ended a turn (#2) (#3548)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**skills:** Stop path containment re-rooting at the working directory (#3549)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tests:** Make the isolated test home work off Windows (#3550)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Probe the gateway where it actually listens (#3551)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Stop validate passing a config the gateway cannot read (#3552)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3598:** Declare the probe url resolver a string extension (#3599)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3616:** Preserve stored location fields the request does not model (#3619)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3494:** Add bounded inbound queue for agent exchanges (#3579)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3575:** Enforce cron job ownership on the rest seams (#3580)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3612:** Inherit denied paths when a sub-agent is granted access (#3613)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3495:** Bind skills extension config case-insensitively (#3582)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3501:** Refuse service bus replies targeting the inbound queue (#3584)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3535:** Surface context exhaustion instead of a silent blank turn (#3585)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3577:** Report agent_converse cancellation cause not bare text (#3586)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3517:** Bound one-shot delete retry and the archive stripe wait (#3581)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3543:** Stop memory flush stamping a malformed cron session id (#3588)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3469:** Make the config revision token opaque (#3590)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3576:** Parse every inline command with the real powershell parser (#3591)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3600:** Bound the inbound queue wait so a wedged head cannot hide (#3608)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3564:** Make anthropic and copilot stop-reason mapping total (#3615)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3595:** Persist the matrix sync since-token across restarts (#3618)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3617:** Order the mobile reconnect pacer barrier (#3620)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3621:** Preserve location credential fields on update (#3624)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3562:** Reject a write grant the archetype toolset cannot use (#3589)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3492:** Bind extension config case-insensitively through one seam (#3611)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3573:** Revalidate cron job ownership at mutation commit (#3622)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3414:** Narrow config.db to owner-only and add doctor coverage (#3623)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3593:** Match ingress allowlist senders case-insensitively (#3635)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3628:** Make the untrusted-content envelope unforgeable (#3636)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3630:** Classify socket-reset cancellations as transient (#3637)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3609:** Report undeliverable steer to a handle-less session (#3638)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3639:** Allow-list the device-code egress skip in the gate (#3640)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3568:** Launch windows cmd shims without escaped quotes (#3641)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3518:** Resolve external address for service bus fan-out (#3643)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3642:** Launch mcp stdio cmd shims via one shared seam (#3647)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3592:** Clear stale provider prompt tokens on a successful cut (#3648)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3567:** Retry provider network_error instead of ending the run (#3649)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3571:** Add an append affordance so agents stop faking it with edit (#3651)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3578:** Collapse blank-line runs of any length (#3652)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3542:** Stop a cached store masking a reaped workspace (#3653)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3566:** Parse -File instead of text-splitting the command line (#3658)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3570:** Accept the run label alongside targetAgentId (#3657)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3661:** Stop todo guidance reading as a one-step-per-turn halt (#3669)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3569:** Skip live sub-agent workspaces during backstop sweep (#3671)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3654:** Annotate numeric compaction fields as numbers not secrets (#3672)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3660:** Scan only pending ask_user checkpoints on startup (#3676)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3674:** Fail fast on a 401/403 websocket handshake (#3678)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3594:** Abandon service bus messages that were never dispatched (#3684)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3679:** Log a normal client disconnect below error (#3685)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3682:** Match fullwidth-pipe special tokens in the sanitizer (#3686)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3655:** Weight CJK code points in the shared token estimator (#3687)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3561:** Adopt equivalent config descriptor instead of warning (#3688)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3521:** Never adopt or archive a human cron conversation (#3689)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3695:** Complete IConversationStore on cron test double (#3697)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3541:** Guard non-deliverable channels in adapter resolution (#3690)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3681:** Stop byte compaction re-firing on preserved oversized entry (#3693)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3746:** Log agent-handle creation at debug, not warning (#3760)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3739:** Reject blank --agent and --session in prompt run (#3762)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3738:** Measure bounded waits with a monotonic clock (#3764)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3765:** Require provenance before treating a json root as config (#3766)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3773:** Pass explicit --limit on ci-pr-status gh pr list (#3781)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3782:** Authenticate pushurl alongside url on the origin remote (#3783)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3788:** Report the gate verdict when projectCosts is empty (#3789)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3707:** Let the #1574 fallback reach PreservedTurns=0 (#3791)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3711:** Suggest last-read path when edit omits path (#3792)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3704:** Share output retention policy across exec and process (#3793)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3779:** Pass configured blocked hosts to cron webhook ssrf check (#3794)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3780:** Decide satellite staleness on one monotonic clock (#3795)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3710:** Launch windows .ps1 path shims via the shared seam (#3797)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3698:** Report callerAborted instead of bare cancellation (#3799)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3703:** Surface sub-agent completion delivery failure (#3801)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3565:** Fail a sub-agent whose tools all failed (#3802)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3515:** Classify exchange deadline expiry apart from caller cancel (#3803)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3814:** Remove duplicate checkpoint member on cron test double (#3815)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tests:** Stop integration fixtures leaking a gateway when a run is killed (#3553)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3818:** Drop duplicate checkpoint member on cron test double (#3822)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3809:** Block ipv4-mapped and transitional ipv6 ssrf bypasses (#3819)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3807:** Bound pre-auth inbound webhook body read (#3813)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3805:** Retain gate artifacts and stop the failure path throwing (#3811)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3758:** Name provider and model in OpenAICompat errors (#3761)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3778:** Scope cron REST read endpoints to the caller (#3796)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3808:** Preserve omitted fields on rest cron update (#3821)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3823:** Diff writes against the store when no config file exists (#3826)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3820:** Await a completion signal in the sub-agent timeout tests (#3825)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3715:** Drive main health probe from workflow_run not cron (#3812)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3722:** Report orphaned worktree directories the registry cannot see (#3790)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3824:** Resolve world id and cli guards from the store (#3831)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3546:** Skip expired jobs in the missed-run scan (#3798)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3824:** Route subagent CLI config reads through the accessor (#3829)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3670:** Make sub-agent workspace reclamation auditable per lifecycle (#3830)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3817:** Strip comments before branch-deletion fence match (#3832)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3451:** Reseed prompt history from transcript load-more prefix (#3835)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3712:** Surface resolved skill root in skills load output (#3837)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3663:** Add partial index for pending ask_user lookups (#3838)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3659:** Isolate tick fan-out failures per job (#3841)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3842:** Normalise config from the store when no config file exists (#3848)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3845:** Report orphan workspace size and refuse registered ids (#3852)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3855:** Decide telegram polling tests by signal not wall clock (#3856)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3667:** Collect prompt contributors into the system prompt (#3858)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3237:** Stamp only PackageVersion when packing the local cli (#3859)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3750:** Distinguish malformed github extension config from absent (#3860)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3680:** Report a real last-alive instant on unclean shutdown (#3800)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3884:** Remove obsolete warning parser argument (#3887)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3918:** Reconstruct exact remote source snapshots (#3946)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3907:** Persist session history as targeted deltas (#3911)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3700:** Never treat a disabled agent workspace as orphaned (#3804)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3673:** Invalidate auth.json cache on out-of-process rotation (#3834)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3851:** Add bounded inbound queue and timeout to webhook path (#3853)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3713:** Corroborate the live badge against session status (#3875)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3846:** Re-fetch active transcript on mobile refresh (#3878)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3975:** Bind web fetch to validated destination addresses (#4033)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3932:** Verify freshness against current target refs (#3947)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3927:** Collect complete verified pr file footprints (#3945)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3913:** Preserve engine deadline cancellation provenance (#3926)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3874:** Reject incomplete dispatch budgets (#3916)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3850:** Pass ci comment bodies through files (#3879)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3895:** Handle mixed cycle aggregation artifacts (#3908)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3915:** Unify background process ownership across tools (#3922)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#2735:** Include configured identity in github failures (#3967)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3982:** Bound isolated docs lint child process execution (#3981)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3984:** Guarantee killed child teardown when callbacks throw (#3974)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#4121:** Resync context after mid-loop compaction (#4122)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Bound non-cooperative parallel tools (#4129)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Respect host path case semantics (#4144)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#4124:** Bound legacy cron session migration (#4145)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**ci:** Make remote failure attribution truthful (#4158)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**ci:** Enforce the PR contract (#4156)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Release abandoned webhook admissions (#4168)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Stabilize transcript refresh identity (#4170)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Recover unacknowledged history identity (#4171)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Clear removed background retry credentials (#4174)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**security:** Enforce agent model allowlists on conversation overrides (#4176)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Reconcile transcript refresh atomically (#4177)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**ci:** Quarantine browser e2e from ordinary validation (#4178)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**security:** Preserve declared auth reference boundary (#4180)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Cancel timed-out compaction providers (#4181)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Recognize recovered sub-agent tool retries (#4183)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**memory:** Persist promotion provenance contributors (#4186)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3600:** Confirm inbound message admission (#4120)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3918:** Stabilize exact-source validation packaging (#4029)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Preserve adapters when pruning extensions (#4198)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Separate audit persistence from policy timeout (#4199)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Evict stale aggregate after save (#4201)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Reflect cron liveness in activity health (#4208)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Detach manual runs from tool calls (#4209)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Preserve agent summaries and emoji labels (#4212)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Reclaim sub-agent memory with workspace (#4213)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sqlite:** Propagate additive migration failures (#4215)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Enforce streaming idle timeout (#4216)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Replay interrupted agent-only conversations (#4217)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Distinguish read-only banner status (#4219)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Bound usage polling lifecycle (#4220)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Name icon-only removal controls (#4221)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Keep latest guide selection (#4222)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Roll back failed jsonl appends (#4224)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Preserve webhook admission order (#4225)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Reveal conversation actions on keyboard focus (#4227)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Restore transcript paging after refresh (#4228)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Preserve equal-timestamp transcript order (#4230)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Report retry mutations accurately (#4231)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tools:** Make process input cancellable (#4232)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**prompts:** Resolve qualified model version from final component (#4234)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Unblock skills after startup failure (#4235)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Align orphan cleanup with effective configuration (#4243)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Contain provider usage modal focus (#4223)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Recover lost tool completion on refresh (#4236)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Stabilize redacted append retry keys (#4237)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Retire idle webhook queue slots (#4239)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Deliver queued callback timeouts (#4240)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Sync guide selection with route (#4245)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Require provider hostname boundaries (#4247)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tools:** Suppress c1 background control strings (#4253)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Make panel splitters keyboard operable (#4254)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Isolate schema form field ids (#4255)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tools:** Disclose incomplete background output (#4257)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Classify compatible content filtering (#4258)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Preserve empty responses tool output (#4260)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Raise live badge text contrast (#4261)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Reject placeholder api keys (#4262)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Stack agent form fields on narrow screens (#4263)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Render schema collection descriptions (#4264)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Preserve redirected debug database json (#4265)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Keep guide indexing incomplete until loaded (#4233)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Constrain splitters after container resize (#4256)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tools:** Defer script checks for compound commands (#4270)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**security:** Redact model-bound tool text (#4273)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Resolve guide-relative links (#4276)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**mobile:** Load shared icon styles (#4277)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Preserve schema form focus outlines (#4278)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Bind webhook callbacks to validated addresses (#4284)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**probe:** Secure diagnostic endpoints (#4285)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Isolate uncooperative timed-out actions (#4287)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Enforce checklist completion (#4303)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Compact between inner tool turns (#4304)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Roll back failed sub-agent admission (#4313)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Manage per-agent extension grants (#4338)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Reload live options from sqlite revisions (#4339)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Documentation",
+          "changes": [
+            {
+              "summary": "**user-guide:** Document world-level WORLD.md (#3554)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "Map the four app-integration surfaces (#3559)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "Daily documentation grooming 2026-08-26 (#3574)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3631:** Daily documentation grooming 2026-08-28 (#3632)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#2639:** Document trailguide disable-vs-delete and shipped entry (#3701)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#1881:** Add agent 365 admin and onboarding guide (#3702)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3705,#3745,#3784,#3806:** Daily documentation grooming 2026-08-31 through 2026-09-03 (#3706)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3716:** Document -Mode core and the strict test-count floor (#3717)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3718:** State measured main-health latency, not the nominal cadence (#3719)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3720:** Repoint workspace-and-memory source refs at src/gateway (#3721)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3723:** Correct container smoke trigger and workflow filename (#3724)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3725:** Retarget tool-security.md onto the real source tree (#3726)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3727:** State the real enforcement of the sensitive-file guard (#3728)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3729:** Replace the non-existent botnexus backup command tree (#3730)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3732:** State that the squash-body setting is not applied (#3733)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3734:** Unify env-var override form across four config pages (#3735)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3737:** Remove two exec tool config keys that do not exist (#3740)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3741:** Replace four non-binding config keys in the user guide (#3742)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3743:** Fix debug logs options and drop fabricated logs command (#3744)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3747:** Correct five nonexistent gateway tool ids (#3748)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3749:** Correct five rest routes that do not exist (#3753)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3756:** Correct gateway rate-limit default from 60 to 300 (#3757)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3786:** Retarget dangling AgentConfigMerger doc crefs (#3787)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3745:** Document the three endpoint-contributor route groups (#3763)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3871:** Fix skills api shape and phantom exchange budget keys (#3872)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3886:** Make cli the primary configuration workflow (#3889)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3993:** Reconcile message routing and session flow (#4001)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3995:** Reconcile todo projection parity status (#3998)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3897:** Reconcile extension and realtime documentation contracts (#3898)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3992:** Reconcile four provider guides with source contracts (#4026)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#4089:** Organize guides by audience and explain user capabilities",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#4106:** Make user onboarding cli-first",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3114:** Document subject-owned extension methods (#4031)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3327:** Refresh sessions seam history guidance (#4032)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#4075:** Reconcile developer agent execution contracts (#4084)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#4076:** Complete operator endpoint and setting references (#4099)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3909:** Document selective stacked pr delivery (#3910)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "Resolve the issue-filing script from the skill root the loader reports (#4163)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Correct built-in model examples (#4175)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Correct icon asset guide (#4244)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**memory:** Align tool guide with current schemas (#4246)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**extensions:** Document out-of-tree extension authoring (#4343)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Performance",
+          "changes": [
+            {
+              "summary": "**ci:** Add dedicated capacity for remote validation (#4166)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tools:** Account process output incrementally (#4226)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Refactor",
+          "changes": [
+            {
+              "summary": "**#2925:** Move string operations onto string extension methods (#3441)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3539:** Record contributor built-in decisions and fence them (#3665)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3442:** Remove the copilot text delta normalizer (#3861)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3212:** Derive portal visibility from the route (#3865)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#2926:** Align agent365 address factory and parser names (#3958)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Publish agent events through the conversation seam (#4169)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Centralize conversation status parsing (#4189)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Share config form orchestration (#4197)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Testing",
+          "changes": [
+            {
+              "summary": "**#3625:** Gate federation relay pin on signals not wall clock (#3644)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3583:** Signal-gate telegram polling waits instead of a 2s clock (#3650)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3560:** Fence agent descriptor round trip against stored-key loss (#3691)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3754:** Pin chain operators and the #3754 reproduction shapes (#3759)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3816:** Gate delivery-mode assertion on dispatch not a 5s wait (#3828)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3849:** Decide inbound boundary bounds by signal not wall clock (#3857)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3430:** Pin hub registration block against generated inventory (#3863)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3699:** Cover Trailguide startup and first conversation (#3864)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**#3301:** Pin newline and empty streaming deltas (#3948)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Compose mid-loop compaction queue regression (#4130)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**ci:** Prove exact ci comment body transport (#4167)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Stabilize parallel tool event ordering (#4182)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Align compaction retry token assertion (#4188)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Signal post-start completion observation (#4214)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Enforce complete icon tone rules (#4229)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Cover rendered icon gradient isolation (#4241)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Fence descendant icon strokes (#4242)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tooling:** Bound ci comment harness children (#4259)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**ci:** Guard documentation impact workflow coverage (#4272)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Isolate telemetry activity observers (#4331)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Miscellaneous",
+          "changes": [
+            {
+              "summary": "**#3885:** Mark broken pull requests as draft (#3888)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**deps:** Update docs advisory dependencies (#4274)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "CI/Build",
+          "changes": [
+            {
+              "summary": "**#3602:** Judge test runs by the container fail-closed result contract (#3607)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "Let the docs-vs-source gate reach the PRs it exists for (#4125)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Build",
+          "changes": [
+            {
+              "summary": "**deps:** Bump mkdocs-material from 9.7.6 to 9.7.7 (#3827)",
+              "documentationUrls": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

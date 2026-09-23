@@ -7,7 +7,7 @@ namespace BotNexus.Memory.Tests.TestInfrastructure;
 
 internal sealed class MemoryStoreTestContext : IAsyncDisposable
 {
-    private MemoryStoreTestContext(string tempDirectory, string dbPath, SqliteMemoryStore store)
+    internal MemoryStoreTestContext(string tempDirectory, string dbPath, SqliteMemoryStore store)
     {
         TempDirectory = tempDirectory;
         DbPath = dbPath;

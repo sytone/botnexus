@@ -17,9 +17,9 @@ public sealed class SqliteMemoryStore(
     MemoryLikeFallbackOptions? likeFallbackOptions = null,
     IMemoryEmbeddingService? embeddingService = null,
     MemoryVectorSearchOptions? vectorSearchOptions = null,
-    ILogger<SqliteMemoryStore>? logger = null) : IMemoryStore
+    ILogger<SqliteMemoryStore>? logger = null,
+    Func<MemoryTemporalDecayPolicy>? temporalDecayPolicy = null) : IMemoryStore
 {
-    private const double DefaultHalfLifeDays = 30d;
     private const int MaxReembeddingErrorLength = 2048;
     private static readonly TimeSpan ReembeddingClaimLease = TimeSpan.FromMinutes(5);
     private readonly string _dbPath = dbPath;
@@ -43,6 +43,8 @@ public sealed class SqliteMemoryStore(
         vectorSearchOptions ?? MemoryVectorSearchOptions.Default;
 
     private readonly ILogger<SqliteMemoryStore> _logger = logger ?? NullLogger<SqliteMemoryStore>.Instance;
+    private readonly Func<MemoryTemporalDecayPolicy> _temporalDecayPolicy =
+        temporalDecayPolicy ?? (() => MemoryTemporalDecayPolicy.Default);
 
     private bool _initialized;
 
@@ -476,12 +478,13 @@ public sealed class SqliteMemoryStore(
     public async Task<MemorySearchResult> SearchWithReportAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
     {
         await InitializeAsync(ct).ConfigureAwait(false);
+        var policy = ResolveTemporalDecayPolicy();
         var sanitized = SanitizeFtsQuery(query);
         if (string.IsNullOrWhiteSpace(sanitized))
-            return new MemorySearchResult([], MemoryVectorScanReport.NotAttempted);
+            return new MemorySearchResult([], MemoryVectorScanReport.NotAttempted, policy);
 
         var limit = Math.Clamp(topK, 1, 100);
-        var lambda = Math.Log(2d) / DefaultHalfLifeDays;
+        var lambda = policy.Lambda;
         try
         {
             await using var connection = CreateConnection();
@@ -513,7 +516,10 @@ public sealed class SqliteMemoryStore(
             var report = await AugmentWithVectorCandidatesAsync(connection, query, candidates, filter, lexicalIds, ct)
                 .ConfigureAwait(false);
 
-            return new MemorySearchResult(HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda), report);
+            return new MemorySearchResult(
+                HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda),
+                report,
+                policy);
         }
         catch (SqliteException ex) when (SqliteRetryHelper.IsTransient(ex))
         {
@@ -1469,7 +1475,8 @@ public sealed class SqliteMemoryStore(
         MemorySearchFilter? filter,
         double lambda,
         CancellationToken ct)
-        => await SearchWithLikeFallbackWithReportAsync(sanitizedQuery, limit, filter, lambda, _likeFallbackOptions, ct)
+        => await SearchWithLikeFallbackWithReportAsync(
+                sanitizedQuery, limit, filter, lambda, ResolveTemporalDecayPolicy(), _likeFallbackOptions, ct)
             .ConfigureAwait(false);
 
     /// <summary>
@@ -1509,7 +1516,8 @@ public sealed class SqliteMemoryStore(
         MemoryLikeFallbackOptions fallbackOptions,
         CancellationToken ct)
     {
-        var result = await SearchWithLikeFallbackWithReportAsync(sanitizedQuery, limit, filter, lambda, fallbackOptions, ct)
+        var result = await SearchWithLikeFallbackWithReportAsync(
+                sanitizedQuery, limit, filter, lambda, ResolveTemporalDecayPolicy(), fallbackOptions, ct)
             .ConfigureAwait(false);
         return result.Entries;
     }
@@ -1524,6 +1532,7 @@ public sealed class SqliteMemoryStore(
         int limit,
         MemorySearchFilter? filter,
         double lambda,
+        MemoryTemporalDecayPolicy temporalDecayPolicy,
         MemoryLikeFallbackOptions fallbackOptions,
         CancellationToken ct)
     {
@@ -1535,7 +1544,7 @@ public sealed class SqliteMemoryStore(
             .ToArray();
 
         if (terms.Length == 0)
-            return new MemorySearchResult([], MemoryVectorScanReport.NotAttempted);
+            return new MemorySearchResult([], MemoryVectorScanReport.NotAttempted, temporalDecayPolicy);
 
         await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
@@ -1602,8 +1611,15 @@ public sealed class SqliteMemoryStore(
         var report = await AugmentWithVectorCandidatesAsync(connection, sanitizedQuery, candidates, filter, lexicalIds, ct)
             .ConfigureAwait(false);
 
-        return new MemorySearchResult(HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda), report);
+        return new MemorySearchResult(
+            HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda),
+            report,
+            temporalDecayPolicy);
     }
+
+    private MemoryTemporalDecayPolicy ResolveTemporalDecayPolicy()
+        => _temporalDecayPolicy()
+            ?? throw new InvalidOperationException("The memory temporal-decay policy resolver returned null.");
 
     /// <summary>
     /// Adds cosine-similarity evidence to the lexical candidate set, and pulls in semantically
