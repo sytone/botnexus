@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace BotNexus.Cli.Services;
 
@@ -20,7 +21,13 @@ public interface IGatewayProcessHandle
     /// </summary>
     string? ExecutablePath { get; }
 
-    /// <summary>Requests termination of the process.</summary>
+    /// <summary>
+    /// Requests a graceful process termination when the platform exposes a signal the gateway can
+    /// handle. Returns false when no request was delivered.
+    /// </summary>
+    bool RequestGracefulStop() => false;
+
+    /// <summary>Forcibly terminates the process.</summary>
     void Kill();
 
     /// <summary>Waits up to <paramref name="milliseconds"/> for exit; true when it exited.</summary>
@@ -50,6 +57,14 @@ internal sealed class LiveProcessHandle(Process process, Func<Process, int, bool
         }
     }
 
+    public bool RequestGracefulStop()
+    {
+        if (OperatingSystem.IsWindows() || process.HasExited)
+            return false;
+
+        return NativeMethods.Kill(process.Id, NativeMethods.SigTerm) == 0;
+    }
+
     public void Kill() => process.Kill();
 
     public bool WaitForExit(int milliseconds)
@@ -65,5 +80,13 @@ internal sealed class LiveProcessHandle(Process process, Func<Process, int, bool
     {
         foreach (var process in Process.GetProcesses())
             yield return new LiveProcessHandle(process);
+    }
+
+    private static class NativeMethods
+    {
+        internal const int SigTerm = 15;
+
+        [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+        internal static extern int Kill(int pid, int signal);
     }
 }
