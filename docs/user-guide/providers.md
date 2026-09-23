@@ -1,6 +1,8 @@
 # Choose and connect a provider
 
-A **provider** is the service that supplies an agent's language model. The **model** is the program that reads your request and produces a response. You can use an existing provider without writing code.
+A **provider type** is a service family such as GitHub Copilot, OpenAI, Anthropic or Ollama. A **provider instance** is the named entry under `providers.<name>` that holds one endpoint and credential selection. Its **API contract** is the wire format used to contact the service, such as OpenAI Completions or Anthropic Messages. A **model** is the program selected within that instance. Each agent chooses a provider instance with `agents.<id>.provider` and a model with `agents.<id>.model`.
+
+BotNexus can use several provider types in one gateway. It also supports multiple named OpenAI-compatible instances, for example separate `local-vllm` and `team-proxy` endpoints. Built-in providers have a narrower boundary: current GitHub Copilot authentication, discovery, diagnostics, health and quota handling use one canonical GitHub Copilot account named `github-copilot`. See [GitHub Copilot accounts and aliases](../providers/github-copilot.md#accounts-provider-instances-and-the-copilot-alias).
 
 This guide explains the setup route in the current source. A saved setting or a listed model does not prove that your account can use it. Check the result with a small request before relying on the connection.
 
@@ -50,6 +52,44 @@ For Ollama, read its [provider guide](../providers/ollama.md) first. The model m
 
 GitHub Models and other compatible endpoints are not choices accepted by this setup wizard. Follow their linked guide rather than substituting their name into `provider setup`.
 
+## Configure two provider types for different agents
+
+This example assigns one agent to Copilot and another to OpenAI. It uses supported setup commands, does not put credentials on the command line, and works from PowerShell or Bash.
+
+1. Configure both credentials. The second command opens a secret prompt for the OpenAI key.
+
+   ```powershell
+   botnexus provider setup --provider github-copilot
+   botnexus provider setup --provider openai
+   ```
+
+2. Create the agents and select an exact model registered for each provider instance.
+
+   ```powershell
+   botnexus agent add copilot-agent --provider github-copilot --model gpt-4.1
+   botnexus agent add openai-agent --provider openai --model gpt-4o
+   ```
+
+   These commands persist `agents.copilot-agent.provider`, `agents.copilot-agent.model`, `agents.openai-agent.provider`, and `agents.openai-agent.model`. If either ID already exists, choose a new ID or update its values with `botnexus config set` instead of overwriting unrelated agent settings.
+
+3. Check the saved provider instances and configuration.
+
+   ```powershell
+   botnexus provider list
+   botnexus agent list
+   botnexus validate
+   ```
+
+4. Open the web interface. Select `copilot-agent`, then send this example request:
+
+   > Reply with only: Copilot connection works. Do not use tools.
+
+5. Start a separate conversation, select `openai-agent`, and send:
+
+   > Reply with only: OpenAI connection works. Do not use tools.
+
+A successful response through each agent checks the selected credential, endpoint, API contract and model together. It can consume paid quota. It does not test every model feature or prove that another agent uses a different account unless that agent selects a genuinely different provider instance.
+
 ## Check the saved connection
 
 Run:
@@ -60,7 +100,7 @@ botnexus provider list
 
 Check that the intended provider is listed. This checks saved configuration, not whether a request will succeed. A running gateway normally refreshes config-defined provider models when it receives the configuration reload signal, so adding or changing one does not require a process restart. If a store-backed installation has not delivered that signal yet, the saved provider can appear in the CLI before the running gateway catalogue changes. Retry only after checking the gateway's available providers; do not treat persistence alone as a successful connection test.
 
-For Copilot, these additional commands contact the service and may refresh saved sign-in credentials:
+For the canonical Copilot instance, these additional commands contact the service and may refresh the saved `github-copilot` credential:
 
 ```powershell
 botnexus provider copilot whoami
@@ -99,6 +139,7 @@ Start with non-sensitive material. See [Usage ideas](usage-ideas.md) for example
 | Model is unavailable | Check its exact ID and your account/server's available models. A built-in list is not an access guarantee. |
 | Chat works but a task fails | Check the required tool or extension. Changing the model does not install tools or grant access. |
 | A previous advanced setting still applies | Consult the provider reference for nested settings; do not repeatedly overwrite unrelated configuration. |
+| Two agents need different Copilot subscriptions | This is planned but not currently supported in one gateway. Do not duplicate the provider key, use `copilot` as a second instance, or hand-edit auth entries. Use separate BotNexus homes/gateways until first-class named built-in instances are delivered. |
 
 To stop using a provider, select a different configured provider/model for affected agents before removing its configuration. Do not remove a shared connection without checking which agents use it. The [CLI reference](../cli-reference.md) covers provider removal.
 
