@@ -177,7 +177,11 @@ public static class GatewayServiceCollectionExtensions
                     : fileSystem.Path.GetDirectoryName(workspaceManager.GetWorkspacePath(agentId))
                         ?? throw new InvalidOperationException($"Agent '{agentId}' workspace has no parent directory.");
                 return fileSystem.Path.Combine(agentDirectory, "data", "memory.sqlite");
-            }, embeddings, fileSystem);
+            },
+            embeddings,
+            fileSystem,
+            serviceProvider.GetService<ILoggerFactory>(),
+            serviceProvider.GetRequiredService<IAgentRegistry>());
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
