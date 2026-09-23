@@ -40,20 +40,39 @@ namespace BotNexus.Gateway.Configuration;
 /// here.
 /// </para>
 /// </remarks>
-public sealed class SqliteConfigurationProvider : ConfigurationProvider
+public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDisposable
 {
+    private static readonly TimeSpan DefaultDetectionInterval = TimeSpan.FromSeconds(1);
+
     private readonly IConfigStore _store;
     private readonly Action<string, Exception?>? _onLoadFailure;
+    private readonly TimeSpan _detectionInterval;
+    private readonly bool _startChangeDetection;
+    private readonly SemaphoreSlim _reloadLock = new(1, 1);
+    private readonly CancellationTokenSource _disposeToken = new();
+    private Task? _changeDetectionTask;
+    private long _appliedRevision = -1;
 
     /// <summary>Creates a provider over <paramref name="store"/>.</summary>
     /// <param name="store">The configuration store to read.</param>
     /// <param name="onLoadFailure">
     /// Invoked with a human-readable reason when a load is rejected and the previous data retained.
     /// </param>
-    public SqliteConfigurationProvider(IConfigStore store, Action<string, Exception?>? onLoadFailure = null)
+    public SqliteConfigurationProvider(
+        IConfigStore store,
+        Action<string, Exception?>? onLoadFailure = null,
+        TimeSpan? detectionInterval = null,
+        bool startChangeDetection = true)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _onLoadFailure = onLoadFailure;
+        _detectionInterval = detectionInterval ?? DefaultDetectionInterval;
+        _startChangeDetection = startChangeDetection;
+
+        if (_detectionInterval <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(detectionInterval), "Detection interval must be positive.");
+        }
     }
 
     /// <summary>
@@ -80,35 +99,84 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider
     /// <inheritdoc />
     public override void Load()
     {
-        // Synchronous by contract. Safe to block: Load runs either during host construction (nothing
-        // else executing) or from a change-token callback on a background thread with no
-        // synchronization context to deadlock against.
-        var previous = Data;
+        // Synchronous by contract. Safe to block during host construction because no synchronization
+        // context is involved. Revision and entries come from one SQLite read transaction.
+        _ = TryApplySnapshotAsync(notify: false, CancellationToken.None).GetAwaiter().GetResult();
 
-        IReadOnlyDictionary<string, ConfigEntry> entries;
+        if (_startChangeDetection && _store.SupportsExternalChangeDetection && _changeDetectionTask is null)
+        {
+            _changeDetectionTask = DetectChangesAsync(_disposeToken.Token);
+        }
+    }
+
+    /// <summary>
+    /// Reads one coherent store snapshot and publishes a reload only when a newer revision was
+    /// materialised successfully. Duplicate checks are coalesced by revision.
+    /// </summary>
+    public Task<bool> CheckForChangesAsync(CancellationToken cancellationToken = default)
+        => TryApplySnapshotAsync(notify: true, cancellationToken);
+
+    private async Task<bool> TryApplySnapshotAsync(bool notify, CancellationToken cancellationToken)
+    {
+        await _reloadLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            entries = _store.ReadEntriesAsync().GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            // Retain last-known-good rather than clearing and rethrowing (#2358). On the reload path
-            // a throw here reaches a background thread and takes the process down.
-            _onLoadFailure?.Invoke("Configuration store could not be read; retaining previous values.", ex);
-            Data = previous;
-            return;
-        }
+            ConfigStoreSnapshot snapshot;
+            try
+            {
+                snapshot = await _store.ReadSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _onLoadFailure?.Invoke("Configuration store could not be read; retaining previous values.", ex);
+                return false;
+            }
 
+            if (snapshot.Revision <= _appliedRevision)
+            {
+                return false;
+            }
+
+            IDictionary<string, string?> candidate;
+            try
+            {
+                candidate = Parse(ConfigDocumentRehydrator.Rehydrate(snapshot.Entries));
+            }
+            catch (Exception ex)
+            {
+                _onLoadFailure?.Invoke(
+                    "Configuration store contents could not be materialised; retaining previous values.", ex);
+                return false;
+            }
+
+            Data = candidate;
+            _appliedRevision = snapshot.Revision;
+            if (notify)
+            {
+                OnReload();
+            }
+
+            return true;
+        }
+        finally
+        {
+            _reloadLock.Release();
+        }
+    }
+
+    private async Task DetectChangesAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(_detectionInterval);
         try
         {
-            var document = ConfigDocumentRehydrator.Rehydrate(entries);
-            Data = Parse(document);
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            {
+                await CheckForChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            _onLoadFailure?.Invoke(
-                "Configuration store contents could not be materialised; retaining previous values.", ex);
-            Data = previous;
+            // Provider disposal owns shutdown; cancellation is the normal terminal state.
         }
     }
 
@@ -161,9 +229,14 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider
     /// change-token plumbing does the rest.
     /// </summary>
     public void NotifyChanged()
+        => _ = CheckForChangesAsync().GetAwaiter().GetResult();
+
+    /// <inheritdoc />
+    public void Dispose()
     {
-        Load();
-        OnReload();
+        // Do not dispose the semaphore while an in-flight check may still release it. Cancelling the
+        // provider-owned token stops the timer and lets the short SQLite read finish safely.
+        _disposeToken.Cancel();
     }
 }
 
