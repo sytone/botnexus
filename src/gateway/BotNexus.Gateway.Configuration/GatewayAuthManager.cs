@@ -141,9 +141,23 @@ public sealed class GatewayAuthManager
             return entry.Endpoint;
 
         if (_platformConfig.CurrentValue.Providers is not null &&
-            TryGetProviderConfig(_platformConfig.CurrentValue.Providers, provider, out var providerConfig) &&
-            !string.IsNullOrWhiteSpace(providerConfig?.BaseUrl))
-            return providerConfig.BaseUrl;
+            TryGetProviderConfig(_platformConfig.CurrentValue.Providers, provider, out var providerConfig))
+        {
+            const string AuthPrefix = "auth:";
+            if (providerConfig?.ApiKey?.StartsWith(AuthPrefix, StringComparison.OrdinalIgnoreCase) == true)
+            {
+                var referenceProvider = providerConfig.ApiKey[AuthPrefix.Length..].Trim();
+                if (!string.IsNullOrWhiteSpace(referenceProvider) &&
+                    TryGetAuthEntry(referenceProvider, out var referencedEntry) &&
+                    !string.IsNullOrWhiteSpace(referencedEntry.Endpoint))
+                {
+                    return referencedEntry.Endpoint;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(providerConfig?.BaseUrl))
+                return providerConfig.BaseUrl;
+        }
 
         return null;
     }

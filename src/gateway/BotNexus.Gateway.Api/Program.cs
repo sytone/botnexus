@@ -451,22 +451,42 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     // with the CORRECT BaseUrl. No downstream consumer patches model.BaseUrl anymore.
     var authManager = serviceProvider.GetRequiredService<GatewayAuthManager>();
 
-    serviceProvider.GetRequiredService<BuiltInModels>().RegisterAll(models, authManager.GetApiEndpoint);
+    var builtInModels = serviceProvider.GetRequiredService<BuiltInModels>();
+    builtInModels.RegisterAll(models, authManager.GetApiEndpoint);
     new IntegrationMockModels().RegisterAll(models);
     GitHubModelsProvider.RegisterModels(models);
 
-    // Dynamic model discovery: overlay live API models onto built-in registry.
-    // Discovery is best-effort — failures fall back to built-in models.
-    var discoveryClient = new CopilotDiscoveryClient(httpClient);
-    var copilotDiscovery = new CopilotModelDiscoveryProvider(
-        discoveryClient,
-        async ct =>
+    var platformConfig = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
+    var copilotInstances = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "github-copilot" };
+    if (platformConfig.Providers is not null)
+    {
+        foreach (var (providerName, providerConfig) in platformConfig.Providers)
         {
-            var apiKey = await authManager.GetApiKeyAsync("github-copilot", ct);
-            var endpoint = authManager.GetApiEndpoint("github-copilot");
-            return (apiKey, endpoint);
-        },
-        loggerFactory.CreateLogger<CopilotModelDiscoveryProvider>());
+            if (providerConfig.Enabled &&
+                string.Equals(providerConfig.Type, "github-copilot", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(providerName, "github-copilot", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(providerName, "copilot", StringComparison.OrdinalIgnoreCase))
+            {
+                builtInModels.RegisterCopilotInstance(models, providerName, authManager.GetApiEndpoint);
+                copilotInstances.Add(providerName);
+            }
+        }
+    }
+
+    // Dynamic model discovery: overlay live API models independently for every configured Copilot
+    // instance. Discovery is best-effort — failures retain that instance's built-in catalogue.
+    var discoveryClient = new CopilotDiscoveryClient(httpClient);
+    var copilotDiscoveries = copilotInstances.Select(providerInstance =>
+        (IModelDiscoveryProvider)new CopilotModelDiscoveryProvider(
+            discoveryClient,
+            async ct =>
+            {
+                var apiKey = await authManager.GetApiKeyAsync(providerInstance, ct);
+                var endpoint = authManager.GetApiEndpoint(providerInstance);
+                return (apiKey, endpoint);
+            },
+            loggerFactory.CreateLogger<CopilotModelDiscoveryProvider>(),
+            providerInstance));
 
     // The Anthropic-direct list was hardcoded in BuiltInModels, so a retired model id stayed
     // selectable in the portal until someone traced a 404 that surfaced only as an empty run.
@@ -478,18 +498,18 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
 
     var discoveryService = new ModelDiscoveryService(
         models,
-        [copilotDiscovery, anthropicDiscovery],
+        copilotDiscoveries.Append(anthropicDiscovery),
         loggerFactory.CreateLogger<ModelDiscoveryService>());
     discoveryService.DiscoverAndRegisterAsync().GetAwaiter().GetResult();
 
     // Register models from openai-compat providers in config (e.g. Ollama, LM Studio),
     // or any provider with an explicit Api override (e.g. integration-mock).
-    var platformConfig = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
     if (platformConfig.Providers is not null)
     {
         foreach (var (providerName, providerConfig) in platformConfig.Providers)
         {
-            if (!providerConfig.Enabled)
+            if (!providerConfig.Enabled ||
+                string.Equals(providerConfig.Type, "github-copilot", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var apiName = string.IsNullOrWhiteSpace(providerConfig.ResolveChatApi())
@@ -543,6 +563,8 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
             if (string.IsNullOrWhiteSpace(agentConfig.Provider) || string.IsNullOrWhiteSpace(agentConfig.Model))
                 continue;
             if (!platformConfig.Providers.TryGetValue(agentConfig.Provider, out var agentProvider))
+                continue;
+            if (string.Equals(agentProvider.Type, "github-copilot", StringComparison.OrdinalIgnoreCase))
                 continue;
             var apiName = string.IsNullOrWhiteSpace(agentProvider.Api)
                 ? "openai-completions"
