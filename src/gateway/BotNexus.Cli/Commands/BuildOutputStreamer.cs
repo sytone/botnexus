@@ -58,6 +58,44 @@ internal static partial class BuildOutputStreamer
         return retryCode == LockedFilesExitCode ? 1 : retryCode;
     }
 
+    internal static Task<int> RunExtensionAsync(
+        string projectPath,
+        string botNexusRepoRoot,
+        string stagingDirectory,
+        bool verbose,
+        CancellationToken cancellationToken)
+        => RunProcessAsync(
+            BuildExtensionStartInfo(projectPath, botNexusRepoRoot, stagingDirectory),
+            verbose,
+            cancellationToken);
+
+    internal static ProcessStartInfo BuildExtensionStartInfo(
+        string projectPath,
+        string botNexusRepoRoot,
+        string stagingDirectory)
+    {
+        var startInfo = CreateStartInfo(Path.GetDirectoryName(projectPath)
+            ?? throw new ArgumentException("The extension project must have a parent directory.", nameof(projectPath)));
+        foreach (var argument in new[]
+        {
+            "build",
+            projectPath,
+            "-c",
+            "Release",
+            "--nologo",
+            "--tl:off",
+            $"/p:BotNexusRepoRoot={botNexusRepoRoot}",
+            $"/p:OutputPath={EnsureTrailingSeparator(stagingDirectory)}",
+            "/p:AppendTargetFrameworkToOutputPath=false",
+            "/p:AppendRuntimeIdentifierToOutputPath=false"
+        })
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        return startInfo;
+    }
+
     /// <summary>
     /// Builds the MSBuild argument string for one attempt. Internal so tests can assert the exact
     /// flag set for each attempt without spawning a real build.
@@ -89,16 +127,8 @@ internal static partial class BuildOutputStreamer
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = BuildArguments(solution, commitSha, isolatedCompilation),
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
+        var psi = CreateStartInfo(workingDirectory);
+        psi.Arguments = BuildArguments(solution, commitSha, isolatedCompilation);
 
         // When interactive and not verbose, suppress per-line output and show a brief message instead.
         var suppressLive = interactive && !verbose;
@@ -147,6 +177,35 @@ internal static partial class BuildOutputStreamer
         }
 
         RenderSummary(state, process.ExitCode, interactive);
+        return process.ExitCode;
+    }
+
+    private static ProcessStartInfo CreateStartInfo(string workingDirectory) => new()
+    {
+        FileName = "dotnet",
+        WorkingDirectory = workingDirectory,
+        UseShellExecute = false,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        CreateNoWindow = true
+    };
+
+    private static string EnsureTrailingSeparator(string path)
+        => Path.EndsInDirectorySeparator(path) ? path : path + Path.DirectorySeparatorChar;
+
+    private static async Task<int> RunProcessAsync(
+        ProcessStartInfo startInfo,
+        bool verbose,
+        CancellationToken cancellationToken)
+    {
+        var state = new BuildState();
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start dotnet build.");
+        var stdoutTask = ReadStreamAsync(process.StandardOutput, state, verbose, isError: false);
+        var stderrTask = ReadStreamAsync(process.StandardError, state, verbose, isError: true);
+        await Task.WhenAll(stdoutTask, stderrTask);
+        await process.WaitForExitAsync(cancellationToken);
+        RenderSummary(state, process.ExitCode, AnsiConsole.Profile.Capabilities.Interactive);
         return process.ExitCode;
     }
 
