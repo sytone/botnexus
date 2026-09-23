@@ -106,6 +106,13 @@ public sealed record MarketplacePluginEntry
     /// <summary>Discovery keywords, or <c>null</c>.</summary>
     [JsonPropertyName("keywords")]
     public IReadOnlyList<string>? Keywords { get; init; }
+
+    /// <summary>
+    /// Advertised external component inventory. This is discovery evidence only and is not
+    /// serialized into the strict native marketplace JSON contract.
+    /// </summary>
+    [JsonIgnore]
+    public MarketplaceComponentInventory Components { get; init; } = new();
 }
 
 /// <summary>
