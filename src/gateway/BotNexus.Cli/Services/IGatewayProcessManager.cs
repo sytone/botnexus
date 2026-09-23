@@ -35,15 +35,23 @@ public interface IGatewayProcessManager
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Queries the current status of the gateway process by reading the PID file
-    /// and checking if the process is alive.
+    /// Queries the current status of the gateway process without mutating lifecycle state.
     /// </summary>
     /// <param name="homePath">BotNexus home directory containing the PID file. Defaults to ~/.botnexus.</param>
+    /// <param name="gatewayBinaryPath">Optional gateway assembly path used to discover a live gateway when the PID file is absent or unverifiable.</param>
+    /// <param name="healthUrl">Optional effective health endpoint. Defaults to the loopback endpoint.</param>
     /// <param name="cancellationToken">Cancellation token for status query.</param>
     /// <returns>
-    /// The current gateway status, including state, PID, and uptime if running.
+    /// The current gateway status, including state, PID, and uptime when known.
     /// </returns>
-    Task<GatewayStatus> GetStatusAsync(string? homePath = null, CancellationToken cancellationToken = default);
+    Task<GatewayStatus> GetStatusAsync(
+        string? homePath = null,
+        string? gatewayBinaryPath = null,
+        string? healthUrl = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Compatibility overload for callers that supply only home and cancellation.</summary>
+    Task<GatewayStatus> GetStatusAsync(string? homePath, CancellationToken cancellationToken);
 
     /// <summary>
     /// Synchronously checks whether the gateway process is currently running.
