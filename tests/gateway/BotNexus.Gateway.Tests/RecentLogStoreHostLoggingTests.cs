@@ -33,6 +33,38 @@ public sealed class RecentLogStoreHostLoggingTests
     }
 
     [Fact]
+    public void HostPipeline_NeutralisesControlCharactersInStructuredProperties_ForEveryTextSink()
+    {
+        using var harness = new HostLoggingHarness();
+
+        harness.CreateLogger<RecentLogStoreHostLoggingTests>()
+            .LogWarning("hostile property {Value}", "ordinary\r\nFORGED\u0085tail");
+
+        var entry = harness.Store.GetRecent(50)
+            .First(candidate => candidate.Message.Contains("hostile property"));
+        entry.Message.ShouldBe("hostile property \"ordinary\\r\\nFORGED\\u0085tail\"");
+        entry.Properties["Value"].ShouldBe("ordinary\\r\\nFORGED\\u0085tail");
+
+        var fileText = File.ReadAllText(harness.LogFile);
+        fileText.ShouldContain("ordinary\\r\\nFORGED\\u0085tail");
+        fileText.ShouldNotContain("ordinary\r\nFORGED");
+        fileText.ShouldNotContain('\u0085');
+    }
+
+    [Fact]
+    public void HostPipeline_LeavesOrdinaryStructuredValuesByteForByteUnchanged()
+    {
+        using var harness = new HostLoggingHarness();
+
+        harness.CreateLogger<RecentLogStoreHostLoggingTests>()
+            .LogWarning("ordinary property {Value}", "日本語/path?q=a+b");
+
+        var entry = harness.Store.GetRecent(50)
+            .First(candidate => candidate.Message.Contains("ordinary property"));
+        entry.Properties["Value"].ShouldBe("日本語/path?q=a+b");
+    }
+
+    [Fact]
     public void LogEndpoint_ReturnsEntriesProducedByHostPipeline()
     {
         using var harness = new HostLoggingHarness();
@@ -163,6 +195,8 @@ public sealed class RecentLogStoreHostLoggingTests
         }
 
         public IRecentLogStore Store => _host.Services.GetRequiredService<IRecentLogStore>();
+
+        public string LogFile => Directory.GetFiles(_logDirectory, "botnexus-*.log").ShouldHaveSingleItem();
 
         public ILogger<T> CreateLogger<T>() => _loggerFactory.CreateLogger<T>();
 
