@@ -270,7 +270,8 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
             MapStopReason,
             ct,
             onFirstToken,
-            StreamIdleTimeout.Resolve(options));
+            StreamIdleTimeout.Resolve(options),
+            secretRedactor);
 
         setUsage(usage);
         setResponseId(responseId);
