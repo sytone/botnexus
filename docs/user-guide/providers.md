@@ -58,7 +58,7 @@ Run:
 botnexus provider list
 ```
 
-Check that the intended provider is listed. This checks saved configuration, not whether a request will succeed.
+Check that the intended provider is listed. This checks saved configuration, not whether a request will succeed. A running gateway normally refreshes config-defined provider models when it receives the configuration reload signal, so adding or changing one does not require a process restart. If a store-backed installation has not delivered that signal yet, the saved provider can appear in the CLI before the running gateway catalogue changes. Retry only after checking the gateway's available providers; do not treat persistence alone as a successful connection test.
 
 For Copilot, these additional commands contact the service and may refresh saved sign-in credentials:
 
