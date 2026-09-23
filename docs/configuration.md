@@ -486,6 +486,13 @@ absent a `config.db` the file serves everything and behaviour is exactly as it a
 | No `config.db` | File-only configuration. This is the default. |
 | `config.db` present | Store values win over the file, for every consumer alike. |
 
+Each committed SQLite mutation advances a revision in the same transaction as its changed keys. A
+running gateway checks that revision once per second and reloads one complete store snapshot when it
+advances, so `IOptionsMonitor` consumers observe canonical writes without a restart. Repeated checks
+of the same revision are coalesced. If a newer snapshot cannot be read or materialised, the gateway
+keeps the last-known-good values and retries on a later check; JSON file activity is not used as the
+SQLite reload authority.
+
 #### Enabling and disabling the store
 
 The store is created by an explicit command, never as a startup side effect - enabling a different

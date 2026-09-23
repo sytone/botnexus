@@ -205,6 +205,7 @@ builder.Services.AddDiagnosticsHardening();
 builder.Services.AddProviderHealthCheck();
 builder.Services.AddBotNexusCron();
 builder.Services.AddPlatformConfiguration(resolvedConfigPath, builder.Configuration);
+builder.Services.AddSingleton(new ExtensionRepositoryRegistryService(resolvedConfigPath, new System.IO.Abstractions.FileSystem()));
 builder.Services.Configure<CronOptions>(options =>
 {
     options.PromptTemplates = startupPlatformConfig.PromptTemplates?
@@ -481,99 +482,8 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
         loggerFactory.CreateLogger<ModelDiscoveryService>());
     discoveryService.DiscoverAndRegisterAsync().GetAwaiter().GetResult();
 
-    // Register models from openai-compat providers in config (e.g. Ollama, LM Studio),
-    // or any provider with an explicit Api override (e.g. integration-mock).
-    var platformConfig = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
-    if (platformConfig.Providers is not null)
-    {
-        foreach (var (providerName, providerConfig) in platformConfig.Providers)
-        {
-            if (!providerConfig.Enabled)
-                continue;
-
-            var apiName = string.IsNullOrWhiteSpace(providerConfig.ResolveChatApi())
-                ? "openai-completions"
-                : providerConfig.ResolveChatApi()!;
-            // For openai-completions a BaseUrl is required (the HTTP endpoint). For other
-            // apis (e.g. integration-mock) BaseUrl is provider-specific (catalog file path,
-            // possibly empty) — skip the BaseUrl gate.
-            if (apiName == "openai-completions" && string.IsNullOrWhiteSpace(providerConfig.BaseUrl))
-                continue;
-
-            if (providerConfig.ResolveChatModels() is { Count: > 0 } chatModels)
-            {
-                foreach (var modelId in chatModels)
-                {
-                    // PBI6 (#1707): a dynamic (config-declared) model carries a valid capability set
-                    // so the agent + conversation pickers offer only valid thinking/context choices.
-                    // Explicit declarations win; anything omitted is inferred from the model family.
-                    // #2854: read through the resolvers so a nested `chat` object wins over the
-                    // deprecated flat twin, per field.
-                    var caps = DynamicModelCapabilities.Infer(
-                        modelId,
-                        declaredReasoning: providerConfig.ResolveChatReasoning(),
-                        declaredExtraHighThinking: providerConfig.ResolveChatSupportsExtraHighThinking(),
-                        declaredExtendedContext: providerConfig.ResolveChatSupportsExtendedContextWindow(),
-                        declaredInput: providerConfig.ResolveChatInput());
-                    models.Register(providerName, new LlmModel(
-                        Id: modelId,
-                        Name: modelId,
-                        Api: apiName,
-                        Provider: providerName,
-                        BaseUrl: providerConfig.BaseUrl ?? string.Empty,
-                        Reasoning: caps.Reasoning,
-                        Input: caps.Input,
-                        Cost: new ModelCost(0, 0, 0, 0),
-                        ContextWindow: providerConfig.ResolveChatContextWindow() ?? 128000,
-                        MaxTokens: 32000,
-                        SupportsExtraHighThinking: caps.SupportsExtraHighThinking,
-                        SupportsExtendedContextWindow: caps.SupportsExtendedContextWindow));
-                }
-            }
-        }
-    }
-
-    // Register the model for any agent using a config-defined provider not in BuiltInModels.
-    if (platformConfig.Agents is not null && platformConfig.Providers is not null)
-    {
-        foreach (KeyValuePair<string, AgentDefinitionConfig> agentEntry in platformConfig.Agents)
-        {
-            var agentConfig = agentEntry.Value;
-            if (string.IsNullOrWhiteSpace(agentConfig.Provider) || string.IsNullOrWhiteSpace(agentConfig.Model))
-                continue;
-            if (!platformConfig.Providers.TryGetValue(agentConfig.Provider, out var agentProvider))
-                continue;
-            var apiName = string.IsNullOrWhiteSpace(agentProvider.Api)
-                ? "openai-completions"
-                : agentProvider.Api!;
-            if (apiName == "openai-completions" && string.IsNullOrWhiteSpace(agentProvider.BaseUrl))
-                continue;
-            if (models.GetModel(agentConfig.Provider, agentConfig.Model) is not null)
-                continue;
-
-            // PBI6 (#1707): same capability inference for an agent-referenced dynamic model, so a
-            // provider that only appears via an agent's model reference still exposes valid pickers.
-            var agentModelCaps = DynamicModelCapabilities.Infer(
-                agentConfig.Model,
-                declaredReasoning: agentProvider.Reasoning,
-                declaredExtraHighThinking: agentProvider.SupportsExtraHighThinking,
-                declaredExtendedContext: agentProvider.SupportsExtendedContextWindow,
-                declaredInput: agentProvider.Input);
-            models.Register(agentConfig.Provider, new LlmModel(
-                Id: agentConfig.Model,
-                Name: agentConfig.Model,
-                Api: apiName,
-                Provider: agentConfig.Provider,
-                BaseUrl: agentProvider.BaseUrl ?? string.Empty,
-                Reasoning: agentModelCaps.Reasoning,
-                Input: agentModelCaps.Input,
-                Cost: new ModelCost(0, 0, 0, 0),
-                ContextWindow: agentProvider.ContextWindow ?? 128000,
-                MaxTokens: 32000,
-                SupportsExtraHighThinking: agentModelCaps.SupportsExtraHighThinking,
-                SupportsExtendedContextWindow: agentModelCaps.SupportsExtendedContextWindow));
-        }
-    }
+    // Config-defined providers are projected by ConfigDefinedModelRegistryReconciler. It owns one
+    // atomic overlay and watches IOptionsMonitor, so startup and later reloads use the same path.
 
     return new LlmClient(apiProviders, models);
 });

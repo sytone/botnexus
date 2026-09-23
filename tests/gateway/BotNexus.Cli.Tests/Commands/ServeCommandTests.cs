@@ -25,7 +25,7 @@ public sealed class ServeCommandTests : IDisposable
 
         var deployed = ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false);
 
-        deployed.ShouldBe(1);
+        deployed.DeployedCount.ShouldBe(1);
         File.Exists(Path.Combine(home, "extensions", "sample-debug", "Sample.Debug.dll")).ShouldBeTrue();
         File.Exists(Path.Combine(home, "extensions", "sample-debug", "botnexus-extension.json")).ShouldBeTrue();
     }
@@ -51,7 +51,7 @@ public sealed class ServeCommandTests : IDisposable
 
         var deployed = ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false);
 
-        deployed.ShouldBe(1);
+        deployed.DeployedCount.ShouldBe(1);
         var deployedDll = Path.Combine(home, "extensions", "sample-fresh", "Sample.Fresh.dll");
         File.Exists(deployedDll).ShouldBeTrue();
         File.ReadAllText(deployedDll).ShouldBe("debug-fresh");
@@ -67,13 +67,13 @@ public sealed class ServeCommandTests : IDisposable
         Directory.CreateDirectory(debugDir);
         File.WriteAllText(Path.Combine(debugDir, "Sample.Prune.dll"), "gen1");
         File.WriteAllText(Path.Combine(debugDir, "CoreLib.oldhash.wasm"), "stale");
-        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).ShouldBe(1);
+        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).DeployedCount.ShouldBe(1);
         var staleDest = Path.Combine(home, "extensions", "sample-prune", "CoreLib.oldhash.wasm");
         File.Exists(staleDest).ShouldBeTrue();
         // Second generation: the stale hashed file is gone from source.
         File.Delete(Path.Combine(debugDir, "CoreLib.oldhash.wasm"));
         File.WriteAllText(Path.Combine(debugDir, "CoreLib.newhash.wasm"), "fresh");
-        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).ShouldBe(1);
+        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).DeployedCount.ShouldBe(1);
         File.Exists(staleDest).ShouldBeFalse();
     }
 
@@ -87,8 +87,8 @@ public sealed class ServeCommandTests : IDisposable
         Directory.CreateDirectory(debugDir);
         File.WriteAllText(Path.Combine(debugDir, "Sample.Keep.dll"), "main");
         File.WriteAllText(Path.Combine(debugDir, "CoreLib.newhash.wasm"), "fresh");
-        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).ShouldBe(1);
-        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).ShouldBe(1);
+        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).DeployedCount.ShouldBe(1);
+        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).DeployedCount.ShouldBe(1);
         var extDest = Path.Combine(home, "extensions", "sample-keep");
         File.Exists(Path.Combine(extDest, "Sample.Keep.dll")).ShouldBeTrue();
         File.Exists(Path.Combine(extDest, "CoreLib.newhash.wasm")).ShouldBeTrue();
@@ -105,7 +105,7 @@ public sealed class ServeCommandTests : IDisposable
         Directory.CreateDirectory(debugDir);
         File.WriteAllText(Path.Combine(debugDir, "Sample.Locked.dll"), "main");
         File.WriteAllText(Path.Combine(debugDir, "CoreLib.oldhash.wasm"), "stale");
-        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).ShouldBe(1);
+        ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose: false).DeployedCount.ShouldBe(1);
         // Remove stale from source, then hold an exclusive lock on the deployed copy.
         File.Delete(Path.Combine(debugDir, "CoreLib.oldhash.wasm"));
         var lockedDest = Path.Combine(home, "extensions", "sample-locked", "CoreLib.oldhash.wasm");

@@ -1674,6 +1674,8 @@ Add or update a provider entry in `config.json` non-interactively. Designed for 
 
 When a provider with the given `--name` already exists, only the flags you pass are updated; unspecified fields preserve their previous values. To clear a previously-set value, pass an empty string explicitly.
 
+A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated provider models then become available for agent assignment without restarting the process. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact. If the canonical SQLite configuration provider has not yet delivered an out-of-process reload signal, the saved configuration remains persisted but the running gateway can still show its previous catalogue until that separate reload defect is resolved.
+
 ### Usage
 
 ```powershell

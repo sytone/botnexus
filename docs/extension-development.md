@@ -16,7 +16,8 @@
 12. [Webhook Handlers](#webhook-handlers)
 13. [Testing Extensions in Isolation](#testing-extensions-in-isolation)
 14. [Build Pipeline & Output](#build-pipeline--output)
-15. [Troubleshooting](#troubleshooting)
+15. [Out-of-tree extension repositories](#out-of-tree-extension-repositories)
+16. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -1500,6 +1501,63 @@ botnexus serve
 # Extensions land in:
 # ~/.botnexus/extensions/<manifest-id>/
 ```
+
+---
+
+## Out-of-tree extension repositories
+
+Use the public [BotNexus extension template](https://github.com/Sytone/botnexus-extension-template) when the extension belongs in its own Git repository. The template contains a manifest, one deterministic `IAgentTool`, tests, packaging scripts, `CopyLocalLockFileAssemblies=true`, and both supported checkout reference shapes.
+
+### Repository layout
+
+```text
+src/BotNexus.Extensions.Reference/
+  BotNexus.Extensions.Reference.csproj
+  ReferenceEchoTool.cs
+  botnexus-extension.json
+tests/BotNexus.Extensions.Reference.Tests/
+scripts/
+```
+
+Keep the manifest beside the extension project. Packaged output remains one flat folder named by the manifest `id`; the repository may contain source, tests, automation and documentation around that folder.
+
+### Reference the BotNexus checkout
+
+Pass the local checkout as the `BotNexusRepoRoot` MSBuild property. The template also reads the `BOTNEXUS_REPO_ROOT` environment variable.
+
+The default source shape uses `ProjectReference` entries below `$(BotNexusRepoRoot)`. Use it for normal development because contract changes compile with the extension. The binary shape uses `Reference` and `HintPath` entries for BotNexus assemblies already built from the same checkout. Select it with `-p:BotNexusReferenceShape=binary`; build the required BotNexus projects first and use `BotNexusBinaryConfiguration` when they were not built in `Release`.
+
+Both shapes must fail with the resolved missing path. Neither shape may search another machine path, download an unversioned DLL, or commit BotNexus contract assemblies to the extension repository. Pin the BotNexus revision in continuous integration and release automation.
+
+### Register the repository
+
+> [!WARNING]
+> A compiled extension runs inside the gateway with full gateway trust and the gateway process's operating-system permissions. Registration is not a sandbox or code-signing decision. Review the repository, dependencies and requested revision before enabling it.
+
+The current CLI stores repository metadata through the shared extension registry:
+
+```powershell
+botnexus extensions add --id reference-extension --url https://github.com/example/reference-extension.git --ref main
+botnexus extensions list
+botnexus extensions update --id reference-extension --ref v1.0.0
+botnexus extensions disable --id reference-extension
+botnexus extensions enable --id reference-extension
+botnexus extensions remove --id reference-extension
+```
+
+`--ref` accepts the branch, tag or commit the operator intends to reconcile. A commit gives the most reproducible registration; a tag is readable but can be moved by a repository owner; a branch follows future commits. Use `--no-updates` when the registration must not move automatically. The Configuration page exposes the same registry and requires an explicit trust acknowledgement.
+
+Registration on current `main` records metadata only. Clone, build, deployment and **Sync Now** remain unavailable until the ordered repository-reconciliation work in [#3844](https://github.com/Sytone/botnexus/issues/3844) is complete. Do not interpret a successful `extensions add` as proof that code was cloned, built, loaded or granted to an agent.
+
+### Lifecycle, failure and removal
+
+The intended reconciler is shared by build, update, serve, gateway lifecycle commands, CLI sync and UI **Sync Now**. A candidate is built and validated before deployment. A failed candidate records a named error and keeps the last-known-good deployment; it must not replace the working directory with partial output or stop the platform from restarting.
+
+Disabling a registration stops updates and intentionally undeploys the extension during reconciliation while retaining the managed clone. Removing a registration undeploys it. Deleting a managed clone is a separate explicit action because a dirty working tree may contain operator data.
+
+Until the reconciler is delivered, use the template's package and local-install scripts for development only. A later `botnexus serve`, gateway deployment or update can prune that manual deployment as stale. Keep the source repository and package so it can be rebuilt and installed again.
+
+After deployment and gateway restart, verify `GET /api/extensions`, the intended agent's available tools, and one fresh conversation. A directory on disk proves only that files were copied.
 
 ---
 

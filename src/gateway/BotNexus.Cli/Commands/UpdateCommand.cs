@@ -390,26 +390,32 @@ internal class UpdateCommand
         AnsiConsole.MarkupLine("[green]✓[/] Build succeeded");
 
         // Deploy extensions
-        int deployed = 0;
+        ExtensionDeploymentResult deploymentResult;
         if (interactive)
         {
-            int capturedDeployed = 0;
+            ExtensionDeploymentResult? capturedDeployment = null;
             await AnsiConsole.Status()
                 .Spinner(Spinner.Known.Dots)
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Deploying extensions...", async ctx =>
                 {
-                    capturedDeployed = ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose);
+                    capturedDeployment = ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose);
                     await Task.CompletedTask;
                 });
-            deployed = capturedDeployed;
+            deploymentResult = capturedDeployment
+                ?? throw new InvalidOperationException("Extension deployment did not produce a result.");
         }
         else
         {
             AnsiConsole.MarkupLine("[blue][[update]][/] Deploying extensions...");
-            deployed = ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose);
+            deploymentResult = ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose);
         }
-        AnsiConsole.MarkupLine($"[green]✓[/] {deployed} extension(s) deployed");
+        foreach (var failure in deploymentResult.Failures)
+        {
+            AnsiConsole.MarkupLine(
+                $"[yellow][[update]] Extension deployment failed for {CliText.SafeDisplay(failure.Source)}:[/] {CliText.SafeDisplay(failure.Message)}");
+        }
+        AnsiConsole.MarkupLine($"[green]✓[/] {deploymentResult.DeployedCount} extension(s) deployed");
 
         return 0;
     }

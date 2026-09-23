@@ -531,6 +531,34 @@ public sealed class AgentsControllerTests
         response.InstanceCount.ShouldBe(1);
     }
 
+    [Theory]
+    [InlineData("../outside.json")]
+    [InlineData("..\\outside.json")]
+    [InlineData("/rooted.json")]
+    [InlineData("C:\\rooted.json")]
+    [InlineData("logs-sibling/export.json")]
+    public void BuildContextExportPath_WithUnsafeLeaf_FailsClosed(string exportIdentifier)
+    {
+        var logDirectory = Path.Combine(Path.GetTempPath(), "botnexus-export-tests", "logs");
+
+        var exception = Should.Throw<ArgumentException>(() =>
+            AgentsController.BuildContextExportPath(logDirectory, exportIdentifier));
+
+        exception.Message.ShouldContain("safe file name");
+    }
+
+    [Fact]
+    public void BuildContextExportPath_WithHostGeneratedLeaf_StaysInsideLogDirectory()
+    {
+        var logDirectory = Path.Combine(Path.GetTempPath(), "botnexus-export-tests", "logs");
+        const string exportIdentifier = "context-export-0123456789abcdef0123456789abcdef.json";
+
+        var exportPath = AgentsController.BuildContextExportPath(logDirectory, exportIdentifier);
+
+        Path.GetFileName(exportPath).ShouldBe(exportIdentifier);
+        Path.GetDirectoryName(exportPath).ShouldBe(Path.GetFullPath(logDirectory));
+    }
+
     private static AgentDescriptor CreateDescriptor(string agentId)
         => new()
         {
@@ -563,6 +591,80 @@ public sealed class AgentsControllerTests
         notifier.Setup(client => client.NotifyAgentsChangedAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return notifier;
+    }
+
+    [Fact]
+    public async Task PutExtensionConfig_Changes_only_the_named_extension()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        using var existing = System.Text.Json.JsonDocument.Parse("{\"keep\":true}");
+        registry.Register(CreateDescriptor("agent-a") with
+        {
+            DisplayName = "Keep me",
+            ExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["unrelated"] = existing.RootElement.Clone()
+            }
+        });
+        var writer = new Mock<IAgentConfigurationWriter>();
+        writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            writer.Object,
+            [CreateNotifier().Object]);
+        using var browser = System.Text.Json.JsonDocument.Parse("{\"browser\":{\"autoProvision\":true}}");
+
+        var result = await controller.PutExtensionConfig(
+            "agent-a",
+            "botnexus-browser",
+            browser.RootElement,
+            CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        var saved = registry.Get(AgentId.From("agent-a"));
+        saved.ShouldNotBeNull();
+        saved.DisplayName.ShouldBe("Keep me");
+        saved.ExtensionConfig.ShouldContainKey("unrelated");
+        saved.ExtensionConfig["unrelated"].GetProperty("keep").GetBoolean().ShouldBeTrue();
+        saved.ExtensionConfig["botnexus-browser"].GetProperty("browser")
+            .GetProperty("autoProvision").GetBoolean().ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeleteExtensionConfig_Removes_only_the_named_extension()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        using var existing = System.Text.Json.JsonDocument.Parse("{\"keep\":true}");
+        using var browser = System.Text.Json.JsonDocument.Parse("{}");
+        registry.Register(CreateDescriptor("agent-a") with
+        {
+            ExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["unrelated"] = existing.RootElement.Clone(),
+                ["botnexus-browser"] = browser.RootElement.Clone()
+            }
+        });
+        var writer = new Mock<IAgentConfigurationWriter>();
+        writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            writer.Object,
+            [CreateNotifier().Object]);
+
+        var result = await controller.DeleteExtensionConfig(
+            "agent-a",
+            "botnexus-browser",
+            CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        var saved = registry.Get(AgentId.From("agent-a"));
+        saved.ShouldNotBeNull();
+        saved.ExtensionConfig.ShouldContainKey("unrelated");
+        saved.ExtensionConfig.ShouldNotContainKey("botnexus-browser");
     }
 
     private static AgentsController CreateController(IAgentRegistry registry, IAgentSupervisor? supervisor = null)

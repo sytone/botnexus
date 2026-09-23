@@ -7757,3 +7757,13 @@ h3.conversation-title.editable:hover {
 .prompt-template-preview { max-height: 240px; overflow: auto; padding: .75rem; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-primary); }
 .prompt-template-validation { color: var(--error); }
 .prompt-template-dialog footer { justify-content: flex-end; }
+
+.extension-repositories-section { display: grid; gap: 1rem; }
+.repository-form { display: grid; gap: .75rem; max-width: 48rem; }
+.repository-form label { display: grid; gap: .35rem; }
+.repository-card { border: 1px solid var(--border); border-radius: 8px; padding: 1rem; display: grid; gap: .65rem; }
+.repository-card > header, .repository-actions { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; }
+.repository-card > header { justify-content: space-between; }
+.repository-status { display: grid; grid-template-columns: minmax(9rem, auto) 1fr; gap: .35rem .75rem; margin: 0; }
+.repository-status dt { color: var(--text-muted); }
+.repository-status dd { margin: 0; overflow-wrap: anywhere; }

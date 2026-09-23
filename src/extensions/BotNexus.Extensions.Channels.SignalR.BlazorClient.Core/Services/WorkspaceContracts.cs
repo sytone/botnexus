@@ -35,6 +35,15 @@ public sealed record WorkspaceResponseDto(
     [property: JsonPropertyName("isTruncated")] bool? IsTruncated,
     [property: JsonPropertyName("binary")] bool? Binary);
 
+/// <summary>One manifest-declared extension configuration field.</summary>
+public sealed record ExtensionConfigFieldDto(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("default")] string? Default,
+    [property: JsonPropertyName("required")] bool Required,
+    [property: JsonPropertyName("sensitive")] bool Sensitive,
+    [property: JsonPropertyName("description")] string? Description);
+
 /// <summary>Loaded extension detail response from GET /api/extensions/details.</summary>
 public sealed record ExtensionDetailDto(
     [property: JsonPropertyName("id")] string Id,
@@ -43,4 +52,5 @@ public sealed record ExtensionDetailDto(
     [property: JsonPropertyName("enabled")] bool Enabled,
     [property: JsonPropertyName("extensionTypes")] IReadOnlyList<string>? ExtensionTypes,
     [property: JsonPropertyName("registeredServices")] IReadOnlyList<string>? RegisteredServices,
-    [property: JsonPropertyName("assemblyFileName")] string? AssemblyFileName);
+    [property: JsonPropertyName("assemblyFileName")] string? AssemblyFileName,
+    [property: JsonPropertyName("configSchema")] IReadOnlyList<ExtensionConfigFieldDto>? ConfigSchema = null);

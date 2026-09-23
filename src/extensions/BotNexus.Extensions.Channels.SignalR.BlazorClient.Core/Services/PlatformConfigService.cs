@@ -356,6 +356,54 @@ public sealed class PlatformConfigService
         return $"HTTP {(int)response.StatusCode}";
     }
 
+    /// <summary>Lists extension repository registrations and their currently available reconciliation status.</summary>
+    public async Task<IReadOnlyList<ExtensionRepositoryItem>?> ListExtensionRepositoriesAsync()
+    {
+        try { return await _http.GetFromJsonAsync<List<ExtensionRepositoryItem>>("/api/extension-repositories", s_jsonOptions); }
+        catch { return null; }
+    }
+
+    /// <summary>Adds an extension repository registration.</summary>
+    public async Task<(bool Success, string? Error)> AddExtensionRepositoryAsync(ExtensionRepositoryCreate request)
+        => await SendRepositoryMutationAsync(HttpMethod.Post, "/api/extension-repositories", request);
+
+    /// <summary>Updates an extension repository registration.</summary>
+    public async Task<(bool Success, string? Error)> UpdateExtensionRepositoryAsync(string id, ExtensionRepositoryUpdate request)
+        => await SendRepositoryMutationAsync(HttpMethod.Put, $"/api/extension-repositories/{Uri.EscapeDataString(id)}", request);
+
+    /// <summary>Enables or disables an extension repository registration.</summary>
+    public async Task<(bool Success, string? Error)> SetExtensionRepositoryEnabledAsync(string id, bool enabled)
+        => await SendRepositoryMutationAsync(HttpMethod.Put, $"/api/extension-repositories/{Uri.EscapeDataString(id)}/enabled", new { enabled });
+
+    /// <summary>Removes extension repository registration metadata.</summary>
+    public async Task<(bool Success, string? Error)> RemoveExtensionRepositoryAsync(string id)
+    {
+        try
+        {
+            var response = await _http.DeleteAsync($"/api/extension-repositories/{Uri.EscapeDataString(id)}");
+            return response.IsSuccessStatusCode ? (true, null) : (false, await ReadApiErrorAsync(response));
+        }
+        catch (Exception ex) { return (false, ex.Message); }
+    }
+
+    private async Task<(bool Success, string? Error)> SendRepositoryMutationAsync(HttpMethod method, string uri, object body)
+    {
+        try
+        {
+            using var message = new HttpRequestMessage(method, uri) { Content = JsonContent.Create(body, options: s_jsonOptions) };
+            using var response = await _http.SendAsync(message);
+            return response.IsSuccessStatusCode ? (true, null) : (false, await ReadApiErrorAsync(response));
+        }
+        catch (Exception ex) { return (false, ex.Message); }
+    }
+
+    /// <summary>Extension repository registration plus truthful unavailable reconciliation fields.</summary>
+    public sealed record ExtensionRepositoryItem(string Id, string RepositoryUrl, string RequestedRef, bool Enabled, bool UpdatesEnabled, string ReconciliationStatus, string? ResolvedCommit, string? ClonePath, DateTimeOffset? LastAttemptUtc, DateTimeOffset? LastSuccessUtc, string? DeployedVersion, string? LatestFailure, bool SyncAvailable);
+    /// <summary>Payload for registering an extension repository.</summary>
+    public sealed record ExtensionRepositoryCreate(string Id, string RepositoryUrl, string RequestedRef, bool Enabled, bool UpdatesEnabled);
+    /// <summary>Payload for editing an extension repository.</summary>
+    public sealed record ExtensionRepositoryUpdate(string RepositoryUrl, string RequestedRef, bool UpdatesEnabled);
+
     /// <summary>Validate the config file.</summary>
     public async Task<ConfigValidationResult?> ValidateAsync()
     {

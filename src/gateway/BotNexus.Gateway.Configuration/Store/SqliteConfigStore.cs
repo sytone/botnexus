@@ -70,12 +70,29 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private bool _initialised;
 
+    /// <inheritdoc />
+    public bool SupportsExternalChangeDetection => _databasePath is not null;
+
     /// <summary>
     /// The schema version this build of the configuration store writes and understands (#2835).
     /// </summary>
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
-    private static readonly SqliteSchemaMigration[] Migrations = [];
+    private static readonly SqliteSchemaMigration[] Migrations =
+    [
+        new(2, "add configuration revision", connection =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE IF NOT EXISTS config_revision (
+                    singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+                    revision  INTEGER NOT NULL
+                );
+                INSERT OR IGNORE INTO config_revision (singleton, revision) VALUES (1, 0);
+                """;
+            command.ExecuteNonQuery();
+        }),
+    ];
 
     /// <summary>
     /// The database file plus the two WAL-mode sidecars, all of which carry configuration data and so
@@ -170,6 +187,10 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
     /// <inheritdoc />
     public async Task<IReadOnlyDictionary<string, ConfigEntry>> ReadEntriesAsync(
         CancellationToken cancellationToken = default)
+        => (await ReadSnapshotAsync(cancellationToken).ConfigureAwait(false)).Entries;
+
+    /// <inheritdoc />
+    public async Task<ConfigStoreSnapshot> ReadSnapshotAsync(CancellationToken cancellationToken = default)
     {
         await EnsureInitialisedAsync(cancellationToken).ConfigureAwait(false);
 
@@ -177,8 +198,21 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
 
         await using var connection = SqliteConnectionFactory.Create(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = (SqliteTransaction)await connection
+            .BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        long revision;
+        await using (var revisionCommand = connection.CreateCommand())
+        {
+            revisionCommand.Transaction = transaction;
+            revisionCommand.CommandText = "SELECT revision FROM config_revision WHERE singleton = 1;";
+            revision = Convert.ToInt64(
+                await revisionCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+                System.Globalization.CultureInfo.InvariantCulture);
+        }
 
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = "SELECT key_path, state, value FROM config_entries;";
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -190,7 +224,8 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
             result[path] = new ConfigEntry(path, state, value);
         }
 
-        return result;
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new ConfigStoreSnapshot(revision, result);
     }
 
     /// <inheritdoc />
@@ -233,6 +268,7 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
             await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        await AdvanceRevisionAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
         // The WAL/SHM sidecars are created lazily by SQLite, so the first write is the earliest point
@@ -317,10 +353,22 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
             await upsert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        await AdvanceRevisionAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
         // Sidecars again (#3414) - this is the hot edit path and the one that keeps -wal populated.
         RestrictStoreFiles();
+    }
+
+    private static async Task AdvanceRevisionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "UPDATE config_revision SET revision = revision + 1 WHERE singleton = 1;";
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task EnsureInitialisedAsync(CancellationToken cancellationToken)
@@ -360,6 +408,11 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
                         value      TEXT,
                         PRIMARY KEY (scope, scope_id, key_path)
                     );
+                    CREATE TABLE IF NOT EXISTS config_revision (
+                        singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
+                        revision  INTEGER NOT NULL
+                    );
+                    INSERT OR IGNORE INTO config_revision (singleton, revision) VALUES (1, 0);
                     """;
                 await create.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }

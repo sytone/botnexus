@@ -3,6 +3,7 @@ using System.Text.Json;
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 using Shouldly;
@@ -20,13 +21,13 @@ public sealed class AgentConfigPanelTests : IDisposable
     private readonly BunitContext _ctx = new();
     private readonly StubHandler _http = new();
     private readonly ClientStateStore _store = new();
+    private readonly IGatewayRestClient _rest = Substitute.For<IGatewayRestClient>();
 
     public AgentConfigPanelTests()
     {
-        var rest = Substitute.For<IGatewayRestClient>();
-        rest.ApiBaseUrl.Returns("http://localhost/api/");
+        _rest.ApiBaseUrl.Returns("http://localhost/api/");
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
-        _ctx.Services.AddSingleton(rest);
+        _ctx.Services.AddSingleton(_rest);
         _ctx.Services.AddSingleton(new HttpClient(_http) { BaseAddress = new Uri("http://localhost/") });
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
@@ -45,6 +46,7 @@ public sealed class AgentConfigPanelTests : IDisposable
         toolIds = new[] { "read", "write", "shell" },
         memory = new { enabled = true },
         heartbeat = new { enabled = true, intervalMinutes = 45 },
+        extensionConfig = new { unrelated = new { keep = true } },
     });
 
     /// <summary>Exactly the nested shape <c>AgentsController.GetContext</c> serializes.</summary>
@@ -230,30 +232,140 @@ public sealed class AgentConfigPanelTests : IDisposable
             .ShouldBe(rendered.Keys.ToHashSet(StringComparer.Ordinal));
     }
 
+    [Fact]
+    public async Task Panel_lists_installed_tool_extensions_and_shows_ungranted_state()
+    {
+        _http.Setup("/api/agents/farnsworth", DescriptorJson);
+        _rest.GetExtensionDetailsAsync(Arg.Any<CancellationToken>()).Returns([
+            BrowserExtension()
+        ]);
+        SeedAgentWithConversation();
+
+        var cut = await OpenAsync();
+
+        cut.Find("[data-extension='botnexus-browser']").TextContent.ShouldContain("Browser Tools");
+        cut.Find("[data-extension='botnexus-browser'] input[type='checkbox']")
+            .HasAttribute("checked").ShouldBeFalse();
+        cut.FindAll("[data-extension-field]").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Grant_configure_and_save_preserves_unrelated_descriptor_configuration()
+    {
+        _http.Setup("/api/agents/farnsworth", DescriptorJson);
+        _http.AcceptPut("/api/agents/farnsworth/extensions/botnexus-browser");
+        _rest.GetExtensionDetailsAsync(Arg.Any<CancellationToken>()).Returns([
+            BrowserExtension()
+        ]);
+        SeedAgentWithConversation();
+
+        var cut = await OpenAsync();
+        await cut.Find("[data-extension='botnexus-browser'] input[type='checkbox']")
+            .ChangeAsync(new ChangeEventArgs { Value = true });
+        await cut.Find("[data-extension-field='browser.binaryPath'] input")
+            .ChangeAsync(new ChangeEventArgs { Value = "/opt/agent-browser" });
+        await cut.Find("[data-extension-field='browser.autoProvision'] input")
+            .ChangeAsync(new ChangeEventArgs { Value = true });
+        await cut.Find(".config-save-extensions-btn").ClickAsync(new());
+
+        using var saved = JsonDocument.Parse(_http.LastPutBody.ShouldNotBeNull());
+        saved.RootElement.GetProperty("browser").GetProperty("binaryPath").GetString().ShouldBe("/opt/agent-browser");
+        saved.RootElement.GetProperty("browser").GetProperty("autoProvision").GetBoolean().ShouldBeTrue();
+        _http.LastPutPath.ShouldBe("/api/agents/farnsworth/extensions/botnexus-browser");
+    }
+
+    [Fact]
+    public async Task Revoke_removes_only_the_selected_extension_grant()
+    {
+        var descriptor = JsonSerializer.Serialize(new
+        {
+            agentId = AgentId,
+            displayName = "Farnsworth",
+            modelId = "claude-opus-5",
+            apiProvider = "github-copilot",
+            extensionConfig = new
+            {
+                unrelated = new { keep = true },
+                botnexusBrowser = new { browser = new { autoProvision = false } },
+            },
+        }).Replace("botnexusBrowser", "botnexus-browser", StringComparison.Ordinal);
+        _http.Setup("/api/agents/farnsworth", descriptor);
+        _http.AcceptDelete("/api/agents/farnsworth/extensions/botnexus-browser");
+        _rest.GetExtensionDetailsAsync(Arg.Any<CancellationToken>()).Returns([BrowserExtension()]);
+        SeedAgentWithConversation();
+
+        var cut = await OpenAsync();
+        await cut.Find("[data-extension='botnexus-browser'] input[type='checkbox']")
+            .ChangeAsync(new ChangeEventArgs { Value = false });
+        await cut.Find(".config-save-extensions-btn").ClickAsync(new());
+
+        _http.LastDeletePath.ShouldBe("/api/agents/farnsworth/extensions/botnexus-browser");
+    }
+
+    private static ExtensionDetailDto BrowserExtension() => new(
+        "botnexus-browser",
+        "Browser Tools",
+        "1.0.0",
+        true,
+        ["tool"],
+        [],
+        "BotNexus.Extensions.BrowserTools.dll",
+        [
+            new ExtensionConfigFieldDto("browser.binaryPath", "string", null, false, false, "Executable path"),
+            new ExtensionConfigFieldDto("browser.autoProvision", "boolean", "false", false, false, "Provision automatically"),
+        ]);
+
     /// <summary>Path-suffix keyed stub, matching the pattern used elsewhere in this suite.</summary>
     private sealed class StubHandler : HttpMessageHandler
     {
         private readonly Dictionary<string, string> _responses = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _acceptedPutPaths = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _acceptedDeletePaths = new(StringComparer.OrdinalIgnoreCase);
+
+        public string? LastPutBody { get; private set; }
+        public string? LastPutPath { get; private set; }
+        public string? LastDeletePath { get; private set; }
 
         public void Setup(string pathSuffix, string json) => _responses[pathSuffix] = json;
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        public void AcceptPut(string pathSuffix) => _acceptedPutPaths.Add(pathSuffix);
+
+        public void AcceptDelete(string pathSuffix) => _acceptedDeletePaths.Add(pathSuffix);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri?.PathAndQuery ?? "";
+            if (request.Method == HttpMethod.Put && _acceptedPutPaths.Any(path.Contains))
+            {
+                LastPutPath = path;
+                LastPutBody = await request.Content!.ReadAsStringAsync(ct);
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(LastPutBody, System.Text.Encoding.UTF8, "application/json"),
+                };
+            }
+            if (request.Method == HttpMethod.Delete && _acceptedDeletePaths.Any(path.Contains))
+            {
+                LastDeletePath = path;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json"),
+                };
+            }
             // Longest key first so "/api/agents/farnsworth" does not swallow a context request.
             foreach (var key in _responses.Keys.OrderByDescending(k => k.Length))
             {
                 if (path.Contains(key, StringComparison.OrdinalIgnoreCase))
-                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    return new HttpResponseMessage(HttpStatusCode.OK)
                     {
                         Content = new StringContent(_responses[key], System.Text.Encoding.UTF8, "application/json"),
-                    });
+                    };
             }
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+            return new HttpResponseMessage(HttpStatusCode.NotFound)
             {
                 Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json"),
-            });
+            };
         }
     }
 }
