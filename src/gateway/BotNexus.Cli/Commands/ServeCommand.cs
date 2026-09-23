@@ -1,7 +1,6 @@
 using System.CommandLine;
 using System.Diagnostics;
 using System.Net.Sockets;
-using System.Text.Json;
 using BotNexus.Gateway.Configuration;
 using Spectre.Console;
 using BotNexus.Cli.Services;
@@ -220,206 +219,95 @@ internal sealed class ServeCommand
     }
 
     /// <summary>
-    /// Deploys built extensions silently (no per-extension output) and returns the count deployed.
-    /// Used when a spinner is active so output doesn't interleave.
+    /// Deploys built in-tree and registered extensions silently and returns the count deployed.
+    /// Registered outputs are read from each registration's managed staging directory.
     /// </summary>
-    public static int DeployExtensionsSilent(string repoRoot, string home, bool verbose)
-    {
-        var count = 0;
-        var extensionsRoot = Path.Combine(repoRoot, "src", "extensions");
-        if (!Directory.Exists(extensionsRoot))
-            return 0;
+    public static ExtensionDeploymentResult DeployExtensionsSilent(string repoRoot, string home, bool verbose)
+        => ReconcileExtensions(repoRoot, home);
 
-        var destRoot = Path.Combine(home, "extensions");
-        var projects = Directory.GetFiles(extensionsRoot, "*.csproj", SearchOption.AllDirectories);
-        var deployedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var project in projects)
-        {
-            var projectDir = Path.GetDirectoryName(project)!;
-            var projectName = Path.GetFileNameWithoutExtension(project);
-            var manifestPath = Path.Combine(projectDir, "botnexus-extension.json");
-            if (!File.Exists(manifestPath))
-                continue;
-
-            string? extId;
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(manifestPath));
-                extId = doc.RootElement.GetProperty("id").GetString();
-            }
-            catch { continue; }
-
-            if (string.IsNullOrWhiteSpace(extId))
-                continue;
-
-            deployedIds.Add(extId);
-            var tfmDir = ResolveExtensionOutputDirectory(projectDir);
-            if (tfmDir is null)
-                continue;
-
-            var extDest = Path.Combine(destRoot, extId);
-            Directory.CreateDirectory(extDest);
-            var freshFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var file in Directory.GetFiles(tfmDir, "*", SearchOption.AllDirectories))
-            {
-                var relativePath = Path.GetRelativePath(tfmDir, file);
-                var destFile = Path.Combine(extDest, relativePath);
-                Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
-                File.Copy(file, destFile, overwrite: true);
-                freshFiles.Add(Path.GetFullPath(destFile));
-            }
-            var manifestDest = Path.Combine(extDest, "botnexus-extension.json");
-            File.Copy(manifestPath, manifestDest, overwrite: true);
-            freshFiles.Add(Path.GetFullPath(manifestDest));
-
-            // Prune stale files left over from earlier generations. Blazor content-hashes
-            // assets, so each rebuild emits new filenames while overwrite:true only refreshes
-            // matching names — old generations would otherwise accumulate unbounded. Best-effort:
-            // the running gateway may hold handles on some files, so mirror the stale-dir
-            // cleanup's locked-file tolerance and skip anything we cannot delete.
-            PruneStaleFiles(extDest, freshFiles);
-            count++;
-        }
-
-        // Clean stale extensions
-        if (Directory.Exists(destRoot))
-        {
-            foreach (var dir in Directory.GetDirectories(destRoot))
-            {
-                var dirName = Path.GetFileName(dir);
-                if (!deployedIds.Contains(dirName))
-                {
-                    try { Directory.Delete(dir, recursive: true); }
-                    catch { /* locked — leave it */ }
-                }
-            }
-        }
-
-        return count;
-    }
-
-    /// <summary>
-    /// Deploys built extensions from the repository to {home}/extensions.
-    /// Public to allow GatewayCommand to use it.
-    /// </summary>
+    /// <summary>Deploys built extensions and reports registered-source failures without failing startup.</summary>
     public static void DeployExtensions(string repoRoot, string home, bool verbose)
     {
-        var extensionsRoot = Path.Combine(repoRoot, "src", "extensions");
-        if (!Directory.Exists(extensionsRoot))
+        var result = ReconcileExtensions(repoRoot, home);
+        foreach (var failure in result.Failures)
         {
-            if (verbose)
-                AnsiConsole.MarkupLine("[blue][[deploy]][/] [dim]No extensions directory found \u2014 skipping.[/]");
-            return;
+            AnsiConsole.MarkupLine(
+                $"[yellow][[deploy]] WARNING:[/] {CliText.SafeDisplay(failure.Source)}: {CliText.SafeDisplay(failure.Message)}");
         }
 
-        var destRoot = Path.Combine(home, "extensions");
-
-        var projects = Directory.GetFiles(extensionsRoot, "*.csproj", SearchOption.AllDirectories);
-        var deployed = 0;
-        var deployedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var project in projects)
-        {
-            var projectDir = Path.GetDirectoryName(project)!;
-            var projectName = Path.GetFileNameWithoutExtension(project);
-            var manifestPath = Path.Combine(projectDir, "botnexus-extension.json");
-
-            if (!File.Exists(manifestPath))
-            {
-                if (verbose)
-                    AnsiConsole.MarkupLine($"[blue][[deploy]][/] [dim]Skipped {CliText.SafeDisplay(projectName)} (no manifest)[/]");
-                continue;
-            }
-
-            string? extId;
-            try
-            {
-                using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
-                extId = doc.RootElement.GetProperty("id").GetString();
-            }
-            catch
-            {
-                AnsiConsole.MarkupLine($"[yellow][[deploy]] WARNING:[/] Could not read manifest for {CliText.SafeDisplay(projectName)}");
-                continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(extId))
-                continue;
-
-            deployedIds.Add(extId);
-
-            var tfmDir = ResolveExtensionOutputDirectory(projectDir);
-            if (tfmDir is null)
-            {
-                if (verbose)
-                    AnsiConsole.MarkupLine($"[blue][[deploy]][/] [dim]No Debug/Release build output for {CliText.SafeDisplay(projectName)} \u2014 skipping.[/]");
-                continue;
-            }
-
-            var extDest = Path.Combine(destRoot, extId);
-            Directory.CreateDirectory(extDest);
-
-            var freshFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var file in Directory.GetFiles(tfmDir, "*", SearchOption.AllDirectories))
-            {
-                var relativePath = Path.GetRelativePath(tfmDir, file);
-                var destFile = Path.Combine(extDest, relativePath);
-                Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
-                File.Copy(file, destFile, overwrite: true);
-                freshFiles.Add(Path.GetFullPath(destFile));
-            }
-
-            var manifestDest = Path.Combine(extDest, "botnexus-extension.json");
-            File.Copy(manifestPath, manifestDest, overwrite: true);
-            freshFiles.Add(Path.GetFullPath(manifestDest));
-
-            // Prune stale files from earlier generations (see DeployExtensionsSilent for rationale).
-            PruneStaleFiles(extDest, freshFiles);
-            AnsiConsole.MarkupLine($"[blue][[deploy]][/] Deployed [green]{CliText.SafeDisplay(extId)}[/]");
-            deployed++;
-        }
-
-        // Clean stale extensions
-        if (Directory.Exists(destRoot))
-        {
-            foreach (var dir in Directory.GetDirectories(destRoot))
-            {
-                var dirName = Path.GetFileName(dir);
-                if (!deployedIds.Contains(dirName))
-                {
-                    try
-                    {
-                        Directory.Delete(dir, recursive: true);
-                        AnsiConsole.MarkupLine($"[blue][[deploy]][/] Removed stale: [dim]{CliText.SafeDisplay(dirName)}[/]");
-                    }
-                    catch
-                    {
-                        AnsiConsole.MarkupLine($"[yellow][[deploy]][/] Could not remove {CliText.SafeDisplay(dirName)} (files locked)");
-                    }
-                }
-            }
-        }
-
-        AnsiConsole.MarkupLine($"[green]✓[/] {deployed} extension(s) deployed to [dim]{CliText.SafeDisplay(destRoot)}[/]");
+        AnsiConsole.MarkupLine(
+            $"[green]✓[/] {result.DeployedCount} extension(s) deployed to [dim]{CliText.SafeDisplay(Path.Combine(home, "extensions"))}[/]");
     }
 
-    /// <summary>
-    /// Deletes files under <paramref name="extDest"/> that are not part of the freshly
-    /// deployed set. Content-hashed Blazor assets change filenames every rebuild, so
-    /// overwrite-only copying leaves stale generations behind. Best-effort: files the
-    /// running gateway still holds open are skipped rather than throwing, matching the
-    /// locked-file tolerance of the stale-directory cleanup.
-    /// </summary>
-    private static void PruneStaleFiles(string extDest, HashSet<string> freshFiles)
+    private static ExtensionDeploymentResult ReconcileExtensions(string repoRoot, string home)
     {
-        foreach (var existing in Directory.GetFiles(extDest, "*", SearchOption.AllDirectories))
+        var sources = DiscoverInTreeDeploymentSources(repoRoot).ToList();
+        sources.AddRange(DiscoverRegisteredDeploymentSources(home));
+        return ExtensionDeploymentReconciler.Reconcile(Path.Combine(home, "extensions"), sources);
+    }
+
+    private static IEnumerable<ExtensionDeploymentSource> DiscoverInTreeDeploymentSources(string repoRoot)
+    {
+        var root = Path.Combine(repoRoot, "src", "extensions");
+        if (!Directory.Exists(root))
+            yield break;
+
+        foreach (var project in Directory.GetFiles(root, "*.csproj", SearchOption.AllDirectories))
         {
-            if (freshFiles.Contains(Path.GetFullPath(existing)))
+            var projectDirectory = Path.GetDirectoryName(project)!;
+            var manifestPath = Path.Combine(projectDirectory, "botnexus-extension.json");
+            if (!File.Exists(manifestPath))
                 continue;
 
-            try { File.Delete(existing); }
-            catch { /* locked or in use - leave it */ }
+            var outputDirectory = ResolveExtensionOutputDirectory(projectDirectory);
+            if (outputDirectory is null)
+                continue;
+
+            yield return new ExtensionDeploymentSource(
+                $"in-tree:{Path.GetFileNameWithoutExtension(project)}",
+                outputDirectory,
+                Enabled: true,
+                Registered: false,
+                manifestPath);
+        }
+    }
+
+    private static IEnumerable<ExtensionDeploymentSource> DiscoverRegisteredDeploymentSources(string home)
+    {
+        var registrations = new ExtensionRepositoryRegistryService(
+                Path.Combine(home, "config.json"),
+                new System.IO.Abstractions.FileSystem())
+            .ListAsync()
+            .GetAwaiter()
+            .GetResult();
+
+        foreach (var registration in registrations)
+        {
+            if (!registration.Enabled)
+                continue;
+
+            var sourceName = $"repository:{registration.Id}";
+            var stagingRoot = Path.Combine(home, "extension-repositories", registration.Id, "staged");
+            if (!Directory.Exists(stagingRoot))
+            {
+                yield return new ExtensionDeploymentSource(sourceName, stagingRoot, true, true);
+                continue;
+            }
+
+            var roots = File.Exists(Path.Combine(stagingRoot, "botnexus-extension.json"))
+                ? [stagingRoot]
+                : Directory.GetDirectories(stagingRoot);
+            if (roots.Length == 0)
+            {
+                yield return new ExtensionDeploymentSource(sourceName, stagingRoot, true, true);
+                continue;
+            }
+
+            foreach (var output in roots)
+            {
+                var outputName = Path.GetFileName(output);
+                yield return new ExtensionDeploymentSource($"{sourceName}:{outputName}", output, true, true);
+            }
         }
     }
 
