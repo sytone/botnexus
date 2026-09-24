@@ -990,9 +990,7 @@ private bool IsStreaming =>
     private ElementReference _expandedComposerDialog;
     private ElementReference _expandedInputElement;
     private bool _expandedComposerFocusPending;
-    private bool _expandedPasteBound;
     private DotNetObjectReference<ChatPanel>? _attachmentPasteRef;
-    private bool _attachmentPasteBound;
     private ElementReference _messagesContainer;
         private ElementReference _inputElement;
     // #1691: load-more (scroll-up pagination) state.
@@ -1194,7 +1192,6 @@ private bool IsStreaming =>
         _expandedComposerError = null;
         _expandedComposerOpen = false;
         _expandedComposerConversationId = null;
-        _expandedPasteBound = false;
     }
 
     private void OpenExpandedComposer()
@@ -1215,7 +1212,6 @@ private bool IsStreaming =>
         _expandedComposerOpen = false;
         _expandedComposerConversationId = null;
         _expandedComposerError = null;
-        _expandedPasteBound = false;
         try { await JS.InvokeVoidAsync("chatScroll.closeComposerDialog", _expandComposerButton); } catch { }
     }
 
@@ -1831,11 +1827,10 @@ private bool IsStreaming =>
                 try { await JS.InvokeVoidAsync("chatScroll.openComposerDialog", _expandedComposerDialog, _expandedInputElement); } catch { }
             }
 
-            if (_expandedComposerOpen && !_expandedPasteBound)
+            if (_expandedComposerOpen)
             {
                 _attachmentPasteRef ??= DotNetObjectReference.Create(this);
                 await JS.InvokeVoidAsync("chatAttachments.bindPaste", _expandedInputElement, _attachmentPasteRef);
-                _expandedPasteBound = true;
             }
 
             // Focus-trap entry: when the tool pop-out modal opens, move focus into the
@@ -1863,11 +1858,13 @@ private bool IsStreaming =>
                 _enterPreventionBound = true;
             }
 
-            if (!_attachmentPasteBound && !IsReadOnly && !hasInlinePrompt)
+            // The DOM element is the binding authority. Blazor can replace this textarea while the
+            // component survives (ask-user and read-only transitions), so offer the current element
+            // to the idempotent JS binder after every render instead of caching component-level state.
+            if (!IsReadOnly && !hasInlinePrompt)
             {
                 _attachmentPasteRef ??= DotNetObjectReference.Create(this);
                 await JS.InvokeVoidAsync("chatAttachments.bindPaste", _inputElement, _attachmentPasteRef);
-                _attachmentPasteBound = true;
             }
 
             // #1691: attach the scroll-to-top observer once so scrolling up fetches the next older
@@ -2323,6 +2320,14 @@ private bool IsStreaming =>
 
     [JSInvokable]
     public Task OnAttachmentsPasted(IReadOnlyList<DraftAttachment> attachments) => AddDraftAttachmentsAsync(attachments);
+
+    [JSInvokable]
+    public Task OnAttachmentPasteFailed()
+    {
+        _attachmentError = "Could not attach the pasted image. Try pasting again or use Attach files.";
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
 
     public Task AddDraftAttachmentsAsync(IReadOnlyList<DraftAttachment> attachments)
     {

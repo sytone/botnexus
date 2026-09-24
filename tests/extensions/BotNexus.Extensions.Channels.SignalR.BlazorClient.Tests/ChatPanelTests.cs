@@ -425,6 +425,39 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
+    public void Active_inline_composer_offers_current_element_to_idempotent_paste_binder_on_rerender()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var initialCount = _ctx.JSInterop.Invocations.Count(i => i.Identifier == "chatAttachments.bindPaste");
+
+        cut.Render();
+
+        _ctx.JSInterop.Invocations.Count(i => i.Identifier == "chatAttachments.bindPaste")
+            .ShouldBeGreaterThan(initialCount);
+    }
+
+    [Fact]
+    public void Expanded_composer_offers_recreated_element_to_idempotent_paste_binder_after_reopen()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        cut.Find("[data-testid='chat-expand']").Click();
+        var firstOpenCount = _ctx.JSInterop.Invocations.Count(i => i.Identifier == "chatAttachments.bindPaste");
+        cut.Find("[data-testid='expanded-composer-close']").Click();
+        cut.Find("[data-testid='chat-expand']").Click();
+
+        _ctx.JSInterop.Invocations.Count(i => i.Identifier == "chatAttachments.bindPaste")
+            .ShouldBeGreaterThan(firstOpenCount);
+    }
+
+    [Fact]
     public void Read_only_sub_agent_view_does_not_bind_prevent_enter_submit()
     {
         CreateAndSeedAgent("sub-1", "Sub Agent", isConnected: true);

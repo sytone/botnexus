@@ -68,6 +68,18 @@ public sealed class AttachmentDraftTests : IDisposable
     }
 
     [Fact]
+    public async Task Paste_failure_is_announced_without_clearing_typed_draft()
+    {
+        var cut = Render();
+        cut.Find("[data-testid='chat-input']").Input("keep this text");
+
+        await cut.InvokeAsync(cut.Instance.OnAttachmentPasteFailed);
+
+        cut.Find("[role='alert']").TextContent.ShouldContain("Could not attach");
+        cut.Find("[data-testid='chat-input']").GetAttribute("value").ShouldBe("keep this text");
+    }
+
+    [Fact]
     public async Task Attachment_only_send_carries_metadata_and_clears_draft()
     {
         var cut = Render();
