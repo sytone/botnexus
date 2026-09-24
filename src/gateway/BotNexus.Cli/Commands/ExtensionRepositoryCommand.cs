@@ -18,6 +18,7 @@ public sealed class ExtensionRepositoryCommand
         command.AddCommand(BuildSetEnabled("enable", true, targetOption));
         command.AddCommand(BuildSetEnabled("disable", false, targetOption));
         command.AddCommand(BuildRemove(targetOption));
+        command.AddCommand(BuildReconcile(targetOption));
         return command;
     }
 
@@ -113,6 +114,26 @@ public sealed class ExtensionRepositoryCommand
         {
             await CreateService(context.ParseResult.GetValueForOption(targetOption)).RemoveAsync(
                 context.ParseResult.GetValueForOption(id)!);
+        });
+        return command;
+    }
+
+    private static Command BuildReconcile(Option<string?> targetOption)
+    {
+        var command = new Command("reconcile", "Clone or safely update enabled extension repositories.");
+        command.SetHandler(async context =>
+        {
+            var home = CliPaths.ResolveTarget(context.ParseResult.GetValueForOption(targetOption));
+            var service = new ExtensionRepositoryRegistryService(Path.Combine(home, "config.json"), new FileSystem());
+            var results = await new ExtensionRepositoryCloneReconciler(home, service).ReconcileEnabledAsync();
+            foreach (var result in results)
+            {
+                if (result.Succeeded)
+                    AnsiConsole.MarkupLine($"[green]{CliText.SafeDisplay(result.Id)}[/] {CliText.SafeDisplay(result.ResolvedCommit!)}");
+                else
+                    AnsiConsole.MarkupLine($"[red]{CliText.SafeDisplay(result.Id)}: {CliText.SafeDisplay(result.FailureName!)}[/] {CliText.SafeDisplay(result.Diagnostic!)}");
+            }
+            context.ExitCode = results.Any(result => !result.Succeeded) ? 1 : 0;
         });
         return command;
     }

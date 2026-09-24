@@ -187,6 +187,27 @@ public sealed class ExtensionRepositoryRegistryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RecordReconciliationStateAsync_PersistsAttemptSuccessAndNamedFailure()
+    {
+        var service = CreateService();
+        await service.AddAsync("community-tools", "https://example.test/repo.git", "main");
+        var attempted = new DateTimeOffset(2026, 9, 23, 10, 0, 0, TimeSpan.Zero);
+        var succeeded = attempted.AddMinutes(1);
+
+        await service.RecordReconciliationAttemptAsync("community-tools", Path.Combine(_directory, "clone"), attempted);
+        await service.RecordReconciliationSuccessAsync("community-tools", new string('a', 40), succeeded);
+        await service.RecordReconciliationFailureAsync("community-tools", "dirty", "operator changes");
+
+        var registration = (await service.ListAsync()).ShouldHaveSingleItem();
+        registration.ReconciliationStatus.ShouldBe("failed");
+        registration.ResolvedCommit.ShouldBe(new string('a', 40));
+        registration.ClonePath.ShouldBe(Path.Combine(_directory, "clone"));
+        registration.LastAttemptUtc.ShouldBe(attempted);
+        registration.LastSuccessUtc.ShouldBe(succeeded);
+        registration.LatestFailure.ShouldBe("dirty: operator changes");
+    }
+
+    [Fact]
     public async Task RemoveAsync_DeletesOnlyRegistration_AndDoesNotTouchCloneSentinel()
     {
         var cloneDirectory = Path.Combine(_directory, "extensions", "community-tools");

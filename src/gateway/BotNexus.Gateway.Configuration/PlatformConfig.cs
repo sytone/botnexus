@@ -237,6 +237,19 @@ public sealed class ExtensionRepositoryRegistration
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "extension-repository", Order = 3)]
     [DefaultValue(true)]
     public bool UpdatesEnabled { get; set; } = true;
+
+    /// <summary>Current reconciliation state, or null before the first attempt.</summary>
+    public string? ReconciliationStatus { get; set; }
+    /// <summary>Exact commit selected by the most recent successful reconciliation.</summary>
+    public string? ResolvedCommit { get; set; }
+    /// <summary>Managed clone path used by the reconciler.</summary>
+    public string? ClonePath { get; set; }
+    /// <summary>UTC timestamp of the most recent reconciliation attempt.</summary>
+    public DateTimeOffset? LastAttemptUtc { get; set; }
+    /// <summary>UTC timestamp of the most recent successful reconciliation.</summary>
+    public DateTimeOffset? LastSuccessUtc { get; set; }
+    /// <summary>Named failure and diagnostic from the most recent failed attempt.</summary>
+    public string? LatestFailure { get; set; }
 }
 
 /// <summary>Read model for an extension repository registration and its dictionary key.</summary>
@@ -245,7 +258,13 @@ public sealed record ExtensionRepositoryRegistrationInfo(
     string RepositoryUrl,
     string RequestedRef,
     bool Enabled,
-    bool UpdatesEnabled);
+    bool UpdatesEnabled,
+    string? ReconciliationStatus,
+    string? ResolvedCommit,
+    string? ClonePath,
+    DateTimeOffset? LastAttemptUtc,
+    DateTimeOffset? LastSuccessUtc,
+    string? LatestFailure);
 
 /// <summary>Provider-specific configuration.</summary>
 public sealed class ProviderConfig
