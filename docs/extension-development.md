@@ -1542,20 +1542,25 @@ botnexus extensions list
 botnexus extensions update --id reference-extension --ref v1.0.0
 botnexus extensions disable --id reference-extension
 botnexus extensions enable --id reference-extension
+botnexus extensions reconcile
 botnexus extensions remove --id reference-extension
 ```
 
 `--ref` accepts the branch, tag or commit the operator intends to reconcile. A commit gives the most reproducible registration; a tag is readable but can be moved by a repository owner; a branch follows future commits. Use `--no-updates` when the registration must not move automatically. The Configuration page exposes the same registry and requires an explicit trust acknowledgement.
 
-Registration on current `main` records metadata only. Clone, build, deployment and **Sync Now** remain unavailable until the ordered repository-reconciliation work in [#3844](https://github.com/Sytone/botnexus/issues/3844) is complete. Do not interpret a successful `extensions add` as proof that code was cloned, built, loaded or granted to an agent.
+`extensions reconcile` materializes every enabled registration under the managed BotNexus home. It clones a missing repository, fetches an existing clean clone when updates are enabled, resolves the requested branch, tag or commit to an exact SHA, and checks out that commit detached. The command records the clone path, attempted time, resolved SHA and bounded failure details in the shared registry. It returns a non-zero exit code when any enabled registration fails.
+
+Reconciliation is deliberately non-destructive. It does not reset, clean or delete a clone. A dirty clone, a local checkout that has diverged from the requested revision, a missing `origin`, or an invalid reference produces a named failure for the operator to resolve. When updates are disabled, an existing clone is inspected without fetching; an absent clone is still cloned so the registration can be materialized for the first time.
+
+Registration and clone reconciliation do not build, deploy, load or grant the extension to an agent. Those lifecycle stages and Configuration-page **Sync Now** remain separate ordered work under [#3844](https://github.com/Sytone/botnexus/issues/3844).
 
 ### Lifecycle, failure and removal
 
-The intended reconciler is shared by build, update, serve, gateway lifecycle commands, CLI sync and UI **Sync Now**. A candidate is built and validated before deployment. A failed candidate records a named error and keeps the last-known-good deployment; it must not replace the working directory with partial output or stop the platform from restarting.
+The current reconciler owns only the managed source clone and persisted reconciliation status. Later build and deployment stages must validate a candidate before replacing a last-known-good deployment; a failed candidate must not stop the platform from restarting.
 
-Disabling a registration stops updates and intentionally undeploys the extension during reconciliation while retaining the managed clone. Removing a registration undeploys it. Deleting a managed clone is a separate explicit action because a dirty working tree may contain operator data.
+Disabling a registration excludes it from clone reconciliation. Removing a registration removes its metadata only. Neither action deletes a managed clone because a dirty working tree may contain operator data; deletion requires a separate explicit action.
 
-Until the reconciler is delivered, use the template's package and local-install scripts for development only. A later `botnexus serve`, gateway deployment or update can prune that manual deployment as stale. Keep the source repository and package so it can be rebuilt and installed again.
+Until build and deployment reconciliation are delivered, use the template's package and local-install scripts for development only. A later `botnexus serve`, gateway deployment or update can prune that manual deployment as stale. Keep the source repository and package so it can be rebuilt and installed again.
 
 After deployment and gateway restart, verify `GET /api/extensions`, the intended agent's available tools, and one fresh conversation. A directory on disk proves only that files were copied.
 
