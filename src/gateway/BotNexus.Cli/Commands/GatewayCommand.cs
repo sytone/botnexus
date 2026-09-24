@@ -514,9 +514,6 @@ internal sealed class GatewayCommand
         return $"{uptime.Seconds}s";
     }
 
-    internal static string ResolveGatewayBinaryPath(string repoRoot) =>
-        Path.Combine(repoRoot, "src", "gateway", "BotNexus.Gateway.Api", "bin", "Release", "net10.0", "BotNexus.Gateway.Api.dll");
-
     private static async Task<int> InstallServiceAsync(string repoRoot, string home, int port, bool verbose, CancellationToken cancellationToken)
     {
         var manager = OsServiceManagerFactory.Create();

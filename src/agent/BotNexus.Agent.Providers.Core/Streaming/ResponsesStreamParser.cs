@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Agent.Providers.Core.Utilities;
 using Microsoft.Extensions.Logging;
 
@@ -59,7 +60,8 @@ public static class ResponsesStreamParser
         Action<LlmStream, LlmModel, string, IReadOnlyList<ContentBlock>?> emitError,
         Action<JsonElement>? onParsedEvent,
         Func<StreamOptions?, string?>? resolveConfiguredServiceTier,
-        CancellationToken ct)
+        CancellationToken ct,
+        ISecretRedactor? secretRedactor = null)
         => ParseEventsAsync(
             stream,
             async cancellationToken =>
@@ -74,7 +76,8 @@ public static class ResponsesStreamParser
             emitError,
             onParsedEvent,
             resolveConfiguredServiceTier,
-            ct);
+            ct,
+            secretRedactor);
 
     /// <summary>
     /// Normalizes Responses JSON events from any provider-private wire transport into the shared
@@ -91,7 +94,8 @@ public static class ResponsesStreamParser
         Action<LlmStream, LlmModel, string, IReadOnlyList<ContentBlock>?> emitError,
         Action<JsonElement>? onParsedEvent,
         Func<StreamOptions?, string?>? resolveConfiguredServiceTier,
-        CancellationToken ct)
+        CancellationToken ct,
+        ISecretRedactor? secretRedactor = null)
     {
         var contentBlocks = new List<ContentBlock>();
         var usage = Usage.Empty();
@@ -137,7 +141,8 @@ public static class ResponsesStreamParser
 
             if (string.Equals(evt.Event, "error", StringComparison.Ordinal))
             {
-                emitError(stream, model, evt.Data, null);
+                emitError(stream, model,
+                    ProviderHttpErrorHelper.RedactDiagnosticText(evt.Data, secretRedactor), null);
                 return;
             }
 
@@ -469,7 +474,8 @@ public static class ResponsesStreamParser
 
                 if (evt.Event is "response.failed")
                 {
-                    var message = GetErrorMessage(root);
+                    var message = ProviderHttpErrorHelper.RedactDiagnosticText(
+                        GetErrorMessage(root), secretRedactor);
                     emitError(stream, model, message, contentBlocks);
                     return;
                 }

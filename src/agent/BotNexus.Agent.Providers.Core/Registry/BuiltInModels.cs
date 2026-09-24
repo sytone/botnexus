@@ -45,45 +45,57 @@ public sealed class BuiltInModels
     /// </param>
     public void RegisterAll(ModelRegistry modelRegistry, Func<string, string?>? endpointResolver = null)
     {
-        RegisterCopilotModels(modelRegistry, endpointResolver);
+        RegisterCopilotInstance(modelRegistry, "github-copilot", endpointResolver);
         RegisterAnthropicModels(modelRegistry);
         RegisterOpenAIModels(modelRegistry);
     }
 
-    private static void RegisterCopilotModels(ModelRegistry modelRegistry, Func<string, string?>? endpointResolver)
+    /// <summary>
+    /// Registers the complete GitHub Copilot built-in catalogue under a provider-instance key while
+    /// retaining each model's wire API contract. The endpoint resolver receives that same instance
+    /// key so credentials and endpoints are never canonicalized back to the default account.
+    /// </summary>
+    /// <param name="modelRegistry">The registry to populate.</param>
+    /// <param name="providerInstance">Operator-owned provider-instance key.</param>
+    /// <param name="endpointResolver">Optional instance-aware endpoint resolver.</param>
+    public void RegisterCopilotInstance(
+        ModelRegistry modelRegistry,
+        string providerInstance,
+        Func<string, string?>? endpointResolver = null)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerInstance);
         // #1639: resolve the Copilot host once, at registration, so every model below is correct by
         // construction (enterprise vs individual). Falls back to the individual host when no
         // resolver is supplied or it declares no override for the provider.
-        var copilotBaseUrl = ResolveCopilotBaseUrl(endpointResolver);
-        Register(modelRegistry, "github-copilot", "claude-haiku-4.5", "Claude Haiku 4.5", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 144000, 32000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "claude-opus-4.5", "Claude Opus 4.5", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 160000, 32000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "claude-opus-4.6", "Claude Opus 4.6", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "claude-opus-4.8", "Claude Opus 4.8", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "claude-opus-5", "Claude Opus 5", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "claude-sonnet-4", "Claude Sonnet 4", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 216000, 16000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "claude-sonnet-4.5", "Claude Sonnet 4.5", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 144000, 32000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "claude-sonnet-4.6", "Claude Sonnet 4.6", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 32000, headers: CopilotHeaders);
+        var copilotBaseUrl = ResolveCopilotBaseUrl(providerInstance, endpointResolver);
+        Register(modelRegistry, providerInstance, "claude-haiku-4.5", "Claude Haiku 4.5", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 144000, 32000, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "claude-opus-4.5", "Claude Opus 4.5", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 160000, 32000, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "claude-opus-4.6", "Claude Opus 4.6", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "claude-opus-4.8", "Claude Opus 4.8", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "claude-opus-5", "Claude Opus 5", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "claude-sonnet-4", "Claude Sonnet 4", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 216000, 16000, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "claude-sonnet-4.5", "Claude Sonnet 4.5", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 144000, 32000, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "claude-sonnet-4.6", "Claude Sonnet 4.6", "github-copilot-messages", copilotBaseUrl, true, ["text", "image"], 200000, 32000, headers: CopilotHeaders);
 
-        Register(modelRegistry, "github-copilot", "gemini-2.5-pro", "Gemini 2.5 Pro", "github-copilot-completions", copilotBaseUrl, false, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
-        Register(modelRegistry, "github-copilot", "gemini-3-flash-preview", "Gemini 3 Flash", "github-copilot-completions", copilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
-        Register(modelRegistry, "github-copilot", "gemini-3-pro-preview", "Gemini 3 Pro Preview", "github-copilot-completions", copilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
-        Register(modelRegistry, "github-copilot", "gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", "github-copilot-completions", copilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, providerInstance, "gemini-2.5-pro", "Gemini 2.5 Pro", "github-copilot-completions", copilotBaseUrl, false, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, providerInstance, "gemini-3-flash-preview", "Gemini 3 Flash", "github-copilot-completions", copilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, providerInstance, "gemini-3-pro-preview", "Gemini 3 Pro Preview", "github-copilot-completions", copilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, providerInstance, "gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", "github-copilot-completions", copilotBaseUrl, true, ["text", "image"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
 
-        Register(modelRegistry, "github-copilot", "gpt-4.1", "GPT-4.1", "github-copilot-completions", copilotBaseUrl, false, ["text", "image"], 128000, 16384, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
-        Register(modelRegistry, "github-copilot", "gpt-4o", "GPT-4o", "github-copilot-completions", copilotBaseUrl, false, ["text", "image"], 128000, 4096, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, providerInstance, "gpt-4.1", "GPT-4.1", "github-copilot-completions", copilotBaseUrl, false, ["text", "image"], 128000, 16384, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, providerInstance, "gpt-4o", "GPT-4o", "github-copilot-completions", copilotBaseUrl, false, ["text", "image"], 128000, 4096, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
 
-        Register(modelRegistry, "github-copilot", "gpt-5", "GPT-5", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 128000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5-mini", "GPT-5-mini", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 264000, 64000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.1", "GPT-5.1", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 264000, 64000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.1-codex", "GPT-5.1-Codex", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.1-codex-max", "GPT-5.1-Codex-max", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.1-codex-mini", "GPT-5.1-Codex-mini", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.2", "GPT-5.2", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 264000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.2-codex", "GPT-5.2-Codex", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.3-codex", "GPT-5.3-Codex", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.4", "GPT-5.4", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.4-mini", "GPT-5.4 mini", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5", "GPT-5", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 128000, 128000, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5-mini", "GPT-5-mini", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 264000, 64000, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.1", "GPT-5.1", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 264000, 64000, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.1-codex", "GPT-5.1-Codex", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.1-codex-max", "GPT-5.1-Codex-max", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.1-codex-mini", "GPT-5.1-Codex-mini", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.2", "GPT-5.2", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 264000, 64000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.2-codex", "GPT-5.2-Codex", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.3-codex", "GPT-5.3-Codex", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.4", "GPT-5.4", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.4-mini", "GPT-5.4 mini", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 400000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
 
         // #3229: the 5.5/5.6 generation. `gateway.auxiliary.titling.model` ships as `gpt-5.6-luna`,
         // so that id MUST exist in the built-in table: Copilot dynamic discovery is best-effort and
@@ -92,13 +104,13 @@ public sealed class BuiltInModels
         // Context window (922000) and the full thinking ladder (minimal..max, i.e.
         // supportsExtraHighThinking) are the values the live discovery overlay reports for this
         // generation, so a discovered and a built-in registration of the same id agree.
-        Register(modelRegistry, "github-copilot", "gpt-5.5", "GPT-5.5", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.6", "GPT-5.6", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.6-luna", "GPT-5.6 Luna", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.6-sol", "GPT-5.6 Sol", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
-        Register(modelRegistry, "github-copilot", "gpt-5.6-terra", "GPT-5.6 Terra", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.5", "GPT-5.5", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.6", "GPT-5.6", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.6-luna", "GPT-5.6 Luna", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.6-sol", "GPT-5.6 Sol", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-5.6-terra", "GPT-5.6 Terra", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
 
-        Register(modelRegistry, "github-copilot", "grok-code-fast-1", "Grok Code Fast 1", "github-copilot-completions", copilotBaseUrl, true, ["text"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
+        Register(modelRegistry, providerInstance, "grok-code-fast-1", "Grok Code Fast 1", "github-copilot-completions", copilotBaseUrl, true, ["text"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
     }
 
     /// <summary>
@@ -106,9 +118,11 @@ public sealed class BuiltInModels
     /// per-provider endpoint from <paramref name="endpointResolver"/> (enterprise account), falling
     /// back to the individual host when none is declared. Pure and null-safe.
     /// </summary>
-    private static string ResolveCopilotBaseUrl(Func<string, string?>? endpointResolver)
+    private static string ResolveCopilotBaseUrl(
+        string providerInstance,
+        Func<string, string?>? endpointResolver)
     {
-        var resolved = endpointResolver?.Invoke("github-copilot");
+        var resolved = endpointResolver?.Invoke(providerInstance);
         return string.IsNullOrWhiteSpace(resolved) ? CopilotBaseUrl : resolved;
     }
 

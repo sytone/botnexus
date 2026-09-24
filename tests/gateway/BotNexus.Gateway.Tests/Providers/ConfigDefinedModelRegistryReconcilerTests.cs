@@ -61,6 +61,28 @@ public sealed class ConfigDefinedModelRegistryReconcilerTests
     }
 
     [Fact]
+    public async Task Start_NamedCopilotProvider_DoesNotProjectGenericConfigModels()
+    {
+        var config = ConfigWithProvider(
+            "work-copilot",
+            enabled: true,
+            baseUrl: null,
+            api: "openai-completions",
+            models: ["gpt-5"]);
+        config.Providers!["work-copilot"].Type = "github-copilot";
+        var monitor = new TestOptionsMonitor<PlatformConfig>(config);
+        var registry = new ModelRegistry();
+        using var reconciler = new ConfigDefinedModelRegistryReconciler(
+            monitor,
+            registry,
+            NullLogger<ConfigDefinedModelRegistryReconciler>.Instance);
+
+        await reconciler.StartAsync(CancellationToken.None);
+
+        registry.GetProviders().ShouldNotContain("work-copilot");
+    }
+
+    [Fact]
     public async Task Reload_InvalidOpenAiCompletionsProvider_KeepsLastKnownGoodCatalogue()
     {
         var monitor = new TestOptionsMonitor<PlatformConfig>(ConfigWithProvider(
