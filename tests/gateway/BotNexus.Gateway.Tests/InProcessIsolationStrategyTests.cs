@@ -23,11 +23,13 @@ using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Loop;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Abstractions;
 using System.Reflection;
 using System.Text.Json;
+using Moq;
 using AgentCoreUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using BotNexus.Gateway.Tests.TestInfrastructure;
 
@@ -376,6 +378,186 @@ public sealed class InProcessIsolationStrategyTests
         messages.ShouldNotContain(m => m is SystemAgentMessage);
         messages[0].ShouldBe(new AgentCoreUserMessage("what was decided?"));
         messages[1].ShouldBe(new AssistantAgentMessage("Option A was chosen."));
+    }
+
+    [Fact]
+    public async Task CreateAsync_MidLoopCompactionConflict_RefreshesOnceAndUsesNewestAppliedContext()
+    {
+        var sessionId = SessionId.From("session-compaction-conflict-retry");
+        var agentId = AgentId.From("agent-a");
+        var stale = new GatewaySession { SessionId = sessionId, AgentId = agentId };
+        stale.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "stale history" });
+        var refreshed = new GatewaySession { SessionId = sessionId, AgentId = agentId };
+        refreshed.AddEntries(
+        [
+            new SessionEntry
+            {
+                Role = MessageRole.System,
+                Content = "newest compacted summary",
+                IsCompactionSummary = true
+            },
+            new SessionEntry { Role = MessageRole.User, Content = "newest retained tail" }
+        ]);
+
+        var sessionStore = new Mock<ISessionStore>();
+        sessionStore.SetupSequence(store => store.GetAsync(sessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stale)
+            .ReturnsAsync(stale)
+            .ReturnsAsync(refreshed);
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(value => value.ShouldCompact(It.IsAny<Session>(), It.IsAny<CompactionOptions>()))
+            .Returns(true);
+        var coordinator = new Mock<ISessionCompactionCoordinator>();
+        coordinator.SetupSequence(value => value.CompactAsync(
+                agentId,
+                It.IsAny<GatewaySession>(),
+                It.IsAny<CancellationToken>(),
+                false,
+                CompactionHandlePolicy.KeepCurrent))
+            .ReturnsAsync(new SessionCompactionOutcome(
+                false, false, HistoryReplaceOutcome.Aborted, 0, 0, 100, 100,
+                "concurrent history change", CompactionSkipReason.ConcurrentHistoryChange))
+            .ReturnsAsync(new SessionCompactionOutcome(
+                true, true, HistoryReplaceOutcome.Applied, 1, 1, 100, 10, null));
+
+        var services = new ServiceCollection();
+        services.AddSingleton(sessionStore.Object);
+        services.AddSingleton(compactor.Object);
+        services.AddSingleton(coordinator.Object);
+        services.AddSingleton<IOptionsMonitor<CompactionOptions>>(
+            new StaticOptionsMonitor<CompactionOptions>(new CompactionOptions()));
+        var strategy = CreateStrategyWithRegisteredModel(serviceProvider: services.BuildServiceProvider());
+        var handle = await strategy.CreateAsync(
+            CreateDescriptor(),
+            new AgentExecutionContext { SessionId = sessionId });
+
+        var compacted = await GetAgentOptions(handle).MaybeCompactAsync!(CancellationToken.None);
+
+        compacted.ShouldNotBeNull();
+        compacted.SystemPrompt.ShouldNotBeNull();
+        compacted.SystemPrompt.ShouldContain("newest compacted summary");
+        compacted.Messages.OfType<AgentCoreUserMessage>()
+            .Select(message => message.Content)
+            .ShouldBe(["newest retained tail"]);
+        sessionStore.Verify(store => store.GetAsync(sessionId, It.IsAny<CancellationToken>()), Times.Exactly(3));
+        coordinator.Verify(value => value.CompactAsync(
+            agentId,
+            It.IsAny<GatewaySession>(),
+            It.IsAny<CancellationToken>(),
+            false,
+            CompactionHandlePolicy.KeepCurrent), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task CreateAsync_MidLoopCompactionConflict_RefreshedBoundedSessionReplacesStaleContext()
+    {
+        var sessionId = SessionId.From("session-compaction-conflict-already-reconciled");
+        var agentId = AgentId.From("agent-a");
+        var stale = new GatewaySession { SessionId = sessionId, AgentId = agentId };
+        stale.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "stale oversized history" });
+        var refreshed = new GatewaySession { SessionId = sessionId, AgentId = agentId };
+        refreshed.AddEntries(
+        [
+            new SessionEntry
+            {
+                Role = MessageRole.System,
+                Content = "concurrently compacted summary",
+                IsCompactionSummary = true
+            },
+            new SessionEntry { Role = MessageRole.User, Content = "concurrently retained tail" }
+        ]);
+
+        var sessionStore = new Mock<ISessionStore>();
+        sessionStore.SetupSequence(store => store.GetAsync(sessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stale)
+            .ReturnsAsync(stale)
+            .ReturnsAsync(refreshed);
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.SetupSequence(value => value.ShouldCompact(It.IsAny<Session>(), It.IsAny<CompactionOptions>()))
+            .Returns(true)
+            .Returns(false);
+        var coordinator = new Mock<ISessionCompactionCoordinator>();
+        coordinator.Setup(value => value.CompactAsync(
+                agentId,
+                stale,
+                It.IsAny<CancellationToken>(),
+                false,
+                CompactionHandlePolicy.KeepCurrent))
+            .ReturnsAsync(new SessionCompactionOutcome(
+                false, false, HistoryReplaceOutcome.Aborted, 0, 0, 100, 100,
+                "concurrent history change", CompactionSkipReason.ConcurrentHistoryChange));
+
+        var services = new ServiceCollection();
+        services.AddSingleton(sessionStore.Object);
+        services.AddSingleton(compactor.Object);
+        services.AddSingleton(coordinator.Object);
+        services.AddSingleton<IOptionsMonitor<CompactionOptions>>(
+            new StaticOptionsMonitor<CompactionOptions>(new CompactionOptions()));
+        var strategy = CreateStrategyWithRegisteredModel(serviceProvider: services.BuildServiceProvider());
+        var handle = await strategy.CreateAsync(
+            CreateDescriptor(),
+            new AgentExecutionContext { SessionId = sessionId });
+
+        var compacted = await GetAgentOptions(handle).MaybeCompactAsync!(CancellationToken.None);
+
+        compacted.ShouldNotBeNull();
+        compacted.SystemPrompt.ShouldNotBeNull();
+        compacted.SystemPrompt.ShouldContain("concurrently compacted summary");
+        compacted.Messages.OfType<AgentCoreUserMessage>()
+            .Select(message => message.Content)
+            .ShouldBe(["concurrently retained tail"]);
+        coordinator.Verify(value => value.CompactAsync(
+            agentId,
+            It.IsAny<GatewaySession>(),
+            It.IsAny<CancellationToken>(),
+            false,
+            CompactionHandlePolicy.KeepCurrent), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAsync_MidLoopCompactionConflictRetryExhausted_ThrowsRetryableFailure()
+    {
+        var sessionId = SessionId.From("session-compaction-conflict-exhausted");
+        var agentId = AgentId.From("agent-a");
+        var sessionStore = new Mock<ISessionStore>();
+        sessionStore.Setup(store => store.GetAsync(sessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new GatewaySession { SessionId = sessionId, AgentId = agentId });
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(value => value.ShouldCompact(It.IsAny<Session>(), It.IsAny<CompactionOptions>()))
+            .Returns(true);
+        var coordinator = new Mock<ISessionCompactionCoordinator>();
+        coordinator.Setup(value => value.CompactAsync(
+                agentId,
+                It.IsAny<GatewaySession>(),
+                It.IsAny<CancellationToken>(),
+                false,
+                CompactionHandlePolicy.KeepCurrent))
+            .ReturnsAsync(new SessionCompactionOutcome(
+                false, false, HistoryReplaceOutcome.Aborted, 0, 0, 100, 100,
+                "concurrent history change", CompactionSkipReason.ConcurrentHistoryChange));
+
+        var services = new ServiceCollection();
+        services.AddSingleton(sessionStore.Object);
+        services.AddSingleton(compactor.Object);
+        services.AddSingleton(coordinator.Object);
+        services.AddSingleton<IOptionsMonitor<CompactionOptions>>(
+            new StaticOptionsMonitor<CompactionOptions>(new CompactionOptions()));
+        var strategy = CreateStrategyWithRegisteredModel(serviceProvider: services.BuildServiceProvider());
+        var handle = await strategy.CreateAsync(
+            CreateDescriptor(),
+            new AgentExecutionContext { SessionId = sessionId });
+
+        Func<Task> act = async () => _ = await GetAgentOptions(handle).MaybeCompactAsync!(CancellationToken.None);
+
+        var exception = await act.ShouldThrowAsync<ProactiveCompactionException>();
+        exception.Retryable.ShouldBeTrue();
+        sessionStore.Verify(store => store.GetAsync(sessionId, It.IsAny<CancellationToken>()), Times.Exactly(3));
+        coordinator.Verify(value => value.CompactAsync(
+            agentId,
+            It.IsAny<GatewaySession>(),
+            It.IsAny<CancellationToken>(),
+            false,
+            CompactionHandlePolicy.KeepCurrent), Times.Exactly(2));
     }
 
     [Fact]
