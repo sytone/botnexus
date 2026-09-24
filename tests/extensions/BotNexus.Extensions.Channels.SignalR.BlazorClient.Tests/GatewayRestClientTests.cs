@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -498,6 +498,23 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
+    public async Task RenderPromptTemplateAsync_surfaces_safe_general_bad_request_error()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse(
+            "/api/prompt-templates/render?agentId=farnsworth",
+            """{"error":"The rendered prompt is too large."}""",
+            HttpStatusCode.BadRequest);
+
+        var result = await client.RenderPromptTemplateAsync(
+            "farnsworth", "daily", new Dictionary<string, string>());
+
+        result.RenderedPrompt.ShouldBeNull();
+        result.Errors.ShouldBeEmpty();
+        result.GeneralError.ShouldBe("The rendered prompt is too large.");
+    }
+
+    [Fact]
     public async Task ExecuteCommandAsync_returns_null_on_a_non_success_status()
     {
         // Sad path: an unstubbed path yields 404. Must return null so the caller can render a
@@ -513,25 +530,25 @@ public sealed class GatewayRestClientTests
 /// <summary>Minimal HTTP handler for stubbing REST responses by URL path.</summary>
 internal sealed class MockHttpMessageHandler : HttpMessageHandler
 {
-    private readonly Dictionary<string, string> _responses = new();
+    private readonly Dictionary<string, (string Json, HttpStatusCode Status)> _responses = new();
     public string LastRequestUrl { get; private set; } = string.Empty;
     public string LastRequestMethod { get; private set; } = string.Empty;
 
-    public void SetResponse(string urlPath, string json)
-        => _responses[urlPath] = json;
+    public void SetResponse(string urlPath, string json, HttpStatusCode status = HttpStatusCode.OK)
+        => _responses[urlPath] = (json, status);
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         LastRequestUrl = request.RequestUri?.ToString() ?? string.Empty;
         LastRequestMethod = request.Method.Method;
 
-        foreach (var (path, json) in _responses)
+        foreach (var (path, response) in _responses)
         {
             if (LastRequestUrl.Contains(path))
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return Task.FromResult(new HttpResponseMessage(response.Status)
                 {
-                    Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                    Content = new StringContent(response.Json, System.Text.Encoding.UTF8, "application/json")
                 });
             }
         }

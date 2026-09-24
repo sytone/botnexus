@@ -534,6 +534,53 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<PromptTemplateDescriptorDto>> GetPromptTemplatesAsync(
+        string agentId,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        return await _http.GetFromJsonAsync<IReadOnlyList<PromptTemplateDescriptorDto>>(
+            $"{_apiBaseUrl}prompt-templates?agentId={Uri.EscapeDataString(agentId)}",
+            cancellationToken) ?? [];
+    }
+
+    /// <inheritdoc />
+    public async Task<PromptTemplateRenderResultDto> RenderPromptTemplateAsync(
+        string agentId,
+        string templateName,
+        IReadOnlyDictionary<string, string> parameters,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var request = new PromptTemplateRenderRequestDto(
+            templateName,
+            parameters.ToDictionary(pair => pair.Key, pair => (string?)pair.Value, StringComparer.Ordinal));
+        using var response = await _http.PostAsJsonAsync(
+            $"{_apiBaseUrl}prompt-templates/render?agentId={Uri.EscapeDataString(agentId)}",
+            request,
+            cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            var rendered = await response.Content.ReadFromJsonAsync<PromptTemplateRenderResponseDto>(
+                cancellationToken: cancellationToken);
+            return new PromptTemplateRenderResultDto(rendered?.RenderedPrompt, new Dictionary<string, string[]>());
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            var problem = await response.Content.ReadFromJsonAsync<PromptTemplateValidationProblemDto>(
+                cancellationToken: cancellationToken);
+            return new PromptTemplateRenderResultDto(
+                null,
+                problem?.Errors ?? new Dictionary<string, string[]>(),
+                problem?.Error);
+        }
+
+        response.EnsureSuccessStatusCode();
+        return new PromptTemplateRenderResultDto(null, new Dictionary<string, string[]>());
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<SubAgentInfo>> ListSessionSubAgentsAsync(
         string sessionId,
         CancellationToken cancellationToken = default)

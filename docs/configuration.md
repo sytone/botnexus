@@ -2261,7 +2261,7 @@ Templates can be defined in three ways:
    - **`.prompt.md`** (recommended for multi-line, human-authored prompts) — YAML front matter + Markdown body for readable content
    - **`.prompt.json`** (supported for compatibility and machine-generated templates) — Single-file JSON format
 
-The CLI merges all sources when listing or rendering templates. When both `foo.prompt.md` and `foo.prompt.json` exist with the same name, `.prompt.md` takes precedence.
+BotNexus resolves templates for the selected agent in this precedence order: workspace, agent, shared, then configuration. A higher-precedence template with the same name shadows the lower-precedence definition. Within one file directory, `foo.prompt.md` takes precedence over `foo.prompt.json`. The CLI and desktop picker use this same effective catalogue; the picker shows the winning source without exposing file paths or template bodies.
 
 **Sample Templates:** The CLI ships bundled sample prompt files. Run `botnexus prompt create samples` to copy them into `~/.botnexus/prompts/`, then modify them for your workflow.
 
@@ -2389,6 +2389,12 @@ Parameters are declared using `{{name}}` placeholders in the template body. The 
 - `required: true` — Parameter must be supplied by caller if no default is set
 - `required: false` — Parameter is optional; renders as empty string if missing
 - `default` — Fallback value when caller does not supply it
+
+### Insert from the desktop composer
+
+In the desktop inline or expanded composer, choose **Templates**, search the effective catalogue, enter parameter values, and select **Preview**. The preview is the exact text the gateway renderer will produce. **Insert** replaces the current textarea selection, or inserts at a collapsed caret, while preserving the rest of the draft, its line endings, attachments, and current delivery intent. Insertion is a normal textarea edit, so browser undo restores the previous draft.
+
+**Insert never dispatches a message.** You can edit the inserted text and must still use the composer's normal **Send**, **Steer**, **Follow Up**, or **Redirect** action. This differs from `botnexus prompt run`, which renders the template and immediately starts an agent run.
 
 ### Examples
 
