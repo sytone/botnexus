@@ -18,7 +18,7 @@ public sealed record ExtensionRepositoryUpdateRequest(string? RepositoryUrl, str
 /// <summary>Explicit enabled state for a repository registration.</summary>
 /// <param name="Enabled">Whether the registration should be enabled.</param>
 public sealed record ExtensionRepositoryEnabledRequest(bool Enabled);
-/// <summary>Repository registration with reconciliation fields that remain null until a reconciler exists.</summary>
+/// <summary>Repository registration and its most recently persisted reconciliation state.</summary>
 /// <param name="Id">Registration key.</param>
 /// <param name="RepositoryUrl">Configured URL.</param>
 /// <param name="RequestedRef">Configured branch, tag, or commit.</param>
@@ -101,5 +101,6 @@ public sealed class ExtensionRepositoriesController(ExtensionRepositoryRegistryS
 
     private static ExtensionRepositoryResponse Project(ExtensionRepositoryRegistrationInfo item) => new(
         item.Id, item.RepositoryUrl, item.RequestedRef, item.Enabled, item.UpdatesEnabled,
-        "not-yet-reconciled", null, null, null, null, null, null, false);
+        item.ReconciliationStatus ?? "not-yet-reconciled", item.ResolvedCommit, item.ClonePath,
+        item.LastAttemptUtc, item.LastSuccessUtc, null, item.LatestFailure, false);
 }
