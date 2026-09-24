@@ -13,18 +13,23 @@ namespace BotNexus.Persistence.Sqlite;
 public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
 {
     /// <summary>The first independently versioned schema understood by this ledger.</summary>
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly SqliteConnection _connection;
     private readonly IManagedTaskFlowCommitObserver? _observer;
+    private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     /// <summary>Opens or creates a managed-task ledger at <paramref name="databasePath"/>.</summary>
-    public SqliteManagedTaskFlowLedger(string databasePath, IManagedTaskFlowCommitObserver? observer = null)
+    public SqliteManagedTaskFlowLedger(
+        string databasePath,
+        IManagedTaskFlowCommitObserver? observer = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         _observer = observer;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _connection = SqliteConnectionFactory.Create($"Data Source={databasePath}");
         _connection.Open();
         ExecutePragma("PRAGMA foreign_keys=ON;");
@@ -157,6 +162,10 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
                 return Result(ManagedTaskLedgerWriteOutcome.StepNotFound, snapshot);
             if (step.Revision != command.ExpectedStepRevision)
                 return Result(ManagedTaskLedgerWriteOutcome.RevisionConflict, snapshot);
+            if (snapshot.Results.Any(item =>
+                    item.StepId == command.StepId
+                    && item.BusinessAcceptance == ManagedTaskResultAcceptance.Accepted))
+                return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
             if (snapshot.Attempts.Any(item => item.StepId == command.StepId && !item.IsRetryable))
                 return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
 
@@ -290,6 +299,245 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
         }, cancellationToken);
     }
 
+    /// <summary>Records validation and acceptance, atomically enqueueing delivery only for accepted results.</summary>
+    public Task<ManagedTaskLedgerWriteResult> RecordResultAsync(
+        RecordManagedTaskResultCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        if (command.BusinessAcceptance == ManagedTaskResultAcceptance.Accepted)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(command.CompletionId);
+            if (command.SchemaValidation != ManagedTaskResultSchemaValidation.Valid)
+                throw new ArgumentException("An accepted result must have valid schema.", nameof(command));
+            if (command.MaxDeliveryAttempts < 1)
+                throw new ArgumentOutOfRangeException(nameof(command), "Accepted results require at least one delivery attempt.");
+        }
+        else if (command.CompletionId is not null)
+        {
+            throw new ArgumentException("Rejected results cannot enqueue completion delivery.", nameof(command));
+        }
+
+        var identity = CommandIdentity.Create("record-result", command.RunId, command);
+        return WriteAsync(command.CommandId, identity, (transaction, now) =>
+        {
+            var duplicate = ReadDuplicate(command.CommandId, identity, transaction);
+            if (duplicate is not null)
+                return duplicate;
+            var snapshot = ReadSnapshot(command.RunId, transaction);
+            if (snapshot is null)
+                return NotFound();
+            if (snapshot.Run.Status == ManagedTaskRunStatus.Cancelled)
+                return Result(ManagedTaskLedgerWriteOutcome.Cancelled, snapshot);
+            if (IsTerminal(snapshot.Run.Status))
+                return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
+            var step = snapshot.Steps.SingleOrDefault(item => item.StepId == command.StepId);
+            if (step is null)
+                return Result(ManagedTaskLedgerWriteOutcome.StepNotFound, snapshot);
+            var attempt = snapshot.Attempts.SingleOrDefault(item =>
+                item.StepId == command.StepId && item.AttemptId == command.AttemptId);
+            if (attempt is null)
+                return Result(ManagedTaskLedgerWriteOutcome.AttemptNotFound, snapshot);
+            if (attempt.Epoch != command.ExpectedAttemptEpoch)
+                return Result(ManagedTaskLedgerWriteOutcome.EpochConflict, snapshot);
+            if (step.Revision != command.ExpectedStepRevision)
+                return Result(ManagedTaskLedgerWriteOutcome.RevisionConflict, snapshot);
+            if (!attempt.IsTerminal || attempt.Status == ManagedTaskAttemptStatus.Running)
+                return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
+            if (attempt.Status == ManagedTaskAttemptStatus.UnknownSideEffect)
+                return Result(ManagedTaskLedgerWriteOutcome.ReconciliationRequired, snapshot);
+            if (snapshot.Results.Any(item => item.StepId == command.StepId && item.AttemptId == command.AttemptId))
+                return Result(ManagedTaskLedgerWriteOutcome.ResultAlreadyRecorded, snapshot);
+            if (command.CompletionId is not null && snapshot.CompletionDeliveries.Any(item =>
+                    item.CompletionId == command.CompletionId
+                    && (item.StepId != command.StepId || item.AttemptId != command.AttemptId)))
+                return Result(ManagedTaskLedgerWriteOutcome.LedgerConflict, snapshot);
+
+            Execute(transaction, """
+                INSERT INTO managed_task_result(
+                    run_id, step_id, attempt_id, attempt_epoch, execution_outcome, result_reference,
+                    schema_validation, business_acceptance, cleanup_status, recorded_at)
+                VALUES($run, $step, $attempt, $epoch, $outcome, $reference, $schema, $acceptance, $cleanup, $now);
+                """,
+                ("$run", command.RunId), ("$step", command.StepId), ("$attempt", command.AttemptId),
+                ("$epoch", command.ExpectedAttemptEpoch), ("$outcome", attempt.Status.ToString()),
+                ("$reference", attempt.ResultReference), ("$schema", command.SchemaValidation.ToString()),
+                ("$acceptance", command.BusinessAcceptance.ToString()),
+                ("$cleanup", ManagedTaskResultCleanupStatus.Pending.ToString()), ("$now", Format(now)));
+            if (command.BusinessAcceptance == ManagedTaskResultAcceptance.Accepted)
+            {
+                Execute(transaction, """
+                    INSERT INTO managed_task_completion_delivery(
+                        run_id, completion_id, step_id, attempt_id, status, generation, delivery_attempts,
+                        max_delivery_attempts, last_failure, delivery_deadline, created_at, updated_at)
+                    VALUES($run, $completion, $step, $attempt, $status, 0, 0, $max, NULL, $deadline, $now, $now);
+                    """,
+                    ("$run", command.RunId), ("$completion", command.CompletionId), ("$step", command.StepId),
+                    ("$attempt", command.AttemptId), ("$status", ManagedTaskCompletionDeliveryStatus.Pending.ToString()),
+                    ("$max", command.MaxDeliveryAttempts),
+                    ("$deadline", command.DeliveryDeadline is null ? null : Format(command.DeliveryDeadline.Value)),
+                    ("$now", Format(now)));
+            }
+            AppendEvent(transaction, command.RunId, command.CommandId, ManagedTaskEventType.ResultRecorded, now);
+            return Applied(command.CommandId, identity, transaction, now);
+        }, cancellationToken);
+    }
+
+    /// <summary>Claims a completion intent once, incrementing its generation and bounded attempt count.</summary>
+    public Task<ManagedTaskLedgerWriteResult> ClaimCompletionDeliveryAsync(
+        ClaimManagedTaskCompletionDeliveryCommand command,
+        CancellationToken cancellationToken = default) =>
+        ChangeDeliveryAsync(command.CommandId, command.RunId, "claim-delivery", command, cancellationToken,
+            (transaction, snapshot, delivery, now) =>
+            {
+                if (delivery.Generation != command.ExpectedGeneration)
+                    return Result(ManagedTaskLedgerWriteOutcome.DeliveryGenerationConflict, snapshot);
+                if (delivery.Status is not (ManagedTaskCompletionDeliveryStatus.Pending or ManagedTaskCompletionDeliveryStatus.Failed))
+                    return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
+                if (delivery.DeliveryDeadline is { } deadline && deadline <= now)
+                {
+                    UpdateDelivery(transaction, delivery, ManagedTaskCompletionDeliveryStatus.Discarded,
+                        delivery.Generation + 1, delivery.DeliveryAttempts, "delivery deadline expired", now);
+                    return AppliedDelivery(command.CommandId, command.RunId, command, transaction, now,
+                        ManagedTaskLedgerWriteOutcome.Expired);
+                }
+                if (delivery.DeliveryAttempts >= delivery.MaxDeliveryAttempts)
+                    return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
+                UpdateDelivery(transaction, delivery, ManagedTaskCompletionDeliveryStatus.InProgress,
+                    delivery.Generation + 1, delivery.DeliveryAttempts + 1, delivery.LastFailure, now);
+                return AppliedDelivery(command.CommandId, command.RunId, command, transaction, now);
+            });
+
+    /// <summary>Requeues interrupted delivery after restart and advances the generation fence.</summary>
+    public Task<ManagedTaskLedgerWriteResult> RecoverCompletionDeliveryAsync(
+        RecoverManagedTaskCompletionDeliveryCommand command,
+        CancellationToken cancellationToken = default) =>
+        ChangeDeliveryAsync(command.CommandId, command.RunId, "recover-delivery", command, cancellationToken,
+            (transaction, snapshot, delivery, now) =>
+            {
+                if (delivery.Generation != command.ExpectedGeneration)
+                    return Result(ManagedTaskLedgerWriteOutcome.DeliveryGenerationConflict, snapshot);
+                if (delivery.Status != ManagedTaskCompletionDeliveryStatus.InProgress)
+                    return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
+                var finalAttemptExhausted = delivery.DeliveryAttempts >= delivery.MaxDeliveryAttempts;
+                var interruptionFailure = finalAttemptExhausted
+                    ? "delivery interrupted while final allowed attempt was in progress"
+                    : "delivery interrupted while attempt was in progress";
+                var recoveredStatus = finalAttemptExhausted
+                    ? ManagedTaskCompletionDeliveryStatus.Suspended
+                    : ManagedTaskCompletionDeliveryStatus.Pending;
+                UpdateDelivery(transaction, delivery, recoveredStatus,
+                    delivery.Generation + 1, delivery.DeliveryAttempts, interruptionFailure, now);
+                return AppliedDelivery(command.CommandId, command.RunId, command, transaction, now);
+            });
+
+    /// <summary>Commits delivered or failed requester notification under the claiming generation.</summary>
+    public Task<ManagedTaskLedgerWriteResult> CompleteCompletionDeliveryAsync(
+        CompleteManagedTaskCompletionDeliveryCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        if (command.Status is not (ManagedTaskCompletionDeliveryStatus.Delivered or ManagedTaskCompletionDeliveryStatus.Failed))
+            throw new ArgumentException("Delivery completion must be delivered or failed.", nameof(command));
+        if (command.Status == ManagedTaskCompletionDeliveryStatus.Failed && string.IsNullOrEmpty(command.LastFailure))
+            throw new ArgumentException("Failed delivery requires the exact failure.", nameof(command));
+        return ChangeDeliveryAsync(command.CommandId, command.RunId, "complete-delivery", command, cancellationToken,
+            (transaction, snapshot, delivery, now) =>
+            {
+                if (delivery.Generation != command.ExpectedGeneration)
+                    return Result(ManagedTaskLedgerWriteOutcome.DeliveryGenerationConflict, snapshot);
+                if (delivery.Status != ManagedTaskCompletionDeliveryStatus.InProgress)
+                    return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
+                var status = command.Status == ManagedTaskCompletionDeliveryStatus.Failed
+                    && delivery.DeliveryAttempts >= delivery.MaxDeliveryAttempts
+                    ? ManagedTaskCompletionDeliveryStatus.Suspended
+                    : command.Status;
+                UpdateDelivery(transaction, delivery, status, delivery.Generation,
+                    delivery.DeliveryAttempts, command.LastFailure, now);
+                return AppliedDelivery(command.CommandId, command.RunId, command, transaction, now);
+            });
+    }
+
+    /// <summary>Completes cleanup independently from execution, acceptance, and requester delivery.</summary>
+    public Task<ManagedTaskLedgerWriteResult> CompleteResultCleanupAsync(
+        CompleteManagedTaskResultCleanupCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        var identity = CommandIdentity.Create("complete-result-cleanup", command.RunId, command);
+        return WriteAsync(command.CommandId, identity, (transaction, now) =>
+        {
+            var duplicate = ReadDuplicate(command.CommandId, identity, transaction);
+            if (duplicate is not null)
+                return duplicate;
+            var snapshot = ReadSnapshot(command.RunId, transaction);
+            if (snapshot is null)
+                return NotFound();
+            var result = snapshot.Results.SingleOrDefault(item =>
+                item.StepId == command.StepId && item.AttemptId == command.AttemptId);
+            if (result is null)
+                return Result(ManagedTaskLedgerWriteOutcome.AttemptNotFound, snapshot);
+            if (result.AttemptEpoch != command.ExpectedAttemptEpoch)
+                return Result(ManagedTaskLedgerWriteOutcome.EpochConflict, snapshot);
+            if (result.CleanupStatus == ManagedTaskResultCleanupStatus.Completed)
+                return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
+            Execute(transaction, """
+                UPDATE managed_task_result SET cleanup_status=$status
+                WHERE run_id=$run AND step_id=$step AND attempt_id=$attempt AND attempt_epoch=$epoch;
+                """, ("$status", ManagedTaskResultCleanupStatus.Completed.ToString()), ("$run", command.RunId),
+                ("$step", command.StepId), ("$attempt", command.AttemptId),
+                ("$epoch", command.ExpectedAttemptEpoch));
+            AppendEvent(transaction, command.RunId, command.CommandId, ManagedTaskEventType.ResultCleanupCompleted, now);
+            return Applied(command.CommandId, identity, transaction, now);
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Reads accepted completion intents for at-least-once replay. Callers deduplicate with CompletionId;
+    /// the ledger does not claim exactly-once external execution or delivery.
+    /// </summary>
+    public async Task<IReadOnlyList<ManagedTaskUndeliveredResult>> GetUndeliveredAcceptedResultsAsync(
+        int maxResults = 100,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxResults, 1);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT d.run_id, d.completion_id, d.step_id, d.attempt_id, d.status, d.generation,
+                       d.delivery_attempts, d.max_delivery_attempts, d.last_failure, d.delivery_deadline,
+                       d.created_at, d.updated_at,
+                       r.attempt_epoch, r.execution_outcome, r.result_reference, r.schema_validation,
+                       r.business_acceptance, r.cleanup_status, r.recorded_at
+                FROM managed_task_completion_delivery d
+                JOIN managed_task_result r ON r.run_id=d.run_id AND r.step_id=d.step_id AND r.attempt_id=d.attempt_id
+                WHERE d.status IN ($pending, $inProgress, $failed)
+                  AND r.business_acceptance=$accepted
+                ORDER BY d.created_at, d.run_id, d.completion_id
+                LIMIT $maxResults;
+                """;
+            command.Parameters.AddWithValue("$pending", ManagedTaskCompletionDeliveryStatus.Pending.ToString());
+            command.Parameters.AddWithValue("$inProgress", ManagedTaskCompletionDeliveryStatus.InProgress.ToString());
+            command.Parameters.AddWithValue("$failed", ManagedTaskCompletionDeliveryStatus.Failed.ToString());
+            command.Parameters.AddWithValue("$accepted", ManagedTaskResultAcceptance.Accepted.ToString());
+            command.Parameters.AddWithValue("$maxResults", maxResults);
+            using var reader = command.ExecuteReader();
+            var rows = new List<ManagedTaskUndeliveredResult>();
+            while (reader.Read())
+            {
+                var delivery = ReadDelivery(reader, 0);
+                var result = new ManagedTaskResultRecord(reader.GetString(0), reader.GetString(2), reader.GetString(3),
+                    reader.GetInt64(12), Enum.Parse<ManagedTaskAttemptStatus>(reader.GetString(13)),
+                    reader.IsDBNull(14) ? null : reader.GetString(14),
+                    Enum.Parse<ManagedTaskResultSchemaValidation>(reader.GetString(15)),
+                    Enum.Parse<ManagedTaskResultAcceptance>(reader.GetString(16)),
+                    Enum.Parse<ManagedTaskResultCleanupStatus>(reader.GetString(17)), Parse(reader.GetString(18)));
+                rows.Add(new(result, delivery));
+            }
+            return rows;
+        }
+        finally { _gate.Release(); }
+    }
+
     /// <summary>Reads a consistent snapshot of a run, or <see langword="null"/> when it is absent.</summary>
     public async Task<ManagedTaskRunSnapshot?> GetRunAsync(string runId, CancellationToken cancellationToken = default)
     {
@@ -331,6 +579,70 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
         finally { _gate.Release(); _gate.Dispose(); }
     }
 
+    private Task<ManagedTaskLedgerWriteResult> ChangeDeliveryAsync<T>(
+        string commandId,
+        string runId,
+        string kind,
+        T payload,
+        CancellationToken cancellationToken,
+        Func<SqliteTransaction, ManagedTaskRunSnapshot, ManagedTaskCompletionDeliveryRecord, DateTimeOffset, ManagedTaskLedgerWriteResult> body)
+    {
+        var identity = CommandIdentity.Create(kind, runId, payload);
+        return WriteAsync(commandId, identity, (transaction, now) =>
+        {
+            var duplicate = ReadDuplicate(commandId, identity, transaction);
+            if (duplicate is not null)
+                return duplicate;
+            var snapshot = ReadSnapshot(runId, transaction);
+            if (snapshot is null)
+                return NotFound();
+            var completionId = payload switch
+            {
+                ClaimManagedTaskCompletionDeliveryCommand value => value.CompletionId,
+                RecoverManagedTaskCompletionDeliveryCommand value => value.CompletionId,
+                CompleteManagedTaskCompletionDeliveryCommand value => value.CompletionId,
+                _ => throw new InvalidOperationException("Unsupported delivery command."),
+            };
+            var delivery = snapshot.CompletionDeliveries.SingleOrDefault(item => item.CompletionId == completionId);
+            return delivery is null
+                ? Result(ManagedTaskLedgerWriteOutcome.CompletionDeliveryNotFound, snapshot)
+                : body(transaction, snapshot, delivery, now);
+        }, cancellationToken);
+    }
+
+    private ManagedTaskLedgerWriteResult AppliedDelivery<T>(
+        string commandId,
+        string runId,
+        T payload,
+        SqliteTransaction transaction,
+        DateTimeOffset now,
+        ManagedTaskLedgerWriteOutcome outcome = ManagedTaskLedgerWriteOutcome.Applied)
+    {
+        AppendEvent(transaction, runId, commandId, ManagedTaskEventType.CompletionDeliveryChanged, now);
+        RecordCommand(transaction, commandId, CommandIdentity.Create(
+            payload is ClaimManagedTaskCompletionDeliveryCommand ? "claim-delivery" :
+            payload is RecoverManagedTaskCompletionDeliveryCommand ? "recover-delivery" : "complete-delivery",
+            runId, payload), now);
+        return Result(outcome, RequireSnapshot(runId, transaction));
+    }
+
+    private void UpdateDelivery(
+        SqliteTransaction transaction,
+        ManagedTaskCompletionDeliveryRecord delivery,
+        ManagedTaskCompletionDeliveryStatus status,
+        long generation,
+        int attempts,
+        string? failure,
+        DateTimeOffset now) =>
+        Execute(transaction, """
+            UPDATE managed_task_completion_delivery
+            SET status=$status, generation=$generation, delivery_attempts=$attempts,
+                last_failure=$failure, updated_at=$now
+            WHERE run_id=$run AND completion_id=$completion;
+            """, ("$status", status.ToString()), ("$generation", generation), ("$attempts", attempts),
+            ("$failure", failure), ("$now", Format(now)), ("$run", delivery.RunId),
+            ("$completion", delivery.CompletionId));
+
     private async Task<ManagedTaskLedgerWriteResult> WriteAsync(
         string commandId,
         CommandIdentity identity,
@@ -346,8 +658,8 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
             // Together with conditional UPDATE predicates this prevents a second ledger instance
             // from validating against one revision and later committing against another.
             using var transaction = _connection.BeginTransaction(deferred: false);
-            var result = body(transaction, DateTimeOffset.UtcNow);
-            if (result.Outcome != ManagedTaskLedgerWriteOutcome.Applied)
+            var result = body(transaction, _timeProvider.GetUtcNow());
+            if (result.Outcome is not (ManagedTaskLedgerWriteOutcome.Applied or ManagedTaskLedgerWriteOutcome.Expired))
             {
                 transaction.Rollback();
                 return result;
@@ -425,6 +737,35 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
                 payload_fingerprint TEXT NOT NULL,
                 completed_at TEXT NOT NULL,
                 FOREIGN KEY(run_id) REFERENCES managed_task_run(run_id));
+            CREATE TABLE IF NOT EXISTS managed_task_result(
+                run_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                attempt_epoch INTEGER NOT NULL,
+                execution_outcome TEXT NOT NULL,
+                result_reference TEXT NULL,
+                schema_validation TEXT NOT NULL,
+                business_acceptance TEXT NOT NULL,
+                cleanup_status TEXT NOT NULL,
+                recorded_at TEXT NOT NULL,
+                PRIMARY KEY(run_id, step_id, attempt_id),
+                FOREIGN KEY(run_id, step_id, attempt_id) REFERENCES managed_task_attempt(run_id, step_id, attempt_id));
+            CREATE TABLE IF NOT EXISTS managed_task_completion_delivery(
+                run_id TEXT NOT NULL,
+                completion_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                delivery_attempts INTEGER NOT NULL,
+                max_delivery_attempts INTEGER NOT NULL,
+                last_failure TEXT NULL,
+                delivery_deadline TEXT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(run_id, completion_id),
+                UNIQUE(run_id, step_id, attempt_id),
+                FOREIGN KEY(run_id, step_id, attempt_id) REFERENCES managed_task_result(run_id, step_id, attempt_id));
             """);
         Execute(transaction, $"PRAGMA user_version = {CurrentSchemaVersion};");
         transaction.Commit();
@@ -511,9 +852,55 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
                     reader.IsDBNull(4) ? null : reader.GetString(4), Parse(reader.GetString(5)), Parse(reader.GetString(6))));
             }
         }
+        var results = new List<ManagedTaskResultRecord>();
+        using (var command = _connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT step_id, attempt_id, attempt_epoch, execution_outcome, result_reference,
+                       schema_validation, business_acceptance, cleanup_status, recorded_at
+                FROM managed_task_result WHERE run_id=$run ORDER BY step_id, attempt_epoch;
+                """;
+            command.Parameters.AddWithValue("$run", runId);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                results.Add(new(runId, reader.GetString(0), reader.GetString(1), reader.GetInt64(2),
+                    Enum.Parse<ManagedTaskAttemptStatus>(reader.GetString(3)),
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    Enum.Parse<ManagedTaskResultSchemaValidation>(reader.GetString(5)),
+                    Enum.Parse<ManagedTaskResultAcceptance>(reader.GetString(6)),
+                    Enum.Parse<ManagedTaskResultCleanupStatus>(reader.GetString(7)), Parse(reader.GetString(8))));
+            }
+        }
+
+        var deliveries = new List<ManagedTaskCompletionDeliveryRecord>();
+        using (var command = _connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT run_id, completion_id, step_id, attempt_id, status, generation, delivery_attempts,
+                       max_delivery_attempts, last_failure, delivery_deadline, created_at, updated_at
+                FROM managed_task_completion_delivery WHERE run_id=$run ORDER BY created_at, completion_id;
+                """;
+            command.Parameters.AddWithValue("$run", runId);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+                deliveries.Add(ReadDelivery(reader, 0));
+        }
         return new(run, new ManagedTaskValueList<ManagedTaskStepRecord>(steps),
-            new ManagedTaskValueList<ManagedTaskAttemptRecord>(attempts));
+            new ManagedTaskValueList<ManagedTaskAttemptRecord>(attempts),
+            new ManagedTaskValueList<ManagedTaskResultRecord>(results),
+            new ManagedTaskValueList<ManagedTaskCompletionDeliveryRecord>(deliveries));
     }
+
+    private static ManagedTaskCompletionDeliveryRecord ReadDelivery(SqliteDataReader reader, int offset) =>
+        new(reader.GetString(offset), reader.GetString(offset + 1), reader.GetString(offset + 2),
+            reader.GetString(offset + 3), Enum.Parse<ManagedTaskCompletionDeliveryStatus>(reader.GetString(offset + 4)),
+            reader.GetInt64(offset + 5), reader.GetInt32(offset + 6), reader.GetInt32(offset + 7),
+            reader.IsDBNull(offset + 8) ? null : reader.GetString(offset + 8),
+            reader.IsDBNull(offset + 9) ? null : Parse(reader.GetString(offset + 9)),
+            Parse(reader.GetString(offset + 10)), Parse(reader.GetString(offset + 11)));
 
     private void RecordCommand(
         SqliteTransaction transaction,

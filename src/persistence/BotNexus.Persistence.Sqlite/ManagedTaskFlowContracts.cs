@@ -149,6 +149,9 @@ public enum ManagedTaskEventType
     AttemptAdmitted,
     AttemptCommitted,
     RunCancelled,
+    ResultRecorded,
+    CompletionDeliveryChanged,
+    ResultCleanupCompleted,
 }
 
 /// <summary>Stable outcomes returned by fenced ledger writes.</summary>
@@ -163,6 +166,12 @@ public enum ManagedTaskLedgerWriteOutcome
     Terminal,
     RunNotFound,
     StepNotFound,
+    ResultAlreadyRecorded,
+    CompletionDeliveryNotFound,
+    DeliveryGenerationConflict,
+    Expired,
+    ReconciliationRequired,
+    LedgerConflict,
 }
 
 /// <summary>Observer points around the durability boundary, used to verify crash semantics.</summary>
@@ -252,11 +261,123 @@ public sealed record ManagedTaskAttemptRecord(
     public bool IsRetryable => Status == ManagedTaskAttemptStatus.Failed;
 }
 
+/// <summary>Persisted output-schema validation, distinct from execution and business acceptance.</summary>
+public enum ManagedTaskResultSchemaValidation
+{
+    Valid,
+    Invalid,
+}
+
+/// <summary>Business decision about whether a terminal attempt result may drive completion.</summary>
+public enum ManagedTaskResultAcceptance
+{
+    Accepted,
+    Rejected,
+}
+
+/// <summary>Retention cleanup state, intentionally independent from requester delivery.</summary>
+public enum ManagedTaskResultCleanupStatus
+{
+    Pending,
+    Completed,
+}
+
+/// <summary>Durable requester-delivery lifecycle for an accepted result.</summary>
+public enum ManagedTaskCompletionDeliveryStatus
+{
+    Pending,
+    InProgress,
+    Delivered,
+    Failed,
+    Suspended,
+    Discarded,
+}
+
+/// <summary>Validates and accepts or rejects an already terminal attempt result.</summary>
+public sealed record RecordManagedTaskResultCommand(
+    string CommandId,
+    string RunId,
+    string StepId,
+    string AttemptId,
+    long ExpectedStepRevision,
+    long ExpectedAttemptEpoch,
+    ManagedTaskResultSchemaValidation SchemaValidation,
+    ManagedTaskResultAcceptance BusinessAcceptance,
+    string? CompletionId,
+    int MaxDeliveryAttempts,
+    DateTimeOffset? DeliveryDeadline);
+
+/// <summary>Claims pending requester delivery under its current generation fence.</summary>
+public sealed record ClaimManagedTaskCompletionDeliveryCommand(
+    string CommandId,
+    string RunId,
+    string CompletionId,
+    long ExpectedGeneration);
+
+/// <summary>Returns an interrupted in-progress delivery to replay with a new generation.</summary>
+public sealed record RecoverManagedTaskCompletionDeliveryCommand(
+    string CommandId,
+    string RunId,
+    string CompletionId,
+    long ExpectedGeneration);
+
+/// <summary>Commits one delivery outcome under the worker generation that owns it.</summary>
+public sealed record CompleteManagedTaskCompletionDeliveryCommand(
+    string CommandId,
+    string RunId,
+    string CompletionId,
+    long ExpectedGeneration,
+    ManagedTaskCompletionDeliveryStatus Status,
+    string? LastFailure);
+
+/// <summary>Marks retained result resources cleaned without changing acceptance or delivery evidence.</summary>
+public sealed record CompleteManagedTaskResultCleanupCommand(
+    string CommandId,
+    string RunId,
+    string StepId,
+    string AttemptId,
+    long ExpectedAttemptEpoch);
+
+/// <summary>Durable validation and acceptance decision for one execution outcome.</summary>
+public sealed record ManagedTaskResultRecord(
+    string RunId,
+    string StepId,
+    string AttemptId,
+    long AttemptEpoch,
+    ManagedTaskAttemptStatus ExecutionOutcome,
+    string? ResultReference,
+    ManagedTaskResultSchemaValidation SchemaValidation,
+    ManagedTaskResultAcceptance BusinessAcceptance,
+    ManagedTaskResultCleanupStatus CleanupStatus,
+    DateTimeOffset RecordedAt);
+
+/// <summary>Transactional outbox row used for at-least-once requester completion delivery.</summary>
+public sealed record ManagedTaskCompletionDeliveryRecord(
+    string RunId,
+    string CompletionId,
+    string StepId,
+    string AttemptId,
+    ManagedTaskCompletionDeliveryStatus Status,
+    long Generation,
+    int DeliveryAttempts,
+    int MaxDeliveryAttempts,
+    string? LastFailure,
+    DateTimeOffset? DeliveryDeadline,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+/// <summary>An accepted result paired with its durable replayable delivery intent.</summary>
+public sealed record ManagedTaskUndeliveredResult(
+    ManagedTaskResultRecord Result,
+    ManagedTaskCompletionDeliveryRecord Delivery);
+
 /// <summary>Consistent read of all projections belonging to one run.</summary>
 public sealed record ManagedTaskRunSnapshot(
     ManagedTaskRunRecord Run,
     ManagedTaskValueList<ManagedTaskStepRecord> Steps,
-    ManagedTaskValueList<ManagedTaskAttemptRecord> Attempts);
+    ManagedTaskValueList<ManagedTaskAttemptRecord> Attempts,
+    ManagedTaskValueList<ManagedTaskResultRecord> Results,
+    ManagedTaskValueList<ManagedTaskCompletionDeliveryRecord> CompletionDeliveries);
 
 /// <summary>Result of a write together with the durable projection, when the run exists.</summary>
 public sealed record ManagedTaskLedgerWriteResult(
