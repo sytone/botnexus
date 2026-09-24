@@ -288,6 +288,12 @@ services.AddSingleton(botNexusConfig);
 
 ## Configuration Sections
 
+### Navigating the Configuration page
+
+The web Configuration page derives its section and subsection navigation from the configuration schema. When a section has multiple `x-ui-group` groups, each group appears as an addressable subsection at `/configuration/<section>/<subsection>`. Fields without a group appear under **General**. Sections with only one subsection omit the redundant subsection navigation.
+
+Changing sections or subsections keeps the same in-progress edit buffer and does not itself mark configuration as changed. **Save Changes**, **Validate**, and **Reload** continue to apply to the whole configuration page, not only the visible subsection.
+
 ### Root: BotNexusConfig
 
 | Property | Type | Default | Description |

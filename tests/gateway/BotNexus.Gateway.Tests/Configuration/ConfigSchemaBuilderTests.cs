@@ -117,6 +117,17 @@ public sealed class ConfigSchemaBuilderTests
     }
 
     [Fact]
+    public void Build_GatewayLargeObjects_HaveDedicatedSubsectionGroups()
+    {
+        var schema = BuildSchema();
+
+        GetPropertyNode(schema, "gateway", "sessionStore")["x-ui-group"]!.GetValue<string>()
+            .ShouldBe("session-store");
+        GetPropertyNode(schema, "gateway", "locations")["x-ui-group"]!.GetValue<string>()
+            .ShouldBe("locations");
+    }
+
+    [Fact]
     public void Build_DeeplyNestedObject_Recurses()
     {
         var schema = BuildSchema();

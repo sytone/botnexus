@@ -447,6 +447,92 @@ public sealed class SchemaFormTests : IDisposable
         Assert.Equal("Gateway", sections[0].Label);
     }
 
+    [Fact]
+    public void Subsections_are_schema_derived_with_general_first_and_group_labels()
+    {
+        var gateway = new JsonObject
+        {
+            ["type"] = "object",
+            ["x-ui-label"] = "Gateway",
+            ["properties"] = new JsonObject
+            {
+                ["listenUrl"] = Scalar("string", "text", "Listen URL", order: 1),
+                ["retention"] = Scalar("string", "text", "Retention", order: 2, group: "tool-result-persistence"),
+                ["limit"] = Scalar("integer", "number", "Limit", order: 3, group: "rate-limit"),
+            },
+        };
+        var cut = Render(
+            Envelope(new JsonObject { ["gateway"] = gateway }),
+            new JsonObject
+            {
+                ["gateway"] = new JsonObject { ["listenUrl"] = "http://x", ["retention"] = "short", ["limit"] = 5 },
+            });
+
+        var subsections = cut.Instance.Subsections("gateway");
+
+        Assert.Equal(new[] { "general", "tool-result-persistence", "rate-limit" }, subsections.Select(s => s.Key));
+        Assert.Equal(new[] { "General", "Tool result persistence", "Rate limit" }, subsections.Select(s => s.Label));
+    }
+
+    [Fact]
+    public void SubsectionKey_renders_only_that_group_with_canonical_full_paths()
+    {
+        var gateway = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["listenUrl"] = Scalar("string", "text", "Listen URL"),
+                ["retention"] = Scalar("string", "text", "Retention", group: "storage"),
+            },
+        };
+        var schema = Envelope(new JsonObject { ["gateway"] = gateway });
+        var value = new JsonObject
+        {
+            ["gateway"] = new JsonObject { ["listenUrl"] = "http://x", ["retention"] = "short" },
+        };
+        string? changedPath = null;
+        var cut = _ctx.Render<SchemaForm>(p =>
+        {
+            p.Add(c => c.Schema, schema);
+            p.Add(c => c.Value, value);
+            p.Add(c => c.SectionKey, "gateway");
+            p.Add(c => c.SubsectionKey, "storage");
+            p.Add(c => c.PathChanged, EventCallback.Factory.Create<string>(this, path => changedPath = path));
+        });
+
+        Assert.Empty(cut.FindAll("[data-testid='field-gateway.listenUrl']"));
+        cut.Find("[data-testid='field-gateway.retention'] input").Change("long");
+        Assert.Equal("gateway.retention", changedPath);
+    }
+
+    [Fact]
+    public void Unknown_subsection_falls_back_to_first_descriptor()
+    {
+        var gateway = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["listenUrl"] = Scalar("string", "text", "Listen URL"),
+                ["retention"] = Scalar("string", "text", "Retention", group: "storage"),
+            },
+        };
+        var cut = _ctx.Render<SchemaForm>(p =>
+        {
+            p.Add(c => c.Schema, Envelope(new JsonObject { ["gateway"] = gateway }));
+            p.Add(c => c.Value, new JsonObject
+            {
+                ["gateway"] = new JsonObject { ["listenUrl"] = "http://x", ["retention"] = "short" },
+            });
+            p.Add(c => c.SectionKey, "gateway");
+            p.Add(c => c.SubsectionKey, "missing");
+        });
+
+        cut.Find("[data-testid='field-gateway.listenUrl'] input");
+        Assert.Empty(cut.FindAll("[data-testid='field-gateway.retention']"));
+    }
+
     // -- 8. Dynamic option sources (#1893) ----------------------------------
 
     // A providers dictionary whose entry value has a defaultModel select sourced from "models".

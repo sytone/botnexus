@@ -5,6 +5,7 @@ using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
@@ -160,6 +161,69 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
         // And now the Gateway fields must be gone -- only the Providers subtree renders.
         Assert.Empty(cut.FindAll("[data-testid='field-gateway.listenUrl']"));
         Assert.Empty(cut.FindAll("[data-testid='field-cron.enabled']"));
+    }
+
+    [Fact]
+    public void Grouped_section_renders_addressable_subsection_navigation_without_marking_dirty()
+    {
+        var schema = BuildSchema();
+        var gateway = schema["schema"]!["properties"]!["gateway"]!.AsObject();
+        var gatewayProperties = gateway["properties"]!.AsObject();
+        gatewayProperties["listenUrl"]!["x-ui-group"] = "network";
+        gatewayProperties["logLevel"]!["x-ui-group"] = "logging";
+        ConfigureServices(new FakeConfigApiHandler(schema, SampleConfig()));
+
+        var cut = _ctx.Render<Configuration>(parameters => parameters
+            .Add(component => component.Section, "gateway")
+            .Add(component => component.Subsection, "logging"));
+
+        cut.WaitForAssertion(() =>
+        {
+            var subsections = cut.FindAll(".config-subsection-item");
+            Assert.Equal(new[] { "network", "logging" }, subsections.Select(element => element.GetAttribute("data-subsection")));
+            cut.Find("[data-testid='field-gateway.logLevel'] select");
+            Assert.Empty(cut.FindAll("[data-testid='field-gateway.listenUrl']"));
+            cut.Find("button.primary").HasAttribute("disabled").ShouldBeTrue();
+        });
+
+        cut.Find(".config-subsection-item[data-subsection='network']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Find("[data-testid='field-gateway.listenUrl'] input");
+            cut.Find("button.primary").HasAttribute("disabled").ShouldBeTrue();
+            _ctx.Services.GetRequiredService<NavigationManager>().Uri.ShouldEndWith("/configuration/gateway/network");
+        });
+    }
+
+    [Fact]
+    public void Simple_section_omits_redundant_subsection_navigation()
+    {
+        ConfigureServices(new FakeConfigApiHandler(BuildSchema(), SampleConfig()));
+
+        var cut = _ctx.Render<Configuration>(parameters => parameters
+            .Add(component => component.Section, "cron"));
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-cron.enabled']"));
+        Assert.Empty(cut.FindAll(".config-subsection-nav"));
+    }
+
+    [Fact]
+    public void Invalid_subsection_route_falls_back_to_first_schema_subsection()
+    {
+        var schema = BuildSchema();
+        var gatewayProperties = schema["schema"]!["properties"]!["gateway"]!["properties"]!.AsObject();
+        gatewayProperties["listenUrl"]!["x-ui-group"] = "network";
+        gatewayProperties["logLevel"]!["x-ui-group"] = "logging";
+        ConfigureServices(new FakeConfigApiHandler(schema, SampleConfig()));
+
+        var cut = _ctx.Render<Configuration>(parameters => parameters
+            .Add(component => component.Section, "gateway")
+            .Add(component => component.Subsection, "missing"));
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-gateway.listenUrl'] input"));
+        Assert.Empty(cut.FindAll("[data-testid='field-gateway.logLevel']"));
+        cut.Find(".config-subsection-item[data-subsection='network']").ClassList.ShouldContain("active");
     }
 
     [Fact]

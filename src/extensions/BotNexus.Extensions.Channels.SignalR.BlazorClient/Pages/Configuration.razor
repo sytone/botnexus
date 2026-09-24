@@ -1,5 +1,6 @@
 @page "/configuration"
 @page "/configuration/{Section}"
+@page "/configuration/{Section}/{Subsection}"
 @inject PlatformConfigService ConfigService
 @inject IJSRuntime JS
 @implements IDisposable
@@ -53,6 +54,20 @@
                 }
             </nav>
             <div class="config-panel-canvas">
+                @if (ActiveSubsections.Count > 1)
+                {
+                    <nav class="config-subsection-nav" aria-label="Configuration subsections">
+                        @foreach (var (key, label) in ActiveSubsections)
+                        {
+                            <button type="button"
+                                    class="config-subsection-item @(string.Equals(key, ActiveSubsection, StringComparison.OrdinalIgnoreCase) ? "active" : "")"
+                                    data-subsection="@key"
+                                    @onclick="() => SelectSubsection(key)">
+                                @label
+                            </button>
+                        }
+                    </nav>
+                }
                 @if (string.Equals(ActiveSection, ExtensionRepositoriesSectionKey, StringComparison.OrdinalIgnoreCase))
                 {
                     <ExtensionRepositoriesSection />
@@ -124,7 +139,7 @@
                 {
                     @* The selected schema section is rendered by the generic SchemaForm. Secrets
                        intentionally bypass it so they can never enter the config save payload. *@
-                    <SchemaForm Schema="_schema" Value="_config" SectionKey="@ActiveSection" ValueChanged="OnConfigChanged" PathChanged="OnPathChanged" />
+                    <SchemaForm Schema="_schema" Value="_config" SectionKey="@ActiveSection" SubsectionKey="@ActiveSubsection" ValueChanged="OnConfigChanged" PathChanged="OnPathChanged" />
                 }
             </div>
         </div>

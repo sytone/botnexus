@@ -78,6 +78,14 @@ else
     [Parameter]
     public string? SectionKey { get; set; }
 
+    /// <summary>
+    /// Optional schema-derived group within <see cref="SectionKey"/>. Ungrouped fields belong to
+    /// the deterministic <c>general</c> subsection. Unknown keys fall back to the first descriptor.
+    /// </summary>
+    [Parameter]
+    public string? SubsectionKey { get; set; }
+
+    private const string GeneralSubsectionKey = "general";
     private const string SecretSentinel = "***";
 
     private JsonObject? RootProperties
@@ -87,13 +95,64 @@ else
             var props = Schema?["schema"]?["properties"]?.AsObject();
             if (props is null || string.IsNullOrEmpty(SectionKey))
                 return props;
-            // Section view: narrow the root to just the selected property so the renderer draws a
-            // single section. Unknown key -> fall back to the full tree rather than a blank form.
+            // Section view: narrow the root to just the selected property so canonical paths still
+            // start at the real root. A subsection narrows only that cloned node's direct fields.
             if (props.TryGetPropertyValue(SectionKey, out var node) && node is JsonObject obj)
-                return new JsonObject { [SectionKey] = obj.DeepClone() };
+            {
+                var section = obj.DeepClone().AsObject();
+                var subsections = Subsections(SectionKey);
+                if (subsections.Count > 1 && section["properties"] is JsonObject sectionProperties)
+                {
+                    var selected = subsections.FirstOrDefault(item =>
+                        string.Equals(item.Key, SubsectionKey, StringComparison.OrdinalIgnoreCase));
+                    if (string.IsNullOrEmpty(selected.Key))
+                        selected = subsections[0];
+                    section["properties"] = FilterProperties(sectionProperties, selected.Key);
+                }
+                return new JsonObject { [SectionKey] = section };
+            }
             return props;
         }
     }
+
+    private static JsonObject FilterProperties(JsonObject properties, string subsectionKey)
+    {
+        var filtered = new JsonObject();
+        foreach (var (key, value) in properties)
+        {
+            if (value is not JsonObject node || !string.Equals(SubsectionKeyFor(node), subsectionKey, StringComparison.OrdinalIgnoreCase))
+                continue;
+            filtered[key] = node.DeepClone();
+        }
+        return filtered;
+    }
+
+    /// <summary>
+    /// Ordered subsection descriptors for a root section. They are derived from direct child
+    /// <c>x-ui-group</c> values, so generated/synthetic groups appear without page hardcoding.
+    /// </summary>
+    public IReadOnlyList<(string Key, string Label)> Subsections(string sectionKey) =>
+        DescribeSubsections(Schema, sectionKey);
+
+    public static IReadOnlyList<(string Key, string Label)> DescribeSubsections(JsonObject? schema, string sectionKey)
+    {
+        var properties = schema?["schema"]?["properties"]?[sectionKey]?["properties"]?.AsObject();
+        if (properties is null)
+            return [];
+
+        return OrderAndGroup(properties)
+            .Select(group =>
+            {
+                var key = string.IsNullOrEmpty(group.Key) ? GeneralSubsectionKey : group.Key;
+                return (Key: key, Label: key == GeneralSubsectionKey ? "General" : GroupLabel(key));
+            })
+            .GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+    }
+
+    private static string SubsectionKeyFor(JsonObject node) =>
+        node["x-ui-group"]?.GetValue<string>() is { Length: > 0 } group ? group : GeneralSubsectionKey;
 
     /// <summary>Ordered root section descriptors (key + label) for a sidebar/nav. Ignores <see cref="SectionKey"/>.</summary>
     public IReadOnlyList<(string Key, string Label)> RootSections()

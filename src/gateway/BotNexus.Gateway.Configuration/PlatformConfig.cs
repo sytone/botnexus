@@ -610,9 +610,9 @@ public sealed class GatewaySettingsConfig
     [Display(
         Name = "Session store",
         Description = "Backend used to persist sessions and conversation history.",
-        GroupName = "Storage",
-        Order = 2)]
-    [ConfigField(Group = "storage", Order = 2)]
+        GroupName = "Session store",
+        Order = 0)]
+    [ConfigField(Group = "session-store", Order = 0)]
     public SessionStoreConfig? SessionStore { get; set; }
 
     /// <summary>Interval in minutes between periodic PASSIVE SQLite WAL checkpoints (#1438). Default 30.</summary>
@@ -753,9 +753,9 @@ public sealed class GatewaySettingsConfig
     [Display(
         Name = "Locations",
         Description = "Named locations registry used for resource management and path resolution.",
-        GroupName = "Storage",
-        Order = 3)]
-    [ConfigField(Group = "storage", Order = 3)]
+        GroupName = "Locations",
+        Order = 0)]
+    [ConfigField(Group = "locations", Order = 0)]
     public Dictionary<string, LocationConfig>? Locations { get; set; }
     /// <summary>Optional explicit cross-world communication permissions.</summary>
     [Display(
