@@ -140,6 +140,12 @@ public sealed class BotNexusHome : IVerifiedHome
         "USER.md"
     ];
 
+    private static readonly string[] TrailguideWorkspaceScaffoldFiles =
+    [
+        "AGENTS.md",
+        "SOUL.md"
+    ];
+
     private static readonly string[] LegacyWorkspaceFiles =
     [
         .. WorkspaceScaffoldFiles,
@@ -329,28 +335,31 @@ public sealed class BotNexusHome : IVerifiedHome
         _fileSystem.Directory.CreateDirectory(agentDirectory);
 
         if (isFirstCreation)
-            ScaffoldAgentWorkspace(agentDirectory);
+            ScaffoldAgentWorkspace(agentDirectory, agentName.Trim());
         else
             MigrateLegacyWorkspace(agentDirectory);
 
         return agentDirectory;
     }
 
-    private void ScaffoldAgentWorkspace(string agentDirectory)
+    private void ScaffoldAgentWorkspace(string agentDirectory, string? agentName = null)
     {
         var workspacePath = Path.Combine(agentDirectory, "workspace");
         _fileSystem.Directory.CreateDirectory(workspacePath);
         _fileSystem.Directory.CreateDirectory(Path.Combine(agentDirectory, "data", "sessions"));
 
+        var isTrailguide = string.Equals(agentName, "nexus-trailguide", StringComparison.OrdinalIgnoreCase);
+        var scaffoldFiles = isTrailguide ? TrailguideWorkspaceScaffoldFiles : WorkspaceScaffoldFiles;
+        var resourceFolder = isTrailguide ? "Templates.Trailguide" : "Templates";
         var assembly = typeof(BotNexusHome).Assembly;
-        foreach (var file in WorkspaceScaffoldFiles)
+        foreach (var file in scaffoldFiles)
         {
             var path = Path.Combine(workspacePath, file);
             if (_fileSystem.File.Exists(path))
                 continue;
 
             var resourceName = assembly.GetManifestResourceNames()
-                .FirstOrDefault(n => n.EndsWith($"Templates.{file}", StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(n => n.EndsWith($"{resourceFolder}.{file}", StringComparison.OrdinalIgnoreCase));
 
             if (resourceName is not null)
             {
