@@ -73,7 +73,8 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
 
         foreach (var (providerName, providerConfig) in config.Providers)
         {
-            if (!providerConfig.Enabled)
+            if (!providerConfig.Enabled ||
+                string.Equals(providerConfig.Type, "github-copilot", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var apiName = string.IsNullOrWhiteSpace(providerConfig.ResolveChatApi())

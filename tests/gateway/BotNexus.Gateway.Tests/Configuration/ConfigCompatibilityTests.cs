@@ -142,6 +142,63 @@ public sealed class ConfigCompatibilityTests
         }
     }
 
+    [Fact]
+    public void NamedBuiltInProvider_TypeIsAdditiveAndOldConfigsRemainUnchanged()
+    {
+        var config = System.Text.Json.JsonSerializer.Deserialize<PlatformConfig>(
+            """
+            {
+              "providers": {
+                "copilot-work": {
+                  "type": "github-copilot",
+                  "apiKey": "auth:copilot-work"
+                }
+              }
+            }
+            """,
+            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        config.ShouldNotBeNull();
+        config.Providers.ShouldNotBeNull();
+        config.Providers["copilot-work"].Type.ShouldBe("github-copilot");
+        PlatformConfigLoader.Load(FixturePath).Providers!["github-copilot"].Type.ShouldBeNull();
+    }
+
+    [Fact]
+    public void NamedCopilotInstance_RegistersCompleteBuiltInRoutesUnderInstanceIdentity()
+    {
+        var registry = new ModelRegistry();
+        string? resolvedProvider = null;
+
+        new BuiltInModels().RegisterCopilotInstance(
+            registry,
+            "copilot-work",
+            provider =>
+            {
+                resolvedProvider = provider;
+                return "https://api.enterprise.githubcopilot.com";
+            });
+
+        resolvedProvider.ShouldBe("copilot-work");
+
+        var messages = registry.GetModel("copilot-work", "claude-sonnet-4.6");
+        var completions = registry.GetModel("copilot-work", "gpt-4.1");
+        var responses = registry.GetModel("copilot-work", "gpt-5.6");
+
+        messages.ShouldNotBeNull();
+        completions.ShouldNotBeNull();
+        responses.ShouldNotBeNull();
+        messages.Provider.ShouldBe("copilot-work");
+        completions.Provider.ShouldBe("copilot-work");
+        responses.Provider.ShouldBe("copilot-work");
+        messages.Api.ShouldBe("github-copilot-messages");
+        completions.Api.ShouldBe("github-copilot-completions");
+        responses.Api.ShouldBe("github-copilot-responses");
+        messages.BaseUrl.ShouldBe("https://api.enterprise.githubcopilot.com");
+        completions.BaseUrl.ShouldBe("https://api.enterprise.githubcopilot.com");
+        responses.BaseUrl.ShouldBe("https://api.enterprise.githubcopilot.com");
+    }
+
     private static IEnumerable<string> CollectModelIds(ProviderConfig provider)
     {
         if (!string.IsNullOrWhiteSpace(provider.DefaultModel))

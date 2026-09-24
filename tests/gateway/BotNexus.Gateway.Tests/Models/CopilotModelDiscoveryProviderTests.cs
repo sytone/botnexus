@@ -100,6 +100,27 @@ public sealed class CopilotModelDiscoveryProviderTests
     }
 
     [Fact]
+    public void MapToLlmModel_NamedInstance_PreservesInstanceIdentityAndWireApi()
+    {
+        var info = new CopilotModelInfo
+        {
+            Id = "gpt-5.6",
+            Vendor = "OpenAI",
+            Capabilities = new CopilotModelCapabilities { Family = "gpt" }
+        };
+
+        var model = CopilotModelDiscoveryProvider.MapToLlmModel(
+            info,
+            "https://api.enterprise.githubcopilot.com",
+            "copilot-work");
+
+        model.ShouldNotBeNull();
+        model.Provider.ShouldBe("copilot-work");
+        model.Api.ShouldBe("github-copilot-responses");
+        model.BaseUrl.ShouldBe("https://api.enterprise.githubcopilot.com");
+    }
+
+    [Fact]
     public void MapToLlmModel_NoVision_TextOnly()
     {
         // Arrange

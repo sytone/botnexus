@@ -250,6 +250,18 @@ public sealed record ExtensionRepositoryRegistrationInfo(
 /// <summary>Provider-specific configuration.</summary>
 public sealed class ProviderConfig
 {
+    /// <summary>
+    /// Built-in provider type implemented by this configured provider instance. Null preserves the
+    /// legacy behavior where the dictionary key itself identifies the provider.
+    /// </summary>
+    [Display(
+        Name = "Type",
+        Description = "Optional built-in provider type for this named provider instance (for example, github-copilot).",
+        GroupName = "Provider",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider", Order = 0)]
+    public string? Type { get; set; }
+
     /// <summary>Whether this provider is enabled. Disabled providers are hidden from API.</summary>
     [Display(
         Name = "Enabled",
