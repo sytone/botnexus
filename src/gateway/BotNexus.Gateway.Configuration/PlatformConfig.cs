@@ -239,16 +239,45 @@ public sealed class ExtensionRepositoryRegistration
     public bool UpdatesEnabled { get; set; } = true;
 
     /// <summary>Current reconciliation state, or null before the first attempt.</summary>
+    [Display(
+        Name = "Reconciliation status",
+        Description = "Latest repository reconciliation outcome recorded by the CLI.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 4)]
     public string? ReconciliationStatus { get; set; }
+
     /// <summary>Exact commit selected by the most recent successful reconciliation.</summary>
+    [Display(
+        Name = "Resolved commit",
+        Description = "Exact Git commit selected by the most recent successful reconciliation.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 5)]
     public string? ResolvedCommit { get; set; }
+
     /// <summary>Managed clone path used by the reconciler.</summary>
+    [Display(
+        Name = "Clone path",
+        Description = "Managed local path where BotNexus materializes this repository.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 6)]
     public string? ClonePath { get; set; }
+
     /// <summary>UTC timestamp of the most recent reconciliation attempt.</summary>
+    [Display(
+        Name = "Last attempt",
+        Description = "UTC timestamp of the most recent repository reconciliation attempt.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 7)]
     public DateTimeOffset? LastAttemptUtc { get; set; }
+
     /// <summary>UTC timestamp of the most recent successful reconciliation.</summary>
+    [Display(
+        Name = "Last success",
+        Description = "UTC timestamp of the most recent successful repository reconciliation.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 8)]
     public DateTimeOffset? LastSuccessUtc { get; set; }
+
     /// <summary>Named failure and diagnostic from the most recent failed attempt.</summary>
+    [Display(
+        Name = "Latest failure",
+        Description = "Named failure and bounded diagnostic from the most recent failed reconciliation.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 9)]
     public string? LatestFailure { get; set; }
 }
 
