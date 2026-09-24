@@ -404,6 +404,7 @@ public sealed class PromptCommandsTests
         templateNames.Count.ShouldBeGreaterThan(0);
         templateNames.ShouldContain("sample-greeting.prompt.md");
         templateNames.ShouldContain("sample-simple-greeting.prompt.json");
+        templateNames.ShouldContain("import-copilot-cli-sessions.prompt.md");
     }
 
     [Fact]
@@ -427,6 +428,13 @@ public sealed class PromptCommandsTests
             copiedFiles.Length.ShouldBe(bundledTemplates.Count);
             foreach (var bundledTemplate in bundledTemplates)
                 copiedFiles.Select(Path.GetFileName).ShouldContain(bundledTemplate);
+
+            var importPrompt = await File.ReadAllTextAsync(
+                Path.Combine(promptsDir, "import-copilot-cli-sessions.prompt.md"));
+            importPrompt.ShouldContain("at least three stored turns");
+            importPrompt.ShouldContain("wait passively");
+            importPrompt.ShouldContain("wake:false");
+            importPrompt.ShouldContain("Do not use `conversation.message`");
         }
         finally
         {
