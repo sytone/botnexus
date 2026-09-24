@@ -215,7 +215,7 @@ public sealed class SqliteManagedTaskFlowLedgerContractTests : IDisposable
     }
 
     [Fact]
-    public async Task Schema_version_is_one_and_authored_definition_metadata_is_additive_not_a_workflow_dsl()
+    public async Task Schema_version_is_current_and_authored_definition_metadata_is_additive_not_a_workflow_dsl()
     {
         var metadata = new ManagedTaskAuthoredDefinition("deploy-release", 3, "repo://definitions/deploy");
         await using (var ledger = new SqliteManagedTaskFlowLedger(DbPath))
@@ -223,14 +223,14 @@ public sealed class SqliteManagedTaskFlowLedgerContractTests : IDisposable
             await ledger.CreateRunAsync(new("create-1", Specification(metadata)));
         }
 
-        SqliteManagedTaskFlowLedger.CurrentSchemaVersion.ShouldBe(1);
+        SqliteManagedTaskFlowLedger.CurrentSchemaVersion.ShouldBe(2);
 
         using var connection = new SqliteConnection($"Data Source={DbPath};Mode=ReadOnly");
         connection.Open();
 
         using var version = connection.CreateCommand();
         version.CommandText = "PRAGMA user_version;";
-        Convert.ToInt32(version.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture).ShouldBe(1);
+        Convert.ToInt32(version.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture).ShouldBe(2);
 
         using var tables = connection.CreateCommand();
         tables.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table';";
@@ -245,6 +245,8 @@ public sealed class SqliteManagedTaskFlowLedgerContractTests : IDisposable
         names.ShouldContain("managed_task_step");
         names.ShouldContain("managed_task_attempt");
         names.ShouldContain("managed_task_event");
+        names.ShouldContain("managed_task_result");
+        names.ShouldContain("managed_task_completion_delivery");
         names.ShouldAllBe(name =>
             !name.Contains("workflow", StringComparison.OrdinalIgnoreCase)
             && !name.Contains("edge", StringComparison.OrdinalIgnoreCase)
