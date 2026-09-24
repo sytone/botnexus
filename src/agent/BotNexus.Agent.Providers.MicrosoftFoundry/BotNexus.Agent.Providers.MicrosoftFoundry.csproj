@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>BotNexus.Agent.Providers.MicrosoftFoundry</RootNamespace>
+    <AssemblyName>BotNexus.Agent.Providers.MicrosoftFoundry</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Azure.Core" />
+    <PackageReference Include="Azure.Identity" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Agent.Providers.MicrosoftFoundry.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
+    <ProjectReference Include="..\BotNexus.Agent.Providers.OpenAI\BotNexus.Agent.Providers.OpenAI.csproj" />
+  </ItemGroup>
+</Project>

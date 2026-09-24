@@ -62,6 +62,9 @@ public delegate Task ResponsesStreamParse(
 /// single choke point before it lands in a persisted, user-visible exception message. Null is a
 /// deliberate no-op so an unwired provider keeps its diagnostics rather than losing them.
 /// </param>
+/// <param name="BuildRequestUri">Optional provider-owned request URI validation and construction hook.</param>
+/// <param name="AuthenticateRequest">Optional provider-owned asynchronous authentication hook.</param>
+/// <param name="ResolveApiKey">Whether the engine resolves and attaches its legacy bearer API key.</param>
 public sealed record ResponsesTransportProfile(
     string Api,
     string ActivityName,
@@ -70,4 +73,7 @@ public sealed record ResponsesTransportProfile(
     Action<HttpRequestMessage, LlmModel, IReadOnlyList<Message>, StreamOptions?> DecorateHeaders,
     Action<HttpResponseMessage, string, ISecretRedactor?> ThrowForError,
     Action<HttpResponseMessage>? OnResponseHeaders = null,
-    ISecretRedactor? SecretRedactor = null);
+    ISecretRedactor? SecretRedactor = null,
+    Func<LlmModel, Uri>? BuildRequestUri = null,
+    Func<HttpRequestMessage, CancellationToken, ValueTask>? AuthenticateRequest = null,
+    bool ResolveApiKey = true);
