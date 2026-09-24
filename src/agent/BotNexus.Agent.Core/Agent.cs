@@ -663,7 +663,9 @@ public sealed class Agent
             OnToolCallDisposition: _options.OnToolCallDisposition,
             SanitizeToolResultText: _options.SanitizeToolResultText,
             EvaluateRunCompletion: _options.EvaluateRunCompletion,
-            MaxCompletionContinuations: _options.MaxCompletionContinuations);
+            MaxCompletionContinuations: _options.MaxCompletionContinuations,
+            RecoveryCoordinator: _options.RecoveryCoordinator,
+            RecoveryAdmissionTimeout: _options.RecoveryAdmissionTimeout);
     }
 
     private Func<CancellationToken, Task<AgentContext?>>? BuildMaybeCompactDelegate()

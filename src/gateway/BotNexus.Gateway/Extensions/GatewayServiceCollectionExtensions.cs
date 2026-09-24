@@ -594,6 +594,8 @@ public static class GatewayServiceCollectionExtensions
         // restore the four-round-trips-per-turn tax the split exists to remove.
         services.TryAddSingleton<BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry>(
             _ => new BotNexus.Agent.Core.Loop.ProviderSuspensionRegistry());
+        services.TryAddSingleton<BotNexus.Agent.Core.Loop.IProviderRecoveryCoordinator>(
+            _ => new BotNexus.Agent.Core.Loop.ProviderRecoveryCoordinator());
 
         services.TryAddSingleton<ILocationResolver>(serviceProvider =>
             new DefaultLocationResolver(

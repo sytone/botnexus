@@ -97,4 +97,6 @@ public record AgentOptions(
     ToolCallDispositionDelegate? OnToolCallDisposition = null,
     Func<string, string>? SanitizeToolResultText = null,
     Loop.EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
-    int MaxCompletionContinuations = 2);
+    int MaxCompletionContinuations = 2,
+    Loop.IProviderRecoveryCoordinator? RecoveryCoordinator = null,
+    TimeSpan? RecoveryAdmissionTimeout = null);
