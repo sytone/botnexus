@@ -100,6 +100,15 @@ public interface IToolAuditSink
 /// </remarks>
 public sealed class DefaultToolAuditSink : IToolAuditSink
 {
+    private const string ToolStartPersistenceKeyPrefix = "tool-start:";
+
+    /// <summary>
+    /// Returns the stable persistence identity shared by write-ahead and streamed projections of
+    /// one provider tool invocation. The session store owns the atomic duplicate suppression.
+    /// </summary>
+    public static string? GetToolStartPersistenceKey(string? toolCallId)
+        => string.IsNullOrWhiteSpace(toolCallId) ? null : $"{ToolStartPersistenceKeyPrefix}{toolCallId}";
+
     /// <summary>
     /// The canonical serialization of "this tool was invoked with no arguments" (#2906). Persisting
     /// this instead of <c>null</c> is what makes "no args" distinguishable from "args lost" in the
@@ -134,7 +143,8 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
             // #2906: never persist NULL on a row this sink renders. An observed call with no
             // arguments records the empty object so a consumer can tell it apart from data loss.
             ToolArgs = NormalizeArguments(serializedArguments),
-            Kind = MessageKind.ToolStart
+            Kind = MessageKind.ToolStart,
+            PersistenceKey = GetToolStartPersistenceKey(toolCallId)
         };
 
     /// <inheritdoc/>
