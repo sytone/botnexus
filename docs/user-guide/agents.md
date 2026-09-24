@@ -647,12 +647,23 @@ The entry the gateway inserts is deliberately minimal. It carries only:
 | `enabled` | `true`, or `false` when no provider/model could be resolved |
 | `definitionVersion` | stamped by the reconciler |
 
-That is the whole entry. In particular the shipped template declares **no `toolIds` and no
+That is the whole configuration entry. In particular the shipped template declares **no `toolIds` and no
 Skills configuration**, so Trailguide inherits whatever `agents.defaults` your installation
-applies, the same as any other agent that omits those keys. A curated workspace, a
-least-privilege tool allowlist and bundled onboarding skills are planned but **have not
-shipped yet**; do not expect them in the entry you see today. If you want Trailguide
-constrained, set `toolIds` on it yourself — it is your entry to edit.
+applies, the same as any other agent that omits those keys. If you want Trailguide
+constrained, set `toolIds` on it yourself - it is your entry to edit.
+
+Trailguide does ship with a curated workspace corpus. On the first creation of
+`~/.botnexus/agents/nexus-trailguide/`, BotNexus writes Trailguide-specific `SOUL.md` and
+`AGENTS.md` files. Together they provide its onboarding voice, require a first-turn placement
+question, and direct it to verify the current Labs curriculum before teaching. Trailguide does
+not receive the generic `BOOTSTRAP.md` or `IDENTITY.md`; its curated files already define its
+identity and first-turn onboarding behavior.
+
+Workspace scaffolding is also insert-only. BotNexus writes the curated files only when the
+Trailguide agent directory is first created. It does not upgrade, merge, or replace an existing
+workspace on startup or on a later call, so user edits and installations that predate the curated
+corpus remain untouched. Remove or edit workspace files only when you deliberately want to manage
+that local content yourself.
 
 Because the reconciler is insert-only, any key you add is permanent: the gateway will never
 come back and rewrite it.
