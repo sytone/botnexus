@@ -565,6 +565,7 @@
             {
                 <textarea class="chat-input @ExpandingInputClass"
                           data-testid="chat-input"
+                          data-composer-context="@ComposerContextToken"
                           @ref="_inputElement"
                           @bind="_inputText"
                           @bind:event="oninput"
@@ -580,6 +581,11 @@
                         title="Expand composer"
                         aria-label="Expand composer">
                     <span aria-hidden="true">↗</span>
+                </button>
+
+                <button type="button" class="prompt-template-open-btn" data-testid="prompt-template-open"
+                        aria-haspopup="dialog" @ref="_promptTemplateOpenButton" @onclick="OpenPromptTemplatePicker" title="Insert a prompt template">
+                    Templates
                 </button>
 
                 <div class="attachment-composer">
@@ -687,6 +693,88 @@
     }
 </div>
 
+@if (_promptPickerOpen)
+{
+    <div class="prompt-template-overlay" @onclick="ClosePromptTemplatePicker">
+        <section class="prompt-template-dialog" data-testid="prompt-template-dialog" role="dialog" aria-modal="true"
+                 aria-labelledby="prompt-template-title" @ref="_promptTemplateDialog" @onclick:stopPropagation="true"
+                 @onkeydown="HandlePromptTemplateKeyDown">
+            <header>
+                <div><h3 id="prompt-template-title">Insert prompt template</h3><p>Preview first; insertion never sends.</p></div>
+                <button type="button" data-testid="prompt-template-close" aria-label="Close prompt template picker" @onclick="ClosePromptTemplatePicker">×</button>
+            </header>
+            @if (_promptTemplatesLoading)
+            {
+                <p data-testid="prompt-template-loading" role="status">Loading templates…</p>
+            }
+            else if (_promptTemplatesError is not null)
+            {
+                <p data-testid="prompt-template-error" role="alert">We couldn’t load prompt templates. Try again.</p>
+            }
+            else if (_selectedPromptTemplate is null)
+            {
+                <input data-testid="prompt-template-search" class="prompt-template-search" value="@_promptTemplateSearch"
+                       @oninput="HandlePromptTemplateSearch" @onkeydown="HandlePromptTemplateSearchKeyDown"
+                       aria-label="Search prompt templates" aria-controls="prompt-template-list"
+                       aria-activedescendant="@ActivePromptTemplateOptionId" autocomplete="off" />
+                @if (FilteredPromptTemplates.Count == 0)
+                {
+                    <p data-testid="prompt-template-empty">No prompt templates found.</p>
+                }
+                else
+                {
+                    <div id="prompt-template-list" class="prompt-template-list" role="listbox" aria-label="Prompt templates">
+                        @for (var index = 0; index < FilteredPromptTemplates.Count; index++)
+                        {
+                            var template = FilteredPromptTemplates[index];
+                            <button type="button" id="@PromptTemplateOptionId(template)" role="option" aria-selected="@(index == _promptTemplateIndex)"
+                                    class="prompt-template-option @(index == _promptTemplateIndex ? "selected" : "")"
+                                    @onclick="() => SelectPromptTemplate(template)">
+                                <strong>@template.Name</strong><span>@template.Description</span><small>@template.Source</small>
+                            </button>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                <button type="button" class="prompt-template-back" @onclick="BackToPromptTemplateList">← Templates</button>
+                <div data-testid="prompt-template-parameters" class="prompt-template-parameters">
+                    <h4>@_selectedPromptTemplate.Name</h4>
+                    @foreach (var parameter in _selectedPromptTemplate.Parameters)
+                    {
+                        <label>
+                            <span>@parameter.Name @if (parameter.Required) { <strong aria-label="required">*</strong> }</span>
+                            @if (!string.IsNullOrWhiteSpace(parameter.Description)) { <small>@parameter.Description</small> }
+                            <input data-testid="@($"prompt-template-parameter-{parameter.Name}")"
+                                   value="@PromptTemplateParameterValue(parameter.Name)"
+                                   @oninput="args => SetPromptTemplateParameter(parameter.Name, args.Value?.ToString())" />
+                        </label>
+                    }
+                </div>
+                @if (_promptTemplateGeneralError is not null)
+                {
+                    <p data-testid="prompt-template-render-error" class="prompt-template-validation" role="alert">@_promptTemplateGeneralError</p>
+                }
+                @if (_promptTemplateValidationErrors.Count > 0)
+                {
+                    <div class="prompt-template-validation" role="alert">
+                        @foreach (var error in _promptTemplateValidationErrors.SelectMany(pair => pair.Value)) { <p>@error</p> }
+                    </div>
+                }
+                @if (_promptTemplatePreview is not null)
+                {
+                    <pre data-testid="prompt-template-preview" class="prompt-template-preview">@_promptTemplatePreview</pre>
+                }
+                <footer>
+                    <button type="button" data-testid="prompt-template-preview-button" @onclick="PreviewPromptTemplate">Preview</button>
+                    <button type="button" data-testid="prompt-template-insert" @onclick="InsertPromptTemplate" disabled="@(_promptTemplatePreview is null)">Insert</button>
+                </footer>
+            }
+        </section>
+    </div>
+}
+
 <AgentConfigPanel @ref="_configPanel" AgentId="@AgentId" />
 
 @code {
@@ -731,10 +819,29 @@
             PreserveAndSwitchDraft(conversationId);
             _lastParameterConversationId = conversationId;
             _forceScrollNext = true;
+            if (_promptPickerOpen)
+                ClosePromptTemplatePicker();
         }
     }
 
     private string? _lastParameterConversationId;
+    private bool _promptPickerOpen;
+    private bool _promptTemplatesLoading;
+    private string? _promptTemplatesError;
+    private string _promptTemplateSearch = string.Empty;
+    private IReadOnlyList<PromptTemplateDescriptorDto> _promptTemplates = [];
+    private PromptTemplateDescriptorDto? _selectedPromptTemplate;
+    private int _promptTemplateIndex;
+    private readonly Dictionary<string, string> _promptTemplateParameters = new(StringComparer.Ordinal);
+    private IReadOnlyDictionary<string, string[]> _promptTemplateValidationErrors = new Dictionary<string, string[]>();
+    private string? _promptTemplatePreview;
+    private string? _promptTemplateGeneralError;
+    private string? _promptPickerConversationToken;
+    private long _promptPreviewGeneration;
+    private bool _promptPickerNeedsFocus;
+    private bool _promptPickerRestoreFocus;
+    private ElementReference _promptTemplateDialog;
+    private ElementReference _promptTemplateOpenButton;
 
     private void HandleStoreChanged()
     {
@@ -894,6 +1001,161 @@ private bool IsStreaming =>
     private DotNetObjectReference<ChatPanel>? _loadMoreRef;
 
     private bool HasDraft => !string.IsNullOrWhiteSpace(_inputText) || _attachments.Count > 0;
+    private string ComposerContextToken => $"{AgentId}:{ActiveConversationId}";
+    private string? ActivePromptTemplateOptionId => FilteredPromptTemplates.Count == 0
+        ? null
+        : PromptTemplateOptionId(FilteredPromptTemplates[Math.Min(_promptTemplateIndex, FilteredPromptTemplates.Count - 1)]);
+    private string PromptTemplateOptionId(PromptTemplateDescriptorDto template)
+    {
+        for (var index = 0; index < _promptTemplates.Count; index++)
+        {
+            if (ReferenceEquals(_promptTemplates[index], template))
+                return $"prompt-template-option-{index}";
+        }
+
+        return "prompt-template-option-unavailable";
+    }
+
+    private IReadOnlyList<PromptTemplateDescriptorDto> FilteredPromptTemplates => _promptTemplates
+        .Where(template => string.IsNullOrWhiteSpace(_promptTemplateSearch)
+            || template.Name.Contains(_promptTemplateSearch, StringComparison.OrdinalIgnoreCase)
+            || (template.Description?.Contains(_promptTemplateSearch, StringComparison.OrdinalIgnoreCase) ?? false))
+        .ToList();
+
+    private async Task OpenPromptTemplatePicker()
+    {
+        _promptPickerOpen = true;
+        _promptTemplatesLoading = true;
+        _promptTemplatesError = null;
+        _promptPickerConversationToken = ActiveConversationId;
+        _promptPickerNeedsFocus = true;
+        _promptPickerRestoreFocus = false;
+        ResetPromptTemplateSelection();
+        try { _promptTemplates = await Rest.GetPromptTemplatesAsync(AgentId); }
+        catch { _promptTemplatesError = "load-failed"; _promptTemplates = []; }
+        finally { _promptTemplatesLoading = false; }
+    }
+
+    private void ClosePromptTemplatePicker()
+    {
+        if (!_promptPickerOpen) return;
+        _promptPickerOpen = false;
+        _promptPickerConversationToken = null;
+        _promptPickerNeedsFocus = false;
+        _promptPickerRestoreFocus = true;
+        ResetPromptTemplateSelection();
+    }
+
+    private void ResetPromptTemplateSelection()
+    {
+        _selectedPromptTemplate = null;
+        _promptTemplateSearch = string.Empty;
+        _promptTemplateIndex = 0;
+        _promptTemplateParameters.Clear();
+        _promptTemplateValidationErrors = new Dictionary<string, string[]>();
+        _promptTemplatePreview = null;
+        _promptTemplateGeneralError = null;
+        _promptPreviewGeneration++;
+    }
+
+    private void HandlePromptTemplateSearch(ChangeEventArgs args)
+    {
+        _promptTemplateSearch = args.Value?.ToString() ?? string.Empty;
+        _promptTemplateIndex = 0;
+    }
+
+    private void HandlePromptTemplateSearchKeyDown(KeyboardEventArgs args)
+    {
+        var templates = FilteredPromptTemplates;
+        if (templates.Count == 0) return;
+        if (args.Key == "ArrowDown") _promptTemplateIndex = Math.Min(_promptTemplateIndex + 1, templates.Count - 1);
+        else if (args.Key == "ArrowUp") _promptTemplateIndex = Math.Max(_promptTemplateIndex - 1, 0);
+        else if (args.Key == "Enter") SelectPromptTemplate(templates[Math.Min(_promptTemplateIndex, templates.Count - 1)]);
+    }
+
+    private void HandlePromptTemplateKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") ClosePromptTemplatePicker();
+    }
+
+    private void SelectPromptTemplate(PromptTemplateDescriptorDto template)
+    {
+        _selectedPromptTemplate = template;
+        _promptTemplateParameters.Clear();
+        foreach (var parameter in template.Parameters)
+            _promptTemplateParameters[parameter.Name] = parameter.Default ?? string.Empty;
+        InvalidatePromptTemplatePreview();
+    }
+
+    private void BackToPromptTemplateList() => SelectPromptTemplateList();
+
+    private void SelectPromptTemplateList()
+    {
+        _selectedPromptTemplate = null;
+        InvalidatePromptTemplatePreview();
+    }
+
+    private string PromptTemplateParameterValue(string name) => _promptTemplateParameters.GetValueOrDefault(name, string.Empty);
+
+    private void SetPromptTemplateParameter(string name, string? value)
+    {
+        _promptTemplateParameters[name] = value ?? string.Empty;
+        InvalidatePromptTemplatePreview();
+    }
+
+    private void InvalidatePromptTemplatePreview()
+    {
+        _promptPreviewGeneration++;
+        _promptTemplatePreview = null;
+        _promptTemplateGeneralError = null;
+        _promptTemplateValidationErrors = new Dictionary<string, string[]>();
+    }
+
+    private async Task PreviewPromptTemplate()
+    {
+        if (_selectedPromptTemplate is null || !PromptPickerContextIsCurrent) return;
+        var generation = ++_promptPreviewGeneration;
+        var templateName = _selectedPromptTemplate.Name;
+        var parameters = new Dictionary<string, string>(_promptTemplateParameters, StringComparer.Ordinal);
+        try
+        {
+            var result = await Rest.RenderPromptTemplateAsync(AgentId, templateName, parameters);
+            if (!PromptPickerContextIsCurrent || generation != _promptPreviewGeneration) return;
+            _promptTemplatePreview = result.RenderedPrompt;
+            _promptTemplateValidationErrors = result.Errors;
+            _promptTemplateGeneralError = result.GeneralError;
+        }
+        catch
+        {
+            if (!PromptPickerContextIsCurrent || generation != _promptPreviewGeneration) return;
+            _promptTemplatePreview = null;
+            _promptTemplateGeneralError = "The template could not be rendered.";
+            _promptTemplateValidationErrors = new Dictionary<string, string[]>();
+        }
+    }
+
+    private bool PromptPickerContextIsCurrent => _promptPickerOpen
+        && string.Equals(_promptPickerConversationToken, ActiveConversationId, StringComparison.Ordinal);
+
+    private async Task InsertPromptTemplate()
+    {
+        if (_promptTemplatePreview is null || !PromptPickerContextIsCurrent) return;
+        var token = _promptPickerConversationToken;
+        var expectedComposerContext = $"{AgentId}:{token}";
+        PromptTemplateInsertionResult result;
+        try
+        {
+            result = await JS.InvokeAsync<PromptTemplateInsertionResult>(
+                "chatComposer.replaceSelection", _inputElement, _promptTemplatePreview, expectedComposerContext);
+        }
+        catch { return; }
+        if (!string.Equals(token, ActiveConversationId, StringComparison.Ordinal)) return;
+        _inputText = result.Value;
+        ResetHistoryNavigation();
+        ClosePromptTemplatePicker();
+        if (Prefs?.Current?.ExpandingInput == true)
+            await JS.InvokeVoidAsync("chatScroll.autoResizeTextarea", _inputElement, Prefs.Current.ExpandingInputMaxLines);
+    }
 
     private async Task HandleInputChanged()
     {
@@ -1537,6 +1799,17 @@ private bool IsStreaming =>
     {
         try
         {
+            if (_promptPickerOpen && _promptPickerNeedsFocus)
+            {
+                _promptPickerNeedsFocus = false;
+                try { await JS.InvokeVoidAsync("chatComposer.focusFirst", _promptTemplateDialog); } catch { }
+            }
+            else if (!_promptPickerOpen && _promptPickerRestoreFocus)
+            {
+                _promptPickerRestoreFocus = false;
+                try { await JS.InvokeVoidAsync("chatComposer.focusElement", _promptTemplateOpenButton); } catch { }
+            }
+
             // #2918: a recall changed _inputText; now that the bound value is in the DOM, move the
             // caret to the end and re-run the expanding-textarea resize. Guarded so a detached
             // element (view switched mid-flight) cannot throw.

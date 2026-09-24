@@ -217,6 +217,18 @@ public interface IGatewayRestClient
         string sessionId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Lists the effective prompt-template catalogue for one agent.</summary>
+    Task<IReadOnlyList<PromptTemplateDescriptorDto>> GetPromptTemplatesAsync(
+        string agentId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Renders a named prompt template without dispatching it.</summary>
+    Task<PromptTemplateRenderResultDto> RenderPromptTemplateAsync(
+        string agentId,
+        string templateName,
+        IReadOnlyDictionary<string, string> parameters,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Current API base URL (set via Configure). Null if not yet configured.</summary>
     string? ApiBaseUrl { get; }
 }

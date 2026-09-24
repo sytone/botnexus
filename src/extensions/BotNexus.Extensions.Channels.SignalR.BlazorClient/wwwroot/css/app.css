@@ -3386,55 +3386,6 @@ details[open] > .thinking-summary::before {
     outline: none;
 }
 
-.agent-extension-config {
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--border);
-}
-
-.agent-extension-config h4 {
-    margin: 0;
-    font-size: var(--text-body);
-}
-
-.agent-extension-help,
-.agent-extension-field small {
-    color: var(--text-muted);
-    font-size: var(--text-caption);
-}
-
-.agent-extension-card {
-    margin-top: 0.75rem;
-    padding: 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-surface);
-}
-
-.agent-extension-grant {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--text-primary);
-    font-weight: 600;
-}
-
-.agent-extension-state {
-    display: block;
-    margin: 0.25rem 0 0.75rem 1.5rem;
-    color: var(--text-muted);
-    font-size: var(--text-caption);
-}
-
-.agent-extension-field {
-    margin-top: 0.65rem;
-}
-
-.agent-extension-field .config-select {
-    width: 100%;
-    box-sizing: border-box;
-}
-
 .config-error {
     padding: 0.5rem 0.75rem;
     background: var(--color-danger-wash);
@@ -7787,6 +7738,25 @@ h3.conversation-title.editable:hover {
     align-items: center;
     gap: 0.5rem;
 }
+
+/* Prompt-template composer picker (#4299). */
+.prompt-template-open-btn { align-self: center; padding: .45rem .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text); cursor: pointer; }
+.prompt-template-overlay { position: fixed; inset: 0; z-index: 220; display: grid; place-items: center; padding: 1rem; background: var(--color-scrim); }
+.prompt-template-dialog { width: min(680px, 96vw); max-height: min(720px, 90vh); overflow: auto; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-secondary); box-shadow: var(--shadow-overlay); }
+.prompt-template-dialog header, .prompt-template-dialog footer { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
+.prompt-template-dialog h3, .prompt-template-dialog h4, .prompt-template-dialog p { margin-top: 0; }
+.prompt-template-dialog header button, .prompt-template-dialog footer button, .prompt-template-back { padding: .45rem .7rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); color: var(--text); cursor: pointer; }
+.prompt-template-search { box-sizing: border-box; width: 100%; margin-bottom: .75rem; padding: .55rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-primary); color: var(--text); }
+.prompt-template-list { display: grid; gap: .35rem; max-height: 320px; overflow: auto; }
+.prompt-template-option { display: grid; grid-template-columns: 1fr auto; gap: .15rem .75rem; padding: .65rem; text-align: left; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); color: var(--text); cursor: pointer; }
+.prompt-template-option span { grid-column: 1 / -1; color: var(--text-muted); }
+.prompt-template-option.selected, .prompt-template-option:focus-visible { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.prompt-template-parameters { display: grid; gap: .65rem; margin: .75rem 0; }
+.prompt-template-parameters label { display: grid; gap: .2rem; }
+.prompt-template-parameters input { padding: .5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-primary); color: var(--text); }
+.prompt-template-preview { max-height: 240px; overflow: auto; padding: .75rem; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-primary); }
+.prompt-template-validation { color: var(--error); }
+.prompt-template-dialog footer { justify-content: flex-end; }
 
 .extension-repositories-section { display: grid; gap: 1rem; }
 .repository-form { display: grid; gap: .75rem; max-width: 48rem; }
