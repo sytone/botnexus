@@ -339,6 +339,9 @@ public sealed class BotNexusHome : IVerifiedHome
         else
             MigrateLegacyWorkspace(agentDirectory);
 
+        if (string.Equals(agentName.Trim(), "nexus-trailguide", StringComparison.OrdinalIgnoreCase))
+            RefreshTrailguideWorkspace(agentDirectory);
+
         return agentDirectory;
     }
 
@@ -373,6 +376,28 @@ public sealed class BotNexusHome : IVerifiedHome
             }
 
             _fileSystem.File.WriteAllText(path, string.Empty);
+        }
+    }
+
+    private void RefreshTrailguideWorkspace(string agentDirectory)
+    {
+        var workspacePath = Path.Combine(agentDirectory, "workspace");
+        _fileSystem.Directory.CreateDirectory(workspacePath);
+
+        var assembly = typeof(BotNexusHome).Assembly;
+        foreach (var file in TrailguideWorkspaceScaffoldFiles)
+        {
+            var resourceName = assembly.GetManifestResourceNames()
+                .FirstOrDefault(n => n.EndsWith($"Templates.Trailguide.{file}", StringComparison.OrdinalIgnoreCase));
+            if (resourceName is null)
+                continue;
+
+            using var stream = assembly.GetManifestResourceStream(resourceName);
+            if (stream is null)
+                continue;
+
+            using var reader = new StreamReader(stream);
+            _fileSystem.File.WriteAllText(Path.Combine(workspacePath, file), reader.ReadToEnd());
         }
     }
 
