@@ -34,6 +34,7 @@ using BotNexus.Gateway.Ralph;
 using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
+using BotNexus.Gateway.Search;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Contracts.Memory;
@@ -92,6 +93,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<SqliteWalCheckpointOptions>();
         services.AddOptions<LivenessWatchdogOptions>();
         services.AddOptions<SessionConsistencyOptions>();
+        services.AddOptions<SearchAggregationOptions>();
         if (configure is not null)
             services.Configure(configure);
         if (config is not null)
@@ -110,6 +112,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<SubAgentWorktreeSnapshotOptions>(config.GetSection("gateway:subAgents:worktreeSnapshot"));
             services.Configure<LivenessWatchdogOptions>(config.GetSection("gateway:livenessWatchdog"));
             services.Configure<SessionConsistencyOptions>(config.GetSection("gateway:sessionConsistency"));
+            services.Configure<SearchAggregationOptions>(config.GetSection("gateway:search"));
             services.Configure<SqliteWalCheckpointOptions>(o =>
                 o.IntervalMinutes = ParseInt(
                     config["gateway:walCheckpointIntervalMinutes"],
@@ -137,6 +140,8 @@ public static class GatewayServiceCollectionExtensions
                     _ => new StaticOptionsMonitor<CompactionOptions>(configuredCompaction)));
             }
         }
+
+        services.TryAddSingleton<SearchAggregator>();
 
         // Core services
         services.TryAddSingleton<IFileSystem, FileSystem>();
