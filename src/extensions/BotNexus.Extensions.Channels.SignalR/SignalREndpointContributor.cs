@@ -31,7 +31,7 @@ public class SignalREndpointContributor : IEndpointContributor
             MapBlazorApp(app, mobilePath, pathPrefix: "/mobile");
     }
 
-    private static void MapBlazorApp(WebApplication app, string blazorPath, string? pathPrefix)
+    internal static void MapBlazorApp(WebApplication app, string blazorPath, string? pathPrefix)
     {
         var indexHtmlPath = Path.Combine(blazorPath, "index.html");
         if (!File.Exists(indexHtmlPath))
