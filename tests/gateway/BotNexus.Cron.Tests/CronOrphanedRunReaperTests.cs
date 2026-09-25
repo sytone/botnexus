@@ -1,7 +1,10 @@
 using System.Reflection;
 using BotNexus.Cron.Tests.TestInfrastructure;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -191,13 +194,93 @@ public sealed class CronOrphanedRunReaperTests
         running.ShouldHaveSingleItem().Id.Value.ShouldBe(inFlight.Id.Value);
     }
 
-    private static CronScheduler CreateScheduler(ICronStore store)
+    [Fact]
+    public async Task ReapOrphanedRunsAsync_SealedOwnerSessionWithoutActiveExecutor_IsTerminalImmediately()
     {
-        var services = new ServiceCollection().BuildServiceProvider();
-        var scopeFactory = services.GetRequiredService<IServiceScopeFactory>();
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
+        var sessionId = SessionId.From("cron:job-1:sealed");
+        await context.Store.RecordRunSessionAsync(run.Id, sessionId);
+
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(store => store.GetAsync(sessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewaySession
+            {
+                SessionId = sessionId,
+                AgentId = AgentId.From("agent-a"),
+                Status = SessionStatus.Sealed
+            });
+        var scheduler = CreateScheduler(context.Store, sessions.Object);
+
+        var reaped = await scheduler.ReapOrphanedRunsAsync();
+
+        reaped.ShouldBe(1);
+        var terminal = (await context.Store.GetRunHistoryAsync(JobId.From("job-1"))).ShouldHaveSingleItem();
+        terminal.Status.ShouldBe(CronRunStatus.Error);
+        terminal.Error.ShouldNotBeNull();
+        terminal.Error.ShouldContain("sealed");
+    }
+
+    [Fact]
+    public async Task GetRunHealthAsync_RunningRow_ReportsAgeOwnerSessionStateAndExecutorOwnership()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
+        var sessionId = SessionId.From("cron:job-1:sealed");
+        await context.Store.RecordRunSessionAsync(run.Id, sessionId);
+
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(store => store.GetAsync(sessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewaySession
+            {
+                SessionId = sessionId,
+                AgentId = AgentId.From("agent-a"),
+                Status = SessionStatus.Sealed
+            });
+        var scheduler = CreateScheduler(context.Store, sessions.Object);
+        var persistedRunning = (await context.Store.ListRunningRunsAsync()).ShouldHaveSingleItem();
+
+        var health = (await scheduler.GetRunHealthAsync([persistedRunning])).ShouldHaveSingleItem();
+
+        health.RunningAge.ShouldNotBeNull();
+        health.RunningAge.Value.ShouldBeGreaterThanOrEqualTo(TimeSpan.Zero);
+        health.OwnerSessionState.ShouldBe("sealed");
+        health.HasActiveExecutor.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task RunActionAsync_RecordsOwnerSessionBeforeTheActionCompletes()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1", actionType: "session-action"));
+        var action = new SessionHoldingAction();
+        var scheduler = CreateScheduler(context.Store, action: action);
+
+        var execution = scheduler.RunNowAsync(JobId.From("job-1"));
+        await action.SessionRecorded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var running = (await context.Store.ListRunningRunsAsync()).ShouldHaveSingleItem();
+        running.SessionId.ShouldBe(action.SessionId);
+
+        action.Release.TrySetResult();
+        (await execution.WaitAsync(TimeSpan.FromSeconds(5))).Status.ShouldBe(CronRunStatus.Ok);
+    }
+
+    private static CronScheduler CreateScheduler(
+        ICronStore store,
+        ISessionStore? sessionStore = null,
+        ICronAction? action = null)
+    {
+        var services = new ServiceCollection();
+        if (sessionStore is not null)
+            services.AddSingleton(sessionStore);
+        var provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         return new CronScheduler(
             store,
-            [],
+            action is null ? [] : [action],
             scopeFactory,
             new StaticOptionsMonitor<CronOptions>(new CronOptions
             {
@@ -206,6 +289,21 @@ public sealed class CronOrphanedRunReaperTests
                 OrphanedRunThresholdSeconds = 3600
             }),
             NullLogger<CronScheduler>.Instance);
+    }
+
+    private sealed class SessionHoldingAction : ICronAction
+    {
+        public string ActionType => "session-action";
+        public SessionId SessionId { get; } = SessionId.From("cron:job-1:running");
+        public TaskCompletionSource SessionRecorded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
+        {
+            await context.RecordSessionIdAsync(SessionId, cancellationToken);
+            SessionRecorded.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+        }
     }
 
     private static async Task SetRunStartedAt(string dbPath, RunId runId, DateTimeOffset value)
