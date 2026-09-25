@@ -275,15 +275,21 @@ function Get-CiPrStatusReport {
 
     # --limit is MANDATORY. gh defaults 'pr list' to 30 items and emits no
     # page-boundary signal, so omitting it truncates the board silently and
-    # indistinguishably from "there are exactly 30 open PRs" (#3773). 500 is an
-    # order of magnitude above the observed board (31) and above the sibling
-    # convention of 100 used by Get-PrFailureCause.ps1 / Invoke-IssueClaim.ps1,
-    # which is deliberate: this is the instrument the whole maintenance loop
-    # reads its open-PR count from, and that count gates dispatch.
+    # indistinguishably from "there are exactly 30 open PRs" (#3773). The fixed
+    # boundary is deliberately generous, but a response that reaches it is not
+    # evidence of completeness and must fail closed (#4035).
+    $inventoryLimit = 500
     $raw = gh pr list --repo $Repo --state open --limit 500 --json number,title,headRefName,headRefOid,baseRefName,mergeable
     if ($LASTEXITCODE -ne 0) { throw "GitHub PR list failed (exit $LASTEXITCODE)." }
     $prs = ($raw -join [Environment]::NewLine) | ConvertFrom-Json -NoEnumerate
     if ($prs -isnot [array]) { throw 'GitHub PR list response must be a JSON array.' }
+    if ($prs.Count -ge $inventoryLimit) {
+        throw "GitHub PR list saturated the $inventoryLimit-row boundary; board completeness is unknown."
+    }
+    $duplicate = @($prs | Group-Object -Property number | Where-Object Count -gt 1 | Select-Object -First 1)
+    if ($duplicate.Count -gt 0) {
+        throw "GitHub PR list contains duplicate pull request number $($duplicate[0].Name); board identity is ambiguous."
+    }
     if ($prs.Count -eq 0) { return @() }
 
     $results = @()
