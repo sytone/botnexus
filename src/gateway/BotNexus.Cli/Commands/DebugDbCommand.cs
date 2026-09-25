@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using BotNexus.Persistence.Sqlite;
 using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
@@ -330,7 +331,9 @@ internal sealed class DebugDbCommand
         // skip warning rather than "no databases found".
         if (matches.Length == 0)
         {
-            var fileName = requested.Contains('.', StringComparison.Ordinal) ? requested : $"{requested}.db";
+            var fileName = requested.Contains('.', StringComparison.Ordinal)
+                ? requested
+                : requested + SqliteStorePathPolicy.CanonicalExtension;
             return [new DbFileInfo(requestedNoExt, Path.Combine(home, fileName))];
         }
 

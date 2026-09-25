@@ -93,7 +93,7 @@ enough to be worth stating plainly rather than treating as interchangeable:
 |---|---|---|
 | `env:` | Process environment, from `botnexus.env` | Simplest, matches existing provider-key handling. Visible to anything that can read `/proc/<pid>/environ` as the same user. |
 | `file:` | One secret per file, mode `0600` | Easy per-target rotation; works with config management. Protection is filesystem permissions plus whatever disk encryption exists. |
-| `sqlite:` | Alongside `config.db` | Convenience and a single backup artifact. **SQLite is not encrypted at rest** — this is not a security improvement over `file:`, and the plan should not present it as one. |
+| `sqlite:` | Alongside `config.sqlite` | Convenience and a single backup artifact. **SQLite is not encrypted at rest** — this is not a security improvement over `file:`, and the plan should not present it as one. |
 | `keyring:` | libsecret / Keychain | Best at-rest protection. Needs a session bus, so on a headless host it requires deliberate setup and may be unavailable; the provider must degrade with a clear error rather than a stack trace. |
 
 Resolution happens **at call time**, not at start-up. That is what makes credential
@@ -242,7 +242,7 @@ deny-list of suspicious names. The field that would actually have leaked was cal
 
 **Phase 4 - `sqlite:` and `keyring:` providers. Delivered.**
 
-`SqliteSecretProvider` reads `sqlite:name` from `~/.botnexus/secrets.db`, and
+`SqliteSecretProvider` reads `sqlite:name` from `~/.botnexus/secrets.sqlite`, and
 `botnexus secret set|list|remove` writes it. The CLI is part of the same change because a store
 nothing can populate would make the backend decorative.
 
@@ -251,7 +251,7 @@ Anything on a command line reaches shell history, `ps` output and CI logs. There
 `secret get`: a command whose purpose is to print a credential to a terminal is a facility for
 exfiltrating one. `list` shows names and timestamps only.
 
-`secrets.db` is restricted to its owner on creation and after every write, and `SecretCommand.cs`
+`secrets.sqlite` is restricted to its owner on creation and after every write, and `SecretCommand.cs`
 is registered with `SecretFilePermissionFenceArchitectureTests` as a secret-writing surface.
 
 **This backend is not encrypted at rest and is not stronger than `file:`.** It buys one artifact to

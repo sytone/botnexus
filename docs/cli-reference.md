@@ -1259,7 +1259,7 @@ botnexus config schema --output my-schema.json
 
 ## config store
 
-Manage the SQLite configuration store (`config.db`). When the store is enabled it serves
+Manage the SQLite configuration store (`config.sqlite`). When the store is enabled it serves
 configuration to the gateway and **its values win over `config.json`**; the file stays on disk and
 is never modified by these commands.
 
@@ -1273,9 +1273,9 @@ botnexus config store <COMMAND> [OPTIONS]
 
 | Subcommand | Description |
 |---|---|
-| `enable` | Create `config.db` from the current `config.json`. The store then serves configuration, with its values winning over the file. |
+| `enable` | Create `config.sqlite` from the current `config.json`. The store then serves configuration, with its values winning over the file. |
 | `status` | Report whether the store exists and how many entries it holds. |
-| `disable` | Delete `config.db`. The gateway returns to file-only configuration on the next start. |
+| `disable` | Delete `config.sqlite`. The gateway returns to file-only configuration on the next start. |
 
 ### Options
 
@@ -1292,7 +1292,7 @@ botnexus config store <COMMAND> [OPTIONS]
 - `enable` reports how many entries were imported and requires a **gateway restart** to take
   effect. It exits `1` if `config.json` is missing (run `botnexus init` first) or is not a JSON
   object.
-- `status` exits `0` in both states: it prints `Configuration store not enabled.` when `config.db`
+- `status` exits `0` in both states: it prints `Configuration store not enabled.` when `config.sqlite`
   is absent, and the entry count plus the store-wins note when it is present.
 - `disable` needs **no `--commit` flag and prompts for nothing** — unlike
   [`config restore`](#config-restore), which overwrites the source document. The store is a derived
@@ -1310,7 +1310,7 @@ botnexus config store enable
 Output:
 
 ```text
-Configuration store enabled. ~/.botnexus/config.db
+Configuration store enabled. ~/.botnexus/config.sqlite
   184 entries imported from config.json.
   Restart the gateway for the store to take effect.
 ```
@@ -1379,7 +1379,7 @@ botnexus secret list
 ```
 
 ```text
-Secrets (~/.botnexus/secrets.db)
+Secrets (~/.botnexus/secrets.sqlite)
   contoso-api  2026-08-28T09:14:02.1234567Z
 ```
 
@@ -2774,7 +2774,7 @@ botnexus debug memory --format json
 
 Directly inspect raw SQLite databases in the BotNexus home directory. Useful for understanding schema and diagnosing storage issues.
 
-Discovery covers **every registered platform store**, not just files ending in `.db`. BotNexus mixes two SQLite file extensions — `.db` (`sessions`, `data/skill-usage`) and `.sqlite` (`cron`, `webhooks`, per-agent `memory`) — and keeps some databases in a `data/` subfolder. All of these are enumerated automatically, so `debug db tables` should be your first-line investigation tool instead of hand-rolled `sqlite3` scripts.
+Discovery covers **every registered platform store**. BotNexus-owned stores use the canonical `.sqlite` extension and may live in the home root, its `data/` subfolder, or an agent workspace. During the compatibility window, discovery also accepts a lone legacy `.db` file. If both names exist for one logical store, the CLI refuses to guess which database is authoritative. Use `debug db tables` as the first-line investigation tool instead of hand-rolled `sqlite3` scripts.
 
 ### Usage
 

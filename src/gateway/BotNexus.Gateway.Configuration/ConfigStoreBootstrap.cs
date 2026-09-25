@@ -1,6 +1,7 @@
 using System.IO.Abstractions;
 using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration.Store;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Gateway.Configuration;
 
@@ -24,8 +25,8 @@ namespace BotNexus.Gateway.Configuration;
 /// </remarks>
 public static class ConfigStoreBootstrap
 {
-    /// <summary>The store's file name, beside <c>config.json</c>.</summary>
-    public const string StoreFileName = "config.db";
+    /// <summary>The canonical store file name, beside <c>config.json</c>.</summary>
+    public const string StoreFileName = "config" + SqliteStorePathPolicy.CanonicalExtension;
 
     /// <summary>
     /// Resolves the store path for a given <c>config.json</c> path.
@@ -38,7 +39,10 @@ public static class ConfigStoreBootstrap
         var directory = fileSystem.Path.GetDirectoryName(configPath);
         return string.IsNullOrEmpty(directory)
             ? StoreFileName
-            : fileSystem.Path.Combine(directory, StoreFileName);
+            : SqliteStorePathPolicy.ResolveOwnedStorePath(
+                directory,
+                "config",
+                fileSystem);
     }
 
     /// <summary>

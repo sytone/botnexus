@@ -1,6 +1,7 @@
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Extensions.DataStore;
 
@@ -22,7 +23,9 @@ public sealed class DataStoreToolContributor : IAgentToolContributor
         if (!config.Enabled)
             return Task.FromResult(new AgentToolContribution(Array.Empty<IAgentTool>()));
 
-        var storePath = Path.Combine(context.WorkspacePath, ".store", "agent-data.db");
+        var storePath = SqliteStorePathPolicy.ResolveOwnedStorePath(
+            Path.Combine(context.WorkspacePath, ".store"),
+            "agent-data");
         var backend   = new SqliteDataStoreBackend(storePath, config.MaxSizeBytes, config.MaxQueryRows);
         IReadOnlyList<IAgentTool> tools = [new DataStoreTool(backend)];
 

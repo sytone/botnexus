@@ -129,7 +129,7 @@ history, in `ps` output, and in CI logs. Pipe it or type it when prompted.
 There is deliberately no `botnexus secret get`. A command whose purpose is to print a credential to
 a terminal is a facility for exfiltrating one.
 
-The store lives at `~/.botnexus/secrets.db` and is restricted to its owner on every write.
+The store lives at `~/.botnexus/secrets.sqlite` and is restricted to its owner on every write.
 
 ### `keyring:` — the OS credential store
 
