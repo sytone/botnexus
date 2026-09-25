@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ⚠️ Changed
 
-- **#3882:** BotNexus-owned SQLite databases now use the `.sqlite` extension. A lone legacy `.db` store is validated and migrated through SQLite's backup API on first access, including committed WAL data. The migration is one-way; legacy reads remain compatible during the transition, while installations containing both names for one logical store must resolve the conflict explicitly.
+- **#3882:** BotNexus-owned SQLite databases now use the `.sqlite` extension. First access to a lone legacy `.db` store blocks while BotNexus validates it, preserves committed WAL data through SQLite's backup API, promotes the canonical store, and archives the legacy database and sidecars. No interactive action is required; ambiguous installations with both active names fail closed.
 
 ## [0.46.0] - 2026-09-23
 

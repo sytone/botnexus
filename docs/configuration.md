@@ -2,7 +2,7 @@
 
 BotNexus uses a hierarchical, dictionary-based configuration model with a unified home directory at `~/.botnexus/` (or `BOTNEXUS_HOME`). Use the `botnexus` CLI to read and change configuration; it applies the same commands whether the active backend is the existing JSON file or the SQLite configuration store.
 
-> **SQLite filename migration:** BotNexus-owned databases now use `.sqlite`. On first access, a lone legacy `.db` database is validated and migrated through a temporary SQLite backup so committed WAL data is preserved. The old name is removed only after the canonical database validates. A legacy `.db` file remains readable during this compatibility window, but when both names exist BotNexus stops and requires the operator to choose the authoritative database.
+> **SQLite filename migration:** BotNexus-owned databases now use `.sqlite`. On first access, access to a lone legacy `.db` database blocks while BotNexus validates it, creates and validates a temporary SQLite backup with committed WAL data, promotes the canonical database, and archives the legacy database plus sidecars under `sqlite-archive/`. No interactive input is required. If both active names already exist, BotNexus fails closed because it cannot determine that they represent the same data.
 
 ## Table of Contents
 

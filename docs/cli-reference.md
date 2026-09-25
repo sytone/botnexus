@@ -2774,7 +2774,7 @@ botnexus debug memory --format json
 
 Directly inspect raw SQLite databases in the BotNexus home directory. Useful for understanding schema and diagnosing storage issues.
 
-Discovery covers **every registered platform store**. BotNexus-owned stores use the canonical `.sqlite` extension and may live in the home root, its `data/` subfolder, or an agent workspace. During the compatibility window, discovery also accepts a lone legacy `.db` file. If both names exist for one logical store, the CLI refuses to guess which database is authoritative. Use `debug db tables` as the first-line investigation tool instead of hand-rolled `sqlite3` scripts.
+Discovery covers **every registered platform store**. BotNexus-owned stores use the canonical `.sqlite` extension and may live in the home root, its `data/` subfolder, or an agent workspace. A lone legacy `.db` file is migrated synchronously and archived before the writer receives the canonical path; no prompt is involved. If both active names already exist for one logical store, the CLI fails closed rather than silently reading an arbitrary database. Use `debug db tables` as the first-line investigation tool instead of hand-rolled `sqlite3` scripts.
 
 ### Usage
 

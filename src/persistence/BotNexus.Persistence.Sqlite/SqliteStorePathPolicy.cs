@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Abstractions;
 using Microsoft.Data.Sqlite;
 
@@ -16,10 +17,13 @@ public static class SqliteStorePathPolicy
     public const string LegacyExtension = ".db";
 
     private static readonly string[] SidecarSuffixes = ["-wal", "-shm"];
+    private static readonly ConcurrentDictionary<string, object> MigrationLocks =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Resolves an owned store to its canonical path. A lone legacy database and its sidecars are
-    /// migrated after integrity and identity validation. If both forms exist, neither is touched.
+    /// Resolves an owned store to its canonical path. A lone legacy database blocks this call while
+    /// it is validated, migrated, and archived with its sidecars. If both active forms exist,
+    /// neither is opened or modified.
     /// </summary>
     public static string ResolveOwnedStorePath(
         this string directory,
@@ -38,31 +42,35 @@ public static class SqliteStorePathPolicy
         var bareName = StripKnownExtension(storeName);
         var fs = fileSystem ?? new FileSystem();
         var canonicalPath = fs.Path.Combine(directory, bareName + CanonicalExtension);
-        var canonicalMatches = FindMatches(fs, directory, bareName + CanonicalExtension);
-        var legacyMatches = FindMatches(fs, directory, bareName + LegacyExtension);
-
-        if (canonicalMatches.Count > 1 || legacyMatches.Count > 1)
+        var migrationLock = MigrationLocks.GetOrAdd(canonicalPath, static _ => new object());
+        lock (migrationLock)
         {
-            throw new InvalidOperationException(
-                $"Multiple case-variant SQLite stores exist for '{bareName}' in '{directory}'. " +
-                "Remove the duplicate only after determining which database is authoritative.");
-        }
+            var canonicalMatches = FindMatches(fs, directory, bareName + CanonicalExtension);
+            var legacyMatches = FindMatches(fs, directory, bareName + LegacyExtension);
 
-        if (canonicalMatches.Count == 1 && legacyMatches.Count == 1)
-        {
-            throw new InvalidOperationException(
-                $"Both canonical SQLite store '{canonicalMatches[0]}' and legacy store '{legacyMatches[0]}' exist. " +
-                "BotNexus will not guess, merge, or overwrite either database.");
-        }
+            if (canonicalMatches.Count > 1 || legacyMatches.Count > 1)
+            {
+                throw new InvalidOperationException(
+                    $"Multiple case-variant SQLite stores exist for '{bareName}' in '{directory}'. " +
+                    "BotNexus cannot start this store until the duplicate is removed.");
+            }
 
-        if (canonicalMatches.Count == 1)
-            return canonicalMatches[0];
+            if (canonicalMatches.Count == 1 && legacyMatches.Count == 1)
+            {
+                throw new InvalidOperationException(
+                    $"Both canonical SQLite store '{canonicalMatches[0]}' and legacy store '{legacyMatches[0]}' exist. " +
+                    "BotNexus cannot safely migrate or open either store while both files are present.");
+            }
 
-        if (legacyMatches.Count == 0)
+            if (canonicalMatches.Count == 1)
+                return canonicalMatches[0];
+
+            if (legacyMatches.Count == 0)
+                return canonicalPath;
+
+            MigrateLegacyStore(fs, legacyMatches[0], canonicalPath, bareName);
             return canonicalPath;
-
-        MigrateLegacyStore(fs, legacyMatches[0], canonicalPath, bareName);
-        return canonicalPath;
+        }
     }
 
     private static void MigrateLegacyStore(IFileSystem fs, string legacyPath, string canonicalPath, string storeKind)
@@ -80,43 +88,7 @@ public static class SqliteStorePathPolicy
             // a partially-renamed set of main/WAL/SHM files.
             fs.File.Move(temporaryPath, canonicalPath);
 
-            try
-            {
-                fs.File.Delete(legacyPath);
-            }
-            catch
-            {
-                // The legacy database is still authoritative until its main file is removed. Remove
-                // the promoted copy so a cleanup failure cannot leave two logical stores to choose from.
-                if (fs.File.Exists(canonicalPath) && fs.File.Exists(legacyPath))
-                    fs.File.Delete(canonicalPath);
-                throw;
-            }
-
-            // Once the legacy main file is gone, the canonical snapshot is authoritative. Sidecars
-            // are cleanup-only at this point; a locked stale sidecar must not roll back a successful
-            // database promotion or cause the next startup to recreate the old logical store.
-            foreach (var suffix in SidecarSuffixes)
-            {
-                var sidecar = FindSidecar(fs, legacyPath, suffix);
-                if (sidecar is null)
-                    continue;
-
-                try
-                {
-                    fs.File.Delete(sidecar);
-                }
-                catch (IOException)
-                {
-                    // Best effort. The legacy main file no longer exists, so these cannot be opened
-                    // as a database and can be removed after the external lock clears.
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    // Best effort. The legacy main file no longer exists, so these cannot be opened
-                    // as a database and can be removed after permissions are corrected.
-                }
-            }
+            ArchiveLegacyStore(fs, legacyPath, storeKind, canonicalPath);
         }
         catch (Exception migrationError)
         {
@@ -127,6 +99,52 @@ public static class SqliteStorePathPolicy
                 $"SQLite store migration from '{legacyPath}' to '{canonicalPath}' failed. " +
                 "The legacy database remains authoritative.",
                 migrationError);
+        }
+    }
+
+    private static void ArchiveLegacyStore(
+        IFileSystem fs,
+        string legacyPath,
+        string storeKind,
+        string canonicalPath)
+    {
+        var directory = fs.Path.GetDirectoryName(legacyPath)
+            ?? throw new InvalidOperationException($"Legacy SQLite store '{legacyPath}' has no parent directory.");
+        var archiveDirectory = fs.Path.Combine(
+            directory,
+            "sqlite-archive",
+            $"{storeKind}-{DateTimeOffset.UtcNow:yyyyMMddTHHmmssfffffffZ}-{Guid.NewGuid():N}");
+        fs.Directory.CreateDirectory(archiveDirectory);
+
+        var sources = new List<string> { legacyPath };
+        foreach (var suffix in SidecarSuffixes)
+        {
+            var sidecar = FindSidecar(fs, legacyPath, suffix);
+            if (sidecar is not null)
+                sources.Add(sidecar);
+        }
+
+        var archived = new List<(string Source, string Destination)>();
+        try
+        {
+            foreach (var source in sources)
+            {
+                var destination = fs.Path.Combine(archiveDirectory, fs.Path.GetFileName(source));
+                fs.File.Move(source, destination);
+                archived.Add((source, destination));
+            }
+        }
+        catch
+        {
+            foreach (var move in archived.AsEnumerable().Reverse())
+            {
+                if (fs.File.Exists(move.Destination) && !fs.File.Exists(move.Source))
+                    fs.File.Move(move.Destination, move.Source);
+            }
+
+            if (fs.File.Exists(canonicalPath) && fs.File.Exists(legacyPath))
+                fs.File.Delete(canonicalPath);
+            throw;
         }
     }
 

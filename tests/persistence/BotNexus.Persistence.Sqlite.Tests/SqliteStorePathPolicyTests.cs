@@ -20,7 +20,7 @@ public sealed class SqliteStorePathPolicyTests : IDisposable
     }
 
     [Fact]
-    public void ResolveOwnedStorePath_LegacyOnly_MigratesDatabaseAndSidecars()
+    public void ResolveOwnedStorePath_LegacyOnly_BlocksUntilDatabaseAndSidecarsAreArchived()
     {
         var legacyPath = Path.Combine(_directory, "sample.db");
         CreateDatabase(legacyPath);
@@ -31,12 +31,20 @@ public sealed class SqliteStorePathPolicyTests : IDisposable
 
         path.ShouldBe(Path.Combine(_directory, "sample.sqlite"));
         File.Exists(path).ShouldBeTrue();
-        File.Exists(path + "-wal").ShouldBeFalse();
-        File.Exists(path + "-shm").ShouldBeFalse();
+        ReadValue(path).ShouldBe("preserved");
         File.Exists(legacyPath).ShouldBeFalse();
         File.Exists(legacyPath + "-wal").ShouldBeFalse();
         File.Exists(legacyPath + "-shm").ShouldBeFalse();
-        ReadValue(path).ShouldBe("preserved");
+
+        var archiveDirectory = Directory.GetDirectories(
+            Path.Combine(_directory, "sqlite-archive"),
+            "sample-*",
+            SearchOption.TopDirectoryOnly).ShouldHaveSingleItem();
+        var archivedLegacy = Path.Combine(archiveDirectory, "sample.db");
+        File.Exists(archivedLegacy).ShouldBeTrue();
+        File.Exists(archivedLegacy + "-wal").ShouldBeTrue();
+        File.Exists(archivedLegacy + "-shm").ShouldBeTrue();
+        ReadValue(archivedLegacy).ShouldBe("preserved");
     }
 
     [Fact]

@@ -84,7 +84,7 @@ internal static class CliStorePaths
             {
                 throw new InvalidOperationException(
                     $"Both canonical SQLite store '{candidates[0]}' and legacy store '{candidates[1]}' exist. " +
-                    "BotNexus will not guess which database is authoritative.");
+                    "BotNexus cannot safely open either store while both active names are present.");
             }
 
             if (candidates.Length == 1)
