@@ -34,6 +34,7 @@ using BotNexus.Gateway.Ralph;
 using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
+using BotNexus.Gateway.Search;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Contracts.Memory;
@@ -185,6 +186,8 @@ public static class GatewayServiceCollectionExtensions
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, MemorySearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, FileSearchContributor>());
          services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
          services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
          // #3569: the backstop workspace sweep must consult a lifecycle authority before deleting.
