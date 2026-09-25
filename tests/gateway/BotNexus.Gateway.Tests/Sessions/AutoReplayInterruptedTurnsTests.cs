@@ -27,7 +27,9 @@ public sealed class AutoReplayInterruptedTurnsTests
         ChannelKey? channelType = null,
         SessionType? sessionType = null,
         string? lastUserContent = null,
-        int existingReplayCount = 0)
+        int existingReplayCount = 0,
+        MessageRole? initiatingRole = null,
+        string? initiatingSenderId = null)
     {
         var session = new GatewaySession
         {
@@ -45,8 +47,9 @@ public sealed class AutoReplayInterruptedTurnsTests
         {
             session.AddEntry(new SessionEntry
             {
-                Role = MessageRole.User,
+                Role = initiatingRole ?? MessageRole.User,
                 Content = lastUserContent,
+                SenderId = initiatingSenderId,
                 Timestamp = DateTimeOffset.UtcNow.AddMinutes(-1)
             });
         }
@@ -188,6 +191,90 @@ public sealed class AutoReplayInterruptedTurnsTests
         orchestrator.Verify(o => o.Post(It.Is<InboundMessage>(m => m.Content == "continue the work")), Times.Once);
         session.History.Single(e => e.Role == MessageRole.Notification).Content
             .Contains("please resend", StringComparison.OrdinalIgnoreCase).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AutoReplay_WhenDisabled_AndAgentOnlyApiKickoffIsAssistantOrigin_ReplaysWithProvenance()
+    {
+        var session = CreateSession("sess-agent-api", "agent-api", withSentinel: true,
+            callerId: "api:issue-delivery-pump", channelType: ChannelKey.From("api"),
+            lastUserContent: "execute issue 4370", initiatingRole: MessageRole.Assistant,
+            initiatingSenderId: "api:issue-delivery-pump");
+        var store = CreateStore(session);
+        var conversations = CreateConversationStore(session, hasHuman: false);
+        var orchestrator = CreateOrchestrator();
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = false, MaxAutoReplayAttempts = 2 };
+
+        var service = CreateService(store.Object, CreateRegistry("agent-api"), options,
+            orchestrator.Object, conversationStore: conversations.Object);
+        await service.StartedAsync(CancellationToken.None);
+
+        orchestrator.Verify(o => o.Post(It.Is<InboundMessage>(m =>
+            m.Content == "execute issue 4370" &&
+            m.ChannelType == ChannelKey.From("api") &&
+            m.SenderId == "api:issue-delivery-pump" &&
+            m.SpeakAs == MessageRole.Assistant &&
+            m.RoutingHints!.RequestedAgentId == session.AgentId &&
+            m.RoutingHints.RequestedSessionId == session.SessionId &&
+            m.RoutingHints.RequestedConversationId == session.ConversationId)), Times.Once);
+    }
+
+    [Fact]
+    public async Task AutoReplay_WhenAdmissionRejected_PreservesCrashSentinelAndDoesNotConsumeAttempt()
+    {
+        var session = CreateSession("sess-rejected", "agent-rejected", withSentinel: true,
+            callerId: "api:issue-delivery-pump", channelType: ChannelKey.From("api"),
+            lastUserContent: "execute issue 4370", initiatingRole: MessageRole.Assistant,
+            initiatingSenderId: "api:issue-delivery-pump");
+        var store = CreateStore(session);
+        var conversations = CreateConversationStore(session, hasHuman: false);
+        var orchestrator = CreateOrchestrator(postAccepted: false);
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = false, MaxAutoReplayAttempts = 2 };
+
+        var service = CreateService(store.Object, CreateRegistry("agent-rejected"), options,
+            orchestrator.Object, conversationStore: conversations.Object);
+        await service.StartedAsync(CancellationToken.None);
+
+        session.History.ShouldContain(e => e.IsCrashSentinel);
+        session.History.ShouldNotContain(e => e.IsReplayBanner);
+        session.Metadata.ContainsKey(InterruptedTurnNotificationService.MetadataKeyReplayCount).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AutoReplay_CarriesIncompleteToolCallIdsForVerification()
+    {
+        var session = CreateSession("sess-tools", "agent-tools", withSentinel: false,
+            callerId: "api:issue-delivery-pump", channelType: ChannelKey.From("api"),
+            lastUserContent: "execute issue 4370", initiatingRole: MessageRole.Assistant,
+            initiatingSenderId: "api:issue-delivery-pump");
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool,
+            Content = "",
+            ToolName = "github_issue_update",
+            ToolCallId = "call-unknown",
+            ToolArgs = "{}",
+            Kind = MessageKind.ToolStart
+        });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.System,
+            Content = "[agent turn in progress — gateway restarted if visible]",
+            IsCrashSentinel = true
+        });
+        var store = CreateStore(session);
+        var conversations = CreateConversationStore(session, hasHuman: false);
+        var orchestrator = CreateOrchestrator();
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = false, MaxAutoReplayAttempts = 2 };
+
+        var service = CreateService(store.Object, CreateRegistry("agent-tools"), options,
+            orchestrator.Object, conversationStore: conversations.Object);
+        await service.StartedAsync(CancellationToken.None);
+
+        var replay = orchestrator.Invocations.Single().Arguments.Single().ShouldBeOfType<InboundMessage>();
+        var outcomeUnknown = replay.Metadata["outcomeUnknownToolCallIds"].ShouldBeOfType<string[]>();
+        outcomeUnknown.ShouldBe(new[] { "call-unknown" });
+        session.History.Single(e => e.IsReplayBanner).Content.ShouldContain("call-unknown");
     }
 
     [Fact]

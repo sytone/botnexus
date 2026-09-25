@@ -128,6 +128,50 @@ public class ModelRegistryTests : IDisposable
     }
 
     [Fact]
+    public void ReplaceOwnedRegistrations_SwapsTheCompleteOverlayAtomically()
+    {
+        _registry.Register("built-in", MakeModel("stable", "built-in"));
+
+        _registry.ReplaceOwnedRegistrations("platform-config",
+        [
+            new ModelRegistration("first", MakeModel("model-a", "first")),
+            new ModelRegistration("second", MakeModel("model-b", "second"))
+        ]);
+
+        _registry.GetModel("first", "model-a").ShouldNotBeNull();
+        _registry.GetModel("second", "model-b").ShouldNotBeNull();
+
+        _registry.ReplaceOwnedRegistrations("platform-config",
+        [
+            new ModelRegistration("first", MakeModel("model-c", "first"))
+        ]);
+
+        _registry.GetModel("first", "model-a").ShouldBeNull();
+        _registry.GetModel("first", "model-c").ShouldNotBeNull();
+        _registry.GetModel("second", "model-b").ShouldBeNull();
+        _registry.GetModel("built-in", "stable").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void ReplaceOwnedRegistrations_RemovingOverrideRevealsBaseRegistration()
+    {
+        var baseModel = MakeModel("shared", "provider", api: "base-api");
+        var configuredModel = MakeModel("shared", "provider", api: "configured-api");
+        _registry.Register("provider", baseModel);
+
+        _registry.ReplaceOwnedRegistrations("platform-config",
+        [
+            new ModelRegistration("provider", configuredModel)
+        ]);
+
+        _registry.GetModel("provider", "shared")!.Api.ShouldBe("configured-api");
+
+        _registry.ReplaceOwnedRegistrations("platform-config", []);
+
+        _registry.GetModel("provider", "shared")!.Api.ShouldBe("base-api");
+    }
+
+    [Fact]
     public void CalculateCost_ComputesCorrectly()
     {
         var model = MakeModel(inputCost: 3.0m, outputCost: 15.0m);

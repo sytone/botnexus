@@ -559,9 +559,9 @@ public static class AgentLoopRunner
     }
 
     /// <summary>
-    /// Best-effort mid-loop auto-compaction (#1710/#4121). Awaits
+    /// Mid-loop auto-compaction (#1710/#4121/#4379). Awaits
     /// <see cref="AgentLoopConfig.MaybeCompactAsync"/> and returns a replacement context when the
-    /// persisted session changed. A failure is swallowed so the loop continues; cancellation propagates.
+    /// persisted session changed. Required compaction failures fail closed; cancellation propagates.
     /// </summary>
     private static async Task<AgentContext?> MaybeCompactAsync(AgentLoopConfig config, CancellationToken cancellationToken)
     {
@@ -578,10 +578,15 @@ public static class AgentLoopRunner
         {
             throw;
         }
+        catch (ProactiveCompactionException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
-            // Compaction is best-effort: a failure must never abort the run, but it must be an
-            // explicit bounded outcome rather than an invisible skipped guard (#4302).
+            // Hosts that have not declared compaction required retain the historical best-effort
+            // behavior. A host that crossed its threshold uses ProactiveCompactionException instead,
+            // which is deliberately not swallowed above (#4379).
             config.OnDiagnostic?.Invoke(
                 $"Proactive durable compaction failed before a provider turn; continuing with the existing bounded overflow recovery. {ex.Message}");
             return null;
@@ -673,7 +678,24 @@ public static class AgentLoopRunner
             try
             {
                 var stream = config.LlmClient.StreamSimple(config.Model, providerContext, streamOptions);
-                return await StreamAccumulator.AccumulateAsync(stream, emit, cancellationToken, messages).ConfigureAwait(false);
+                var assistantMessage = await StreamAccumulator
+                    .AccumulateAsync(stream, emit, cancellationToken, messages)
+                    .ConfigureAwait(false);
+                if (assistantMessage.FinishReason == StopReason.Error
+                    && ContextOverflowDetector.IsContextOverflow(assistantMessage.ErrorMessage)
+                    && !overflowRecovered)
+                {
+                    RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
+                    overflowRecovered = true;
+                    config.OnDiagnostic?.Invoke(
+                        "Reactive lossy context-overflow truncation applied after terminal provider overflow; this is not durable compaction.");
+                    var compacted = CompactForOverflow(messages);
+                    messages.Clear();
+                    messages.AddRange(compacted);
+                    continue;
+                }
+
+                return assistantMessage;
             }
             catch (Exception ex) when (ContextOverflowDetector.IsContextOverflow(ex) && !overflowRecovered)
             {

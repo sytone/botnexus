@@ -531,6 +531,34 @@ public sealed class AgentsControllerTests
         response.InstanceCount.ShouldBe(1);
     }
 
+    [Theory]
+    [InlineData("../outside.json")]
+    [InlineData("..\\outside.json")]
+    [InlineData("/rooted.json")]
+    [InlineData("C:\\rooted.json")]
+    [InlineData("logs-sibling/export.json")]
+    public void BuildContextExportPath_WithUnsafeLeaf_FailsClosed(string exportIdentifier)
+    {
+        var logDirectory = Path.Combine(Path.GetTempPath(), "botnexus-export-tests", "logs");
+
+        var exception = Should.Throw<ArgumentException>(() =>
+            AgentsController.BuildContextExportPath(logDirectory, exportIdentifier));
+
+        exception.Message.ShouldContain("safe file name");
+    }
+
+    [Fact]
+    public void BuildContextExportPath_WithHostGeneratedLeaf_StaysInsideLogDirectory()
+    {
+        var logDirectory = Path.Combine(Path.GetTempPath(), "botnexus-export-tests", "logs");
+        const string exportIdentifier = "context-export-0123456789abcdef0123456789abcdef.json";
+
+        var exportPath = AgentsController.BuildContextExportPath(logDirectory, exportIdentifier);
+
+        Path.GetFileName(exportPath).ShouldBe(exportIdentifier);
+        Path.GetDirectoryName(exportPath).ShouldBe(Path.GetFullPath(logDirectory));
+    }
+
     private static AgentDescriptor CreateDescriptor(string agentId)
         => new()
         {

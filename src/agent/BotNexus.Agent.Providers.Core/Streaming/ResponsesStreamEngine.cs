@@ -92,12 +92,16 @@ public static class ResponsesStreamEngine
         StreamOptions? options,
         CancellationToken ct)
     {
-        var credential = ProviderCredentialResolver.Resolve(model.Provider, options?.ApiKey, logger);
-        var apiKey = credential.Value;
-        if (string.IsNullOrWhiteSpace(apiKey))
+        string? apiKey = null;
+        if (profile.ResolveApiKey)
         {
-            throw new InvalidOperationException(
-                $"No API key for {model.Provider}. Set credentials before using model '{model.Id}'.");
+            var credential = ProviderCredentialResolver.Resolve(model.Provider, options?.ApiKey, logger);
+            apiKey = credential.Value;
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                throw new InvalidOperationException(
+                    $"No API key for {model.Provider}. Set credentials before using model '{model.Id}'.");
+            }
         }
 
         var messages = MessageTransformer.TransformMessages(context.Messages, model);
@@ -110,10 +114,11 @@ public static class ResponsesStreamEngine
                 payload = obj;
         }
 
-        var url = $"{model.BaseUrl.TrimEnd('/')}/responses";
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        var requestUri = profile.BuildRequestUri?.Invoke(model) ?? new Uri($"{model.BaseUrl.TrimEnd('/')}/responses");
+        using var request = new HttpRequestMessage(HttpMethod.Post, requestUri);
         request.Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        if (profile.AuthenticateRequest is null)
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
         if (model.Headers is not null)
@@ -131,6 +136,9 @@ public static class ResponsesStreamEngine
             foreach (var (key, value) in options.Headers)
                 request.Headers.TryAddWithoutValidation(key, value);
         }
+
+        if (profile.AuthenticateRequest is not null)
+            await profile.AuthenticateRequest(request, ct).ConfigureAwait(false);
 
         using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         profile.OnResponseHeaders?.Invoke(response);

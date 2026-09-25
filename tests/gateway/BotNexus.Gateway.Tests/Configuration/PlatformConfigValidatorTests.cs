@@ -177,6 +177,32 @@ public sealed class PlatformConfigValidatorTests
     }
 
     [Fact]
+    public void ValidateAnnotated_NonPositiveTemporalDecayHalfLife_ReturnsError()
+    {
+        var config = new PlatformConfig
+        {
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["assistant"] = new()
+                {
+                    Provider = "copilot",
+                    Model = "gpt-4.1",
+                    Memory = new MemoryAgentConfig
+                    {
+                        Search = new MemorySearchAgentConfig
+                        {
+                            TemporalDecay = new TemporalDecayAgentConfig { HalfLifeDays = 0 }
+                        }
+                    }
+                }
+            }
+        };
+
+        PlatformConfigValidator.ValidateAnnotated(config)
+            .ShouldContain(error => error.Contains("half life days", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void CollectCrossFieldErrors_InvalidListenUrl_ReturnsListenUrlError()
     {
         var config = new PlatformConfig

@@ -97,4 +97,5 @@ public sealed record MemoryVectorScanReport(
 /// <param name="VectorScan">What the vector leg of retrieval actually examined.</param>
 public sealed record MemorySearchResult(
     IReadOnlyList<ScoredMemoryEntry> Entries,
-    MemoryVectorScanReport VectorScan);
+    MemoryVectorScanReport VectorScan,
+    MemoryTemporalDecayPolicy? TemporalDecay = null);

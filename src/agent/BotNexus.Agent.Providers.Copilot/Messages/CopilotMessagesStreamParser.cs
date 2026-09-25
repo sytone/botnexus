@@ -2,10 +2,12 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using BotNexus.Agent.Providers.Copilot.Telemetry;
+using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Diagnostics;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Streaming;
 using BotNexus.Agent.Providers.Core.Utilities;
+using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Agent.Providers.Copilot.Messages;
@@ -48,7 +50,8 @@ internal static class CopilotMessagesStreamParser
         Func<string?, StopReason> mapStopReason,
         CancellationToken ct,
         Action? onFirstToken = null,
-        TimeSpan? idleTimeout = null)
+        TimeSpan? idleTimeout = null,
+        ISecretRedactor? secretRedactor = null)
     {
         // Bound the untrusted SSE body before a single byte reaches the line loop below. Every byte
         // the StreamReader consumes flows through the ByteCountingStream, so an unbounded body or a
@@ -132,6 +135,7 @@ internal static class CopilotMessagesStreamParser
                     logger,
                     buildMessage,
                     mapStopReason,
+                    secretRedactor,
                     ref responseId,
                     ref stopReason,
                     out usage);
@@ -160,6 +164,7 @@ internal static class CopilotMessagesStreamParser
         ILogger logger,
         Func<LlmModel, List<ContentBlock>, Usage, StopReason, string?, string?, AssistantMessage> buildMessage,
         Func<string?, StopReason> mapStopReason,
+        ISecretRedactor? secretRedactor,
         ref string? responseId,
         ref StopReason stopReason,
         out Usage updatedUsage)
@@ -217,7 +222,8 @@ internal static class CopilotMessagesStreamParser
                 var errorMsg = data.TryGetProperty("error", out var err)
                     ? err.TryGetProperty("message", out var m) ? m.GetString() : "Unknown error"
                     : "Unknown error";
-                throw new InvalidOperationException($"Copilot streaming error: {errorMsg}");
+                var diagnostic = ProviderHttpErrorHelper.RedactDiagnosticText(errorMsg, secretRedactor);
+                throw new InvalidOperationException($"Copilot streaming error: {diagnostic}");
         }
     }
 

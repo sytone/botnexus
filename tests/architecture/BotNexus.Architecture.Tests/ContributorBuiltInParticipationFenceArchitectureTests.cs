@@ -76,14 +76,6 @@ public sealed class ContributorBuiltInParticipationFenceArchitectureTests : Arch
                 "for assemblies that cannot reach that pipeline at compile time. The wiring is " +
                 "held by a through-the-builder test, so it cannot rot back to silence.",
 
-            ["ISearchContributor"] =
-                "Deliberately contract-only in #4002. This slice defines the shared source, result, " +
-                "and fail-closed provenance-trust vocabulary before the parent cross-domain search " +
-                "feature adds orchestration or built-in sources. Inventing a built-in solely to " +
-                "satisfy this fence would couple the extension contract to an unapproved source. " +
-                "The first built-in source must remove this exemption and participate through the " +
-                "same interface; until then, serialization and programmatic contract tests pin the " +
-                "model while no runtime wiring is claimed.",
         };
 
     /// <summary>
@@ -96,6 +88,7 @@ public sealed class ContributorBuiltInParticipationFenceArchitectureTests : Arch
         "ICommandContributor",
         "IConfigSchemaContributor",
         "IEndpointContributor",
+        "ISearchContributor",
     ];
 
     /// <summary>

@@ -86,6 +86,7 @@
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.0-preview.3.25171.6" />
 
     <!-- Azure / identity -->
+    <PackageVersion Include="Azure.Core" Version="1.44.1" />
     <PackageVersion Include="Azure.Identity" Version="1.13.2" />
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
     <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.18.0" />

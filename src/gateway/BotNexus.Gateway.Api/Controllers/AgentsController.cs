@@ -672,13 +672,40 @@ public sealed class AgentsController : ControllerBase
         var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
         if (diag is null) return NotFound("Handle does not support diagnostics.");
         var logDir = Path.Combine(BotNexusHome.ResolveHomePath(), "logs");
+        var exportIdentifier = $"context-export-{Guid.NewGuid():N}.json";
+        var filePath = BuildContextExportPath(logDir, exportIdentifier);
         Directory.CreateDirectory(logDir);
-        var fileName = $"context-export-{agentId}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}.json";
-        var filePath = Path.Combine(logDir, fileName);
         System.IO.File.WriteAllText(
             filePath,
             System.Text.Json.JsonSerializer.Serialize(diag, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
-        return Ok(new { exported = filePath });
+        return Ok(new { exported = exportIdentifier });
+    }
+
+    /// <summary>
+    /// Resolves a host-generated context-export identifier beneath the configured logs directory.
+    /// </summary>
+    public static string BuildContextExportPath(string logDirectory, string exportIdentifier)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(logDirectory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(exportIdentifier);
+
+        if (exportIdentifier.IndexOfAny(['/', '\\']) >= 0
+            || !string.Equals(Path.GetFileName(exportIdentifier), exportIdentifier, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("Context export identifier must be a safe file name.", nameof(exportIdentifier));
+        }
+
+        var fullLogDirectory = Path.GetFullPath(logDirectory);
+        var directoryPrefix = Path.EndsInDirectorySeparator(fullLogDirectory)
+            ? fullLogDirectory
+            : fullLogDirectory + Path.DirectorySeparatorChar;
+        var fullExportPath = Path.GetFullPath(Path.Combine(fullLogDirectory, exportIdentifier));
+        if (!fullExportPath.StartsWith(directoryPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("Context export path must remain inside the logs directory.", nameof(exportIdentifier));
+        }
+
+        return fullExportPath;
     }
 
     private IAgentHandle? GetAgentHandle(string agentId, string sessionId)

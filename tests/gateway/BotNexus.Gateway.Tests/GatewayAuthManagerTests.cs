@@ -166,6 +166,36 @@ public sealed class GatewayAuthManagerTests : IDisposable
         apiKey.ShouldBe("copilot-auth-access-key");
     }
 
+    [Fact]
+    public async Task NamedProviderAuthReference_ResolvesCredentialAndEndpointFromSameProfile()
+    {
+        await _fileSystem.File.WriteAllTextAsync(_authFilePath, """
+                                             {
+                                               "copilot-work-auth": {
+                                                 "type": "token",
+                                                 "refresh": "unused",
+                                                 "access": "work-access-key",
+                                                 "expires": 4102444800000,
+                                                 "endpoint": "https://api.enterprise.githubcopilot.com"
+                                               }
+                                             }
+                                             """);
+        var manager = CreateManager(new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["copilot-work"] = new()
+                {
+                    Type = "github-copilot",
+                    ApiKey = "auth:copilot-work-auth"
+                }
+            }
+        });
+
+        (await manager.GetApiKeyAsync("copilot-work")).ShouldBe("work-access-key");
+        manager.GetApiEndpoint("copilot-work").ShouldBe("https://api.enterprise.githubcopilot.com");
+    }
+
     [Theory]
     [InlineData("auth:")]
     [InlineData("auth:   ")]

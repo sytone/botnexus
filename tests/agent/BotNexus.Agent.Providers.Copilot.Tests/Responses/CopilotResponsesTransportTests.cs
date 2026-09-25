@@ -190,6 +190,30 @@ public sealed class CopilotResponsesTransportTests
         result.Content.OfType<TextContent>().Single().Text.ShouldBe("hello");
     }
 
+
+    [Fact]
+    public async Task WebSocketFailureAfterSemanticOutput_RedactsPeerDiagnosticAndPreservesContext()
+    {
+        const string token = "synthetic-stream-token-4119";
+        var socket = new StubWebSocketTransport(messages:
+        [
+            "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}",
+            "{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"hello\"}"
+        ], receiveFailure: new WebSocketException("connection rejected " + token));
+        var provider = new CopilotResponsesProvider(
+            new HttpClient(new RecordingHandler(_ => throw new InvalidOperationException("SSE replay must be suppressed."))),
+            NullLogger<CopilotResponsesProvider>.Instance, socket, new StubRedactor());
+
+        var result = await provider.Stream(MapModel(["/responses", "ws:/responses"]), BuildContext(), Options())
+            .GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        var error = result.ErrorMessage;
+        error.ShouldBe("connection rejected [REDACTED]");
+        error.ShouldNotBeNull();
+        error.ShouldNotContain(token);
+        result.Content.OfType<TextContent>().Single().Text.ShouldBe("hello");
+    }
+
     [Fact]
     public async Task WebSocketCloseAfterSemanticOutput_SurfacesCloseCodeAndReason()
     {
@@ -660,6 +684,13 @@ public sealed class CopilotResponsesTransportTests
         {
             lock (_entries) _entries.Add((logLevel, formatter(state, exception)));
         }
+    }
+
+
+    private sealed class StubRedactor : BotNexus.Gateway.Abstractions.Security.ISecretRedactor
+    {
+        public string Redact(string input) => input.Replace("synthetic-stream-token-4119", "[REDACTED]", StringComparison.Ordinal);
+        public string RedactForExternalDelivery(string input) => Redact(input);
     }
 
     private sealed class StubWebSocketTransport(

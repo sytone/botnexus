@@ -91,6 +91,74 @@ public sealed class BotNexusHomeTests
     }
 
     [Fact]
+    public void GetAgentDirectory_TrailguideReceivesCuratedWorkspaceWithoutIdentityBootstrap()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath);
+
+        var path = home.GetAgentDirectory("nexus-trailguide");
+        var workspace = Path.Combine(path, "workspace");
+        var soul = fs.File.ReadAllText(Path.Combine(workspace, "SOUL.md"));
+        var agents = fs.File.ReadAllText(Path.Combine(workspace, "AGENTS.md"));
+
+        soul.ShouldContain("Trailguide's Identity and Conduct");
+        soul.ShouldContain("BotNexus guide and operator's assistant");
+        soul.ShouldContain("create a purpose-built agent");
+        agents.ShouldContain("Trailguide Operating Contract");
+        agents.ShouldContain("Repository documentation is primary");
+        agents.ShouldContain("Labs are optional");
+        fs.File.Exists(Path.Combine(workspace, "BOOTSTRAP.md")).ShouldBeFalse();
+        fs.File.Exists(Path.Combine(workspace, "IDENTITY.md")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void GetAgentDirectory_OrdinaryAgentRetainsGenericScaffolding()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath);
+
+        var path = home.GetAgentDirectory("ordinary-agent");
+        var workspace = Path.Combine(path, "workspace");
+
+        fs.File.ReadAllText(Path.Combine(workspace, "AGENTS.md")).ShouldContain("# Agents");
+        fs.File.Exists(Path.Combine(workspace, "BOOTSTRAP.md")).ShouldBeTrue();
+        fs.File.Exists(Path.Combine(workspace, "IDENTITY.md")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void GetAgentDirectory_ExistingTrailguideWorkspaceRefreshesCanonicalFiles()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath);
+        var agentPath = Path.Combine(HomePath, "agents", "nexus-trailguide");
+        var workspace = Path.Combine(agentPath, "workspace");
+        fs.Directory.CreateDirectory(workspace);
+        fs.File.WriteAllText(Path.Combine(workspace, "SOUL.md"), "stale or user-edited soul");
+        fs.File.WriteAllText(Path.Combine(workspace, "AGENTS.md"), "stale or user-edited agents");
+
+        home.GetAgentDirectory("nexus-trailguide");
+
+        fs.File.ReadAllText(Path.Combine(workspace, "SOUL.md"))
+            .ShouldContain("BotNexus guide and operator's assistant");
+        fs.File.ReadAllText(Path.Combine(workspace, "AGENTS.md"))
+            .ShouldContain("Repository documentation is primary");
+    }
+
+    [Fact]
+    public void GetAgentDirectory_ExistingTrailguideWorkspacePreservesCustomOverlay()
+    {
+        var fs = new MockFileSystem();
+        var home = new BotNexusHome(fs, HomePath);
+        var path = home.GetAgentDirectory("nexus-trailguide");
+        var customPath = Path.Combine(path, "workspace", "TRAILGUIDE.custom.md");
+        fs.File.WriteAllText(customPath, "user-owned customization");
+
+        home.GetAgentDirectory("nexus-trailguide");
+
+        fs.File.ReadAllText(customPath).ShouldBe("user-owned customization");
+    }
+
+    [Fact]
     public void Initialize_WithSeparateDataDir_CreatesDirectoriesInDataPath()
     {
         var fs = new MockFileSystem();

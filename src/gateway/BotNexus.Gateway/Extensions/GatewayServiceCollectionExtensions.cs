@@ -34,11 +34,14 @@ using BotNexus.Gateway.Ralph;
 using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
+using BotNexus.Gateway.Search;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Gateway.Providers;
 using BotNexus.Gateway.Abstractions.Providers;
+using BotNexus.Gateway.Contracts.Agents;
+using BotNexus.Gateway.Agents.Proposals;
 using BotNexus.Gateway.Contracts.Events;
 using BotNexus.Gateway.Events;
 using BotNexus.Gateway.Evaluations;
@@ -92,6 +95,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<SqliteWalCheckpointOptions>();
         services.AddOptions<LivenessWatchdogOptions>();
         services.AddOptions<SessionConsistencyOptions>();
+        services.AddOptions<SearchAggregationOptions>();
         if (configure is not null)
             services.Configure(configure);
         if (config is not null)
@@ -110,6 +114,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<SubAgentWorktreeSnapshotOptions>(config.GetSection("gateway:subAgents:worktreeSnapshot"));
             services.Configure<LivenessWatchdogOptions>(config.GetSection("gateway:livenessWatchdog"));
             services.Configure<SessionConsistencyOptions>(config.GetSection("gateway:sessionConsistency"));
+            services.Configure<SearchAggregationOptions>(config.GetSection("gateway:search"));
             services.Configure<SqliteWalCheckpointOptions>(o =>
                 o.IntervalMinutes = ParseInt(
                     config["gateway:walCheckpointIntervalMinutes"],
@@ -137,6 +142,8 @@ public static class GatewayServiceCollectionExtensions
                     _ => new StaticOptionsMonitor<CompactionOptions>(configuredCompaction)));
             }
         }
+
+        services.TryAddSingleton<SearchAggregator>();
 
         // Core services
         services.TryAddSingleton<IFileSystem, FileSystem>();
@@ -177,10 +184,16 @@ public static class GatewayServiceCollectionExtensions
                     : fileSystem.Path.GetDirectoryName(workspaceManager.GetWorkspacePath(agentId))
                         ?? throw new InvalidOperationException($"Agent '{agentId}' workspace has no parent directory.");
                 return fileSystem.Path.Combine(agentDirectory, "data", "memory.sqlite");
-            }, embeddings, fileSystem);
+            },
+            embeddings,
+            fileSystem,
+            serviceProvider.GetService<ILoggerFactory>(),
+            serviceProvider.GetRequiredService<IAgentRegistry>());
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, MemorySearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, FileSearchContributor>());
          services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
          services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
          // #3569: the backstop workspace sweep must consult a lifecycle authority before deleting.
@@ -394,6 +407,22 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<ISqliteDatabaseRegistry, SqliteDatabaseRegistry>();
         services.TryAddSingleton<INetworkPathDetector>(sp =>
             new NetworkPathDetector(sp.GetRequiredService<IFileSystem>()));
+
+        // Governed proposals are runtime state, not configuration. Keep this ledger in the writable
+        // data directory and deliberately give the store no registry or configuration-writer
+        // dependency: approval application belongs to the later lifecycle slice (#4093).
+        services.TryAddSingleton<IAgentProposalStore>(serviceProvider =>
+        {
+            var home = serviceProvider.GetRequiredService<BotNexusHome>();
+            var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
+            var databasePath = fileSystem.Path.Combine(home.DataPath, "agent-proposals.sqlite");
+            serviceProvider.GetRequiredService<ISqliteDatabaseRegistry>().Register(databasePath);
+            return new SqliteAgentProposalStore(
+                databasePath,
+                fileSystem,
+                serviceProvider.GetRequiredService<INetworkPathDetector>(),
+                serviceProvider.GetService<ILogger<SqliteWalMaintenance>>());
+        });
 
         // Extension state store
         services.TryAddSingleton<IExtensionStateStore>(serviceProvider =>
@@ -653,6 +682,13 @@ public static class GatewayServiceCollectionExtensions
             serviceProvider.GetRequiredService<BotNexusHome>(),
             serviceProvider.GetRequiredService<IFileSystem>(),
             serviceProvider.GetRequiredService<ILogger<PlatformAgentReconciliationService>>()));
+
+        // Reconcile config-defined model registrations before agent descriptors consume the live
+        // registry. Both services subscribe to the same options monitor; registration order keeps
+        // the catalogue revision ahead of agent validation for each reload.
+        services.TryAddSingleton<ConfigDefinedModelRegistryReconciler>();
+        services.AddSingleton<IHostedService>(serviceProvider =>
+            serviceProvider.GetRequiredService<ConfigDefinedModelRegistryReconciler>());
 
         // #2136: the six worker archetypes (researcher, coder, planner, reviewer, writer, analyst)
         // are no longer registered as named conversational agents. They are resolved at spawn time

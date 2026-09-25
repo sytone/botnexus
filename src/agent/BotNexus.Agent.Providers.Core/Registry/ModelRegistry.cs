@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using BotNexus.Agent.Providers.Core.Diagnostics;
 using BotNexus.Agent.Providers.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -7,11 +6,15 @@ namespace BotNexus.Agent.Providers.Core.Registry;
 
 /// <summary>
 /// Model registry. Port of pi-mono's models.ts registry.
-/// Thread-safe via ConcurrentDictionary.
+/// Thread-safe via immutable catalogue snapshots swapped under a short registration lock.
 /// </summary>
 public sealed class ModelRegistry
 {
-    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, LlmModel>> _registry = new();
+    private readonly Lock _sync = new();
+    private readonly Dictionary<string, Dictionary<string, LlmModel>> _baseRegistrations = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IReadOnlyList<ModelRegistration>> _ownedRegistrations = new(StringComparer.Ordinal);
+    private volatile IReadOnlyDictionary<string, IReadOnlyDictionary<string, LlmModel>> _registry =
+        new Dictionary<string, IReadOnlyDictionary<string, LlmModel>>(StringComparer.OrdinalIgnoreCase);
 
     // Common aliases so users can write "copilot" instead of "github-copilot" in config
     private static readonly Dictionary<string, string> ProviderAliases = new(StringComparer.OrdinalIgnoreCase)
@@ -49,13 +52,49 @@ public sealed class ModelRegistry
     /// <param name="model">The model.</param>
     public void Register(string provider, LlmModel model)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
         ArgumentNullException.ThrowIfNull(model);
 
-        var models = _registry.GetOrAdd(provider, _ => new ConcurrentDictionary<string, LlmModel>());
-        if (models.TryGetValue(model.Id, out var previous))
-            WarnIfModalitiesNarrowed(provider, previous, model);
+        lock (_sync)
+        {
+            if (GetModelCore(_registry, provider, model.Id) is { } previous)
+                WarnIfModalitiesNarrowed(provider, previous, model);
 
-        models[model.Id] = model;
+            if (!_baseRegistrations.TryGetValue(provider, out var models))
+            {
+                models = new Dictionary<string, LlmModel>(StringComparer.Ordinal);
+                _baseRegistrations[provider] = models;
+            }
+
+            models[model.Id] = model;
+            _registry = BuildSnapshot();
+        }
+    }
+
+    /// <summary>
+    /// Atomically replaces every model registration owned by one runtime source. Registrations
+    /// from other owners and the base catalogue remain intact; removing an override reveals the
+    /// underlying registration rather than deleting it.
+    /// </summary>
+    public void ReplaceOwnedRegistrations(string owner, IReadOnlyList<ModelRegistration> registrations)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(owner);
+        ArgumentNullException.ThrowIfNull(registrations);
+
+        lock (_sync)
+        {
+            var candidate = registrations.ToArray();
+            foreach (var registration in candidate)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(registration.Provider);
+                ArgumentNullException.ThrowIfNull(registration.Model);
+                if (GetModelCore(_registry, registration.Provider, registration.Model.Id) is { } previous)
+                    WarnIfModalitiesNarrowed(registration.Provider, previous, registration.Model);
+            }
+
+            _ownedRegistrations[owner] = candidate;
+            _registry = BuildSnapshot();
+        }
     }
 
     /// <summary>
@@ -220,7 +259,49 @@ public sealed class ModelRegistry
     /// </summary>
     public void Clear()
     {
-        _registry.Clear();
+        lock (_sync)
+        {
+            _baseRegistrations.Clear();
+            _ownedRegistrations.Clear();
+            _registry = new Dictionary<string, IReadOnlyDictionary<string, LlmModel>>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private IReadOnlyDictionary<string, IReadOnlyDictionary<string, LlmModel>> BuildSnapshot()
+    {
+        var snapshot = new Dictionary<string, Dictionary<string, LlmModel>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (provider, models) in _baseRegistrations)
+            snapshot[provider] = new Dictionary<string, LlmModel>(models, StringComparer.Ordinal);
+
+        foreach (var registrations in _ownedRegistrations.Values)
+        {
+            foreach (var registration in registrations)
+            {
+                if (!snapshot.TryGetValue(registration.Provider, out var models))
+                {
+                    models = new Dictionary<string, LlmModel>(StringComparer.Ordinal);
+                    snapshot[registration.Provider] = models;
+                }
+
+                models[registration.Model.Id] = registration.Model;
+            }
+        }
+
+        return snapshot.ToDictionary(
+            entry => entry.Key,
+            entry => (IReadOnlyDictionary<string, LlmModel>)entry.Value,
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static LlmModel? GetModelCore(
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, LlmModel>> registry,
+        string provider,
+        string modelId)
+    {
+        var resolved = ResolveProvider(provider);
+        return registry.TryGetValue(resolved, out var models) && models.TryGetValue(modelId, out var model)
+            ? model
+            : null;
     }
 
     private static string ResolveProvider(string provider) =>

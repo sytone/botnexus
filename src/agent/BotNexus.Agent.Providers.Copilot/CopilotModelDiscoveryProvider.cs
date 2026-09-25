@@ -14,7 +14,7 @@ namespace BotNexus.Agent.Providers.Copilot;
 public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
 {
     /// <inheritdoc/>
-    public string ProviderKey => "github-copilot";
+    public string ProviderKey { get; }
 
     private static readonly IReadOnlyDictionary<string, string> CopilotHeaders = new Dictionary<string, string>
     {
@@ -51,14 +51,18 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
     /// Returns (null, null) if credentials are unavailable.
     /// </param>
     /// <param name="logger">Logger.</param>
+    /// <param name="providerKey">Provider-instance key used for discovery and model registration.</param>
     public CopilotModelDiscoveryProvider(
         CopilotDiscoveryClient discoveryClient,
         Func<CancellationToken, Task<(string? SessionToken, string? Endpoint)>> credentialResolver,
-        ILogger<CopilotModelDiscoveryProvider> logger)
+        ILogger<CopilotModelDiscoveryProvider> logger,
+        string providerKey = "github-copilot")
     {
         _discoveryClient = discoveryClient ?? throw new ArgumentNullException(nameof(discoveryClient));
         _credentialResolver = credentialResolver ?? throw new ArgumentNullException(nameof(credentialResolver));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerKey);
+        ProviderKey = providerKey;
     }
 
     /// <inheritdoc/>
@@ -99,7 +103,7 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
             if (string.IsNullOrWhiteSpace(info.Id))
                 continue;
 
-            var model = MapToLlmModel(info, endpoint);
+            var model = MapToLlmModel(info, endpoint, ProviderKey);
             if (model is not null)
                 models.Add(model);
         }
@@ -124,7 +128,15 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
     /// <param name="info">The Copilot model info.</param>
     /// <param name="baseUrl">The resolved API host to stamp onto the model.</param>
     public static LlmModel? MapToLlmModel(CopilotModelInfo info, string? baseUrl)
+        => MapToLlmModel(info, baseUrl, "github-copilot");
+
+    /// <summary>
+    /// Maps a discovered Copilot model beneath the selected provider-instance identity while
+    /// preserving the wire API selected from the advertised model capabilities.
+    /// </summary>
+    public static LlmModel? MapToLlmModel(CopilotModelInfo info, string? baseUrl, string providerKey)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerKey);
         if (string.IsNullOrWhiteSpace(info.Id))
             return null;
 
@@ -151,7 +163,7 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
             Id: id,
             Name: name,
             Api: api,
-            Provider: "github-copilot",
+            Provider: providerKey,
             BaseUrl: resolvedBaseUrl,
             Reasoning: reasoning,
             Input: input,

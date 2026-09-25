@@ -437,6 +437,94 @@ public sealed class PluginLifecycleManagerTests : IDisposable
         Assert.Equal(["alpha", "beta"], _manager.List().Select(p => p.Name));
     }
 
+    [Fact]
+    public async Task ConcurrentInstallsAreSerializedAcrossFetchAndStateMutation()
+    {
+        var fetcher = new CoordinatedPluginSourceFetcher();
+        fetcher.EnqueueBlocked("v1", PluginContent("hello-world", extra: ("data.txt", "first")));
+        fetcher.Enqueue("v2", PluginContent("hello-world", extra: ("data.txt", "second")));
+        var manager = new PluginLifecycleManager(_store, fetcher);
+
+        var first = manager.InstallAsync(new PluginInstallRequest
+        {
+            Source = "https://example.com/first.git",
+            Name = "hello-world",
+        });
+        await fetcher.FirstFetchEntered;
+
+        var second = manager.InstallAsync(new PluginInstallRequest
+        {
+            Source = "https://example.com/second.git",
+            Name = "hello-world",
+        });
+
+        Assert.Equal(1, fetcher.CallCount);
+        fetcher.ReleaseFirstFetch();
+
+        Assert.Equal(PluginOperationOutcome.Installed, (await first).Outcome);
+        Assert.Equal(PluginOperationOutcome.Failed, (await second).Outcome);
+        Assert.Equal("first", File.ReadAllText(Path.Combine(_root, "hello-world", "data.txt")));
+        Assert.Equal("v1", _store.Find("hello-world")!.ResolvedVersion);
+    }
+
+    [Fact]
+    public async Task UpdateAndRemoveAreSerializedAcrossContentAndStateMutation()
+    {
+        _fetcher.Enqueue("v1", PluginContent("hello-world", extra: ("data.txt", "old")));
+        await _manager.InstallAsync(new PluginInstallRequest { Source = "https://example.com/hello.git" });
+
+        var fetcher = new CoordinatedPluginSourceFetcher();
+        fetcher.EnqueueBlocked("v2", PluginContent("hello-world", extra: ("data.txt", "new")));
+        var manager = new PluginLifecycleManager(_store, fetcher);
+        var update = manager.UpdateAsync("hello-world");
+        await fetcher.FirstFetchEntered;
+
+        var removeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var remove = Task.Run(() =>
+        {
+            removeStarted.SetResult();
+            return manager.Remove("hello-world");
+        });
+        await removeStarted.Task;
+
+        Assert.Equal("old", File.ReadAllText(Path.Combine(_root, "hello-world", "data.txt")));
+        Assert.NotNull(_store.Find("hello-world"));
+        fetcher.ReleaseFirstFetch();
+
+        Assert.Equal(PluginOperationOutcome.Updated, (await update).Outcome);
+        Assert.Equal(PluginOperationOutcome.Removed, (await remove).Outcome);
+        Assert.Null(_store.Find("hello-world"));
+        Assert.False(Directory.Exists(Path.Combine(_root, "hello-world")));
+    }
+
+    [Fact]
+    public async Task CancelledMutationReleasesTheLifecycleGate()
+    {
+        var fetcher = new CoordinatedPluginSourceFetcher();
+        fetcher.EnqueueCancellationBlocked();
+        fetcher.Enqueue("v2", PluginContent("hello-world", extra: ("data.txt", "complete")));
+        var manager = new PluginLifecycleManager(_store, fetcher);
+        using var cancellation = new CancellationTokenSource();
+
+        var cancelled = manager.InstallAsync(new PluginInstallRequest
+        {
+            Source = "https://example.com/cancelled.git",
+            Name = "hello-world",
+        }, cancellation.Token);
+        await fetcher.FirstFetchEntered;
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelled);
+
+        var completed = await manager.InstallAsync(new PluginInstallRequest
+        {
+            Source = "https://example.com/complete.git",
+            Name = "hello-world",
+        });
+
+        Assert.Equal(PluginOperationOutcome.Installed, completed.Outcome);
+        Assert.Equal("complete", File.ReadAllText(Path.Combine(_root, "hello-world", "data.txt")));
+    }
+
     // The transport's git metadata is an artefact of cloning, not plugin content: copying it in
     // would make every plugin directory a nested repository and pollute the removal manifest.
     [Fact]

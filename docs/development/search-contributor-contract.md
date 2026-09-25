@@ -69,3 +69,38 @@ public sealed class DocumentationSearchContributor : ISearchContributor
 ```
 
 The example uses a source-local score. It does not promise that `0.82` sorts above a result from another contributor.
+
+## Query the aggregated endpoint
+
+The gateway discovers the complete dependency-injection collection of `ISearchContributor` implementations and exposes them through:
+
+```http
+GET /api/search?query=<text>&source=<source-id>[,<source-id>]&limit=<per-source-limit>
+```
+
+- `query` is required for useful work. A missing, empty, or whitespace-only query returns an empty array and does not call contributors.
+- `source` is optional. It selects one or more comma-separated source IDs, matched case-insensitively. Omitting it selects every registered contributor.
+- `limit` is optional, defaults to 20, and is clamped to the inclusive range 1–100. The bound applies independently to each source.
+
+The response contains one group per selected contributor, in registration order. Each group reports the source identity and label, availability, trust-assessment capability, bounded result count, results in source-local order, and a source-local `error`. Unavailable contributors return an empty group. A contributor exception or deadline produces an empty group with a stable error description without failing other contributors. Caller cancellation still cancels the whole request.
+
+The endpoint does not merge or globally rank results. Consumers must keep source identity, source-local relevance, and provenance trust distinct.
+
+## Configure source deadlines
+
+Each contributor has an independent deadline. Configure the default and optional source-specific overrides under `gateway.search`:
+
+```json
+{
+  "gateway": {
+    "search": {
+      "defaultSourceTimeout": "00:00:05",
+      "sourceTimeouts": {
+        "documentation": "00:00:02"
+      }
+    }
+  }
+}
+```
+
+Source override keys match `SourceId` case-insensitively. Non-positive configured values fall back to the five-second default rather than disabling the deadline.

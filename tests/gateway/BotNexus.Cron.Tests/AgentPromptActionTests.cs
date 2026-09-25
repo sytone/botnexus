@@ -60,7 +60,7 @@ public sealed class AgentPromptActionTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_SoulAgent_UsesSoulTrigger()
+    public async Task ExecuteAsync_SoulEnabledAgent_StillUsesCronTrigger()
     {
         var action = new AgentPromptAction();
         var cronTrigger = new Mock<IInternalTrigger>();
@@ -78,18 +78,19 @@ public sealed class AgentPromptActionTests
         registry.Setup(value => value.Get(AgentId.From("agent-a"))).Returns(descriptor);
         cronTrigger.SetupGet(value => value.Type).Returns(TriggerType.Cron);
         soulTrigger.SetupGet(value => value.Type).Returns(TriggerType.Soul);
-        soulTrigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
-            .ReturnsAsync(SessionId.From("soul:agent-a:2026-05-08"));
+        cronTrigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .ReturnsAsync(SessionId.From("cron:job-1:run-1"));
 
         var services = BuildServices(cronTrigger.Object, soulTrigger.Object, registry.Object);
         var context = CreateContext(services);
 
         await action.ExecuteAsync(context);
 
-        soulTrigger.Verify(value =>
-            value.CreateSessionAsync(AgentId.From("agent-a"), "Ping from cron", It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()), Times.Once);
         cronTrigger.Verify(value =>
+            value.CreateSessionAsync(AgentId.From("agent-a"), "Ping from cron", It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()), Times.Once);
+        soulTrigger.Verify(value =>
             value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()), Times.Never);
+        context.SessionId!.Value.ShouldBe(SessionId.From("cron:job-1:run-1"));
     }
 
     [Fact]

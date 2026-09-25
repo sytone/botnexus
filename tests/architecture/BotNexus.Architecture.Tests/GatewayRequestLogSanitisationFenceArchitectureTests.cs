@@ -70,6 +70,24 @@ public sealed class GatewayRequestLogSanitisationFenceArchitectureTests : Archit
 
 
     [Fact]
+    public void GatewaySinkFanOut_IsWrappedByTheLogTextSanitisingSeam()
+    {
+        const string configurationSource = ApiRoot + "/Logging/GatewaySerilogConfiguration.cs";
+        var source = File.ReadAllText(ResolvePath(configurationSource));
+
+        source.ShouldContain(
+            "new SecretRedactingSink(new LogTextSanitizingSink(inner), redactor)",
+            Case.Sensitive,
+            "Every gateway sink must remain behind the central structured-property safety seam. " +
+            "Adding per-controller calls is insufficient because a new external/configuration value " +
+            "could otherwise reach the text file and diagnostics buffer without neutralisation.");
+        source.ShouldNotContain(
+            "new SecretRedactingSink(inner, redactor)",
+            Case.Sensitive,
+            "A direct redactor-to-sink path bypasses record-boundary sanitisation.");
+    }
+
+    [Fact]
     public void Helper_Exists()
     {
         var path = ResolvePath(HelperSource);

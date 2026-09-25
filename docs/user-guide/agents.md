@@ -647,12 +647,29 @@ The entry the gateway inserts is deliberately minimal. It carries only:
 | `enabled` | `true`, or `false` when no provider/model could be resolved |
 | `definitionVersion` | stamped by the reconciler |
 
-That is the whole entry. In particular the shipped template declares **no `toolIds` and no
+That is the whole configuration entry. In particular the shipped template declares **no `toolIds` and no
 Skills configuration**, so Trailguide inherits whatever `agents.defaults` your installation
-applies, the same as any other agent that omits those keys. A curated workspace, a
-least-privilege tool allowlist and bundled onboarding skills are planned but **have not
-shipped yet**; do not expect them in the entry you see today. If you want Trailguide
-constrained, set `toolIds` on it yourself — it is your entry to edit.
+applies, the same as any other agent that omits those keys. If you want Trailguide
+constrained, set `toolIds` on it yourself - it is your entry to edit.
+
+Trailguide ships with a curated workspace corpus. BotNexus writes Trailguide-specific `SOUL.md`
+and `AGENTS.md` files. Together they define its voice, require answers to be grounded in the
+locally available repository documentation, treat Labs as optional supplemental material, and
+help the user operate BotNexus and discover relevant capabilities. Trailguide does not receive the
+generic `BOOTSTRAP.md` or `IDENTITY.md`; its curated files already define its identity and
+first-turn behavior.
+
+The two canonical files are platform-owned and refreshed from the installed repository whenever
+BotNexus resolves the Trailguide workspace. Trailguide is instructed never to edit them. This lets
+an update correct or improve the default agent for every installation without maintaining a chain
+of historical content hashes.
+
+Put installation-specific or user-requested standing customization in
+`TRAILGUIDE.custom.md` in the Trailguide workspace. The prompt loader includes that file after the
+canonical files when it exists. BotNexus never creates, replaces, or deletes it, and Trailguide is
+instructed to write persistent customization only there. Existing edits made directly to the old
+canonical files before this contract shipped will be replaced on the next update; move any content
+you want to retain into `TRAILGUIDE.custom.md`.
 
 Because the reconciler is insert-only, any key you add is permanent: the gateway will never
 come back and rewrite it.

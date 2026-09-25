@@ -430,6 +430,17 @@ Describe '#3932 verified current-target freshness' {
                 if ($script:Scenario -eq 'empty') { return '[]' }
                 if ($script:Scenario -eq 'list-malformed') { return '{bad' }
                 if ($script:Scenario -eq 'list-object') { return '{}' }
+                if ($script:Scenario -eq 'list-saturated') {
+                    return (1..500 | ForEach-Object {
+                        @{ number = $_; title = "fixture $_"; headRefName = "fix/$($_)"; headRefOid = '1d64221de118ae9c0f3286007ba7d0a5328653ff'; baseRefName = 'release/next'; mergeable = 'MERGEABLE' }
+                    } | ConvertTo-Json -Compress -AsArray)
+                }
+                if ($script:Scenario -eq 'list-duplicate') {
+                    return (@(
+                        @{ number = 3557; title = 'fixture'; headRefName = 'fix/one'; headRefOid = '1d64221de118ae9c0f3286007ba7d0a5328653ff'; baseRefName = 'release/next'; mergeable = 'MERGEABLE' },
+                        @{ number = 3557; title = 'duplicate'; headRefName = 'fix/two'; headRefOid = '1d64221de118ae9c0f3286007ba7d0a5328653ff'; baseRefName = 'release/next'; mergeable = 'MERGEABLE' }
+                    ) | ConvertTo-Json -Compress -AsArray)
+                }
                 $head = '1d64221de118ae9c0f3286007ba7d0a5328653ff'
                 if ($script:Scenario -eq 'missing-head') { $head = '' }
                 $branch = if ($script:Scenario -like 'same-*') { 'fix/local-branch' } else { 'upstream/ui-portal-overhaul' }
@@ -502,6 +513,18 @@ Describe '#3932 verified current-target freshness' {
         $r.freshnessStatus | Should -Be 'verified'
     }
 
+    It 'rejects a saturated fixed-boundary inventory before reporting a partial board' {
+        $script:Scenario = 'list-saturated'
+        { Get-CiPrStatusReport -Repo 'Sytone/botnexus' } |
+            Should -Throw '*saturated the 500-row boundary*'
+    }
+
+    It 'rejects duplicate PR numbers before reporting an ambiguous board' {
+        $script:Scenario = 'list-duplicate'
+        { Get-CiPrStatusReport -Repo 'Sytone/botnexus' } |
+            Should -Throw '*duplicate pull request number 3557*'
+    }
+
     It 'fails closed for <caseName> without changing passing check health' -TestCases @(
         'ref-http', 'ref-malformed', 'ref-missing', 'ref-array', 'ref-wrong-type', 'missing-head',
         'compare-http', 'compare-malformed', 'compare-missing', 'compare-null',
@@ -545,7 +568,9 @@ Describe '#3932 verified current-target freshness' {
         @{ caseName = 'empty'; expectedExit = 0; freshness = '' },
         @{ caseName = 'list-http'; expectedExit = 1; freshness = '' },
         @{ caseName = 'list-malformed'; expectedExit = 1; freshness = '' },
-        @{ caseName = 'list-object'; expectedExit = 1; freshness = '' }
+        @{ caseName = 'list-object'; expectedExit = 1; freshness = '' },
+        @{ caseName = 'list-saturated'; expectedExit = 1; freshness = '' },
+        @{ caseName = 'list-duplicate'; expectedExit = 1; freshness = '' }
     ) {
         param($caseName, $expectedExit, $freshness)
         $path = (Join-Path $PSScriptRoot 'ci-pr-status.ps1').Replace("'", "''")

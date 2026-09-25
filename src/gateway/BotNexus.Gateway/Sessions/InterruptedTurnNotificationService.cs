@@ -176,21 +176,27 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
                 };
 
                 session.AddEntry(notification);
-                session.RemoveCrashSentinels();
 
                 // Agent-only conversations have nobody who can act on a resend instruction, so
                 // replay them independently of the human-facing opt-in. The same interactive and
                 // attempt-cap guards still apply. Missing conversation data is conservative: it
                 // does not prove the absence of a human.
-                var didReplay = false;
-                if ((_options.AutoReplayInterruptedTurns || isAgentOnlyConversation)
+                var shouldAttemptReplay = (_options.AutoReplayInterruptedTurns || isAgentOnlyConversation)
                     && session.IsInteractive
-                    && _orchestrator is not null)
+                    && _orchestrator is not null;
+                var didReplay = false;
+                if (shouldAttemptReplay)
                 {
                     didReplay = await TryAutoReplayAsync(session, agentId, cancellationToken).ConfigureAwait(false);
                     if (didReplay)
                         replayed++;
                 }
+
+                // The sentinel is the durable recovery marker. A refused or impossible replay must
+                // leave it in place so a later startup can try again. Notify-only sessions retain
+                // the historical behaviour because there is deliberately no replacement turn.
+                if (didReplay || !shouldAttemptReplay)
+                    session.RemoveCrashSentinels();
 
                 try
                 {
@@ -306,64 +312,101 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
             return Task.FromResult(false);
         }
 
-        // Find the last user message before the sentinel — this is what we replay.
-        var lastUser = session.History
-            .Where(e => e.Role == MessageRole.User && !e.IsCrashSentinel)
+        // Human requests are authoritative user entries. Agent-origin API requests are authoritative
+        // assistant entries with durable API sender provenance; accepting every assistant response
+        // would replay model output as a new request.
+        var initiatingEntry = session.History
+            .Where(e => !e.IsCrashSentinel && !string.IsNullOrWhiteSpace(e.Content))
+            .Where(e => e.Role == MessageRole.User
+                || (session.ChannelType == ChannelKey.From("api")
+                    && e.Role == MessageRole.Assistant
+                    && !string.IsNullOrWhiteSpace(e.SenderId)
+                    && e.SenderId.StartsWith("api", StringComparison.OrdinalIgnoreCase)))
             .OrderBy(e => e.Timestamp)
             .LastOrDefault();
 
-        if (lastUser is null || string.IsNullOrWhiteSpace(lastUser.Content))
+        if (initiatingEntry is null)
         {
-            _logger.LogDebug(
-                "Session {SessionId} has no replayable user message; skipping auto-replay",
+            _logger.LogWarning(
+                "Session {SessionId} has no authoritative initiating message; recovery remains retryable",
                 session.SessionId.Value);
             return Task.FromResult(false);
         }
 
-        // Increment the replay counter in metadata.
-        session.Metadata[MetadataKeyReplayCount] = replayCount + 1;
-
-        // #3046: append the gateway-authored banner as its OWN System entry, flagged so
-        // SessionContextProjector.IsVisibleOnResume admits it to the LLM view. The user's original
-        // entry is left untouched and the replayed Content below stays byte-for-byte verbatim - the
-        // agent must be able to tell what the platform said from what the user said, since misread
-        // provenance is the defect being fixed.
-        session.AddEntry(new SessionEntry
-        {
-            Role = MessageRole.System,
-            Content = BuildReplayBanner(lastUser.Content, replayCount + 1, _options.MaxAutoReplayAttempts),
-            Timestamp = DateTimeOffset.UtcNow,
-            IsReplayBanner = true
-        });
-
         var channelType = session.ChannelType ?? ChannelKey.From("internal");
-        var callerId = session.CallerId ?? session.SessionId.Value;
+        var callerId = initiatingEntry.SenderId ?? session.CallerId ?? session.SessionId.Value;
+        var outcomeUnknownToolCallIds = FindOutcomeUnknownToolCallIds(session.History);
+        var metadata = new Dictionary<string, object?>
+        {
+            ["isReplay"] = true,
+            ["originalTimestamp"] = initiatingEntry.Timestamp.ToString("o")
+        };
+        if (outcomeUnknownToolCallIds.Length > 0)
+            metadata["outcomeUnknownToolCallIds"] = outcomeUnknownToolCallIds;
 
         var replay = new InboundMessage
         {
             ChannelType = channelType,
             SenderId = callerId,
             Sender = CitizenId.Of(agentId),
-            ChannelAddress = ChannelAddress.From(callerId),
-            Content = lastUser.Content,
+            ChannelAddress = ChannelAddress.From(session.ConversationId.IsInitialized()
+                ? session.ConversationId.Value
+                : callerId),
+            Content = initiatingEntry.Content,
             Timestamp = DateTimeOffset.UtcNow,
+            Trigger = initiatingEntry.Trigger,
+            SpeakAs = initiatingEntry.Role,
+            Kind = initiatingEntry.Kind,
             RoutingHints = new InboundMessageRoutingHints(
                 RequestedAgentId: agentId,
                 RequestedSessionId: session.SessionId,
                 RequestedConversationId: session.ConversationId.IsInitialized() ? session.ConversationId : null),
-            Metadata = new Dictionary<string, object?>
-            {
-                ["isReplay"] = true,
-                ["originalTimestamp"] = lastUser.Timestamp.ToString("o")
-            }
+            Metadata = metadata
         };
 
         var accepted = _orchestrator!.Post(replay);
 
         _logger.LogInformation(
-            "Auto-replay for session {SessionId}: Post returned {Accepted} (attempt {Attempt}/{Max})",
-            session.SessionId.Value, accepted, replayCount + 1, _options.MaxAutoReplayAttempts);
+            "Auto-replay for session {SessionId}: Post returned {Accepted} (attempt {Attempt}/{Max}, outcome-unknown tools {OutcomeUnknownCount})",
+            session.SessionId.Value, accepted, replayCount + 1, _options.MaxAutoReplayAttempts,
+            outcomeUnknownToolCallIds.Length);
 
-        return Task.FromResult(accepted);
+        if (!accepted)
+            return Task.FromResult(false);
+
+        session.Metadata[MetadataKeyReplayCount] = replayCount + 1;
+        var bannerContent = BuildReplayBanner(
+            initiatingEntry.Content, replayCount + 1, _options.MaxAutoReplayAttempts);
+        if (outcomeUnknownToolCallIds.Length > 0)
+        {
+            bannerContent += "\n\nOutcome is unknown for these recent tool calls; verify each before repeating it: "
+                + string.Join(", ", outcomeUnknownToolCallIds);
+        }
+
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.System,
+            Content = bannerContent,
+            Timestamp = DateTimeOffset.UtcNow,
+            IsReplayBanner = true
+        });
+
+        return Task.FromResult(true);
+    }
+
+    private static string[] FindOutcomeUnknownToolCallIds(IEnumerable<SessionEntry> history)
+    {
+        var completed = history
+            .Where(static entry => entry.IsToolResultRow() && !string.IsNullOrWhiteSpace(entry.ToolCallId))
+            .Select(static entry => entry.ToolCallId!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        return history
+            .Where(static entry => entry.IsToolStartRow() && !string.IsNullOrWhiteSpace(entry.ToolCallId))
+            .Select(static entry => entry.ToolCallId!)
+            .Where(toolCallId => !completed.Contains(toolCallId))
+            .Distinct(StringComparer.Ordinal)
+            .Take(20)
+            .ToArray();
     }
 }

@@ -17,10 +17,12 @@ public sealed class SqliteMemoryStore(
     MemoryLikeFallbackOptions? likeFallbackOptions = null,
     IMemoryEmbeddingService? embeddingService = null,
     MemoryVectorSearchOptions? vectorSearchOptions = null,
-    ILogger<SqliteMemoryStore>? logger = null) : IMemoryStore
+    ILogger<SqliteMemoryStore>? logger = null,
+    Func<MemoryTemporalDecayPolicy>? temporalDecayPolicy = null) : IMemoryStore
 {
-    private const double DefaultHalfLifeDays = 30d;
     private const int MaxReembeddingErrorLength = 2048;
+    private const string LiveMemoryPredicate =
+        "m.is_archived = 0 AND (m.expires_at IS NULL OR julianday(m.expires_at) > julianday('now'))";
     private static readonly TimeSpan ReembeddingClaimLease = TimeSpan.FromMinutes(5);
     private readonly string _dbPath = dbPath;
     private readonly SqliteWalMaintenance _walMaintenance = new(fileSystem);
@@ -43,6 +45,8 @@ public sealed class SqliteMemoryStore(
         vectorSearchOptions ?? MemoryVectorSearchOptions.Default;
 
     private readonly ILogger<SqliteMemoryStore> _logger = logger ?? NullLogger<SqliteMemoryStore>.Instance;
+    private readonly Func<MemoryTemporalDecayPolicy> _temporalDecayPolicy =
+        temporalDecayPolicy ?? (() => MemoryTemporalDecayPolicy.Default);
 
     private bool _initialized;
 
@@ -476,12 +480,13 @@ public sealed class SqliteMemoryStore(
     public async Task<MemorySearchResult> SearchWithReportAsync(string query, int topK = 10, MemorySearchFilter? filter = null, CancellationToken ct = default)
     {
         await InitializeAsync(ct).ConfigureAwait(false);
+        var policy = ResolveTemporalDecayPolicy();
         var sanitized = SanitizeFtsQuery(query);
         if (string.IsNullOrWhiteSpace(sanitized))
-            return new MemorySearchResult([], MemoryVectorScanReport.NotAttempted);
+            return new MemorySearchResult([], MemoryVectorScanReport.NotAttempted, policy);
 
         var limit = Math.Clamp(topK, 1, 100);
-        var lambda = Math.Log(2d) / DefaultHalfLifeDays;
+        var lambda = policy.Lambda;
         try
         {
             await using var connection = CreateConnection();
@@ -513,7 +518,10 @@ public sealed class SqliteMemoryStore(
             var report = await AugmentWithVectorCandidatesAsync(connection, query, candidates, filter, lexicalIds, ct)
                 .ConfigureAwait(false);
 
-            return new MemorySearchResult(HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda), report);
+            return new MemorySearchResult(
+                HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda),
+                report,
+                policy);
         }
         catch (SqliteException ex) when (SqliteRetryHelper.IsTransient(ex))
         {
@@ -1288,7 +1296,7 @@ public sealed class SqliteMemoryStore(
 
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
                    m.provenance, m.origin_conversation_id, m.origin_session_id,
@@ -1299,7 +1307,7 @@ public sealed class SqliteMemoryStore(
             FROM memories_fts
             INNER JOIN memories m ON m.rowid = memories_fts.rowid
             WHERE memories_fts MATCH $query
-              AND m.is_archived = 0
+              AND {LiveMemoryPredicate}
             """);
 
         command.Parameters.AddWithValue("$query", matchExpression);
@@ -1410,10 +1418,10 @@ public sealed class SqliteMemoryStore(
     {
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT COUNT(*)
             FROM memories m
-            WHERE m.is_archived = 0
+            WHERE {LiveMemoryPredicate}
             """);
         sql.AppendLine();
         AppendFilters(sql, command, filter);
@@ -1430,12 +1438,12 @@ public sealed class SqliteMemoryStore(
 
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT COUNT(*)
             FROM memories_fts
             INNER JOIN memories m ON m.rowid = memories_fts.rowid
             WHERE memories_fts MATCH $query
-              AND m.is_archived = 0
+              AND {LiveMemoryPredicate}
             """);
         sql.AppendLine();
         command.Parameters.AddWithValue("$query", matchExpression);
@@ -1469,7 +1477,8 @@ public sealed class SqliteMemoryStore(
         MemorySearchFilter? filter,
         double lambda,
         CancellationToken ct)
-        => await SearchWithLikeFallbackWithReportAsync(sanitizedQuery, limit, filter, lambda, _likeFallbackOptions, ct)
+        => await SearchWithLikeFallbackWithReportAsync(
+                sanitizedQuery, limit, filter, lambda, ResolveTemporalDecayPolicy(), _likeFallbackOptions, ct)
             .ConfigureAwait(false);
 
     /// <summary>
@@ -1509,7 +1518,8 @@ public sealed class SqliteMemoryStore(
         MemoryLikeFallbackOptions fallbackOptions,
         CancellationToken ct)
     {
-        var result = await SearchWithLikeFallbackWithReportAsync(sanitizedQuery, limit, filter, lambda, fallbackOptions, ct)
+        var result = await SearchWithLikeFallbackWithReportAsync(
+                sanitizedQuery, limit, filter, lambda, ResolveTemporalDecayPolicy(), fallbackOptions, ct)
             .ConfigureAwait(false);
         return result.Entries;
     }
@@ -1524,6 +1534,7 @@ public sealed class SqliteMemoryStore(
         int limit,
         MemorySearchFilter? filter,
         double lambda,
+        MemoryTemporalDecayPolicy temporalDecayPolicy,
         MemoryLikeFallbackOptions fallbackOptions,
         CancellationToken ct)
     {
@@ -1535,13 +1546,13 @@ public sealed class SqliteMemoryStore(
             .ToArray();
 
         if (terms.Length == 0)
-            return new MemorySearchResult([], MemoryVectorScanReport.NotAttempted);
+            return new MemorySearchResult([], MemoryVectorScanReport.NotAttempted, temporalDecayPolicy);
 
         await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
                    m.provenance, m.origin_conversation_id, m.origin_session_id,
@@ -1549,7 +1560,7 @@ public sealed class SqliteMemoryStore(
                    m.supersedes_id, m.superseded_by_id, m.origin_kind, m.origin_reference, m.embedding_status,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories m
-            WHERE m.is_archived = 0
+            WHERE {LiveMemoryPredicate}
             """);
 
         // See the note on the FTS path: the raw string literal has no trailing newline.
@@ -1602,8 +1613,15 @@ public sealed class SqliteMemoryStore(
         var report = await AugmentWithVectorCandidatesAsync(connection, sanitizedQuery, candidates, filter, lexicalIds, ct)
             .ConfigureAwait(false);
 
-        return new MemorySearchResult(HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda), report);
+        return new MemorySearchResult(
+            HybridMemoryRanker.RankWithScores(candidates.Values, limit, lambda),
+            report,
+            temporalDecayPolicy);
     }
+
+    private MemoryTemporalDecayPolicy ResolveTemporalDecayPolicy()
+        => _temporalDecayPolicy()
+            ?? throw new InvalidOperationException("The memory temporal-decay policy resolver returned null.");
 
     /// <summary>
     /// Adds cosine-similarity evidence to the lexical candidate set, and pulls in semantically
@@ -1712,7 +1730,7 @@ public sealed class SqliteMemoryStore(
     {
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
                    m.provenance, m.origin_conversation_id, m.origin_session_id,
@@ -1720,7 +1738,7 @@ public sealed class SqliteMemoryStore(
                    m.supersedes_id, m.superseded_by_id, m.origin_kind, m.origin_reference, m.embedding_status,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories m
-            WHERE m.is_archived = 0
+            WHERE {LiveMemoryPredicate}
               AND m.embedding IS NOT NULL
             """);
 

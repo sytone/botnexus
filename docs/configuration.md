@@ -712,31 +712,33 @@ cooldown), not under `agents`.
 
 ### Providers: ProvidersConfig
 
-Dictionary mapping provider names to provider configurations. Keys are case-insensitive and match extension folder names under `extensions/providers/{name}/`.
+Dictionary mapping provider-instance names to `ProviderConfig` objects. Keys are case-insensitive model-registry identities; they are not extension folder names. Built-in LLM providers are registered directly in `Program.cs`.
 
 ```json
 {
   "providers": {
-    "github-copilot": { ... },
-    "openai": { ... },
-    "anthropic": { ... },
-    "my-compatible-endpoint": { ... }
+    "github-copilot": { "apiKey": "auth:github-copilot" },
+    "openai": { "apiKey": "auth:openai" },
+    "anthropic": { "apiKey": "auth:anthropic" },
+    "my-compatible-endpoint": {
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKey": "auth:compatible-endpoint",
+      "chat": {
+        "api": "openai-compat",
+        "models": ["my-model"]
+      }
+    }
   }
 }
 ```
 
+The provider-instance key is what an agent stores in `agents.<id>.provider`. `api` selects the registered wire contract; it does not name an account. `apiKey` can hold a literal credential or an `auth:<entry>` reference. Keep credentials under providers, not agents.
+
+Named compatible endpoints can coexist because each entry explicitly supplies its endpoint, credential reference, API contract and model list. That does not make arbitrary names complete instances of a built-in provider. In particular, Copilot login, discovery and diagnostics currently target the canonical `github-copilot` instance. See [GitHub Copilot accounts and aliases](providers/github-copilot.md#accounts-provider-instances-and-the-copilot-alias).
+
 #### ProviderConfig: Common Properties
 
-All providers inherit these properties:
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `Auth` | string | `"apikey"` | Authentication type: `"apikey"` or `"oauth"` |
-| `ApiKey` | string | `""` | API key (used if Auth="apikey"; ignored for OAuth) |
-| `ApiBase` | string | null | Custom API base URL (useful for proxies, Azure endpoints) |
-| `DefaultModel` | string | null | Default model for this provider (e.g., gpt-4o, gpt-4-turbo) |
-| `TimeoutSeconds` | int | 120 | Request timeout in seconds |
-| `MaxRetries` | int | 3 | Number of retries on transient failure |
+The current common fields are `enabled`, `apiKey`, `baseUrl`, `streamIdleTimeoutMs`, and the nested `chat` and `embeddings` capability objects. Deprecated flat chat fields remain readable during migration and are listed in the [canonical field table](#canonical-shape), but nested capability fields take precedence per field. Retired authentication-mode, API-base, provider-timeout, retry-count, and OAuth-client-id fields are not properties on the current `ProviderConfig`.
 
 #### Copilot Provider: Supported Models
 
@@ -824,24 +826,15 @@ botnexus config set agents.coder.provider copilot
 
 #### Copilot Provider (OAuth Device Code Flow)
 
-**Folder:** `extensions/providers/copilot/`  
-**Auth:** OAuth (no API key required)
+Run the supported login command before using a Copilot agent:
 
 ```bash
-botnexus config set providers.copilot.defaultModel gpt-4o
+botnexus provider setup --provider github-copilot
 ```
 
-**How it works:**
-1. On first use, agent prompts user to visit `https://github.com/login/device` and enter a code
-2. Token cached at `~/.botnexus/tokens/copilot.json` (encrypted on supported platforms)
-3. On subsequent runs, cached token is reused automatically
-4. Token is automatically refreshed if expired
+The command performs the device-code flow immediately, saves or replaces the canonical `github-copilot` entry in `auth.json`, and writes `providers.github-copilot.apiKey` as `auth:github-copilot` through the active configuration backend. Agents do not trigger login on first use. The gateway refreshes an expiring stored OAuth session when the retained credential permits it.
 
-**Properties:**
-- `Auth`: Must be `"oauth"` (required)
-- `DefaultModel`: Any supported Copilot model ID (e.g., `claude-opus-4.6`, `gpt-5.4`, `gpt-4o`)
-- `ApiBase`: GitHub Copilot endpoint (fixed: `https://api.individual.githubcopilot.com`)
-- `OAuthClientId`: GitHub app client ID (defaults to official BotNexus client ID)
+`copilot` is a model-registry alias for `github-copilot`, not another account. Named independently authenticated built-in Copilot instances are planned but not implemented; use separate BotNexus homes/gateways if two subscriptions must remain isolated. See the [Copilot provider guide](providers/github-copilot.md#accounts-provider-instances-and-the-copilot-alias).
 
 **Copilot API Headers:**
 
@@ -860,23 +853,23 @@ These headers identify the client to the Copilot API and enable proper rate limi
 
 #### OpenAI Provider
 
-**Folder:** `extensions/providers/openai/`  
-**Auth:** API Key
+Use the setup wizard so the API key is entered at a secret prompt rather than exposed in shell history:
 
 ```bash
-botnexus config set providers.openai.apiKey sk-...
-botnexus config set providers.openai.defaultModel gpt-4-turbo
+botnexus provider setup --provider openai
 ```
+
+The wizard writes the built-in `openai` provider instance and its selected default model. See the [OpenAI provider guide](providers/openai.md) for credential resolution and registered model IDs.
 
 #### Anthropic Provider
 
-**Folder:** `extensions/providers/anthropic/`  
-**Auth:** API Key
+Use the setup wizard so the API key is entered at a secret prompt rather than exposed in shell history:
 
 ```bash
-botnexus config set providers.anthropic.apiKey sk-ant-...
-botnexus config set providers.anthropic.defaultModel claude-3-5-sonnet-20241022
+botnexus provider setup --provider anthropic
 ```
+
+The wizard writes the built-in `anthropic` provider instance and its selected default model. See the [Anthropic provider guide](providers/anthropic.md) for credential resolution and registered model IDs.
 
 
 ---
@@ -1014,6 +1007,8 @@ botnexus config set gateway.subAgents.defaultTimeoutSeconds 1800
 botnexus config set gateway.subAgents.maxTimeoutSeconds 1800
 botnexus config set gateway.subAgents.defaultMaxTurns 30
 botnexus config set gateway.subAgents.maxTurnsCeiling 30
+botnexus config set gateway.subAgents.advisoryMaxTurns 30
+botnexus config set gateway.subAgents.advisoryTimeoutSeconds 1500
 botnexus config set gateway.subAgents.maxConcurrentPerSession 5
 botnexus config set gateway.subAgents.parentOverrides.farnsworth.defaultTimeoutSeconds 3600
 botnexus config set gateway.subAgents.parentOverrides.farnsworth.maxTimeoutSeconds 3600
@@ -1031,8 +1026,10 @@ or `parent-override`) so operators can audit which authorization tier applied.
 |----------|------|---------|-------------|
 | `subAgents.defaultTimeoutSeconds` | int | 600 | Timeout used when a spawn omits or supplies a non-positive timeout. |
 | `subAgents.maxTimeoutSeconds` | int | 1800 | Global timeout ceiling. |
+| `subAgents.advisoryTimeoutSeconds` | int | 1500 | Effective timeout above which a staging advisory is returned and logged; `0` disables it. The advisory does not change the timeout. |
 | `subAgents.defaultMaxTurns` | int | 30 | Turn budget used when omitted. |
 | `subAgents.maxTurnsCeiling` | int | 30 | Global turn ceiling. |
+| `subAgents.advisoryMaxTurns` | int | 30 | Effective turn budget above which a staging advisory is returned and logged; `0` disables it. The advisory does not change the turn budget. |
 | `subAgents.maxConcurrentPerSession` | int | 5 | Global running-child limit per parent session. |
 | `subAgents.parentOverrides.<parentAgentId>` | object | none | Trusted partial override of the five budget fields above. |
 | `subAgents.workspaceRoot` | string | ` ` (empty) | Temporary root directory under which each sub-agent's isolated workspace is created and later reclaimed. Empty preserves the historical default of `<OS temp>/botnexus-subagent-workspaces`. Supports `~` and environment-variable expansion and is normalized to an absolute path. The gateway (`FileAgentWorkspaceManager`) and the CLI (`botnexus subagent workspace list|prune` plus `doctor`) resolve this through the same shared resolver, so they can never target different directories. |
@@ -2082,14 +2079,7 @@ public class CopilotExtensionRegistrar : IExtensionRegistrar
 
 ### Extension Config Keys
 
-Configuration keys in `Providers`, `Channels`, `Tools.Extensions`, and `Tools.McpServers` must match the folder name under `extensions/{type}/{name}/`.
-
-**Examples:**
-- Config key `"copilot"` → loads from `extensions/providers/copilot/`
-- Config key `"telegram"` → loads from `extensions/channels/telegram/`
-- Config key `"github"` → loads from `extensions/tools/github/`
-
-Keys are **case-insensitive** for matching but should use kebab-case by convention.
+Do not apply one naming rule to unrelated extension systems. LLM provider keys are model-registry provider-instance identities and are consumed by the built-in provider registration in `Program.cs`; they do not load folders under `extensions/providers`. Channel, tool, and extension-owned configuration follows the contract of that extension and may use its registration ID. Consult the owning extension guide before creating a key.
 
 ### Extension-Specific Configuration
 
@@ -2281,7 +2271,7 @@ Templates can be defined in three ways:
    - **`.prompt.md`** (recommended for multi-line, human-authored prompts) — YAML front matter + Markdown body for readable content
    - **`.prompt.json`** (supported for compatibility and machine-generated templates) — Single-file JSON format
 
-The CLI merges all sources when listing or rendering templates. When both `foo.prompt.md` and `foo.prompt.json` exist with the same name, `.prompt.md` takes precedence.
+BotNexus resolves templates for the selected agent in this precedence order: workspace, agent, shared, then configuration. A higher-precedence template with the same name shadows the lower-precedence definition. Within one file directory, `foo.prompt.md` takes precedence over `foo.prompt.json`. The CLI and desktop picker use this same effective catalogue; the picker shows the winning source without exposing file paths or template bodies.
 
 **Sample Templates:** The CLI ships bundled sample prompt files. Run `botnexus prompt create samples` to copy them into `~/.botnexus/prompts/`, then modify them for your workflow.
 
@@ -2409,6 +2399,12 @@ Parameters are declared using `{{name}}` placeholders in the template body. The 
 - `required: true` — Parameter must be supplied by caller if no default is set
 - `required: false` — Parameter is optional; renders as empty string if missing
 - `default` — Fallback value when caller does not supply it
+
+### Insert from the desktop composer
+
+In the desktop inline or expanded composer, choose **Templates**, search the effective catalogue, enter parameter values, and select **Preview**. The preview is the exact text the gateway renderer will produce. **Insert** replaces the current textarea selection, or inserts at a collapsed caret, while preserving the rest of the draft, its line endings, attachments, and current delivery intent. Insertion is a normal textarea edit, so browser undo restores the previous draft.
+
+**Insert never dispatches a message.** You can edit the inserted text and must still use the composer's normal **Send**, **Steer**, **Follow Up**, or **Redirect** action. This differs from `botnexus prompt run`, which renders the template and immediately starts an agent run.
 
 ### Examples
 

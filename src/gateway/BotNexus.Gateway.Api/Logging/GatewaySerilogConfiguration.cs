@@ -115,11 +115,11 @@ public static class GatewaySerilogConfiguration
             .Enrich.WithMachineName()
             .Enrich.WithThreadId();
 
-        // Every sink is wrapped in one redacting decorator rather than each being wrapped
-        // individually, so a sink added later inherits redaction by construction instead of by the
-        // author remembering to opt in - which is precisely the failure this issue reports.
-        var redactingSink = LoggerSinkConfiguration.Wrap(
-            inner => new SecretRedactingSink(inner, redactor),
+        // Every sink is wrapped in one redacting and log-text-sanitising pipeline rather than each
+        // being wrapped individually. A sink added later therefore inherits both confidentiality
+        // and record-boundary safety by construction instead of relying on every logging call site.
+        var safeSink = LoggerSinkConfiguration.Wrap(
+            inner => new SecretRedactingSink(new LogTextSanitizingSink(inner), redactor),
             wrapped =>
             {
                 wrapped.Sink(new RecentLogStoreSink(services.GetRequiredService<IRecentLogStore>()));
@@ -132,7 +132,7 @@ public static class GatewaySerilogConfiguration
                     retainedFileCountLimit: 168);
             });
 
-        return enriched.WriteTo.Sink(redactingSink);
+        return enriched.WriteTo.Sink(safeSink);
     }
 
     /// <summary>
@@ -154,15 +154,15 @@ public static class GatewaySerilogConfiguration
 
         var redactor = new SecretRedactor();
 
-        var redactingSink = LoggerSinkConfiguration.Wrap(
-            inner => new SecretRedactingSink(inner, redactor),
+        var safeSink = LoggerSinkConfiguration.Wrap(
+            inner => new SecretRedactingSink(new LogTextSanitizingSink(inner), redactor),
             wrapped =>
             {
                 wrapped.Console();
                 wrapped.File(bootstrapLogPath, rollingInterval: RollingInterval.Day);
             });
 
-        return configuration.WriteTo.Sink(redactingSink);
+        return configuration.WriteTo.Sink(safeSink);
     }
 
     /// <summary>

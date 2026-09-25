@@ -528,7 +528,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 initialMessages.Count, summaries.Count, context.History.Count, context.SessionId);
         }
 
-        // #1710/#4121: best-effort mid-loop auto-compaction hook. A long dispatch re-checks
+        // #1710/#4121/#4379: fail-closed mid-loop auto-compaction hook. A long dispatch re-checks
         // between outer iterations, but it must not evict the handle that is executing this callback:
         // DisposeAsync would call Agent.AbortAsync and await the same active run. Instead the
         // coordinator persists without eviction and this callback returns a replacement context for
@@ -551,21 +551,92 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 modelWindow: model.ContextWindow);
             maybeCompactAsync = async cancellationToken =>
             {
-                var liveSession = await sessionStore.GetAsync(compactSessionId, cancellationToken).ConfigureAwait(false);
                 var scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
-                if (liveSession is null || !compactor.ShouldCompact(liveSession.Session, scopedOptions))
+                GatewaySession? liveSession = null;
+                for (var attempt = 0; attempt < 2; attempt++)
                 {
-                    return null;
+                    liveSession = await sessionStore.GetAsync(compactSessionId, cancellationToken).ConfigureAwait(false);
+                    if (liveSession is null)
+                    {
+                        if (attempt == 0)
+                        {
+                            return null;
+                        }
+
+                        throw new ProactiveCompactionException(
+                            "Required proactive compaction could not refresh the session after a conflict.",
+                            retryable: true);
+                    }
+
+                    if (!compactor.ShouldCompact(liveSession.Session, scopedOptions))
+                    {
+                        if (attempt == 0)
+                        {
+                            return null;
+                        }
+
+                        _logger.LogInformation(
+                            "Proactive compaction conflict for session {SessionId} was reconciled by a newer bounded session snapshot.",
+                            compactSessionId);
+                        break;
+                    }
+
+                    SessionCompactionOutcome outcome;
+                    try
+                    {
+                        outcome = await compactionCoordinator.CompactAsync(
+                            compactAgentId,
+                            liveSession,
+                            cancellationToken,
+                            handlePolicy: CompactionHandlePolicy.KeepCurrent).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new ProactiveCompactionException(
+                            "Required proactive compaction failed before it produced an outcome.",
+                            retryable: true,
+                            ex);
+                    }
+
+                    if (outcome.Applied)
+                    {
+                        _logger.LogInformation(
+                            "Proactive compaction applied for session {SessionId} on attempt {Attempt}.",
+                            compactSessionId,
+                            attempt + 1);
+                        break;
+                    }
+
+                    if (outcome.SkipReason != CompactionSkipReason.ConcurrentHistoryChange)
+                    {
+                        throw new ProactiveCompactionException(
+                            $"Required proactive compaction did not apply (reason={outcome.SkipReason?.Value ?? "Unspecified"}).",
+                            retryable: false);
+                    }
+
+                    if (attempt == 0)
+                    {
+                        _logger.LogInformation(
+                            "Proactive compaction conflict for session {SessionId}; refreshing and retrying once.",
+                            compactSessionId);
+                        continue;
+                    }
+
+                    _logger.LogWarning(
+                        "Proactive compaction conflict retry exhausted for session {SessionId}; provider invocation is blocked.",
+                        compactSessionId);
+                    throw new ProactiveCompactionException(
+                        "Required proactive compaction conflict retry was exhausted.",
+                        retryable: true);
                 }
 
-                var outcome = await compactionCoordinator.CompactAsync(
-                    compactAgentId,
-                    liveSession,
-                    cancellationToken,
-                    handlePolicy: CompactionHandlePolicy.KeepCurrent).ConfigureAwait(false);
-                if (!outcome.Applied)
+                if (liveSession is null)
                 {
-                    return null;
+                    throw new InvalidOperationException("Applied proactive compaction did not retain its session snapshot.");
                 }
 
                 var compactedEntries = SessionContextProjector.ProjectForResume(liveSession.History);
