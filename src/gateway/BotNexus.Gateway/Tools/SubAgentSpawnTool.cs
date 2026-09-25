@@ -150,43 +150,51 @@ public sealed class SubAgentSpawnTool(
                 Status = "failed"
             }, JsonOptions));
         }
-        // #2789: the clamp field is emitted ONLY when a ceiling actually reduced the request, so
-        // its presence is the signal to re-scope. Serialized through two shapes rather than a
-        // nullable property because a field that is always there (even as null) is boilerplate a
-        // calling model stops reading, which is the failure this issue exists to fix.
-        var result = spawned.BudgetClamp is { } clamp
-            ? JsonSerializer.Serialize(new
-            {
-                spawned.SubAgentId,
-                SessionId = spawned.ChildSessionId,
-                ConversationId = spawned.ChildConversationId,
-                spawned.Status,
-                spawned.Name,
-                BudgetClamp = new
-                {
-                    clamp.PolicyTier,
-                    clamp.MaxTurnsClamped,
-                    clamp.RequestedMaxTurns,
-                    clamp.EffectiveMaxTurns,
-                    clamp.TimeoutSecondsClamped,
-                    clamp.RequestedTimeoutSeconds,
-                    clamp.EffectiveTimeoutSeconds,
-                    Notice = "Your requested budget exceeded a configured ceiling and was reduced. "
-                        + "Scope the delegated task to the effective values above, not the requested ones."
-                }
-            }, JsonOptions)
-            : JsonSerializer.Serialize(new
-            {
-                spawned.SubAgentId,
-                SessionId = spawned.ChildSessionId,
-                // #2338: the run's own conversation id. This is what a channel expands to load the
-                // child's transcript on demand; it is deliberately NOT the caller's conversation id.
-                ConversationId = spawned.ChildConversationId,
-                spawned.Status,
-                spawned.Name
-            }, JsonOptions);
+        // Optional warning fields are added only when actionable. A plain in-range spawn keeps the
+        // compact historical result, while clamp and advisory disclosures can compose independently.
+        var result = new Dictionary<string, object?>
+        {
+            ["subAgentId"] = spawned.SubAgentId,
+            ["sessionId"] = spawned.ChildSessionId,
+            // #2338: the run's own conversation id. This is what a channel expands to load the
+            // child's transcript on demand; it is deliberately NOT the caller's conversation id.
+            ["conversationId"] = spawned.ChildConversationId,
+            ["status"] = spawned.Status,
+            ["name"] = spawned.Name
+        };
 
-        return TextResult(result);
+        if (spawned.BudgetClamp is { } clamp)
+        {
+            result["budgetClamp"] = new
+            {
+                clamp.PolicyTier,
+                clamp.MaxTurnsClamped,
+                clamp.RequestedMaxTurns,
+                clamp.EffectiveMaxTurns,
+                clamp.TimeoutSecondsClamped,
+                clamp.RequestedTimeoutSeconds,
+                clamp.EffectiveTimeoutSeconds,
+                Notice = "Your requested budget exceeded a configured ceiling and was reduced. "
+                    + "Scope the delegated task to the effective values above, not the requested ones."
+            };
+        }
+
+        if (spawned.BudgetAdvisory is { } advisory)
+        {
+            result["budgetAdvisory"] = new
+            {
+                advisory.MaxTurnsAboveThreshold,
+                advisory.MaxTurnsThreshold,
+                advisory.EffectiveMaxTurns,
+                advisory.TimeoutSecondsAboveThreshold,
+                advisory.TimeoutSecondsThreshold,
+                advisory.EffectiveTimeoutSeconds,
+                Warning = "The effective budget exceeds a configured staging advisory. Delegate one coherent stage "
+                    + "and split multi-stage work into separate sub-agent runs. This warning did not change the effective budget."
+            };
+        }
+
+        return TextResult(JsonSerializer.Serialize(result, JsonOptions));
     }
 
     private static SubAgentSpawnMode BuildSpawnMode(

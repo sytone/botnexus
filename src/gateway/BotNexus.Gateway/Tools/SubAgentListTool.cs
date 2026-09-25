@@ -60,6 +60,7 @@ public sealed class SubAgentListTool(
                 info.TurnsUsed,
                 info.ResultSummary,
                 info.BudgetClamp,
+                info.BudgetAdvisory,
                 // Emitted as text, not the raw enum: JsonOptions has no enum converter, so an
                 // unprojected enum would reach the calling model as a bare integer.
                 CompletionDelivery = info.CompletionDelivery.ToString(),
