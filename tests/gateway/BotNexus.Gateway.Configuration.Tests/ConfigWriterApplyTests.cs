@@ -124,7 +124,7 @@ public sealed class ConfigWriterApplyTests : IDisposable
         var after = before.DeepClone().AsObject();
         after["channels"]!["telegram"]!["enabled"] = true;
 
-        await new SqliteConfigurationWriter(store)
+        await new SqliteConfigurationWriter(store, "config.db")
             .ApplyChangeSetAsync(ConfigDocumentDiffer.Diff(before, after), "test");
 
         var entries = await store.ReadEntriesAsync();
@@ -169,7 +169,7 @@ public sealed class ConfigWriterApplyTests : IDisposable
         // The store starts EMPTY.
         var store = new SqliteConfigStore($"Data Source={_storePath}");
         var fanOut = new FanOutConfigurationWriter(
-            [new JsonConfigurationWriter(_configPath, new FileSystem()), new SqliteConfigurationWriter(store)]);
+            [new JsonConfigurationWriter(_configPath, new FileSystem()), new SqliteConfigurationWriter(store, "config.db")]);
 
         await fanOut.ApplyChangeSetAsync(ConfigDocumentDiffer.Diff(before, after), "test");
 

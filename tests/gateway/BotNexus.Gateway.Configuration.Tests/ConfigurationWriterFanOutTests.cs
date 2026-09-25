@@ -89,7 +89,7 @@ public sealed class ConfigurationWriterFanOutTests : IDisposable
         var writer = new FanOutConfigurationWriter(
         [
             new JsonConfigurationWriter(_configPath, fileSystem),
-            new SqliteConfigurationWriter(store),
+            new SqliteConfigurationWriter(store, "config.db"),
         ]);
 
         await writer.WriteAsync(Doc("""{ "gateway": { "listenUrl": "http://localhost:7777" } }"""), "test");

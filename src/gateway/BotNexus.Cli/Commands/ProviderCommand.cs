@@ -202,7 +202,7 @@ internal sealed class ProviderCommand
         AnsiConsole.MarkupLine(existed
             ? $"[green]✓[/] Provider [green]{name}[/] updated."
             : $"[green]✓[/] Provider [green]{name}[/] added.");
-        AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
+        exitCode.PrintReceipt();
 
         if (verbose)
         {
@@ -245,7 +245,7 @@ internal sealed class ProviderCommand
             return exitCode;
 
         AnsiConsole.MarkupLine($"[green]✓[/] Provider [green]{CliText.SafeDisplay(name)}[/] removed.");
-        AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
+        exitCode.PrintReceipt();
         if (verbose)
         {
             var remaining = (await CliConfigMutation.ReadAsync(configPath, cancellationToken))
@@ -429,7 +429,7 @@ internal sealed class ProviderCommand
                     return;
 
                 AnsiConsole.MarkupLine($"[green]✓[/] Provider [green]{providerName}[/] configured successfully.");
-                AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
+                wizardExit.PrintReceipt();
 
                 if (c.Get<bool>("verbose"))
                 {

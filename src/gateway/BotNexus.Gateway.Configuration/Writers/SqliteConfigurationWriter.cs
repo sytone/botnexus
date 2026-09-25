@@ -15,16 +15,23 @@ namespace BotNexus.Gateway.Configuration.Writers;
 public sealed class SqliteConfigurationWriter : IConfigurationWriter
 {
     private readonly IConfigStore _store;
+    private readonly string _storePath;
 
     /// <summary>Creates a writer over <paramref name="store"/>.</summary>
-    public SqliteConfigurationWriter(IConfigStore store)
+    public SqliteConfigurationWriter(IConfigStore store, string storePath)
     {
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentException.ThrowIfNullOrWhiteSpace(storePath);
         _store = store;
+        _storePath = storePath;
     }
 
     /// <inheritdoc />
     public string Name => "sqlite";
+
+    /// <inheritdoc />
+    public IReadOnlyList<ConfigurationBackendDescriptor> Backends =>
+        [new(Name, _storePath, WinsOnRead: true)];
 
     /// <inheritdoc />
     /// <remarks>

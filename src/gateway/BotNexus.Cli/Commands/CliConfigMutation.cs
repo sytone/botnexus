@@ -22,6 +22,19 @@ namespace BotNexus.Cli.Commands;
 /// once the <em>complete</em> candidate document has validated.
 /// </para>
 /// </remarks>
+internal sealed record CliConfigMutationResult(
+    int ExitCode,
+    IReadOnlyList<ConfigurationBackendDescriptor> Backends)
+{
+    public static implicit operator int(CliConfigMutationResult result) => result.ExitCode;
+
+    public void PrintReceipt()
+    {
+        if (ExitCode == 0)
+            CliConfigMutation.PrintSuccessReceipt(Backends);
+    }
+}
+
 internal static class CliConfigMutation
 {
     /// <summary>
@@ -42,7 +55,7 @@ internal static class CliConfigMutation
     /// fails closed.
     /// </param>
     /// <returns>Process exit code: 0 when persisted, 1 when rejected.</returns>
-    public static async Task<int> ApplyAsync(
+    public static async Task<CliConfigMutationResult> ApplyAsync(
         string configPath,
         Func<ConfigDocument, string?> mutation,
         string reason,
@@ -63,7 +76,7 @@ internal static class CliConfigMutation
             // inside the config critical section. Report the conflict explicitly and exit non-zero
             // rather than writing without the lock - a silently lost config edit is the defect.
             AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(ex.Message)}");
-            return 1;
+            return new(1, writer.Backends);
         }
 
         if (errors.Count > 0)
@@ -71,13 +84,34 @@ internal static class CliConfigMutation
             AnsiConsole.MarkupLine("[red]Config validation failed; the existing config was not modified:[/]");
             foreach (var error in errors)
                 AnsiConsole.MarkupLine($"  [red]\u2022[/] {CliText.SafeDisplay(error)}");
-            return 1;
+            return new(1, writer.Backends);
         }
 
-        if (verbose)
-            AnsiConsole.MarkupLine($"[dim]Saved config: {CliText.SafeDisplay(configPath)}[/]");
+        return new(0, writer.Backends);
+    }
 
-        return 0;
+    /// <summary>Prints the redacted receipt for the backends that completed the write.</summary>
+    internal static void PrintSuccessReceipt(IReadOnlyList<ConfigurationBackendDescriptor> backends)
+    {
+        ArgumentNullException.ThrowIfNull(backends);
+
+        if (backends.Count == 1 && string.Equals(backends[0].Name, "json", StringComparison.OrdinalIgnoreCase))
+        {
+            AnsiConsole.MarkupLine($"  Config saved to: {CliText.SafeDisplay(backends[0].Location)}");
+            return;
+        }
+
+        AnsiConsole.MarkupLine("  Updated configuration backends:");
+        foreach (var backend in backends)
+        {
+            var label = string.Equals(backend.Name, "json", StringComparison.OrdinalIgnoreCase)
+                ? "JSON:   "
+                : string.Equals(backend.Name, "sqlite", StringComparison.OrdinalIgnoreCase)
+                    ? "SQLite: "
+                    : $"{CliText.SafeDisplay(backend.Name)}: ";
+            var precedence = backend.WinsOnRead ? " (wins on read)" : string.Empty;
+            AnsiConsole.MarkupLine($"    {label}{CliText.SafeDisplay(backend.Location)}{precedence}");
+        }
     }
 
     /// <summary>
