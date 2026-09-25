@@ -93,13 +93,86 @@ public sealed class ExecToolBackgroundPruneTests : IDisposable
     [Fact]
     public async Task BackgroundExecute_PrunesDeadEntriesOnRegister()
     {
-        var registry = new BackgroundProcessRegistry(1);
-        var old = await Exited(DateTimeOffset.UtcNow.AddSeconds(-1));
-        var fresh = await Exited(DateTimeOffset.UtcNow);
-        registry.Register("owner", old);
-        registry.Get("owner", old.Pid).ShouldNotBeNull();
-        registry.Register("owner", fresh);
-        registry.Get("owner", old.Pid).ShouldBeNull("registering reaps oldest completed entries");
-        registry.Get("owner", fresh.Pid).ShouldBeSameAs(fresh);
+        const int retentionCap = 1;
+        const string owner = "launch-owner";
+        var registry = new BackgroundProcessRegistry(retentionCap);
+        var startedAt = DateTimeOffset.UtcNow.AddMinutes(-retentionCap);
+        var retained = new List<BackgroundProcess>(retentionCap);
+        for (var index = 0; index < retentionCap; index++)
+        {
+            var completed = await Exited(startedAt.AddSeconds(index));
+            registry.Register(owner, completed);
+            retained.Add(completed);
+        }
+
+        var foreignOwner = "foreign-" + Guid.NewGuid().ToString("N");
+        var foreignLive = StartLiveProcess(startedAt.AddMinutes(-1));
+        registry.Register(foreignOwner, foreignLive);
+        _spawned.Add(foreignLive);
+
+        try
+        {
+            registry.List(owner).Count.ShouldBe(retentionCap, "the completed retention cap must be full before launch");
+            var oldest = retained[0];
+            registry.Get(owner, oldest.Pid).ShouldBeSameAs(oldest);
+
+            var tool = new ExecTool(
+                null,
+                null,
+                owner,
+                registry,
+                managed => managed.WaitForCompletionAsync().WaitAsync(TimeSpan.FromSeconds(30)));
+            var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+            {
+                ["command"] = OperatingSystem.IsWindows()
+                    ? new[] { "cmd.exe", "/c", "exit 0" }
+                    : new[] { "/bin/sh", "-c", "exit 0" },
+                ["background"] = true,
+            });
+            var result = await tool.ExecuteAsync("prune-on-launch", args);
+            var launchedPid = result.Details.ShouldBeOfType<ExecTool.ExecToolDetails>().Pid;
+            launchedPid.ShouldNotBeNull();
+            registry.Get(owner, oldest.Pid).ShouldBeNull("the real launch registration must evict the oldest completed entry");
+            var launched = registry.Get(owner, launchedPid.Value);
+            launched.ShouldNotBeNull("a real ExecTool launch must register its owned process");
+            _spawned.Add(launched);
+            await launched.WaitForCompletionAsync().WaitAsync(TimeSpan.FromSeconds(30));
+
+            var afterLaunch = registry.List(owner);
+            afterLaunch.Count.ShouldBe(retentionCap, "two completed registrations must be pruned back to the cap of one");
+            afterLaunch.ShouldNotContain(oldest, "the oldest completed entry must be evicted after the real launch completes");
+            afterLaunch.ShouldContain(launched, "the newly launched process must occupy the retained slot");
+            registry.Get(foreignOwner, foreignLive.Pid).ShouldBeSameAs(foreignLive, "another owner's live process must remain protected");
+        }
+        finally
+        {
+            foreignLive.Kill();
+            registry.Clear(foreignOwner);
+        }
+    }
+
+    private static BackgroundProcess StartLiveProcess(DateTimeOffset startedAt)
+    {
+        var info = new ProcessStartInfo(OperatingSystem.IsWindows() ? "pwsh" : "/bin/sh")
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        if (OperatingSystem.IsWindows())
+        {
+            info.ArgumentList.Add("-NoProfile");
+            info.ArgumentList.Add("-Command");
+            info.ArgumentList.Add("[Console]::ReadLine()");
+        }
+        else
+        {
+            info.ArgumentList.Add("-c");
+            info.ArgumentList.Add("read line");
+        }
+
+        var raw = Process.Start(info) ?? throw new InvalidOperationException("live child did not start");
+        return new BackgroundProcess(raw, "live", startedAt);
     }
 }
