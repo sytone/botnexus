@@ -429,6 +429,7 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
             return saveCode;
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Set [green]{CliText.SafeDisplay(keyPath)}[/].");
+        saveCode.PrintReceipt();
         return 0;
     }
 

@@ -60,7 +60,7 @@ public static class ConfigWriterFactory
         if (fileSystem.File.Exists(storePath))
         {
             store = new SqliteConfigStore($"Data Source={storePath}");
-            writers.Add(new SqliteConfigurationWriter(store));
+            writers.Add(new SqliteConfigurationWriter(store, storePath));
         }
 
         var writer = writers.Count == 1 ? writers[0] : new FanOutConfigurationWriter(writers);

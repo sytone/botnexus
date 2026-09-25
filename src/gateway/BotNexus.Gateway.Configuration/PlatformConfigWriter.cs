@@ -82,6 +82,9 @@ public sealed class PlatformConfigWriter
     /// </remarks>
     private readonly Writers.IConfigurationWriter _writer;
 
+    /// <summary>The exact persistence backends registered for this writer.</summary>
+    public IReadOnlyList<Writers.ConfigurationBackendDescriptor> Backends => _writer.Backends;
+
     /// <summary>
     /// Store consulted for the pristine document when no config file exists. Null for file-only
     /// installations, which is every caller that has not been given a store.

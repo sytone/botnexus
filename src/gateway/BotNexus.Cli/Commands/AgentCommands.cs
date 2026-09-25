@@ -288,6 +288,7 @@ internal sealed class AgentCommands
         botNexusHome.GetAgentDirectory(id);
 
         AnsiConsole.MarkupLine($"[green]✓[/] Agent [green]{CliText.SafeDisplay(id)}[/] added successfully.");
+        saveCode.PrintReceipt();
         return 0;
     }
 
@@ -341,6 +342,7 @@ internal sealed class AgentCommands
         botNexusHome.GetAgentDirectory(id);
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Added agent [green]{CliText.SafeDisplay(id)}[/].");
+        saveCode.PrintReceipt();
         return 0;
     }
 
@@ -385,6 +387,7 @@ internal sealed class AgentCommands
             return saveCode;
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Removed agent [green]{CliText.SafeDisplay(matchedId)}[/].");
+        saveCode.PrintReceipt();
         return 0;
     }
 
@@ -719,6 +722,7 @@ internal sealed class AgentCommands
 
         var verb = exists ? "Replaced" : "Imported";
         AnsiConsole.MarkupLine($"[green]\u2713[/] {verb} agent [green]{CliText.SafeDisplay(targetId)}[/] from template [dim]{CliText.SafeDisplay(Path.GetFileName(filePath))}[/].");
+        saveCode.PrintReceipt();
         if (template.RequiredSecrets is { Count: > 0 })
         {
             AnsiConsole.MarkupLine("[yellow]Required secrets to re-provide before this agent can run:[/]");
@@ -851,7 +855,7 @@ internal sealed class AgentCommands
     /// <summary>Canonical path of the agents section.</summary>
     private const string AgentsPath = "agents";
 
-    private static async Task<int> SetAgentEntryAsync(
+    private static async Task<CliConfigMutationResult> SetAgentEntryAsync(
         string configPath,
         string agentId,
         AgentDefinitionConfig agent,
