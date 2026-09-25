@@ -2135,6 +2135,14 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         // histogram. Counts are numeric activity tags; neither session nor row identity is tagged.
         activity?.SetTag("botnexus.session.history.mode", snapshot.RequiresReplacement ? "reconcile" : "append");
         activity?.SetTag("botnexus.session.history.rows.inserted", result.InsertedRowCount);
+        if (!snapshot.RequiresReplacement && result.InsertedRowCount < snapshot.Entries.Count)
+        {
+            // Bounded duplicate-suppression diagnostic. Persistence keys identify rows without
+            // exposing tool arguments, results, session ids, or provider call ids in telemetry.
+            activity?.SetTag(
+                "botnexus.session.history.rows.duplicate_suppressed",
+                snapshot.Entries.Count - result.InsertedRowCount);
+        }
         activity?.SetTag("botnexus.session.history.rows.updated", result.UpdatedRowCount);
         activity?.SetTag("botnexus.session.history.rows.deleted", result.DeletedRowCount);
         LastHistoryRowsMutated = result.InsertedRowCount + result.UpdatedRowCount + result.DeletedRowCount;
