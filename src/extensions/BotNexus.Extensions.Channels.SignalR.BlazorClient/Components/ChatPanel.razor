@@ -4,6 +4,7 @@
 @inject IGatewayRestClient Rest
 @inject IPortalPreferencesService Prefs
 @inject ISlashCommandDispatcher CommandDispatcher
+@inject IServiceProvider ServiceProvider
 @implements IDisposable
 @using System.Text.Json
 @using System.Text.Encodings.Web
@@ -72,24 +73,6 @@
                     Export
                 </button>
             }
-            @if (CanManageActiveConversation)
-            {
-                <button class="conversation-header-action @(ActiveConversation?.IsPinned == true ? "pinned" : "")"
-                        data-testid="chat-pin-conversation-btn"
-                        title="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
-                        aria-label="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
-                        aria-pressed="@(ActiveConversation?.IsPinned == true ? "true" : "false")"
-                        @onclick="ToggleActiveConversationPinAsync">
-                    <Icon Name="pin" Size="16" />
-                </button>
-                <button class="conversation-header-action archive"
-                        data-testid="chat-archive-conversation-btn"
-                        title="Archive conversation"
-                        aria-label="Archive conversation"
-                        @onclick="ArchiveActiveConversationAsync">
-                    <Icon Name="delete" Size="16" Class="bn-icon-inherit" />
-                </button>
-            }
             <button class="config-btn" data-testid="chat-config-btn" @onclick="OpenConfig" title="Agent configuration">
                 <Icon Name="configuration" Size="16" Class="bn-icon-inherit" />
             </button>
@@ -101,6 +84,10 @@
                 </button>
             }
         </div>
+        @if (HasActiveConversation)
+        {
+            <ConversationActionMenu Actions="@BuildActiveConversationActions()" />
+        }
         <div class="chat-header-overflow">
             <button class="chat-header-overflow-trigger"
                     @onclick="ToggleMobileActionsMenu"
@@ -122,22 +109,6 @@
                             title="Toggle tool visibility">
                         <Icon Name="tools" Size="16" />
                     </button>
-                    @if (CanManageActiveConversation)
-                    {
-                        <button class="conversation-header-action @(ActiveConversation?.IsPinned == true ? "pinned" : "")"
-                                title="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
-                                aria-label="@(ActiveConversation?.IsPinned == true ? "Unpin conversation" : "Pin conversation to top")"
-                                aria-pressed="@(ActiveConversation?.IsPinned == true ? "true" : "false")"
-                                @onclick="ToggleActiveConversationPinFromMenuAsync">
-                            <Icon Name="pin" Size="16" />
-                        </button>
-                        <button class="conversation-header-action archive"
-                                title="Archive conversation"
-                                aria-label="Archive conversation"
-                                @onclick="ArchiveActiveConversationFromMenuAsync">
-                            <Icon Name="delete" Size="16" Class="bn-icon-inherit" />
-                        </button>
-                    }
                     <button class="config-btn" @onclick="OpenConfigFromMenu" title="Agent configuration">
                         <Icon Name="configuration" Size="16" Class="bn-icon-inherit" />
                     </button>
@@ -1676,18 +1647,35 @@ private bool IsStreaming =>
         await OpenConfig();
     }
 
-    private async Task ToggleActiveConversationPinAsync()
+    private IReadOnlyList<ConversationActionDefinition> BuildActiveConversationActions()
     {
-        if (!CanManageActiveConversation || ActiveConversationId is null || ActiveConversation is null)
-            return;
-
-        await Interaction.SetConversationPinnedAsync(AgentId, ActiveConversationId, !ActiveConversation.IsPinned);
+        if (ActiveConversation is not { } conversation)
+            return [];
+        var projection = conversation.Project(Store.ActiveSelectionSource);
+        var sectionsState = ServiceProvider.GetService<ConversationSectionsState>();
+        var currentSectionId = sectionsState?.GetAssignedSectionId(conversation.ConversationId);
+        var sections = (sectionsState?.Sections ?? []).Select(section => new ConversationActionSection(
+            section.SectionId, section.Name, string.Equals(section.SectionId, currentSectionId, StringComparison.Ordinal))).ToList();
+        return ConversationActionDefinitions.Create(
+            new(true, conversation.IsDefault, IsReadOnly, projection.IsUnattended, conversation.IsPinned, sections),
+            new(
+                () => { StartEditTitle(); return Task.CompletedTask; },
+                pinned => Interaction.SetConversationPinnedAsync(AgentId, conversation.ConversationId, pinned),
+                ArchiveActiveConversationAsync,
+                sectionId => MoveActiveConversationAsync(conversation.ConversationId, sectionId)));
     }
 
-    private async Task ToggleActiveConversationPinFromMenuAsync()
+    private async Task MoveActiveConversationAsync(string conversationId, string? sectionId)
     {
-        _showMobileActionsMenu = false;
-        await ToggleActiveConversationPinAsync();
+        var sectionsApi = ServiceProvider.GetService<SectionsApiClient>();
+        var sectionsState = ServiceProvider.GetService<ConversationSectionsState>();
+        if (sectionsApi is null || sectionsState is null)
+            return;
+        var changed = sectionId is null
+            ? await sectionsApi.UnassignAsync(AgentId, conversationId)
+            : await sectionsApi.AssignAsync(AgentId, sectionId, conversationId);
+        if (changed)
+            await sectionsState.ReloadAsync();
     }
 
     private async Task ArchiveActiveConversationAsync()
@@ -1703,12 +1691,6 @@ private bool IsStreaming =>
         }
 
         await Interaction.ArchiveConversationAsync(AgentId, ActiveConversationId);
-    }
-
-    private async Task ArchiveActiveConversationFromMenuAsync()
-    {
-        _showMobileActionsMenu = false;
-        await ArchiveActiveConversationAsync();
     }
 
     private void ConfirmNewSession()

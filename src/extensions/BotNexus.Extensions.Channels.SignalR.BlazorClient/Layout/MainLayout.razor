@@ -172,9 +172,6 @@
 }
 
 @code {
-    // Conversation id whose "move to section" menu is currently open (#2324); null when closed.
-    private string? _sectionMenuConversationId;
-
     private bool _cronGroupCollapsed = true;
     private HashSet<string> _cronConversationIds = new(StringComparer.OrdinalIgnoreCase);
     private const string CronCollapsedKey = "botnexus-cron-collapsed";
@@ -1171,10 +1168,9 @@
     // affordance moves with the conversation rather than disappearing when it is assigned.
     private RenderFragment RenderSectionMemberActions(AgentState agent, string conversationId) => __builder =>
     {
-        @if (!agent.IsReadOnly && agent.Conversations.TryGetValue(conversationId, out var conversation) && !conversation.IsDefault)
+        @if (agent.Conversations.TryGetValue(conversationId, out var conversation))
         {
-            @RenderSectionButton(conversation)
-            @RenderSectionMenu(agent, conversation)
+            <ConversationActionMenu Actions="@BuildConversationActions(agent, conversation)" />
         }
     };
 
@@ -1201,130 +1197,54 @@
     private RenderFragment RenderConversationItem(AgentState agent, ConversationState conversation) => __builder =>
     {
         <div class="conversation-list-item" data-testid="conversation-list-item" data-conversation-id="@conversation.ConversationId">
-            <a class="conversation-list-item-btn @(conversation.ConversationId == agent.ActiveConversationId ? "active" : "")"
-               href="agent/@Uri.EscapeDataString(agent.AgentId)/conversation/@Uri.EscapeDataString(conversation.ConversationId)"
-               @onclick="() => SelectConversationAsync(agent.AgentId, conversation.ConversationId)"
-               @onclick:preventDefault="true">
-                <span class="conversation-list-item-main">
-                    <span class="conversation-list-item-title" title="@PortalText.SingleLine(conversation.Title)">@PortalText.SingleLine(conversation.Title)</span>
-
-                    @if (conversation.IsDefault)
-                    {
-                        <span class="conversation-default-badge">Default</span>
-                    }
-                    @if (GetVirtualConversationBadge(conversation) is { } badge)
-                    {
-                        <span class="conversation-default-badge">@badge</span>
-                    }
-                </span>
-
-                <span class="conversation-list-item-meta">
-                    @if (conversation.UnreadCount > 0)
-                    {
-                        <span class="conversation-unread-dot"
-                              aria-label="Unread messages"></span>
-                    }
-
-                    <span class="conversation-updated-at">
-                        @FormatConversationTimestamp(conversation.UpdatedAt)
+            <ConversationActionMenu Actions="@BuildConversationActions(agent, conversation)">
+                <a class="conversation-list-item-btn @(conversation.ConversationId == agent.ActiveConversationId ? "active" : "")"
+                   href="agent/@Uri.EscapeDataString(agent.AgentId)/conversation/@Uri.EscapeDataString(conversation.ConversationId)"
+                   @onclick="() => SelectConversationAsync(agent.AgentId, conversation.ConversationId)"
+                   @onclick:preventDefault="true">
+                    <span class="conversation-list-item-main">
+                        <span class="conversation-list-item-title" title="@PortalText.SingleLine(conversation.Title)">@PortalText.SingleLine(conversation.Title)</span>
+                        @if (conversation.IsDefault) { <span class="conversation-default-badge">Default</span> }
+                        @if (GetVirtualConversationBadge(conversation) is { } badge) { <span class="conversation-default-badge">@badge</span> }
                     </span>
-                </span>
-            </a>
-            @if (!conversation.IsDefault && !agent.IsReadOnly)
-            {
-                @* One strip rather than three independently positioned buttons. The old
-                   per-button right: offsets were 21.6px apart and never revisited when the
-                   buttons gained a 32px minimum hit target, so each overlapped its neighbour
-                   and all three sat on the title. Flex + gap cannot drift out of step. The
-                   section menu stays outside the strip: it positions against the row. *@
-                <div class="conversation-row-actions">
-                    @RenderSectionButton(conversation)
-                    <button class="conversation-pin-btn @(conversation.IsPinned ? "pinned" : "")" data-testid="conversation-pin-btn"
-                            title="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
-                            aria-label="@(conversation.IsPinned ? "Unpin conversation" : "Pin conversation to top")"
-                            aria-pressed="@(conversation.IsPinned ? "true" : "false")"
-                            @onclick:stopPropagation="true"
-                            @onclick="() => SetConversationPinnedAsync(agent.AgentId, conversation.ConversationId, !conversation.IsPinned)">
-                        <Icon Name="pin" Size="16" />
-                    </button>
-                    <button class="conversation-archive-btn" data-testid="conversation-archive-btn"
-                            title="@(IsUnattendedConversation(conversation) ? "Close conversation \u2014 reopens on next trigger" : "Archive conversation")"
-                            @onclick:stopPropagation="true"
-                            @onclick="() => ArchiveConversationAsync(agent.AgentId, conversation.ConversationId, conversation.Title, IsUnattendedConversation(conversation))">
-                        @* An unattended conversation reopens on its next trigger, so closing it
-                           pauses it rather than discarding it. *@
-                        <Icon Name="@(IsUnattendedConversation(conversation) ? "pause" : "delete")"
-                              Size="16" Class="bn-icon-inherit" />
-                    </button>
-                </div>
-                @RenderSectionMenu(agent, conversation)
-            }
+                    <span class="conversation-list-item-meta">
+                        @if (conversation.UnreadCount > 0) { <span class="conversation-unread-dot" aria-label="Unread messages"></span> }
+                        <span class="conversation-updated-at">@FormatConversationTimestamp(conversation.UpdatedAt)</span>
+                    </span>
+                </a>
+            </ConversationActionMenu>
         </div>
     };
 
-    // #2324: the sections feature (#2124) shipped with no way to put a conversation *into* a section -
-    // SectionsApiClient.AssignAsync had zero UI call sites. This is the interim inline affordance the
-    // issue sanctions: a per-row folder button opening a small "move to section" menu. The richer
-    // right-click context menu (#2326) and inline section rendering (#2325) are separate work; when
-    // #2326 lands, this menu's Assign/Unassign handlers are the reusable seam it can call.
-    private RenderFragment RenderSectionButton(ConversationState conversation) => __builder =>
+    private IReadOnlyList<ConversationActionDefinition> BuildConversationActions(AgentState agent, ConversationState conversation)
     {
-        var isOpen = string.Equals(_sectionMenuConversationId, conversation.ConversationId, StringComparison.Ordinal);
-        <button class="conversation-section-btn" data-testid="conversation-section-btn"
-                title="Move to section"
-                aria-label="Move to section"
-                aria-haspopup="menu"
-                aria-expanded="@(isOpen ? "true" : "false")"
-                @onclick:stopPropagation="true"
-                @onclick="() => ToggleSectionMenu(conversation.ConversationId)">
-            <Icon Name="move" Size="16" />
-        </button>
-    };
+        var projection = conversation.Project(Store.ActiveSelectionSource);
+        var currentSectionId = SectionsState.GetAssignedSectionId(conversation.ConversationId);
+        var sections = SectionsState.Sections
+            .Select(section => new ConversationActionSection(section.SectionId, section.Name,
+                string.Equals(section.SectionId, currentSectionId, StringComparison.Ordinal)))
+            .ToList();
+        return ConversationActionDefinitions.Create(
+            new(true, conversation.IsDefault, agent.IsReadOnly || projection.IsReadOnly,
+                projection.IsUnattended, conversation.IsPinned, sections),
+            new(
+                () => RenameConversationFromMenuAsync(agent.AgentId, conversation),
+                pinned => SetConversationPinnedAsync(agent.AgentId, conversation.ConversationId, pinned),
+                () => ArchiveConversationAsync(agent.AgentId, conversation.ConversationId, conversation.Title, projection.IsUnattended),
+                sectionId => sectionId is null
+                    ? UnassignConversationSectionAsync(agent.AgentId, conversation.ConversationId)
+                    : AssignConversationSectionAsync(agent.AgentId, conversation.ConversationId, sectionId)));
+    }
 
-    // The menu is a sibling of the actions strip, not a child of it: it positions against
-    // .conversation-list-item, and nesting it inside an absolutely positioned strip would
-    // re-anchor it to the strip instead.
-    private RenderFragment RenderSectionMenu(AgentState agent, ConversationState conversation) => __builder =>
+    private async Task RenameConversationFromMenuAsync(string agentId, ConversationState conversation)
     {
-        var isOpen = string.Equals(_sectionMenuConversationId, conversation.ConversationId, StringComparison.Ordinal);
-        @if (isOpen)
-        {
-            var sections = SectionsState.Sections;
-            var currentSectionId = GetAssignedSectionId(conversation.ConversationId);
-            <div class="conversation-section-menu" data-testid="conversation-section-menu" role="menu">
-                <button class="conversation-section-menu-item @(currentSectionId is null ? "active" : "")"
-                        role="menuitem"
-                        data-testid="conversation-section-menu-none"
-                        @onclick:stopPropagation="true"
-                        @onclick="() => UnassignConversationSectionAsync(agent.AgentId, conversation.ConversationId)">None</button>
-                @foreach (var section in sections)
-                {
-                    <button class="conversation-section-menu-item @(string.Equals(currentSectionId, section.SectionId, StringComparison.Ordinal) ? "active" : "")"
-                            role="menuitem"
-                            data-testid="conversation-section-menu-item"
-                            data-section-id="@(section.SectionId)"
-                            @onclick:stopPropagation="true"
-                            @onclick="() => AssignConversationSectionAsync(agent.AgentId, conversation.ConversationId, section.SectionId)">@(section.Name)</button>
-                }
-                @if (sections.Count == 0)
-                {
-                    <div class="conversation-section-menu-empty" data-testid="conversation-section-menu-empty">No sections yet.</div>
-                }
-            </div>
-        }
-    };
-
-    private void ToggleSectionMenu(string conversationId) =>
-        _sectionMenuConversationId = string.Equals(_sectionMenuConversationId, conversationId, StringComparison.Ordinal)
-            ? null
-            : conversationId;
-
-    private string? GetAssignedSectionId(string conversationId) =>
-        SectionsState.GetAssignedSectionId(conversationId);
+        var title = await JS.InvokeAsync<string?>("prompt", "Rename conversation", conversation.Title);
+        if (!string.IsNullOrWhiteSpace(title) && !string.Equals(title.Trim(), conversation.Title, StringComparison.Ordinal))
+            await Interaction.RenameConversationAsync(agentId, conversation.ConversationId, title.Trim());
+    }
 
     private async Task AssignConversationSectionAsync(string agentId, string conversationId, string sectionId)
     {
-        _sectionMenuConversationId = null;
         if (await SectionsApi.AssignAsync(agentId, sectionId, conversationId))
             await SectionsState.ReloadAsync();
         StateHasChanged();
@@ -1332,7 +1252,6 @@
 
     private async Task UnassignConversationSectionAsync(string agentId, string conversationId)
     {
-        _sectionMenuConversationId = null;
         if (await SectionsApi.UnassignAsync(agentId, conversationId))
             await SectionsState.ReloadAsync();
         StateHasChanged();

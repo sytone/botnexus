@@ -132,7 +132,7 @@ public sealed class DataTestIdAttributeTests : IDisposable
         _store.SelectView("test-agent", string.Empty, SelectionSource.UserClick);
 
         var cut = RenderLayout();
-        cut.Find("[data-testid='conversation-archive-btn']");
+        cut.Find("[data-testid='conversation-actions-trigger']");
     }
 
     // ───────────────────────────────────────────────────────────────────────
