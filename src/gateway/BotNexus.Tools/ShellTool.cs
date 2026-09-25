@@ -133,7 +133,8 @@ public sealed class ShellTool : IAgentTool
               "directly - wrap them in a subexpression, '$(foreach ($x in $xs) { ... }) | <cmd>', not " +
               "'foreach ($x in $xs) { ... } | <cmd>' which fails with 'An empty pipe element is not allowed'; " +
               "inside double-quoted strings wrap a variable followed by ':' as ${var} " +
-              "(or use single quotes); no backtick line-continuations; pass -Filter a single string, not an array; for " +
+              "(or use single quotes); $PID is a read-only automatic variable, so use a name such as $processId for your own value; " +
+              "no backtick line-continuations; pass -Filter a single string, not an array; for " +
               "multi-line or complex scripts write a tmp/*.ps1 file and run it. Inline Python on Windows prints cp1252 by " +
               "default (UnicodeEncodeError on emoji/em-dash/box glyphs) -- set $env:PYTHONUTF8=1 or write a tmp/*.py file and " +
               "run 'python -X utf8 file.py'. Never pipe a here-string into an interpreter; write a temp file and execute it."
