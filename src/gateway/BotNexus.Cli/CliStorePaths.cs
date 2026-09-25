@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Configuration;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Cli;
 
@@ -47,7 +48,8 @@ internal static class CliStorePaths
     /// it is what every current writer creates; <c>.db</c> is retained so pre-existing stores from
     /// older deployments still resolve.
     /// </summary>
-    private static readonly string[] Extensions = [".sqlite", ".db"];
+    private static readonly string[] Extensions =
+        [SqliteStorePathPolicy.CanonicalExtension, SqliteStorePathPolicy.LegacyExtension];
 
     /// <summary>
     /// Resolves a named store (e.g. <c>"sessions"</c>, <c>"cron"</c>) tolerantly across both SQLite
@@ -73,12 +75,20 @@ internal static class CliStorePaths
 
         foreach (var directory in directories)
         {
-            foreach (var fileName in candidateNames)
+            var candidates = candidateNames
+                .Select(fileName => Path.Combine(directory, fileName))
+                .Where(File.Exists)
+                .ToArray();
+
+            if (candidates.Length > 1)
             {
-                var candidate = Path.Combine(directory, fileName);
-                if (File.Exists(candidate))
-                    return new StoreResolution(candidate, Found: true, directories, candidateNames);
+                throw new InvalidOperationException(
+                    $"Both canonical SQLite store '{candidates[0]}' and legacy store '{candidates[1]}' exist. " +
+                    "BotNexus cannot safely open either store while both active names are present.");
             }
+
+            if (candidates.Length == 1)
+                return new StoreResolution(candidates[0], Found: true, directories, candidateNames);
         }
 
         // Nothing on disk. Fall back to the path a writer WOULD create so callers that create or

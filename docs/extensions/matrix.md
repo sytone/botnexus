@@ -177,7 +177,7 @@ failure is logged and the caption/body is still dispatched.
 ## Sync continuity across restarts
 
 Each account's `next_batch` token is persisted durably, keyed by agent id and account name, in a
-SQLite database under the verified BotNexus home (`<data-root>/data/matrix-sync-cursor.db`). On
+SQLite database under the verified BotNexus home (`<data-root>/data/matrix-sync-cursor.sqlite`). On
 start, an account with a stored token resumes `/sync` from it; an account with no stored token
 performs a normal initial sync.
 

@@ -2,6 +2,7 @@ using BotNexus.Extensions.Skills.Telemetry;
 using BotNexus.Gateway.Abstractions.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Extensions.Skills;
 
@@ -22,7 +23,9 @@ public sealed class SkillsServiceContributor : IServiceContributor
         services.TryAddSingleton<ISkillUsageTelemetry>(_ =>
         {
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var dbPath = Path.Combine(home, ".botnexus", "data", "skill-usage.db");
+            var dbPath = SqliteStorePathPolicy.ResolveOwnedStorePath(
+                Path.Combine(home, ".botnexus", "data"),
+                "skill-usage");
             return new SqliteSkillUsageStore(dbPath);
         });
     }

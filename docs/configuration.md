@@ -2,6 +2,8 @@
 
 BotNexus uses a hierarchical, dictionary-based configuration model with a unified home directory at `~/.botnexus/` (or `BOTNEXUS_HOME`). Use the `botnexus` CLI to read and change configuration; it applies the same commands whether the active backend is the existing JSON file or the SQLite configuration store.
 
+> **SQLite filename migration:** BotNexus-owned databases now use `.sqlite`. On first access, access to a lone legacy `.db` database blocks while BotNexus validates it, creates and validates a temporary SQLite backup with committed WAL data, promotes the canonical database, and archives the legacy database plus sidecars under `sqlite-archive/`. No interactive input is required. If both active names already exist, BotNexus fails closed because it cannot determine that they represent the same data.
+
 ## Table of Contents
 
 1. [Quick Start](#quick-start)
@@ -234,7 +236,7 @@ BotNexus follows a **defaults → overrides** pattern. The CLI is the management
 
 1. **Defaults** — Built-in constants in code (e.g., `Model = "gpt-4o"`)
 2. **Environment variables** — Supply settings not present in the persistent platform configuration (see [Environment Variable Overrides](#environment-variable-overrides))
-3. **Persistent platform configuration** — `config.json`, `config.db`, or both during migration; when both contain a key, the SQLite value wins
+3. **Persistent platform configuration** — `config.json`, `config.sqlite`, or both during migration; when both contain a key, the SQLite value wins
 4. **Named agent overrides** — Per-agent customization in the `agents` dictionary
 
 **Example:**
@@ -254,14 +256,14 @@ agent's own values override those defaults.
 
 ## Primary Deployment: ~/.botnexus/
 
-BotNexus resolves its home from `~/.botnexus/` or `BOTNEXUS_HOME`. Manage the configuration in that home through the CLI; the active persistent backend may be `config.json`, `config.db`, or both while an installation is migrating.
+BotNexus resolves its home from `~/.botnexus/` or `BOTNEXUS_HOME`. Manage the configuration in that home through the CLI; the active persistent backend may be `config.json`, `config.sqlite`, or both while an installation is migrating.
 
 On startup, BotNexus creates the required home structure. During the transition it can contain:
 
 ```text
 ~/.botnexus/
 ├── config.json        # legacy JSON backend; optional for a store-backed home
-├── config.db          # SQLite configuration backend, when enabled
+├── config.sqlite      # SQLite configuration backend, when enabled
 ├── extensions/
 │   ├── providers/
 │   ├── channels/
@@ -473,18 +475,18 @@ source.
 
 ### Configuration store (SQLite)
 
-A SQLite-backed configuration store can sit alongside `config.json` at `config.db` in the same
+A SQLite-backed configuration store can sit alongside `config.json` at `config.sqlite` in the same
 directory. `botnexus config get`, `botnexus config set`, and the purpose-built provider and agent
 commands remain the operator interface in either state; callers do not select a backend per command.
 
 **It is an ordinary .NET configuration provider.** There is no feature flag, no migration service,
 and no verification harness. The store is registered after the JSON file, so any key it holds wins;
-absent a `config.db` the file serves everything and behaviour is exactly as it always was.
+absent a `config.sqlite` the file serves everything and behaviour is exactly as it always was.
 
 | State | Behaviour |
 |-------|-----------|
-| No `config.db` | File-only configuration. This is the default. |
-| `config.db` present | Store values win over the file, for every consumer alike. |
+| No `config.sqlite` | File-only configuration. This is the default. |
+| `config.sqlite` present | Store values win over the file, for every consumer alike. |
 
 Each committed SQLite mutation advances a revision in the same transaction as its changed keys. A
 running gateway checks that revision once per second and reloads one complete store snapshot when it
@@ -499,13 +501,13 @@ The store is created by an explicit command, never as a startup side effect - en
 configuration backend is a decision, so it takes an action:
 
 ```bash
-# Create config.db and import the current config.json.
+# Create config.sqlite and import the current config.json.
 botnexus config store enable
 
 # Report whether the store exists and how many entries it holds.
 botnexus config store status
 
-# Delete config.db. Configuration returns to the file on the next start.
+# Delete config.sqlite. Configuration returns to the file on the next start.
 botnexus config store disable
 ```
 

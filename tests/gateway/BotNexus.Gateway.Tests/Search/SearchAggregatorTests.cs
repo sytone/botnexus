@@ -181,7 +181,8 @@ public sealed class SearchAggregatorTests
         var aggregator = provider.GetRequiredService<SearchAggregator>();
         var groups = await aggregator.SearchAsync("needle", 10, cancellationToken: CancellationToken.None);
 
-        groups.Single().SourceId.ShouldBe("test-extension");
+        var extensionGroup = groups.Single(group => group.SourceId == "test-extension");
+        extensionGroup.Results.Single().Target.ShouldBe("/extension");
     }
 
     private static SearchAggregator CreateAggregator(

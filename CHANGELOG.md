@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ⚠️ Changed
+
+- **#3882:** BotNexus-owned SQLite databases now use the `.sqlite` extension. First access to a lone legacy `.db` store blocks while BotNexus validates it, preserves committed WAL data through SQLite's backup API, promotes the canonical store, and archives the legacy database and sidecars. No interactive action is required; ambiguous installations with both active names fail closed.
+
 ## [0.46.0] - 2026-09-23
 
 ### ✨ Features

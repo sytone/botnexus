@@ -85,7 +85,12 @@ internal sealed class SecretFilePermissionCheck : IDoctorCheck
     /// (#3414). Named here rather than globbed so that dropping one from the inspected set is a
     /// visible source edit that <c>SecretFilePermissionCheckTests</c> catches.
     /// </summary>
-    internal static readonly string[] ConfigStoreFileNames = ["config.db", "config.db-wal", "config.db-shm"];
+    internal static readonly string[] ConfigStoreFileNames =
+    [
+        ConfigStoreBootstrap.StoreFileName,
+        ConfigStoreBootstrap.StoreFileName + "-wal",
+        ConfigStoreBootstrap.StoreFileName + "-shm"
+    ];
 
     /// <summary>
     /// Yields the existing secret-bearing files for the active home. Uses

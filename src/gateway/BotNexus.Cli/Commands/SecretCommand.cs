@@ -66,7 +66,7 @@ public sealed class SecretCommand
     }
 
     private static string StorePath(string? target)
-        => Path.Combine(CliPaths.ResolveTarget(target), SqliteSecretProvider.StoreFileName);
+        => SqliteStorePathPolicy.ResolveOwnedStorePath(CliPaths.ResolveTarget(target), "secrets");
 
     internal static async Task<int> SetAsync(string storePath, string name, CancellationToken cancellationToken)
     {

@@ -1,5 +1,6 @@
 using System.IO.Abstractions;
 using BotNexus.Cli.Commands.Doctor;
+using BotNexus.Gateway.Configuration;
 using Shouldly;
 
 namespace BotNexus.Cli.Tests.Commands.Doctor;
@@ -139,8 +140,8 @@ public sealed class SecretFilePermissionCheckTests : IDisposable
     {
         WriteSecret("config.json");
         Secure("config.json");
-        WriteSecret("config.db");
-        Loosen("config.db");
+        WriteSecret(ConfigStoreBootstrap.StoreFileName);
+        Loosen(ConfigStoreBootstrap.StoreFileName);
 
         var result = await RunAsync(Context());
 
@@ -149,7 +150,7 @@ public sealed class SecretFilePermissionCheckTests : IDisposable
             "config.db holds every value config.json holds, secrets included (#3414). A secure " +
             "config.json does not make an exposed store safe, and doctor exists precisely to make " +
             "that exposure visible.");
-        string.Join("\n", result.Details).ShouldContain("config.db");
+        string.Join("\n", result.Details).ShouldContain(ConfigStoreBootstrap.StoreFileName);
     }
 
     /// <summary>
@@ -157,12 +158,12 @@ public sealed class SecretFilePermissionCheckTests : IDisposable
     /// inspected in its own right rather than being assumed safe because the database is.
     /// </summary>
     [Theory]
-    [InlineData("config.db-wal")]
-    [InlineData("config.db-shm")]
+    [InlineData("config.sqlite-wal")]
+    [InlineData("config.sqlite-shm")]
     public async Task BroadlyReadableStoreSidecar_IsReported(string sidecar)
     {
-        WriteSecret("config.db");
-        Secure("config.db");
+        WriteSecret(ConfigStoreBootstrap.StoreFileName);
+        Secure(ConfigStoreBootstrap.StoreFileName);
         WriteSecret(sidecar);
         Loosen(sidecar);
 
@@ -183,7 +184,7 @@ public sealed class SecretFilePermissionCheckTests : IDisposable
     [Fact]
     public async Task OwnerOnlyConfigStore_IsHealthyAndIsActuallyInspected()
     {
-        foreach (var name in new[] { "config.db", "config.db-wal", "config.db-shm" })
+        foreach (var name in SecretFilePermissionCheck.ConfigStoreFileNames)
         {
             WriteSecret(name);
             Secure(name);
