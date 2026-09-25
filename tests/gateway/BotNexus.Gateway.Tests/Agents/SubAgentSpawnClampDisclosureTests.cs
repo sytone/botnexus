@@ -100,6 +100,77 @@ public sealed class SubAgentSpawnClampDisclosureTests
         payload.RootElement.TryGetProperty("budgetClamp", out _).ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task SpawnTool_AboveAdvisoryThresholds_DisclosesStagingWarningWithoutChangingBudgets()
+    {
+        var manager = CreateManager(
+            new TurnDrivingHandle(turnsToAttempt: 0),
+            maxTurnsCeiling: 100,
+            maxTimeoutSeconds: 3600,
+            advisoryMaxTurns: 30,
+            advisoryTimeoutSeconds: 1500);
+
+        using var payload = await ExecuteSpawnToolAsync(manager, maxTurns: 31, timeoutSeconds: 1501);
+
+        var advisory = payload.RootElement.GetProperty("budgetAdvisory");
+        advisory.GetProperty("maxTurnsAboveThreshold").GetBoolean().ShouldBeTrue();
+        advisory.GetProperty("maxTurnsThreshold").GetInt32().ShouldBe(30);
+        advisory.GetProperty("effectiveMaxTurns").GetInt32().ShouldBe(31);
+        advisory.GetProperty("timeoutSecondsAboveThreshold").GetBoolean().ShouldBeTrue();
+        advisory.GetProperty("timeoutSecondsThreshold").GetInt32().ShouldBe(1500);
+        advisory.GetProperty("effectiveTimeoutSeconds").GetInt32().ShouldBe(1501);
+        advisory.GetProperty("warning").GetString().ShouldNotBeNull().ShouldContain("one coherent stage");
+        payload.RootElement.TryGetProperty("budgetClamp", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SpawnTool_AtAdvisoryThresholds_HasNoStagingWarning()
+    {
+        var manager = CreateManager(
+            new TurnDrivingHandle(turnsToAttempt: 0),
+            maxTurnsCeiling: 100,
+            maxTimeoutSeconds: 3600,
+            advisoryMaxTurns: 30,
+            advisoryTimeoutSeconds: 1500);
+
+        using var payload = await ExecuteSpawnToolAsync(manager, maxTurns: 30, timeoutSeconds: 1500);
+
+        payload.RootElement.TryGetProperty("budgetAdvisory", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SpawnTool_AdvisoryDisabled_HasNoStagingWarning()
+    {
+        var manager = CreateManager(
+            new TurnDrivingHandle(turnsToAttempt: 0),
+            maxTurnsCeiling: 100,
+            maxTimeoutSeconds: 3600,
+            advisoryMaxTurns: 0,
+            advisoryTimeoutSeconds: 0);
+
+        using var payload = await ExecuteSpawnToolAsync(manager, maxTurns: 99, timeoutSeconds: 3599);
+
+        payload.RootElement.TryGetProperty("budgetAdvisory", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SpawnTool_ClampAndAdvisory_ComposeUsingEffectiveBudgets()
+    {
+        var manager = CreateManager(
+            new TurnDrivingHandle(turnsToAttempt: 0),
+            maxTurnsCeiling: 40,
+            maxTimeoutSeconds: 1800,
+            advisoryMaxTurns: 30,
+            advisoryTimeoutSeconds: 1500);
+
+        using var payload = await ExecuteSpawnToolAsync(manager, maxTurns: 100, timeoutSeconds: 3600);
+
+        payload.RootElement.GetProperty("budgetClamp").GetProperty("effectiveMaxTurns").GetInt32().ShouldBe(40);
+        var advisory = payload.RootElement.GetProperty("budgetAdvisory");
+        advisory.GetProperty("effectiveMaxTurns").GetInt32().ShouldBe(40);
+        advisory.GetProperty("effectiveTimeoutSeconds").GetInt32().ShouldBe(1800);
+    }
+
     /// <summary>
     /// AC4 (turns, by derivation): the DISCLOSED effective turn budget equals the budget the run
     /// was actually given. Read back from the run itself - a budget-exhausted run reports
@@ -201,7 +272,9 @@ public sealed class SubAgentSpawnClampDisclosureTests
     private static DefaultSubAgentManager CreateManager(
         IAgentHandle handle,
         int maxTurnsCeiling = 30,
-        int maxTimeoutSeconds = 1800)
+        int maxTimeoutSeconds = 1800,
+        int advisoryMaxTurns = 30,
+        int advisoryTimeoutSeconds = 1500)
     {
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor
@@ -229,6 +302,8 @@ public sealed class SubAgentSpawnClampDisclosureTests
         options.SubAgents.MaxDepth = 8;
         options.SubAgents.MaxTurnsCeiling = maxTurnsCeiling;
         options.SubAgents.MaxTimeoutSeconds = maxTimeoutSeconds;
+        options.SubAgents.AdvisoryMaxTurns = advisoryMaxTurns;
+        options.SubAgents.AdvisoryTimeoutSeconds = advisoryTimeoutSeconds;
         options.SubAgents.DefaultTimeoutSeconds = Math.Min(600, maxTimeoutSeconds);
 
         return new DefaultSubAgentManager(

@@ -257,6 +257,7 @@ internal sealed class LocationsCommand
             return saveCode;
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Added location [green]{CliText.SafeDisplay(normalizedName)}[/].");
+        saveCode.PrintReceipt();
         return 0;
     }
 
@@ -336,6 +337,7 @@ internal sealed class LocationsCommand
             return saveCode;
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Updated location [green]{CliText.SafeDisplay(matchedName)}[/].");
+        saveCode.PrintReceipt();
         return 0;
     }
 
@@ -379,6 +381,7 @@ internal sealed class LocationsCommand
             return saveCode;
 
         AnsiConsole.MarkupLine($"[green]\u2713[/] Deleted location [green]{CliText.SafeDisplay(matchedName)}[/].");
+        saveCode.PrintReceipt();
         return 0;
     }
 

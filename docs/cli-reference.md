@@ -1039,7 +1039,7 @@ assistant
 
 ## config set
 
-Set a configuration value by its dotted key path. The value is type-checked against the platform model, then written through the shared configuration writer to whichever persistent backend is active. The command syntax is identical for JSON and SQLite.
+Set a configuration value by its dotted key path. The value is type-checked against the platform model, then written through the shared configuration writer. A JSON-only home updates `config.json`; when `config.db` is enabled, targeted mutations fan out to both JSON and SQLite and the success receipt names both backends. SQLite values win on read. The command syntax is identical in either mode.
 
 ### Usage
 
@@ -1294,6 +1294,10 @@ botnexus config store <COMMAND> [OPTIONS]
   object.
 - `status` exits `0` in both states: it prints `Configuration store not enabled.` when `config.sqlite`
   is absent, and the entry count plus the store-wins note when it is present.
+- Targeted mutations such as `config set`, `agent`, `locations`, and `provider` writes update
+  `config.json` and the enabled store together. Their success receipt lists the backends actually
+  registered for that write and marks SQLite as winning on read; a partial fan-out is an error and
+  does not print a success receipt.
 - `disable` needs **no `--commit` flag and prompts for nothing** — unlike
   [`config restore`](#config-restore), which overwrites the source document. The store is a derived
   copy of `config.json`, which is left untouched, so a disable discards nothing that
@@ -1670,7 +1674,7 @@ Example output:
 
 ## provider add
 
-Add or update a provider entry in `config.json` non-interactively. Designed for scripts, CI, and integration tests that need to configure providers without the interactive wizard.
+Add or update a provider entry non-interactively. A JSON-only home updates `config.json`; when the SQLite configuration store is enabled, the command updates both backends and reports that SQLite wins on read. Designed for scripts, CI, and integration tests that need to configure providers without the interactive wizard.
 
 When a provider with the given `--name` already exists, only the flags you pass are updated; unspecified fields preserve their previous values. To clear a previously-set value, pass an empty string explicitly.
 
@@ -1725,7 +1729,7 @@ botnexus provider add --name local-vllm `
 
 ## provider remove
 
-Remove a provider entry from `config.json` non-interactively. Returns exit code 0 even if the named provider does not exist (idempotent).
+Remove a provider entry non-interactively from every enabled configuration backend. Returns exit code 0 even if the named provider does not exist (idempotent).
 
 ### Usage
 

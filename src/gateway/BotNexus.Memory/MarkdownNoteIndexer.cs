@@ -46,6 +46,7 @@ internal static class MarkdownNoteIndexer
         string agentId,
         string workspacePath,
         string notePath,
+        DateTimeOffset? expiresAt,
         CancellationToken ct)
     {
         if (!fileSystem.File.Exists(notePath))
@@ -93,7 +94,7 @@ internal static class MarkdownNoteIndexer
                 Embedding = null,
                 CreatedAt = now,
                 UpdatedAt = now,
-                ExpiresAt = null,
+                ExpiresAt = expiresAt,
                 IsArchived = false
             };
 

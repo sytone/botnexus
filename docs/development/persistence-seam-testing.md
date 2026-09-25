@@ -182,3 +182,23 @@ Conversations and **sessions**. Cron jobs, webhook registrations/runs and config
 are still uninventoried and untested, and remain tracked on issue #3327 along with an architecture
 test that flags new broad aggregate updates in high-risk services. Each domain ships as its own
 PR; #2130 closes only when all of them are covered.
+
+
+## Governed agent proposal ledger
+
+`IAgentProposalStore` is the repository-owned durable queue and audit boundary for governed agent
+create/update proposals. Each row carries the target `AgentId`, the **complete** proposed
+`AgentDescriptor` JSON, justification, proposer and proposal timestamp, plus pending/approved/rejected
+review state. Review events are stored in an append-only child table.
+
+`SqliteAgentProposalStore` follows the shared SQLite contract: connections come from
+`SqliteConnectionFactory` (per-open busy timeout), journal mode comes from filesystem-aware
+`SqliteWalMaintenance`, and schema version 1 is recorded through `SqliteSchemaMigrator`. The gateway
+registers the ledger as `agent-proposals.sqlite` under `BotNexusHome.DataPath`, the writable runtime
+data location.
+
+The only terminal mutation is a compare-and-swap update guarded by `WHERE status = 'pending'`.
+Updating the proposal and appending its audit event share one transaction, so repeated or concurrent
+reviews return the first stored decision and cannot replace it. This store deliberately has no agent
+registry, configuration writer, or config-store dependency: persistence is not approval application,
+and applying an approved descriptor belongs to the lifecycle layer.

@@ -54,16 +54,31 @@ public sealed class SubAgentOptions
     public int MaxTurnsCeiling { get; set; } = 30;
 
     /// <summary>
+    /// Gets or sets the advisory turn threshold above which a permitted spawn warns the caller to
+    /// split the assignment into one coherent stage. This never changes the effective budget. A
+    /// value of zero disables the turn advisory.
+    /// </summary>
+    [Display(
+        Name = "Advisory max turns",
+        Description = "Advisory turn threshold for staging guidance. A value of zero disables the advisory.",
+        GroupName = "Sub-agents",
+        Order = 3)]
+    [DefaultValue(30)]
+    [Range(0, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 3)]
+    public int AdvisoryMaxTurns { get; set; } = 30;
+
+    /// <summary>
     /// Gets or sets the default timeout, in seconds, applied to sub-agent runs.
     /// </summary>
     [Display(
         Name = "Default timeout (seconds)",
         Description = "Default timeout, in seconds, applied to sub-agent runs when a spawn request does not specify one.",
         GroupName = "Sub-agents",
-        Order = 3)]
+        Order = 4)]
     [DefaultValue(600)]
     [Range(1, int.MaxValue)]
-    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 3)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 4)]
     public int DefaultTimeoutSeconds { get; set; } = 600;
 
     /// <summary>
@@ -77,10 +92,25 @@ public sealed class SubAgentOptions
         Name = "Max timeout (seconds)",
         Description = "Hard upper bound, in seconds, for an agent-supplied timeoutSeconds on a spawn request. A value of zero or less disables the ceiling.",
         GroupName = "Sub-agents",
-        Order = 4)]
+        Order = 5)]
     [DefaultValue(1800)]
-    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 5)]
     public int MaxTimeoutSeconds { get; set; } = 1800;
+
+    /// <summary>
+    /// Gets or sets the advisory timeout threshold, in seconds, above which a permitted spawn warns
+    /// the caller to split the assignment into one coherent stage. This never changes the effective
+    /// timeout. A value of zero disables the timeout advisory.
+    /// </summary>
+    [Display(
+        Name = "Advisory timeout (seconds)",
+        Description = "Advisory timeout threshold for staging guidance. A value of zero disables the advisory.",
+        GroupName = "Sub-agents",
+        Order = 6)]
+    [DefaultValue(1500)]
+    [Range(0, int.MaxValue)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 6)]
+    public int AdvisoryTimeoutSeconds { get; set; } = 1500;
 
     /// <summary>
     /// Gets or sets the maximum allowed nested sub-agent depth.
@@ -89,10 +119,10 @@ public sealed class SubAgentOptions
         Name = "Max depth",
         Description = "Maximum allowed nested sub-agent depth.",
         GroupName = "Sub-agents",
-        Order = 5)]
+        Order = 7)]
     [DefaultValue(1)]
     [Range(1, int.MaxValue)]
-    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 7)]
     public int MaxDepth { get; set; } = 1;
 
     /// <summary>
@@ -103,8 +133,8 @@ public sealed class SubAgentOptions
         Name = "Default model",
         Description = "Default model for sub-agent runs. Empty uses the parent agent's model.",
         GroupName = "Sub-agents",
-        Order = 6)]
-    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "sub-agents", Order = 6, OptionsSource = "models")]
+        Order = 8)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "sub-agents", Order = 8, OptionsSource = "models")]
     public string DefaultModel { get; set; } = "";
 
     /// <summary>
@@ -191,7 +221,9 @@ public sealed class SubAgentOptions
             parentOverride?.MaxTimeoutSeconds ?? MaxTimeoutSeconds,
             parentOverride?.DefaultMaxTurns ?? DefaultMaxTurns,
             parentOverride?.MaxTurnsCeiling ?? MaxTurnsCeiling,
-            parentOverride?.MaxConcurrentPerSession ?? MaxConcurrentPerSession);
+            parentOverride?.MaxConcurrentPerSession ?? MaxConcurrentPerSession,
+            AdvisoryTimeoutSeconds,
+            AdvisoryMaxTurns);
     }
 
     /// <summary>
@@ -294,7 +326,9 @@ public sealed record SubAgentBudgetPolicy(
     int MaxTimeoutSeconds,
     int DefaultMaxTurns,
     int MaxTurnsCeiling,
-    int MaxConcurrentPerSession)
+    int MaxConcurrentPerSession,
+    int AdvisoryTimeoutSeconds,
+    int AdvisoryMaxTurns)
 {
     /// <summary>Resolves and clamps a requested timeout.</summary>
     public int ResolveTimeoutSeconds(int requestedTimeoutSeconds)
@@ -308,5 +342,21 @@ public sealed record SubAgentBudgetPolicy(
     {
         var resolved = Math.Max(1, requestedMaxTurns > 0 ? requestedMaxTurns : DefaultMaxTurns);
         return MaxTurnsCeiling > 0 ? Math.Min(resolved, MaxTurnsCeiling) : resolved;
+    }
+
+    /// <summary>Builds staging guidance from the effective budgets, without changing them.</summary>
+    public SubAgentBudgetAdvisory? CreateAdvisory(int effectiveMaxTurns, int effectiveTimeoutSeconds)
+    {
+        var turnsAbove = AdvisoryMaxTurns > 0 && effectiveMaxTurns > AdvisoryMaxTurns;
+        var timeoutAbove = AdvisoryTimeoutSeconds > 0 && effectiveTimeoutSeconds > AdvisoryTimeoutSeconds;
+        return turnsAbove || timeoutAbove
+            ? new SubAgentBudgetAdvisory(
+                turnsAbove,
+                AdvisoryMaxTurns,
+                effectiveMaxTurns,
+                timeoutAbove,
+                AdvisoryTimeoutSeconds,
+                effectiveTimeoutSeconds)
+            : null;
     }
 }

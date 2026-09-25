@@ -40,6 +40,8 @@ using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Gateway.Providers;
 using BotNexus.Gateway.Abstractions.Providers;
+using BotNexus.Gateway.Contracts.Agents;
+using BotNexus.Gateway.Agents.Proposals;
 using BotNexus.Gateway.Contracts.Events;
 using BotNexus.Gateway.Events;
 using BotNexus.Gateway.Evaluations;
@@ -93,6 +95,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<SqliteWalCheckpointOptions>();
         services.AddOptions<LivenessWatchdogOptions>();
         services.AddOptions<SessionConsistencyOptions>();
+        services.AddOptions<SearchAggregationOptions>();
         if (configure is not null)
             services.Configure(configure);
         if (config is not null)
@@ -111,6 +114,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<SubAgentWorktreeSnapshotOptions>(config.GetSection("gateway:subAgents:worktreeSnapshot"));
             services.Configure<LivenessWatchdogOptions>(config.GetSection("gateway:livenessWatchdog"));
             services.Configure<SessionConsistencyOptions>(config.GetSection("gateway:sessionConsistency"));
+            services.Configure<SearchAggregationOptions>(config.GetSection("gateway:search"));
             services.Configure<SqliteWalCheckpointOptions>(o =>
                 o.IntervalMinutes = ParseInt(
                     config["gateway:walCheckpointIntervalMinutes"],
@@ -138,6 +142,8 @@ public static class GatewayServiceCollectionExtensions
                     _ => new StaticOptionsMonitor<CompactionOptions>(configuredCompaction)));
             }
         }
+
+        services.TryAddSingleton<SearchAggregator>();
 
         // Core services
         services.TryAddSingleton<IFileSystem, FileSystem>();
@@ -401,6 +407,22 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<ISqliteDatabaseRegistry, SqliteDatabaseRegistry>();
         services.TryAddSingleton<INetworkPathDetector>(sp =>
             new NetworkPathDetector(sp.GetRequiredService<IFileSystem>()));
+
+        // Governed proposals are runtime state, not configuration. Keep this ledger in the writable
+        // data directory and deliberately give the store no registry or configuration-writer
+        // dependency: approval application belongs to the later lifecycle slice (#4093).
+        services.TryAddSingleton<IAgentProposalStore>(serviceProvider =>
+        {
+            var home = serviceProvider.GetRequiredService<BotNexusHome>();
+            var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
+            var databasePath = fileSystem.Path.Combine(home.DataPath, "agent-proposals.sqlite");
+            serviceProvider.GetRequiredService<ISqliteDatabaseRegistry>().Register(databasePath);
+            return new SqliteAgentProposalStore(
+                databasePath,
+                fileSystem,
+                serviceProvider.GetRequiredService<INetworkPathDetector>(),
+                serviceProvider.GetService<ILogger<SqliteWalMaintenance>>());
+        });
 
         // Extension state store
         services.TryAddSingleton<IExtensionStateStore>(serviceProvider =>

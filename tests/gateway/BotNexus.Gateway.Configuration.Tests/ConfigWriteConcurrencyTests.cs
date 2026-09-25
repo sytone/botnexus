@@ -235,7 +235,7 @@ public sealed class ConfigWriteConcurrencyTests : IDisposable
         var fanOut = new FanOutConfigurationWriter(
         [
             new JsonConfigurationWriter(_configPath, new FileSystem()),
-            new SqliteConfigurationWriter(store),
+            new SqliteConfigurationWriter(store, "config.db"),
         ]);
 
         // Serialised deliberately: the fan-out has no lock of its own - PlatformConfigWriter provides
