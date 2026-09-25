@@ -55,6 +55,69 @@ public sealed class ProviderRateLimitHandlerHostTests
         ProviderRateLimitHandler.ResolveProvider(null).ShouldBeNull();
     }
 
+    public static TheoryData<string, TimeSpan> ValidResetDurations => new()
+    {
+        { "1s", TimeSpan.FromSeconds(1) },
+        { "6m0s", TimeSpan.FromMinutes(6) },
+        { "1h2m3s", new TimeSpan(1, 2, 3) },
+        { "150ms", TimeSpan.FromMilliseconds(150) },
+        { "1.5s", TimeSpan.FromSeconds(1.5) },
+    };
+
+    public static TheoryData<string> InvalidResetDurations => new()
+    {
+        "1s2bananas",
+        "2bananas1s",
+        "1s2",
+        "1..5s",
+        ".s",
+        "999999999999999999999999h",
+    };
+
+    [Theory]
+    [MemberData(nameof(ValidResetDurations))]
+    public void ParseReset_CompleteSupportedDuration_ReturnsExactInstant(string raw, TimeSpan duration)
+    {
+        var now = new DateTimeOffset(2026, 9, 25, 7, 0, 0, TimeSpan.Zero);
+
+        ProviderRateLimitHandler.ParseReset(raw, now).ShouldBe(now + duration);
+    }
+
+    [Fact]
+    public void ParseReset_Rfc3339Timestamp_ReturnsExactInstant()
+    {
+        var now = new DateTimeOffset(2026, 9, 25, 7, 0, 0, TimeSpan.Zero);
+        var expected = new DateTimeOffset(2026, 9, 25, 8, 2, 3, TimeSpan.Zero);
+
+        ProviderRateLimitHandler.ParseReset("2026-09-25T08:02:03Z", now).ShouldBe(expected);
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidResetDurations))]
+    public void ParseReset_PartiallyMalformedOrOutOfRangeDuration_ReturnsNull(string raw)
+    {
+        var now = new DateTimeOffset(2026, 9, 25, 7, 0, 0, TimeSpan.Zero);
+
+        ProviderRateLimitHandler.ParseReset(raw, now).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task SendAsync_MalformedResetHeader_ReturnsResponseAndRecordsUnknownReset()
+    {
+        var store = new ProviderUsageStore();
+        using var client = new HttpClient(new ProviderRateLimitHandler(store, NullLogger<ProviderRateLimitHandler>.Instance)
+        {
+            InnerHandler = new MalformedResetResponseHandler(),
+        });
+
+        using var response = await client.GetAsync(new Uri("https://api.anthropic.com/v1/messages"));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var snapshot = store.Snapshots["anthropic"];
+        snapshot.RequestsLimit.ShouldBe(200);
+        snapshot.RequestsResetUtc.ShouldBeNull();
+    }
+
     [Fact]
     public async Task SendAsync_ConcatenatedLookalikeHost_DoesNotReplaceKnownProviderSnapshot()
     {
@@ -71,6 +134,22 @@ public sealed class ProviderRateLimitHandlerHostTests
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         store.Snapshots["anthropic"].ShouldBeSameAs(original);
+    }
+
+    private sealed class MalformedResetResponseHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                RequestMessage = request,
+            };
+            response.Headers.Add("anthropic-ratelimit-requests-limit", "200");
+            response.Headers.Add("anthropic-ratelimit-requests-reset", "1s2bananas");
+            return Task.FromResult(response);
+        }
     }
 
     private sealed class RateLimitResponseHandler : HttpMessageHandler

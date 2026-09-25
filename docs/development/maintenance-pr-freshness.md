@@ -35,14 +35,18 @@ promise that either branch has remained unchanged since capture.
 
 HTTP/native-command failure, malformed JSON, non-object compare responses,
 missing/null counters, strings, fractions and negative counters all fail closed.
-A successful zero comparison remains distinct from all of these cases.
+The PR inventory is also fail-closed: the collector requests at most 500 rows,
+rejects a response that reaches that boundary because completeness is unknown,
+and rejects duplicate PR numbers because row identity is ambiguous. A successful
+zero comparison remains distinct from all of these cases.
 
 ## Process exit contract
 
 - **0:** a JSON board was emitted, including an empty array or rows with explicit
   unknown freshness. This is collection success, not proof of CI or freshness.
-- **1:** board collection failed (for example, the PR list request failed or its
-  response was malformed). A diagnostic is written to stderr, not mixed into JSON.
+- **1:** board collection failed (for example, the PR list request failed, its
+  response was malformed, its fixed boundary was saturated, or duplicate PR
+  identities were returned). A diagnostic is written to stderr, not mixed into JSON.
 
 Incidental `gh` exit codes must not leak into the collector's process result.
 Dot-sourcing loads functions without executing the board or exiting the caller.

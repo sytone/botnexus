@@ -185,34 +185,49 @@ public sealed class ProviderRateLimitHandler : DelegatingHandler
                 DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var instant))
             return instant;
 
-        // Go-style duration: "1s", "6m0s", "1h2m3s", "150ms".
-        var total = TimeSpan.Zero;
-        var seen = false;
-        var i = 0;
-        while (i < raw.Length)
+        // Go-style duration: "1s", "6m0s", "1h2m3s", "150ms". Every component must
+        // carry a supported unit; accepting only the recognized prefix would turn malformed
+        // provider evidence into a plausible but incorrect reset instant.
+        try
         {
-            var start = i;
-            while (i < raw.Length && (char.IsDigit(raw[i]) || raw[i] == '.')) i++;
-            if (i == start) return null;
-            if (!double.TryParse(raw[start..i], NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
-                return null;
-
-            var unitStart = i;
-            while (i < raw.Length && !char.IsDigit(raw[i]) && raw[i] != '.') i++;
-            var unit = raw[unitStart..i];
-
-            total += unit switch
+            var total = TimeSpan.Zero;
+            var seen = false;
+            var i = 0;
+            while (i < raw.Length)
             {
-                "ms" => TimeSpan.FromMilliseconds(value),
-                "s" => TimeSpan.FromSeconds(value),
-                "m" => TimeSpan.FromMinutes(value),
-                "h" => TimeSpan.FromHours(value),
-                _ => TimeSpan.Zero,
-            };
-            if (unit is "ms" or "s" or "m" or "h") seen = true;
-        }
+                var start = i;
+                while (i < raw.Length && (char.IsDigit(raw[i]) || raw[i] == '.')) i++;
+                if (i == start) return null;
+                if (!double.TryParse(raw[start..i], NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ||
+                    !double.IsFinite(value) || value < 0)
+                {
+                    return null;
+                }
 
-        return seen ? nowUtc + total : null;
+                var unitStart = i;
+                while (i < raw.Length && !char.IsDigit(raw[i]) && raw[i] != '.') i++;
+                var unit = raw[unitStart..i];
+
+                var component = unit switch
+                {
+                    "ms" => TimeSpan.FromMilliseconds(value),
+                    "s" => TimeSpan.FromSeconds(value),
+                    "m" => TimeSpan.FromMinutes(value),
+                    "h" => TimeSpan.FromHours(value),
+                    _ => (TimeSpan?)null,
+                };
+                if (component is null) return null;
+
+                total += component.Value;
+                seen = true;
+            }
+
+            return seen ? nowUtc + total : null;
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
