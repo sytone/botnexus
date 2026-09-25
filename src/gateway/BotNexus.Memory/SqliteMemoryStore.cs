@@ -21,6 +21,8 @@ public sealed class SqliteMemoryStore(
     Func<MemoryTemporalDecayPolicy>? temporalDecayPolicy = null) : IMemoryStore
 {
     private const int MaxReembeddingErrorLength = 2048;
+    private const string LiveMemoryPredicate =
+        "m.is_archived = 0 AND (m.expires_at IS NULL OR julianday(m.expires_at) > julianday('now'))";
     private static readonly TimeSpan ReembeddingClaimLease = TimeSpan.FromMinutes(5);
     private readonly string _dbPath = dbPath;
     private readonly SqliteWalMaintenance _walMaintenance = new(fileSystem);
@@ -1294,7 +1296,7 @@ public sealed class SqliteMemoryStore(
 
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
                    m.provenance, m.origin_conversation_id, m.origin_session_id,
@@ -1305,7 +1307,7 @@ public sealed class SqliteMemoryStore(
             FROM memories_fts
             INNER JOIN memories m ON m.rowid = memories_fts.rowid
             WHERE memories_fts MATCH $query
-              AND m.is_archived = 0
+              AND {LiveMemoryPredicate}
             """);
 
         command.Parameters.AddWithValue("$query", matchExpression);
@@ -1416,10 +1418,10 @@ public sealed class SqliteMemoryStore(
     {
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT COUNT(*)
             FROM memories m
-            WHERE m.is_archived = 0
+            WHERE {LiveMemoryPredicate}
             """);
         sql.AppendLine();
         AppendFilters(sql, command, filter);
@@ -1436,12 +1438,12 @@ public sealed class SqliteMemoryStore(
 
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT COUNT(*)
             FROM memories_fts
             INNER JOIN memories m ON m.rowid = memories_fts.rowid
             WHERE memories_fts MATCH $query
-              AND m.is_archived = 0
+              AND {LiveMemoryPredicate}
             """);
         sql.AppendLine();
         command.Parameters.AddWithValue("$query", matchExpression);
@@ -1550,7 +1552,7 @@ public sealed class SqliteMemoryStore(
         await connection.OpenAsync(ct).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
                    m.provenance, m.origin_conversation_id, m.origin_session_id,
@@ -1558,7 +1560,7 @@ public sealed class SqliteMemoryStore(
                    m.supersedes_id, m.superseded_by_id, m.origin_kind, m.origin_reference, m.embedding_status,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories m
-            WHERE m.is_archived = 0
+            WHERE {LiveMemoryPredicate}
             """);
 
         // See the note on the FTS path: the raw string literal has no trailing newline.
@@ -1728,7 +1730,7 @@ public sealed class SqliteMemoryStore(
     {
         await using var command = connection.CreateCommand();
         var sql = new StringBuilder(
-            """
+            $"""
             SELECT m.id, m.agent_id, m.session_id, m.turn_index, m.source_type, m.content, m.metadata_json,
                    m.embedding, m.created_at, m.updated_at, m.expires_at, m.is_archived,
                    m.provenance, m.origin_conversation_id, m.origin_session_id,
@@ -1736,7 +1738,7 @@ public sealed class SqliteMemoryStore(
                    m.supersedes_id, m.superseded_by_id, m.origin_kind, m.origin_reference, m.embedding_status,
                    (julianday('now') - julianday(m.created_at)) AS age_days
             FROM memories m
-            WHERE m.is_archived = 0
+            WHERE {LiveMemoryPredicate}
               AND m.embedding IS NOT NULL
             """);
 
