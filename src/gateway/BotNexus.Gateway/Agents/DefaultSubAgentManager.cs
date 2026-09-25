@@ -399,6 +399,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         var timeoutSeconds = 0;
         var maxTurns = 0;
         SubAgentBudgetClamp? budgetClamp = null;
+        SubAgentBudgetAdvisory? budgetAdvisory = null;
         SubAgentInfo? info = null;
         SubAgentRecord? record = null;
 
@@ -504,6 +505,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                     timeoutSeconds)
                 : null;
 
+            // #3341: advisory thresholds are evaluated only after hard policy has produced the
+            // effective budgets. They add guidance but never clamp, reject, or replace those values.
+            budgetAdvisory = budgetPolicy.CreateAdvisory(maxTurns, timeoutSeconds);
+
             info = new SubAgentInfo
             {
                 SubAgentId = subAgentId,
@@ -521,7 +526,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 StartedAt = DateTimeOffset.UtcNow,
                 TurnsUsed = 0,
                 // #2789: null unless a ceiling actually reduced the request.
-                BudgetClamp = budgetClamp
+                BudgetClamp = budgetClamp,
+                // #3341: null unless an effective budget is above an enabled advisory threshold.
+                BudgetAdvisory = budgetAdvisory
             };
 
             var admissionRecord = new SubAgentRecord(
@@ -573,6 +580,17 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 budgetClamp.EffectiveTimeoutSeconds,
                 budgetClamp.RequestedMaxTurns,
                 budgetClamp.EffectiveMaxTurns);
+        }
+
+        if (budgetAdvisory is not null)
+        {
+            _logger.LogWarning(
+                "Sub-agent '{SubAgentId}' effective budget is above the staging advisory: timeoutSeconds {EffectiveTimeout} (threshold {TimeoutThreshold}), maxTurns {EffectiveMaxTurns} (threshold {MaxTurnsThreshold}). Delegate one coherent stage; this advisory did not change the effective budget.",
+                subAgentId,
+                budgetAdvisory.EffectiveTimeoutSeconds,
+                budgetAdvisory.TimeoutSecondsThreshold,
+                budgetAdvisory.EffectiveMaxTurns,
+                budgetAdvisory.MaxTurnsThreshold);
         }
 
         // The deadline is scheduled through the injected TimeProvider rather than the ambient

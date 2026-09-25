@@ -97,6 +97,21 @@ public sealed class SubAgentParentBudgetPolicyTests
         logger.VerifyLog(LogLevel.Warning, "ParentAgentId=farnsworth", "PolicyTier=parent-override");
     }
 
+    [Fact]
+    public async Task SpawnAsync_EffectiveBudgetAboveAdvisory_LogsStagingGuidance()
+    {
+        var options = CreateOptions();
+        options.AdvisoryMaxTurns = 20;
+        options.AdvisoryTimeoutSeconds = 500;
+        var manager = CreateManager(
+            new MutableOptionsMonitor<GatewayOptions>(new GatewayOptions { SubAgents = options }),
+            out var logger);
+
+        _ = await manager.SpawnAsync(CreateRequest("ordinary") with { TimeoutSeconds = 501, MaxTurns = 21 });
+
+        logger.VerifyLog(LogLevel.Warning, "one coherent stage", "timeoutSeconds 501", "maxTurns 21");
+    }
+
     private static SubAgentOptions CreateOptions() => new()
     {
         DefaultTimeoutSeconds = 600,
