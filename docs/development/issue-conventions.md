@@ -71,13 +71,12 @@ had their stated premise disproven during implementation.
 
 **Humans** — use the issue forms. Blank issues are disabled; pick a type so the right questions get asked.
 
-**Agents** — never hand-roll `gh issue create`. Use the `botnexus-maintenance` skill's
-`New-BotNexusIssue.ps1`, which lints before filing.
+**Agents with the maintainer tooling installed** — use the `botnexus-maintenance` skill's
+`New-BotNexusIssue.ps1`. It creates a template and checks the body and labels before filing.
 
-That skill does **not** live in this repo: it is a workspace skill under farnsworth's agent
-workspace. Resolve its directory from the **Path:** line that `skills` `load` reports and build
-every path from there — hard-coding a root fails for an agent-local skill with a "not recognized
-as the name of a script file" error that names the wrong problem. See
+The maintainer skill and its `reference/issue-schema.json` are deployment-local tools; they do
+**not** ship in this repository. Resolve the skill directory from the **Path:** line reported by
+`skills load botnexus-maintenance` instead of assuming where it is installed. See
 [Skills](../extensions/skills.md).
 
 ```powershell
@@ -89,8 +88,17 @@ $s = Join-Path $skillDir 'scripts/New-BotNexusIssue.ps1'
      -Area area:platform -Priority priority:high -DryRun
 ```
 
-The forms and the agent templates are generated from one schema
-(`reference/issue-schema.json` inside that same skill directory), so they cannot drift apart.
+**Other agents and contributors** — use an issue form, or use `gh issue create` with a body that
+follows the shared spine and type-specific requirements above. Supply labels according to the
+cardinality rules below; for example:
+
+```shell
+gh issue create --repo Sytone/botnexus --title "[Docs] ..." \
+  --body-file issue.md --label "type:docs,priority:low,area:tooling"
+```
+
+The checked-in forms under `.github/ISSUE_TEMPLATE/` are the repository-visible templates.
+Contributors do not need the maintainer's private schema or script to file a conforming issue.
 
 ## Labels
 
@@ -114,8 +122,10 @@ The `squad:` namespace was retired on 2026-07-29 along with the multi-agent squa
 improvement changes it for the better on something that already works; chore changes no product
 behaviour at all (dependencies, CI, build).
 
-Labels are written only by `Set-BotNexusLabels.ps1`, against a closed allow-list. Bare legacy names
-(`bug`, `enhancement`, `documentation`, …) were migrated and deleted on 2026-07-29 and no longer exist.
+Maintainer automation writes labels through `Set-BotNexusLabels.ps1`, against a closed allow-list.
+Other filers select labels through an issue form or `gh issue create --label` and must follow the
+same cardinality rules. Bare legacy names (`bug`, `enhancement`, `documentation`, …) were migrated
+and deleted on 2026-07-29 and no longer exist.
 
 ## Existing issues
 

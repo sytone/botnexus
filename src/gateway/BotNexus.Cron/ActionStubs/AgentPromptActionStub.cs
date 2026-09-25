@@ -51,18 +51,14 @@ public sealed class AgentPromptAction : ICronAction
         // recurring opaque failure once per fire. The registry being absent from DI is a distinct,
         // deliberately non-rejecting condition: "cannot know", not "agent missing".
         var registry = context.Services.GetService<IAgentRegistry>();
-        var descriptor = CronAgentPreflight.EnsureResolvable(registry, agentId);
+        _ = CronAgentPreflight.EnsureResolvable(registry, agentId);
 
-        var preferredTriggerType = descriptor?.Soul?.Enabled == true
-            ? TriggerType.Soul
-            : TriggerType.Cron;
-
+        // An agent-prompt job is cron work regardless of the target agent's capabilities.
+        // Soul maintenance has its own explicit trigger provenance; inferring it from Soul.Enabled
+        // bypasses the job's pinned conversation and collapses unrelated jobs into one daily session.
         var trigger = context.Services.GetServices<IInternalTrigger>()
-            .FirstOrDefault(candidate => candidate.Type.Equals(preferredTriggerType))
-            ?? throw new InvalidOperationException(
-                preferredTriggerType.Equals(TriggerType.Soul)
-                    ? "Soul internal trigger is not registered."
-                    : "Cron internal trigger is not registered.");
+            .FirstOrDefault(candidate => candidate.Type.Equals(TriggerType.Cron))
+            ?? throw new InvalidOperationException("Cron internal trigger is not registered.");
 
         var triggerRequest = new InternalTriggerRequest
         {

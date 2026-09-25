@@ -83,6 +83,20 @@ public sealed class MarkdownNoteIndexingTests
     }
 
     [Fact]
+    public async Task SaveAsync_PersistsRequestedExpiryOnIndexedNote()
+    {
+        await using var ctx = await NoteTestContext.CreateAsync();
+        var expiry = DateTimeOffset.UtcNow.AddHours(2);
+
+        await ctx.Memory.SaveAsync(new AgentMemorySaveRequest(
+            NoteTestContext.AgentId, Note0802, "note", ExpiresAt: expiry));
+
+        var entries = await ctx.Store.SearchAsync(Query2, 10);
+        entries.ShouldNotBeEmpty();
+        entries.ShouldAllBe(entry => entry.ExpiresAt == expiry);
+    }
+
+    [Fact]
     public async Task MultiSectionNote_ReturnsTheMatchingSectionOnly_Ac3()
     {
         await using var ctx = await NoteTestContext.CreateAsync();

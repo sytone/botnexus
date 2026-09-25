@@ -4513,13 +4513,14 @@ details[open] > .thinking-summary::before {
     line-height: 1.4;
 }
 
-/* Item meta row: unread dot + timestamp */
+/* Item meta row: unread dot + timestamp. Keep it on the content edge rather than
+   pushing it beneath the right-side actions. */
 .conversation-list-item-meta {
     display: flex;
     flex-direction: row;
     align-items: center;
+    align-self: flex-start;
     gap: 0.35rem;
-    margin-left: auto;
 }
 
 .conversation-unread-dot {
@@ -4550,6 +4551,17 @@ details[open] > .thinking-summary::before {
    restating it, so the two can no longer contradict each other. A collapsed button is zero
    width, which keeps the strip exactly as wide as whatever is actually visible - that is
    what stops the backdrop covering empty space when only the pin is showing. */
+.conversation-list-item:has(.conversation-row-actions) {
+    --conversation-row-actions-width: calc((3 * var(--hit-pointer)) + 4px + 0.25rem + 1.5rem);
+}
+
+/* Reserve the expanded strip's full width on the title line. Long titles continue to
+   ellipsize, while the metadata line remains available at every supported sidebar width. */
+.conversation-list-item:has(.conversation-row-actions) .conversation-list-item-main {
+    min-height: 28px;
+    padding-right: var(--conversation-row-actions-width);
+}
+
 .conversation-row-actions {
     /* Both layers of the backdrop are built from these, so the tint can vary by row state
        without restating the gradient. */
@@ -4558,12 +4570,7 @@ details[open] > .thinking-summary::before {
 
     position: absolute;
     right: 0;
-    /* Anchored to the metadata line rather than centred on the whole row. Three 32px
-       buttons need 128px of a 155px row, so a vertically centred strip covers the title -
-       and the title is what you are reading when you reach for these. Displacing the
-       timestamp instead costs nothing: it is the one thing on the row you do not need
-       while you are acting on it. */
-    bottom: 0;
+    top: 0.6rem;
     display: flex;
     align-items: center;
     gap: 2px;
@@ -4589,8 +4596,7 @@ details[open] > .thinking-summary::before {
 /* Revealed by hover, keyboard focus within the strip, the section menu being open, or
    the pin being set - a pinned conversation has to advertise itself with the pointer
    nowhere near it. The backdrop appears with the buttons: at rest the strip paints
-   nothing at all. The fade runs across padding-left so the timestamp dissolves under
-   the strip rather than being cut off at a hard edge. */
+   nothing at all. The title-line reservation keeps the backdrop clear of metadata. */
 .conversation-list-item:hover .conversation-row-actions,
 .conversation-row-actions:focus-within,
 .conversation-row-actions:has([aria-expanded="true"]),

@@ -87,6 +87,64 @@ public sealed class WorkspaceContextBuilderTests
     }
 
     [Fact]
+    public async Task BuildSystemPromptAsync_TrailguideIncludesUserOwnedCustomOverlay()
+    {
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "CANONICAL AGENTS"),
+            ("SOUL.md", "CANONICAL SOUL"),
+            ("TRAILGUIDE.custom.md", "USER CUSTOMIZATION"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("nexus-trailguide"),
+                DisplayName = "Nexus Trailguide",
+                ModelId = "test-model",
+                ApiProvider = "test-provider"
+            });
+
+            result.ShouldContain("CANONICAL AGENTS");
+            result.ShouldContain("CANONICAL SOUL");
+            result.ShouldContain("USER CUSTOMIZATION");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_OrdinaryAgentDoesNotLoadTrailguideCustomOverlay()
+    {
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "AGENTS"),
+            ("TRAILGUIDE.custom.md", "TRAILGUIDE ONLY"));
+        try
+        {
+            var manager = new StubWorkspaceManager(workspacePath);
+            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
+
+            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("ordinary-agent"),
+                DisplayName = "Ordinary",
+                ModelId = "test-model",
+                ApiProvider = "test-provider"
+            });
+
+            result.ShouldContain("AGENTS");
+            result.ShouldNotContain("TRAILGUIDE ONLY");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task BuildSystemPromptAsync_WithAgentRootPath_ResolvesWorkspaceSubdirectory()
     {
         var workspacePath = CreateWorkspace(("AGENTS.md", "AGENTS"));

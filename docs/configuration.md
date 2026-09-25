@@ -1001,6 +1001,8 @@ botnexus config set gateway.subAgents.defaultTimeoutSeconds 1800
 botnexus config set gateway.subAgents.maxTimeoutSeconds 1800
 botnexus config set gateway.subAgents.defaultMaxTurns 30
 botnexus config set gateway.subAgents.maxTurnsCeiling 30
+botnexus config set gateway.subAgents.advisoryMaxTurns 30
+botnexus config set gateway.subAgents.advisoryTimeoutSeconds 1500
 botnexus config set gateway.subAgents.maxConcurrentPerSession 5
 botnexus config set gateway.subAgents.parentOverrides.farnsworth.defaultTimeoutSeconds 3600
 botnexus config set gateway.subAgents.parentOverrides.farnsworth.maxTimeoutSeconds 3600
@@ -1018,8 +1020,10 @@ or `parent-override`) so operators can audit which authorization tier applied.
 |----------|------|---------|-------------|
 | `subAgents.defaultTimeoutSeconds` | int | 600 | Timeout used when a spawn omits or supplies a non-positive timeout. |
 | `subAgents.maxTimeoutSeconds` | int | 1800 | Global timeout ceiling. |
+| `subAgents.advisoryTimeoutSeconds` | int | 1500 | Effective timeout above which a staging advisory is returned and logged; `0` disables it. The advisory does not change the timeout. |
 | `subAgents.defaultMaxTurns` | int | 30 | Turn budget used when omitted. |
 | `subAgents.maxTurnsCeiling` | int | 30 | Global turn ceiling. |
+| `subAgents.advisoryMaxTurns` | int | 30 | Effective turn budget above which a staging advisory is returned and logged; `0` disables it. The advisory does not change the turn budget. |
 | `subAgents.maxConcurrentPerSession` | int | 5 | Global running-child limit per parent session. |
 | `subAgents.parentOverrides.<parentAgentId>` | object | none | Trusted partial override of the five budget fields above. |
 | `subAgents.workspaceRoot` | string | ` ` (empty) | Temporary root directory under which each sub-agent's isolated workspace is created and later reclaimed. Empty preserves the historical default of `<OS temp>/botnexus-subagent-workspaces`. Supports `~` and environment-variable expansion and is normalized to an absolute path. The gateway (`FileAgentWorkspaceManager`) and the CLI (`botnexus subagent workspace list|prune` plus `doctor`) resolve this through the same shared resolver, so they can never target different directories. |

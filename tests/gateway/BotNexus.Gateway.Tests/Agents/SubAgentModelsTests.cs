@@ -162,8 +162,10 @@ public sealed class SubAgentModelsTests
         options.MaxConcurrentPerSession.ShouldBe(5);
         options.DefaultMaxTurns.ShouldBe(30);
         options.MaxTurnsCeiling.ShouldBe(30);
+        options.AdvisoryMaxTurns.ShouldBe(30);
         options.DefaultTimeoutSeconds.ShouldBe(600);
         options.MaxTimeoutSeconds.ShouldBe(1800);
+        options.AdvisoryTimeoutSeconds.ShouldBe(1500);
         options.MaxDepth.ShouldBe(1);
         options.DefaultModel.ShouldBeEmpty();
     }

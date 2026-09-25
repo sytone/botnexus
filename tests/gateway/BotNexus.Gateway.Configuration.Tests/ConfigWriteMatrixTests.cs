@@ -83,7 +83,7 @@ public sealed class ConfigWriteMatrixTests : IDisposable
 
         var store = new SqliteConfigStore($"Data Source={_storePath}");
         await store.WriteDocumentAsync(before);
-        var sqlite = new SqliteConfigurationWriter(store);
+        var sqlite = new SqliteConfigurationWriter(store, "config.db");
         await sqlite.ApplyChangeSetAsync(changes, "matrix");
         var entries = await store.ReadEntriesAsync();
         return ConfigDocumentRehydrator.Rehydrate(entries);

@@ -212,6 +212,66 @@ public class AgentLoopRunnerMaybeCompactTests
     }
 
     [Fact]
+    public async Task RunAsync_WhenRequiredProactiveCompactionFails_DoesNotCallProvider()
+    {
+        var providerCalls = 0;
+        using var provider = RegisterProvider("maybe-compact-required-failure", (_, _, _) =>
+        {
+            Interlocked.Increment(ref providerCalls);
+            return TestStreamFactory.CreateTextResponse("must not run");
+        });
+
+        var config = CreateConfig(
+            "maybe-compact-required-failure",
+            _ => Task.FromException<AgentContext?>(new ProactiveCompactionException(
+                "Required proactive compaction failed.",
+                retryable: true)));
+
+        Func<Task> act = () => AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("oversized context")],
+            new AgentContext(null, [], []),
+            config,
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        var exception = await act.ShouldThrowAsync<ProactiveCompactionException>();
+        exception.Retryable.ShouldBeTrue();
+        providerCalls.ShouldBe(0, "a required compaction failure must fail closed before provider invocation");
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenTerminalProviderMessageReportsOverflow_CompactsOnceAndRetries()
+    {
+        const string apiId = "in-band-context-overflow";
+        var providerCalls = 0;
+        var observedContextCounts = new List<int>();
+        using var provider = RegisterProvider(apiId, (_, context, _) =>
+        {
+            observedContextCounts.Add(context.Messages.Count);
+            return Interlocked.Increment(ref providerCalls) == 1
+                ? TestStreamFactory.CreateErrorResponse("input is too long for requested model")
+                : TestStreamFactory.CreateTextResponse("recovered");
+        });
+
+        var history = Enumerable.Range(0, 15)
+            .Select(index => (AgentMessage)new AgentUserMessage($"message-{index}"))
+            .ToList();
+        var result = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("latest")],
+            new AgentContext(null, history, []),
+            CreateConfig(apiId, _ => Task.FromResult<AgentContext?>(null)),
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        providerCalls.ShouldBe(2, "an in-band overflow gets exactly one reactive recovery attempt");
+        observedContextCounts[1].ShouldBeLessThan(observedContextCounts[0]);
+        result.OfType<AssistantAgentMessage>().ShouldContain(message => message.Content == "recovered");
+        result.OfType<AssistantAgentMessage>().ShouldNotContain(message =>
+            message.ErrorMessage != null
+            && message.ErrorMessage.Contains("input is too long", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task RunAsync_WhenMaybeCompactIsCancelled_PropagatesCancellation()
     {
         using var provider = RegisterProvider("maybe-compact-cancelled", (_, _, _) =>

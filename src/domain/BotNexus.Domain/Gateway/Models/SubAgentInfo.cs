@@ -95,6 +95,12 @@ public sealed record SubAgentInfo
     public SubAgentBudgetClamp? BudgetClamp { get; init; }
 
     /// <summary>
+    /// Gets optional staging guidance when an effective turn or timeout budget exceeds its
+    /// configured advisory threshold. The advisory never changes either effective budget.
+    /// </summary>
+    public SubAgentBudgetAdvisory? BudgetAdvisory { get; init; }
+
+    /// <summary>
     /// Gets bounded recovery evidence captured from a caller-granted Git worktree when this run
     /// ended by timeout or turn-budget exhaustion. Null for every other terminal disposition.
     /// </summary>
@@ -174,6 +180,18 @@ public sealed record SubAgentBudgetClamp(
     /// <summary>Gets a value indicating whether the timeout specifically was reduced.</summary>
     public bool TimeoutSecondsClamped => RequestedTimeoutSeconds > EffectiveTimeoutSeconds;
 }
+
+/// <summary>
+/// Advises the caller to split an unusually large permitted budget into one coherent stage. The
+/// effective values are the budgets threaded into the run after hard policy is applied.
+/// </summary>
+public sealed record SubAgentBudgetAdvisory(
+    bool MaxTurnsAboveThreshold,
+    int MaxTurnsThreshold,
+    int EffectiveMaxTurns,
+    bool TimeoutSecondsAboveThreshold,
+    int TimeoutSecondsThreshold,
+    int EffectiveTimeoutSeconds);
 
 /// <summary>
 /// Represents the lifecycle state of a sub-agent run.

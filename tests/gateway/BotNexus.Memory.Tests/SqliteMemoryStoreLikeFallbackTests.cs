@@ -51,6 +51,22 @@ public sealed class SqliteMemoryStoreLikeFallbackTests
     }
 
     [Fact]
+    public async Task LikeFallback_ExcludesExpiredEntries()
+    {
+        await using var context = await MemoryStoreTestContext.CreateAsync();
+        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry(
+            "expired", "a", "expiryfallback keyword", expiresAt: DateTimeOffset.UtcNow.AddMinutes(-1)));
+        await context.Store.InsertAsync(MemoryStoreTestContext.CreateEntry(
+            "live", "a", "expiryfallback keyword"));
+
+        var options = new MemoryLikeFallbackOptions { RecencyWindowDays = null, MaxScanRows = null };
+        var results = await context.Store.SearchWithLikeFallbackAsync(
+            "expiryfallback", 10, filter: null, Lambda, options, CancellationToken.None);
+
+        results.Select(result => result.Id).ShouldBe(["live"]);
+    }
+
+    [Fact]
     public async Task LikeFallback_AppliesRowCeiling_CapsCandidateScan()
     {
         await using var context = await MemoryStoreTestContext.CreateAsync();

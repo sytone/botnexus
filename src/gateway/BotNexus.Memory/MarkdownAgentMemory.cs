@@ -70,7 +70,7 @@ public sealed class MarkdownAgentMemory : IAgentMemory
             _memoryPathOverride,
             ct).ConfigureAwait(false);
 
-        await IndexNoteAsync(request.AgentId, filePath: null, ct).ConfigureAwait(false);
+        await IndexNoteAsync(request.AgentId, filePath: null, request.ExpiresAt, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -86,7 +86,7 @@ public sealed class MarkdownAgentMemory : IAgentMemory
             _memoryPathOverride,
             ct).ConfigureAwait(false);
 
-        await IndexNoteAsync(_agentId, filePath, ct).ConfigureAwait(false);
+        await IndexNoteAsync(_agentId, filePath, expiresAt: null, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -95,7 +95,11 @@ public sealed class MarkdownAgentMemory : IAgentMemory
     /// file is the source of truth, so any indexing failure is logged and swallowed rather than
     /// propagated back to the caller that already wrote the note successfully.
     /// </summary>
-    private async Task IndexNoteAsync(string agentId, string? filePath, CancellationToken ct)
+    private async Task IndexNoteAsync(
+        string agentId,
+        string? filePath,
+        DateTimeOffset? expiresAt,
+        CancellationToken ct)
     {
         try
         {
@@ -105,7 +109,7 @@ public sealed class MarkdownAgentMemory : IAgentMemory
                 return;
 
             await MarkdownNoteIndexer
-                .IndexNoteFileAsync(_memoryStore, _fileSystem, agentId, workspacePath, notePath, ct)
+                .IndexNoteFileAsync(_memoryStore, _fileSystem, agentId, workspacePath, notePath, expiresAt, ct)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException)

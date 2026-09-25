@@ -523,6 +523,15 @@
           "format": "int32",
           "default": 30
         },
+        "advisoryMaxTurns": {
+          "title": "Advisory max turns",
+          "type": "integer",
+          "description": "Advisory turn threshold for staging guidance. A value of zero disables the advisory.",
+          "format": "int32",
+          "default": 30,
+          "maximum": 2147483647.0,
+          "minimum": 0.0
+        },
         "defaultTimeoutSeconds": {
           "title": "Default timeout (seconds)",
           "type": "integer",
@@ -538,6 +547,15 @@
           "description": "Hard upper bound, in seconds, for an agent-supplied timeoutSeconds on a spawn request. A value of zero or less disables the ceiling.",
           "format": "int32",
           "default": 1800
+        },
+        "advisoryTimeoutSeconds": {
+          "title": "Advisory timeout (seconds)",
+          "type": "integer",
+          "description": "Advisory timeout threshold for staging guidance. A value of zero disables the advisory.",
+          "format": "int32",
+          "default": 1500,
+          "maximum": 2147483647.0,
+          "minimum": 0.0
         },
         "maxDepth": {
           "title": "Max depth",
