@@ -1,0 +1,38 @@
+# Prompt behavior evaluator
+
+This opt-in console harness measures how a real model follows BotNexus prompt guidance. It uses the production `AgentLoopRunner`, `OpenAICompatProvider`, message converter, prompt sections, and tool executor; it does not synthesize model output or implement another agent loop.
+
+## Cost and reliability
+
+Every invocation makes real provider requests and can incur token charges. The deterministic fixture requires exactly 12 observable operations: initial todo, inspection, revised todo, change application, six distinct validation/checkpoint operations, completion verification, and final todo. This deliberately exceeds the GPT narration threshold, so a GPT run cannot pass without at least one non-empty progress message splitting the chain. Tool chains normally require several provider turns. Provider throttling, outages, model updates, and sampling make results flaky and non-deterministic; repeat all four mutation cells per rung multiple times and compare distributions rather than treating one run as a unit test. The paid model evaluation is intentionally opt-in and absent from ordinary CI. The evaluator project is included in the root traversal so remote CORE compiles it, and CORE discovers and runs its deterministic contract-test project without making provider requests.
+
+## Configuration and invocation
+
+Create a JSON file outside source control (the API key itself stays in an environment variable):
+
+```json
+{
+  "endpoint": "https://your-openai-compatible-endpoint/v1",
+  "provider": "explicit-provider-label",
+  "model": "exact-model-id",
+  "apiKeyEnvironmentVariable": "BEHAVIOR_EVAL_API_KEY",
+  "rung": "Gpt",
+  "mutation": "None",
+  "maxTokens": 2048,
+  "timeoutSeconds": 120,
+  "outputPath": "artifacts/behavior-eval/gpt-current.json"
+}
+```
+
+Then run on request:
+
+```powershell
+$env:BEHAVIOR_EVAL_API_KEY = '<secret>'
+dotnet run --project tools/BotNexus.PromptBehaviorEval -- --config path/to/eval.json
+```
+
+Run the `Default`, `Claude`, and `Gpt` rungs separately with a deliberately supplied provider/model/endpoint. A rung selects prompt guidance only; it does not pretend that the serving model belongs to that family. This permits controlled cross-model and native-family comparisons without requiring an architectural decision about a universal credential router.
+
+Mutation values are `None`, `FormerTodoInstruction`, `FormerResultWaitInstruction`, or the JSON string `FormerTodoInstruction, FormerResultWaitInstruction`. The former strings are exact copies from `6111a00c0^`. Run all four mutation cells per rung repeatedly to isolate each instruction, their interaction, and model variance.
+
+The output JSON records provider/model/rung/mutation, timestamps, ordered tool calls, accepted todo snapshots, every accepted or rejected todo transition, rejected operation count, added-item-after-inspection evidence, distinct done-item count, assistant-message count, maximum tool calls between non-empty assistant messages, token counts, final text, ordered raw observations, and the exact system prompt. Tool state enforces the exact operation order; an out-of-order call is recorded as rejected, returns a failure result, and does not advance the fixture. The `acceptance` object reports the expected operation order, named checks, an explicit `passed` verdict, and `failedChecks`. Common checks require the exact operation order, an expected sequence longer than 10 calls, the discovered item after inspection, at least two distinct done items, no rejected todo transitions, and no rejected operations. The GPT rung additionally requires maximum silent spacing of 10 tool calls; Default and Claude still report spacing but do not inherit that model-specific criterion. Keep result files out of source control when prompts or task text are sensitive.

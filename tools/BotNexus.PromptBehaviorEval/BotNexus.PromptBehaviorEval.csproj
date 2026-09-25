@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
+    <ProjectReference Include="..\..\src\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
+    <ProjectReference Include="..\..\src\agent\BotNexus.Agent.Providers.OpenAICompat\BotNexus.Agent.Providers.OpenAICompat.csproj" />
+    <ProjectReference Include="..\..\src\gateway\BotNexus.Gateway.Prompts\BotNexus.Gateway.Prompts.csproj" />
+  </ItemGroup>
+</Project>
