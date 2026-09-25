@@ -15,6 +15,13 @@ public sealed record CronExecutionContext
     public required DateTimeOffset TriggeredAt { get; init; }
     public required CronTriggerType TriggerType { get; init; }
     public required IServiceProvider Services { get; init; }
+
+    /// <summary>
+    /// Optional persistence callback supplied by the scheduler so an action can publish its
+    /// owning session before the action completes (#4283).
+    /// </summary>
+    public Func<SessionId, CancellationToken, Task>? PersistSessionIdAsync { get; init; }
+
     public SessionId? SessionId { get; private set; }
 
     /// <summary>
@@ -54,6 +61,18 @@ public sealed record CronExecutionContext
     public void RecordSessionId(SessionId sessionId)
     {
         SessionId = sessionId;
+    }
+
+    /// <summary>
+    /// Records and durably publishes the session that owns this run while the action is still in
+    /// flight. The local value is assigned before the write so terminal bookkeeping retains it even
+    /// if the owner-session projection write fails and the scheduler handles that failure normally.
+    /// </summary>
+    public async Task RecordSessionIdAsync(SessionId sessionId, CancellationToken cancellationToken = default)
+    {
+        SessionId = sessionId;
+        if (PersistSessionIdAsync is not null)
+            await PersistSessionIdAsync(sessionId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

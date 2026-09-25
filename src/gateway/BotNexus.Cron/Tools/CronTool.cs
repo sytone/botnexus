@@ -542,7 +542,8 @@ public sealed class CronTool(
             var runs = statuses is null
                 ? await cronStore.GetRunHistoryAsync(jobId, limit, cancellationToken).ConfigureAwait(false)
                 : await cronStore.GetRecentRunsAsync([jobId], statuses, limit, cancellationToken).ConfigureAwait(false);
-            return TextResult(JsonSerializer.Serialize(runs, JsonOptions));
+            var projectedRuns = await scheduler.GetRunHealthAsync(runs, cancellationToken).ConfigureAwait(false);
+            return TextResult(JsonSerializer.Serialize(projectedRuns, JsonOptions));
         }
 
         // The cross-job scope is derived by applying the SAME CanManage rule the per-job path
@@ -555,7 +556,8 @@ public sealed class CronTool(
             .ToList();
 
         var recent = await cronStore.GetRecentRunsAsync(manageable, statuses, limit, cancellationToken).ConfigureAwait(false);
-        return TextResult(JsonSerializer.Serialize(recent, JsonOptions));
+        var projectedRecent = await scheduler.GetRunHealthAsync(recent, cancellationToken).ConfigureAwait(false);
+        return TextResult(JsonSerializer.Serialize(projectedRecent, JsonOptions));
     }
 
     /// <summary>
