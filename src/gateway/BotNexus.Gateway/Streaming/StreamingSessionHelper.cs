@@ -150,13 +150,14 @@ public static class StreamingSessionHelper
                         evt.ToolArgs is { Count: > 0 }
                             ? System.Text.Json.JsonSerializer.Serialize(evt.ToolArgs)
                             : null);
+                    // The write-ahead can append directly through ISessionStore, so this aggregate
+                    // may be stale. The stable persistence key on ProjectStart is the authoritative
+                    // idempotency contract; this snapshot check is only a cheap in-memory guard.
                     var alreadyPersisted = evt.ToolCallId is not null
                         && session.GetHistorySnapshot().Any(entry =>
                             entry.ToolCallId == evt.ToolCallId && entry.IsToolStartRow());
                     if (!alreadyPersisted)
-                    {
                         streamedHistory.Add(startEntry);
-                    }
                     allHistoryEntries.Add(startEntry);
                     if (evt.ToolCallId is not null)
                     {

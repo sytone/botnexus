@@ -20,6 +20,8 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     private const string BootstrapFileName = "BOOTSTRAP.md";
     private const string MemoryFileName = "MEMORY.md";
     private const string UserFileName = "USER.md";
+    private const string TrailguideAgentId = "nexus-trailguide";
+    private const string TrailguideCustomFileName = "TRAILGUIDE.custom.md";
     private const string MemoryPromptInjectionNone = "none";
     private const string MemoryPromptInjectionFull = "full";
     private static readonly string[] DefaultPromptFiles =
@@ -220,6 +222,11 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
         var memoryPromptInjection = ResolveMemoryPromptInjection(descriptor.Memory?.PromptInjection);
         var promptFiles = ResolvePromptFiles(descriptor, includeMemoryFile: !IsMemoryPromptInjectionNone(memoryPromptInjection));
+        if (descriptor.AgentId.Value.Equals(TrailguideAgentId, StringComparison.OrdinalIgnoreCase)
+            && !promptFiles.Contains(TrailguideCustomFileName, StringComparer.OrdinalIgnoreCase))
+        {
+            promptFiles = [.. promptFiles, TrailguideCustomFileName];
+        }
 
         // #2435: the model in force for THIS conversation selects the instruction-file variant.
         // Read from the already-resolved effective settings for the same reason the runtime line

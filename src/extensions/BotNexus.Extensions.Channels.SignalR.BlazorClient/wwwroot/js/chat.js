@@ -235,15 +235,29 @@ window.chatAttachments = {
     bindPaste: function (element, dotNetRef) {
         if (!element || element._attachmentPasteBound) return;
         element.addEventListener('paste', async function (event) {
-            var clipboardFiles = event.clipboardData ? event.clipboardData.files : [];
-            var images = Array.from(clipboardFiles).filter(function (file) {
+            var clipboard = event.clipboardData;
+            var images = clipboard ? Array.from(clipboard.files || []).filter(function (file) {
                 return file.type.startsWith('image/');
-            });
+            }) : [];
+
+            // Some browsers expose pasted images only as DataTransferItems. Ordinary text paste
+            // remains native because the handler returns unless at least one image blob exists.
+            if (!images.length && clipboard && clipboard.items) {
+                images = Array.from(clipboard.items).filter(function (item) {
+                    return item.kind === 'file' && item.type.startsWith('image/');
+                }).map(function (item) {
+                    return item.getAsFile();
+                }).filter(Boolean);
+            }
             if (!images.length) return;
 
             event.preventDefault();
-            var drafts = await window.chatAttachments.readFiles(images);
-            await dotNetRef.invokeMethodAsync('OnAttachmentsPasted', drafts);
+            try {
+                var drafts = await window.chatAttachments.readFiles(images);
+                await dotNetRef.invokeMethodAsync('OnAttachmentsPasted', drafts);
+            } catch (error) {
+                try { await dotNetRef.invokeMethodAsync('OnAttachmentPasteFailed'); } catch (_) { }
+            }
         });
         element._attachmentPasteBound = true;
     }

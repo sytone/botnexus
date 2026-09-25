@@ -49,11 +49,12 @@ namespace BotNexus.Agent.Core.Configuration;
 /// lack a backing tool call, and a <see cref="BotNexus.Agent.Core.Types.ClaimAuditEvent"/> is emitted on detection.
 /// </param>
 /// <param name="MaybeCompactAsync">
-/// Optional best-effort auto-compaction hook (#1710/#4302). When set it is awaited before every
-/// provider turn, after any preceding tool batch and its results have completed, so both inner tool
-/// chains and outer follow-up iterations re-check the compaction threshold before growing further.
-/// A returned context replaces the loop's live snapshot. Failures are diagnosed and the loop
-/// continues to its bounded reactive overflow fallback. Null means no mid-loop re-check.
+/// Optional auto-compaction hook (#1710/#4302/#4379). When set it is awaited before every provider
+/// turn, after any preceding tool batch and its results have completed, so both inner tool chains and
+/// outer follow-up iterations re-check the compaction threshold before growing further. A returned
+/// context replaces the loop's live snapshot. Hosts throw <see cref="ProactiveCompactionException"/>
+/// when compaction was required but failed; that typed failure blocks provider invocation. Other
+/// exceptions retain the optional best-effort behavior. Null means no mid-loop re-check.
 /// </param>
 /// <param name="OnDiagnostic">
 /// Optional non-fatal diagnostic sink. Used to surface hook-budget breaches (#2518) so a slow or

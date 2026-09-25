@@ -5,6 +5,7 @@ using BotNexus.Gateway.Audit;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Sessions;
+using BotNexus.Gateway.Streaming;
 using BotNexus.Domain.World;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -283,6 +284,75 @@ public sealed class ToolAuditWriteAheadTests
     }
 
     [Fact]
+    public async Task PersistStartAsync_ThenDuplicateStreamingStarts_WithStaleSession_PersistsOneStartAndOneResult()
+    {
+        var directory = Path.Combine(AppContext.BaseDirectory, "ToolAuditWriteAheadTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var connectionString = $"Data Source={Path.Combine(directory, "sessions.db")};Pooling=False";
+            var conversations = new InMemoryConversationStore();
+            await conversations.CreateAsync(new Conversation
+            {
+                ConversationId = ConversationId.From("conv"),
+                AgentId = AgentId.From("agent-a")
+            });
+            var store = new SqliteSessionStore(connectionString, NullLogger<SqliteSessionStore>.Instance, conversations);
+            var staleSession = await store.GetOrCreateAsync(SessionId.From("streamed"), AgentId.From("agent-a"));
+            staleSession.ConversationId = ConversationId.From("conv");
+            await store.SaveAsync(staleSession);
+
+            await Create(store, "streamed").PersistStartAsync(
+                "call-streamed",
+                "exec",
+                Args("command", "git status"),
+                default);
+
+            await StreamingSessionHelper.ProcessAndSaveAsync(
+                ToAsyncEnumerable(
+                [
+                    new AgentStreamEvent
+                    {
+                        Type = AgentStreamEventType.ToolStart,
+                        ToolCallId = "call-streamed",
+                        ToolName = "exec",
+                        ToolArgs = new Dictionary<string, object?> { ["command"] = "git status" }
+                    },
+                    new AgentStreamEvent
+                    {
+                        Type = AgentStreamEventType.ToolStart,
+                        ToolCallId = "call-streamed",
+                        ToolName = "exec",
+                        ToolArgs = new Dictionary<string, object?> { ["command"] = "git status" }
+                    },
+                    new AgentStreamEvent
+                    {
+                        Type = AgentStreamEventType.ToolEnd,
+                        ToolCallId = "call-streamed",
+                        ToolName = "exec",
+                        ToolResult = "clean"
+                    }
+                ]),
+                staleSession,
+                store);
+
+            var reloaded = await new SqliteSessionStore(connectionString, NullLogger<SqliteSessionStore>.Instance, conversations)
+                .GetAsync(SessionId.From("streamed"));
+            var rows = reloaded.ShouldNotBeNull().GetHistorySnapshot()
+                .Where(entry => entry.ToolCallId == "call-streamed")
+                .ToArray();
+            rows.Count(entry => entry.IsToolStartRow()).ShouldBe(1);
+            rows.Single(entry => entry.IsToolStartRow()).PersistenceKey.ShouldBe("tool-start:call-streamed");
+            rows.Count(entry => entry.Kind == MessageKind.ToolResult).ShouldBe(1);
+            rows.ShouldAllBe(entry => entry.ToolArgs.ShouldNotBeNull().Contains("git status", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task PersistStartAsync_ParallelCallsRetainTheirOwnRedactedArguments()
     {
         var session = Session("s1");
@@ -344,6 +414,15 @@ public sealed class ToolAuditWriteAheadTests
         AgentId = AgentId.From($"{id}-agent"),
         ConversationId = ConversationId.From("conv")
     };
+
+    private static async IAsyncEnumerable<AgentStreamEvent> ToAsyncEnumerable(IEnumerable<AgentStreamEvent> events)
+    {
+        foreach (var evt in events)
+        {
+            yield return evt;
+            await Task.Yield();
+        }
+    }
 
     private static IReadOnlyDictionary<string, object?> Args(string name, string value) =>
         new Dictionary<string, object?> { [name] = value };

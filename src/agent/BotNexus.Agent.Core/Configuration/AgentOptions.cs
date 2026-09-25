@@ -41,9 +41,10 @@ namespace BotNexus.Agent.Core.Configuration;
 /// Optional post-turn claim-auditor configuration (#1600). When null the auditor does not run.
 /// </param>
 /// <param name="MaybeCompactAsync">
-/// Optional best-effort auto-compaction hook (#1710). Flows to the loop config and is awaited at
-/// the top of each outer-loop iteration so a long dispatch re-checks the compaction threshold
-/// between turns. Null means no mid-loop re-check.
+/// Optional auto-compaction hook (#1710/#4379). Flows to the loop config and is awaited before
+/// each provider turn so a long dispatch re-checks the compaction threshold between turns. A typed
+/// <see cref="Loop.ProactiveCompactionException"/> fails closed when compaction was required.
+/// Null means no mid-loop re-check.
 /// </param>
 /// <param name="SuspensionRegistry">
 /// Optional provider-exhaustion suspension registry (#3015). Flows to the loop config; when set, a
