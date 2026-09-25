@@ -1,5 +1,6 @@
 using System.IO.Abstractions;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using BotNexus.Cli.Commands;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Configuration.Store;
@@ -9,7 +10,7 @@ using Shouldly;
 namespace BotNexus.Cli.Tests;
 
 [Collection("AnsiConsole")]
-public sealed class ConfigMutationReceiptTests : IDisposable
+public sealed partial class ConfigMutationReceiptTests : IDisposable
 {
     private const string Secret = "receipt-test-secret";
 
@@ -125,6 +126,10 @@ public sealed class ConfigMutationReceiptTests : IDisposable
             CancellationToken.None);
 
     private static string Normalize(string value)
-        => value.Replace("\r\n", Environment.NewLine, StringComparison.Ordinal)
+        => AnsiEscapeSequence().Replace(value, string.Empty)
+            .Replace("\r\n", Environment.NewLine, StringComparison.Ordinal)
             .Replace("\n", Environment.NewLine, StringComparison.Ordinal);
+
+    [GeneratedRegex("\\x1B\\[[0-?]*[ -/]*[@-~]")]
+    private static partial Regex AnsiEscapeSequence();
 }
