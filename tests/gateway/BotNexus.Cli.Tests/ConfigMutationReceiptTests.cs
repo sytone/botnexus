@@ -31,6 +31,7 @@ public sealed class ConfigMutationReceiptTests : IDisposable
         AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
         {
             Out = new AnsiConsoleOutput(_output),
+            Ansi = AnsiSupport.No,
             Interactive = InteractionSupport.No
         });
         AnsiConsole.Console.Profile.Width = 300;
