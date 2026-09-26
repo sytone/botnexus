@@ -47,6 +47,6 @@ public static class ToolResultSanitizer
             content.Add(new AgentToolContent(AgentToolContentType.Text, sanitized));
         }
 
-        return changed ? new AgentToolResult(content, result.Details) : result;
+        return changed ? result with { Content = content } : result;
     }
 }

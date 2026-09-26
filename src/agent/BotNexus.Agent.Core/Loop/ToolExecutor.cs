@@ -660,15 +660,15 @@ internal static class ToolExecutor
         var remoteResult = await satelliteExecution.Executor
             .ExecuteAsync(request, cancellationToken, onUpdate)
             .ConfigureAwait(false);
-        var metadata = remoteResult.Metadata ?? SatelliteToolResultMetadata.Complete;
+        var metadata = remoteResult.Metadata;
         var normalizedResult = remoteResult.Result with
         {
-            Details = new SatelliteToolResultDetails(
+            DeliveryDetails = new SatelliteToolResultDetails(
                 remoteResult.Outcome,
-                metadata.IsTruncated,
-                metadata.IsIncomplete,
-                metadata.Artifacts,
-                remoteResult.Result.Details)
+                metadata?.IsTruncated,
+                metadata?.IsIncomplete,
+                metadata?.Artifacts ?? [],
+                remoteResult.Result.DeliveryDetails)
         };
         if (remoteResult.IsError)
         {
@@ -774,7 +774,7 @@ internal static class ToolExecutor
             {
                 var content = afterResult.Content ?? result.Content;
                 var details = afterResult.Details ?? result.Details;
-                result = new AgentToolResult(content, details);
+                result = result with { Content = content, Details = details };
                 isError = afterResult.IsError ?? isError;
             }
         }
