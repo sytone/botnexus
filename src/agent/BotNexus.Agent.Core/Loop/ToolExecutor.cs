@@ -649,7 +649,7 @@ internal static class ToolExecutor
         AgentToolUpdateCallback? onUpdate)
     {
         var request = new SatelliteToolRequest(
-            ProtocolVersion: 1,
+            ProtocolVersion: 2,
             Scope: satelliteExecution.Scope,
             ToolCallId: prepared.ToolCall.Id,
             ToolName: prepared.ToolCall.Name,
@@ -660,12 +660,22 @@ internal static class ToolExecutor
         var remoteResult = await satelliteExecution.Executor
             .ExecuteAsync(request, cancellationToken, onUpdate)
             .ConfigureAwait(false);
+        var metadata = remoteResult.Metadata ?? SatelliteToolResultMetadata.Complete;
+        var normalizedResult = remoteResult.Result with
+        {
+            Details = new SatelliteToolResultDetails(
+                remoteResult.Outcome,
+                metadata.IsTruncated,
+                metadata.IsIncomplete,
+                metadata.Artifacts,
+                remoteResult.Result.Details)
+        };
         if (remoteResult.IsError)
         {
-            throw new SatelliteToolExecutionException(remoteResult.Result);
+            throw new SatelliteToolExecutionException(normalizedResult);
         }
 
-        return remoteResult.Result;
+        return normalizedResult;
     }
 
     private sealed class SatelliteToolExecutionException(AgentToolResult result) : Exception

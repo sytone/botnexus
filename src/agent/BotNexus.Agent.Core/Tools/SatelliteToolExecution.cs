@@ -25,7 +25,9 @@ public sealed record SatelliteExecutionScope(
     string WorkspaceId,
     string RunId,
     string AttemptId,
-    long FencingGeneration);
+    long FencingGeneration,
+    string CallerIdentity,
+    string WorkingDirectory);
 
 /// <summary>
 /// Host-selected satellite routing and policy context for an agent run.
@@ -65,15 +67,46 @@ public enum SatelliteToolOutcome
 }
 
 /// <summary>
+/// Reference to a bounded artifact retained by the satellite instead of copied into the tool result.
+/// </summary>
+public sealed record SatelliteArtifactReference(
+    string ArtifactId,
+    string MediaType,
+    long Length,
+    string Sha256);
+
+/// <summary>
+/// Bounded delivery facts supplied by the satellite executor.
+/// </summary>
+public sealed record SatelliteToolResultMetadata(
+    bool IsTruncated,
+    bool IsIncomplete,
+    IReadOnlyList<SatelliteArtifactReference> Artifacts)
+{
+    public static SatelliteToolResultMetadata Complete { get; } = new(false, false, []);
+}
+
+/// <summary>
+/// Satellite delivery facts retained alongside tool-specific result details.
+/// </summary>
+public sealed record SatelliteToolResultDetails(
+    SatelliteToolOutcome Outcome,
+    bool IsTruncated,
+    bool IsIncomplete,
+    IReadOnlyList<SatelliteArtifactReference> Artifacts,
+    object? ToolDetails);
+
+/// <summary>
 /// Typed remote tool result compatible with the local normalized tool-result contract.
 /// </summary>
 public sealed record SatelliteToolResult(
     SatelliteToolOutcome Outcome,
     AgentToolResult Result,
-    bool IsError)
+    bool IsError,
+    SatelliteToolResultMetadata? Metadata = null)
 {
     public static SatelliteToolResult Completed(AgentToolResult result) =>
-        new(SatelliteToolOutcome.Completed, result, false);
+        new(SatelliteToolOutcome.Completed, result, false, SatelliteToolResultMetadata.Complete);
 
     public static SatelliteToolResult Unavailable(string message) =>
         Error(SatelliteToolOutcome.Unavailable, message);
@@ -82,7 +115,8 @@ public sealed record SatelliteToolResult(
         new(
             outcome,
             new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]),
-            true);
+            true,
+            new SatelliteToolResultMetadata(false, true, []));
 }
 
 /// <summary>
