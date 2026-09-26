@@ -27,7 +27,14 @@ public sealed record RunCompletionDecision(
         string continuationOwner,
         string wakeCondition,
         string? detail = null)
-        => new(
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(evidence);
+        ArgumentException.ThrowIfNullOrWhiteSpace(continuationOwner);
+        ArgumentException.ThrowIfNullOrWhiteSpace(wakeCondition);
+        if (!Enum.IsDefined(reason))
+            throw new ArgumentOutOfRangeException(nameof(reason), reason, "Unknown run stop reason.");
+
+        return new(
             RunCompletionStatus.Parked,
             openItemIds,
             reason,
@@ -35,6 +42,7 @@ public sealed record RunCompletionDecision(
             evidence,
             continuationOwner,
             wakeCondition);
+    }
 }
 
 /// <summary>
