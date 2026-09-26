@@ -549,12 +549,13 @@ public sealed class PluginAgentDescriptorFenceTests
             + "plugin-declarable privilege surface the moment it exists.");
     }
 
-    // AgentId is required to construct the candidate and the fence intentionally copies that same
-    // identity into its reference descriptor. It cannot be independently mutated into a declaration;
-    // every other live fenced member must have a concrete non-default mutation recipe below.
+    // AgentId is required to construct the candidate and cannot be independently mutated into a
+    // declaration. DefaultExtensionConfig is populated by the server from agents.defaults and is
+    // not plugin-owned. Every other live fenced member must have a concrete mutation recipe below.
     private static IReadOnlyList<string> IdentityOnlyFencedExemptions { get; } =
     [
         nameof(AgentDescriptor.AgentId),
+        nameof(AgentDescriptor.DefaultExtensionConfig),
     ];
 
     private static IReadOnlyDictionary<string, Func<AgentDescriptor, AgentDescriptor>> MutationRecipes { get; } =

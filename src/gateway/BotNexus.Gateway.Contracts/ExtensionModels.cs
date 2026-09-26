@@ -1,4 +1,26 @@
+using System.Text.Json.Serialization;
+
 namespace BotNexus.Gateway.Abstractions.Extensions;
+
+/// <summary>Concrete locations at which an extension may own runtime configuration.</summary>
+[JsonConverter(typeof(ExtensionConfigurationScopeJsonConverter))]
+public enum ExtensionConfigurationScope
+{
+    /// <summary>Configuration for the singular BotNexus world.</summary>
+    [JsonStringEnumMemberName("world")]
+    World,
+    /// <summary>Configuration for the singular gateway runtime.</summary>
+    [JsonStringEnumMemberName("gateway")]
+    Gateway,
+    /// <summary>Configuration for agent defaults and named agents.</summary>
+    [JsonStringEnumMemberName("agent")]
+    Agent
+}
+
+/// <summary>String-only JSON converter for extension configuration scopes.</summary>
+public sealed class ExtensionConfigurationScopeJsonConverter()
+    : JsonStringEnumConverter<ExtensionConfigurationScope>(namingPolicy: null, allowIntegerValues: false);
+
 /// <summary>
 /// Manifest format stored in botnexus-extension.json.
 /// </summary>
@@ -38,6 +60,8 @@ public sealed record ExtensionManifest
     /// Used to validate operator config and apply defaults at startup.
     /// </summary>
     public IReadOnlyList<ExtensionConfigFieldSchema> ConfigSchema { get; init; } = [];
+    /// <summary>Concrete runtime configuration scopes supported by this extension.</summary>
+    public IReadOnlyList<ExtensionConfigurationScope> ConfigurationScopes { get; init; } = [];
 }
 /// <summary>
 /// Schema declaration for a single extension configuration field.
@@ -148,4 +172,6 @@ public sealed record LoadedExtension
     /// Configuration field schema declared by this extension in the manifest.
     /// </summary>
     public IReadOnlyList<ExtensionConfigFieldSchema> ConfigSchema { get; init; } = [];
+    /// <summary>Concrete runtime configuration scopes supported by this extension.</summary>
+    public IReadOnlyList<ExtensionConfigurationScope> ConfigurationScopes { get; init; } = [];
 }

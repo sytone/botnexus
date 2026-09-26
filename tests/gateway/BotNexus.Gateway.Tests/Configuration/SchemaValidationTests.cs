@@ -196,9 +196,9 @@ public sealed class SchemaValidationTests
     }
 
     [Fact]
-    public async Task Validate_ConfigWithExtensionsDefaultsAndAgentJsonElements_DoesNotCrash()
+    public async Task Validate_ConfigWithAgentExtensionDefaultsAndAgentJsonElements_DoesNotCrash()
     {
-        // Regression: IConfiguration cannot bind JsonElement. gateway.extensions.defaults
+        // Regression: IConfiguration cannot bind JsonElement. agents.defaults.extensions
         // and per-agent extensions/metadata/isolationOptions were left undefined after
         // IConfiguration.Bind(), causing serialization crashes in PlatformConfigSchema
         // validation at startup.
@@ -210,16 +210,10 @@ public sealed class SchemaValidationTests
         {
             await File.WriteAllTextAsync(configPath, """
                 {
-                  "gateway": {
-                    "extensions": {
-                      "defaults": {
-                        "botnexus-skills": { "enabled": true },
-                        "botnexus-exec": { "enabled": true }
-                      }
-                    }
-                  },
+                  "gateway": {},
                   "providers": { "copilot": { "enabled": true, "apiKey": "test" } },
                   "agents": {
+                    "defaults": { "extensions": { "botnexus-skills": { "enabled": true }, "botnexus-exec": { "enabled": true } } },
                     "agent-b": {
                       "provider": "copilot",
                       "model": "gpt-4.1",
@@ -235,8 +229,8 @@ public sealed class SchemaValidationTests
             var errors = PlatformConfigLoader.Validate(config);
 
             errors.ShouldBeEmpty();
-            config.Gateway?.Extensions?.Defaults.ShouldNotBeNull();
-            config.Gateway!.Extensions!.Defaults!.ShouldContainKey("botnexus-skills");
+            config.AgentDefaults?.Extensions.ShouldNotBeNull();
+            config.AgentDefaults!.Extensions!.ShouldContainKey("botnexus-skills");
             config.Agents!["agent-b"].Extensions.ShouldNotBeNull();
             config.Agents["agent-b"].Extensions!.ShouldContainKey("botnexus-mcp");
         }

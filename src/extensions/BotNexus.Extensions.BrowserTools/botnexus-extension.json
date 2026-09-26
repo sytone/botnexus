@@ -4,7 +4,9 @@
   "description": "Guarded agent-browser automation for BotNexus agents",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.BrowserTools.dll",
-  "extensionTypes": ["tool"],
+  "extensionTypes": [
+    "tool"
+  ],
   "enabled": true,
   "configSchema": [
     {
@@ -46,5 +48,8 @@
       "sensitive": false,
       "description": "Maximum characters of page text returned inline to the model. Text beyond this is spilled to the agent workspace and referenced by path."
     }
+  ],
+  "configurationScopes": [
+    "agent"
   ]
 }

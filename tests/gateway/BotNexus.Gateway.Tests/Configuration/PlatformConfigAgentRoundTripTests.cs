@@ -258,7 +258,7 @@ public sealed class PlatformConfigAgentRoundTripTests : IDisposable
               "customRootField": "preserve-me",
               "gateway": {
                 "defaultTimezone": "America/Los_Angeles",
-                "extensions": { "defaults": {} }
+                "extensionLoader": { "enabled": true }
               },
               "channels": {
                 "signalr": { "type": "signalr", "enabled": true },

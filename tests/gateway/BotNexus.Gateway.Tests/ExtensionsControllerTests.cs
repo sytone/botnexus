@@ -10,6 +10,24 @@ namespace BotNexus.Gateway.Tests;
 public sealed class ExtensionsControllerTests
 {
     [Fact]
+    public void Details_ProjectsConfigurationScopes()
+    {
+        var loader = new Mock<IExtensionLoader>();
+        loader.Setup(value => value.GetLoaded()).Returns([
+            CreateLoadedExtension("ext-a", "Extension A", "1.0.0", "ExtensionA.dll", ["tool"]) with
+            {
+                ConfigurationScopes = [ExtensionConfigurationScope.Agent]
+            }
+        ]);
+
+        var result = new ExtensionsController(loader.Object, new ExtensionBootReport()).Details();
+
+        var payload = (result.Result as OkObjectResult)?.Value as IReadOnlyList<ExtensionDetailResponse>;
+        payload.ShouldNotBeNull();
+        payload.ShouldHaveSingleItem().ConfigurationScopes.ShouldBe([ExtensionConfigurationScope.Agent]);
+    }
+
+    [Fact]
     public void List_WithNoLoadedExtensions_ReturnsEmptyList()
     {
         var loader = new Mock<IExtensionLoader>();

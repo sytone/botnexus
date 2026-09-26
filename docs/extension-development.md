@@ -40,7 +40,7 @@ path.
 - The manifest is the contract. No manifest, no extension — see [The `botnexus-extension.json` manifest](#the-botnexus-extensionjson-manifest).
 - Extensions are loaded into their own `AssemblyLoadContext`. Extensions declaring `endpoint-contributor` or `api-contributor` are loaded **non-collectible** (ASP.NET uses `Reflection.Emit` for typed hub proxies).
 - Discovery is one level deep: `<extensions root>/<extension-folder>/botnexus-extension.json`.
-- Extension **configuration** is keyed by the manifest `id` (e.g. `botnexus-exec`), under `gateway.extensions.defaults` or an agent's `extensions` block.
+- Extension **configuration** is keyed by manifest `id` in the concrete scope declared by `configurationScopes`.
 
 ---
 
@@ -198,8 +198,8 @@ One flat folder per extension, named by the manifest `id`. An actual
 └── botnexus-web/
 ```
 
-The extensions root is `gateway.extensions.path` in `config.json`, defaulting to
-`~/.botnexus/extensions`. Set `gateway.extensions.enabled` to `false` to disable dynamic loading
+The extensions root is `gateway.extensionLoader.path` in `config.json`, defaulting to
+`~/.botnexus/extensions`. Set `gateway.extensionLoader.enabled` to `false` to disable dynamic loading
 entirely.
 
 ### Source layout
@@ -943,28 +943,18 @@ public void Register(IServiceCollection services, IConfiguration configuration)
 
 ### Configuration Shape in config.json
 
-Extension config is keyed by the manifest `id` — there are no `channels:`/`providers:`/`tools:`
-prefixes. World-level defaults live under `gateway.extensions.defaults`; per-agent overrides live under
-`agents.<id>.extensions`.
+Runtime settings are keyed by manifest `id`. Loader settings are separate from extension-owned settings:
 
 ```json
 {
+  "world": { "extensions": { "example-policy": { "mode": "restricted" } } },
   "gateway": {
-    "extensions": {
-      "path": "~/.botnexus/extensions",
-      "enabled": true,
-      "defaults": {
-        "botnexus-exec": { "enabled": true },
-        "botnexus-web": { "enabled": true, "search.provider": "brave" }
-      }
-    }
+    "extensionLoader": { "path": "~/.botnexus/extensions", "enabled": true },
+    "extensions": { "example-transport": { "listen": true } }
   },
   "agents": {
-    "my-agent": {
-      "extensions": {
-        "botnexus-web": { "search.maxResults": 10 }
-      }
-    }
+    "defaults": { "extensions": { "botnexus-web": { "search": { "provider": "brave", "apiKey": "${env:WEB_KEY}" } } } },
+    "my-agent": { "extensions": { "botnexus-web": { "search": { "maxResults": 10 } } } }
   }
 }
 ```
@@ -986,147 +976,9 @@ public sealed class MyTool
 
 ---
 
-## World-Level Extension Defaults
+## Agent extension defaults
 
-To avoid repeating extension configuration across multiple agents, operators can define shared extension defaults at the gateway level. This is particularly useful when many agents need identical extension settings.
-
-### Configuration Structure
-
-Extension defaults are defined in the `gateway.extensions.defaults` section of `config.json`:
-
-```json
-{
-  "gateway": {
-    "extensions": {
-      "defaults": {
-        "botnexus-skills": { "enabled": true, "maxLoadedSkills": 20 },
-        "botnexus-exec": { "enabled": true }
-      }
-    }
-  },
-  "agents": {
-    "my-agent": {
-      "extensions": {
-        "botnexus-skills": { "maxLoadedSkills": 30 }
-      }
-    },
-    "assistant": {}
-  }
-}
-```
-
-### Before and After Example
-
-**Before (duplicated per agent):**
-```json
-{
-  "agents": {
-    "my-agent": {
-      "extensions": {
-        "botnexus-skills": { "enabled": true, "maxLoadedSkills": 20 },
-        "botnexus-exec": { "enabled": true }
-      }
-    },
-    "assistant": {
-      "extensions": {
-        "botnexus-skills": { "enabled": true, "maxLoadedSkills": 20 },
-        "botnexus-exec": { "enabled": true }
-      }
-    }
-  }
-}
-```
-
-**After (DRY with world defaults):**
-```json
-{
-  "gateway": {
-    "extensions": {
-      "defaults": {
-        "botnexus-skills": { "enabled": true, "maxLoadedSkills": 20 },
-        "botnexus-exec": { "enabled": true }
-      }
-    }
-  },
-  "agents": {
-    "my-agent": {
-      "extensions": {
-        "botnexus-skills": { "maxLoadedSkills": 30 }
-      }
-    },
-    "assistant": {}
-  }
-}
-```
-
-### Merge Semantics
-
-When an agent's extension configuration is merged with world defaults:
-
-- **Objects merge recursively** — Keys from both default and agent are combined, with agent values taking precedence on conflicts
-- **Scalars and arrays are replaced wholesale** — If an agent provides a scalar or array value, it completely replaces the default (no partial merging)
-- **Inheritance is tri-state** - each key in an agent's extension configuration is in exactly one of three states:
-
-| Agent-side shape | Meaning | Merged result |
-| --- | --- | --- |
-| Key absent | Inherit | The world-level default value |
-| Key present with explicit `null` | Suppress | The key is **removed** - it does not appear in the merged output at all |
-| Key present with a value | Override | The agent's value |
-
-This matches the semantics of agent configuration sections (`memory`, `search`, `heartbeat`, and friends), so `null`
-means the same thing everywhere: *do not inherit this*. It never means "set this to null".
-
-```json
-{
-  "gateway": {
-    "extensions": {
-      "defaults": {
-        "botnexus-skills": { "enabled": true, "maxLoadedSkills": 20, "skillsPath": "~/.botnexus/skills" }
-      }
-    }
-  },
-  "agents": {
-    "my-agent": {
-      "extensions": {
-        "botnexus-skills": {
-          "maxLoadedSkills": 30,
-          "skillsPath": null
-        }
-      }
-    }
-  }
-}
-```
-
-`my-agent` resolves to `{ "enabled": true, "maxLoadedSkills": 30 }` - `enabled` is inherited, `maxLoadedSkills` is
-overridden, and `skillsPath` is suppressed so the extension falls back to its own built-in default.
-
-Suppression works at every depth, including the extension id itself. Setting `"botnexus-skills": null` on an agent
-drops that extension's inherited configuration entirely. An explicit `null` for a key that has no world-level
-counterpart is a no-op rather than a null leaf.
-
-> **Extension authors:** because `null` is reserved for suppression, a bare JSON `null` will never reach your
-> configuration binder. If your extension needs to persist a genuine null-valued setting, model it explicitly
-> (for example as an object with a discriminator) instead of relying on `null` surviving the merge.
-- **Missing agent config inherits defaults** — Agents without an `extensions` block receive all world defaults unchanged
-- **Explicit disabling** — An agent can disable a world-default extension by setting `"enabled": false`
-- **Null overrides** — An explicit `null` from an agent removes a value from the merged result
-
-### Merge Examples
-
-| World Default | Agent Override | Effective Config |
-|---|---|---|
-| `{ "a": 1, "b": 2 }` | `{ "b": 3, "c": 4 }` | `{ "a": 1, "b": 3, "c": 4 }` |
-| `{ "a": 1 }` | (absent) | `{ "a": 1 }` |
-| (absent) | `{ "b": 2 }` | `{ "b": 2 }` |
-| `{ "nested": { "x": 1 } }` | `{ "nested": { "y": 2 } }` | `{ "nested": { "x": 1, "y": 2 } }` |
-| `[1, 2]` | `[3, 4]` | `[3, 4]` (arrays replace) |
-
-### Backward Compatibility
-
-Existing configurations without a `gateway.extensions.defaults` section continue to work unchanged. World-level defaults are entirely optional and do not affect deployments that don't use them.
-
----
+`agents.defaults.extensions.<id>` stores shared agent values. A consumer binds that entry and the named `agents.<agentId>.extensions.<id>` entry separately, then chooses named-agent, agent-default, and code fallback for each property. This intentionally is not a deep merge: world and gateway settings never flow into agent settings.
 
 ## OAuth Providers
 
@@ -1578,7 +1430,7 @@ After deployment and gateway restart, verify `GET /api/extensions`, the intended
 
 2. Is `enabled` `true` in the manifest, and is the extension enabled in config by its manifest `id`?
    ```json
-   "gateway": { "extensions": { "defaults": { "botnexus-discord": { "enabled": true } } } }
+   "agents": { "defaults": { "extensions": { "botnexus-discord": { "enabled": true } } } }
    ```
 
 3. Does the file named by `entryAssembly` exist in that same folder? A missing entry assembly logs a
@@ -1684,3 +1536,9 @@ To create a BotNexus extension:
 8. **Enable in config** and the Gateway loads it at startup
 
 Happy extending!
+
+## Explicit extension configuration scopes
+
+A manifest with `configSchema` must declare `configurationScopes` using only `world`, `gateway`, and `agent`. Values are stored independently at `world.extensions.<id>`, `gateway.extensions.<id>`, `agents.defaults.extensions.<id>`, and `agents.<agentId>.extensions.<id>`. Gateway loader settings live at `gateway.extensionLoader`; the former `gateway.extensions.defaults` shape is rejected with migration guidance.
+
+Binding reads one raw scope at a time. Agent consumers may read both agent-default and named-agent bags, but must choose precedence explicitly for each property: named agent first, agent default second, then the code default. World and gateway values never flow into agent configuration implicitly.

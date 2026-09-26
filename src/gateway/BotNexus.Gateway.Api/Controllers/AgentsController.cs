@@ -5,6 +5,8 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Extensions;
+using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Webhooks;
 using BotNexus.Domain.Primitives;
 using Microsoft.AspNetCore.Http;
@@ -29,6 +31,7 @@ public sealed class AgentsController : ControllerBase
     private readonly ISkillReviewProvisioner? _skillReviewProvisioner;
     private readonly IAgentWebhookProvisioner? _webhookProvisioner;
     private readonly ModelRegistry? _modelRegistry;
+    private readonly IExtensionLoader? _extensionLoader;
     private readonly ILogger<AgentsController> _logger;
 
     /// <summary>
@@ -43,7 +46,8 @@ public sealed class AgentsController : ControllerBase
         ISkillReviewProvisioner? skillReviewProvisioner = null,
         ModelRegistry? modelRegistry = null,
         ILogger<AgentsController>? logger = null,
-        IAgentWebhookProvisioner? webhookProvisioner = null)
+        IAgentWebhookProvisioner? webhookProvisioner = null,
+        IExtensionLoader? extensionLoader = null)
     {
         _registry = registry;
         _supervisor = supervisor;
@@ -53,6 +57,7 @@ public sealed class AgentsController : ControllerBase
         _skillReviewProvisioner = skillReviewProvisioner;
         _webhookProvisioner = webhookProvisioner;
         _modelRegistry = modelRegistry;
+        _extensionLoader = extensionLoader;
         _logger = logger ?? NullLogger<AgentsController>.Instance;
     }
 
@@ -149,6 +154,9 @@ public sealed class AgentsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult> Register([FromBody] AgentDescriptor descriptor, CancellationToken cancellationToken)
     {
+        // Defaults are materialized by the server from agents.defaults and are never client-owned.
+        descriptor = descriptor with { DefaultExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>() };
+
         if (descriptor.Kind == AgentKind.SubAgent)
         {
             return BadRequest(new
@@ -163,6 +171,9 @@ public sealed class AgentsController : ControllerBase
         var validationErrors = BotNexus.Gateway.Agents.AgentDescriptorValidator.ValidateForConfig(descriptor, null, _modelRegistry);
         if (validationErrors.Count > 0)
             return BadRequest(new { error = string.Join(" ", validationErrors) });
+        var extensionScopeErrors = ValidateExtensionConfigurationScopes(null, descriptor);
+        if (extensionScopeErrors.Count > 0)
+            return BadRequest(new { error = string.Join(" ", extensionScopeErrors) });
 
         var agentId = descriptor.AgentId;
         if (_registry.Contains(agentId))
@@ -321,16 +332,23 @@ public sealed class AgentsController : ControllerBase
             });
         }
 
+        var typedAgentId = AgentId.From(agentId);
+        var previous = _registry.Get(typedAgentId);
+        if (previous is null)
+            return NotFound();
+
+        // Defaults are materialized by the server from agents.defaults and are never client-owned.
+        descriptor = descriptor with { DefaultExtensionConfig = previous.DefaultExtensionConfig };
+
         // #2065: reject incomplete descriptors before any mutation so an update cannot silently
         // clear persisted required properties.
         var validationErrors = BotNexus.Gateway.Agents.AgentDescriptorValidator.ValidateForConfig(descriptor, null, _modelRegistry);
         if (validationErrors.Count > 0)
             return BadRequest(new { error = string.Join(" ", validationErrors) });
 
-        var typedAgentId = AgentId.From(agentId);
-        var previous = _registry.Get(typedAgentId);
-        if (previous is null)
-            return NotFound();
+        var extensionScopeErrors = ValidateExtensionConfigurationScopes(previous, descriptor);
+        if (extensionScopeErrors.Count > 0)
+            return BadRequest(new { error = string.Join(" ", extensionScopeErrors) });
 
         // 1) Persist config first. On failure the registry still holds the previous descriptor.
         try
@@ -743,6 +761,19 @@ public sealed class AgentsController : ControllerBase
         {
             _logger.LogError(ex, "Rollback failed: could not restore previous config for agent {AgentId} after a lifecycle failure.", previous.AgentId.Value);
         }
+    }
+
+    private IReadOnlyList<string> ValidateExtensionConfigurationScopes(
+        AgentDescriptor? previous,
+        AgentDescriptor candidate)
+    {
+        if (_extensionLoader is null)
+            return [];
+
+        return ExtensionConfigurationScopeValidator.ValidateAgentChanges(
+            previous,
+            candidate,
+            _extensionLoader.GetLoaded());
     }
 
     private async Task NotifyAgentsChangedBestEffortAsync(string changeType, string? agentId, CancellationToken cancellationToken)

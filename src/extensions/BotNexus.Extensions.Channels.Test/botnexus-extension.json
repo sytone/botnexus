@@ -4,7 +4,10 @@
   "description": "Opt-in HTTP-driven channel adapter used by integration tests to act as a real named channel. Disabled by default so it is never loaded in a production configuration.",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.Channels.Test.dll",
-  "extensionTypes": ["channel", "endpoint-contributor"],
+  "extensionTypes": [
+    "channel",
+    "endpoint-contributor"
+  ],
   "enabled": false,
   "configSchema": [
     {
@@ -31,5 +34,8 @@
       "sensitive": false,
       "description": "Ring-buffer bound for captured log entries. The oldest entries are evicted once the bound is reached."
     }
+  ],
+  "configurationScopes": [
+    "gateway"
   ]
 }

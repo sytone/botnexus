@@ -376,6 +376,13 @@ public sealed class ConfigDocument
             {
                 ["defaults"] = new JsonObject
                 {
+                    ["extensions"] = new JsonObject
+                    {
+                        ["botnexus-skills"] = new JsonObject
+                        {
+                            ["enabled"] = true
+                        }
+                    },
                     ["memory"] = new JsonObject
                     {
                         ["enabled"] = true,

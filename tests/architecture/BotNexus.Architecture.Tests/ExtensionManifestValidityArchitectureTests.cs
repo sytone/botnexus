@@ -18,6 +18,13 @@ public sealed class ExtensionManifestValidityArchitectureTests : ArchitectureTes
 {
     private static readonly JsonSerializerOptions ManifestJsonOptions = new(JsonSerializerDefaults.Web);
 
+    private static readonly HashSet<string> AllowedConfigurationScopes = new(StringComparer.Ordinal)
+    {
+        "world",
+        "gateway",
+        "agent"
+    };
+
     /// <summary>Extension types accepted by the gateway loader.</summary>
     private static readonly HashSet<string> AllowedExtensionTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -149,6 +156,54 @@ public sealed class ExtensionManifestValidityArchitectureTests : ArchitectureTes
             + Environment.NewLine + string.Join(Environment.NewLine, failures));
     }
 
+    /// <summary>Configuration schemas explicitly declare the runtime scopes where they apply.</summary>
+    [Fact]
+    public void ExtensionManifestConfigurationScopes_AreExplicitValidAndUnique()
+    {
+        var failures = new List<string>();
+
+        foreach (var manifestPath in EnumerateManifests())
+        {
+            var relative = Path.GetRelativePath(Repository.Root, manifestPath);
+            var manifest = JsonSerializer.Deserialize<ManifestRecord>(
+                File.ReadAllText(manifestPath), ManifestJsonOptions);
+            if (manifest is null)
+            {
+                continue;
+            }
+
+            var scopes = manifest.ConfigurationScopes ?? [];
+            var invalid = scopes
+                .Where(scope => string.IsNullOrWhiteSpace(scope) || !AllowedConfigurationScopes.Contains(scope))
+                .ToArray();
+            if (invalid.Length > 0)
+            {
+                failures.Add($"{relative}: configurationScopes contains unsupported values: {string.Join(", ", invalid)}.");
+            }
+
+            var duplicates = scopes
+                .Where(scope => !string.IsNullOrWhiteSpace(scope))
+                .GroupBy(scope => scope, StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .ToArray();
+            if (duplicates.Length > 0)
+            {
+                failures.Add($"{relative}: configurationScopes contains duplicates: {string.Join(", ", duplicates)}.");
+            }
+
+            if ((manifest.ConfigSchema?.Count ?? 0) > 0 && scopes.Count == 0)
+            {
+                failures.Add($"{relative}: a non-empty configSchema requires at least one configurationScope.");
+            }
+        }
+
+        failures.ShouldBeEmpty(
+            "Extension manifest configurationScopes must be unique values from world, gateway, or agent, " +
+            "and every non-empty configSchema must declare at least one scope:" + Environment.NewLine +
+            string.Join(Environment.NewLine, failures));
+    }
+
     /// <summary>Manifest ids must be unique — duplicates collide in the loader's registry.</summary>
     [Fact]
     public void ExtensionManifestIds_AreUnique()
@@ -178,7 +233,7 @@ public sealed class ExtensionManifestValidityArchitectureTests : ArchitectureTes
         var bindable = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "id", "name", "description", "version", "entryAssembly",
-            "extensionTypes", "dependencies", "enabled", "configSchema"
+            "extensionTypes", "dependencies", "enabled", "configSchema", "configurationScopes"
         };
 
         var offenders = new List<string>();
@@ -252,5 +307,7 @@ public sealed class ExtensionManifestValidityArchitectureTests : ArchitectureTes
         public string Version { get; init; } = string.Empty;
         public string EntryAssembly { get; init; } = string.Empty;
         public IReadOnlyList<string> ExtensionTypes { get; init; } = [];
+        public IReadOnlyList<JsonElement> ConfigSchema { get; init; } = [];
+        public IReadOnlyList<string> ConfigurationScopes { get; init; } = [];
     }
 }

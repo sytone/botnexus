@@ -4,7 +4,9 @@
   "description": "GitHub agent tools over a platform-owned GitHub App installation credential. Structured issue and pull-request operations with no agent-visible token.",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.GitHub.dll",
-  "extensionTypes": ["tool"],
+  "extensionTypes": [
+    "tool"
+  ],
   "enabled": true,
   "configSchema": [
     {
@@ -74,5 +76,8 @@
       "sensitive": false,
       "description": "Upper bound on a list page. A larger request is clamped and the clamp is reported in the result."
     }
+  ],
+  "configurationScopes": [
+    "agent"
   ]
 }
