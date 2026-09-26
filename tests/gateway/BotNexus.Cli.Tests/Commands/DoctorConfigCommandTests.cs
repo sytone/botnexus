@@ -59,18 +59,14 @@ public sealed class DoctorConfigCommandTests : IDisposable
         var fullConfig = """
             {
               "gateway": {
-                "extensions": {
-                  "enabled": true,
-                  "defaults": {
-                    "botnexus-skills": { "enabled": true }
-                  }
-                }
+                "extensionLoader": { "enabled": true },
+                "compaction": { "summarizationModel": "claude-haiku-4.5" }
               },
               "cron": { "enabled": true, "tickIntervalSeconds": 60 },
-              "compaction": { "summarizationModel": "claude-haiku-4.5" },
               "agents": {
                 "defaults": {
-                  "memory": { "enabled": true, "indexing": "auto" }
+                  "memory": { "enabled": true, "indexing": "auto" },
+                  "extensions": { "botnexus-skills": { "enabled": true } }
                 }
               }
             }
@@ -120,7 +116,7 @@ public sealed class DoctorConfigCommandTests : IDisposable
             var root = JsonNode.Parse(written)!.AsObject();
 
             // skills default applied
-            var skillsEnabled = root["gateway"]!["extensions"]!["defaults"]!["botnexus-skills"]!["enabled"]!.GetValue<bool>();
+            var skillsEnabled = root["agents"]!["defaults"]!["extensions"]!["botnexus-skills"]!["enabled"]!.GetValue<bool>();
             skillsEnabled.ShouldBeTrue();
 
             // cron applied

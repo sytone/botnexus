@@ -22,7 +22,7 @@ namespace BotNexus.Gateway.Configuration;
 /// <para>
 /// Recognition walks <em>types</em>, not values. An instance-based probe cannot answer the question
 /// for a dictionary whose value type is an opaque JSON leaf: materialising
-/// <c>gateway.extensions.defaults["botnexus-skills"]</c> yields a <see cref="JsonElement"/> whose
+/// <c>agents.defaults.extensions["botnexus-skills"]</c> yields a <see cref="JsonElement"/> whose
 /// own children are free-form, so the walk would hit a null parent and report a legitimate path as
 /// unrecognised. Walking types lets the recogniser stop at the opaque boundary and accept whatever
 /// follows, which is the correct answer: past that point the platform genuinely does not model the

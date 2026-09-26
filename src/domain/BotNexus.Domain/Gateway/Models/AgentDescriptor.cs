@@ -260,6 +260,10 @@ public sealed record AgentDescriptor : ICitizen
     /// </summary>
     public IReadOnlyDictionary<string, System.Text.Json.JsonElement> ExtensionConfig { get; init; } =
         new Dictionary<string, System.Text.Json.JsonElement>();
+
+    /// <summary>Raw <c>agents.defaults.extensions</c> values, kept separate from named-agent values.</summary>
+    public IReadOnlyDictionary<string, System.Text.Json.JsonElement> DefaultExtensionConfig { get; init; } =
+        new Dictionary<string, System.Text.Json.JsonElement>();
 /// <summary>Conversation retention policy override for this agent. Null means world default applies.</summary>
     public AgentConversationRetentionConfig? ConversationRetention { get; init; }
 

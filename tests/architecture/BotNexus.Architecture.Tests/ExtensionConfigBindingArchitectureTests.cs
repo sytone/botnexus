@@ -36,6 +36,10 @@ public sealed class ExtensionConfigBindingArchitectureTests : ArchitectureTest
     private static readonly string[] AllowedFiles =
     [
         "ExtensionConfigBinder.cs",
+        // This validator compares raw JsonElement values to enforce ownership. It deliberately
+        // does not bind them to an extension POCO, so routing through the binder would change the
+        // operation rather than protect camelCase-to-PascalCase binding.
+        "ExtensionConfigurationScopeValidator.cs",
     ];
 
     /// <summary>

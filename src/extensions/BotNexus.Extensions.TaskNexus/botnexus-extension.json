@@ -4,7 +4,9 @@
   "description": "Keeps TaskNexus in sync by delivering per-agent webhook bindings and secret-free full-roster health snapshots. Disabled until extensions.tasknexus.baseUrl is set.",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.TaskNexus.dll",
-  "extensionTypes": ["tool"],
+  "extensionTypes": [
+    "tool"
+  ],
   "enabled": true,
   "configSchema": [
     {
@@ -21,5 +23,8 @@
       "sensitive": false,
       "description": "Externally reachable gateway origin TaskNexus should POST back to, prepended to the relative inbound webhook path."
     }
+  ],
+  "configurationScopes": [
+    "agent"
   ]
 }

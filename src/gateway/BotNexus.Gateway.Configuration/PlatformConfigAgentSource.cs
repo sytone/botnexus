@@ -224,6 +224,7 @@ public sealed class PlatformConfigAgentSource(
                     // a null JsonElement reaching an extension's own binder is not an absent key, it
                     // is a malformed value. Passing them through 500s agent registration.
                     ExtensionConfig = StripNullExtensionEntries(effectiveConfig.Extensions),
+                    DefaultExtensionConfig = StripNullExtensionEntries(platformConfig.AgentDefaults?.Extensions),
                     Kind = effectiveConfig.Kind ?? AgentKind.Named,
                     ShellCommand = effectiveConfig.ShellCommand
                 };

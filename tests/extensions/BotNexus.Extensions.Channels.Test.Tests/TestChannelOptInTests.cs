@@ -161,7 +161,7 @@ public sealed class TestChannelOptInTests : IDisposable
     {
         Gateway = new()
         {
-            Extensions = new ExtensionsConfig
+            ExtensionLoader = new ExtensionLoaderConfig
             {
                 Enabled = true,
                 Path = Path.Combine(_root, "extensions"),

@@ -4,7 +4,9 @@
   "description": "Matrix Client-Server API channel adapter - per-agent homeserver accounts, /sync long poll, m.room.message send/receive",
   "version": "0.1.0",
   "entryAssembly": "BotNexus.Extensions.Channels.Matrix.dll",
-  "extensionTypes": ["channel"],
+  "extensionTypes": [
+    "channel"
+  ],
   "enabled": true,
   "configSchema": [
     {
@@ -59,5 +61,8 @@
       "sensitive": false,
       "description": "Minimum interval in milliseconds between streaming edit (m.replace) updates for a single in-flight response."
     }
+  ],
+  "configurationScopes": [
+    "gateway"
   ]
 }

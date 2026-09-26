@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.WebTools\BotNexus.Extensions.WebTools.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Configuration\BotNexus.Gateway.Configuration.csproj" />
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Mcp\BotNexus.Extensions.Mcp.csproj" />
   </ItemGroup>
 

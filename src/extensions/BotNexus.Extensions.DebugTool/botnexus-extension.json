@@ -4,5 +4,10 @@
   "description": "Agent-facing read-only access to sessions.db and gateway runtime state for debugging and introspection.",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.DebugTool.dll",
-  "extensionTypes": ["tool"]
+  "extensionTypes": [
+    "tool"
+  ],
+  "configurationScopes": [
+    "agent"
+  ]
 }

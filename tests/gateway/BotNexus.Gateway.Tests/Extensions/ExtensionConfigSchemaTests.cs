@@ -3,7 +3,9 @@ using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json.Nodes;
 using Shouldly;
 
 namespace BotNexus.Gateway.Tests.Extensions;
@@ -170,6 +172,84 @@ public sealed class ExtensionConfigSchemaTests : IDisposable
         result.AppliedDefaults.ShouldBeEmpty();
     }
 
+
+    [Fact]
+    public void StartupDiagnostics_LogExactUnsupportedAndUnknownPaths_WithoutMutation()
+    {
+        var platformConfig = new PlatformConfig
+        {
+            World = new WorldSettingsConfig
+            {
+                Extensions = new Dictionary<string, JsonElement>
+                {
+                    ["agent-only"] = JsonDocument.Parse("""{ "enabled": true }""").RootElement.Clone()
+                }
+            },
+            Gateway = new GatewaySettingsConfig
+            {
+                Extensions = new Dictionary<string, JsonElement>
+                {
+                    ["unknown"] = JsonDocument.Parse("{}").RootElement.Clone()
+                }
+            }
+        };
+        var logger = new RecordingLogger();
+        var before = JsonSerializer.Serialize(platformConfig);
+
+        ServiceCollectionExtensions.LogConfigurationScopeDiagnostics(
+            platformConfig,
+            [Loaded("agent-only", ExtensionConfigurationScope.Agent)],
+            logger);
+
+        JsonSerializer.Serialize(platformConfig).ShouldBe(before);
+        logger.Messages.ShouldContain(message => message.Contains("world.extensions.agent-only", StringComparison.Ordinal));
+        logger.Messages.ShouldContain(message => message.Contains("gateway.extensions.unknown", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void StartupDiagnostics_IncludeAgentDefaultExtensions()
+    {
+        var platformConfig = new PlatformConfig
+        {
+            AgentDefaults = new AgentDefaultsConfig
+            {
+                Extensions = new Dictionary<string, JsonElement>
+                {
+                    ["gateway-only"] = JsonSerializer.SerializeToElement(new { enabled = true })
+                }
+            }
+        };
+        var logger = new RecordingLogger();
+
+        ServiceCollectionExtensions.LogConfigurationScopeDiagnostics(
+            platformConfig,
+            [Loaded("gateway-only", ExtensionConfigurationScope.Gateway)],
+            logger);
+
+        logger.Messages.ShouldContain(message =>
+            message.Contains("agents.defaults.extensions.gateway-only", StringComparison.Ordinal));
+    }
+
+    private static LoadedExtension Loaded(string id, params ExtensionConfigurationScope[] scopes) => new()
+    {
+        ExtensionId = id,
+        Name = id,
+        Version = "1.0.0",
+        DirectoryPath = id,
+        EntryAssemblyPath = id,
+        LoadedAtUtc = DateTimeOffset.UnixEpoch,
+        ConfigurationScopes = scopes
+    };
+
+    private sealed class RecordingLogger : ILogger
+    {
+        public List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+    }
+
     // Helpers
 
     private string CreateExtensionDir(string id, bool enabled)
@@ -196,7 +276,7 @@ public sealed class ExtensionConfigSchemaTests : IDisposable
     {
         Gateway = new()
         {
-            Extensions = new ExtensionsConfig
+            ExtensionLoader = new ExtensionLoaderConfig
             {
                 Enabled = true,
                 Path = Path.GetDirectoryName(extensionsDir)

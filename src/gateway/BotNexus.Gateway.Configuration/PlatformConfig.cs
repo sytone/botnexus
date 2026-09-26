@@ -58,6 +58,15 @@ public sealed class PlatformConfig : IValidatableObject
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 2)]
     public string? WorldId { get; set; }
 
+    /// <summary>World-scoped extension-owned runtime configuration.</summary>
+    [Display(
+        Name = "World",
+        Description = "World-scoped settings shared across the BotNexus installation, including extension-owned world configuration.",
+        GroupName = "General",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 5)]
+    public WorldSettingsConfig? World { get; set; }
+
     /// <summary>Gateway-specific settings.</summary>
     [Display(
         Name = "Gateway",
@@ -612,9 +621,27 @@ public sealed class ProviderEmbeddingsConfig
     public int? Dimensions { get; set; }
 }
 
+/// <summary>Configuration owned by the singular BotNexus world.</summary>
+public sealed class WorldSettingsConfig
+{
+    /// <summary>World-scoped extension-owned runtime configuration, keyed by extension ID.</summary>
+    [Display(
+        Name = "World extensions",
+        Description = "Extension-owned configuration that applies once to the whole BotNexus world.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extensions", Order = 0)]
+    public Dictionary<string, JsonElement>? Extensions { get; set; }
+}
+
 /// <summary>Gateway runtime configuration.</summary>
 public sealed class GatewaySettingsConfig
 {
+    /// <summary>Gateway-scoped extension-owned runtime configuration, keyed by extension ID.</summary>
+    [Display(
+        Name = "Gateway extensions",
+        Description = "Extension-owned configuration for the singular gateway runtime.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extensions", Order = 1)]
+    public Dictionary<string, JsonElement>? Extensions { get; set; }
+
     /// <summary>Gateway HTTP listen URL.</summary>
     [Display(
         Name = "Listen URL",
@@ -793,14 +820,10 @@ public sealed class GatewaySettingsConfig
     // .GetSection_GatewaySection_RedactsApiKeysConnectionStringsAndCrossWorldSecrets.
     [ConfigField(Group = "security", Order = 0)]
     public Dictionary<string, ApiKeyConfig>? ApiKeys { get; set; }
-    /// <summary>Extensions loading settings.</summary>
-    [Display(
-        Name = "Extensions",
-        Description = "Dynamic extension loading: whether extensions load, from where, and their world-level defaults.",
-        GroupName = "Extensions",
-        Order = 0)]
+    /// <summary>Dynamic extension discovery and loading settings.</summary>
+    [Display(Name = "Extension loader", Description = "Dynamic extension loading settings.", GroupName = "Extensions", Order = 0)]
     [ConfigField(Group = "extensions", Order = 0)]
-    public ExtensionsConfig? Extensions { get; set; }
+    public ExtensionLoaderConfig? ExtensionLoader { get; set; }
     /// <summary>World identity shown by gateway clients.</summary>
     [Display(
         Name = "World identity",
@@ -1926,7 +1949,7 @@ public sealed class PromptTemplateParameterConfig
 }
 
 /// <summary>Configuration for dynamic extension discovery and loading.</summary>
-public sealed class ExtensionsConfig
+public sealed class ExtensionLoaderConfig
 {
     /// <summary>
     /// Root directory containing extension folders with botnexus-extension.json manifests.
@@ -1950,17 +1973,6 @@ public sealed class ExtensionsConfig
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "extensions", Order = 1)]
     public bool Enabled { get; set; } = true;
 
-    /// <summary>
-    /// World-level default extension configuration, keyed by extension ID.
-    /// Deep-merged with agent-level overrides to produce effective config per agent.
-    /// </summary>
-    [Display(
-        Name = "Defaults",
-        Description = "World-level default extension configuration, keyed by extension ID. Deep-merged with agent-level overrides to produce effective config per agent.",
-        GroupName = "Extensions",
-        Order = 2)]
-    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extensions", Order = 2)]
-    public Dictionary<string, JsonElement>? Defaults { get; set; }
 }
 
 /// <summary>Agent definition in platform config.</summary>

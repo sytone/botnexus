@@ -4,7 +4,9 @@
   "description": "Telegram Bot API channel adapter - long polling or secure webhook, DMs and group topics",
   "version": "1.1.0",
   "entryAssembly": "BotNexus.Extensions.Channels.Telegram.dll",
-  "extensionTypes": ["channel"],
+  "extensionTypes": [
+    "channel"
+  ],
   "enabled": true,
   "configSchema": [
     {
@@ -59,5 +61,8 @@
       "sensitive": false,
       "description": "Maximum Telegram message length before payload splitting. Conservative default stays below Telegram's 4096-byte limit."
     }
+  ],
+  "configurationScopes": [
+    "gateway"
   ]
 }

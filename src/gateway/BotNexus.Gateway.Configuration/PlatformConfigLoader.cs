@@ -140,9 +140,57 @@ public static class PlatformConfigLoader
         using var document = JsonDocument.Parse(rawJson);
         var root = document.RootElement;
 
+        MigrateLegacyGatewayExtensionLoader(config, root);
         config = MigrateLegacyGatewaySettings(config, root);
         ExtractAgentDefaults(config, root);
         return config;
+    }
+
+    internal static void MigrateLegacyGatewayExtensionLoader(PlatformConfig config, JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("gateway", out var gateway)
+            || gateway.ValueKind != JsonValueKind.Object
+            || !gateway.TryGetProperty("extensions", out var extensions)
+            || extensions.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        JsonElement? path = null;
+        JsonElement? enabled = null;
+        foreach (var property in extensions.EnumerateObject())
+        {
+            if (property.Name.Equals("defaults", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new JsonException("gateway.extensions.defaults is no longer supported; move it to agents.defaults.extensions. Loader path/enabled settings move to gateway.extensionLoader.");
+            }
+
+            if (property.Name.Equals("path", StringComparison.OrdinalIgnoreCase))
+                path = property.Value;
+            else if (property.Name.Equals("enabled", StringComparison.OrdinalIgnoreCase))
+                enabled = property.Value;
+        }
+
+        if (path is null && enabled is null)
+            return;
+
+        var hasExplicitLoader = gateway.TryGetProperty("extensionLoader", out _);
+        var loader = config.Gateway?.ExtensionLoader ?? new ExtensionLoaderConfig();
+        if (!hasExplicitLoader && path is JsonElement pathElement && pathElement.ValueKind == JsonValueKind.String)
+            loader.Path = pathElement.GetString();
+        if (!hasExplicitLoader && enabled is JsonElement enabledElement
+            && enabledElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            loader.Enabled = enabledElement.GetBoolean();
+        }
+
+        config.Gateway ??= new GatewaySettingsConfig();
+        config.Gateway.ExtensionLoader = loader;
+        config.Gateway.Extensions?.Remove("path");
+        config.Gateway.Extensions?.Remove("enabled");
+        if (config.Gateway.Extensions is { Count: 0 })
+            config.Gateway.Extensions = null;
     }
 
     /// <summary>
@@ -469,7 +517,7 @@ public static class PlatformConfigLoader
         migrated |= TryMigrateObject(root, "compaction", gateway.Compaction, value => gateway.Compaction = value);
         migrated |= TryMigrateObject(root, "cors", gateway.Cors, value => gateway.Cors = value);
         migrated |= TryMigrateObject(root, "rateLimit", gateway.RateLimit, value => gateway.RateLimit = value);
-        migrated |= TryMigrateObject(root, "extensions", gateway.Extensions, value => gateway.Extensions = value);
+        migrated |= TryMigrateObject(root, "extensions", gateway.ExtensionLoader, value => gateway.ExtensionLoader = value);
         migrated |= TryMigrateObject(root, "locations", gateway.Locations, value => gateway.Locations = value);
         migrated |= TryMigrateObject(root, "crossWorld", gateway.CrossWorld, value => gateway.CrossWorld = value);
 

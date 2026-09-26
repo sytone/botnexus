@@ -61,22 +61,14 @@ public sealed class PlatformConfigValidationTests
                   "requestsPerMinute": 120,
                   "windowSeconds": 60
                 },
-                "extensions": {
-                  "path": "extensions",
-                  "defaults": {
-                    "botnexus-skills": { "enabled": true },
-                    "botnexus-exec": { "timeout": 30 }
-                  }
-                }
+                "extensionLoader": { "path": "extensions" }
               },
               "providers": {
                 "copilot": { "apiKey": "test-key" }
               },
               "agents": {
-                "assistant": {
-                  "provider": "copilot",
-                  "model": "gpt-4.1"
-                }
+                "defaults": { "extensions": { "botnexus-skills": { "enabled": true }, "botnexus-exec": { "timeout": 30 } } },
+                "assistant": { "provider": "copilot", "model": "gpt-4.1" }
               }
             }
             """,
@@ -90,10 +82,8 @@ public sealed class PlatformConfigValidationTests
                 var gateway = config.Gateway ?? throw new InvalidOperationException("Expected gateway config.");
                 gateway.SessionStore.ShouldNotBeNull();
                 gateway.SessionStore.Type.ShouldBe("InMemory");
-                gateway.Extensions.ShouldNotBeNull();
-                var extensions = gateway.Extensions ?? throw new InvalidOperationException("Expected gateway extensions.");
-                extensions.Defaults.ShouldNotBeNull();
-                var defaults = extensions.Defaults ?? throw new InvalidOperationException("Expected extension defaults.");
+                gateway.ExtensionLoader.ShouldNotBeNull();
+                var defaults = config.AgentDefaults?.Extensions ?? throw new InvalidOperationException("Expected agent extension defaults.");
                 defaults.ShouldContainKey("botnexus-skills");
                 defaults["botnexus-skills"].GetProperty("enabled").GetBoolean().ShouldBeTrue();
                 SerializeShouldNotThrow(config);
@@ -119,21 +109,11 @@ public sealed class PlatformConfigValidationTests
                   "requestsPerMinute": 100,
                   "windowSeconds": 120
                 },
-                "extensions": {
-                  "path": "extensions",
-                  "defaults": {
-                    "botnexus-mcp": { "enabled": true }
-                  }
-                }
+                "extensionLoader": { "path": "extensions" },
+                "extensions": { "botnexus-mcp": { "enabled": true } }
               },
               "providers": {
                 "copilot": { "apiKey": "test-key" }
-              },
-              "agents": {
-                "assistant": {
-                  "provider": "copilot",
-                  "model": "gpt-4.1"
-                }
               }
             }
             """,
@@ -1024,32 +1004,21 @@ public sealed class PlatformConfigValidationTests
             });
 
     [Fact]
-    public Task Validate_GatewayExtensionsDefaultsWithMultipleExtensions_NoErrors()
+    public Task Validate_AgentExtensionDefaultsWithMultipleExtensions_NoErrors()
         => WithConfigFileAsync(
             """
             {
-              "gateway": {
-                "extensions": {
-                  "defaults": {
-                    "botnexus-skills": {
-                      "enabled": true,
-                      "paths": ["skills"]
-                    },
-                    "botnexus-exec": {
-                      "enabled": true,
-                      "timeout": 30
-                    }
+              "agents": {
+                "defaults": {
+                  "extensions": {
+                    "botnexus-skills": { "enabled": true, "paths": ["skills"] },
+                    "botnexus-exec": { "enabled": true, "timeout": 30 }
                   }
-                }
+                },
+                "assistant": { "provider": "copilot", "model": "gpt-4.1" }
               },
               "providers": {
                 "copilot": { "apiKey": "test-key" }
-              },
-              "agents": {
-                "assistant": {
-                  "provider": "copilot",
-                  "model": "gpt-4.1"
-                }
               }
             }
             """,
@@ -1058,12 +1027,7 @@ public sealed class PlatformConfigValidationTests
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
 
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                config.Gateway.ShouldNotBeNull();
-                var gateway = config.Gateway ?? throw new InvalidOperationException("Expected gateway config.");
-                gateway.Extensions.ShouldNotBeNull();
-                var extensions = gateway.Extensions ?? throw new InvalidOperationException("Expected gateway extensions.");
-                extensions.Defaults.ShouldNotBeNull();
-                var defaults = extensions.Defaults ?? throw new InvalidOperationException("Expected extension defaults.");
+                var defaults = config.AgentDefaults?.Extensions ?? throw new InvalidOperationException("Expected agent extension defaults.");
                 defaults.ShouldContainKey("botnexus-skills");
                 defaults.ShouldContainKey("botnexus-exec");
                 defaults["botnexus-exec"].GetProperty("timeout").GetInt32().ShouldBe(30);
@@ -1071,23 +1035,16 @@ public sealed class PlatformConfigValidationTests
             });
 
     [Fact]
-    public Task Validate_GatewayExtensionsDefaultsEmpty_NoErrors()
+    public Task Validate_AgentExtensionDefaultsEmpty_NoErrors()
         => WithConfigFileAsync(
             """
             {
-              "gateway": {
-                "extensions": {
-                  "defaults": {}
-                }
+              "agents": {
+                "defaults": { "extensions": {} },
+                "assistant": { "provider": "copilot", "model": "gpt-4.1" }
               },
               "providers": {
                 "copilot": { "apiKey": "test-key" }
-              },
-              "agents": {
-                "assistant": {
-                  "provider": "copilot",
-                  "model": "gpt-4.1"
-                }
               }
             }
             """,
@@ -1095,8 +1052,8 @@ public sealed class PlatformConfigValidationTests
             {
                 var config = await PlatformConfigLoader.LoadAsync(configPath, validateOnLoad: false);
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                config.Gateway!.Extensions!.Defaults.ShouldNotBeNull();
-                config.Gateway.Extensions.Defaults.ShouldBeEmpty();
+                config.AgentDefaults!.Extensions.ShouldNotBeNull();
+                config.AgentDefaults.Extensions.ShouldBeEmpty();
             });
 
     [Fact]
@@ -1808,20 +1765,12 @@ public sealed class PlatformConfigValidationTests
         => WithConfigFileAsync(
             """
             {
-              "gateway": {
-                "extensions": {
-                  "defaults": {
-                    "botnexus-skills": {
-                      "enabled": true,
-                      "paths": ["skills"]
-                    }
-                  }
-                }
-              },
+              "gateway": {},
               "providers": {
                 "copilot": { "apiKey": "provider-key" }
               },
               "agents": {
+                "defaults": { "extensions": { "botnexus-skills": { "enabled": true, "paths": ["skills"] } } },
                 "assistant": {
                   "provider": "copilot",
                   "model": "gpt-4.1",
@@ -1849,7 +1798,7 @@ public sealed class PlatformConfigValidationTests
                 var agent = config.Agents!["assistant"];
 
                 PlatformConfigLoader.Validate(config).ShouldBeEmpty();
-                config.Gateway!.Extensions!.Defaults!["botnexus-skills"].GetProperty("paths")[0].GetString().ShouldBe("skills");
+                config.AgentDefaults!.Extensions!["botnexus-skills"].GetProperty("paths")[0].GetString().ShouldBe("skills");
                 agent.Metadata!.Value.GetProperty("owner").GetString().ShouldBe("test-user");
                 agent.IsolationOptions!.Value.GetProperty("timeout").GetInt32().ShouldBe(30);
                 agent.Extensions!["botnexus-exec"].GetProperty("shell").GetString().ShouldBe("bash");
@@ -2024,6 +1973,98 @@ public sealed class PlatformConfigValidationTests
         var property = typeof(MemoryAgentConfig).GetProperty("PromptInjection");
         property.ShouldNotBeNull("MemoryAgentConfig.PromptInjection should exist for memory prompt-injection validation.");
         return property!.GetValue(config)?.ToString() ?? string.Empty;
+    }
+
+    [Fact]
+    public async Task LegacyGatewayExtensionsLoaderShape_MigratesPathAndEnabledWithoutRuntimeEntries()
+    {
+        const string json = """
+            {
+              "gateway": { "extensions": { "path": "legacy-extensions", "enabled": false } }
+            }
+            """;
+        var path = Path.Combine(Path.GetTempPath(), $"botnexus-loader-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(path, json);
+        try
+        {
+            var config = await PlatformConfigLoader.LoadAsync(path, validateOnLoad: false);
+
+            config.Gateway!.ExtensionLoader!.Path.ShouldBe("legacy-extensions");
+            config.Gateway.ExtensionLoader.Enabled.ShouldBeFalse();
+            config.Gateway.Extensions.ShouldBeNull();
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task LegacyGatewayExtensionsLoaderShape_PreservesRuntimeEntriesAndExplicitLoaderWins()
+    {
+        const string json = """
+            {
+              "gateway": {
+                "extensionLoader": { "path": "explicit", "enabled": true },
+                "extensions": {
+                  "path": "legacy",
+                  "enabled": false,
+                  "sample": { "scope": "gateway" }
+                }
+              }
+            }
+            """;
+        var path = Path.Combine(Path.GetTempPath(), $"botnexus-loader-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(path, json);
+        try
+        {
+            var config = await PlatformConfigLoader.LoadAsync(path, validateOnLoad: false);
+
+            config.Gateway!.ExtensionLoader!.Path.ShouldBe("explicit");
+            config.Gateway.ExtensionLoader.Enabled.ShouldBeTrue();
+            config.Gateway.Extensions!.Keys.ShouldBe(["sample"]);
+            config.Gateway.Extensions["sample"].GetProperty("scope").GetString().ShouldBe("gateway");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ExtensionScopeBags_AreStoredSeparately_AndStaleDefaultsAreRejected()
+    {
+        const string json = """
+            {
+              "world": { "extensions": { "sample": { "scope": "world" } } },
+              "gateway": {
+                "extensionLoader": { "enabled": true, "path": "extensions" },
+                "extensions": { "sample": { "scope": "gateway" } }
+              },
+              "agents": {
+                "defaults": { "extensions": { "sample": { "scope": "default" } } },
+                "assistant": { "provider": "copilot", "model": "gpt-4.1", "extensions": { "sample": { "scope": "agent" } } }
+              }
+            }
+            """;
+        var path = Path.Combine(Path.GetTempPath(), $"botnexus-scopes-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(path, json);
+        try
+        {
+            var config = await PlatformConfigLoader.LoadAsync(path, validateOnLoad: false);
+            config.World!.Extensions!["sample"].GetProperty("scope").GetString().ShouldBe("world");
+            config.Gateway!.Extensions!["sample"].GetProperty("scope").GetString().ShouldBe("gateway");
+            config.AgentDefaults!.Extensions!["sample"].GetProperty("scope").GetString().ShouldBe("default");
+            config.Agents!["assistant"].Extensions!["sample"].GetProperty("scope").GetString().ShouldBe("agent");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+
+        var errors = PlatformConfigLoader.ValidateRawJson("""{"gateway":{"extensions":{"defaults":{"sample":{}}}}}""");
+        errors.ShouldContain(error => error.Contains("gateway.extensions.defaults", StringComparison.Ordinal)
+            && error.Contains("agents.defaults.extensions", StringComparison.Ordinal));
     }
 
     [Fact]

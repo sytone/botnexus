@@ -1,5 +1,7 @@
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Abstractions.Extensions;
+using Moq;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using System.IO.Abstractions;
@@ -264,6 +266,77 @@ public sealed class ConfigControllerTests
         {
             var result = await controller.GetSection("does-not-exist", writer, CancellationToken.None);
             result.Result.ShouldBeOfType<NotFoundResult>();
+        });
+    }
+
+
+    [Fact]
+    public async Task PatchConfig_RejectsNewUnknownGatewayPlacementAtomically()
+    {
+        await WithConfigFileAsync("""{ "gateway": { "port": 5000 } }""", async (controller, writer) =>
+        {
+            var loader = new Mock<IExtensionLoader>();
+            loader.Setup(value => value.GetLoaded()).Returns([]);
+            var request = new ConfigPatchRequest(
+            [
+                new ConfigPatchOperationDto("gateway.port", JsonValue.Create(6000)),
+                new ConfigPatchOperationDto("gateway.extensions.unknown", new JsonObject())
+            ]);
+
+            var result = await controller.PatchConfig(request, writer, loader.Object, CancellationToken.None);
+
+            var badRequest = result.Result.ShouldBeOfType<BadRequestObjectResult>();
+            var response = badRequest.Value.ShouldBeOfType<ConfigPatchResponse>();
+            response.Errors.ShouldContain(error => error.Contains("gateway.extensions.unknown", StringComparison.Ordinal));
+            var persisted = await writer.ReadAsync();
+            persisted["gateway"]!["port"]!.GetValue<int>().ShouldBe(5000);
+            persisted["gateway"]!["extensions"].ShouldBeNull();
+        });
+    }
+
+    [Fact]
+    public async Task UpdateSectionEntry_AgentsSection_IsBlocked()
+    {
+        await WithConfigFileAsync("{}", async (controller, writer) =>
+        {
+            var result = await controller.UpdateSectionEntry(
+                "agents", "alpha", new JsonObject(), writer, Mock.Of<IExtensionLoader>(), CancellationToken.None);
+
+            result.ShouldBeOfType<BadRequestObjectResult>();
+            (await writer.ReadAsync())["agents"].ShouldBeNull();
+        });
+    }
+
+    [Fact]
+    public async Task UpdateSection_RejectsNewUnsupportedWorldPlacement()
+    {
+        await WithConfigFileAsync("{}", async (controller, writer) =>
+        {
+            var loader = new Mock<IExtensionLoader>();
+            loader.Setup(value => value.GetLoaded()).Returns(
+            [
+                new LoadedExtension
+                {
+                    ExtensionId = "agent-only",
+                    Name = "agent-only",
+                    Version = "1.0.0",
+                    DirectoryPath = "agent-only",
+                    EntryAssemblyPath = "agent-only",
+                    LoadedAtUtc = DateTimeOffset.UnixEpoch,
+                    ConfigurationScopes = [ExtensionConfigurationScope.Agent]
+                }
+            ]);
+
+            var result = await controller.UpdateSection(
+                "world",
+                JsonNode.Parse("""{ "extensions": { "agent-only": {} } }""")!,
+                writer,
+                loader.Object,
+                CancellationToken.None);
+
+            var badRequest = result.ShouldBeOfType<BadRequestObjectResult>();
+            badRequest.Value.ShouldBeOfType<string>().ShouldContain("world.extensions.agent-only");
+            (await writer.ReadAsync())["world"].ShouldBeNull();
         });
     }
 

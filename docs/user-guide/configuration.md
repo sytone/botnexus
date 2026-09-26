@@ -114,8 +114,8 @@ botnexus config set gateway.cors.allowedOrigins '["http://localhost:3000","https
 botnexus config set gateway.rateLimit.requestsPerMinute 300
 botnexus config set gateway.rateLimit.windowSeconds 60
 botnexus config set gateway.logLevel Information
-botnexus config set gateway.extensions.path '~/.botnexus/extensions'
-botnexus config set gateway.extensions.enabled true
+botnexus config set gateway.extensionLoader.path '~/.botnexus/extensions'
+botnexus config set gateway.extensionLoader.enabled true
 botnexus config set gateway.world.id local-gateway
 ```
 
@@ -902,8 +902,8 @@ botnexus config set gateway.compaction.preservedTurns 3
 botnexus config set gateway.compaction.tokenThresholdRatio 0.6
 botnexus config set gateway.cors.allowedOrigins '["http://localhost:3000"]'
 botnexus config set gateway.rateLimit.requestsPerMinute 120
-botnexus config set gateway.extensions.path '~/.botnexus/extensions'
-botnexus config set gateway.extensions.enabled true
+botnexus config set gateway.extensionLoader.path '~/.botnexus/extensions'
+botnexus config set gateway.extensionLoader.enabled true
 botnexus config set gateway.world.id production-gateway
 botnexus config set agents.assistant.displayName 'General Assistant'
 botnexus config set agents.assistant.description 'Multi-purpose AI assistant'

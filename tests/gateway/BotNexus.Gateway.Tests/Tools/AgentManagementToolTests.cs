@@ -380,14 +380,11 @@ public sealed class AgentManagementToolTests
         var skillsElement = JsonSerializer.SerializeToElement(new { enabled = true });
         var platformConfig = new PlatformConfig
         {
-            Gateway = new GatewaySettingsConfig
+            AgentDefaults = new AgentDefaultsConfig
             {
-                Extensions = new ExtensionsConfig
+                Extensions = new Dictionary<string, JsonElement>
                 {
-                    Defaults = new Dictionary<string, JsonElement>
-                    {
-                        ["botnexus-skills"] = skillsElement
-                    }
+                    ["botnexus-skills"] = skillsElement
                 }
             }
         };

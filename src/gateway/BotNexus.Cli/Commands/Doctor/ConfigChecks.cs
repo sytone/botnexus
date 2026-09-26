@@ -4,17 +4,17 @@ using BotNexus.Cli.Commands.Doctor.Generated;
 namespace BotNexus.Cli.Commands.Doctor;
 
 /// <summary>
-/// Checks that <c>gateway.extensions</c> block exists and is enabled.
+/// Checks that <c>gateway.extensionLoader</c> block exists and is enabled.
 /// </summary>
 [DoctorCheck(Id = "extensions-block", Suite = DoctorSuite.Config, Order = 0)]
 public sealed class ExtensionsBlockCheck : IConfigCheck
 {
-    private const string ExtensionsPath = "gateway.extensions";
-    internal const string ExtensionsEnabledPath = "gateway.extensions.enabled";
+    private const string ExtensionsPath = "gateway.extensionLoader";
+    internal const string ExtensionsEnabledPath = "gateway.extensionLoader.enabled";
 
     public string Id => "extensions-block";
-    public string Description => "gateway.extensions block is absent or has extensions disabled.";
-    public string FixDescription => "Add gateway.extensions = { enabled: true }";
+    public string Description => "gateway.extensionLoader block is absent or has extensions disabled.";
+    public string FixDescription => "Add gateway.extensionLoader = { enabled: true }";
 
     public bool IsApplicable(ConfigDocument config)
     {
@@ -30,22 +30,22 @@ public sealed class ExtensionsBlockCheck : IConfigCheck
 }
 
 /// <summary>
-/// Checks that <c>gateway.extensions.defaults["botnexus-skills"]</c> is present and enabled.
+/// Checks that <c>agents.defaults.extensions["botnexus-skills"]</c> is present and enabled.
 /// </summary>
 [DoctorCheck(Id = "skills-world-default", Suite = DoctorSuite.Config, Order = 1)]
 public sealed class SkillsWorldDefaultCheck : IConfigCheck
 {
-    private const string SkillsEntryPath = "gateway.extensions.defaults.botnexus-skills";
-    private const string SkillsEnabledPath = "gateway.extensions.defaults.botnexus-skills.enabled";
+    private const string SkillsEntryPath = "agents.defaults.extensions.botnexus-skills";
+    private const string SkillsEnabledPath = "agents.defaults.extensions.botnexus-skills.enabled";
 
     public string Id => "skills-world-default";
-    public string Description => "Skills extension has no world-level default in gateway.extensions.defaults.";
-    public string FixDescription => "Add gateway.extensions.defaults[\"botnexus-skills\"].enabled = true";
+    public string Description => "Skills extension has no world-level default in agents.defaults.extensions.";
+    public string FixDescription => "Add agents.defaults.extensions[\"botnexus-skills\"].enabled = true";
 
     public bool IsApplicable(ConfigDocument config)
     {
         // Absent, or present as something other than a settings object, both mean "no usable
-        // world-level default". Only an object carrying an explicit false is a deliberate opt-out
+        // agent default". Only an object carrying an explicit false is a deliberate opt-out
         // that this check must still report.
         if (!config.HasObject(SkillsEntryPath))
             return true;

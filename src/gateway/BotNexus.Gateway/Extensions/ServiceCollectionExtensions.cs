@@ -50,7 +50,7 @@ public static class ServiceCollectionExtensions
         var fileSystem = new FileSystem();
         var loader = new AssemblyLoadContextExtensionLoader(services, hookDispatcher, logger, fileSystem);
 
-        var extensionsConfig = platformConfig.Gateway?.Extensions;
+        var extensionsConfig = platformConfig.Gateway?.ExtensionLoader;
         if (extensionsConfig?.Enabled is false)
             return [];
 
@@ -119,8 +119,45 @@ public static class ServiceCollectionExtensions
         // warning per pruned service.
         loader.PruneUnconstructableExtensionServices();
 
+        LogConfigurationScopeDiagnostics(platformConfig, loader.GetLoaded(), deduplicationLogger);
+
         services.Replace(ServiceDescriptor.Singleton<IExtensionLoader>(loader));
         return results;
+    }
+
+    internal static void LogConfigurationScopeDiagnostics(
+        PlatformConfig platformConfig,
+        IReadOnlyList<LoadedExtension> loadedExtensions,
+        ILogger? logger)
+    {
+        ArgumentNullException.ThrowIfNull(platformConfig);
+        ArgumentNullException.ThrowIfNull(loadedExtensions);
+
+        var document = System.Text.Json.JsonSerializer.SerializeToNode(
+            platformConfig,
+            new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+            })?.AsObject() ?? new System.Text.Json.Nodes.JsonObject();
+        if (platformConfig.AgentDefaults?.Extensions is { Count: > 0 } defaultExtensions)
+        {
+            var agents = document["agents"] as System.Text.Json.Nodes.JsonObject
+                ?? new System.Text.Json.Nodes.JsonObject();
+            document["agents"] = agents;
+            agents["defaults"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["extensions"] = System.Text.Json.JsonSerializer.SerializeToNode(defaultExtensions)
+            };
+        }
+
+        foreach (var violation in ExtensionConfigurationScopeValidator.FindViolations(document, loadedExtensions))
+        {
+            logger?.LogWarning(
+                "Extension configuration placement is invalid at '{ConfigurationPath}' for extension '{ExtensionId}': {Reason}",
+                violation.Path,
+                violation.ExtensionId,
+                violation.Reason);
+        }
     }
 
     /// <summary>
@@ -135,7 +172,7 @@ public static class ServiceCollectionExtensions
     /// </remarks>
     public const string ExtensionsPathEnvVar = "BOTNEXUS_EXTENSIONS_PATH";
 
-    internal static string ResolveExtensionsPath(ExtensionsConfig? extensionConfig, IFileSystem fileSystem)
+    internal static string ResolveExtensionsPath(ExtensionLoaderConfig? extensionConfig, IFileSystem fileSystem)
     {
         // Explicit configuration always wins.
         if (!string.IsNullOrWhiteSpace(extensionConfig?.Path))

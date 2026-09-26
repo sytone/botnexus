@@ -4,7 +4,9 @@
   "description": "Web search and fetch tools for agents",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.WebTools.dll",
-  "extensionTypes": ["tool"],
+  "extensionTypes": [
+    "tool"
+  ],
   "enabled": true,
   "configSchema": [
     {
@@ -46,5 +48,8 @@
       "sensitive": false,
       "description": "HTTP timeout in seconds for web fetch requests."
     }
+  ],
+  "configurationScopes": [
+    "agent"
   ]
 }
