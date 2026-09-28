@@ -148,7 +148,17 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             sessions.Count,
             groupKeys.Count);
 
-        return new SubscribeAllResult(sessions);
+        var activeRuns = sessions
+            .Where(session => _supervisor.GetHandle(
+                AgentId.From(session.AgentId),
+                SessionId.From(session.SessionId))?.IsRunning == true)
+            .Select(session => new RunActivitySnapshot(
+                session.SessionId,
+                session.AgentId,
+                session.ConversationId))
+            .ToArray();
+
+        return new SubscribeAllResult(sessions, activeRuns);
     }
 
     /// <summary>

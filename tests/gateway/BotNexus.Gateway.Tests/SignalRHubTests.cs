@@ -93,6 +93,51 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
+    public async Task GatewayHub_SubscribeAll_ReturnsAuthoritativeActiveRunSnapshot()
+    {
+        var summary = new SessionSummary(
+            "session-1",
+            "agent-1",
+            ChannelKey.From("signalr"),
+            SessionStatus.Active,
+            SessionType.UserAgent,
+            true,
+            3,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            "conversation-1");
+        var warmup = new Mock<ISessionWarmupService>();
+        warmup.Setup(service => service.GetAvailableSessionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([summary]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(value => value.IsRunning).Returns(true);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.GetHandle(AgentId.From("agent-1"), BotNexus.Domain.Primitives.SessionId.From("session-1")))
+            .Returns(handle.Object);
+
+        var groups = new Mock<IGroupManager>();
+        groups.Setup(value => value.AddToGroupAsync(
+                "conn-1",
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHub(
+            groups: groups.Object,
+            warmup: warmup.Object,
+            supervisor: supervisor.Object,
+            connectionId: "conn-1");
+
+        var result = await hub.SubscribeAll();
+
+        var activeRun = result.ActiveRuns.ShouldHaveSingleItem();
+        activeRun.SessionId.ShouldBe("session-1");
+        activeRun.AgentId.ShouldBe("agent-1");
+        activeRun.ConversationId.ShouldBe("conversation-1");
+    }
+
+    [Fact]
     public async Task GatewayHub_GetAgents_ExcludesSubAgentsAndBuiltins()
     {
         var registry = new Mock<IAgentRegistry>();
