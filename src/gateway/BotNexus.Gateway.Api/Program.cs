@@ -356,6 +356,7 @@ builder.Services.AddTransient<ProviderRateLimitHandler>(sp => new ProviderRateLi
     sp.GetRequiredService<ILogger<ProviderRateLimitHandler>>()));
 
 builder.Services.AddHttpClient();
+builder.Services.AddTransient<ProviderExceptionalDiagnosticsHandler>();
 builder.Services.AddTransient<ProviderLoggingHandler>(sp =>
 {
     // Always wire the gateway's shared SecretRedactor into the handler so that any API key or
@@ -376,10 +377,12 @@ builder.Services.AddHttpClient("BotNexus", client =>
 {
     client.Timeout = TimeSpan.FromMinutes(10);
 })
+.AddHttpMessageHandler<ProviderExceptionalDiagnosticsHandler>()
 .AddHttpMessageHandler(sp =>
-    // Outermost handler: retry transient provider transport failures (notably HTTP 421
-    // Misdirected Request from Copilot endpoints) on a fresh connection before they are
-    // converted into exceptions/empty responses. Benefits every provider that flows through
+    // Retry transient provider transport failures (notably HTTP 421 Misdirected Request from
+    // Copilot endpoints) inside the terminal exceptional-diagnostics handler, so exhausted retries
+    // produce one payload-free event before they are converted into exceptions/empty responses.
+    // Benefits every provider that flows through
     // the shared provider HttpClient, including the session compaction summary call.
     new TransientHttpRetryHandler(
         sp.GetService<ILoggerFactory>()?.CreateLogger<TransientHttpRetryHandler>()))
@@ -392,7 +395,7 @@ builder.Services.AddHttpClient("BotNexus", client =>
     return sp.GetRequiredService<ProviderLoggingHandler>();
 })
 .AddHttpMessageHandler(sp =>
-    // Innermost of the three, deliberately: it must observe the response that was actually
+    // Innermost of the provider handlers, deliberately: it must observe the response that was actually
     // returned to the caller, after the retry handler has finished replaying failures. Sitting
     // outside it would capture the headroom of an attempt that got discarded.
     sp.GetRequiredService<ProviderRateLimitHandler>());

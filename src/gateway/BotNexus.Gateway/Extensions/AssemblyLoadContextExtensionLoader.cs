@@ -201,7 +201,8 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
                 LoadedAtUtc = DateTimeOffset.UtcNow,
                 RegisteredServices = registeredServiceNames,
                 Enabled = extension.Manifest.Enabled,
-                ConfigSchema = extension.Manifest.ConfigSchema
+                ConfigSchema = extension.Manifest.ConfigSchema,
+                ConfigurationScopes = extension.Manifest.ConfigurationScopes
             };
 
             lock (_sync)
@@ -331,6 +332,12 @@ public sealed class AssemblyLoadContextExtensionLoader : IExtensionLoader
             "endpoint-contributor",
             "api-contributor"
         };
+
+        var configurationScopes = manifest.ConfigurationScopes ?? [];
+        if ((manifest.ConfigSchema?.Count ?? 0) > 0 && configurationScopes.Count == 0)
+            throw new InvalidOperationException($"Manifest for '{manifest.Id}' declares configSchema and must define at least one configurationScope (world, gateway, or agent).");
+        if (configurationScopes.Count != configurationScopes.Distinct().Count())
+            throw new InvalidOperationException($"Manifest for '{manifest.Id}' declares duplicate configurationScopes.");
 
         var invalidTypes = extensionTypes
             .Where(extensionType => !allowedTypes.Contains(extensionType))

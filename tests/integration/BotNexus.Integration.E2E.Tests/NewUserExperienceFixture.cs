@@ -223,7 +223,7 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
             // (issue #599 tracks dedicated `world` and `extension` commands).
             // All these live under GatewaySettingsConfig, hence the `gateway.*` prefix.
             await RunCliAsync("config", $"set gateway.world \"{{\\\"id\\\":\\\"e2e-world\\\",\\\"name\\\":\\\"E2E World\\\"}}\" --target \"{Home}\"");
-            await RunCliAsync("config", $"set gateway.extensions.enabled true --target \"{Home}\"");
+            await RunCliAsync("config", $"set gateway.extensionLoader.enabled true --target \"{Home}\"");
 
             // Default agent → first provisioned agent.
             await RunCliAsync("config", $"set gateway.defaultAgentId {AgentIds[0]} --target \"{Home}\"");

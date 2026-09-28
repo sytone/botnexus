@@ -40,6 +40,9 @@ public class ExecToolTests : IDisposable
         var description = _tool.Definition.Description;
 
         description.ShouldContain("${var}");
+        description.ShouldContain("$PID");
+        description.ShouldContain("read-only automatic variable");
+        description.ShouldContain("processId");
         description.ShouldContain("PYTHONUTF8");
         description.ShouldContain("here-string");
     }

@@ -257,7 +257,7 @@ public sealed class MainLayoutTests : IDisposable
     /// purely because the SERVER stamped <c>source="Cron"</c>. No mutable flag, no id prefix.
     /// </summary>
     [Fact]
-    public async Task Cron_source_conversation_shows_badge_and_close_button()
+    public async Task Cron_source_conversation_shows_badge_without_mutating_actions()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
@@ -272,10 +272,7 @@ public sealed class MainLayoutTests : IDisposable
         await cut.InvokeAsync(() => cut.Find("[data-testid='cron-group-toggle']").Click());
 
         Assert.Contains("Cron", cut.Markup);
-        var archiveBtn = cut.Find(".conversation-archive-btn");
-        // An unattended conversation reopens on its next trigger, so it pauses rather than deletes.
-        Assert.Contains("bn-icon-pause", archiveBtn.InnerHtml);
-        Assert.Contains("Close conversation", archiveBtn.GetAttribute("title"));
+        Assert.Empty(cut.FindAll("[data-testid='conversation-actions-trigger']"));
     }
 
     /// <summary>
@@ -418,9 +415,8 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
 
-        var archiveBtn = cut.Find(".conversation-archive-btn");
-        Assert.Contains("bn-icon-delete", archiveBtn.InnerHtml);
-        Assert.Contains("Archive conversation", archiveBtn.GetAttribute("title"));
+        cut.Find("[data-testid='conversation-actions-trigger']").Click();
+        Assert.Equal("Archive", cut.Find("[data-action-id='archive']").TextContent.Trim());
     }
 
     [Fact]
@@ -434,7 +430,8 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
 
-        Assert.Empty(cut.FindAll(".conversation-archive-btn"));
+        cut.Find("[data-testid='conversation-actions-trigger']").Click();
+        Assert.Empty(cut.FindAll("[data-action-id='archive']"));
     }
 
     [Fact]

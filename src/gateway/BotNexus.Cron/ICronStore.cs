@@ -74,6 +74,16 @@ public interface ICronStore
     Task RecordRunFinalizationAsync(JobId jobId, DateTimeOffset lastRunAt, string lastRunStatus, string? lastRunError, CancellationToken ct = default);
     Task DeleteAsync(JobId jobId, CancellationToken ct = default);
     Task<CronRun> RecordRunStartAsync(JobId jobId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Persists the session that owns an in-flight run as soon as the action creates it. This is a
+    /// narrow, non-terminal write: status, completion, error and cost remain untouched. Repeated
+    /// writes of the same session converge, allowing a trigger to publish ownership before its
+    /// potentially long-running turn finishes (#4283).
+    /// </summary>
+    Task RecordRunSessionAsync(RunId runId, SessionId sessionId, CancellationToken ct = default)
+        => Task.CompletedTask;
+
     /// <summary>
     /// Records a run's terminal outcome and, when supplied, its per-run cost measurements (#2641).
     /// </summary>

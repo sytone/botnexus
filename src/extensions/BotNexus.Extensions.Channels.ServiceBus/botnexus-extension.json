@@ -4,7 +4,9 @@
   "description": "Azure Service Bus queue channel adapter - inbound message receive and reply dispatch via Service Bus queues",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.Channels.ServiceBus.dll",
-  "extensionTypes": ["channel"],
+  "extensionTypes": [
+    "channel"
+  ],
   "enabled": true,
   "configSchema": [
     {
@@ -45,5 +47,8 @@
       "sensitive": false,
       "description": "Maximum number of messages processed concurrently by the Service Bus processor."
     }
+  ],
+  "configurationScopes": [
+    "gateway"
   ]
 }

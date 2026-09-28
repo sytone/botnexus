@@ -2268,8 +2268,8 @@ Current checks are:
 
 | Check | Id | Reports |
 |---|---|---|
-| Extensions block | `extensions-block` | The `gateway.extensions` block is absent or has extensions disabled. |
-| Skills world default | `skills-world-default` | The Skills extension has no world-level default in `gateway.extensions.defaults`. |
+| Extensions block | `extensions-block` | The `gateway.extensionLoader` block is absent or has extensions disabled. |
+| Skills agent default | `skills-world-default` | The Skills extension has no shared agent default in `agents.defaults.extensions`. |
 | Cron configuration | `cron-enabled` | The cron scheduler block is absent from config. |
 | Memory agent default | `memory-agent-default` | The `agents.defaults.memory` block is absent, so memory indexing is not enabled by default. |
 | Compaction model | `compaction-model` | `gateway.compaction.summarizationModel` names an expensive reasoning model, which may fail or waste tokens on a summarization call. |

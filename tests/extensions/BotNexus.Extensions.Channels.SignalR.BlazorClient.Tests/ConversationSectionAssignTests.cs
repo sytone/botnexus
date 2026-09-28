@@ -83,7 +83,7 @@ public sealed class ConversationSectionAssignTests : IDisposable
 
         // The affordance must exist on a non-default conversation row - this is the gap #2324 reports.
         cut.WaitForAssertion(() =>
-            Assert.NotNull(cut.Find("[data-testid='conversation-section-btn']")));
+            Assert.NotNull(cut.Find("[data-testid='conversation-actions-trigger']")));
     }
 
     [Fact]
@@ -92,14 +92,14 @@ public sealed class ConversationSectionAssignTests : IDisposable
         SeedSections();
 
         var cut = RenderLayout();
-        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-section-btn']").Click());
+        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-actions-trigger']").Click());
 
         cut.WaitForAssertion(() =>
         {
-            Assert.NotNull(cut.Find("[data-testid='conversation-section-menu-none']"));
-            var items = cut.FindAll("[data-testid='conversation-section-menu-item']");
+            Assert.NotNull(cut.Find("[data-action-id='move-none']"));
+            var items = cut.FindAll("[data-action-id^='move-']:not([data-action-id='move-none'])");
             Assert.Single(items);
-            Assert.Equal("Work", items[0].TextContent.Trim());
+            Assert.Equal("Move to: Work", items[0].TextContent.Trim());
         });
     }
 
@@ -110,8 +110,8 @@ public sealed class ConversationSectionAssignTests : IDisposable
         _handler.SetStatus("PUT", "/api/agents/a-1/sections/sec_1/conversations/c-1", HttpStatusCode.NoContent);
 
         var cut = RenderLayout();
-        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-section-btn']").Click());
-        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-section-menu-item']").Click());
+        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-actions-trigger']").Click());
+        cut.WaitForAssertion(() => cut.Find("[data-action-id^='move-']:not([data-action-id='move-none'])").Click());
 
         // AssignAsync now has a real UI call site (acceptance criterion of #2324).
         cut.WaitForAssertion(() => Assert.Contains(_handler.Requests,
@@ -126,8 +126,8 @@ public sealed class ConversationSectionAssignTests : IDisposable
         _handler.SetStatus("DELETE", "/api/agents/a-1/sections/conversations/c-1", HttpStatusCode.NoContent);
 
         var cut = RenderLayout();
-        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-section-btn']").Click());
-        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-section-menu-none']").Click());
+        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-actions-trigger']").Click());
+        cut.WaitForAssertion(() => cut.Find("[data-action-id='move-none']").Click());
 
         cut.WaitForAssertion(() => Assert.Contains(_handler.Requests,
             r => r.Method == "DELETE" && r.Path == "/api/agents/a-1/sections/conversations/c-1"));
@@ -140,12 +140,12 @@ public sealed class ConversationSectionAssignTests : IDisposable
         _handler.SetStatus("PUT", "/api/agents/a-1/sections/sec_1/conversations/c-1", HttpStatusCode.NoContent);
 
         var cut = RenderLayout();
-        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-section-btn']").Click());
+        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-actions-trigger']").Click());
 
         // After the assign round-trips, the panel reloads and the server now reports the assignment,
         // so the conversation renders inside the section body instead of the empty-state text.
         SeedSections("""{"c-1":"sec_1"}""");
-        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-section-menu-item']").Click());
+        cut.WaitForAssertion(() => cut.Find("[data-action-id^='move-']:not([data-action-id='move-none'])").Click());
 
         cut.WaitForAssertion(() =>
         {

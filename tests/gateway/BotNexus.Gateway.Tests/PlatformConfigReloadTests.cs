@@ -140,6 +140,61 @@ public sealed class PlatformConfigReloadTests : IDisposable
         config.Gateway.ListenUrl.ShouldBe("http://localhost:9999");
     }
 
+    [Fact]
+    public void PlatformConfigPostConfigure_MigratesLegacyGatewayExtensionLoaderSettings()
+    {
+        File.WriteAllText(_configPath, """
+            {
+              "gateway": {
+                "extensions": {
+                  "path": "/legacy/extensions",
+                  "enabled": false,
+                  "runtime-extension": { "value": true }
+                }
+              }
+            }
+            """);
+
+        var configuration = new ConfigurationBuilder()
+            .AddJsonFile(_configPath, optional: false, reloadOnChange: false)
+            .Build();
+        var config = new PlatformConfig();
+        configuration.Bind(config);
+
+        new PlatformConfigPostConfigure(configuration, _configPath)
+            .PostConfigure(Options.DefaultName, config);
+
+        config.Gateway.ShouldNotBeNull();
+        config.Gateway!.ExtensionLoader.ShouldNotBeNull();
+        config.Gateway.ExtensionLoader!.Path.ShouldBe("/legacy/extensions");
+        config.Gateway.ExtensionLoader.Enabled.ShouldBeFalse();
+        config.Gateway.Extensions.ShouldNotBeNull();
+        config.Gateway.Extensions!.ShouldContainKey("runtime-extension");
+        config.Gateway.Extensions.ShouldNotContainKey("path");
+        config.Gateway.Extensions.ShouldNotContainKey("enabled");
+    }
+
+    [Fact]
+    public void PlatformConfigPostConfigure_RejectsLegacyGatewayExtensionDefaults()
+    {
+        File.WriteAllText(_configPath, """
+            { "gateway": { "extensions": { "defaults": { "legacy": {} } } } }
+            """);
+
+        var configuration = new ConfigurationBuilder()
+            .AddJsonFile(_configPath, optional: false, reloadOnChange: false)
+            .Build();
+        var config = new PlatformConfig();
+        configuration.Bind(config);
+
+        var exception = Should.Throw<OptionsValidationException>(() =>
+            new PlatformConfigPostConfigure(configuration, _configPath)
+                .PostConfigure(Options.DefaultName, config));
+
+        exception.Failures.ShouldContain(message =>
+            message.Contains("gateway.extensions.defaults", StringComparison.Ordinal));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_rootPath))

@@ -30,10 +30,16 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
             // already-bound config so the gateway can start on defaults.
             try
             {
-                PlatformConfigLoader.MigrateLegacyGatewaySettings(config, rawJson);
-                PlatformConfigLoader.ExtractAgentDefaults(config, rawJson);
+                using var document = JsonDocument.Parse(rawJson);
+                PlatformConfigLoader.MigrateLegacyGatewaySettings(config, document.RootElement);
+                PlatformConfigLoader.ExtractAgentDefaults(config, document.RootElement);
                 PopulateVersionFromRawJson(config, rawJson);
                 PopulateJsonElementFields(config, rawJson);
+                PlatformConfigLoader.MigrateLegacyGatewayExtensionLoader(config, document.RootElement);
+            }
+            catch (JsonException ex) when (ex.Message.Contains("gateway.extensions.defaults", StringComparison.Ordinal))
+            {
+                throw new OptionsValidationException(nameof(PlatformConfig), typeof(PlatformConfig), [ex.Message]);
             }
             catch (JsonException)
             {
@@ -86,16 +92,24 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
         {
             using var doc = JsonDocument.Parse(rawJson);
 
-            // Populate gateway.extensions.defaults (Dictionary<string, JsonElement>)
-            if (config.Gateway?.Extensions is not null &&
-                doc.RootElement.TryGetProperty("gateway", out var gatewayEl) &&
-                gatewayEl.TryGetProperty("extensions", out var extEl) &&
-                extEl.TryGetProperty("defaults", out var defaultsEl) &&
-                defaultsEl.ValueKind == JsonValueKind.Object)
+            PopulateExtensionBag(doc.RootElement, "world", bag =>
             {
-                config.Gateway.Extensions.Defaults = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
-                foreach (var prop in defaultsEl.EnumerateObject())
-                    config.Gateway.Extensions.Defaults[prop.Name] = prop.Value.Clone();
+                config.World ??= new WorldSettingsConfig();
+                config.World.Extensions = bag;
+            });
+            PopulateExtensionBag(doc.RootElement, "gateway", bag =>
+            {
+                config.Gateway ??= new GatewaySettingsConfig();
+                config.Gateway.Extensions = bag;
+            });
+            if (doc.RootElement.TryGetProperty("agents", out var defaultsAgents)
+                && defaultsAgents.TryGetProperty("defaults", out var defaults)
+                && defaults.TryGetProperty("extensions", out var defaultExtensions)
+                && defaultExtensions.ValueKind == JsonValueKind.Object)
+            {
+                config.AgentDefaults ??= new AgentDefaultsConfig();
+                config.AgentDefaults.Extensions = defaultExtensions.EnumerateObject()
+                    .ToDictionary(property => property.Name, property => property.Value.Clone(), StringComparer.OrdinalIgnoreCase);
             }
 
             // Populate per-agent JsonElement fields
@@ -124,22 +138,35 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
         catch { /* non-fatal */ }
     }
 
+    private static void PopulateExtensionBag(JsonElement root, string scope, Action<Dictionary<string, JsonElement>> setter)
+    {
+        if (root.TryGetProperty(scope, out var scopeElement)
+            && scopeElement.TryGetProperty("extensions", out var extensions)
+            && extensions.ValueKind == JsonValueKind.Object)
+        {
+            setter(extensions.EnumerateObject().ToDictionary(
+                property => property.Name,
+                property => property.Value.Clone(),
+                StringComparer.OrdinalIgnoreCase));
+        }
+    }
+
+    private static void NullifyInvalidExtensionBag(Dictionary<string, JsonElement>? bag)
+    {
+        if (bag is null)
+            return;
+        foreach (var key in bag.Where(pair => pair.Value.ValueKind == JsonValueKind.Undefined).Select(pair => pair.Key).ToArray())
+            bag.Remove(key);
+    }
+
     /// <summary>
     /// Null out any JsonElement fields left in an undefined state by IConfiguration binding.
     /// </summary>
     private static void NullifyInvalidJsonElements(PlatformConfig config)
     {
-        // gateway.extensions.defaults
-        if (config.Gateway?.Extensions?.Defaults is not null)
-        {
-            var badKeys = config.Gateway.Extensions.Defaults
-                .Where(kvp => kvp.Value.ValueKind == JsonValueKind.Undefined)
-                .Select(kvp => kvp.Key).ToList();
-            foreach (var key in badKeys)
-                config.Gateway.Extensions.Defaults.Remove(key);
-            if (config.Gateway.Extensions.Defaults.Count == 0)
-                config.Gateway.Extensions.Defaults = null;
-        }
+        NullifyInvalidExtensionBag(config.World?.Extensions);
+        NullifyInvalidExtensionBag(config.Gateway?.Extensions);
+        NullifyInvalidExtensionBag(config.AgentDefaults?.Extensions);
 
         if (config.Agents is null)
             return;

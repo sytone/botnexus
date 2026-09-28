@@ -60,6 +60,79 @@ public sealed class CopilotResponsesTransportTests
     }
 
     [Fact]
+    public async Task Gpt56_OpaqueReasoningWithoutSummary_ReportsUnavailableWithoutExposingEncryptedContent()
+    {
+        // Sanitized from the captured gpt-5.6-sol Copilot Responses shape: the provider reports a
+        // reasoning item, opaque encrypted content, and non-zero reasoning-token usage, but emits
+        // no reasoning-summary event. Payload bytes are synthetic and must never reach content or
+        // diagnostics.
+        const string opaquePayload = "synthetic-encrypted-reasoning-4154";
+        var frames = new[]
+        {
+            "{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"reason_1\",\"type\":\"reasoning\",\"summary\":[]}}",
+            $"{{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{{\"id\":\"reason_1\",\"type\":\"reasoning\",\"encrypted_content\":\"{opaquePayload}\",\"summary\":[]}}}}",
+            "{\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}",
+            "{\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"answer\"}",
+            "{\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":8,\"total_tokens\":18,\"output_tokens_details\":{\"reasoning_tokens\":6}}}}"
+        };
+
+        var (websocket, sse) = await ParseThroughCopilotTransportsAsync(frames);
+
+        Project(websocket).ShouldBe(Project(sse));
+        var warning = websocket.OfType<WarningEvent>().ShouldHaveSingleItem();
+        warning.Code.ShouldBe(WarningCodes.ReasoningSummaryUnavailable);
+        warning.Message.ShouldContain("summary not provided");
+        warning.Message.ShouldNotContain(opaquePayload);
+        websocket.OfType<ThinkingDeltaEvent>().ShouldBeEmpty();
+        var final = websocket.OfType<DoneEvent>().ShouldHaveSingleItem().Message;
+        var opaque = final.Content.OfType<ThinkingContent>().ShouldHaveSingleItem();
+        opaque.Thinking.ShouldBeEmpty();
+        var signature = Assert.IsType<string>(opaque.ThinkingSignature);
+        signature.ShouldContain(opaquePayload);
+    }
+
+    [Fact]
+    public async Task Gpt56_TerminalReasoningSummaryWithoutDeltas_ReachesFinalThinkingContent()
+    {
+        var frames = new[]
+        {
+            "{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"reason_1\",\"type\":\"reasoning\",\"summary\":[]}}",
+            "{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"reason_1\",\"type\":\"reasoning\",\"encrypted_content\":\"opaque\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Displayable summary\"}]}}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}"
+        };
+
+        var (websocket, sse) = await ParseThroughCopilotTransportsAsync(frames);
+
+        Project(websocket).ShouldBe(Project(sse));
+        websocket.OfType<WarningEvent>().ShouldBeEmpty();
+        websocket.OfType<ThinkingDeltaEvent>().ShouldHaveSingleItem().Delta.ShouldBe("Displayable summary");
+        websocket.OfType<DoneEvent>().ShouldHaveSingleItem().Message.Content
+            .OfType<ThinkingContent>().ShouldHaveSingleItem().Thinking.ShouldBe("Displayable summary");
+    }
+
+    [Fact]
+    public async Task RawReasoningTextDelta_IsNotExposedAsDisplayableThinking()
+    {
+        var frames = new[]
+        {
+            "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"reason_1\",\"type\":\"reasoning\",\"summary\":[]}}",
+            "{\"type\":\"response.reasoning_text.delta\",\"item_id\":\"reason_1\",\"content_index\":0,\"delta\":\"hidden chain of thought\"}",
+            "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"reason_1\",\"type\":\"reasoning\",\"encrypted_content\":\"opaque\",\"summary\":[]}}",
+            "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"output_tokens\":5,\"total_tokens\":5,\"output_tokens_details\":{\"reasoning_tokens\":5}}}}"
+        };
+
+        var parsed = await ParseJsonEventsAsync(frames);
+
+        parsed.OfType<ThinkingDeltaEvent>().ShouldBeEmpty();
+        parsed.OfType<WarningEvent>().ShouldHaveSingleItem().Code
+            .ShouldBe(WarningCodes.ReasoningSummaryUnavailable);
+        parsed.OfType<DoneEvent>().ShouldHaveSingleItem().Message.Content
+            .OfType<ThinkingContent>().ShouldAllBe(block => block.Thinking.Length == 0);
+        JsonSerializer.Serialize(parsed).ShouldNotContain("hidden chain of thought");
+    }
+
+    [Fact]
     public async Task Gpt56_WebSocketAndSse_ProduceEquivalentDeltasAndFinalText()
     {
         // Transport parity acceptance: reproduce via the actual capability-aware WebSocket path AND
@@ -595,6 +668,24 @@ public sealed class CopilotResponsesTransportTests
         return await ParseAsync(ct => ValueTask.FromResult(queue.TryDequeue(out var value)
             ? new ResponsesEvent(JsonDocument.Parse(value).RootElement.GetProperty("type").GetString() ?? "", value)
             : null));
+    }
+
+    private static async Task<(List<AssistantMessageEvent> WebSocket, List<AssistantMessageEvent> Sse)>
+        ParseThroughCopilotTransportsAsync(IReadOnlyList<string> frames)
+    {
+        var model = MapModel(["/responses", "ws:/responses"], "gpt-5.6-sol");
+        var websocketProvider = new CopilotResponsesProvider(
+            new HttpClient(new RecordingHandler(_ =>
+                throw new InvalidOperationException("SSE fallback must not run for the WebSocket fixture."))),
+            NullLogger<CopilotResponsesProvider>.Instance,
+            new StubWebSocketTransport(messages: frames));
+        var sseProvider = new CopilotResponsesProvider(
+            new HttpClient(new RecordingHandler(_ => SseResponse(frames))),
+            NullLogger<CopilotResponsesProvider>.Instance);
+
+        return (
+            await CollectAsync(websocketProvider.Stream(model, BuildContext(), Options())),
+            await CollectAsync(sseProvider.Stream(model, BuildContext(), SseOptions())));
     }
 
     private static async Task<List<AssistantMessageEvent>> ParseSseAsync(IEnumerable<string> json)

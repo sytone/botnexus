@@ -93,6 +93,7 @@ public sealed class ExtensionsController : ControllerBase
                 ext.ExtensionTypes,
                 ext.RegisteredServices,
                 ext.ConfigSchema,
+                ext.ConfigurationScopes,
                 Path.GetFileName(ext.EntryAssemblyPath)))
             .ToArray();
 
@@ -123,6 +124,7 @@ public sealed record ExtensionResponse(
 /// <param name="ExtensionTypes">Extension type identifiers declared in the manifest.</param>
 /// <param name="RegisteredServices">Service contract names registered by this extension.</param>
 /// <param name="ConfigSchema">Configuration field schema declared by this extension.</param>
+/// <param name="ConfigurationScopes">Concrete runtime configuration scopes declared by this extension.</param>
 /// <param name="AssemblyFileName">The entry assembly filename.</param>
 public sealed record ExtensionDetailResponse(
     string Id,
@@ -132,6 +134,7 @@ public sealed record ExtensionDetailResponse(
     IReadOnlyList<string> ExtensionTypes,
     IReadOnlyList<string> RegisteredServices,
     IReadOnlyList<ExtensionConfigFieldSchema> ConfigSchema,
+    IReadOnlyList<ExtensionConfigurationScope> ConfigurationScopes,
     string AssemblyFileName);
 
 

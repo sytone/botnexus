@@ -1,6 +1,8 @@
 using BotNexus.Gateway.Api.Configuration;
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Abstractions.Extensions;
+using BotNexus.Gateway.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
@@ -107,6 +109,7 @@ public sealed class ConfigController : ControllerBase
     public async Task<ActionResult<ConfigPatchResponse>> PatchConfig(
         [FromBody] ConfigPatchRequest request,
         [FromServices] PlatformConfigWriter writer,
+        [FromServices] IExtensionLoader extensionLoader,
         CancellationToken ct)
     {
         if (request?.Operations is null || request.Operations.Count == 0)
@@ -126,7 +129,12 @@ public sealed class ConfigController : ControllerBase
 
         try
         {
-            var result = await writer.ApplyPatchAsync(operations, "before-config-patch", request.ExpectedRevision, ct);
+            var result = await writer.ApplyPatchAsync(
+                operations,
+                "before-config-patch",
+                request.ExpectedRevision,
+                ct,
+                ScopeValidation(extensionLoader));
             if (!result.Success)
                 return BadRequest(new ConfigPatchResponse(false, null, result.Errors));
 
@@ -178,14 +186,22 @@ public sealed class ConfigController : ControllerBase
         string section,
         [FromBody] JsonNode value,
         [FromServices] PlatformConfigWriter writer,
+        [FromServices] IExtensionLoader extensionLoader,
         CancellationToken ct)
     {
         // Prevent updating agents via this endpoint (use /api/agents instead)
         if (section.Equals("agents", StringComparison.OrdinalIgnoreCase))
             return BadRequest("Use /api/agents for agent management.");
 
-        await writer.UpdateSectionAsync(section, value, ct);
-        return Ok(new { message = $"Section '{section}' updated. Changes will be applied automatically." });
+        try
+        {
+            await writer.UpdateSectionAsync(section, value, ct, additionalValidation: ScopeValidation(extensionLoader));
+            return Ok(new { message = $"Section '{section}' updated. Changes will be applied automatically." });
+        }
+        catch (PlatformConfigSectionGuardException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     /// <summary>
@@ -197,10 +213,21 @@ public sealed class ConfigController : ControllerBase
         string key,
         [FromBody] JsonNode value,
         [FromServices] PlatformConfigWriter writer,
+        [FromServices] IExtensionLoader extensionLoader,
         CancellationToken ct)
     {
-        await writer.UpdateSectionEntryAsync(section, key, value, ct);
-        return Ok(new { message = $"Entry '{key}' in section '{section}' updated." });
+        if (section.Equals("agents", StringComparison.OrdinalIgnoreCase))
+            return BadRequest("Use /api/agents for agent management.");
+
+        try
+        {
+            await writer.UpdateSectionEntryAsync(section, key, value, ct, ScopeValidation(extensionLoader));
+            return Ok(new { message = $"Entry '{key}' in section '{section}' updated." });
+        }
+        catch (PlatformConfigSectionGuardException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     /// <summary>
@@ -486,6 +513,14 @@ public sealed class ConfigController : ControllerBase
 
     private static JsonObject SerializeConfig(PlatformConfig config)
         => JsonSerializer.SerializeToNode(config, WriteOptions)?.AsObject() ?? new JsonObject();
+
+    private static Func<JsonObject, JsonObject, IReadOnlyList<string>> ScopeValidation(IExtensionLoader extensionLoader)
+    {
+        ArgumentNullException.ThrowIfNull(extensionLoader);
+        var loadedExtensions = extensionLoader.GetLoaded();
+        return (before, candidate) =>
+            ExtensionConfigurationScopeValidator.ValidateChanges(before, candidate, loadedExtensions);
+    }
 
     private static void RedactSecrets(JsonObject config)
         => ConfigSecretMerge.Redact(config);

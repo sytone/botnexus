@@ -442,7 +442,8 @@ public sealed class CronController(
         if (!IsCallerAuthorizedFor(existing))
             return StatusCode(StatusCodes.Status403Forbidden, new { error = ForbiddenMessage });
 
-        return Ok(await store.GetRunHistoryAsync(typedJobId, limit, cancellationToken));
+        var runs = await store.GetRunHistoryAsync(typedJobId, limit, cancellationToken);
+        return Ok(await scheduler.GetRunHealthAsync(runs, cancellationToken));
     }
 
     /// <summary>

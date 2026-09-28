@@ -1023,8 +1023,9 @@ public sealed class ChatPanelTests : IDisposable
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
-        cut.Find("[data-testid='chat-pin-conversation-btn']");
-        cut.Find("[data-testid='chat-archive-conversation-btn']");
+        cut.Find("[data-testid='conversation-actions-trigger']").Click();
+        cut.Find("[data-action-id='pin']");
+        cut.Find("[data-action-id='archive']");
     }
 
     [Fact]
@@ -1035,7 +1036,7 @@ public sealed class ChatPanelTests : IDisposable
         _store.SetActiveConversation("agent-1", "conv-1");
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
-        await cut.InvokeAsync(() => cut.Find("[data-testid='chat-pin-conversation-btn']").Click());
+        await cut.InvokeAsync(() => { cut.Find("[data-testid='conversation-actions-trigger']").Click(); cut.Find("[data-action-id='pin']").Click(); });
 
         await _interaction.Received(1).SetConversationPinnedAsync("agent-1", "conv-1", true);
     }
@@ -1048,9 +1049,9 @@ public sealed class ChatPanelTests : IDisposable
         _store.SetActiveConversation("agent-1", "conv-1");
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
-        var pinButton = cut.Find("[data-testid='chat-pin-conversation-btn']");
-        pinButton.GetAttribute("aria-label").ShouldBe("Unpin conversation");
-        pinButton.GetAttribute("aria-pressed").ShouldBe("true");
+        cut.Find("[data-testid='conversation-actions-trigger']").Click();
+        var pinButton = cut.Find("[data-action-id='pin']");
+        pinButton.TextContent.Trim().ShouldBe("Unpin");
 
         await cut.InvokeAsync(() => pinButton.Click());
 
@@ -1068,7 +1069,7 @@ public sealed class ChatPanelTests : IDisposable
         _store.SetActiveConversation("agent-1", "conv-1");
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
-        await cut.InvokeAsync(() => cut.Find("[data-testid='chat-archive-conversation-btn']").Click());
+        await cut.InvokeAsync(() => { cut.Find("[data-testid='conversation-actions-trigger']").Click(); cut.Find("[data-action-id='archive']").Click(); });
 
         var invocation = Assert.Single(_ctx.JSInterop.Invocations, call => call.Identifier == "confirm");
         Assert.Single(invocation.Arguments).ShouldBe("Archive 'Keep me'?");
@@ -1083,7 +1084,7 @@ public sealed class ChatPanelTests : IDisposable
         _store.SetActiveConversation("agent-1", "conv-1");
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
-        await cut.InvokeAsync(() => cut.Find("[data-testid='chat-archive-conversation-btn']").Click());
+        await cut.InvokeAsync(() => { cut.Find("[data-testid='conversation-actions-trigger']").Click(); cut.Find("[data-action-id='archive']").Click(); });
 
         await _interaction.Received(1).ArchiveConversationAsync("agent-1", "conv-1");
     }
@@ -1097,8 +1098,9 @@ public sealed class ChatPanelTests : IDisposable
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
-        Assert.Empty(cut.FindAll("[data-testid='chat-pin-conversation-btn']"));
-        Assert.Empty(cut.FindAll("[data-testid='chat-archive-conversation-btn']"));
+        cut.Find("[data-testid='conversation-actions-trigger']").Click();
+        Assert.Empty(cut.FindAll("[data-action-id='pin']"));
+        Assert.Empty(cut.FindAll("[data-action-id='archive']"));
     }
 
     [Fact]
@@ -1112,8 +1114,7 @@ public sealed class ChatPanelTests : IDisposable
 
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
-        Assert.Empty(cut.FindAll("[data-testid='chat-pin-conversation-btn']"));
-        Assert.Empty(cut.FindAll("[data-testid='chat-archive-conversation-btn']"));
+        Assert.Empty(cut.FindAll("[data-testid='conversation-actions-trigger']"));
     }
 
     [Fact]

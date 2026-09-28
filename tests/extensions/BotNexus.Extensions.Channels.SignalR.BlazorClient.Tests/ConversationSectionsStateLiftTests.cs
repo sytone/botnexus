@@ -85,13 +85,13 @@ public sealed class ConversationSectionsStateLiftTests : IDisposable
         SeedSections("""[{"sectionId":"sec_1","agentId":"a-1","name":"Work","order":0,"isCollapsed":false}]""");
 
         var cut = RenderLayout();
-        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-section-btn']").Click());
+        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-actions-trigger']").Click());
 
         cut.WaitForAssertion(() =>
         {
-            var items = cut.FindAll("[data-testid='conversation-section-menu-item']");
+            var items = cut.FindAll("[data-action-id^='move-']:not([data-action-id='move-none'])");
             Assert.Single(items);
-            Assert.Equal("Work", items[0].TextContent.Trim());
+            Assert.Equal("Move to: Work", items[0].TextContent.Trim());
         });
 
         // Author new section data purely through the lifted service - no panel interaction at all.
@@ -101,7 +101,7 @@ public sealed class ConversationSectionsStateLiftTests : IDisposable
 
         cut.WaitForAssertion(() =>
         {
-            var ids = cut.FindAll("[data-testid='conversation-section-menu-item']")
+            var ids = cut.FindAll("[data-action-id^='move-']:not([data-action-id='move-none'])")
                 .Select(e => e.GetAttribute("data-section-id"))
                 .ToList();
             Assert.Equal(["sec_1", "sec_2"], ids);
@@ -116,13 +116,13 @@ public sealed class ConversationSectionsStateLiftTests : IDisposable
             """{"c-1":"sec_1"}""");
 
         var cut = RenderLayout();
-        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-section-btn']").Click());
+        cut.WaitForAssertion(() => cut.Find("[data-testid='conversation-actions-trigger']").Click());
 
         cut.WaitForAssertion(() =>
         {
             // "active" comes from ConversationSectionsState.GetAssignedSectionId - the load-bearing lookup.
-            Assert.Contains("active", cut.Find("[data-testid='conversation-section-menu-item']").GetAttribute("class"));
-            Assert.DoesNotContain("active", cut.Find("[data-testid='conversation-section-menu-none']").GetAttribute("class"));
+            Assert.Contains("(current)", cut.Find("[data-action-id='move-sec_1']").TextContent);
+            Assert.DoesNotContain("(current)", cut.Find("[data-action-id='move-none']").TextContent);
         });
     }
 
