@@ -170,6 +170,8 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
         var gateway = schema["schema"]!["properties"]!["gateway"]!.AsObject();
         var gatewayProperties = gateway["properties"]!.AsObject();
         gatewayProperties["listenUrl"]!["x-ui-group"] = "network";
+        gatewayProperties["world"]!["x-ui-group"] = "network";
+        gatewayProperties["apiKeys"]!["x-ui-group"] = "network";
         gatewayProperties["logLevel"]!["x-ui-group"] = "logging";
         ConfigureServices(new FakeConfigApiHandler(schema, SampleConfig()));
 
@@ -214,6 +216,8 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
         var schema = BuildSchema();
         var gatewayProperties = schema["schema"]!["properties"]!["gateway"]!["properties"]!.AsObject();
         gatewayProperties["listenUrl"]!["x-ui-group"] = "network";
+        gatewayProperties["world"]!["x-ui-group"] = "network";
+        gatewayProperties["apiKeys"]!["x-ui-group"] = "network";
         gatewayProperties["logLevel"]!["x-ui-group"] = "logging";
         ConfigureServices(new FakeConfigApiHandler(schema, SampleConfig()));
 
