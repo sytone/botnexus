@@ -54,10 +54,7 @@ public sealed class SkillsWorldDefaultCheck : IConfigCheck
     }
 
     public void Apply(ConfigDocument config)
-    {
-        config.Set(ExtensionsBlockCheck.ExtensionsEnabledPath, true);
-        config.Set(SkillsEnabledPath, true);
-    }
+        => config.Set(SkillsEnabledPath, true);
 }
 
 /// <summary>

@@ -2032,7 +2032,7 @@ public sealed class PlatformConfigValidationTests
     }
 
     [Fact]
-    public async Task ExtensionScopeBags_AreStoredSeparately_AndStaleDefaultsAreRejected()
+    public async Task ExtensionScopeBags_AreStoredSeparately_AndLegacyDefaultsAreMigrated()
     {
         const string json = """
             {
@@ -2062,9 +2062,11 @@ public sealed class PlatformConfigValidationTests
             File.Delete(path);
         }
 
-        var errors = PlatformConfigLoader.ValidateRawJson("""{"gateway":{"extensions":{"defaults":{"sample":{}}}}}""");
-        errors.ShouldContain(error => error.Contains("gateway.extensions.defaults", StringComparison.Ordinal)
-            && error.Contains("agents.defaults.extensions", StringComparison.Ordinal));
+        const string legacyJson = """{"gateway":{"extensions":{"defaults":{"sample":{"scope":"legacy-default"}}}}}""";
+        PlatformConfigLoader.ValidateRawJson(legacyJson).ShouldBeEmpty();
+        var migrated = PlatformConfigLoader.MaterializeConfig(legacyJson);
+        migrated.AgentDefaults!.Extensions!["sample"].GetProperty("scope").GetString()
+            .ShouldBe("legacy-default");
     }
 
     [Fact]

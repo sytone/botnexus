@@ -2262,12 +2262,13 @@ against the generated registry, so a check added to the code without a row here 
 
 ## doctor config
 
-Guided config migration. Compares your existing `config.json` against a set of built-in checks, reports any missing or outdated settings, and optionally applies the fixes in place. Operates offline — no running gateway required.
+Guided config migration. Reads the effective persisted configuration from `config.json`, the SQLite configuration store, or both; reports missing or outdated settings; and optionally applies fixes through the canonical writer to every configured backend. Operates offline — no running gateway required.
 
 Current checks are:
 
 | Check | Id | Reports |
 |---|---|---|
+| Legacy gateway extensions | `legacy-gateway-extensions` | Loader settings still use `gateway.extensions.path`/`enabled`, or shared agent defaults still use `gateway.extensions.defaults`. The fix moves them to `gateway.extensionLoader` and `agents.defaults.extensions` without overwriting canonical values. |
 | Extensions block | `extensions-block` | The `gateway.extensionLoader` block is absent or has extensions disabled. |
 | Skills agent default | `skills-world-default` | The Skills extension has no shared agent default in `agents.defaults.extensions`. |
 | Cron configuration | `cron-enabled` | The cron scheduler block is absent from config. |

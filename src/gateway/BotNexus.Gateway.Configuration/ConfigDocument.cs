@@ -62,6 +62,9 @@ public sealed class ConfigDocument
     public string ToJsonString()
         => _root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
 
+    /// <summary>Creates an independent copy that preserves every JSON value kind.</summary>
+    internal ConfigDocument DeepClone() => new(_root.DeepClone().AsObject());
+
     // ---------------------------------------------------------------- reads
 
     /// <summary>

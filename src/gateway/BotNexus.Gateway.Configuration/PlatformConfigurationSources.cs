@@ -152,7 +152,7 @@ public static class PlatformConfigurationSources
             // reads when the builder is built, which happens below - so handing it a stream we then
             // close yields an empty, silently wrong configuration.
             var buffer = new MemoryStream(fileSystem.File.ReadAllBytes(configPath));
-            builder.AddJsonStream(buffer);
+            builder.AddAcceptedRawJsonStream(buffer);
         }
 
         var directory = fileSystem.Path.GetDirectoryName(configPath);
@@ -167,9 +167,9 @@ public static class PlatformConfigurationSources
             }
         }
 
-        // The raw-JSON post-configure step reads the physical file directly, so it is given no path
-        // here: an injected filesystem's file may not exist on disk at all. It falls back to the
-        // provider scan, finds no physical JSON provider, and leaves the bound values alone.
+        // The stream provider retains the exact parsed document, so post-configuration can perform
+        // raw-shape normalization without rereading a physical file that may not exist (or may be
+        // stale relative to a higher-precedence SQLite provider).
         return BuildMonitor(builder.Build(), configFilePath: null);
     }
 

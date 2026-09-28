@@ -92,8 +92,7 @@ public sealed class ConfigChecksTests
         new SkillsWorldDefaultCheck().Apply(config);
 
         config.GetBool("agents.defaults.extensions.botnexus-skills.enabled").ShouldBe(true);
-        // extensions block should also be enabled
-        config.GetBool("gateway.extensionLoader.enabled").ShouldBe(true);
+        config.GetBool("gateway.extensionLoader.enabled").ShouldBeNull();
     }
 
     [Fact]

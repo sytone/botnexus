@@ -473,7 +473,7 @@ public sealed class ConfigController : ControllerBase
                 .ToArray();
             return Ok(new ConfigValidationResponse(errors.Length == 0, resolvedPath, warnings, errors));
         }
-        catch (Exception ex) when (ex is JsonException or InvalidDataException or FormatException)
+        catch (Exception ex) when (ex is JsonException or InvalidDataException or FormatException or OptionsValidationException)
         {
             var parseMessage = ex.GetBaseException() is JsonException jsonException
                 ? jsonException.Message
@@ -492,13 +492,16 @@ public sealed class ConfigController : ControllerBase
 
     private static PlatformConfig LoadConfigFromPath(string path)
     {
-        var fileConfiguration = new ConfigurationBuilder()
-            .AddJsonFile(path, optional: false, reloadOnChange: false)
+        // This endpoint validates the explicitly requested document, not the host's provider graph.
+        // Use the exact-document stream provider so objects, arrays, nulls, and legacy root shape
+        // survive without introducing a second direct PlatformConfig loader in production code.
+        var bytes = System.IO.File.ReadAllBytes(path);
+        var configuration = new ConfigurationBuilder()
+            .AddAcceptedRawJsonStream(new MemoryStream(bytes))
             .Build();
-
         var config = new PlatformConfig();
-        fileConfiguration.Bind(config);
-        new PlatformConfigPostConfigure(fileConfiguration, path).PostConfigure(Options.DefaultName, config);
+        configuration.Bind(config);
+        PlatformConfigPostConfigure.ApplyAuthoritativeRawShape(configuration, config);
         return config;
     }
 
