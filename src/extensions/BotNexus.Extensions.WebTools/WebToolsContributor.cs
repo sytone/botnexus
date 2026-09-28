@@ -54,15 +54,16 @@ public sealed class WebToolsContributor : IAgentToolContributor
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var config = ResolveExtensionConfig<WebToolsConfig>(context.Descriptor, "botnexus-web");
-        if (config is null)
+        var defaults = ExtensionConfigBinder.BindAgentDefaults<WebToolsOverrides>(context.Descriptor, "botnexus-web");
+        var named = ExtensionConfigBinder.BindNamedAgent<WebToolsOverrides>(context.Descriptor, "botnexus-web");
+        if (defaults is null && named is null)
             return Task.FromResult(new AgentToolContribution([]));
 
         var tools = new List<IAgentTool>();
-        var fetchConfig = config.Fetch ?? new WebFetchConfig();
+        var fetchConfig = ResolveFetch(named?.Fetch, defaults?.Fetch);
         tools.Add(new WebFetchTool(fetchConfig, _transportFactory(fetchConfig), _secretRedactor));
 
-        if (config.Search is { } searchConfig)
+        if (ResolveSearch(named?.Search, defaults?.Search) is { } searchConfig)
         {
             var useCopilotProvider = string.Equals(searchConfig.Provider, "copilot", StringComparison.OrdinalIgnoreCase);
             var hasApiKey = !string.IsNullOrWhiteSpace(searchConfig.ApiKey);
@@ -87,6 +88,49 @@ public sealed class WebToolsContributor : IAgentToolContributor
         return Task.FromResult(new AgentToolContribution(tools));
     }
 
-    private static T? ResolveExtensionConfig<T>(AgentDescriptor descriptor, string extensionId) where T : class
-        => ExtensionConfigBinder.Bind<T>(descriptor, extensionId);
+    private static WebSearchConfig? ResolveSearch(WebSearchOverrides? named, WebSearchOverrides? defaults)
+    {
+        if (named is null && defaults is null)
+            return null;
+        return new WebSearchConfig
+        {
+            Provider = named?.Provider ?? defaults?.Provider ?? "brave",
+            ApiKey = named?.ApiKey ?? defaults?.ApiKey,
+            MaxResults = named?.MaxResults ?? defaults?.MaxResults ?? 5
+        };
+    }
+
+    private sealed class WebToolsOverrides
+    {
+        public WebSearchOverrides? Search { get; set; }
+        public WebFetchOverrides? Fetch { get; set; }
+    }
+
+    private sealed class WebSearchOverrides
+    {
+        public string? Provider { get; set; }
+        public string? ApiKey { get; set; }
+        public int? MaxResults { get; set; }
+    }
+
+    private sealed class WebFetchOverrides
+    {
+        public int? MaxLengthChars { get; set; }
+        public int? TimeoutSeconds { get; set; }
+        public string? UserAgent { get; set; }
+        public bool? AllowPrivateNetworks { get; set; }
+        public IReadOnlyList<string>? AdditionalBlockedHosts { get; set; }
+        public long? MaxResponseBytes { get; set; }
+    }
+
+    private static WebFetchConfig ResolveFetch(WebFetchOverrides? named, WebFetchOverrides? defaults)
+        => new()
+        {
+            MaxLengthChars = named?.MaxLengthChars ?? defaults?.MaxLengthChars ?? 20_000,
+            TimeoutSeconds = named?.TimeoutSeconds ?? defaults?.TimeoutSeconds ?? 30,
+            UserAgent = named?.UserAgent ?? defaults?.UserAgent ?? "BotNexus/1.0 (compatible; bot)",
+            AllowPrivateNetworks = named?.AllowPrivateNetworks ?? defaults?.AllowPrivateNetworks ?? false,
+            AdditionalBlockedHosts = named?.AdditionalBlockedHosts ?? defaults?.AdditionalBlockedHosts ?? [],
+            MaxResponseBytes = named?.MaxResponseBytes ?? defaults?.MaxResponseBytes ?? 16L * 1024 * 1024
+        };
 }

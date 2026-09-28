@@ -7,6 +7,7 @@ using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Abstractions.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -613,7 +614,8 @@ public sealed class AgentsControllerTests
             registry,
             Mock.Of<IAgentSupervisor>(),
             writer.Object,
-            [CreateNotifier().Object]);
+            [CreateNotifier().Object],
+            extensionLoader: ExtensionLoader(("botnexus-browser", [ExtensionConfigurationScope.Agent])));
         using var browser = System.Text.Json.JsonDocument.Parse("{\"browser\":{\"autoProvision\":true}}");
 
         var result = await controller.PutExtensionConfig(
@@ -665,6 +667,260 @@ public sealed class AgentsControllerTests
         saved.ShouldNotBeNull();
         saved.ExtensionConfig.ShouldContainKey("unrelated");
         saved.ExtensionConfig.ShouldNotContainKey("botnexus-browser");
+    }
+
+    [Fact]
+    public async Task Register_Discards_client_supplied_default_extension_config()
+    {
+        using var supplied = System.Text.Json.JsonDocument.Parse("""{"enabled":true}""");
+        var descriptor = CreateDescriptor("agent-a") with
+        {
+            DefaultExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["client-injected"] = supplied.RootElement.Clone()
+            }
+        };
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            new NoOpAgentConfigurationWriter());
+
+        var result = await controller.Register(descriptor, CancellationToken.None);
+
+        result.ShouldBeOfType<CreatedAtActionResult>();
+        registry.Get(AgentId.From("agent-a"))!.DefaultExtensionConfig.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Update_Preserves_server_owned_default_extension_config()
+    {
+        using var existing = System.Text.Json.JsonDocument.Parse("""{"enabled":true}""");
+        using var injected = System.Text.Json.JsonDocument.Parse("""{"enabled":false}""");
+        var original = CreateDescriptor("agent-a") with
+        {
+            DefaultExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["server-default"] = existing.RootElement.Clone()
+            }
+        };
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(original);
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            new NoOpAgentConfigurationWriter());
+        var candidate = original with
+        {
+            DisplayName = "updated",
+            DefaultExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["client-injected"] = injected.RootElement.Clone()
+            }
+        };
+
+        var result = await controller.Update("agent-a", candidate, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        var updated = registry.Get(AgentId.From("agent-a"))!;
+        updated.DefaultExtensionConfig.ShouldContainKey("server-default");
+        updated.DefaultExtensionConfig.ShouldNotContainKey("client-injected");
+    }
+
+    [Fact]
+    public async Task Register_WithoutExtensionLoader_Preserves_historical_direct_call_behavior()
+    {
+        using var config = System.Text.Json.JsonDocument.Parse("{}");
+        var descriptor = CreateDescriptor("agent-a") with
+        {
+            ExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["not-loaded"] = config.RootElement.Clone()
+            }
+        };
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            new NoOpAgentConfigurationWriter());
+
+        var result = await controller.Register(descriptor, CancellationToken.None);
+
+        result.ShouldBeOfType<CreatedAtActionResult>();
+        registry.Get(AgentId.From("agent-a"))!.ExtensionConfig.ShouldContainKey("not-loaded");
+    }
+
+    [Fact]
+    public async Task PutExtensionConfig_Rejects_gateway_only_extension()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            writer.Object,
+            extensionLoader: ExtensionLoader(("gateway-only", [ExtensionConfigurationScope.Gateway])));
+        using var config = System.Text.Json.JsonDocument.Parse("{}");
+
+        var result = await controller.PutExtensionConfig(
+            "agent-a", "gateway-only", config.RootElement, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+        writer.Verify(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PutExtensionConfig_Accepts_extension_with_agent_scope(bool hasAdditionalScope)
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor("agent-a"));
+        var scopes = hasAdditionalScope
+            ? new[] { ExtensionConfigurationScope.Gateway, ExtensionConfigurationScope.Agent }
+            : [ExtensionConfigurationScope.Agent];
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            new NoOpAgentConfigurationWriter(),
+            extensionLoader: ExtensionLoader(("agent-extension", scopes)));
+        using var config = System.Text.Json.JsonDocument.Parse("{}");
+
+        var result = await controller.PutExtensionConfig(
+            "agent-a", "agent-extension", config.RootElement, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+    }
+
+    [Fact]
+    public async Task Register_Rejects_new_extension_entry_without_loaded_agent_scope_manifest()
+    {
+        using var config = System.Text.Json.JsonDocument.Parse("{}");
+        var descriptor = CreateDescriptor("agent-a") with
+        {
+            ExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["gateway-only"] = config.RootElement.Clone()
+            }
+        };
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var controller = new AgentsController(
+            new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance),
+            Mock.Of<IAgentSupervisor>(),
+            writer.Object,
+            extensionLoader: ExtensionLoader(("gateway-only", [ExtensionConfigurationScope.Gateway])));
+
+        var result = await controller.Register(descriptor, CancellationToken.None);
+
+        result.ShouldBeOfType<BadRequestObjectResult>();
+        writer.Verify(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Update_Rejects_changed_stale_extension_entry()
+    {
+        using var originalConfig = System.Text.Json.JsonDocument.Parse("{\"legacy\":true}");
+        using var changedConfig = System.Text.Json.JsonDocument.Parse("{\"legacy\":false}");
+        var original = CreateDescriptor("agent-a") with
+        {
+            ExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["missing-extension"] = originalConfig.RootElement.Clone()
+            }
+        };
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(original);
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            writer.Object,
+            extensionLoader: ExtensionLoader());
+        var candidate = original with
+        {
+            ExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["missing-extension"] = changedConfig.RootElement.Clone()
+            }
+        };
+
+        var result = await controller.Update("agent-a", candidate, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<BadRequestObjectResult>();
+        writer.Verify(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Update_Preserves_unchanged_stale_extension_entry()
+    {
+        using var config = System.Text.Json.JsonDocument.Parse("{\"legacy\":true}");
+        var original = CreateDescriptor("agent-a") with
+        {
+            ExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["missing-extension"] = config.RootElement.Clone()
+            }
+        };
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(original);
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            new NoOpAgentConfigurationWriter(),
+            extensionLoader: ExtensionLoader());
+
+        var result = await controller.Update(
+            "agent-a", original with { DisplayName = "updated" }, CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        registry.Get(AgentId.From("agent-a"))!.ExtensionConfig.ShouldContainKey("missing-extension");
+    }
+
+    [Fact]
+    public async Task Update_Allows_removing_stale_extension_entry()
+    {
+        using var config = System.Text.Json.JsonDocument.Parse("{\"legacy\":true}");
+        var original = CreateDescriptor("agent-a") with
+        {
+            ExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>
+            {
+                ["missing-extension"] = config.RootElement.Clone()
+            }
+        };
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(original);
+        var controller = new AgentsController(
+            registry,
+            Mock.Of<IAgentSupervisor>(),
+            new NoOpAgentConfigurationWriter(),
+            extensionLoader: ExtensionLoader());
+
+        var result = await controller.Update(
+            "agent-a",
+            original with { ExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>() },
+            CancellationToken.None);
+
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        registry.Get(AgentId.From("agent-a"))!.ExtensionConfig.ShouldBeEmpty();
+    }
+
+    private static IExtensionLoader ExtensionLoader(
+        params (string Id, IReadOnlyList<ExtensionConfigurationScope> Scopes)[] extensions)
+    {
+        var loader = new Mock<IExtensionLoader>();
+        loader.Setup(value => value.GetLoaded()).Returns(extensions.Select(extension => new LoadedExtension
+        {
+            ExtensionId = extension.Id,
+            Name = extension.Id,
+            Version = "1.0.0",
+            DirectoryPath = extension.Id,
+            EntryAssemblyPath = extension.Id + ".dll",
+            LoadedAtUtc = DateTimeOffset.UtcNow,
+            ExtensionTypes = ["tool"],
+            ConfigurationScopes = extension.Scopes
+        }).ToArray());
+        return loader.Object;
     }
 
     private static AgentsController CreateController(IAgentRegistry registry, IAgentSupervisor? supervisor = null)

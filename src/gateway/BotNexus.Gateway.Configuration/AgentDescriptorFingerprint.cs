@@ -105,6 +105,7 @@ internal static class AgentDescriptorFingerprint
         // that inline config edits (e.g. metadata, extensions, memory) are also reflected.
         builder.Append(SerializeStable(d.Metadata)).Append('\u001f');
         builder.Append(SerializeStable(d.IsolationOptions)).Append('\u001f');
+        builder.Append(SerializeExtensions(d.DefaultExtensionConfig)).Append('\u001f');
         builder.Append(SerializeExtensions(d.ExtensionConfig)).Append('\u001f');
         builder.Append(SerializeStable(d.Memory)).Append('\u001f');
         builder.Append(SerializeStable(d.Soul)).Append('\u001f');

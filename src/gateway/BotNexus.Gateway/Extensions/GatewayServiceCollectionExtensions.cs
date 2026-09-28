@@ -428,7 +428,9 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IExtensionStateStore>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
-            var dbPath = Path.Combine(home.RootPath, "data", "extension-state.db");
+            var dbPath = SqliteStorePathPolicy.ResolveOwnedStorePath(
+                Path.Combine(home.RootPath, "data"),
+                "extension-state");
             serviceProvider.GetRequiredService<ISqliteDatabaseRegistry>().Register(dbPath);
             var fs = serviceProvider.GetRequiredService<IFileSystem>();
             var storeLogger = serviceProvider.GetRequiredService<ILogger<SqliteExtensionStateStore>>();
@@ -670,7 +672,10 @@ public static class GatewayServiceCollectionExtensions
             // back" is an obvious operation for whoever needs it at 3am.
             var fs = sp.GetRequiredService<IFileSystem>();
             var directory = PlatformConfigLoader.GetDefaultConfigDirectory(fs);
-            return new SqliteConfigStore($"Data Source={Path.Combine(directory, "config.db")}");
+            var storePath = ConfigStoreBootstrap.ResolveStorePath(
+                Path.Combine(directory, "config.json"),
+                fs);
+            return new SqliteConfigStore($"Data Source={storePath}");
         });
 
         // #2635: additively reconcile the bundled agent catalog into config.json. Registered

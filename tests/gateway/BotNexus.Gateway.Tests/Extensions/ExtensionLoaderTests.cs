@@ -61,6 +61,34 @@ public sealed class ExtensionLoaderTests : IDisposable
     }
 
     [Fact]
+    public async Task DiscoverAsync_RejectsUnknownConfigurationScope()
+    {
+        var extensionDirectory = Path.Combine(_rootPath, "bad-scope");
+        Directory.CreateDirectory(extensionDirectory);
+        await File.WriteAllTextAsync(Path.Combine(extensionDirectory, "entry.dll"), "placeholder");
+        await File.WriteAllTextAsync(Path.Combine(extensionDirectory, "botnexus-extension.json"),
+            """{"id":"bad-scope","name":"Bad scope","version":"1.0.0","entryAssembly":"entry.dll","extensionTypes":["tool"],"configurationScopes":["tenant"],"configSchema":[{"id":"enabled"}]}""");
+
+        var discovered = await CreateLoader(new ServiceCollection()).DiscoverAsync(_rootPath);
+
+        discovered.ShouldNotContain(item => item.Manifest.Id == "bad-scope");
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_RejectsNumericConfigurationScope()
+    {
+        var extensionDirectory = Path.Combine(_rootPath, "numeric-scope");
+        Directory.CreateDirectory(extensionDirectory);
+        await File.WriteAllTextAsync(Path.Combine(extensionDirectory, "entry.dll"), "placeholder");
+        await File.WriteAllTextAsync(Path.Combine(extensionDirectory, "botnexus-extension.json"),
+            """{"id":"numeric-scope","name":"Numeric scope","version":"1.0.0","entryAssembly":"entry.dll","extensionTypes":["tool"],"configurationScopes":[0],"configSchema":[{"id":"enabled"}]}""");
+
+        var discovered = await CreateLoader(new ServiceCollection()).DiscoverAsync(_rootPath);
+
+        discovered.ShouldNotContain(item => item.Manifest.Id == "numeric-scope");
+    }
+
+    [Fact]
     public async Task DiscoverAsync_AllowsMediaHandlerExtensionType()
     {
         var mediaHandler = Path.Combine(_rootPath, "media-handler");

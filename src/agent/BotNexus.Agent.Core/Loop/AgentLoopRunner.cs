@@ -380,7 +380,8 @@ public static class AgentLoopRunner
 
             if (config.EvaluateRunCompletion is not null)
             {
-                lastCompletionDecision = await config.EvaluateRunCompletion(cancellationToken).ConfigureAwait(false);
+                lastCompletionDecision = ValidateCompletionDecision(
+                    await config.EvaluateRunCompletion(cancellationToken).ConfigureAwait(false));
                 if (lastCompletionDecision.Status == RunCompletionStatus.Working)
                 {
                     if (completionContinuationAttempts >= config.EffectiveMaxCompletionContinuations)
@@ -404,6 +405,28 @@ public static class AgentLoopRunner
             metrics.ToMetrics(endTime2),
             endTime2,
             completion)).ConfigureAwait(false);
+    }
+
+    private static RunCompletionDecision ValidateCompletionDecision(RunCompletionDecision decision)
+    {
+        if (decision.Status != RunCompletionStatus.Parked)
+        {
+            return decision;
+        }
+
+        var hasValidReason = decision.StopReason is { } reason && Enum.IsDefined(reason);
+        var hasStructuredEvidence = !string.IsNullOrWhiteSpace(decision.Evidence)
+            && !string.IsNullOrWhiteSpace(decision.ContinuationOwner)
+            && !string.IsNullOrWhiteSpace(decision.WakeCondition);
+        if (hasValidReason && hasStructuredEvidence)
+        {
+            return decision;
+        }
+
+        return RunCompletionDecision.Continue(
+            decision.OpenItemIds,
+            "The host reported parked work without a complete structured stop disposition; " +
+            "a reason, evidence, continuation owner, and wake condition are all required.");
     }
 
     private static BotNexus.Agent.Core.Types.UserMessage BuildCompletionContinuation(RunCompletionDecision decision, int attempt)

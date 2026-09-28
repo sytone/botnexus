@@ -75,7 +75,7 @@ public static class PlatformConfigurationSources
         var directory = fs.Path.GetDirectoryName(configPath);
         if (!string.IsNullOrEmpty(directory))
         {
-            var storePath = fs.Path.Combine(directory, ConfigStoreBootstrap.StoreFileName);
+            var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, fs);
             if (fs.File.Exists(storePath))
             {
                 builder.AddSqliteConfigStore(
@@ -158,7 +158,7 @@ public static class PlatformConfigurationSources
         var directory = fileSystem.Path.GetDirectoryName(configPath);
         if (!string.IsNullOrEmpty(directory))
         {
-            var storePath = fileSystem.Path.Combine(directory, ConfigStoreBootstrap.StoreFileName);
+            var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, fileSystem);
             if (fileSystem.File.Exists(storePath))
             {
                 builder.AddSqliteConfigStore(

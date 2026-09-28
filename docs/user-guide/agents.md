@@ -721,7 +721,7 @@ it back up unchanged.
 
 ::: warning Review orphan cleanup before approving it
 `botnexus doctor agents` compares workspace directories with every agent declaration in the
-effective configuration. This includes disabled agents. When `config.db` exists, its SQLite
+effective configuration. This includes disabled agents. When `config.sqlite` exists, its SQLite
 values are authoritative; otherwise BotNexus uses `config.json`.
 
 A disabled agent's workspace is reported as `declared` and is not deleted. A workspace is
@@ -760,12 +760,12 @@ Disabled agents:
 - Retain their configuration for later re-enabling
 - **Keep their workspace directory.** `botnexus doctor agents --cleanup-orphans` deletes only
   workspaces whose agent id is absent from the effective configuration. This includes authoritative
-  SQLite declarations in `config.db`, not only entries in `config.json`. A disabled agent is still
+  SQLite declarations in `config.sqlite`, not only entries in `config.json`. A disabled agent is still
   declared and is reported as `declared`, never `orphaned`.
 
 ### Removal
 
-Remove an agent from the effective configuration. If `config.db` exists, update the agent through
+Remove an agent from the effective configuration. If `config.sqlite` exists, update the agent through
 a supported configuration command or disable the store before editing `config.json`; deleting only
 the JSON mirror does not remove an authoritative SQLite declaration. If you also created a separate
 agent JSON file under `~/.botnexus/agents/`, remove that declaration too. Configuration reload then

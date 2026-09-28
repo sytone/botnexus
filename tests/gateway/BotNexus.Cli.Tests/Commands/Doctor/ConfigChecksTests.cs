@@ -32,7 +32,7 @@ public sealed class ConfigChecksTests
     public void ExtensionsBlockCheck_NotApplicableWhenEnabled()
     {
         new ExtensionsBlockCheck()
-            .IsApplicable(Parse("{\"gateway\":{\"extensions\":{\"enabled\":true}}}"))
+            .IsApplicable(Parse("{\"gateway\":{\"extensionLoader\":{\"enabled\":true}}}"))
             .ShouldBeFalse();
     }
 
@@ -40,7 +40,7 @@ public sealed class ConfigChecksTests
     public void ExtensionsBlockCheck_ApplicableWhenExplicitlyDisabled()
     {
         new ExtensionsBlockCheck()
-            .IsApplicable(Parse("{\"gateway\":{\"extensions\":{\"enabled\":false}}}"))
+            .IsApplicable(Parse("{\"gateway\":{\"extensionLoader\":{\"enabled\":false}}}"))
             .ShouldBeTrue();
     }
 
@@ -50,7 +50,7 @@ public sealed class ConfigChecksTests
         var config = ConfigDocument.Empty();
         new ExtensionsBlockCheck().Apply(config);
 
-        config.GetBool("gateway.extensions.enabled").ShouldBe(true);
+        config.GetBool("gateway.extensionLoader.enabled").ShouldBe(true);
     }
 
     // ── SkillsWorldDefaultCheck ───────────────────────────────────────────────
@@ -65,7 +65,7 @@ public sealed class ConfigChecksTests
     public void SkillsWorldDefaultCheck_ApplicableWhenSkillsKeyAbsent()
     {
         new SkillsWorldDefaultCheck()
-            .IsApplicable(Parse("{\"gateway\":{\"extensions\":{\"defaults\":{}}}}"))
+            .IsApplicable(Parse("{\"agents\":{\"defaults\":{\"extensions\":{}}}}"))
             .ShouldBeTrue();
     }
 
@@ -73,7 +73,7 @@ public sealed class ConfigChecksTests
     public void SkillsWorldDefaultCheck_NotApplicableWhenPresent()
     {
         new SkillsWorldDefaultCheck()
-            .IsApplicable(Parse("{\"gateway\":{\"extensions\":{\"defaults\":{\"botnexus-skills\":{\"enabled\":true}}}}}"))
+            .IsApplicable(Parse("{\"agents\":{\"defaults\":{\"extensions\":{\"botnexus-skills\":{\"enabled\":true}}}}}"))
             .ShouldBeFalse();
     }
 
@@ -81,7 +81,7 @@ public sealed class ConfigChecksTests
     public void SkillsWorldDefaultCheck_ApplicableWhenExplicitlyDisabled()
     {
         new SkillsWorldDefaultCheck()
-            .IsApplicable(Parse("{\"gateway\":{\"extensions\":{\"defaults\":{\"botnexus-skills\":{\"enabled\":false}}}}}"))
+            .IsApplicable(Parse("{\"agents\":{\"defaults\":{\"extensions\":{\"botnexus-skills\":{\"enabled\":false}}}}}"))
             .ShouldBeTrue();
     }
 
@@ -91,18 +91,18 @@ public sealed class ConfigChecksTests
         var config = ConfigDocument.Empty();
         new SkillsWorldDefaultCheck().Apply(config);
 
-        config.GetBool("gateway.extensions.defaults.botnexus-skills.enabled").ShouldBe(true);
+        config.GetBool("agents.defaults.extensions.botnexus-skills.enabled").ShouldBe(true);
         // extensions block should also be enabled
-        config.GetBool("gateway.extensions.enabled").ShouldBe(true);
+        config.GetBool("gateway.extensionLoader.enabled").ShouldBe(true);
     }
 
     [Fact]
     public void SkillsWorldDefaultCheck_Apply_PreservesExistingDefaults()
     {
-        var config = Parse("{\"gateway\":{\"extensions\":{\"enabled\":true,\"defaults\":{\"other-ext\":{\"enabled\":true}}}}}");
+        var config = Parse("{\"agents\":{\"defaults\":{\"extensions\":{\"other-ext\":{\"enabled\":true}}}}}");
         new SkillsWorldDefaultCheck().Apply(config);
 
-        var defaults = config.GetEntryKeys("gateway.extensions.defaults");
+        var defaults = config.GetEntryKeys("agents.defaults.extensions");
         defaults.ShouldContain("other-ext");
         defaults.ShouldContain("botnexus-skills");
     }

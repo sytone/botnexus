@@ -1,10 +1,11 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Models;
 namespace BotNexus.Gateway.Configuration;
 
 /// <summary>
-/// World-level defaults that are field-merged into each agent's effective config.
+/// Shared agent defaults stored under the reserved agents.defaults block.
 /// Exposed in JSON as <c>agents.defaults</c>.
 /// </summary>
 public sealed class AgentDefaultsConfig
@@ -37,4 +38,7 @@ public sealed class AgentDefaultsConfig
 
     /// <summary>Default file access policy inherited by agents.</summary>
     public FileAccessPolicyConfig? FileAccess { get; set; }
+
+    /// <summary>Raw agent-default extension configuration keyed by extension ID.</summary>
+    public Dictionary<string, JsonElement>? Extensions { get; set; }
 }

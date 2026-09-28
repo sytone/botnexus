@@ -212,7 +212,12 @@ public sealed class PlatformConfigWriter
     /// full authoritative section from disk (e.g. LocationsController, which must be
     /// able to delete entries by omission) get a straight replace.
     /// </param>
-    public async Task UpdateSectionAsync(string sectionName, JsonNode value, CancellationToken ct = default, bool merge = true)
+    public async Task UpdateSectionAsync(
+        string sectionName,
+        JsonNode value,
+        CancellationToken ct = default,
+        bool merge = true,
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
         => await MutateAsync(
             root =>
             {
@@ -243,7 +248,8 @@ public sealed class PlatformConfigWriter
             },
             $"before-{sectionName}-update",
             ct,
-            namedSections: [sectionName]);
+            namedSections: [sectionName],
+            additionalValidation: additionalValidation);
 
     /// <summary>
     /// Reads the current platform configuration together with the revision token it was read at.
@@ -493,7 +499,8 @@ public sealed class PlatformConfigWriter
         IReadOnlyList<ConfigPatchOperation> operations,
         string reason,
         string? expectedRevision = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
     {
         ArgumentNullException.ThrowIfNull(operations);
 
@@ -533,7 +540,8 @@ public sealed class PlatformConfigWriter
             reason,
             validateCandidate: true,
             ConfigPatchApplier.DeclaredSections(operations),
-            ct);
+            ct,
+            additionalValidation);
 
         return errors.Count > 0
             ? new ConfigPatchResult(false, null, errors)
@@ -580,7 +588,12 @@ public sealed class PlatformConfigWriter
     /// <summary>
     /// Updates a keyed entry within a section (e.g., providers.github-copilot).
     /// </summary>
-    public async Task UpdateSectionEntryAsync(string sectionName, string key, JsonNode value, CancellationToken ct = default)
+    public async Task UpdateSectionEntryAsync(
+        string sectionName,
+        string key,
+        JsonNode value,
+        CancellationToken ct = default,
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
         => await MutateAsync(root =>
         {
             if (root[sectionName] is not JsonObject section)
@@ -609,7 +622,7 @@ public sealed class PlatformConfigWriter
             {
                 section[key] = value;
             }
-        }, $"before-{sectionName}-update", ct, namedSections: [sectionName]);
+        }, $"before-{sectionName}-update", ct, namedSections: [sectionName], additionalValidation: additionalValidation);
 
     /// <summary>
     /// Atomically mutates the config document and persists the result.
@@ -623,14 +636,15 @@ public sealed class PlatformConfigWriter
         Action<JsonObject> mutation,
         string reason,
         CancellationToken ct = default,
-        IReadOnlyCollection<string>? namedSections = null)
+        IReadOnlyCollection<string>? namedSections = null,
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
     {
         ArgumentNullException.ThrowIfNull(mutation);
         await MutateAsync(root =>
         {
             mutation(root);
             return Task.CompletedTask;
-        }, reason, ct, namedSections);
+        }, reason, ct, namedSections, additionalValidation);
     }
 
     /// <summary>
@@ -648,7 +662,8 @@ public sealed class PlatformConfigWriter
         Func<JsonObject, Task> mutation,
         string reason,
         CancellationToken ct = default,
-        IReadOnlyCollection<string>? namedSections = null)
+        IReadOnlyCollection<string>? namedSections = null,
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
     {
         ArgumentNullException.ThrowIfNull(mutation);
 
@@ -661,7 +676,8 @@ public sealed class PlatformConfigWriter
             reason,
             validateCandidate: false,
             namedSections,
-            ct);
+            ct,
+            additionalValidation);
 
         // This overload has no error channel in its signature, so a guard rejection must throw or
         // it would be indistinguishable from a successful write - which is precisely the silent
@@ -750,7 +766,8 @@ public sealed class PlatformConfigWriter
         string reason,
         bool validateCandidate,
         IReadOnlyCollection<string>? namedSections,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
     {
         // Lock order is always semaphore -> cross-process file lock (#2134). See
         // CrossProcessConfigLock for the ordering/deadlock argument: the semaphore keeps this
@@ -773,6 +790,13 @@ public sealed class PlatformConfigWriter
             var destroyed = ConfigSectionGuard.FindDestroyedSections(pristine, root, namedSections);
             if (destroyed.Count > 0)
                 return [ConfigSectionGuard.FormatRejection(_configPath, destroyed)];
+
+            if (additionalValidation is not null)
+            {
+                var additionalErrors = additionalValidation(pristine, root);
+                if (additionalErrors.Count > 0)
+                    return additionalErrors;
+            }
 
             if (validateCandidate)
             {

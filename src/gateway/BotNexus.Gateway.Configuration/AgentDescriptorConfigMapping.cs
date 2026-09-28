@@ -96,6 +96,10 @@ public static class AgentDescriptorConfigMapping
     /// <item><see cref="AgentDescriptor.ConversationRetention"/> - there is no corresponding
     /// <c>AgentDefinitionConfig</c> field and the source never reads one, so it cannot round-trip
     /// and is not persisted.</item>
+    /// <item><see cref="AgentDescriptor.DefaultExtensionConfig"/> - server-owned effective values
+    /// copied from <c>agents.defaults.extensions</c>. Agent create/update requests cannot own or
+    /// persist this world default; the server clears injected values on create and preserves its
+    /// existing values on update.</item>
     /// </list>
     /// </remarks>
     public static readonly IReadOnlySet<string> UnsupportedForPersistence = new HashSet<string>(StringComparer.Ordinal)
@@ -103,5 +107,6 @@ public static class AgentDescriptorConfigMapping
         nameof(AgentDescriptor.Order),
         nameof(AgentDescriptor.SystemPrompt),
         nameof(AgentDescriptor.ConversationRetention),
+        nameof(AgentDescriptor.DefaultExtensionConfig),
     };
 }

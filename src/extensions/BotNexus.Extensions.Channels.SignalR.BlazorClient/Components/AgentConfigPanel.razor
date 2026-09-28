@@ -250,7 +250,8 @@
             {
                 _toolExtensions = (await RestClient.GetExtensionDetailsAsync())
                     .Where(extension => extension.Enabled
-                        && extension.ExtensionTypes?.Contains("tool", StringComparer.OrdinalIgnoreCase) == true)
+                        && extension.ExtensionTypes?.Contains("tool", StringComparer.OrdinalIgnoreCase) == true
+                        && extension.ConfigurationScopes?.Contains("agent", StringComparer.OrdinalIgnoreCase) == true)
                     .OrderBy(extension => extension.Name, StringComparer.OrdinalIgnoreCase)
                     .ToList();
             }

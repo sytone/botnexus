@@ -130,13 +130,18 @@ public sealed class CliStorePathsTests : IDisposable
     }
 
     [Fact]
-    public void Resolve_BothExtensionsPresent_PrefersTheWritersSqliteFile()
+    public void Resolve_BothExtensionsPresent_RefusesToGuess()
     {
-        Touch(Path.Combine(_home, "sessions.db"));
-        var expected = Path.Combine(_home, "sessions.sqlite");
-        Touch(expected);
+        var legacy = Path.Combine(_home, "sessions.db");
+        var canonical = Path.Combine(_home, "sessions.sqlite");
+        Touch(legacy);
+        Touch(canonical);
 
-        CliStorePaths.Resolve("sessions", _home).Path.ShouldBe(expected);
+        var exception = Should.Throw<InvalidOperationException>(() =>
+            CliStorePaths.Resolve("sessions", _home));
+
+        exception.Message.ShouldContain(canonical);
+        exception.Message.ShouldContain(legacy);
     }
 
     // ── AC2: explicit --target outranks an ambient BOTNEXUS_DATA_DIR. ──────────────────────────

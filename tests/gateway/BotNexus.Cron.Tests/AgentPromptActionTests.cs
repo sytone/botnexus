@@ -231,6 +231,41 @@ public sealed class AgentPromptActionTests
             Times.Once);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_PublishesSchedulerSessionCallbackToCronTrigger()
+    {
+        var action = new AgentPromptAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var expectedSession = SessionId.From("cron:job-1:run-1");
+        var published = new TaskCompletionSource<SessionId>(TaskCreationOptions.RunContinuationsAsynchronously);
+        trigger.SetupGet(value => value.Type).Returns(TriggerType.Cron);
+        trigger.Setup(value => value.CreateSessionAsync(
+                It.IsAny<AgentId>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<InternalTriggerRequest?>()))
+            .Returns(async (AgentId _, string _, CancellationToken ct, InternalTriggerRequest? request) =>
+            {
+                request.ShouldNotBeNull();
+                request!.SessionCreatedAsync.ShouldNotBeNull();
+                await request.SessionCreatedAsync(expectedSession, ct);
+                return expectedSession;
+            });
+
+        var context = CreateContext(BuildServices(trigger.Object, RegistryReturning(SoulDisabledDescriptor))) with
+        {
+            PersistSessionIdAsync = (sessionId, _) =>
+            {
+                published.TrySetResult(sessionId);
+                return Task.CompletedTask;
+            }
+        };
+
+        await action.ExecuteAsync(context);
+
+        (await published.Task.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe(expectedSession);
+    }
+
     private static IServiceProvider BuildServices(IInternalTrigger trigger, IAgentRegistry? registry = null)
         => new ServiceCollection()
             .AddSingleton<IInternalTrigger>(trigger)

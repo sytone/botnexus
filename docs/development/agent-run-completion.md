@@ -22,7 +22,7 @@ The default automatic continuation limit is two. If every evaluation still retur
 
 The in-process gateway evaluates the conversation's persisted `todo` checklist. It treats `pending` and `in_progress` items as actionable. `done` and `cancelled` are terminal.
 
-A persisted `ask_user` request is currently the only checklist stop disposition the gateway can prove directly. It produces a `Parked` result with `UserInput` as the reason. An assistant sentence such as “I filed an issue,” “phase complete,” or “I will continue later” does not create a stop disposition.
+A persisted `ask_user` request is currently the only checklist stop disposition the gateway can prove directly. It produces a `Parked` result with `UserInput` as the reason. Every parked decision must include a recognized reason, non-empty evidence, a continuation owner, and a wake condition; the runtime rejects incomplete parked decisions and continues the bounded loop instead. An assistant sentence such as “I filed an issue,” “phase complete,” or “I will continue later” does not create a stop disposition.
 
 A conversation with no checklist keeps the previous behavior and completes normally. Open checklist items can carry across sessions; they remain work until the agent completes or cancels them, or records a supported structured wait.
 

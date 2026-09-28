@@ -89,12 +89,9 @@ public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
     /// </summary>
     /// <remarks>
     /// <para>
-    /// #3515: this previously changed <c>gateway.extensions.defaults</c> and asserted the reloaded
-    /// descriptor carried them. That no longer notifies at all, and correctly so: #2114 suppresses an
-    /// <c>IOptionsMonitor</c> callback whose effective descriptors are unchanged, and with world
-    /// defaults no longer merging into an agent (inheritance is being redesigned - #3503), editing
-    /// <c>defaults</c> changes no descriptor. The old test would now hang for two minutes and time
-    /// out, which is what it did.
+    /// #3515: this previously changed extension defaults and asserted that a merged extension bag
+    /// reached the descriptor. Defaults are now carried separately, while this test still changes
+    /// the named agent so the effective descriptor fingerprint must change and notify.
     /// </para>
     /// <para>
     /// The subject under test is reload PROPAGATION, so the edit moved to the agent block - a change
@@ -108,16 +105,14 @@ public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
     {
         await File.WriteAllTextAsync(_configPath, """
             {
-              "gateway": {
-                "extensions": {
-                  "defaults": {
+              "agents": {
+                "defaults": {
+                  "extensions": {
                     "ext": {
                       "a": 1
                     }
                   }
-                }
-              },
-              "agents": {
+                },
                 "assistant": {
                   "provider": "copilot",
                   "model": "gpt-4.1",
@@ -149,9 +144,8 @@ public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
                 changed.TrySetResult(descriptors);
         });
 
-        // #3515: edit the AGENT, not gateway.extensions.defaults. A defaults-only edit changes no
-        // descriptor now that nothing merges, so #2114's unchanged-fingerprint suppression correctly
-        // withholds the callback and this would time out.
+        // Edit the named agent. A defaults-only edit is not the subject of this reload-propagation
+        // test; the display-name change must alter the descriptor fingerprint and trigger callback.
         var agentsUpdate = JsonNode.Parse("""
             {
               "assistant": {
