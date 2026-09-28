@@ -230,6 +230,25 @@ public sealed class ExtensionConfigSchemaTests : IDisposable
             message.Contains("agents.defaults.extensions.gateway-only", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void StartupDiagnostics_WarnAndContinue_WhenConfigContainsUndefinedJsonElement()
+    {
+        var platformConfig = new PlatformConfig
+        {
+            FeatureManagement = new Dictionary<string, JsonElement>
+            {
+                ["synthetic-flag"] = default
+            }
+        };
+        var logger = new RecordingLogger();
+
+        ServiceCollectionExtensions.LogConfigurationScopeDiagnostics(platformConfig, [], logger);
+
+        logger.Entries.ShouldContain(entry =>
+            entry.Level == LogLevel.Warning
+            && entry.Message.Contains("Skipping extension configuration placement diagnostics", StringComparison.Ordinal));
+    }
+
     private static LoadedExtension Loaded(string id, params ExtensionConfigurationScope[] scopes) => new()
     {
         ExtensionId = id,
@@ -243,11 +262,12 @@ public sealed class ExtensionConfigSchemaTests : IDisposable
 
     private sealed class RecordingLogger : ILogger
     {
-        public List<string> Messages { get; } = [];
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+        public IEnumerable<string> Messages => Entries.Select(entry => entry.Message);
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel logLevel) => true;
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+            Func<TState, Exception?, string> formatter) => Entries.Add((logLevel, formatter(state, exception)));
     }
 
     // Helpers

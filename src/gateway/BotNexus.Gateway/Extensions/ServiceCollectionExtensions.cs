@@ -133,30 +133,39 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(platformConfig);
         ArgumentNullException.ThrowIfNull(loadedExtensions);
 
-        var document = System.Text.Json.JsonSerializer.SerializeToNode(
-            platformConfig,
-            new System.Text.Json.JsonSerializerOptions
-            {
-                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-            })?.AsObject() ?? new System.Text.Json.Nodes.JsonObject();
-        if (platformConfig.AgentDefaults?.Extensions is { Count: > 0 } defaultExtensions)
+        try
         {
-            var agents = document["agents"] as System.Text.Json.Nodes.JsonObject
-                ?? new System.Text.Json.Nodes.JsonObject();
-            document["agents"] = agents;
-            agents["defaults"] = new System.Text.Json.Nodes.JsonObject
+            var document = System.Text.Json.JsonSerializer.SerializeToNode(
+                platformConfig,
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                })?.AsObject() ?? new System.Text.Json.Nodes.JsonObject();
+            if (platformConfig.AgentDefaults?.Extensions is { Count: > 0 } defaultExtensions)
             {
-                ["extensions"] = System.Text.Json.JsonSerializer.SerializeToNode(defaultExtensions)
-            };
-        }
+                var agents = document["agents"] as System.Text.Json.Nodes.JsonObject
+                    ?? new System.Text.Json.Nodes.JsonObject();
+                document["agents"] = agents;
+                agents["defaults"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["extensions"] = System.Text.Json.JsonSerializer.SerializeToNode(defaultExtensions)
+                };
+            }
 
-        foreach (var violation in ExtensionConfigurationScopeValidator.FindViolations(document, loadedExtensions))
+            foreach (var violation in ExtensionConfigurationScopeValidator.FindViolations(document, loadedExtensions))
+            {
+                logger?.LogWarning(
+                    "Extension configuration placement is invalid at '{ConfigurationPath}' for extension '{ExtensionId}': {Reason}",
+                    violation.Path,
+                    violation.ExtensionId,
+                    violation.Reason);
+            }
+        }
+        catch (Exception ex)
         {
             logger?.LogWarning(
-                "Extension configuration placement is invalid at '{ConfigurationPath}' for extension '{ExtensionId}': {Reason}",
-                violation.Path,
-                violation.ExtensionId,
-                violation.Reason);
+                ex,
+                "Skipping extension configuration placement diagnostics because the current configuration snapshot could not be inspected.");
         }
     }
 
