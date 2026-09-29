@@ -100,6 +100,16 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void Renders_explicit_mobile_view_link()
+    {
+        var cut = RenderLayout();
+
+        var link = cut.Find("[data-testid='mobile-view-link']");
+        link.TextContent.Trim().ShouldBe("Mobile view");
+        link.GetAttribute("href").ShouldBe("/mobile");
+    }
+
+    [Fact]
     public void Renders_sidebar_closed_by_default()
     {
         var cut = RenderLayout();
@@ -372,7 +382,7 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
         // WaitForState stabilises the first render, then await InvokeAsync so any subsequent
-        // async re-renders (e.g. isMobileView JS interop in OnAfterRenderAsync) complete and
+        // async re-renders from OnAfterRenderAsync complete and
         // event handler IDs are stable before we assert.
         cut.WaitForState(() => cut.FindAll(".agent-session-item").Count > 0);
         await cut.InvokeAsync(() => cut.Find(".agent-session-item").Click());
@@ -698,36 +708,15 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void AgentDropdown_Rendered_EvenWhenIsMobileIsTrue()
+    public void AgentDropdown_Rendered_WithoutViewportDetection()
     {
-        // Desktop MainLayout always renders agent dropdown regardless of viewport width.
-        // Narrow viewport on desktop still uses MainLayout (not MobileLayout), so the
-        // agent list must remain visible.
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.NotifyChanged();
 
-        // Simulate narrow viewport: chatScroll.isMobileView returns true
-        _ctx.JSInterop.Setup<bool>("chatScroll.isMobileView").SetResult(true);
-
         var cut = RenderLayout();
 
-        // Agent dropdown must still be present
         Assert.NotEmpty(cut.FindAll("[data-testid='agent-select']"));
-    }
-
-    [Fact]
-    public void AgentDropdown_Rendered_WhenIsMobileIsFalse()
-    {
-        // Desktop default: isMobileView returns false (default Loose mock behavior)
-        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
-        _store.NotifyChanged();
-
-        _ctx.JSInterop.Setup<bool>("chatScroll.isMobileView").SetResult(false);
-
-        var cut = RenderLayout();
-
-        // Dropdown should be visible on desktop
-        cut.Find(".agent-dropdown-select");
+        _ctx.JSInterop.Invocations.ShouldNotContain(invocation => invocation.Identifier == "chatScroll.isMobileView");
     }
 
     [Fact]
@@ -791,11 +780,8 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Agent_dropdown_visible_even_when_viewport_is_narrow()
+    public void Agent_dropdown_stays_in_the_desktop_component_tree()
     {
-        // Simulate narrow viewport: chatScroll.isMobileView returns true
-        _ctx.JSInterop.Setup<bool>("chatScroll.isMobileView").SetResult(true);
-
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
@@ -804,8 +790,7 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
 
-        // The agent dropdown must still be rendered in MainLayout even on narrow viewports
-        // because desktop users resize their browser but stay on MainLayout (not MobileLayout)
+        // CSS may reflow at a narrow width, but the desktop component tree remains unchanged.
         var select = cut.Find("[data-testid='agent-select']");
         Assert.NotNull(select);
     }

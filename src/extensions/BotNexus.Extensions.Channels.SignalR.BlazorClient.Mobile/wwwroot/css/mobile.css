@@ -147,6 +147,18 @@ body {
 
 .menu-action:hover { background: rgba(100, 160, 220, 0.08); }
 
+.menu-action-link {
+    box-sizing: border-box;
+    text-decoration: none;
+}
+
+.menu-build-info {
+    display: block;
+    padding: 2px 16px 9px;
+    color: #8296ad;
+    font-size: 11px;
+}
+
 /* Small "has content" indicator dot shown next to the Canvas menu action when
    the active agent/conversation currently has published canvas HTML. The Canvas
    action itself is always visible so the panel can be opened at any time. */
