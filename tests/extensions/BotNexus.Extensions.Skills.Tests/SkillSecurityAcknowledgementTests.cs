@@ -49,13 +49,22 @@ public sealed class SkillSecurityAcknowledgementTests
         return fs;
     }
 
-    private static SkillSecurityAcknowledgement ExecAck(string skill = "shelling-skill") => new()
+    private static SkillSecurityAcknowledgement ExecAck(MockFileSystem fs, string skill = "shelling-skill")
     {
-        Skill = skill,
-        RuleId = "dangerous-exec",
-        File = "scripts/run.mjs",
-        Reason = "This skill exists to invoke git.",
-    };
+        var path = Path.Combine(SkillsDir, "shelling-skill", "scripts", "run.mjs");
+        var finding = SkillSecurityScanner.ScanSource(fs.File.ReadAllText(path), path)
+            .Single(f => f.RuleId == "dangerous-exec");
+        return new SkillSecurityAcknowledgement
+        {
+            Skill = skill,
+            RuleId = finding.RuleId,
+            File = "scripts/run.mjs",
+            Severity = finding.Severity,
+            FindingId = SkillSecurityScanner.ComputeFindingId(finding),
+            Sha256 = SkillSecurityAcknowledgements.ComputeSha256(fs, path),
+            Reason = "This skill exists to invoke git."
+        };
+    }
 
     // -----------------------------------------------------------------------
     // AC4 — happy path: matching scoped acknowledgement loads the skill
@@ -69,7 +78,7 @@ public sealed class SkillSecurityAcknowledgementTests
 
         var skills = SkillDiscovery.Discover(
             SkillsDir, null, null, fs, logger,
-            securityAcknowledgements: [ExecAck()]);
+            securityAcknowledgements: [ExecAck(fs)]);
 
         skills.ShouldContain(s => s.Name == "shelling-skill");
         logger.Warnings.ShouldBeEmpty();
@@ -87,7 +96,7 @@ public sealed class SkillSecurityAcknowledgementTests
 
         var skills = SkillDiscovery.Discover(
             SkillsDir, null, null, fs, logger,
-            securityAcknowledgements: [ExecAck()]);
+            securityAcknowledgements: [ExecAck(fs)]);
 
         skills.ShouldNotContain(s => s.Name == "shelling-skill");
 
@@ -163,7 +172,7 @@ public sealed class SkillSecurityAcknowledgementTests
         var logger = new CapturingLogger();
         var skills = SkillDiscovery.Discover(
             SkillsDir, null, null, fs, logger,
-            securityAcknowledgements: [ExecAck()]);
+            securityAcknowledgements: [ExecAck(fs)]);
 
         skills.ShouldNotContain(s => s.Name == "shelling-skill");
         logger.Warnings.ShouldHaveSingleItem().ShouldContain("env-harvesting");
@@ -175,12 +184,16 @@ public sealed class SkillSecurityAcknowledgementTests
         var fs = CreateSkill("shelling-skill", withSecondFinding: false);
         var runPath = Path.Combine(SkillsDir, "shelling-skill", "scripts", "run.mjs");
         var pinnedHash = SkillSecurityAcknowledgements.ComputeSha256(fs, runPath);
+        var finding = SkillSecurityScanner.ScanSource(fs.File.ReadAllText(runPath), runPath)
+            .Single(candidate => candidate.RuleId == "dangerous-exec");
 
         var pinned = new SkillSecurityAcknowledgement
         {
             Skill = "shelling-skill",
-            RuleId = "dangerous-exec",
+            RuleId = finding.RuleId,
             File = "scripts/run.mjs",
+            Severity = finding.Severity,
+            FindingId = SkillSecurityScanner.ComputeFindingId(finding),
             Sha256 = pinnedHash,
         };
 
@@ -208,22 +221,26 @@ public sealed class SkillSecurityAcknowledgementTests
     {
         var fs = CreateSkill("shelling-skill", withSecondFinding: false);
         var runPath = Path.Combine(SkillsDir, "shelling-skill", "scripts", "run.mjs");
-        var ack = ExecAck();
+        var ack = ExecAck(fs);
 
         // always-false mutation is caught here:
         SkillSecurityAcknowledgements
-            .IsAcknowledged(ack, "shelling-skill", "scripts/run.mjs", "dangerous-exec", fs, runPath)
+            .IsAcknowledged(ack, "shelling-skill", "scripts/run.mjs", "dangerous-exec",
+                ScanSeverity.Critical, ack.FindingId!, fs, runPath)
             .ShouldBeTrue();
 
         // always-true mutation is caught here:
         SkillSecurityAcknowledgements
-            .IsAcknowledged(ack, "shelling-skill", "scripts/run.mjs", "env-harvesting", fs, runPath)
+            .IsAcknowledged(ack, "shelling-skill", "scripts/run.mjs", "env-harvesting",
+                ScanSeverity.Critical, ack.FindingId!, fs, runPath)
             .ShouldBeFalse();
         SkillSecurityAcknowledgements
-            .IsAcknowledged(ack, "shelling-skill", "scripts/nope.mjs", "dangerous-exec", fs, runPath)
+            .IsAcknowledged(ack, "shelling-skill", "scripts/nope.mjs", "dangerous-exec",
+                ScanSeverity.Critical, ack.FindingId!, fs, runPath)
             .ShouldBeFalse();
         SkillSecurityAcknowledgements
-            .IsAcknowledged(ack, "another-skill", "scripts/run.mjs", "dangerous-exec", fs, runPath)
+            .IsAcknowledged(ack, "another-skill", "scripts/run.mjs", "dangerous-exec",
+                ScanSeverity.Critical, ack.FindingId!, fs, runPath)
             .ShouldBeFalse();
     }
 
@@ -232,14 +249,11 @@ public sealed class SkillSecurityAcknowledgementTests
     {
         var fs = CreateSkill("shelling-skill", withSecondFinding: false);
 
+        var acknowledgement = ExecAck(fs);
+        acknowledgement.File = @"scripts\run.mjs";
         var skills = SkillDiscovery.Discover(
             SkillsDir, null, null, fs, logger: null,
-            securityAcknowledgements: [new SkillSecurityAcknowledgement
-            {
-                Skill = "shelling-skill",
-                RuleId = "dangerous-exec",
-                File = @"scripts\run.mjs",
-            }]);
+            securityAcknowledgements: [acknowledgement]);
 
         skills.ShouldContain(s => s.Name == "shelling-skill");
     }

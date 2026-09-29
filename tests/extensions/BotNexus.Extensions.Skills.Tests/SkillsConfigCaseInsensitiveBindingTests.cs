@@ -207,6 +207,9 @@ public sealed class SkillsConfigCaseInsensitiveBindingTests
         if (underlying == typeof(long))
             return (long)(current ?? 0L) + 17L;
 
+        if (underlying == typeof(DateTimeOffset))
+            return (DateTimeOffset)(current ?? DateTimeOffset.UnixEpoch) + TimeSpan.FromMinutes(17);
+
         if (underlying == typeof(string))
             return current as string == "seeded-value" ? "seeded-value-2" : "seeded-value";
 
