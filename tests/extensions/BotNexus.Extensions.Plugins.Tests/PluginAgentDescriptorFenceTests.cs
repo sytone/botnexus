@@ -451,6 +451,31 @@ public sealed class PluginAgentDescriptorFenceTests
     [Theory]
     [InlineData("omitted")]
     [InlineData("null")]
+    [InlineData("explicit")]
+    public void Apply_SerializedPolicy_PreservesFilesystemRootCeilingDeny_InRealValidator(string shape)
+    {
+        var workspace = Path.Combine(Path.GetTempPath(), "plugin-root-denial-4041", "workspace");
+        var filesystemRoot = Path.GetPathRoot(workspace).ShouldNotBeNull();
+        var result = PluginAgentDescriptorFence.Apply(DeserializePolicyShape(shape), new FileAccessPolicy
+        {
+            DeniedPaths = [filesystemRoot]
+        });
+
+        result.IsAccepted.ShouldBeTrue();
+        var policy = result.Descriptor.ShouldNotBeNull().FileAccess.ShouldNotBeNull();
+        policy.AllowedReadPaths.ShouldBeEmpty();
+        policy.AllowedWritePaths.ShouldBeEmpty();
+        policy.DeniedPaths.ShouldContain(filesystemRoot);
+
+        var validator = new BotNexus.Gateway.Security.DefaultPathValidator(policy, workspace);
+        var descendant = Path.Combine(workspace, "nested", "secret.txt");
+        validator.CanRead(descendant).ShouldBeFalse("plugin composition must retain root read denials");
+        validator.CanWrite(descendant).ShouldBeFalse("plugin composition must retain root write denials");
+    }
+
+    [Theory]
+    [InlineData("omitted")]
+    [InlineData("null")]
     [InlineData("empty")]
     [InlineData("explicit")]
     public void Apply_SerializedPolicy_RejectsAmbiguousCeilingDeny_EvenWhenOmitted(string shape)
