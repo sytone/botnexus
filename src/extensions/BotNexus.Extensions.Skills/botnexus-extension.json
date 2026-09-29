@@ -54,6 +54,13 @@
       "default": "100000",
       "sensitive": false,
       "description": "Maximum total characters of skill content included in the prompt."
+    },
+    {
+      "id": "securityAcknowledgements",
+      "type": "array",
+      "required": false,
+      "sensitive": false,
+      "description": "Hash-pinned, explicitly confirmed security finding acknowledgements with durable audit metadata."
     }
   ],
   "configurationScopes": [

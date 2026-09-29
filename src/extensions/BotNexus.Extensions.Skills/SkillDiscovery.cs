@@ -194,7 +194,8 @@ public static class SkillDiscovery
 
             var acknowledged = acknowledgements is { Count: > 0 }
                 && acknowledgements.Any(ack => SkillSecurityAcknowledgements.IsAcknowledged(
-                    ack, skillName, relative, finding.RuleId, fileSystem, finding.File));
+                    ack, skillName, relative, finding.RuleId, finding.Severity,
+                    SkillSecurityScanner.ComputeFindingId(finding), fileSystem, finding.File));
 
             if (!acknowledged)
                 outstanding.Add($"{relative}:{finding.Line} ({finding.RuleId})");
