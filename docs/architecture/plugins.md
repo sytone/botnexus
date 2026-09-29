@@ -315,7 +315,7 @@ isolation escalation, or file access beyond the installing user's own ceiling.**
 |---|---|---|
 | Identity and presentation | `id`, `displayName`, `emoji`, `description` | Bound and projected |
 | Model selection | `model`, `provider`, `allowedModels`, `thinking`, `contextWindow` | Bound and projected |
-| Prompt content | `systemPrompt`, `systemPromptFiles` | Bound and projected |
+| Prompt content | `systemPrompt` | Bound and projected. The deprecated `systemPromptFiles` field remains accepted for compatibility during issue #2941 Stage 1 but should not be used by new plugins. |
 | Tool ids and limits | `toolIds`, `maxConcurrentSessions` | Bound and projected |
 | File access | `fileAccess` | Bound, then **narrowed** to the installing user's ceiling |
 | Host provenance | `metadata` | Unsupported as plugin input; ignored. The host writes only `metadata.plugin`. |

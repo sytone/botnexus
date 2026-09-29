@@ -1784,7 +1784,7 @@
             "array",
             "null"
           ],
-          "description": "Ordered list of files to load as the system prompt. Empty = default order.",
+          "description": "Deprecated custom prompt-file list retained for compatibility. Use standard workspace instruction files, WORLD.md, inline prompts, conversation instructions, or model-specific variants.",
           "items": {
             "type": "string"
           }
@@ -1795,7 +1795,7 @@
             "null",
             "string"
           ],
-          "description": "Path to a single system prompt file (legacy, prefer SystemPromptFiles)."
+          "description": "Deprecated custom prompt file retained for compatibility. Use standard workspace instruction files, WORLD.md, inline prompts, conversation instructions, or model-specific variants."
         },
         "toolIds": {
           "title": "Tool ids",

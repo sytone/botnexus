@@ -326,7 +326,7 @@ botnexus agent add note-taker --provider github-copilot --model gpt-4o --display
 
 # Add optional per-agent settings by dotted path
 botnexus config set agents.researcher.toolIds '["read","web_search","web_fetch"]'
-botnexus config set agents.note-taker.systemPromptFiles '["SOUL.md","IDENTITY.md"]'
+# Add instructions to standard files in the note-taker workspace, such as AGENTS.md or SOUL.md.
 
 botnexus agent list
 botnexus validate

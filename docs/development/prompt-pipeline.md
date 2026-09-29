@@ -281,17 +281,9 @@ Injects project-specific documentation:
 
 **Context File Discovery:**
 
-Prompt-file selection uses this precedence:
+Prompt-file selection normally loads the canonical workspace instruction files in this order: `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `BOOTSTRAP.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md`. The deprecated `systemPromptFile` and `systemPromptFiles` keys remain runtime-compatible during issue #2941 Stage 1 but should not be used in new configuration.
 
-1. A non-empty `systemPromptFiles` list takes precedence and is used in its configured order.
-2. Otherwise, a nonblank legacy `systemPromptFile` selects that one file.
-3. Otherwise, the canonical default list is used: `AGENTS.md`, `SOUL.md`, `TOOLS.md`,
-   `BOOTSTRAP.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md`.
-
-When `memory.promptInjection` is `none`, `WorkspaceContextBuilder` filters memory prompt files from
-whichever source won, including an explicitly selected `MEMORY.md` or model-specific memory variant.
-Daily-memory injection follows the same memory setting. Conversation scope independently withholds
-owner-private files (`USER.md`, `MEMORY.md`, and daily memory notes) from shared conversations.
+When `memory.promptInjection` is `none`, `WorkspaceContextBuilder` filters memory prompt files from the selected set, including an explicitly selected `MEMORY.md` or model-specific memory variant. Daily-memory injection follows the same memory setting. Conversation scope independently withholds owner-private files (`USER.md`, `MEMORY.md`, and daily memory notes) from shared conversations.
 
 See [WorkspaceContextBuilder.cs](../../src/gateway/BotNexus.Gateway/Agents/WorkspaceContextBuilder.cs)
 
