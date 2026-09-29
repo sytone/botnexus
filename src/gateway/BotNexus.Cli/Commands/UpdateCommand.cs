@@ -13,6 +13,7 @@ namespace BotNexus.Cli.Commands;
 /// </summary>
 internal class UpdateCommand
 {
+    internal const int ExtensionDeploymentFailureExitCode = 2;
     private const int CancelledExitCode = 130;
 
     /// <summary>
@@ -363,11 +364,14 @@ internal class UpdateCommand
 
         // Steps 3 & 4: Build and deploy (gateway is now stopped, no file locks)
         var buildResult = await RunBuildAndDeployAsync(repoRoot, home, verbose, cancellationToken);
-        if (buildResult != 0)
+        if (buildResult != 0 && buildResult != ExtensionDeploymentFailureExitCode)
             return buildResult;
 
-        // Step 5: Start
-        return await RunRestartAsync(home, port, repoRoot, cancellationToken);
+        // Step 5: Start even after a controlled deployment failure. Atomic reconciliation has
+        // preserved or restored the usable deployment; leaving the stopped gateway offline would
+        // turn a recoverable update failure into an outage. Preserve the nonzero update result.
+        var restartResult = await RunRestartAsync(home, port, repoRoot, cancellationToken);
+        return restartResult != 0 ? restartResult : buildResult;
     }
 
     protected virtual Task<ReleaseUpdateStatus> ResolveReleaseStatusAsync(
@@ -549,8 +553,11 @@ internal class UpdateCommand
         }
         AnsiConsole.MarkupLine($"[green]✓[/] {deploymentResult.DeployedCount} extension(s) deployed");
 
-        return 0;
+        return DeploymentExitCode(deploymentResult);
     }
+
+    internal static int DeploymentExitCode(ExtensionDeploymentResult result)
+        => result.Failures.Count == 0 ? 0 : ExtensionDeploymentFailureExitCode;
 
     protected virtual async Task<int> RunRestartAsync(string home, int port, string repoRoot, CancellationToken cancellationToken)
     {
