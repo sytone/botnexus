@@ -564,7 +564,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private static MessageContentPart ConvertToDomainContentPart(MediaContentPartDto dto)
     {
         if (dto.Text is not null)
-            return new TextContentPart { MimeType = dto.MimeType, Text = dto.Text };
+            return new TextContentPart { MimeType = dto.MimeType, Text = dto.Text, FileName = dto.FileName };
 
         if (dto.Base64Data is not null)
             return new BinaryContentPart

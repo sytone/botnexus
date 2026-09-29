@@ -201,6 +201,7 @@ else
                         {
                             <div class="message-content plain-text-content">@msg.Content</div>
                         }
+                        <AttachmentList Attachments="@msg.Attachments" />
                         <div class="message-time">@FormatTimestamp(msg.Timestamp)</div>
                     </div>
                 }
