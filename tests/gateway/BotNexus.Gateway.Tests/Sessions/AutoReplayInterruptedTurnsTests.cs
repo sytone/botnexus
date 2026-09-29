@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
@@ -124,16 +125,16 @@ public sealed class AutoReplayInterruptedTurnsTests
         GatewayOptions? options = null,
         IInboundMessageOrchestrator? orchestrator = null,
         IActivityBroadcaster? broadcaster = null,
-        IChannelManager? channelManager = null,
+        IConversationEventPublisher? eventPublisher = null,
         IConversationStore? conversationStore = null)
     {
         broadcaster ??= Mock.Of<IActivityBroadcaster>();
-        channelManager ??= Mock.Of<IChannelManager>();
+        eventPublisher ??= Mock.Of<IConversationEventPublisher>();
         return new InterruptedTurnNotificationService(
             store,
             registry,
             broadcaster,
-            channelManager,
+            eventPublisher,
             NullLogger<InterruptedTurnNotificationService>.Instance,
             orchestrator,
             options is not null ? Options.Create(options) : null,
