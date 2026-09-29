@@ -91,14 +91,14 @@ public sealed class CronWriteInventoryTests
 
         mutating.ShouldNotBeEmpty();
 
-        var classified = Inventory.Select(entry => entry.EntryPoint).ToHashSet(StringComparer.Ordinal);
-        var unclassified = mutating.Where(name => !classified.Contains(name)).ToArray();
+        var classified = Inventory.Select(entry => entry.EntryPoint).ToArray();
+        classified.ShouldNotBeEmpty();
+        classified.ShouldBeUnique();
 
-        unclassified.ShouldBeEmpty(
-            "ICronStore gained mutation entry points with no #3327 write classification: "
-            + string.Join(", ", unclassified)
-            + ". Add a CronWriteInventoryTests.Inventory row naming its owned state and concurrency "
-            + "guard, then add a seam test when it can overlap another write to the same state.");
+        classified.Order(StringComparer.Ordinal).ShouldBe(
+            mutating.Order(StringComparer.Ordinal),
+            "The ICronStore mutation set and #3327 inventory must match exactly. A method present only "
+            + "in the interface is unclassified; a row present only in the inventory is stale.");
     }
 
     [Fact]
