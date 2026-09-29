@@ -18,7 +18,7 @@
 @implements IDisposable
 @implements IAsyncDisposable
 
-<div class="app-shell" data-density="@DensityAttribute">
+<div class="app-shell" data-density="@DensityAttribute" data-shell="@ShellAttribute">
     @* Top bar with burger + logo *@
     <header class="app-banner">
         <div class="banner-header">
@@ -203,6 +203,11 @@
     /// </summary>
     private string DensityAttribute => PortalDensity.Normalize(Prefs.Current.Density);
 
+    /// <summary>
+    /// Shell variant emitted as <c>data-shell</c>. The default is classic, so adding the preference
+    /// is behavior-neutral until a user explicitly opts into simplified slices.
+    /// </summary>
+    private string ShellAttribute => PortalShell.Normalize(Prefs.Current.Shell);
 
     /// <summary>True when the light theme is active, driving the toggle's icon and label.</summary>
     private bool IsLightTheme => PortalTheme.Normalize(Prefs.Current.Theme) == PortalTheme.Light;

@@ -1056,6 +1056,13 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void App_shell_carries_classic_shell_attribute_by_default()
+    {
+        var cut = RenderLayout();
+        Assert.Equal("classic", cut.Find(".app-shell").GetAttribute("data-shell"));
+    }
+
+    [Fact]
     public void Tools_section_renders_configured_tools_from_fake_source()
     {
         _toolsHandler.SetTools("""

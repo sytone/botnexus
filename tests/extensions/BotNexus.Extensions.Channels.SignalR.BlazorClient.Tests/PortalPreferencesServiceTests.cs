@@ -23,6 +23,7 @@ public class PortalPreferencesServiceTests
         var prefs = _sut.Current;
         Assert.True(prefs.ExpandingInput);
         Assert.Equal(8, prefs.ExpandingInputMaxLines);
+        Assert.Equal(PortalShell.Classic, prefs.Shell);
     }
 
     [Fact]
@@ -108,12 +109,49 @@ public class PortalPreferencesServiceTests
     }
 
     [Fact]
-    public async Task SaveAsync_WritesToLocalStorage()
+    public async Task SetShellAsync_NormalizesPersistsAndRaisesOnChanged()
     {
+        var raised = false;
+        _sut.OnChanged += () => raised = true;
+
+        await _sut.SetShellAsync("  SIMPLIFIED  ");
+
+        Assert.Equal(PortalShell.Simplified, _sut.Current.Shell);
+        Assert.True(raised);
+        await _js.Received(1).InvokeAsync<object>(
+            "portalPrefs.save",
+            Arg.Is<object[]>(args => SavedShellIs(args, PortalShell.Simplified)));
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithCorruptedShell_FallsBackToClassic()
+    {
+        var stored = JsonSerializer.Serialize(new PortalPreferences { Shell = "surprise-me" });
+        _js.InvokeAsync<string>("portalPrefs.load", Arg.Any<object[]>())
+           .Returns(new ValueTask<string>(stored));
+
+        await _sut.LoadAsync();
+
+        Assert.Equal(PortalShell.Classic, _sut.Current.Shell);
+    }
+
+    [Fact]
+    public async Task SaveAsync_NormalizesCorruptedShellBeforeWriting()
+    {
+        _sut.Current.Shell = "surprise-me";
+
         await _sut.SaveAsync();
 
-        await _js.Received(1).InvokeAsync<object>("portalPrefs.save", Arg.Any<object[]>());
+        Assert.Equal(PortalShell.Classic, _sut.Current.Shell);
+        await _js.Received(1).InvokeAsync<object>(
+            "portalPrefs.save",
+            Arg.Is<object[]>(args => SavedShellIs(args, PortalShell.Classic)));
     }
+
+    private static bool SavedShellIs(object[] args, string expected) =>
+        args.Length == 2
+        && args[1] is string json
+        && JsonSerializer.Deserialize<PortalPreferences>(json)?.Shell == expected;
 
     [Fact]
     public async Task LoadAsync_WithInvalidJson_UsesDefaults()
