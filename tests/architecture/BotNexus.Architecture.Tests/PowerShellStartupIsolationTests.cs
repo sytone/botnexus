@@ -10,9 +10,11 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
     [Fact]
     public async Task RunLintAt_StderrBeyondPipeCapacity_RetainsBothOutputs()
     {
+        const int pipeSaturatingBytes = 131072;
         await ExerciseLintBoundaryAsync(
-            "[Console]::Error.Write(('E' * 2097152)); [Console]::Out.Write('stdout-complete'); exit 0",
-            cancelAfterStart: false);
+            $"[Console]::Error.Write(('E' * {pipeSaturatingBytes})); [Console]::Out.Write('stdout-complete'); exit 0",
+            cancelAfterStart: false,
+            expectedStdErrBytes: pipeSaturatingBytes);
     }
 
     [Fact]
@@ -23,7 +25,10 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
             cancelAfterStart: true);
     }
 
-    private static async Task ExerciseLintBoundaryAsync(string body, bool cancelAfterStart)
+    private static async Task ExerciseLintBoundaryAsync(
+        string body,
+        bool cancelAfterStart,
+        int expectedStdErrBytes = 0)
     {
         var fixture = Directory.CreateTempSubdirectory("lint-boundary-").FullName;
         using var unrelated = new DocsLintScriptTests.PowerShellStartupState();
@@ -62,7 +67,7 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
                 result.ShouldNotBeNull();
                 result.ExitCode.ShouldBe(0, result.StartupDiagnostics);
                 result.StdOut.ShouldBe("stdout-complete");
-                result.StdErr.ShouldBe(new string('E', 2097152));
+                result.StdErr.ShouldBe(new string('E', expectedStdErrBytes));
             }
 
             observed.ShouldNotBeNull();
