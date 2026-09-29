@@ -116,6 +116,7 @@
        same red. --color-danger stays bright where it is a 1px border or an 8px dot and
        contrast against text does not apply. */
     --color-danger-fill: #ce433d;
+    --color-danger-fill-hover: #b63631;
     --color-danger-bg: #2c1315;
     --color-danger-text: #ff7b72;
 
@@ -368,6 +369,7 @@
 
     --color-danger: #cf222e;
     --color-danger-fill: #cf222e;
+    --color-danger-fill-hover: #a40e26;
     --color-danger-bg: #fbe3e4;
     --color-danger-text: #a40e26;
 
@@ -2353,7 +2355,7 @@ html, body, #app {
 }
 
 .confirm-btn:hover {
-    background: var(--color-danger);
+    background: var(--color-danger-fill-hover);
 }
 
 /* ── Tool call display ──────────────────────────────────────────────── */
