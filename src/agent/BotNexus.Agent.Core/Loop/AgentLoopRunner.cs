@@ -181,6 +181,7 @@ public static class AgentLoopRunner
                 var refreshedContext = await MaybeCompactAsync(config, cancellationToken).ConfigureAwait(false);
                 if (refreshedContext is not null)
                 {
+                    NotifyContextReplaced(refreshedContext.Tools);
                     currentContext = refreshedContext;
                     messages = refreshedContext.Messages.ToList();
                     config.OnDiagnostic?.Invoke(
@@ -578,6 +579,15 @@ public static class AgentLoopRunner
                 deferred.Insert(0, drained[i]);
                 drained.RemoveAt(i);
             }
+        }
+    }
+
+    private static void NotifyContextReplaced(IReadOnlyList<IAgentTool> tools)
+    {
+        foreach (var tool in tools)
+        {
+            if (tool is IContextReplacementAwareTool contextAwareTool)
+                contextAwareTool.OnContextReplaced();
         }
     }
 

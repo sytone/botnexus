@@ -72,6 +72,8 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
         SkillName = record.SkillName,
         ViewCount = record.ViewCount,
         UseCount = record.UseCount,
+        SuppressedLoadCount = record.SuppressedLoadCount,
+        ContextReloadCount = record.ContextReloadCount,
         PatchCount = record.PatchCount,
         LastUsedAt = record.LastUsedAt,
         CreatedBy = record.CreatedBy,

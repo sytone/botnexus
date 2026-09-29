@@ -21,10 +21,11 @@ public sealed class SkillTool(
     string? workspaceSkillsDir,
     SkillsConfig? config,
     ISkillUsageTelemetry? telemetry = null,
-    string? pluginRootDir = null) : IAgentTool
+    string? pluginRootDir = null) : IAgentTool, IContextReplacementAwareTool
 {
     private readonly IFileSystem _fileSystem = new FileSystem();
-    private readonly ConcurrentDictionary<string, byte> _sessionLoaded = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _contextLoaded = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _evictedLoads = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Creates a SkillTool with a static skill list (for testing).</summary>
     internal SkillTool(IReadOnlyList<SkillDefinition> allSkills, SkillsConfig? config, ISkillUsageTelemetry? telemetry = null)
@@ -98,17 +99,26 @@ public sealed class SkillTool(
             """).RootElement.Clone());
 
     /// <summary>Gets the set of skill names explicitly loaded during this session.</summary>
-    public IReadOnlySet<string> SessionLoadedSkills => _sessionLoaded.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlySet<string> SessionLoadedSkills => _contextLoaded.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
     public SkillsConfig? Config => config;
     public (string? Global, string? Agent, string? Workspace) DiscoveryPaths
         => (globalSkillsDir, agentSkillsDir, workspaceSkillsDir);
+
+    /// <inheritdoc />
+    public void OnContextReplaced()
+    {
+        foreach (var skillName in _contextLoaded.Keys)
+            _evictedLoads.TryAdd(skillName, 0);
+
+        _contextLoaded.Clear();
+    }
 
     public bool TryUnload(string skillName)
     {
         if (string.IsNullOrWhiteSpace(skillName))
             return false;
 
-        return _sessionLoaded.TryRemove(skillName, out _);
+        return _contextLoaded.TryRemove(skillName, out _);
     }
 
     public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
@@ -138,7 +148,7 @@ public sealed class SkillTool(
     private async Task<AgentToolResult> ListSkillsAsync(CancellationToken cancellationToken)
     {
         var currentSkills = DiscoverSkills();
-        var resolution = SkillResolver.Resolve(currentSkills, config, explicitlyLoaded: _sessionLoaded.Keys.ToList());
+        var resolution = SkillResolver.Resolve(currentSkills, config, explicitlyLoaded: _contextLoaded.Keys.ToList());
 
         var lines = new List<string>();
         if (resolution.Loaded.Count > 0)
@@ -189,8 +199,14 @@ public sealed class SkillTool(
         if (skill is null)
             return TextResult($"Skill '{skillName}' not found. Use action 'list' to see available skills.");
 
-        if (_sessionLoaded.ContainsKey(skill.Name))
-            return TextResult($"Skill '{skill.Name}' is already loaded.");
+        var payload = RenderSkill(skill);
+        var fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload)));
+        if (_contextLoaded.TryGetValue(skill.Name, out var loadedFingerprint)
+            && string.Equals(loadedFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            await RecordAsync(t => t.RecordSuppressedLoadAsync(skill.Name, cancellationToken)).ConfigureAwait(false);
+            return TextResult($"Skill '{skill.Name}' is already loaded in the current context.");
+        }
 
         // Delegate access checks to the resolver - it handles deny, allow, and limits
         var resolution = SkillResolver.Resolve(currentSkills, config, explicitlyLoaded: [skill.Name]);
@@ -200,24 +216,51 @@ public sealed class SkillTool(
         if (!resolution.Loaded.Any(s => string.Equals(s.Name, skillName, StringComparison.OrdinalIgnoreCase)))
             return TextResult($"Skill '{skillName}' cannot be loaded (budget exceeded).");
 
-        if (!_sessionLoaded.TryAdd(skill.Name, 0))
-            return TextResult($"Skill '{skill.Name}' is already loaded.");
+        if (!TryMarkContextLoaded(skill.Name, fingerprint))
+        {
+            await RecordAsync(t => t.RecordSuppressedLoadAsync(skill.Name, cancellationToken)).ConfigureAwait(false);
+            return TextResult($"Skill '{skill.Name}' is already loaded in the current context.");
+        }
 
-        // Record the load as a use once it has actually been added to the session (#1833).
+        // Record the full payload separately from cheap acknowledgements and post-compaction reloads.
         await RecordAsync(t => t.RecordUseAsync(skill.Name, cancellationToken)).ConfigureAwait(false);
+        if (_evictedLoads.TryRemove(skill.Name, out _))
+            await RecordAsync(t => t.RecordContextReloadAsync(skill.Name, cancellationToken)).ConfigureAwait(false);
 
-        return TextResult($"""
-            ## Skill: {skill.Name}
-            **Path:** {skill.SourcePath}
-            **Resolved from:** {DescribeRoot(skill.Source)} skill root
-
-            Resolve scripts and support files against this directory - skills live under more than
-            one root and the shared root is not always the right one (#3712).
-
-            {skill.Content}
-            {RenderLinkedFiles(skill)}
-            """);
+        return TextResult(payload);
     }
+
+    private bool TryMarkContextLoaded(string skillName, string fingerprint)
+    {
+        while (true)
+        {
+            if (_contextLoaded.TryGetValue(skillName, out var existing))
+            {
+                if (string.Equals(existing, fingerprint, StringComparison.Ordinal))
+                    return false;
+
+                if (_contextLoaded.TryUpdate(skillName, fingerprint, existing))
+                    return true;
+
+                continue;
+            }
+
+            if (_contextLoaded.TryAdd(skillName, fingerprint))
+                return true;
+        }
+    }
+
+    private static string RenderSkill(SkillDefinition skill) => $"""
+        ## Skill: {skill.Name}
+        **Path:** {skill.SourcePath}
+        **Resolved from:** {DescribeRoot(skill.Source)} skill root
+
+        Resolve scripts and support files against this directory - skills live under more than
+        one root and the shared root is not always the right one (#3712).
+
+        {skill.Content}
+        {RenderLinkedFiles(skill)}
+        """;
 
     /// <summary>
     /// Names the discovery tier a skill was resolved from (#3712). The bare path alone is not
