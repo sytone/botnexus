@@ -279,6 +279,16 @@ body {
     50%       { opacity: 0; }
 }
 
+.mobile-composer { position: sticky; bottom: 0; background: #111d2e; }
+.mobile-attachment-list { display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px 0; }
+.mobile-attachment-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; padding: 5px 8px; border: 1px solid rgba(100, 160, 220, 0.25); border-radius: 999px; background: #0d1926; font-size: 12px; flex: none; }
+.mobile-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-attachment-size { color: #7a9cbf; flex: none; }
+.mobile-attachment-chip button { border: 0; background: transparent; color: #a9c4e0; font-size: 16px; padding: 0 2px; }
+.mobile-composer-error { padding: 6px 12px 0; color: #f87171; font-size: 13px; }
+.mobile-attach-btn { width: 38px; height: 44px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(100, 160, 220, 0.2); border-radius: 8px; cursor: pointer; flex: none; }
+.mobile-attachment-input { display: none; }
+
 /* ── Bottom bar ───────────────────────────────────────────────────────────── */
 .bottom-bar {
     position: sticky;
