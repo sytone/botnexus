@@ -1,5 +1,44 @@
 /* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
 
+.release-history-content {
+    display: grid;
+    gap: 16px;
+    max-width: 64rem;
+    padding: 24px;
+}
+
+.release-history-entry {
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    padding: 24px;
+}
+
+.release-history-heading,
+.release-history-links {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.release-history-heading h3,
+.release-history-category h4 {
+    margin: 0;
+}
+
+.release-history-heading time {
+    color: var(--text-muted);
+}
+
+.release-history-category {
+    margin-top: 16px;
+}
+
+.release-history-category li a {
+    margin-left: 8px;
+}
+
 /* ── Inter ────────────────────────────────────────────────────────────────
    Self-hosted rather than loaded from the Google Fonts CDN: the portal is
    reachable on a LAN (and offline via the service worker), so text must not

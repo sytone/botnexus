@@ -400,6 +400,9 @@
     private RenderFragment RenderHomeNav() => __builder =>
     {
         @NavAnchor("", @<text><Icon Name="home" /><span class="sidebar-nav-label">Home</span></text>)
+        <div class="sidebar-subnav" data-testid="home-subnav">
+            @SubNavAnchor("release-history", @<text><span>Change history</span></text>)
+        </div>
     };
 
     private RenderFragment RenderActivityNav() => __builder =>

@@ -1251,6 +1251,16 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void Home_nav_contains_change_history_subnavigation()
+    {
+        var cut = RenderLayout();
+
+        var link = cut.Find("[data-testid='subnav-release-history']");
+        Assert.Equal("release-history", link.GetAttribute("href"));
+        Assert.Equal("Change history", link.TextContent.Trim());
+    }
+
+    [Fact]
     public void Home_nav_entry_renders_first_in_default_order()
     {
         var cut = RenderLayout();
