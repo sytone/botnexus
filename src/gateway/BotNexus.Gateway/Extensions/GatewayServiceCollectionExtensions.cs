@@ -194,6 +194,9 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, MemorySearchContributor>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, FileSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, AgentSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, ConversationSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, SessionSearchContributor>());
          services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
          services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
          // #3569: the backstop workspace sweep must consult a lifecycle authority before deleting.
