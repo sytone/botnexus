@@ -323,16 +323,15 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
             "whitespace-padded content must still be delivered verbatim — only the literal NO_REPLY sentinel is suppressed");
     }
 
-    // ── #192 — Steering must be dispatched as a control message ────────────
+    // ── #192 / #3034 — Steering intent uses the unified inbound entry point ─
 
     /// <summary>
-    /// Pins <see href="https://github.com/sytone/botnexus/issues/192">#192</see>: a steer used
-    /// to fall through as a normal user prompt in the wrong conversation when the agent
-    /// wasn't running. Steer now bypasses the orchestrator queue entirely and calls
-    /// handle.SteerAsync directly — no InboundMessage is dispatched.
+    /// Pins <see href="https://github.com/sytone/botnexus/issues/192">#192</see> and #3034:
+    /// a steer must remain a steer rather than becoming an ordinary prompt, while still flowing
+    /// through the one gateway-owned inbound entry point.
     /// </summary>
     [Fact]
-    public async Task Steer_InjectsDirectlyViaHandle_NotThroughOrchestratorQueue()
+    public async Task Steer_DispatchesExplicitIntentThroughUnifiedInboundEntryPoint()
     {
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
@@ -350,18 +349,21 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         await connection.InvokeAsync<JsonElement>(
             "Steer", TestAgentId, "steer-session-1", "stop and reconsider", (string?)null, cts.Token);
 
-        // Steer no longer dispatches through the orchestrator
-        dispatcher.Messages.ShouldBeEmpty();
+        var message = dispatcher.Messages.ShouldHaveSingleItem();
+        message.Content.ShouldBe("stop and reconsider");
+        message.RoutingHints.ShouldNotBeNull();
+        message.RoutingHints!.RequestedAgentId.ShouldBe(AgentId.From(TestAgentId));
+        message.RoutingHints.RequestedSessionId.ShouldBe(SessionId.From("steer-session-1"));
+        message.RoutingHints.DeliveryMode.ShouldBe(InboundDeliveryMode.Steer);
     }
 
     /// <summary>
-    /// Pins <see href="https://github.com/sytone/botnexus/issues/192">#192</see>: when the
-    /// caller supplies an explicit <c>conversationId</c>, Steer must succeed and the
-    /// conversationId is carried on the SteeringInjected activity event (not on an
-    /// InboundMessage dispatch).
+    /// Pins <see href="https://github.com/sytone/botnexus/issues/192">#192</see>: an explicit
+    /// conversation identity must survive the unified inbound dispatch rather than being inferred
+    /// from ambient client state.
     /// </summary>
     [Fact]
-    public async Task Steer_WithExplicitConversationId_SucceedsWithoutDispatch()
+    public async Task Steer_WithExplicitConversationId_DispatchesAddressedIntent()
     {
         var dispatcher = new RecordingDispatcher();
         await using var factory = CreateTestFactory(services =>
@@ -379,9 +381,12 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         var result = await connection.InvokeAsync<JsonElement>(
             "Steer", TestAgentId, "steer-session-2", "be more thorough", "explicit-target-conv", cts.Token);
 
-        // Should succeed without dispatching through orchestrator
         result.GetProperty("sessionId").GetString().ShouldBe("steer-session-2");
-        dispatcher.Messages.ShouldBeEmpty();
+        var message = dispatcher.Messages.ShouldHaveSingleItem();
+        message.RoutingHints.ShouldNotBeNull();
+        message.RoutingHints!.RequestedSessionId.ShouldBe(SessionId.From("steer-session-2"));
+        message.RoutingHints.RequestedConversationId.ShouldBe(ConversationId.From("explicit-target-conv"));
+        message.RoutingHints.DeliveryMode.ShouldBe(InboundDeliveryMode.Steer);
     }
 
     // ── #130 — Stale bindings must be muted on disconnect ──────────────────

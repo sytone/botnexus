@@ -2,6 +2,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Extensions.Channels.SignalR;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Tests.Dispatching;
 using Moq;
 using AgentUserMessage = BotNexus.Gateway.Abstractions.Models.AgentUserMessage;
@@ -64,81 +65,81 @@ public sealed class DraftAttachmentDispatchTests
     // ── Path 1: Steer ────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Steer_WithTextAttachment_DeliversAttachmentContentToTheAgent()
+    public async Task Steer_WithTextAttachment_DeliversAttachmentContentToTheInboundBoundary()
     {
-        AgentUserMessage? injected = null;
-        var handle = RunningHandle();
-        handle.Setup(h => h.SteerAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<AgentUserMessage, CancellationToken>((m, _) => injected = m)
-            .Returns(Task.CompletedTask);
-
-        var hub = SignalRHubTests.CreateHub(supervisor: SupervisorFor(handle.Object).Object);
+        var orchestrator = new CapturingInboundMessageOrchestrator
+        {
+            AdmissionStatus = InboundDispatchStatus.Steered
+        };
+        var hub = SignalRHubTests.CreateHub(orchestrator: orchestrator);
 
         await hub.SteerWithMedia(Agent, Session, "look at this", TextPart(), conversationId: null);
 
-        injected.ShouldNotBeNull();
-        injected!.Content.ShouldContain("look at this");
-        injected.Content.ShouldContain(TextAttachmentBody);
+        var inbound = orchestrator.Captured.ShouldHaveSingleItem();
+        inbound.Content.ShouldBe("look at this");
+        var attachment = inbound.ContentParts.ShouldNotBeNull().ShouldHaveSingleItem();
+        attachment.ShouldBeOfType<TextContentPart>().Text.ShouldBe(TextAttachmentBody);
+        inbound.RoutingHints.ShouldNotBeNull();
+        inbound.RoutingHints!.DeliveryMode.ShouldBe(InboundDeliveryMode.Steer);
     }
 
     [Fact]
-    public async Task Steer_WithImageAttachment_DeliversImageOnTheVisionPath()
+    public async Task Steer_WithImageAttachment_DeliversImageOnTheInboundBoundary()
     {
-        AgentUserMessage? injected = null;
-        var handle = RunningHandle();
-        handle.Setup(h => h.SteerAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<AgentUserMessage, CancellationToken>((m, _) => injected = m)
-            .Returns(Task.CompletedTask);
-
-        var hub = SignalRHubTests.CreateHub(supervisor: SupervisorFor(handle.Object).Object);
+        var orchestrator = new CapturingInboundMessageOrchestrator
+        {
+            AdmissionStatus = InboundDispatchStatus.Steered
+        };
+        var hub = SignalRHubTests.CreateHub(orchestrator: orchestrator);
 
         await hub.SteerWithMedia(Agent, Session, "what is this", ImagePart(), conversationId: null);
 
-        injected.ShouldNotBeNull();
-        injected!.Images.ShouldNotBeNull();
-        injected.Images!.Count.ShouldBe(1);
-        injected.Images[0].Value.ShouldStartWith(ImageBase64Marker);
+        var inbound = orchestrator.Captured.ShouldHaveSingleItem();
+        var attachment = inbound.ContentParts.ShouldNotBeNull().ShouldHaveSingleItem();
+        var binary = attachment.ShouldBeOfType<BinaryContentPart>();
+        binary.MimeType.ShouldBe("image/png");
+        binary.Data.ShouldBe(new byte[] { 1, 2, 3 });
     }
 
     // ── Path 2: Redirect (InterruptAndSteer) ─────────────────────────────
 
     [Fact]
-    public async Task Redirect_WithTextAttachment_DeliversAttachmentContentToTheAgent()
+    public async Task Redirect_WithTextAttachment_DeliversAttachmentContentToTheInboundBoundary()
     {
-        AgentUserMessage? injected = null;
-        var handle = RunningHandle();
-        handle.Setup(h => h.InterruptAndSteerAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<AgentUserMessage, CancellationToken>((m, _) => injected = m)
-            .Returns(Task.CompletedTask);
-
-        var hub = SignalRHubTests.CreateHub(supervisor: SupervisorFor(handle.Object).Object);
+        var orchestrator = new CapturingInboundMessageOrchestrator
+        {
+            AdmissionStatus = InboundDispatchStatus.Steered
+        };
+        var hub = SignalRHubTests.CreateHub(orchestrator: orchestrator);
 
         var delivered = await hub.InterruptAndSteerWithMedia(Agent, Session, "do this instead", TextPart());
 
         delivered.ShouldBeTrue();
-        injected.ShouldNotBeNull();
-        injected!.Content.ShouldContain("do this instead");
-        injected.Content.ShouldContain(TextAttachmentBody);
+        var inbound = orchestrator.Captured.ShouldHaveSingleItem();
+        inbound.Content.ShouldBe("do this instead");
+        var attachment = inbound.ContentParts.ShouldNotBeNull().ShouldHaveSingleItem();
+        attachment.ShouldBeOfType<TextContentPart>().Text.ShouldBe(TextAttachmentBody);
+        inbound.RoutingHints.ShouldNotBeNull();
+        inbound.RoutingHints!.DeliveryMode.ShouldBe(InboundDeliveryMode.Interrupt);
     }
 
     [Fact]
-    public async Task Redirect_WithImageAttachment_DeliversImageOnTheVisionPath()
+    public async Task Redirect_WithImageAttachment_DeliversImageOnTheInboundBoundary()
     {
-        AgentUserMessage? injected = null;
-        var handle = RunningHandle();
-        handle.Setup(h => h.InterruptAndSteerAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<AgentUserMessage, CancellationToken>((m, _) => injected = m)
-            .Returns(Task.CompletedTask);
-
-        var hub = SignalRHubTests.CreateHub(supervisor: SupervisorFor(handle.Object).Object);
+        var orchestrator = new CapturingInboundMessageOrchestrator
+        {
+            AdmissionStatus = InboundDispatchStatus.Steered
+        };
+        var hub = SignalRHubTests.CreateHub(orchestrator: orchestrator);
 
         var delivered = await hub.InterruptAndSteerWithMedia(Agent, Session, "look here", ImagePart());
 
         delivered.ShouldBeTrue();
-        injected.ShouldNotBeNull();
-        injected!.Images.ShouldNotBeNull();
-        injected.Images!.Count.ShouldBe(1);
-        injected.Images[0].Value.ShouldStartWith(ImageBase64Marker);
+        var inbound = orchestrator.Captured.ShouldHaveSingleItem();
+        var attachment = inbound.ContentParts.ShouldNotBeNull().ShouldHaveSingleItem();
+        var binary = attachment.ShouldBeOfType<BinaryContentPart>();
+        binary.MimeType.ShouldBe("image/png");
+        binary.Data.ShouldBe(new byte[] { 1, 2, 3 });
     }
 
     // ── Path 3: Follow Up (running -> pending-message queue, #2458) ───────
