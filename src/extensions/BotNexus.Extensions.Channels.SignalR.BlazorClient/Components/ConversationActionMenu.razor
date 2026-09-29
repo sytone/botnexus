@@ -18,20 +18,22 @@
 
 @if (_open)
 {
-    <button type="button" class="conversation-action-menu-dismiss" data-testid="conversation-action-menu-dismiss"
-            aria-label="Dismiss conversation actions" @onclick="Close"></button>
-    <div class="conversation-action-menu" data-testid="conversation-action-menu" role="menu" tabindex="-1"
-         @ref="_menu" style="left:@(_x)px;top:@(_y)px" @onkeydown="HandleMenuKeyDown">
-        @for (var i = 0; i < Actions.Count; i++)
-        {
-            var index = i;
-            var action = Actions[index];
-            <button type="button" role="menuitem" tabindex="@(index == _activeIndex ? "0" : "-1")"
-                    class="conversation-action-menu-item @(action.IsDestructive ? "destructive" : null)"
-                    data-action-id="@action.Id"
-                    data-section-id="@(action.Id.StartsWith("move-", StringComparison.Ordinal) && action.Id != "move-none" ? action.Id[5..] : null)"
-                    @onclick="() => InvokeAction(action)">@action.Label</button>
-        }
+    <div class="conversation-action-overlay" data-testid="conversation-action-overlay" popover="manual" @ref="_overlay">
+        <button type="button" class="conversation-action-menu-dismiss" data-testid="conversation-action-menu-dismiss"
+                aria-label="Dismiss conversation actions" @onclick="Close"></button>
+        <div class="conversation-action-menu" data-testid="conversation-action-menu" role="menu" tabindex="-1"
+             @ref="_menu" style="left:@(_x)px;top:@(_y)px" @onkeydown="HandleMenuKeyDown">
+            @for (var i = 0; i < Actions.Count; i++)
+            {
+                var index = i;
+                var action = Actions[index];
+                <button type="button" role="menuitem" tabindex="@(index == _activeIndex ? "0" : "-1")"
+                        class="conversation-action-menu-item @(action.IsDestructive ? "destructive" : null)"
+                        data-action-id="@action.Id"
+                        data-section-id="@(action.Id.StartsWith("move-", StringComparison.Ordinal) && action.Id != "move-none" ? action.Id[5..] : null)"
+                        @onclick="() => InvokeAction(action)">@action.Label</button>
+            }
+        </div>
     </div>
 }
 
@@ -40,6 +42,7 @@
     [Parameter] public RenderFragment? ChildContent { get; set; }
 
     private ElementReference _trigger;
+    private ElementReference _overlay;
     private ElementReference _menu;
     private DotNetObjectReference<ConversationActionMenu>? _reference;
     private bool _open;
@@ -54,7 +57,7 @@
             return;
         _focusMenu = false;
         _reference ??= DotNetObjectReference.Create(this);
-        await JS.InvokeVoidAsync("conversationActionMenu.open", _menu, _reference);
+        await JS.InvokeVoidAsync("conversationActionMenu.open", _overlay, _menu, _reference);
         await JS.InvokeVoidAsync("conversationActionMenu.focusItem", _menu, _activeIndex);
     }
 
