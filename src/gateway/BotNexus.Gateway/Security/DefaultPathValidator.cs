@@ -329,6 +329,11 @@ public sealed class DefaultPathValidator : IPathValidator
             return true;
         }
 
+        if (Path.EndsInDirectorySeparator(configuredPath))
+        {
+            return candidatePath.StartsWith(configuredPath, PathComparison);
+        }
+
         return candidatePath.StartsWith(configuredPath + Path.DirectorySeparatorChar, PathComparison)
                || candidatePath.StartsWith(configuredPath + Path.AltDirectorySeparatorChar, PathComparison);
     }
