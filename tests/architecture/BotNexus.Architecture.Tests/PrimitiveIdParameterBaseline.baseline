@@ -26,12 +26,8 @@ src/extensions/BotNexus.Extensions.Qmd/QmdToolContributor.cs|1
 src/extensions/BotNexus.Extensions.Skills/SkillsCommandContributor.cs|1
 src/gateway/BotNexus.Cron/Actions/MemoryDreamingCronAction.cs|1
 src/gateway/BotNexus.Cron/CronAlertTarget.cs|2
-src/gateway/BotNexus.Gateway.Configuration/NoOpAgentConfigurationWriter.cs|1
-src/gateway/BotNexus.Gateway.Configuration/PlatformAgentReconciliationService.cs|1
-src/gateway/BotNexus.Gateway.Configuration/PlatformConfigAgentWriter.cs|2
 src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentCanvasNotifier.cs|3
 src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentChangeNotifier.cs|1
-src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentConfigurationWriter.cs|1
 src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentTodoNotifier.cs|2
 src/gateway/BotNexus.Gateway.Contracts/Conversations/ConversationConcurrencyException.cs|1
 src/gateway/BotNexus.Gateway.Contracts/Conversations/IConversationChangeNotifier.cs|2
