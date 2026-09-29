@@ -109,6 +109,23 @@ public sealed class PlatformAgentReconciliationServiceTests : IDisposable
             .ShouldBe(BundledPlatformAgents.TrailguideDefinitionVersion);
     }
 
+    [Fact]
+    public async Task StartAsync_InsertsTrailguideWithBundledSkillAutoloadReferences()
+    {
+        await WriteConfigAsync(new JsonObject
+        {
+            ["agents"] = new JsonObject { ["farnsworth"] = ValidAgent("github-copilot", "claude-opus-4") }
+        });
+
+        await CreateService().StartAsync(CancellationToken.None);
+
+        var entry = (await ReadConfigAsync())["agents"]![TrailguideId]!.AsObject();
+        var skills = entry["extensions"]!["botnexus-skills"]!.AsObject();
+        skills["enabled"]!.GetValue<bool>().ShouldBeTrue();
+        skills["autoLoad"]!.AsArray().Select(node => node!.GetValue<string>()).ShouldBe(
+            new[] { "trailguide-documentation", "trailguide-troubleshooting" });
+    }
+
     // ------------------------------------------------- insert-only / no write
 
     [Fact]
