@@ -170,7 +170,7 @@ public sealed class EffectiveRuntimeContextTests
         return handle.ShouldBeOfType<InProcessAgentHandle>().RenderedSystemPrompt.ShouldNotBeNull();
     }
 
-    private static SimpleStreamOptions GetGenerationSettings(IAgentHandle handle)
+    private static GenerationOptions GetGenerationSettings(IAgentHandle handle)
     {
         var agentField = handle.GetType().GetField("_agent", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
         agentField.ShouldNotBeNull();
@@ -179,7 +179,7 @@ public sealed class EffectiveRuntimeContextTests
         var optionsField = typeof(BotNexus.Agent.Core.Agent).GetField("_options", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
         optionsField.ShouldNotBeNull();
         var options = optionsField.GetValue(agent).ShouldBeOfType<BotNexus.Agent.Core.Configuration.AgentOptions>();
-        return options.GenerationSettings.ShouldBeOfType<SimpleStreamOptions>();
+        return options.GenerationSettings.ShouldBeOfType<GenerationOptions>();
     }
 
     private static async Task<(InProcessIsolationStrategy Strategy, SessionId SessionId)> CreateSeamAsync(

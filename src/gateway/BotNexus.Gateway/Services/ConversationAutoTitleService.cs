@@ -87,7 +87,7 @@ public sealed class ConversationAutoTitleService
     /// <param name="timeoutSeconds">Per-call timeout in seconds; non-positive falls back to 30.</param>
     /// <param name="sessionId">
     /// #3417: the id of the session that originated this conversation turn, threaded onto the
-    /// outgoing <c>SimpleStreamOptions.SessionId</c> so the titling request carries the same session
+    /// outgoing <c>GenerationOptions.SessionId</c> so the titling request carries the same session
     /// identity every interactive request does. Optional: a caller with no resolved session still
     /// titles, it simply emits no cache key. Typed (#3099) so a blank id is not representable.
     /// </param>
@@ -345,14 +345,14 @@ public sealed class ConversationAutoTitleService
             // request is correlatable and eligible for the Copilot prompt cache. When there is no
             // auth manager AND no session id there is still nothing to say, so null options are
             // preserved verbatim - behaviour-preserving for the pre-#2025 shape.
-            var streamOptions = _authManager is not null
-                ? await _authManager
-                    .CreateAuthenticatedOptionsAsync(model.Provider, baseOptions: null, sessionId, ct)
-                    .ConfigureAwait(false)
-                : sessionId is { } resolvedSessionId
-                    ? new SimpleStreamOptions { SessionId = resolvedSessionId.Value }
-                    : null;
-
+            var generationOptions = new GenerationOptions
+            {
+                SessionId = sessionId?.Value,
+                CancellationToken = ct
+            };
+            var executionOptions = _authManager is not null
+                ? await _authManager.CreateExecutionOptionsAsync(model.Provider, cancellationToken: ct).ConfigureAwait(false)
+                : null;
             // #3833: the auto-title call goes through the auth manager's bounded invalidate-and-
             // retry so a credential rotating mid-flight costs one wasted round trip rather than a
             // silently skipped title (the catch below swallows the failure into a warning, which is
@@ -363,22 +363,19 @@ public sealed class ConversationAutoTitleService
                         model.Provider,
                         async (apiKey, _) =>
                         {
-                            var attemptOptions = streamOptions is null
-                                ? null
-                                : streamOptions with
-                                {
-                                    ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey
-                                };
-
+                            var attemptOptions = (executionOptions ?? new ProviderExecutionOptions()) with
+                            {
+                                ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey
+                            };
                             return await _llmClient
-                                .CompleteSimpleAsync(model, context, attemptOptions)
+                                .CompleteSimpleAsync(model, context, generationOptions, attemptOptions)
                                 .WaitAsync(TimeSpan.FromSeconds(effectiveTimeout), ct)
                                 .ConfigureAwait(false);
                         },
                         ct)
                     .ConfigureAwait(false)
                 : await _llmClient
-                    .CompleteSimpleAsync(model, context, streamOptions)
+                    .CompleteSimpleAsync(model, context, generationOptions, executionOptions)
                     .WaitAsync(TimeSpan.FromSeconds(effectiveTimeout), ct)
                     .ConfigureAwait(false);
         }

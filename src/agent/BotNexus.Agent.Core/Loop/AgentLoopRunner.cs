@@ -215,14 +215,16 @@ public static class AgentLoopRunner
 
                 pendingMessages.Clear();
 
-                var streamOptions = await BuildStreamOptionsAsync(config, cancellationToken).ConfigureAwait(false);
+                var generationOptions = config.GenerationSettings with { CancellationToken = cancellationToken };
+                var executionOptions = await config.GetProviderExecutionOptions(config.Model.Provider, cancellationToken).ConfigureAwait(false);
                 var messageCountBeforeAssistant = messages.Count;
                 var assistantMessage = await ExecuteWithRetryAsync(
                         messages,
                         currentContext.SystemPrompt,
                         currentContext.Tools,
                         config,
-                        streamOptions,
+                        generationOptions,
+                        executionOptions,
                         emit,
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -519,32 +521,6 @@ public static class AgentLoopRunner
         await emit(new ClaimAuditEvent(result, turnMessage, DateTimeOffset.UtcNow)).ConfigureAwait(false);
     }
 
-    private static async Task<SimpleStreamOptions> BuildStreamOptionsAsync(
-        AgentLoopConfig config,
-        CancellationToken cancellationToken)
-    {
-        var options = CloneOptions(config.GenerationSettings, cancellationToken);
-        var apiKey = await config.GetApiKey(config.Model.Provider, cancellationToken).ConfigureAwait(false);
-        // Null permits provider-level ambient resolution. A blank value can instead represent an
-        // explicit but unavailable declaration, so preserve it to prevent ambient substitution.
-        if (apiKey is not null)
-        {
-            options = options with { ApiKey = apiKey };
-        }
-
-        return options;
-    }
-
-    private static SimpleStreamOptions CloneOptions(SimpleStreamOptions source, CancellationToken cancellationToken)
-    {
-        return source with
-        {
-            CancellationToken = cancellationToken,
-            Headers = source.Headers is null ? null : new Dictionary<string, string>(source.Headers),
-            Metadata = source.Metadata is null ? null : new Dictionary<string, object>(source.Metadata),
-        };
-    }
-
     private static async Task<IReadOnlyList<AgentMessage>> GetMessagesAsync(
         GetMessagesDelegate? getMessages,
         CancellationToken cancellationToken)
@@ -672,7 +648,8 @@ public static class AgentLoopRunner
         string? systemPrompt,
         IReadOnlyList<IAgentTool> tools,
         AgentLoopConfig config,
-        SimpleStreamOptions streamOptions,
+        GenerationOptions generationOptions,
+        ProviderExecutionOptions? executionOptions,
         Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken)
     {
@@ -710,7 +687,7 @@ public static class AgentLoopRunner
             var messageCountBeforeStream = messages.Count;
             try
             {
-                var stream = config.LlmClient.StreamSimple(config.Model, providerContext, streamOptions);
+                var stream = config.LlmClient.StreamSimple(config.Model, providerContext, generationOptions, executionOptions);
                 var assistantMessage = await StreamAccumulator
                     .AccumulateAsync(stream, emit, cancellationToken, messages)
                     .ConfigureAwait(false);

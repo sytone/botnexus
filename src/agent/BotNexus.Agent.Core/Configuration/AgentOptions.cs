@@ -11,7 +11,7 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="Model">The model definition used for provider calls (can be overridden in InitialState).</param>
 /// <param name="ConvertToLlm">Optional converter for agent messages to provider chat messages before each LLM call.</param>
 /// <param name="TransformContext">Optional context transformer before provider invocation (defaults to identity passthrough).</param>
-/// <param name="GetApiKey">Resolves provider API keys on demand.</param>
+/// <param name="GetProviderExecutionOptions">Resolves provider execution policy, including credentials, on demand.</param>
 /// <param name="GetSteeringMessages">Provides steering messages when configured (combined with Agent.Steer queues).</param>
 /// <param name="GetFollowUpMessages">Provides follow-up messages when configured (combined with Agent.FollowUp queues).</param>
 /// <param name="ToolExecutionMode">Controls tool execution ordering (Sequential or Parallel).</param>
@@ -74,13 +74,13 @@ public record AgentOptions(
     LlmClient LlmClient,
     ConvertToLlmDelegate? ConvertToLlm,
     TransformContextDelegate? TransformContext,
-    GetApiKeyDelegate GetApiKey,
+    GetProviderExecutionOptionsDelegate GetProviderExecutionOptions,
     GetMessagesDelegate? GetSteeringMessages,
     GetMessagesDelegate? GetFollowUpMessages,
     ToolExecutionMode ToolExecutionMode,
     BeforeToolCallDelegate? BeforeToolCall,
     AfterToolCallDelegate? AfterToolCall,
-    SimpleStreamOptions GenerationSettings,
+    GenerationOptions GenerationSettings,
     QueueMode SteeringMode,
     QueueMode FollowUpMode,
     string? SessionId = null,

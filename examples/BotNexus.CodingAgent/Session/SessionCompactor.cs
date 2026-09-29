@@ -371,11 +371,14 @@ public sealed class SessionCompactor
             var completion = await options.LlmClient.CompleteSimpleAsync(
                     options.Model,
                     context,
-                    new SimpleStreamOptions
+                    new GenerationOptions
+                    {
+                        MaxTokens = Math.Max(512, (int)Math.Floor(options.ReserveTokens * 0.8))
+                    },
+                    new ProviderExecutionOptions
                     {
                         ApiKey = options.ApiKey,
-                        Headers = options.Headers is null ? null : new Dictionary<string, string>(options.Headers),
-                        MaxTokens = Math.Max(512, (int)Math.Floor(options.ReserveTokens * 0.8))
+                        Headers = options.Headers is null ? null : new Dictionary<string, string>(options.Headers)
                     })
                 .ConfigureAwait(false);
 
