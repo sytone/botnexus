@@ -131,8 +131,6 @@ public sealed class ChannelKnowledgeFenceArchitectureTests : ArchitectureTest
             "direct SendStreamDeltaAsync/SendStreamEventAsync/SendAsync from the agent loop", "#2087"),
 
         // Session lifecycle notifications still delivered by direct adapter send.
-        new("R5", Path.Combine("gateway", "BotNexus.Gateway", "Sessions", "SessionCompactionCoordinator.cs"),
-            "direct adapter SendAsync for the compaction notice", "#2088"),
 
         // Legacy direct delivery / outbound binding fan-out.
         new("R5", Path.Combine("gateway", "BotNexus.Gateway", "OutboundResponseDeliverer.cs"),

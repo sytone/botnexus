@@ -318,7 +318,15 @@ public static class GatewayServiceCollectionExtensions
         // explicit MessageRole.Notification, discriminated against the SAME scope-resolved window.
         services.TryAddSingleton<IContextExhaustionNotifier, ContextExhaustionNotifier>();
         services.AddSingleton<IPreCompactionMemoryFlusher, PreCompactionMemoryFlusher>();
-        services.AddSingleton<ISessionCompactionCoordinator, SessionCompactionCoordinator>();
+        services.AddSingleton<ISessionCompactionCoordinator>(serviceProvider => new SessionCompactionCoordinator(
+            serviceProvider.GetRequiredService<ISessionCompactor>(),
+            serviceProvider.GetRequiredService<ISessionStore>(),
+            serviceProvider.GetRequiredService<IAgentSupervisor>(),
+            serviceProvider.GetRequiredService<IConversationEventPublisher>(),
+            serviceProvider.GetRequiredService<IConversationStore>(),
+            serviceProvider.GetRequiredService<IOptionsMonitor<CompactionOptions>>(),
+            serviceProvider.GetRequiredService<ILogger<SessionCompactionCoordinator>>(),
+            serviceProvider.GetService<IPreCompactionMemoryFlusher>()));
         services.AddSingleton<ISessionEndMemoryFlusher, SessionEndMemoryFlusher>();
         services.AddSingleton<IConversationResetService, DefaultConversationResetService>();
         services.AddSingleton<IMediaPipeline, MediaPipeline>();
