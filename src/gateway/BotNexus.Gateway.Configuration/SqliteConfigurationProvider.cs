@@ -47,6 +47,7 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
     private readonly IConfigStore _store;
     private readonly Action<string, Exception?>? _onLoadFailure;
     private readonly TimeSpan _detectionInterval;
+    private readonly TimeProvider _timeProvider;
     private readonly bool _startChangeDetection;
     private readonly SemaphoreSlim _reloadLock = new(1, 1);
     private readonly CancellationTokenSource _disposeToken = new();
@@ -63,11 +64,13 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
         IConfigStore store,
         Action<string, Exception?>? onLoadFailure = null,
         TimeSpan? detectionInterval = null,
-        bool startChangeDetection = true)
+        bool startChangeDetection = true,
+        TimeProvider? timeProvider = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _onLoadFailure = onLoadFailure;
         _detectionInterval = detectionInterval ?? DefaultDetectionInterval;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _startChangeDetection = startChangeDetection;
 
         if (_detectionInterval <= TimeSpan.Zero)
@@ -171,7 +174,7 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
 
     private async Task DetectChangesAsync(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(_detectionInterval);
+        using var timer = new PeriodicTimer(_detectionInterval, _timeProvider);
         try
         {
             while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
