@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Extensions.Logging;
@@ -98,6 +99,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     private readonly IChannelManager? _channelManager;
     private readonly IInboundDeliveryResolver? _deliveryResolver;
     private readonly IInboundSteerDeliverer? _steerDeliverer;
+    private readonly IActivityBroadcaster? _activityBroadcaster;
     private readonly int _queueCapacity;
     private readonly TimeSpan _queueWaitTimeout;
     private readonly Func<TimeSpan, CancellationToken, Task> _queueDelay;
@@ -129,7 +131,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         IInboundSteerDeliverer? steerDeliverer = null,
         TimeSpan? queueWaitTimeout = null,
         Func<TimeSpan, CancellationToken, Task>? queueDelay = null,
-        Func<Task<InboundDispatchResult>, CancellationToken, Task<InboundDispatchResult>>? waitForRunningCompletion = null)
+        Func<Task<InboundDispatchResult>, CancellationToken, Task<InboundDispatchResult>>? waitForRunningCompletion = null,
+        IActivityBroadcaster? activityBroadcaster = null)
     {
         ArgumentNullException.ThrowIfNull(processor);
         ArgumentNullException.ThrowIfNull(logger);
@@ -144,6 +147,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         _queueCapacity = queueCapacity;
         _deliveryResolver = deliveryResolver;
         _steerDeliverer = steerDeliverer;
+        _activityBroadcaster = activityBroadcaster;
         if (queueWaitTimeout is { } supplied && supplied <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(queueWaitTimeout), supplied,
@@ -176,6 +180,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 nameof(message));
         }
 
+        _ = PublishInboundActivityBestEffortAsync(message);
+
         var queueKey = GetQueueKey(message);
         var queueItem = new QueuedInboundMessage(message);
         return TryWriteToLiveQueue(queueKey, queueItem);
@@ -194,6 +200,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 $"Channel '{message.ChannelType}' producer must populate it (see #526).",
                 nameof(message));
         }
+
+        await PublishInboundActivityBestEffortAsync(message).ConfigureAwait(false);
 
         if (await TrySteerAsync(message, cancellationToken).ConfigureAwait(false))
         {
@@ -352,6 +360,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 nameof(message));
         }
 
+        await PublishInboundActivityBestEffortAsync(message).ConfigureAwait(false);
+
         // #3028: the steer/queue decision is made HERE, server-side, before anything touches the
         // FIFO queue. The resolver reads the caller's stated intent and the server-owned evidence
         // (is a turn actually running?) and collapses them to one mechanism. Absent the seam this
@@ -399,6 +409,42 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
             // we let the processor finish in the background on a detached token — do
             // not surface the inner exception to a now-disconnected caller.
             throw;
+        }
+    }
+
+    private async Task PublishInboundActivityBestEffortAsync(InboundMessage message)
+    {
+        if (_activityBroadcaster is null)
+        {
+            return;
+        }
+
+        var hints = InboundMessageRoutingHints.FromMessage(message);
+        try
+        {
+            // Activity is observability, not an admission receipt. It deliberately uses an
+            // independent token and cannot turn an otherwise accepted, refused, or cancelled
+            // submission into a different delivery outcome.
+            await _activityBroadcaster.PublishAsync(new GatewayActivity
+            {
+                Type = GatewayActivityType.MessageReceived,
+                AgentId = hints.RequestedAgentId?.Value,
+                SessionId = hints.RequestedSessionId?.Value,
+                ConversationId = hints.RequestedConversationId?.Value,
+                ChannelType = message.ChannelType,
+                Message = message.Content,
+                Data = new Dictionary<string, object?>
+                {
+                    ["requestedDeliveryIntent"] = hints.DeliveryMode.ToString()
+                }
+            }, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to publish inbound activity for channel '{ChannelType}'; delivery continues.",
+                message.ChannelType);
         }
     }
 

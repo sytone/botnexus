@@ -212,7 +212,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             new AgentHandleSteerDeliverer(
                 supervisor,
                 sessions,
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentHandleSteerDeliverer>.Instance));
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentHandleSteerDeliverer>.Instance),
+            activityBroadcaster: activity);
     }
 
     /// <summary>
@@ -312,14 +313,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         GatewayTelemetry.MessagesProcessed.Add(1,
             new KeyValuePair<string, object?>("botnexus.channel.type", message.ChannelType),
             new KeyValuePair<string, object?>("botnexus.session.id", requestedSessionIdValue));
-
-        await _activity.PublishAsync(new GatewayActivity
-        {
-            Type = GatewayActivityType.MessageReceived,
-            ChannelType = message.ChannelType,
-            Message = message.Content,
-            SessionId = requestedSessionIdValue
-        }, cancellationToken);
 
         var targetAgents = await _router.ResolveAsync(message, cancellationToken);
         if (targetAgents.Count == 0)
