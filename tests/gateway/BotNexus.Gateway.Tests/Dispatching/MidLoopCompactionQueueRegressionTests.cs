@@ -119,7 +119,8 @@ public sealed class MidLoopCompactionQueueRegressionTests
             compactor.Object,
             sessionStore,
             supervisorHolder.Value,
-            Mock.Of<IChannelManager>(),
+            eventPublisher: null,
+            conversations: null,
             new FixedOptionsMonitor<CompactionOptions>(new CompactionOptions { PreservedTurns = 0 }),
             NullLogger<SessionCompactionCoordinator>.Instance));
         await using var serviceProvider = services.BuildServiceProvider();

@@ -11,11 +11,11 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 /// history, apply + persist with optimistic concurrency, and evict the cached
 /// agent handle so the next turn rebuilds from post-compaction history.
 ///
-/// User notification is intentionally a separate step (<see cref="BuildNotificationText"/>
-/// + <see cref="TrySendChannelNotificationAsync"/>) so callers can deliver the
-/// canonical text through whichever transport they own — a channel adapter for
-/// inbound-channel-driven compactions, the SignalR hub return value plus a
-/// local system message for the Blazor portal — without forking the text.
+/// User notification is intentionally a separate post-compaction step
+/// (<see cref="BuildNotificationText"/> + <see cref="TryPublishNotificationAsync"/>).
+/// Channel-driven callers persist the canonical notification in the session, then publish the
+/// committed item through the channel-neutral conversation event seam. SignalR RPC and command
+/// callers may still use the canonical text as their direct return value without forking it.
 ///
 /// Introduced to fix three subtly different compaction code paths that left
 /// the manual paths missing agent-handle eviction (Bug 3 in PR #602),
@@ -26,7 +26,7 @@ public interface ISessionCompactionCoordinator
     /// <summary>
     /// Run flush + compact + save + handle-eviction. Does not emit any user
     /// notification — callers use <see cref="BuildNotificationText"/> and
-    /// <see cref="TrySendChannelNotificationAsync"/> for that.
+    /// <see cref="TryPublishNotificationAsync"/> for that.
     /// </summary>
     /// <param name="agentId">Target agent.</param>
     /// <param name="session">The session to compact.</param>
@@ -52,17 +52,15 @@ public interface ISessionCompactionCoordinator
     string BuildNotificationText(SessionCompactionOutcome outcome);
 
     /// <summary>
-    /// Convenience helper that resolves the channel adapter for
-    /// <paramref name="channelType"/> and sends the canonical notification
-    /// text. Swallows transport failures (logs a warning) so a delivery
-    /// problem never masks a successful compaction. Returns <c>false</c> if
-    /// the adapter could not be resolved or the send threw.
+    /// Appends and persists the canonical notification, then publishes the exact committed
+    /// session item through the conversation-event seam. Persistence failures propagate and publish
+    /// no success fact. Publication rejection or failure is non-transactional: it is logged and
+    /// returns <c>false</c>, while the durable session item remains available for reconciliation.
     /// </summary>
-    Task<bool> TrySendChannelNotificationAsync(
+    Task<bool> TryPublishNotificationAsync(
         SessionCompactionOutcome outcome,
-        ChannelKey channelType,
-        ChannelAddress channelAddress,
-        string sessionId,
+        AgentId agentId,
+        GatewaySession session,
         CancellationToken cancellationToken);
 }
 

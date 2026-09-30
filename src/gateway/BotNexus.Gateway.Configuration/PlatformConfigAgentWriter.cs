@@ -1,4 +1,5 @@
 using System.Text.Json;
+using BotNexus.Domain.Primitives;
 using System.Text.Json.Nodes;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Configuration;
@@ -43,7 +44,7 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
         await _configWriter.MutateAsync(root =>
         {
             var agents = EnsureAgentsObject(root);
-            var entry = GetOrCreateAgentEntry(agents, descriptor.AgentId.Value);
+            var entry = GetOrCreateAgentEntry(agents, descriptor.AgentId);
 
             // Required identity + routing surface.
             entry["provider"] = descriptor.ApiProvider;
@@ -86,9 +87,8 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
         }, $"before-agent-upsert-{descriptor.AgentId}", cancellationToken);
     }
 
-    public async Task DeleteAsync(string agentId, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(AgentId agentId, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(agentId);
 
         await _configWriter.MutateAsync(root =>
         {
@@ -96,9 +96,9 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             if (!TryGetAgentsObject(root, out var agents))
                 return;
 
-            if (!agents.Remove(agentId))
+            if (!agents.Remove(agentId.Value))
                 return;
-        }, $"before-agent-delete-{agentId}", cancellationToken);
+        }, $"before-agent-delete-{agentId.Value}", cancellationToken);
     }
 
     private static void SetOptionalString(JsonObject target, string propertyName, string? value)
@@ -352,13 +352,13 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
         return false;
     }
 
-    private static JsonObject GetOrCreateAgentEntry(JsonObject agents, string agentId)
+    private static JsonObject GetOrCreateAgentEntry(JsonObject agents, AgentId agentId)
     {
-        if (agents[agentId] is JsonObject existing)
+        if (agents[agentId.Value] is JsonObject existing)
             return existing;
 
         var created = new JsonObject();
-        agents[agentId] = created;
+        agents[agentId.Value] = created;
         return created;
     }
 }

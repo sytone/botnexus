@@ -186,7 +186,7 @@ public sealed class ConfigMutationMatrixDiskTests
             .ShouldBe("preserve-me");
         after["agents"]!["assistant"]!["extensions"]!["botnexus-skills"]!["allow"]!
             .AsArray().Count.ShouldBe(2);
-        after["gateway"]!["extensions"]!["defaults"]!["botnexus-skills"]!["root"]!
+        after["agents"]!["defaults"]!["extensions"]!["botnexus-skills"]!["root"]!
             .GetValue<string>().ShouldBe("skills");
     }
 

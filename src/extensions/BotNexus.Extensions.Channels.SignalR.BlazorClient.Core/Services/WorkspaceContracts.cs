@@ -53,4 +53,5 @@ public sealed record ExtensionDetailDto(
     [property: JsonPropertyName("extensionTypes")] IReadOnlyList<string>? ExtensionTypes,
     [property: JsonPropertyName("registeredServices")] IReadOnlyList<string>? RegisteredServices,
     [property: JsonPropertyName("assemblyFileName")] string? AssemblyFileName,
-    [property: JsonPropertyName("configSchema")] IReadOnlyList<ExtensionConfigFieldDto>? ConfigSchema = null);
+    [property: JsonPropertyName("configSchema")] IReadOnlyList<ExtensionConfigFieldDto>? ConfigSchema = null,
+    [property: JsonPropertyName("configurationScopes")] IReadOnlyList<string>? ConfigurationScopes = null);

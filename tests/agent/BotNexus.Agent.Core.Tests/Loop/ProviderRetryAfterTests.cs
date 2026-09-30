@@ -300,13 +300,13 @@ public class ProviderRetryAfterTests
                         DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
                     .ToList()),
             TransformContext: (messages, _) => Task.FromResult(messages),
-            GetApiKey: (_, _) => Task.FromResult<string?>(null),
+            GetProviderExecutionOptions: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
             GetSteeringMessages: null,
             GetFollowUpMessages: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
             BeforeToolCall: null,
             AfterToolCall: null,
-            GenerationSettings: new SimpleStreamOptions(),
+            GenerationSettings: new GenerationOptions(),
             MaxRetryDelayMs: maxRetryDelayMs);
     }
 
@@ -322,13 +322,13 @@ public class ProviderRetryAfterTests
             LlmClient: TestHelpers.CreateLlmClient(),
             ConvertToLlm: (messages, _) => Task.FromResult<IReadOnlyList<Message>>([]),
             TransformContext: (messages, _) => Task.FromResult(messages),
-            GetApiKey: (_, _) => Task.FromResult<string?>(null),
+            GetProviderExecutionOptions: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
             GetSteeringMessages: null,
             GetFollowUpMessages: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
             BeforeToolCall: null,
             AfterToolCall: null,
-            GenerationSettings: new SimpleStreamOptions());
+            GenerationSettings: new GenerationOptions());
     }
 
     private static IDisposable RegisterProvider(string apiId,

@@ -70,6 +70,20 @@ public sealed class DocumentationSearchContributor : ISearchContributor
 
 The example uses a source-local score. It does not promise that `0.82` sorts above a result from another contributor.
 
+## Built-in source behavior
+
+The gateway registers these built-in sources alongside extension contributors:
+
+| Source ID | Label | Native read and matching | Source-local order and target |
+| --- | --- | --- | --- |
+| `agents` | Agents | Reads `IAgentRegistry` descriptors and matches ID, display name, description, summary, model, and provider case-insensitively. It is unavailable when no agents are registered. | Agent ID ascending; `/agents/{agentId}`. |
+| `conversations` | Conversations | Reads active `IConversationStore` conversation records and matches IDs, title, purpose, and status case-insensitively. | Updated time descending, then conversation ID; `/chat/{agentId}/{conversationId}`. |
+| `sessions` | Sessions | Reads at most 500 metadata-only `ISessionStore` summaries, including inactive sessions, and matches session, agent, conversation, channel, status, and type case-insensitively. It never materializes transcripts. | Updated time descending, then session ID; the owning conversation's chat route, or the agent chat route for a legacy summary without a conversation ID. |
+| `memory` | Memory | Delegates to each enabled agent's native memory search. | Native memory relevance order; the memory entry route. |
+| `files` | Files | Scans policy-readable files in registered agent workspaces without a separate index. | Agent and path order; the workspace file route. |
+
+All built-in snippets are bounded to 240 characters. Agent, conversation, session, and file results explicitly report untrusted provenance; only memory can attest trust from its native trust tier. Empty queries and non-positive bounds return no results, and every source honors caller cancellation. These contributors add no index and do not define a global rank.
+
 ## Query the aggregated endpoint
 
 The gateway discovers the complete dependency-injection collection of `ISearchContributor` implementations and exposes them through:

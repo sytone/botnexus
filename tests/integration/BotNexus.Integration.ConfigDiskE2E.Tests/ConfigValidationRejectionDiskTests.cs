@@ -119,21 +119,12 @@ public sealed class ConfigValidationRejectionDiskTests
     }
 
     /// <summary>
-    /// A runtime consumer bound to a corrupted config file <em>should</em> degrade to its
-    /// last-known-good configuration rather than throwing. Today it does not: the JSON
-    /// configuration provider wraps the parse failure in <see cref="InvalidDataException"/> and
-    /// rethrows, which on a watcher-driven reload lands on a background thread and can take the
-    /// host down. Filed as #2358.
+    /// A runtime consumer bound to a corrupted config file retains its last-known-good
+    /// configuration, reports the rejected reload, and does not throw on the caller or watcher
+    /// thread (#2358).
     /// </summary>
-    /// <remarks>
-    /// This test pins the <em>observed</em> behaviour deliberately, and will fail the moment
-    /// #2358 is fixed - at which point the assertion should be inverted to
-    /// <c>Should.NotThrow</c> and the consumer asserted to still hold the pre-corruption
-    /// providers. The production fix cannot land here: it touches config-source registration
-    /// owned by open PRs #2352 / #2348.
-    /// </remarks>
     [Fact]
-    public void MalformedJsonOnDisk_CurrentlyThrowsOnReload_Pinned2358()
+    public void MalformedJsonOnDisk_ReloadRetainsLastKnownGoodAndReportsDiagnostic()
     {
         using var home = new ConfigHomeFixture(MaximalConfig.Json);
         using var consumer = home.BuildRuntimeConsumer();
@@ -141,8 +132,10 @@ public sealed class ConfigValidationRejectionDiskTests
 
         File.WriteAllText(home.ConfigPath, "{ this is not json ");
 
-        var failure = Should.Throw<InvalidDataException>(() => consumer.ReloadNow());
-        failure.Message.ShouldContain("config.json", Case.Insensitive);
+        var config = Should.NotThrow(() => consumer.ReloadNow());
+        config.Providers!.ShouldContainKey("github-copilot");
+        home.LoadFailures.ShouldContain(message =>
+            message.Contains("previous configuration is being retained", StringComparison.Ordinal));
     }
 
     /// <summary>

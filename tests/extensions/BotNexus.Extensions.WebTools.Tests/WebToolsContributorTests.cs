@@ -6,6 +6,7 @@ using BotNexus.Extensions.WebTools.Search;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Extensions.WebTools.Tests;
 
@@ -17,6 +18,97 @@ namespace BotNexus.Extensions.WebTools.Tests;
 [Trait("Category", "Unit")]
 public class WebToolsContributorTests
 {
+    [Fact]
+    public async Task ContributeAsync_DefaultsOnly_ContributesConfiguredFetchAndSearch()
+    {
+        var defaults = JsonSerializer.SerializeToElement(new
+        {
+            fetch = new { maxLengthChars = 1234, timeoutSeconds = 17 },
+            search = new { provider = "brave", apiKey = "shared-key", maxResults = 8 }
+        });
+        var descriptor = BuildDescriptor(defaults: defaults);
+
+        var contribution = await new WebToolsContributor().ContributeAsync(BuildContext(descriptor));
+
+        var fetch = contribution.Tools.OfType<WebFetchTool>().ShouldHaveSingleItem();
+        GetFetchConfig(fetch).MaxLengthChars.ShouldBe(1234);
+        GetFetchConfig(fetch).TimeoutSeconds.ShouldBe(17);
+        var search = contribution.Tools.OfType<WebSearchTool>().ShouldHaveSingleItem();
+        GetSearchConfig(search).Provider.ShouldBe("brave");
+        GetSearchConfig(search).ApiKey.ShouldBe("shared-key");
+        GetSearchConfig(search).MaxResults.ShouldBe(8);
+    }
+
+    [Fact]
+    public async Task ContributeAsync_WorldAndGatewayBags_DoNotFlowIntoAgentReads()
+    {
+        var configured = JsonSerializer.SerializeToElement(new
+        {
+            fetch = new { maxLengthChars = 1234 },
+            search = new { provider = "brave", apiKey = "scope-key" }
+        });
+        var platform = new PlatformConfig
+        {
+            World = new WorldSettingsConfig
+            {
+                Extensions = new Dictionary<string, JsonElement> { ["botnexus-web"] = configured }
+            },
+            Gateway = new GatewaySettingsConfig
+            {
+                Extensions = new Dictionary<string, JsonElement> { ["botnexus-web"] = configured }
+            }
+        };
+        var descriptor = BuildDescriptor();
+
+        platform.BindWorldExtension<WebToolsConfig>("botnexus-web").ShouldNotBeNull();
+        platform.BindGatewayExtension<WebToolsConfig>("botnexus-web").ShouldNotBeNull();
+        platform.BindAgentDefaultExtension<WebToolsConfig>("botnexus-web").ShouldBeNull();
+        var contribution = await new WebToolsContributor().ContributeAsync(BuildContext(descriptor));
+
+        contribution.Tools.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ContributeAsync_NoAgentScopes_DoesNotContributeTools()
+    {
+        var descriptor = BuildDescriptor();
+
+        var contribution = await new WebToolsContributor().ContributeAsync(BuildContext(descriptor));
+
+        contribution.Tools.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ContributeAsync_PartialNamedOverride_RetainsSiblingAgentDefaults()
+    {
+        var defaults = JsonSerializer.SerializeToElement(new { search = new { provider = "brave", apiKey = "shared-key", maxResults = 4 } });
+        var named = JsonSerializer.SerializeToElement(new { search = new { maxResults = 9 } });
+        var descriptor = new AgentDescriptor
+        {
+            AgentId = AgentId.From("test-agent"),
+            DisplayName = "Test Agent",
+            ModelId = "gpt-4.1",
+            ApiProvider = "github-copilot",
+            DefaultExtensionConfig = new Dictionary<string, JsonElement> { ["botnexus-web"] = defaults },
+            ExtensionConfig = new Dictionary<string, JsonElement> { ["botnexus-web"] = named }
+        };
+        var context = new AgentToolContributionContext(
+            descriptor,
+            new AgentExecutionContext { SessionId = SessionId.Create() },
+            Path.GetTempPath(),
+            new AllowAllPathValidator(),
+            null,
+            (_, _) => Task.FromResult<string?>(null));
+
+        var contribution = await new WebToolsContributor().ContributeAsync(context);
+
+        var search = contribution.Tools.OfType<WebSearchTool>().ShouldHaveSingleItem();
+        var config = GetSearchConfig(search);
+        config.Provider.ShouldBe("brave");
+        config.ApiKey.ShouldBe("shared-key");
+        config.MaxResults.ShouldBe(9);
+    }
+
     [Fact]
     public async Task ContributeAsync_CopilotProvider_FlowsResolvedEnterpriseEndpointToWebSearchTool()
     {
@@ -89,6 +181,46 @@ public class WebToolsContributorTests
         contribution.Tools.OfType<WebFetchTool>().ShouldHaveSingleItem();
         contribution.Tools.OfType<WebSearchTool>().ShouldHaveSingleItem();
         GetRedactor(contribution.Tools.OfType<WebFetchTool>().First()).ShouldBeNull();
+    }
+
+    private static AgentDescriptor BuildDescriptor(JsonElement? defaults = null, JsonElement? named = null)
+        => new()
+        {
+            AgentId = AgentId.From("test-agent"),
+            DisplayName = "Test Agent",
+            ModelId = "gpt-4.1",
+            ApiProvider = "github-copilot",
+            DefaultExtensionConfig = defaults is { } defaultValue
+                ? new Dictionary<string, JsonElement> { ["botnexus-web"] = defaultValue }
+                : new Dictionary<string, JsonElement>(),
+            ExtensionConfig = named is { } namedValue
+                ? new Dictionary<string, JsonElement> { ["botnexus-web"] = namedValue }
+                : new Dictionary<string, JsonElement>()
+        };
+
+    private static AgentToolContributionContext BuildContext(AgentDescriptor descriptor)
+        => new(
+            descriptor,
+            new AgentExecutionContext { SessionId = SessionId.Create() },
+            Path.GetTempPath(),
+            new AllowAllPathValidator(),
+            null,
+            (_, _) => Task.FromResult<string?>(null));
+
+    private static WebFetchConfig GetFetchConfig(WebFetchTool tool)
+    {
+        var field = typeof(WebFetchTool).GetField("_config", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("WebFetchTool must retain its resolved configuration.");
+        return field.GetValue(tool) as WebFetchConfig
+            ?? throw new InvalidOperationException("WebFetchTool configuration has an unexpected type.");
+    }
+
+    private static WebSearchConfig GetSearchConfig(WebSearchTool tool)
+    {
+        var field = typeof(WebSearchTool).GetField("_config", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("WebSearchTool must retain its resolved configuration.");
+        return field.GetValue(tool) as WebSearchConfig
+            ?? throw new InvalidOperationException("WebSearchTool configuration has an unexpected type.");
     }
 
     private static ISecretRedactor? GetRedactor(object tool)

@@ -35,8 +35,6 @@ public int MaxConcurrentSessions { get; init; }
 public IReadOnlyList<string> ToolIds { get; init; } = [];
 public IReadOnlyList<string> SubAgentIds { get; init; } = [];
 public string? SystemPrompt { get; init; }
-public string? SystemPromptFile { get; init; }
-public IReadOnlyList<string> SystemPromptFiles { get; init; } = [];
 public HeartbeatAgentConfig? Heartbeat { get; init; }
 public SoulAgentConfig? Soul { get; init; }
 public FileAccessPolicy? FileAccess { get; init; }
@@ -65,8 +63,7 @@ illustrative provider and model strings with a pair registered in your deploymen
       "model": "registered-model-id",
       "isolationStrategy": "in-process",
       "maxConcurrentSessions": 1,
-      "toolIds": ["read", "write", "edit", "shell", "grep", "glob"],
-      "systemPromptFiles": ["AGENTS.md", "SOUL.md"]
+      "toolIds": ["read", "write", "edit", "shell", "grep", "glob"]
     }
   }
 }

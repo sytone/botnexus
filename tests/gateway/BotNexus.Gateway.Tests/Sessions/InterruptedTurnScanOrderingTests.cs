@@ -1,5 +1,6 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Activity;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
@@ -91,8 +92,10 @@ public sealed class InterruptedTurnScanOrderingTests
             sp.GetRequiredService<ISessionStore>(),
             sp.GetRequiredService<IAgentRegistry>(),
             sp.GetRequiredService<IActivityBroadcaster>(),
-            sp.GetRequiredService<IChannelManager>(),
-            NullLogger<InterruptedTurnNotificationService>.Instance));
+            Mock.Of<IConversationEventPublisher>(),
+            NullLogger<InterruptedTurnNotificationService>.Instance,
+            orchestrator: null,
+            options: null));
 
         using var host = builder.Build();
         await host.StartAsync();

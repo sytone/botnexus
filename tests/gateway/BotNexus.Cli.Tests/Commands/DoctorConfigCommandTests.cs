@@ -1,4 +1,7 @@
 using BotNexus.Cli.Commands;
+using BotNexus.Cli.Commands.Doctor;
+using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Configuration.Store;
 using Shouldly;
 using Spectre.Console;
 using System.Text.Json.Nodes;
@@ -59,18 +62,14 @@ public sealed class DoctorConfigCommandTests : IDisposable
         var fullConfig = """
             {
               "gateway": {
-                "extensions": {
-                  "enabled": true,
-                  "defaults": {
-                    "botnexus-skills": { "enabled": true }
-                  }
-                }
+                "extensionLoader": { "enabled": true },
+                "compaction": { "summarizationModel": "claude-haiku-4.5" }
               },
               "cron": { "enabled": true, "tickIntervalSeconds": 60 },
-              "compaction": { "summarizationModel": "claude-haiku-4.5" },
               "agents": {
                 "defaults": {
-                  "memory": { "enabled": true, "indexing": "auto" }
+                  "memory": { "enabled": true, "indexing": "auto" },
+                  "extensions": { "botnexus-skills": { "enabled": true } }
                 }
               }
             }
@@ -120,7 +119,7 @@ public sealed class DoctorConfigCommandTests : IDisposable
             var root = JsonNode.Parse(written)!.AsObject();
 
             // skills default applied
-            var skillsEnabled = root["gateway"]!["extensions"]!["defaults"]!["botnexus-skills"]!["enabled"]!.GetValue<bool>();
+            var skillsEnabled = root["agents"]!["defaults"]!["extensions"]!["botnexus-skills"]!["enabled"]!.GetValue<bool>();
             skillsEnabled.ShouldBeTrue();
 
             // cron applied
@@ -197,4 +196,197 @@ public sealed class DoctorConfigCommandTests : IDisposable
             Directory.Delete(Path.GetDirectoryName(configPath)!, recursive: true);
         }
     }
+    [Fact]
+    public async Task DoctorConfig_LegacyExtensions_DryRunPreviewsWithoutWritingJson()
+    {
+        var configPath = await WriteTempConfigAsync(LegacyExtensionsJson);
+        try
+        {
+            var before = await File.ReadAllTextAsync(configPath);
+
+            var result = await new DoctorConfigCommand().ExecuteAsync(
+                configPath, autoApply: true, dryRun: true, verbose: false, CancellationToken.None);
+
+            result.ShouldBe(0);
+            (await File.ReadAllTextAsync(configPath)).ShouldBe(before);
+            _consoleOutput.ToString().ShouldContain("legacy-gateway-extensions");
+            _consoleOutput.ToString().ShouldContain("would apply");
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(configPath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DoctorConfig_LegacyExtensions_YesWritesCanonicalJsonShape()
+    {
+        var configPath = await WriteTempConfigAsync(LegacyExtensionsJson);
+        try
+        {
+            await new DoctorConfigCommand().ExecuteAsync(
+                configPath, autoApply: true, dryRun: false, verbose: false, CancellationToken.None);
+
+            var written = await File.ReadAllTextAsync(configPath);
+            written.ShouldContain("legacy-only");
+            written.ShouldContain("canonicalUnknown");
+            written.ShouldContain("\"token\": null");
+            written.ShouldNotContain("\"defaults\": {\n        \"legacy-only\"");
+            var document = ConfigDocument.Parse(written);
+            LegacyGatewayExtensionsMigration.IsApplicable(document).ShouldBeFalse();
+            document.TryGetString("gateway.extensionLoader.path", out var loaderPath).ShouldBeTrue();
+            loaderPath.ShouldBe("legacy/extensions");
+            document.GetBool("gateway.extensionLoader.enabled").ShouldBeTrue(
+                "the legacy migration preserves false, then the separately accepted extensions-block doctor check enables the loader");
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(configPath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DoctorConfig_StoreOnlyLegacyExtensions_DryRunDoesNotCreateJsonOrChangeStore()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"botnexus-doctor-store-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var configPath = Path.Combine(directory, "config.json");
+        var storePath = Path.Combine(directory, ConfigStoreBootstrap.StoreFileName);
+        var store = new BotNexus.Gateway.Configuration.Store.SqliteConfigStore($"Data Source={storePath}");
+        await store.WriteDocumentAsync(JsonNode.Parse(LegacyExtensionsJson)!.AsObject());
+        var before = ConfigDocumentRehydrator.Rehydrate(await store.ReadEntriesAsync()).ToJsonString();
+        try
+        {
+            var result = await new DoctorConfigCommand().ExecuteAsync(
+                configPath, autoApply: true, dryRun: true, verbose: false, CancellationToken.None);
+
+            result.ShouldBe(0);
+            File.Exists(configPath).ShouldBeFalse();
+            ConfigDocumentRehydrator.Rehydrate(await store.ReadEntriesAsync()).ToJsonString().ShouldBe(before);
+        }
+        finally
+        {
+            ConfigStoreBootstrap.ReleaseConnections(storePath);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DoctorConfig_StoreOnlyLegacyExtensions_YesWritesCanonicalStoreAndJsonMirror()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"botnexus-doctor-store-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var configPath = Path.Combine(directory, "config.json");
+        var storePath = Path.Combine(directory, ConfigStoreBootstrap.StoreFileName);
+        var store = new BotNexus.Gateway.Configuration.Store.SqliteConfigStore($"Data Source={storePath}");
+        await store.WriteDocumentAsync(JsonNode.Parse(LegacyExtensionsJson)!.AsObject());
+        try
+        {
+            var result = await new DoctorConfigCommand().ExecuteAsync(
+                configPath, autoApply: true, dryRun: false, verbose: false, CancellationToken.None);
+
+            result.ShouldBe(0);
+            File.Exists(configPath).ShouldBeTrue();
+            var stored = ConfigDocument.Parse(ConfigDocumentRehydrator.Rehydrate(await store.ReadEntriesAsync()).ToJsonString());
+            LegacyGatewayExtensionsMigration.IsApplicable(stored).ShouldBeFalse();
+            stored.TryGetString("gateway.extensionLoader.path", out var loaderPath).ShouldBeTrue();
+            loaderPath.ShouldBe("legacy/extensions");
+            stored.GetBool("gateway.extensionLoader.enabled").ShouldBeTrue(
+                "the legacy migration preserves false, then the separately accepted extensions-block doctor check enables the loader");
+            stored.ToJsonString().ShouldContain("canonicalUnknown");
+            stored.ToJsonString().ShouldContain("\"token\": null");
+        }
+        finally
+        {
+            ConfigStoreBootstrap.ReleaseConnections(storePath);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DoctorConfig_UnsafeLegacyMigration_ReturnsNonzeroAndDoesNotWrite(bool dryRun)
+    {
+        const string unsafeJson = """
+            {
+              "gateway": {
+                "extensionLoader": null,
+                "extensions": { "path": "legacy/extensions" }
+              }
+            }
+            """;
+        var configPath = await WriteTempConfigAsync(unsafeJson);
+        try
+        {
+            var before = await File.ReadAllTextAsync(configPath);
+
+            var result = await new DoctorConfigCommand().ExecuteAsync(
+                configPath, autoApply: true, dryRun, verbose: false, CancellationToken.None);
+
+            result.ShouldBe(1);
+            (await File.ReadAllTextAsync(configPath)).ShouldBe(before);
+            _consoleOutput.ToString().ShouldContain("gateway.extensionLoader");
+            _consoleOutput.ToString().ShouldContain("not modified");
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(configPath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ApplyAcceptedChecks_ReplaysOnlyAcceptedChecksAndRechecksApplicability()
+    {
+        var document = ConfigDocument.Parse("{}");
+        var accepted = new PathSettingCheck("accepted", "gateway.extensionLoader.enabled");
+        var rejected = new PathSettingCheck("rejected", "cron.enabled");
+
+        DoctorConfigCommand.ApplyAcceptedChecks(document, [accepted]);
+
+        document.GetBool("gateway.extensionLoader.enabled").ShouldBeTrue();
+        document.GetBool("cron.enabled").ShouldBeNull();
+        accepted.ApplyCount.ShouldBe(1);
+        rejected.ApplyCount.ShouldBe(0);
+
+        DoctorConfigCommand.ApplyAcceptedChecks(document, [accepted]);
+        accepted.ApplyCount.ShouldBe(1);
+    }
+
+    private sealed class PathSettingCheck(string id, string path) : IConfigCheck
+    {
+        public string Id => id;
+        public string Description => id;
+        public string FixDescription => id;
+        public int ApplyCount { get; private set; }
+        public bool IsApplicable(ConfigDocument config) => config.GetBool(path) is not true;
+        public void Apply(ConfigDocument config)
+        {
+            ApplyCount++;
+            config.Set(path, true);
+        }
+    }
+
+    private const string LegacyExtensionsJson = """
+        {
+          "gateway": {
+            "extensions": {
+              "path": "legacy/extensions",
+              "enabled": false,
+              "defaults": {
+                "canonical": { "enabled": false, "legacy": "loses" },
+                "legacy-only": { "token": null }
+              }
+            }
+          },
+          "agents": {
+            "defaults": {
+              "extensions": {
+                "canonical": { "enabled": true, "canonicalUnknown": 9 }
+              }
+            }
+          }
+        }
+        """;
+
 }

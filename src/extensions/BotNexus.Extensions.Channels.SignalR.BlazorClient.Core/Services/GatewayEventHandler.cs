@@ -126,7 +126,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         var conv = agent!.Conversations.GetValueOrDefault(convId);
         if (conv is null) return;
 
-        conv.StreamState.IsRunActive = true;
+        MarkRunActive(conv, agent);
         // #1897/streaming-flash: RunStarted fires BEFORE the first MessageStart (which is what
         // normally calls ClearBuffers). Any residual Buffer/ThinkingBuffer left over from the
         // previous turn would otherwise be painted by ChatPanel's live streaming bubble the
@@ -136,10 +136,55 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         // the buffers when the run opens closes that window; MessageStart still clears again per
         // message, so this is purely defensive and cannot drop in-flight content.
         conv.StreamState.ClearBuffers();
+        _store.NotifyChanged();
+    }
+
+    /// <summary>
+    /// Reconciles whole-run activity from the server-owned subscribe snapshot. REST remains the
+    /// only session-roster writer; this applies only the live run bracket that persistence cannot
+    /// reconstruct.
+    /// </summary>
+    public void ApplyRunActivitySnapshot(IReadOnlyList<RunActivitySnapshot> activeRuns)
+    {
+        ArgumentNullException.ThrowIfNull(activeRuns);
+
+        foreach (var agent in _store.Agents.Values)
+        {
+            foreach (var conversation in agent.Conversations.Values)
+                conversation.StreamState.IsRunActive = false;
+
+            agent.IsStreaming = false;
+            agent.ProcessingStage = null;
+        }
+
+        foreach (var snapshot in activeRuns)
+        {
+            var conversationId = snapshot.ConversationId;
+            if (string.IsNullOrWhiteSpace(conversationId)
+                && !_store.TryResolveConversationBySession(snapshot.AgentId, snapshot.SessionId, out conversationId))
+            {
+                continue;
+            }
+
+            if (_store.GetAgent(snapshot.AgentId) is not { } agent
+                || conversationId is null
+                || agent.Conversations.GetValueOrDefault(conversationId) is not { } conversation)
+            {
+                continue;
+            }
+
+            MarkRunActive(conversation, agent);
+        }
+
+        _store.NotifyChanged();
+    }
+
+    private static void MarkRunActive(ConversationState conversation, AgentState agent)
+    {
+        conversation.StreamState.IsRunActive = true;
         agent.IsStreaming = true;
         if (string.IsNullOrEmpty(agent.ProcessingStage))
             agent.ProcessingStage = "\U0001F916 Agent is working\u2026";
-        _store.NotifyChanged();
     }
 
     /// <summary>
@@ -206,7 +251,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         var conv = agent!.Conversations.GetValueOrDefault(convId);
         if (conv is null) return;
 
-        agent.IsStreaming = true;
+        MarkRunActive(conv, agent);
         conv.StreamState.IsStreaming = true;
         conv.StreamState.ClearBuffers();
         agent.ProcessingStage = "🤖 Agent is responding…";
@@ -222,6 +267,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         var conv = agent!.Conversations.GetValueOrDefault(convId);
         if (conv is null) return;
 
+        MarkRunActive(conv, agent);
         conv.StreamState.AppendBuffer(evt.ContentDelta);
         // #1651: a non-streaming SendAsync fan-out can stamp the role the delivered content
         // should render under (e.g. an on-behalf-of-user kickoff carried as `user`). Record it
@@ -243,6 +289,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         var conv = agent!.Conversations.GetValueOrDefault(convId);
         if (conv is null) return;
 
+        MarkRunActive(conv, agent);
         conv.StreamState.AppendThinking(evt.ThinkingContent);
         agent.ProcessingStage = "💭 Thinking…";
         _store.NotifyChangedThrottled();
@@ -257,6 +304,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         var conv = agent!.Conversations.GetValueOrDefault(convId);
         if (conv is null) return;
 
+        MarkRunActive(conv, agent);
         var toolCallId = evt.ToolCallId ?? Guid.NewGuid().ToString("N");
         var argsJson = evt.ToolArgs is not null
             ? JsonSerializer.Serialize(evt.ToolArgs, s_jsonOptions)
@@ -801,13 +849,12 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         foreach (var agent in _store.Agents.Values)
             agent.IsConnected = true;
 
+        SubscribeAllResult? subscribeResult = null;
         try
         {
-            // Re-join the hub groups. The returned Sessions payload is deliberately DISCARDED:
-            // portal session state is loaded over REST and only over REST (#2541 AC1), so writing
-            // it here would make the hub a second, unordered writer into the same store. The
-            // caller's reconnect path re-runs the REST roster walk.
-            _ = await _hub.SubscribeAllAsync();
+            // Re-join the hub groups. Session roster loading remains REST-owned (#2541); the
+            // subscribe response contributes only the authoritative live-run snapshot.
+            subscribeResult = await _hub.SubscribeAllAsync();
             await _hub.SubscribeAgentsAsync([.. _store.Agents.Keys]);
         }
         catch (Exception ex)
@@ -846,6 +893,11 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
                 }
             }
         }
+
+        // Apply the server snapshot AFTER clearing stale buffers. Otherwise this reconnect's
+        // legacy false-active repair would immediately overwrite an authoritative active result.
+        if (subscribeResult is not null)
+            ApplyRunActivitySnapshot(subscribeResult.ActiveRuns);
 
         // #2439: pending steering/follow-up entries are purely client-side optimism. After a
         // reconnect the client cannot confirm whether the gateway still holds them, and there is

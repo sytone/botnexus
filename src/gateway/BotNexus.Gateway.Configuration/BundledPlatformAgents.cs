@@ -39,7 +39,7 @@ public static class BundledPlatformAgents
     /// Current shipped shape of the Trailguide descriptor. Bump when the template gains fields
     /// that a later stage needs to distinguish from a user-authored entry.
     /// </summary>
-    public const int TrailguideDefinitionVersion = 1;
+    public const int TrailguideDefinitionVersion = 2;
 
     /// <summary>
     /// Metadata key under which <see cref="BundledAgentDefinition.DefinitionVersion"/> is stamped
@@ -69,7 +69,17 @@ public static class BundledPlatformAgents
         {
             ["displayName"] = "Nexus Trailguide",
             ["emoji"] = "🧭",
-            ["description"] = DefaultDescription
+            ["description"] = DefaultDescription,
+            ["extensions"] = new JsonObject
+            {
+                ["botnexus-skills"] = new JsonObject
+                {
+                    ["enabled"] = true,
+                    ["autoLoad"] = new JsonArray(
+                        "trailguide-documentation",
+                        "trailguide-troubleshooting")
+                }
+            }
         });
 
     /// <summary>All bundled agents, in reconciliation order.</summary>

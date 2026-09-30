@@ -641,7 +641,7 @@ public sealed class Agent
             _options.LlmClient,
             _convertToLlm,
             _transformContext,
-            _options.GetApiKey,
+            _options.GetProviderExecutionOptions,
             BuildQueueDelegate(_steeringQueue, _options.GetSteeringMessages),
             BuildQueueDelegate(_followUpQueue, _options.GetFollowUpMessages),
             _options.ToolExecutionMode,
@@ -692,13 +692,9 @@ public sealed class Agent
         };
     }
 
-    private static SimpleStreamOptions CloneGenerationSettings(SimpleStreamOptions source)
+    private static GenerationOptions CloneGenerationSettings(GenerationOptions source)
     {
-        return source with
-        {
-            Headers = source.Headers is null ? null : new Dictionary<string, string>(source.Headers),
-            Metadata = source.Metadata is null ? null : new Dictionary<string, object>(source.Metadata),
-        };
+        return source with { };
     }
 
     private static GetMessagesDelegate BuildQueueDelegate(

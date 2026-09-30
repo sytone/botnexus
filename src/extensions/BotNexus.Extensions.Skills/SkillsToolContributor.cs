@@ -24,7 +24,7 @@ public sealed class SkillsToolContributor(ISkillUsageTelemetry? telemetry = null
         var workspaceSkillsDir = Path.Combine(context.WorkspacePath, "skills");
         // Plugin-shipped skills join at the global/shared tier (#2684).
         var pluginRootDir = Path.Combine(homeDir, ".botnexus", PluginSkillRootResolver.PluginRootDirectoryName);
-        var config = ResolveExtensionConfig<SkillsConfig>(context.Descriptor, "botnexus-skills");
+        var config = SkillsConfigResolver.Resolve(context.Descriptor);
 
         // Seed the global skills directory with an example skill on first use.
         SkillsSeeder.EnsureGlobalSkillsSeed(globalSkillsDir);

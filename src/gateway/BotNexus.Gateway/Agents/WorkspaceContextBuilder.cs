@@ -8,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Gateway.Prompts;
+using BotNexus.Gateway.Security;
 using System.IO.Abstractions;
 
 namespace BotNexus.Gateway.Agents;
@@ -235,8 +236,13 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         var effectiveModelId = effectiveSettings?.Model ?? descriptor.ModelId;
         var effectiveProviderId = effectiveSettings?.Provider ?? descriptor.ApiProvider;
 
+        // Prompt-file selection is also a file-read capability. Apply the descriptor's effective
+        // host-owned policy to the resolved path (including model variants) before content is read.
+        // WORLD.md is operator-owned platform context outside the agent workspace and deliberately
+        // remains outside this agent policy boundary.
+        var pathValidator = new DefaultPathValidator(descriptor.FileAccess, workspacePath);
         var contextFiles = (await LoadContextFilesAsync(
-            _fileSystem, workspacePath, promptFiles, effectiveModelId, effectiveProviderId, cancellationToken)).ToList();
+            _fileSystem, pathValidator, workspacePath, promptFiles, effectiveModelId, effectiveProviderId, cancellationToken)).ToList();
 
         // Inject world-level instructions if WORLD.md exists at ~/.botnexus/WORLD.md
         if (!string.IsNullOrWhiteSpace(_homePath))
@@ -484,6 +490,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
     private static async Task<ContextFile[]> LoadContextFilesAsync(
         IFileSystem fileSystem,
+        IPathValidator pathValidator,
         string workspacePath,
         IReadOnlyList<string> promptFiles,
         string? modelId,
@@ -502,8 +509,12 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             var resolvedPromptFile = ResolveVariantPromptFile(fileSystem, workspacePath, promptFile, modelId, providerId);
 
             var filePath = Path.GetFullPath(Path.Combine(workspacePath, resolvedPromptFile));
-            if (!IsPathUnderWorkspace(workspacePath, filePath) || !fileSystem.File.Exists(filePath))
+            if (!IsPathUnderWorkspace(workspacePath, filePath)
+                || pathValidator.ValidateAndResolve(filePath, FileAccessMode.Read) is null
+                || !fileSystem.File.Exists(filePath))
+            {
                 continue;
+            }
 
             var content = await fileSystem.File.ReadAllTextAsync(filePath, cancellationToken);
             if (!string.IsNullOrWhiteSpace(content))
@@ -513,8 +524,11 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             // varies. A bootstrap variant that survived first read would re-run its one-shot
             // instructions on every turn.
             if (ContextFileVariants.GetBaseFileName(Path.GetFileName(resolvedPromptFile))
-                .Equals(BootstrapFileName, StringComparison.OrdinalIgnoreCase))
+                .Equals(BootstrapFileName, StringComparison.OrdinalIgnoreCase)
+                && pathValidator.ValidateAndResolve(filePath, FileAccessMode.Write) is not null)
+            {
                 DeleteBootstrapFile(fileSystem, filePath);
+            }
         }
 
         return [.. contextFiles];

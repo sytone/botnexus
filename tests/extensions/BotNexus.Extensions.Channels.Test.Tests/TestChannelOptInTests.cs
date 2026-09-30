@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
@@ -83,6 +84,8 @@ public sealed class TestChannelOptInTests : IDisposable
 
         HasRegistration(services, typeof(IChannelAdapter), typeof(TestChannelAdapter)).ShouldBeFalse(
             "The test channel adapter was registered by a production configuration.");
+        HasRegistration(services, typeof(IConversationEventSink), typeof(TestChannelAdapter)).ShouldBeFalse(
+            "The test channel conversation-event sink was registered by a production configuration.");
         HasRegistration(services, typeof(IEndpointContributor), typeof(TestChannelEndpointContributor)).ShouldBeFalse(
             "The test channel HTTP surface was registered by a production configuration.");
     }
@@ -113,6 +116,8 @@ public sealed class TestChannelOptInTests : IDisposable
         // this test project compiled against.
         HasRegistration(services, typeof(IChannelAdapter), typeof(TestChannelAdapter)).ShouldBeTrue(
             "The opted-in test channel did not register an IChannelAdapter.");
+        HasRegistration(services, typeof(IConversationEventSink), typeof(TestChannelAdapter)).ShouldBeTrue(
+            "The opted-in test channel did not register an IConversationEventSink.");
         HasRegistration(services, typeof(IEndpointContributor), typeof(TestChannelEndpointContributor)).ShouldBeTrue(
             "The opted-in test channel did not register its IEndpointContributor.");
     }
@@ -123,10 +128,26 @@ public sealed class TestChannelOptInTests : IDisposable
     /// its <c>TestChannelAdapter</c> is a distinct <c>Type</c> from the one compiled here.
     /// </summary>
     private static bool HasRegistration(IServiceCollection services, Type contract, Type implementation)
-        => services.Any(descriptor =>
+    {
+        if (services.Any(descriptor =>
+                descriptor.ServiceType == contract
+                && descriptor.ImplementationType?.FullName == implementation.FullName))
+        {
+            return true;
+        }
+
+        // A type implementing more than one extension contract is registered once by concrete type
+        // and each contract receives a factory resolving that shared singleton. Match that established
+        // loader shape without relying on Type reference equality across AssemblyLoadContexts.
+        var hasSharedImplementation = services.Any(descriptor =>
+            descriptor.ServiceType.FullName == implementation.FullName
+            && descriptor.ImplementationType?.FullName == implementation.FullName);
+        var hasContractFactory = services.Any(descriptor =>
             descriptor.ServiceType == contract
-            && descriptor.ImplementationType is not null
-            && descriptor.ImplementationType.FullName == implementation.FullName);
+            && descriptor.ImplementationFactory is not null);
+
+        return hasSharedImplementation && hasContractFactory;
+    }
 
     /// <summary>
     /// Copies the extension's real build output (manifest + assemblies) into a temporary probe
@@ -161,7 +182,7 @@ public sealed class TestChannelOptInTests : IDisposable
     {
         Gateway = new()
         {
-            Extensions = new ExtensionsConfig
+            ExtensionLoader = new ExtensionLoaderConfig
             {
                 Enabled = true,
                 Path = Path.Combine(_root, "extensions"),

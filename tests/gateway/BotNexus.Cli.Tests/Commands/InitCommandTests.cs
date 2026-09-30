@@ -2,6 +2,7 @@ using System.IO.Abstractions;
 using System.Text.Json.Nodes;
 using BotNexus.Cli.Commands;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Configuration.Store;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 
@@ -34,16 +35,38 @@ public sealed class InitCommandTests
             // Act
             await cmd.ExecuteAsync(tempHome, force: false, verbose: false, CancellationToken.None);
 
-            // Assert - skills world default must be present for discoverability
+            // Assert - skills world defaults must be explicit and portable.
             var configPath = Path.Combine(tempHome, "config.json");
-            var json = await File.ReadAllTextAsync(configPath);
-            json.ShouldContain("botnexus-skills");
-            json.ShouldContain("\"enabled\": true");
+            var root = JsonNode.Parse(await File.ReadAllTextAsync(configPath))!;
+            var skills = root["agents"]!["defaults"]!["extensions"]!["botnexus-skills"]!;
+            skills["enabled"]!.GetValue<bool>().ShouldBeTrue();
+            skills["allowSharedSkillManagement"]!.GetValue<bool>().ShouldBeTrue();
         }
         finally
         {
             if (Directory.Exists(tempHome))
                 Directory.Delete(tempHome, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Init_FreshSqliteBackedHome_IncludesSharedManagementDefault()
+    {
+        using var home = new TempHome();
+        var storePath = ConfigStoreBootstrap.ResolveStorePath(home.ConfigPath, new FileSystem());
+        await ConfigStoreBootstrap.PopulateAsync(storePath, new JsonObject());
+
+        try
+        {
+            await new InitCommand().ExecuteAsync(home.Path, force: false, verbose: false, CancellationToken.None);
+
+            var entries = await new SqliteConfigStore($"Data Source={storePath}").ReadEntriesAsync();
+            entries["agents.defaults.extensions.botnexus-skills.allowSharedSkillManagement"]
+                .Value.ShouldBe("true");
+        }
+        finally
+        {
+            ConfigStoreBootstrap.ReleaseConnections(storePath);
         }
     }
 

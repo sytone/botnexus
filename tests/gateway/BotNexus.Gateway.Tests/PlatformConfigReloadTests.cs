@@ -85,7 +85,7 @@ public sealed class PlatformConfigReloadTests : IDisposable
             """);
 
         var configBuilder = new ConfigurationBuilder();
-        configBuilder.AddJsonFile(_configPath, optional: false, reloadOnChange: false);
+        configBuilder.AddResilientJsonFile(_configPath, optional: false, reloadOnChange: false);
         var configuration = configBuilder.Build();
 
         var services = new ServiceCollection();
@@ -122,7 +122,7 @@ public sealed class PlatformConfigReloadTests : IDisposable
             """);
 
         var configBuilder = new ConfigurationBuilder();
-        configBuilder.AddJsonFile(_configPath, optional: false, reloadOnChange: false);
+        configBuilder.AddResilientJsonFile(_configPath, optional: false, reloadOnChange: false);
         var configuration = configBuilder.Build();
 
         var services = new ServiceCollection();
@@ -138,6 +138,62 @@ public sealed class PlatformConfigReloadTests : IDisposable
         config.Gateway.ShouldNotBeNull();
         config.Gateway!.DefaultAgentId.ShouldBe("legacy-agent");
         config.Gateway.ListenUrl.ShouldBe("http://localhost:9999");
+    }
+
+    [Fact]
+    public void PlatformConfigPostConfigure_MigratesLegacyGatewayExtensionLoaderSettings()
+    {
+        File.WriteAllText(_configPath, """
+            {
+              "gateway": {
+                "extensions": {
+                  "path": "/legacy/extensions",
+                  "enabled": false,
+                  "runtime-extension": { "value": true }
+                }
+              }
+            }
+            """);
+
+        var configuration = new ConfigurationBuilder()
+            .AddResilientJsonFile(_configPath, optional: false, reloadOnChange: false)
+            .Build();
+        var config = new PlatformConfig();
+        configuration.Bind(config);
+
+        new PlatformConfigPostConfigure(configuration, _configPath)
+            .PostConfigure(Options.DefaultName, config);
+
+        config.Gateway.ShouldNotBeNull();
+        config.Gateway!.ExtensionLoader.ShouldNotBeNull();
+        config.Gateway.ExtensionLoader!.Path.ShouldBe("/legacy/extensions");
+        config.Gateway.ExtensionLoader.Enabled.ShouldBeFalse();
+        config.Gateway.Extensions.ShouldNotBeNull();
+        config.Gateway.Extensions!.ShouldContainKey("runtime-extension");
+        config.Gateway.Extensions.ShouldNotContainKey("path");
+        config.Gateway.Extensions.ShouldNotContainKey("enabled");
+    }
+
+    [Fact]
+    public void PlatformConfigPostConfigure_MigratesLegacyGatewayExtensionDefaults()
+    {
+        File.WriteAllText(_configPath, """
+            { "gateway": { "extensions": { "defaults": { "legacy": { "enabled": true } } } } }
+            """);
+
+        var configuration = new ConfigurationBuilder()
+            .AddResilientJsonFile(_configPath, optional: false, reloadOnChange: false)
+            .Build();
+        var config = new PlatformConfig();
+        configuration.Bind(config);
+
+        new PlatformConfigPostConfigure(configuration, _configPath)
+            .PostConfigure(Options.DefaultName, config);
+
+        var extensions = config.AgentDefaults?.Extensions;
+        extensions.ShouldNotBeNull();
+        extensions.ShouldContainKey("legacy");
+        extensions["legacy"].GetProperty("enabled").GetBoolean().ShouldBeTrue();
     }
 
     public void Dispose()

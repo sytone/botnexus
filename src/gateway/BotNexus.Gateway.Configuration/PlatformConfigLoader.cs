@@ -129,16 +129,21 @@ public static class PlatformConfigLoader
     /// because <c>TryRecoverFromBackup</c> hand-duplicated this sequence inline.
     /// </remarks>
     /// <exception cref="JsonException">The raw JSON is not valid (callers translate this as needed).</exception>
-    private static PlatformConfig MaterializeConfig(string rawJson)
+    internal static PlatformConfig MaterializeConfig(string rawJson)
     {
-        var config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
+        if (string.IsNullOrWhiteSpace(rawJson))
+            return new PlatformConfig();
+
+        var document = ConfigDocument.Parse(rawJson);
+        var migration = LegacyGatewayExtensionsMigration.Apply(document);
+        if (!migration.Succeeded)
+            throw new JsonException(string.Join(" ", migration.Errors));
+        var migratedJson = document.ToJsonString();
+        var config = JsonSerializer.Deserialize<PlatformConfig>(migratedJson, JsonOptions)
             ?? new PlatformConfig();
 
-        if (string.IsNullOrWhiteSpace(rawJson))
-            return config;
-
-        using var document = JsonDocument.Parse(rawJson);
-        var root = document.RootElement;
+        using var parsed = JsonDocument.Parse(migratedJson);
+        var root = parsed.RootElement;
 
         config = MigrateLegacyGatewaySettings(config, root);
         ExtractAgentDefaults(config, root);
@@ -469,7 +474,7 @@ public static class PlatformConfigLoader
         migrated |= TryMigrateObject(root, "compaction", gateway.Compaction, value => gateway.Compaction = value);
         migrated |= TryMigrateObject(root, "cors", gateway.Cors, value => gateway.Cors = value);
         migrated |= TryMigrateObject(root, "rateLimit", gateway.RateLimit, value => gateway.RateLimit = value);
-        migrated |= TryMigrateObject(root, "extensions", gateway.Extensions, value => gateway.Extensions = value);
+        migrated |= TryMigrateObject(root, "extensions", gateway.ExtensionLoader, value => gateway.ExtensionLoader = value);
         migrated |= TryMigrateObject(root, "locations", gateway.Locations, value => gateway.Locations = value);
         migrated |= TryMigrateObject(root, "crossWorld", gateway.CrossWorld, value => gateway.CrossWorld = value);
 

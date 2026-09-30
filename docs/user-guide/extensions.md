@@ -662,7 +662,7 @@ dotnet add package BotNexus.Extensions.MyTool --version 1.0.0
 BotNexus discovers extensions from:
 
 1. **`~/.botnexus/extensions/`** (default)
-2. **Custom path** via `gateway.extensions.path` in config
+2. **Custom path** via `gateway.extensionLoader.path` in config
 
 **Directory structure:**
 ```text

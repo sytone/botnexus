@@ -319,8 +319,6 @@ public sealed class CompactionHistoryReadFailureTests
         supervisor.Setup(s => s.StopAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var channelManager = new Mock<IChannelManager>();
-
         var optionsMonitor = new Mock<IOptionsMonitor<CompactionOptions>>();
         optionsMonitor.Setup(o => o.CurrentValue).Returns(new CompactionOptions { PreservedTurns = 3 });
 
@@ -328,7 +326,8 @@ public sealed class CompactionHistoryReadFailureTests
             compactor.Object,
             sessions.Object,
             supervisor.Object,
-            channelManager.Object,
+            eventPublisher: null,
+            conversations: null,
             optionsMonitor.Object,
             NullLogger<SessionCompactionCoordinator>.Instance);
     }

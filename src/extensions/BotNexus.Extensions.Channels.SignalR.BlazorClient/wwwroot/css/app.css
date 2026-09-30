@@ -1,5 +1,44 @@
 /* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
 
+.release-history-content {
+    display: grid;
+    gap: 16px;
+    max-width: 64rem;
+    padding: 24px;
+}
+
+.release-history-entry {
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    padding: 24px;
+}
+
+.release-history-heading,
+.release-history-links {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.release-history-heading h3,
+.release-history-category h4 {
+    margin: 0;
+}
+
+.release-history-heading time {
+    color: var(--text-muted);
+}
+
+.release-history-category {
+    margin-top: 16px;
+}
+
+.release-history-category li a {
+    margin-left: 8px;
+}
+
 /* ── Inter ────────────────────────────────────────────────────────────────
    Self-hosted rather than loaded from the Google Fonts CDN: the portal is
    reachable on a LAN (and offline via the service worker), so text must not
@@ -116,6 +155,7 @@
        same red. --color-danger stays bright where it is a 1px border or an 8px dot and
        contrast against text does not apply. */
     --color-danger-fill: #ce433d;
+    --color-danger-fill-hover: #b63631;
     --color-danger-bg: #2c1315;
     --color-danger-text: #ff7b72;
 
@@ -368,6 +408,7 @@
 
     --color-danger: #cf222e;
     --color-danger-fill: #cf222e;
+    --color-danger-fill-hover: #a40e26;
     --color-danger-bg: #fbe3e4;
     --color-danger-text: #a40e26;
 
@@ -1066,6 +1107,25 @@ html, body, #app {
     margin-top: auto;
     padding-top: 0.75rem;
     border-top: 1px solid var(--border);
+}
+
+.client-view-link {
+    display: block;
+    color: var(--accent);
+    font-size: var(--text-body-sm);
+    text-decoration: none;
+}
+
+.client-view-link:hover,
+.client-view-link:focus-visible {
+    text-decoration: underline;
+}
+
+.client-build-info {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--text-muted);
+    font-size: var(--text-caption);
 }
 
 .restart-btn {
@@ -2353,7 +2413,7 @@ html, body, #app {
 }
 
 .confirm-btn:hover {
-    background: var(--color-danger);
+    background: var(--color-danger-fill-hover);
 }
 
 /* ── Tool call display ──────────────────────────────────────────────── */
@@ -7773,3 +7833,29 @@ h3.conversation-title.editable:hover {
 .repository-status { display: grid; grid-template-columns: minmax(9rem, auto) 1fr; gap: .35rem .75rem; margin: 0; }
 .repository-status dt { color: var(--text-muted); }
 .repository-status dd { margin: 0; overflow-wrap: anywhere; }
+
+
+/* Shared conversation command surface (#2326). */
+.conversation-action-context-target { display: contents; }
+.conversation-actions-trigger {
+    min-width: 32px; min-height: 32px; border: 0; border-radius: 4px;
+    background: transparent; color: var(--text-muted); cursor: pointer; touch-action: manipulation;
+}
+.conversation-actions-trigger:hover, .conversation-actions-trigger:focus-visible { background: var(--bg-hover); color: var(--text-primary); }
+.conversation-list-item > .conversation-action-context-target > .conversation-actions-trigger,
+.conversation-list-item .conversation-actions-trigger { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
+.conversation-action-menu-dismiss { position: fixed; inset: 0; z-index: 1098; border: 0; padding: 0; background: transparent; }
+.conversation-action-menu {
+    position: fixed; z-index: 1099; min-width: 180px; max-width: min(280px, calc(100vw - 16px));
+    max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px;
+    border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary);
+    box-shadow: 0 8px 24px rgba(0,0,0,.28);
+}
+.conversation-action-menu-item {
+    display: block; width: 100%; min-height: 36px; padding: 7px 10px; border: 0; border-radius: 4px;
+    background: transparent; color: var(--text-primary); text-align: left; cursor: pointer;
+}
+.conversation-action-menu-item:hover, .conversation-action-menu-item:focus-visible { background: var(--bg-hover); outline: none; }
+.conversation-action-menu-item.destructive { color: var(--danger, #d9534f); }
+.chat-header > .conversation-action-context-target,
+.chat-header > .conversation-action-context-target > .conversation-actions-trigger { position: static; transform: none; flex: 0 0 auto; }

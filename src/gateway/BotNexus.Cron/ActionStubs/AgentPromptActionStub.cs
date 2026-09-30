@@ -66,7 +66,8 @@ public sealed class AgentPromptAction : ICronAction
             JobName = ExternalText.Sanitize(context.Job.Name, ExternalText.DefaultDisplayLength),
             ModelOverride = context.Job.Model,
             ConversationId = context.Job.ConversationId,
-            CreatedBy = context.Job.CreatedBy
+            CreatedBy = context.Job.CreatedBy,
+            SessionCreatedAsync = context.PersistSessionIdAsync
         };
         SessionId sessionId;
         try

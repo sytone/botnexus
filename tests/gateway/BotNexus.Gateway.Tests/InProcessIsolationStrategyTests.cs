@@ -887,7 +887,7 @@ public sealed class InProcessIsolationStrategyTests
             new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-think") });
 
         var options = GetAgentOptions(handle);
-        var settings = options.GenerationSettings.ShouldBeOfType<SimpleStreamOptions>();
+        var settings = options.GenerationSettings.ShouldBeOfType<GenerationOptions>();
         settings.Reasoning.ShouldBe(ThinkingLevel.High);
         settings.ContextWindow.ShouldBe(1_000_000);
     }
@@ -910,7 +910,7 @@ public sealed class InProcessIsolationStrategyTests
             new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-nothink") });
 
         var options = GetAgentOptions(handle);
-        var settings = options.GenerationSettings.ShouldBeOfType<SimpleStreamOptions>();
+        var settings = options.GenerationSettings.ShouldBeOfType<GenerationOptions>();
         settings.Reasoning.ShouldBeNull();
         settings.ContextWindow.ShouldBeNull();
     }

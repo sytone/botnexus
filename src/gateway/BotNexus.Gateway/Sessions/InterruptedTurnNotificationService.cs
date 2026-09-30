@@ -2,8 +2,8 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
-using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
@@ -21,8 +21,8 @@ namespace BotNexus.Gateway.Sessions;
 /// unresolved crash-sentinel entry (written by <see cref="GatewayHost"/> before each
 /// LLM call) indicates the previous run did not complete cleanly. For each such session
 /// this service appends a <see cref="MessageRole.Notification"/> entry, removes the
-/// sentinels, persists the session, and delivers an out-of-band notification through
-/// the originating channel when possible.
+/// sentinels, persists the session, and publishes that committed session-item fact through
+/// the channel-neutral conversation event seam.
 /// </summary>
 /// <remarks>
 /// Interactive sessions are replayed when <see cref="GatewayOptions.AutoReplayInterruptedTurns"/>
@@ -30,6 +30,14 @@ namespace BotNexus.Gateway.Sessions;
 /// because no human participant can act on a resend notification. Cron/soul/subagent sessions
 /// remain excluded. A replay counter in session metadata caps retries at
 /// <see cref="GatewayOptions.MaxAutoReplayAttempts"/> to prevent infinite crash loops.
+/// </remarks>
+/// <remarks>
+/// Conversation-event publication is deliberately post-commit and best-effort. A rejection or
+/// exception is logged but never rolls back the saved notification, and this startup scan does not
+/// retry publication because the crash sentinel has already been consumed. The session store is the
+/// source of truth: clients recover missed live events by hydrating the persisted transcript, while
+/// broader startup reconciliation belongs at the session/conversation projection boundary rather
+/// than in this one-shot recovery service. <see cref="GatewayActivity"/> remains telemetry only.
 /// </remarks>
 public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
 {
@@ -77,7 +85,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
     private readonly ISessionStore _sessions;
     private readonly IAgentRegistry _agentRegistry;
     private readonly IActivityBroadcaster _broadcaster;
-    private readonly IChannelManager _channelManager;
+    private readonly IConversationEventPublisher _eventPublisher;
     private readonly ILogger<InterruptedTurnNotificationService> _logger;
     private readonly IInboundMessageOrchestrator? _orchestrator;
     private readonly GatewayOptions _options;
@@ -86,27 +94,13 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
     private readonly ConditionalWeakTable<GatewaySession, SemaphoreSlim> _recoveryGates = new();
 
     /// <summary>
-    /// Initializes a new instance without auto-replay support (backwards-compat overload).
+    /// Initializes the startup recovery scan and its post-commit conversation-event projection.
     /// </summary>
     public InterruptedTurnNotificationService(
         ISessionStore sessions,
         IAgentRegistry agentRegistry,
         IActivityBroadcaster broadcaster,
-        IChannelManager channelManager,
-        ILogger<InterruptedTurnNotificationService> logger)
-        : this(sessions, agentRegistry, broadcaster, channelManager, logger,
-               orchestrator: null, options: null, conversations: null, lifecycleEvents: null)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance with optional auto-replay support.
-    /// </summary>
-    public InterruptedTurnNotificationService(
-        ISessionStore sessions,
-        IAgentRegistry agentRegistry,
-        IActivityBroadcaster broadcaster,
-        IChannelManager channelManager,
+        IConversationEventPublisher eventPublisher,
         ILogger<InterruptedTurnNotificationService> logger,
         IInboundMessageOrchestrator? orchestrator,
         IOptions<GatewayOptions>? options,
@@ -116,7 +110,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         _sessions = sessions;
         _agentRegistry = agentRegistry;
         _broadcaster = broadcaster;
-        _channelManager = channelManager;
+        _eventPublisher = eventPublisher;
         _logger = logger;
         _orchestrator = orchestrator;
         _options = options?.Value ?? new GatewayOptions();
@@ -214,9 +208,6 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
             return;
         }
 
-        // Live recovery is intentionally narrow: only an interactive API turn in a conversation
-        // with no human participant can be replaced automatically. Human-facing and scheduled
-        // sessions retain their existing startup/notification contracts.
         if (!session.IsInteractive
             || !await IsAgentOnlyConversationAsync(session, cancellationToken).ConfigureAwait(false))
         {
@@ -227,8 +218,6 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // The marker is the idempotency token. An earlier accepted replacement consumes it;
-            // a duplicate lifecycle delivery then observes no work and cannot enqueue twice.
             if (!session.History.Any(static entry => entry.IsCrashSentinel))
                 return;
 
@@ -250,12 +239,13 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         var notificationContent = isAgentOnlyConversation
             ? AgentOnlyNotificationContent
             : NotificationContent;
-        session.AddEntry(new SessionEntry
+        var notification = new SessionEntry
         {
             Role = MessageRole.Notification,
             Content = notificationContent,
             Timestamp = DateTimeOffset.UtcNow
-        });
+        };
+        session.AddEntry(notification);
 
         var shouldAttemptReplay = (_options.AutoReplayInterruptedTurns || isAgentOnlyConversation)
             && session.IsInteractive
@@ -276,6 +266,9 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
             return false;
         }
 
+        await PublishPersistedNotificationAsync(session, agentId, notification, cancellationToken)
+            .ConfigureAwait(false);
+
         await _broadcaster.PublishAsync(new GatewayActivity
         {
             Type = GatewayActivityType.System,
@@ -285,31 +278,71 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
             Message = didReplay ? $"{notificationContent} (auto-replaying)" : notificationContent
         }, cancellationToken).ConfigureAwait(false);
 
-        if (!didReplay
-            && session.ChannelType.HasValue
-            && !string.IsNullOrWhiteSpace(session.CallerId)
-            && _channelManager.Get(session.ChannelType.Value) is { } adapter)
+        return didReplay;
+    }
+
+    private async Task PublishPersistedNotificationAsync(
+        GatewaySession session,
+        AgentId agentId,
+        SessionEntry notification,
+        CancellationToken cancellationToken)
+    {
+        if (!session.ConversationId.IsInitialized())
+        {
+            _logger.LogWarning(
+                "Persisted interrupted-turn notification for session {SessionId} has no conversation id; live event publication was skipped",
+                session.SessionId.Value);
+            return;
+        }
+
+        var bindings = System.Collections.Immutable.ImmutableArray<ConversationBindingSnapshot>.Empty;
+        if (_conversations is not null)
         {
             try
             {
-                await adapter.SendAsync(new OutboundMessage
-                {
-                    ChannelType = session.ChannelType.Value,
-                    ChannelAddress = ChannelAddress.From(session.CallerId),
-                    Content = notificationContent,
-                    SessionId = session.SessionId.Value,
-                    ConversationId = session.ConversationId.IsInitialized() ? session.ConversationId.Value : null
-                }, cancellationToken).ConfigureAwait(false);
+                var conversation = await _conversations.GetAsync(session.ConversationId, cancellationToken)
+                    .ConfigureAwait(false);
+                bindings = ConversationBindingSnapshot.FromMany(conversation?.ChannelBindings);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
-                _logger.LogWarning(ex,
-                    "Failed to deliver interrupted-turn notification via channel {ChannelType} for session {SessionId}",
-                    session.ChannelType.Value, session.SessionId.Value);
+                // The committed transcript remains authoritative. A later client hydration or
+                // reconciliation can recover it even when binding projection is temporarily unavailable.
+                _logger.LogWarning(
+                    ex,
+                    "Failed to snapshot bindings for persisted interrupted-turn notification in conversation {ConversationId}; publishing with no bindings",
+                    session.ConversationId.Value);
             }
         }
 
-        return didReplay;
+        try
+        {
+            var accepted = await _eventPublisher.PublishAsync(new ConversationSessionItemPersistedEvent
+            {
+                AgentId = agentId,
+                ConversationId = session.ConversationId,
+                SessionId = session.SessionId,
+                Bindings = bindings,
+                Item = notification,
+                OccurredAt = notification.Timestamp
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (!accepted)
+            {
+                _logger.LogWarning(
+                    "Conversation event publisher rejected persisted interrupted-turn notification for session {SessionId}; the committed session item will not be retried",
+                    session.SessionId.Value);
+            }
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Publication is not transactional with session persistence. Never compensate the durable
+            // mutation: consumers reconcile from the transcript when live best-effort delivery is missed.
+            _logger.LogWarning(
+                ex,
+                "Failed to publish persisted interrupted-turn notification for session {SessionId}; the committed session item will not be retried",
+                session.SessionId.Value);
+        }
     }
 
     private async Task<bool> IsAgentOnlyConversationAsync(

@@ -1,7 +1,10 @@
+using System.Collections.Immutable;
 using BotNexus.Domain.Primitives;
 using BotNexus.Extensions.Channels.Matrix.Tests.Fakes;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -790,6 +793,96 @@ public sealed class MatrixChannelAdapterTests
             SessionId.From("s_1"),
             ChannelAddress.From(string.Empty))).ShouldBeFalse();
     }
+
+    [Fact]
+    public async Task Publisher_ProjectsOnlyApplicableMatrixBinding_AndIgnoresUnsupportedEvents()
+    {
+        var factory = new FakeMatrixClientFactory();
+        var options = BuildOptions();
+        options.StreamingBufferMs = 60_000;
+        var adapter = CreateAdapter(options, factory);
+        await adapter.StartAsync(CreateDispatcher().Object);
+
+        var conversationId = ConversationId.From("c_matrix");
+        var sessionId = SessionId.From("s_matrix");
+        var bindings = ImmutableArray.Create(
+            Binding("matrix-active", "matrix", MatrixChannelAddress.Encode(Room), BindingMode.Interactive),
+            Binding("matrix-muted", "matrix", MatrixChannelAddress.Encode("!muted:example.com"), BindingMode.Muted),
+            Binding("telegram-active", "telegram", ChannelAddress.From("chat-1"), BindingMode.Interactive));
+
+        await using var publisher = new ConversationEventPublisher(
+            [(IConversationEventSink)adapter],
+            logger: NullLogger<ConversationEventPublisher>.Instance);
+
+        foreach (var streamEvent in new[]
+                 {
+                     new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Hello " },
+                     new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "world" },
+                     new AgentStreamEvent { Type = AgentStreamEventType.RunEnded },
+                 })
+        {
+            (await publisher.PublishAsync(new ConversationAgentEvent
+            {
+                AgentId = AgentId.From("farnsworth"),
+                ConversationId = conversationId,
+                SessionId = sessionId,
+                Bindings = bindings,
+                StreamEvent = streamEvent with
+                {
+                    AgentId = AgentId.From("farnsworth"),
+                    ConversationId = conversationId,
+                    SessionId = sessionId,
+                },
+            })).ShouldBeTrue();
+        }
+
+        (await publisher.PublishAsync(new ConversationCreatedEvent
+        {
+            AgentId = AgentId.From("farnsworth"),
+            ConversationId = conversationId,
+            Bindings = bindings,
+        })).ShouldBeTrue();
+        (await publisher.PublishAsync(new ConversationAgentEvent
+        {
+            AgentId = AgentId.From("farnsworth"),
+            ConversationId = ConversationId.From("c_unrelated"),
+            SessionId = SessionId.From("s_unrelated"),
+            Bindings = ImmutableArray.Create(
+                Binding("telegram-only", "telegram", ChannelAddress.From("chat-2"), BindingMode.Interactive)),
+            StreamEvent = new AgentStreamEvent
+            {
+                Type = AgentStreamEventType.ContentDelta,
+                ContentDelta = "ignored",
+                AgentId = AgentId.From("farnsworth"),
+                ConversationId = ConversationId.From("c_unrelated"),
+                SessionId = SessionId.From("s_unrelated"),
+            },
+        })).ShouldBeTrue();
+
+        await publisher.WaitForDrainAsync(CancellationToken.None);
+
+        var sent = factory.ClientFor("farnsworth").SentMessages;
+        sent.Count.ShouldBe(2);
+        sent[0].RoomId.ShouldBe(Room);
+        sent[0].Content.Body.ShouldBe("Hello ");
+        sent[1].RoomId.ShouldBe(Room);
+        var finalContent = sent[1].Content.NewContent;
+        finalContent.ShouldNotBeNull();
+        finalContent.Body.ShouldBe("Hello world");
+    }
+
+    private static ConversationBindingSnapshot Binding(
+        string id,
+        string channel,
+        ChannelAddress address,
+        BindingMode mode)
+        => new(
+            BindingId.From(id),
+            ChannelKey.From(channel),
+            AdapterId: null,
+            address,
+            mode,
+            ThreadingMode.Single);
 
     // ── Capabilities ───────────────────────────────────────────────────────────
 

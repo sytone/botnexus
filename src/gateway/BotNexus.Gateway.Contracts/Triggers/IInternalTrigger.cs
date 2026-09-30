@@ -62,6 +62,14 @@ public sealed record InternalTriggerRequest
     public ConversationId? ResolvedConversationId { get; set; }
 
     /// <summary>
+    /// Optional callback invoked immediately after a trigger durably creates its session, before
+    /// the potentially long-running turn begins. Cron uses this to persist run ownership while the
+    /// row is still running, so a crash or sealed session can be reconciled without waiting for an
+    /// age-only orphan threshold (#4283).
+    /// </summary>
+    public Func<SessionId, CancellationToken, Task>? SessionCreatedAsync { get; init; }
+
+    /// <summary>
     /// Written back by the trigger after the turn completes: the number of tool invocations the
     /// turn performed (#2985). <c>null</c> means the trigger never reported one - e.g. the turn
     /// was interrupted and re-surfaced as a cancellation, in which case the run has its own

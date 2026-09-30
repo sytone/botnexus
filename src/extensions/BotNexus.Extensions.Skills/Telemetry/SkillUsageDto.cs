@@ -21,8 +21,14 @@ public sealed class SkillUsageDto
     /// <summary>Times the skill was surfaced in a listing or had a support file viewed.</summary>
     public long ViewCount { get; set; }
 
-    /// <summary>Times the skill was loaded into context.</summary>
+    /// <summary>Times the full skill body was loaded into context.</summary>
     public long UseCount { get; set; }
+
+    /// <summary>Times a repeat load was suppressed because the skill remained in context.</summary>
+    public long SuppressedLoadCount { get; set; }
+
+    /// <summary>Times the full skill body was reloaded after durable context replacement.</summary>
+    public long ContextReloadCount { get; set; }
 
     /// <summary>Times the skill was mutated via the manage tool.</summary>
     public long PatchCount { get; set; }

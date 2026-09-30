@@ -20,8 +20,7 @@ public sealed class SkillManagerToolContributor(ISkillUsageTelemetry? telemetry 
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var config = ResolveExtensionConfig<SkillsConfig>(context.Descriptor, "botnexus-skills")
-                     ?? new SkillsConfig();
+        var config = SkillsConfigResolver.Resolve(context.Descriptor) ?? new SkillsConfig();
 
         // Only contribute the write tool when creation is explicitly enabled
         if (!config.AllowSkillCreation)
@@ -40,10 +39,4 @@ public sealed class SkillManagerToolContributor(ISkillUsageTelemetry? telemetry 
 
         return Task.FromResult(new AgentToolContribution(tools));
     }
-
-    /// <summary>
-    /// Binds through the extension's single JSON seam so camelCase operator config binds (#3495).
-    /// </summary>
-    private static T? ResolveExtensionConfig<T>(AgentDescriptor descriptor, string extensionId) where T : class
-        => ExtensionConfigBinder.Bind<T>(descriptor, extensionId);
 }

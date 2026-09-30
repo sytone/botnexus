@@ -119,6 +119,7 @@ public sealed record AgentDescriptor : ICitizen
     /// Path to a file containing the system prompt (alternative to <see cref="SystemPrompt" />).
     /// Relative paths are resolved from the agent configuration directory.
     /// </summary>
+    [Obsolete("Custom prompt-file selection is deprecated (#2941). Use standard workspace instruction files, WORLD.md, inline system prompts, conversation instructions, or model-specific variants.", DiagnosticId = "BNX2941")]
     public string? SystemPromptFile { get; init; }
 
     /// <summary>
@@ -126,6 +127,7 @@ public sealed record AgentDescriptor : ICitizen
     /// Resolved relative to the agent's workspace directory.
     /// If empty, uses default load order: AGENTS.md, SOUL.md, TOOLS.md, BOOTSTRAP.md, IDENTITY.md, USER.md.
     /// </summary>
+    [Obsolete("Custom prompt-file selection is deprecated (#2941). Use standard workspace instruction files, WORLD.md, inline system prompts, conversation instructions, or model-specific variants.", DiagnosticId = "BNX2941")]
     public IReadOnlyList<string> SystemPromptFiles { get; init; } = [];
 
     /// <summary>
@@ -259,6 +261,10 @@ public sealed record AgentDescriptor : ICitizen
     /// Example: <c>ExtensionConfig["botnexus-skills"]</c> for skills config.
     /// </summary>
     public IReadOnlyDictionary<string, System.Text.Json.JsonElement> ExtensionConfig { get; init; } =
+        new Dictionary<string, System.Text.Json.JsonElement>();
+
+    /// <summary>Raw <c>agents.defaults.extensions</c> values, kept separate from named-agent values.</summary>
+    public IReadOnlyDictionary<string, System.Text.Json.JsonElement> DefaultExtensionConfig { get; init; } =
         new Dictionary<string, System.Text.Json.JsonElement>();
 /// <summary>Conversation retention policy override for this agent. Null means world default applies.</summary>
     public AgentConversationRetentionConfig? ConversationRetention { get; init; }

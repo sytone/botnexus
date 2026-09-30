@@ -66,18 +66,31 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
         store.LastHistoryWriteReconciled.ShouldBeFalse();
     }
 
-    [Fact]
-    public async Task SaveAsync_WithLargePersistedHistory_WritesOnlyDelta()
+    [Theory]
+    [InlineData(10)]
+    [InlineData(20_000)]
+    public async Task SaveAsync_WithPersistedHistory_ExecutesOneInsertAndNoRewrite(int persistedEntryCount)
     {
         var store = CreateStore();
-        var session = await CreateSavedSessionAsync(store, "large-delta", entryCount: 2_000);
+        var session = await CreateSavedSessionAsync(
+            store,
+            $"delta-{persistedEntryCount}",
+            entryCount: persistedEntryCount);
+        await InstallHistoryMutationAuditAsync();
 
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "delta" });
         await store.SaveAsync(session);
 
+        var mutations = await ReadHistoryMutationAuditAsync();
+        mutations.Inserts.ShouldBe(1,
+            "ordinary save must issue one history insert regardless of persisted prefix length");
+        mutations.Updates.ShouldBe(0,
+            "ordinary save must not update an unchanged persisted history row");
+        mutations.Deletes.ShouldBe(0,
+            "ordinary save must not delete and recreate persisted history");
         store.LastHistoryRowsMutated.ShouldBe(1, "work must be proportional to the delta, not total history");
         store.LastHistoryWriteReconciled.ShouldBeFalse();
-        (await ReadHistoryRowsAsync(session.SessionId)).Count.ShouldBe(2_001);
+        (await ReadHistoryRowsAsync(session.SessionId)).Count.ShouldBe(persistedEntryCount + 1);
     }
 
     [Fact]
@@ -567,6 +580,51 @@ public sealed class SqliteSessionStoreAppendSaveTests : IDisposable
         command.Parameters.AddWithValue("$isHistory", entry.IsHistory ? 1 : 0);
         command.Parameters.AddWithValue("$persistenceKey", (object?)entry.PersistenceKey ?? DBNull.Value);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task InstallHistoryMutationAuditAsync()
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            CREATE TABLE history_mutation_audit (
+                operation TEXT NOT NULL
+            );
+            CREATE TRIGGER audit_history_insert AFTER INSERT ON session_history
+            BEGIN
+                INSERT INTO history_mutation_audit(operation) VALUES ('insert');
+            END;
+            CREATE TRIGGER audit_history_update AFTER UPDATE ON session_history
+            BEGIN
+                INSERT INTO history_mutation_audit(operation) VALUES ('update');
+            END;
+            CREATE TRIGGER audit_history_delete AFTER DELETE ON session_history
+            BEGIN
+                INSERT INTO history_mutation_audit(operation) VALUES ('delete');
+            END;
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<(int Inserts, int Updates, int Deletes)> ReadHistoryMutationAuditAsync()
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                SUM(CASE WHEN operation = 'insert' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN operation = 'update' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN operation = 'delete' THEN 1 ELSE 0 END)
+            FROM history_mutation_audit
+            """;
+        await using var reader = await command.ExecuteReaderAsync();
+        (await reader.ReadAsync()).ShouldBeTrue();
+        return (
+            reader.IsDBNull(0) ? 0 : reader.GetInt32(0),
+            reader.IsDBNull(1) ? 0 : reader.GetInt32(1),
+            reader.IsDBNull(2) ? 0 : reader.GetInt32(2));
     }
 
     private async Task<List<(long Id, string Content, bool IsHistory)>> ReadHistoryRowsAsync(SessionId sessionId)

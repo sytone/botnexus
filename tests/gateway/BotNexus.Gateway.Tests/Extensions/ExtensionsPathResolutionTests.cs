@@ -53,7 +53,7 @@ public sealed class ExtensionsPathResolutionTests : IDisposable
         Environment.SetEnvironmentVariable(ServiceCollectionExtensions.ExtensionsPathEnvVar, environment);
 
         var resolved = ServiceCollectionExtensions.ResolveExtensionsPath(
-            new ExtensionsConfig { Path = configured },
+            new ExtensionLoaderConfig { Path = configured },
             new MockFileSystem());
 
         resolved.ShouldBe(Path.GetFullPath(configured));
@@ -66,7 +66,7 @@ public sealed class ExtensionsPathResolutionTests : IDisposable
         Environment.SetEnvironmentVariable(ServiceCollectionExtensions.ExtensionsPathEnvVar, environment);
 
         var resolved = ServiceCollectionExtensions.ResolveExtensionsPath(
-            new ExtensionsConfig(),
+            new ExtensionLoaderConfig(),
             new MockFileSystem());
 
         resolved.ShouldBe(Path.GetFullPath(environment));

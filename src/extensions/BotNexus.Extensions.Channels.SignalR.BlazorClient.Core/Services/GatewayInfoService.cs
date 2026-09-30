@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -28,6 +29,18 @@ public sealed class GatewayInfoService
         }
         catch { }
     }
+
+    /// <summary>Formats the shared build identity shown by both Portal clients.</summary>
+    public static string FormatBuildIdentity(GatewayInfo? info)
+    {
+        if (info is null)
+            return "Build identity unavailable";
+
+        var timestamp = info.BuildTimestamp == default
+            ? "time unknown"
+            : info.BuildTimestamp.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
+        return $"{info.CommitShort} · {timestamp}";
+    }
 }
 
 public sealed record GatewayInfo(
@@ -36,4 +49,5 @@ public sealed record GatewayInfo(
     string CommitSha,
     string CommitShort,
     string Version,
+    DateTimeOffset BuildTimestamp = default,
     string? DefaultAgentId = null);

@@ -10,9 +10,11 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
     [Fact]
     public async Task RunLintAt_StderrBeyondPipeCapacity_RetainsBothOutputs()
     {
+        const int pipeSaturatingBytes = 131072;
         await ExerciseLintBoundaryAsync(
-            "[Console]::Error.Write(('E' * 2097152)); [Console]::Out.Write('stdout-complete'); exit 0",
-            cancelAfterStart: false);
+            $"[Console]::Error.Write(('E' * {pipeSaturatingBytes})); [Console]::Out.Write('stdout-complete'); exit 0",
+            cancelAfterStart: false,
+            expectedStdErrBytes: pipeSaturatingBytes);
     }
 
     [Fact]
@@ -23,7 +25,10 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
             cancelAfterStart: true);
     }
 
-    private static async Task ExerciseLintBoundaryAsync(string body, bool cancelAfterStart)
+    private static async Task ExerciseLintBoundaryAsync(
+        string body,
+        bool cancelAfterStart,
+        int expectedStdErrBytes = 0)
     {
         var fixture = Directory.CreateTempSubdirectory("lint-boundary-").FullName;
         using var unrelated = new DocsLintScriptTests.PowerShellStartupState();
@@ -62,7 +67,7 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
                 result.ShouldNotBeNull();
                 result.ExitCode.ShouldBe(0, result.StartupDiagnostics);
                 result.StdOut.ShouldBe("stdout-complete");
-                result.StdErr.ShouldBe(new string('E', 2097152));
+                result.StdErr.ShouldBe(new string('E', expectedStdErrBytes));
             }
 
             observed.ShouldNotBeNull();
@@ -103,10 +108,12 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
     {
         var parentCache = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
         var parentModuleCache = Environment.GetEnvironmentVariable("PSModuleAnalysisCachePath");
+        var parentMinimumCpuCount = Environment.GetEnvironmentVariable("DOTNET_MultiCoreJitMinNumCpus");
         using var state = new DocsLintScriptTests.PowerShellStartupState();
         var start = new ProcessStartInfo("pwsh");
         start.Environment["XDG_CACHE_HOME"] = "inherited-cache";
         start.Environment["PSModuleAnalysisCachePath"] = "inherited-module-cache";
+        start.Environment["DOTNET_MultiCoreJitMinNumCpus"] = "2";
         start.Environment["UNRELATED_SENTINEL"] = "preserve";
 
         state.Configure(start);
@@ -114,9 +121,11 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
         start.Environment["XDG_CACHE_HOME"].ShouldBe(
             OperatingSystem.IsWindows() ? "inherited-cache" : state.Root);
         start.Environment["PSModuleAnalysisCachePath"].ShouldBe(Path.Combine(state.Root, "ModuleAnalysisCache"));
+        start.Environment["DOTNET_MultiCoreJitMinNumCpus"].ShouldBe(int.MaxValue.ToString());
         start.Environment["UNRELATED_SENTINEL"].ShouldBe("preserve");
         Environment.GetEnvironmentVariable("XDG_CACHE_HOME").ShouldBe(parentCache);
         Environment.GetEnvironmentVariable("PSModuleAnalysisCachePath").ShouldBe(parentModuleCache);
+        Environment.GetEnvironmentVariable("DOTNET_MultiCoreJitMinNumCpus").ShouldBe(parentMinimumCpuCount);
     }
 
     [Fact]
@@ -136,6 +145,8 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
         a.Environment.ShouldContainKey("PSModuleAnalysisCachePath");
         b.Environment.ShouldContainKey("PSModuleAnalysisCachePath");
         a.Environment["PSModuleAnalysisCachePath"].ShouldNotBe(b.Environment["PSModuleAnalysisCachePath"]);
+        a.Environment["DOTNET_MultiCoreJitMinNumCpus"].ShouldBe(int.MaxValue.ToString());
+        b.Environment["DOTNET_MultiCoreJitMinNumCpus"].ShouldBe(int.MaxValue.ToString());
         if (!OperatingSystem.IsWindows())
         {
             a.Environment.ShouldContainKey("XDG_CACHE_HOME");
@@ -202,7 +213,7 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
 
     private static Process CreateProbe(DocsLintScriptTests.PowerShellStartupState state)
     {
-        const string command = "[ordered]@{ cache = [System.Management.Automation.PSObject].Assembly.GetType('System.Management.Automation.Platform').GetField('CacheDirectory', [Reflection.BindingFlags]'Static,NonPublic').GetValue($null); moduleCache = $env:PSModuleAnalysisCachePath; version = $PSVersionTable.PSVersion.ToString(); runtime = [System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription; executable = [Environment]::ProcessPath } | ConvertTo-Json -Compress; [Console]::ReadLine() | Out-Null";
+        const string command = "[ordered]@{ cache = [System.Management.Automation.PSObject].Assembly.GetType('System.Management.Automation.Platform').GetField('CacheDirectory', [Reflection.BindingFlags]'Static,NonPublic').GetValue($null); moduleCache = $env:PSModuleAnalysisCachePath; minimumCpuCount = $env:DOTNET_MultiCoreJitMinNumCpus; version = $PSVersionTable.PSVersion.ToString(); runtime = [System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription; executable = [Environment]::ProcessPath } | ConvertTo-Json -Compress; [Console]::ReadLine() | Out-Null";
         var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh")
         {
             RedirectStandardOutput = true,
@@ -226,6 +237,7 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
         output.WriteLine("PowerShell startup probe: " + line);
         var root = document.RootElement;
         root.GetProperty("moduleCache").GetString().ShouldBe(Path.Combine(state.Root, "ModuleAnalysisCache"));
+        root.GetProperty("minimumCpuCount").GetString().ShouldBe(int.MaxValue.ToString());
         root.GetProperty("version").GetString().ShouldNotBeNullOrWhiteSpace();
         root.GetProperty("runtime").GetString().ShouldNotBeNullOrWhiteSpace();
         root.GetProperty("executable").GetString().ShouldNotBeNullOrWhiteSpace();
