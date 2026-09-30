@@ -56,6 +56,14 @@
       "description": "Maximum total characters of skill content included in the prompt."
     },
     {
+      "id": "allowSharedSkillManagement",
+      "type": "bool",
+      "required": false,
+      "default": "true",
+      "sensitive": false,
+      "description": "Allows this agent to manage shared skills that are available to every agent. Set false to opt out."
+    },
+    {
       "id": "securityAcknowledgements",
       "type": "array",
       "required": false,

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Extensions.Skills;
@@ -13,10 +14,10 @@ public static class SkillsConfigResolver
     {
         var named = ExtensionConfigBinder.BindNamedAgent<SkillsConfig>(descriptor, SkillsExtensionJson.ExtensionId);
         var defaults = ExtensionConfigBinder.BindAgentDefaults<SkillsConfig>(descriptor, SkillsExtensionJson.ExtensionId);
-        if (named is null && defaults?.SecurityAcknowledgements is not { Count: > 0 })
+        if (named is null && defaults is null)
             return null;
 
-        var source = named ?? new SkillsConfig();
+        var source = named ?? defaults ?? new SkillsConfig();
         return new SkillsConfig
         {
             Enabled = source.Enabled,
@@ -28,9 +29,40 @@ public static class SkillsConfigResolver
             TrustMode = source.TrustMode,
             AllowSkillCreation = source.AllowSkillCreation,
             AllowSkillDeletion = source.AllowSkillDeletion,
-            AllowSharedSkillManagement = source.AllowSharedSkillManagement,
+            AllowSharedSkillManagement = ResolveSharedManagement(descriptor, defaults),
             SecurityAcknowledgements = Combine(defaults?.SecurityAcknowledgements, source.SecurityAcknowledgements)
         };
+    }
+
+    private static bool ResolveSharedManagement(AgentDescriptor descriptor, SkillsConfig? defaults)
+    {
+        if (TryReadSharedManagement(descriptor.ExtensionConfig, out var namedValue))
+            return namedValue;
+        if (TryReadSharedManagement(descriptor.DefaultExtensionConfig, out var defaultValue))
+            return defaultValue;
+        return defaults?.AllowSharedSkillManagement ?? new SkillsConfig().AllowSharedSkillManagement;
+    }
+
+    private static bool TryReadSharedManagement(
+        IReadOnlyDictionary<string, JsonElement> scope,
+        out bool value)
+    {
+        value = default;
+        if (!scope.TryGetValue(SkillsExtensionJson.ExtensionId, out var extension) ||
+            extension.ValueKind is not JsonValueKind.Object)
+            return false;
+
+        foreach (var property in extension.EnumerateObject())
+        {
+            if (string.Equals(property.Name, "allowSharedSkillManagement", StringComparison.OrdinalIgnoreCase) &&
+                property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                value = property.Value.GetBoolean();
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static List<Security.SkillSecurityAcknowledgement>? Combine(

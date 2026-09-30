@@ -472,7 +472,8 @@ public sealed class ConfigDocument
                     {
                         ["botnexus-skills"] = new JsonObject
                         {
-                            ["enabled"] = true
+                            ["enabled"] = true,
+                            ["allowSharedSkillManagement"] = true
                         }
                     },
                     ["memory"] = new JsonObject
