@@ -78,3 +78,24 @@ public sealed class SkillsFileResponse
     [JsonPropertyName("isTruncated")]
     public bool IsTruncated { get; set; }
 }
+
+/// <summary>Complete scanner evidence submitted for an explicit operator acknowledgement.</summary>
+public sealed record SkillSecurityAcknowledgementRequest
+{
+    /// <summary>Skill directory name under the shared skills root.</summary>
+    public string Skill { get; init; } = string.Empty;
+    /// <summary>Current scanner rule identifier.</summary>
+    public string RuleId { get; init; } = string.Empty;
+    /// <summary>Skill-relative file containing the finding.</summary>
+    public string File { get; init; } = string.Empty;
+    /// <summary>Current scanner severity.</summary>
+    public string Severity { get; init; } = string.Empty;
+    /// <summary>Stable identity emitted for the exact scanner result.</summary>
+    public string FindingId { get; init; } = string.Empty;
+    /// <summary>Exact lowercase or uppercase hexadecimal SHA-256 of the current file bytes.</summary>
+    public string Sha256 { get; init; } = string.Empty;
+    /// <summary>Explicit confirmation that the operator reviewed this exact evidence.</summary>
+    public bool Confirmed { get; init; }
+    /// <summary>Bounded, nonblank operator justification retained in configuration.</summary>
+    public string Reason { get; init; } = string.Empty;
+}

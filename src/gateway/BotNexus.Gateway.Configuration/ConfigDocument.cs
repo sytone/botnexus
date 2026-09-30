@@ -62,6 +62,9 @@ public sealed class ConfigDocument
     public string ToJsonString()
         => _root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
 
+    /// <summary>Creates an independent copy that preserves every JSON value kind.</summary>
+    internal ConfigDocument DeepClone() => new(_root.DeepClone().AsObject());
+
     // ---------------------------------------------------------------- reads
 
     /// <summary>
@@ -192,6 +195,95 @@ public sealed class ConfigDocument
             return false;
 
         return RawConfigPath.TrySet(_root, path, node, out error);
+    }
+
+    /// <summary>
+    /// Appends a typed value to an array at a canonical path unless an equivalent value already
+    /// exists. Missing arrays are created; a present non-array value fails closed.
+    /// </summary>
+    public bool TryAppendUniqueFrom<T>(
+        IReadOnlyList<string> pathSegments,
+        T value,
+        Func<T, bool> isEquivalent,
+        out bool added,
+        out string error)
+    {
+        ArgumentNullException.ThrowIfNull(pathSegments);
+        ArgumentNullException.ThrowIfNull(isEquivalent);
+        added = false;
+        if (pathSegments.Count == 0 || pathSegments.Any(string.IsNullOrWhiteSpace))
+        {
+            error = "Configuration array path is required.";
+            return false;
+        }
+
+        var path = string.Join('.', pathSegments);
+        JsonObject parent = _root;
+        for (var index = 0; index < pathSegments.Count - 1; index++)
+        {
+            var segment = pathSegments[index];
+            var key = parent.Select(pair => pair.Key)
+                .FirstOrDefault(candidate => candidate.Equals(segment, StringComparison.OrdinalIgnoreCase))
+                ?? segment;
+            if (parent[key] is null)
+            {
+                var created = new JsonObject();
+                parent[key] = created;
+                parent = created;
+                continue;
+            }
+
+            if (parent[key] is not JsonObject existingObject)
+            {
+                error = $"Configuration value at '{string.Join('.', pathSegments.Take(index + 1))}' must be an object.";
+                return false;
+            }
+
+            parent = existingObject;
+        }
+
+        var arraySegment = pathSegments[^1];
+        var arrayKey = parent.Select(pair => pair.Key)
+            .FirstOrDefault(candidate => candidate.Equals(arraySegment, StringComparison.OrdinalIgnoreCase))
+            ?? arraySegment;
+        JsonArray array;
+        if (parent[arrayKey] is null)
+        {
+            array = [];
+            parent[arrayKey] = array;
+        }
+        else if (parent[arrayKey] is JsonArray existingArray)
+        {
+            array = existingArray;
+        }
+        else
+        {
+            error = $"Configuration value at '{path}' must be an array.";
+            return false;
+        }
+
+        foreach (var node in array)
+        {
+            try
+            {
+                var item = node is null ? default : node.Deserialize<T>(WriteOptions);
+                if (item is not null && isEquivalent(item))
+                {
+                    error = string.Empty;
+                    return true;
+                }
+            }
+            catch (JsonException)
+            {
+                error = $"Configuration array at '{path}' contains a malformed entry.";
+                return false;
+            }
+        }
+
+        array.Add(JsonSerializer.SerializeToNode(value, WriteOptions));
+        added = true;
+        error = string.Empty;
+        return true;
     }
 
     /// <summary>
@@ -380,7 +472,8 @@ public sealed class ConfigDocument
                     {
                         ["botnexus-skills"] = new JsonObject
                         {
-                            ["enabled"] = true
+                            ["enabled"] = true,
+                            ["allowSharedSkillManagement"] = true
                         }
                     },
                     ["memory"] = new JsonObject

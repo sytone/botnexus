@@ -4,6 +4,8 @@
     <RootNamespace>BotNexus.Extensions.Channels.SignalR.BlazorClient</RootNamespace>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
     <ServiceWorkerAssetsManifest>service-worker-assets.js</ServiceWorkerAssetsManifest>
+    <UserGuideSourceRoot Condition="'$(UserGuideSourceRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\docs</UserGuideSourceRoot>
+    <UserGuideOutputRoot Condition="'$(UserGuideOutputRoot)' == ''">$(MSBuildThisFileDirectory)wwwroot</UserGuideOutputRoot>
   </PropertyGroup>
 
   <ItemGroup>
@@ -37,19 +39,22 @@
     wwwroot; BeforeBuild alone is too late for a WASM project.
   -->
   <Target Name="CopyUserGuide" BeforeTargets="ResolveStaticWebAssetsInputs;BeforeBuild">
+    <!-- wwwroot/guide is generated and exclusively owned by this target. Recreate only that
+         bounded directory so removed or renamed sources cannot survive incremental builds. -->
+    <RemoveDir Directories="$(UserGuideOutputRoot)\guide" />
     <ItemGroup>
-      <UserGuideDoc Include="$(MSBuildThisFileDirectory)..\..\..\docs\user-guide\**\*.md" />
-      <UserGuideExtra Include="$(MSBuildThisFileDirectory)..\..\..\docs\skills.md" />
-      <UserGuideIndex Include="$(MSBuildThisFileDirectory)..\..\..\docs\user-guide\guide-index.json" />
+      <UserGuideDoc Include="$(UserGuideSourceRoot)\user-guide\**\*.md" />
+      <UserGuideExtra Include="$(UserGuideSourceRoot)\skills.md" />
+      <UserGuideIndex Include="$(UserGuideSourceRoot)\user-guide\guide-index.json" />
     </ItemGroup>
     <Copy SourceFiles="@(UserGuideDoc)"
-          DestinationFiles="@(UserGuideDoc->'$(MSBuildThisFileDirectory)wwwroot\guide\%(RecursiveDir)%(Filename)%(Extension)')"
+          DestinationFiles="@(UserGuideDoc->'$(UserGuideOutputRoot)\guide\%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(UserGuideExtra)"
-          DestinationFolder="$(MSBuildThisFileDirectory)wwwroot\guide"
+          DestinationFolder="$(UserGuideOutputRoot)\guide"
           SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(UserGuideIndex)"
-          DestinationFolder="$(MSBuildThisFileDirectory)wwwroot\guide"
+          DestinationFolder="$(UserGuideOutputRoot)\guide"
           SkipUnchangedFiles="true" />
   </Target>
 

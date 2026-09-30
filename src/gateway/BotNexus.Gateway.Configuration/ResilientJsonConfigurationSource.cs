@@ -67,9 +67,11 @@ public sealed class ResilientJsonConfigurationSource : JsonConfigurationSource
 /// the rationale (#2358).
 /// </summary>
 internal sealed class ResilientJsonConfigurationProvider(ResilientJsonConfigurationSource source)
-    : JsonConfigurationProvider(source)
+    : JsonConfigurationProvider(source), IAcceptedRawConfigDocumentProvider
 {
     private readonly ResilientJsonConfigurationSource _source = source;
+    private ConfigDocument? _acceptedRawDocument;
+    private ConfigDocument? _candidateRawDocument;
 
     /// <summary>
     /// Loads the file, keeping the last-known-good data when the candidate cannot be parsed or does
@@ -82,6 +84,8 @@ internal sealed class ResilientJsonConfigurationProvider(ResilientJsonConfigurat
         // loader assigns an EMPTY dictionary before rethrowing on a reload parse failure, so the
         // snapshot has to be taken up-front.
         var lastKnownGood = new Dictionary<string, string?>(Data, StringComparer.OrdinalIgnoreCase);
+        var lastKnownGoodRaw = _acceptedRawDocument;
+        _candidateRawDocument = null;
 
         try
         {
@@ -90,12 +94,14 @@ internal sealed class ResilientJsonConfigurationProvider(ResilientJsonConfigurat
         catch (Exception ex) when (ex is InvalidDataException or IOException or FormatException)
         {
             Data = lastKnownGood;
+            _acceptedRawDocument = lastKnownGoodRaw;
             Report(
                 $"Failed to load configuration file '{_source.Path}'. The previous configuration is being retained; fix the JSON to apply changes.",
                 ex);
             return;
         }
 
+        _acceptedRawDocument = _candidateRawDocument;
         if (!_source.ValidatePlatformConfig)
             return;
 
@@ -103,7 +109,20 @@ internal sealed class ResilientJsonConfigurationProvider(ResilientJsonConfigurat
         if (validationError is null)
             return;
 
+        if (lastKnownGoodRaw is null)
+        {
+            // There is no healthy state to roll back to during the first load. Keep the exact
+            // invalid candidate in the provider so explicit options access produces the existing,
+            // actionable OptionsValidationException instead of silently materialising defaults.
+            // Load itself still does not throw, so host composition can choose degraded startup.
+            Report(
+                $"Configuration file '{_source.Path}' failed initial validation. The invalid configuration remains available for controlled options validation. {validationError}",
+                null);
+            return;
+        }
+
         Data = lastKnownGood;
+        _acceptedRawDocument = lastKnownGoodRaw;
         Report(
             $"Configuration file '{_source.Path}' failed validation and was rejected. The previous configuration is being retained. {validationError}",
             null);
@@ -115,19 +134,25 @@ internal sealed class ResilientJsonConfigurationProvider(ResilientJsonConfigurat
     /// the existing <see cref="PlatformConfigOptionsValidator"/> over it. Returns the joined error
     /// text when the candidate must be rejected, or <see langword="null"/> when it is acceptable.
     /// </summary>
+    public override void Load(Stream stream)
+    {
+        using var copy = new MemoryStream();
+        stream.CopyTo(copy);
+        var bytes = copy.ToArray();
+        _candidateRawDocument = ConfigDocument.Parse(System.Text.Encoding.UTF8.GetString(bytes));
+        base.Load(new MemoryStream(bytes));
+    }
+
+    ConfigDocument? IAcceptedRawConfigDocumentProvider.GetAcceptedRawDocument()
+        => _acceptedRawDocument?.DeepClone();
+
     private string? TryValidateCandidate()
     {
         try
         {
-            var candidateRoot = new ConfigurationBuilder()
-                .AddInMemoryCollection(Data)
-                .Build();
-
-            var candidate = new PlatformConfig();
-            candidateRoot.Bind(candidate);
-            new PlatformConfigPostConfigure(candidateRoot, _source.Path is { } path && File.Exists(path) ? path : null)
-                .PostConfigure(Options.DefaultName, candidate);
-
+            var candidate = _candidateRawDocument is null
+                ? new PlatformConfig()
+                : PlatformConfigLoader.MaterializeConfig(_candidateRawDocument.ToJsonString());
             var result = new PlatformConfigOptionsValidator().Validate(Options.DefaultName, candidate);
             return result.Failed
                 ? string.Join("; ", result.Failures ?? [])

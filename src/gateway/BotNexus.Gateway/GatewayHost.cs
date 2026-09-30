@@ -189,7 +189,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 compactor,
                 sessions,
                 supervisor,
-                channelManager,
+                conversationEventPublisher,
+                conversationStore,
                 compactionOptions,
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<BotNexus.Gateway.Sessions.SessionCompactionCoordinator>.Instance,
                 memoryFlusher);
@@ -1243,11 +1244,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 var outcome = await _compactionCoordinator.CompactAsync(session.AgentId, session, cancellationToken).ConfigureAwait(false);
                 if (outcome.Applied)
                 {
-                    await _compactionCoordinator.TrySendChannelNotificationAsync(
+                    _ = await _compactionCoordinator.TryPublishNotificationAsync(
                         outcome,
-                        message.ChannelType,
-                        message.ChannelAddress,
-                        sessionId,
+                        typedAgentId,
+                        session,
                         cancellationToken).ConfigureAwait(false);
                 }
             }
@@ -1510,11 +1510,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         // Always notify on this path — channel-driven /compact callers expect feedback
         // even on failure so the user knows the command landed. Use the canonical
         // text (including the FailureReason when applicable).
-        await _compactionCoordinator.TrySendChannelNotificationAsync(
+        _ = await _compactionCoordinator.TryPublishNotificationAsync(
             outcome,
-            message.ChannelType,
-            message.ChannelAddress,
-            typedSessionId.Value,
+            session.AgentId,
+            session,
             cancellationToken).ConfigureAwait(false);
     }
 

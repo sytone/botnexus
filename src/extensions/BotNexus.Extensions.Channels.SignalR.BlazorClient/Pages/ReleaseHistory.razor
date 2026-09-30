@@ -1,0 +1,113 @@
+@page "/release-history"
+@inject ReleaseHistoryClient ReleaseHistoryClient
+@implements IDisposable
+
+<PageTitle>BotNexus &mdash; Change history</PageTitle>
+
+<div class="platform-config-page release-history-page">
+    <header class="platform-config-toolbar">
+        <h2 class="page-heading"><span>Change history</span></h2>
+        <button class="secondary-btn" data-testid="release-history-refresh" disabled="@_loading" @onclick="LoadAsync">Refresh</button>
+    </header>
+
+    <main class="release-history-content" aria-live="polite">
+        @if (_loading)
+        {
+            <p class="workspace-state t-body" data-testid="release-history-loading">Loading released versions…</p>
+        }
+        else if (_error && _manifest is null)
+        {
+            <div class="workspace-state t-body" role="alert" data-testid="release-history-error">
+                <p>Release history is unavailable.</p>
+                <button class="secondary-btn" @onclick="LoadAsync">Retry</button>
+            </div>
+        }
+        else if (_manifest?.Releases.Count == 0)
+        {
+            <p class="workspace-state t-body" data-testid="release-history-empty">No released versions are available yet.</p>
+        }
+        else if (_manifest is not null)
+        {
+            @if (_error)
+            {
+                <div class="workspace-state t-body" role="alert" data-testid="release-history-refresh-error">
+                    <span>Could not refresh release history. Showing the last validated data.</span>
+                    <button class="secondary-btn" @onclick="LoadAsync">Retry</button>
+                </div>
+            }
+            @foreach (var release in _manifest.Releases)
+            {
+                <article class="release-history-entry" data-testid="release-history-entry">
+                    <header class="release-history-heading">
+                        <h3>Version @release.Version</h3>
+                        <time datetime="@release.ReleasedAt">@release.ReleasedAt</time>
+                    </header>
+                    <div class="release-history-links">
+                        <a href="@release.ReleaseUrl" target="_blank" rel="noopener noreferrer" data-testid="release-link">Release notes</a>
+                        <a href="@release.DocumentationUrl" target="_blank" rel="noopener noreferrer" data-testid="release-documentation-link">Release documentation</a>
+                    </div>
+                    @foreach (var category in release.Categories)
+                    {
+                        <section class="release-history-category">
+                            <h4>@category.Name</h4>
+                            <ul>
+                                @foreach (var change in category.Changes)
+                                {
+                                    <li>
+                                        <span>@PlainText(change.Summary)</span>
+                                        @foreach (var url in change.DocumentationUrls)
+                                        {
+                                            <a href="@url" target="_blank" rel="noopener noreferrer" data-testid="capability-link">Documentation</a>
+                                        }
+                                    </li>
+                                }
+                            </ul>
+                        </section>
+                    }
+                </article>
+            }
+        }
+    </main>
+</div>
+
+@code {
+    private readonly CancellationTokenSource _disposeCancellation = new();
+    private ReleaseHistoryManifest? _manifest;
+    private bool _loading = true;
+    private bool _error;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = false;
+        try
+        {
+            _manifest = await ReleaseHistoryClient.GetAsync(_disposeCancellation.Token);
+        }
+        catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception)
+        {
+            _error = true;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string PlainText(string summary) =>
+        System.Text.RegularExpressions.Regex.Replace(
+            System.Text.RegularExpressions.Regex.Replace(summary, @"\[([^\]]+)\]\(https://[^)]+\)", "$1"),
+            @"[*_`]",
+            string.Empty);
+
+    public void Dispose()
+    {
+        _disposeCancellation.Cancel();
+        _disposeCancellation.Dispose();
+    }
+}

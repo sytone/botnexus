@@ -199,7 +199,7 @@ public sealed class AgentsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            await CompensateConfigDeleteAsync(agentId.Value, cancellationToken);
+            await CompensateConfigDeleteAsync(agentId, cancellationToken);
             return Conflict(new { error = ex.Message });
         }
 
@@ -219,7 +219,7 @@ public sealed class AgentsController : ControllerBase
         {
             _logger.LogError(ex, "Provisioning failed for new agent {AgentId}; rolling back registry and config.", agentId.Value);
             _registry.Unregister(agentId);
-            await CompensateConfigDeleteAsync(agentId.Value, cancellationToken);
+            await CompensateConfigDeleteAsync(agentId, cancellationToken);
             return Problem(
                 detail: $"Failed to provision agent side effects: {ex.Message}",
                 statusCode: StatusCodes.Status500InternalServerError);
@@ -368,7 +368,7 @@ public sealed class AgentsController : ControllerBase
         if (!wasUpdated)
         {
             // Concurrently removed between the Get and the Update; restore config to match.
-            await CompensateConfigDeleteAsync(agentId, cancellationToken);
+            await CompensateConfigDeleteAsync(typedAgentId, cancellationToken);
             return NotFound();
         }
 
@@ -419,7 +419,7 @@ public sealed class AgentsController : ControllerBase
         // 1) Delete config first. If this fails the registry still holds the agent (no divergence).
         try
         {
-            await _configurationWriter.DeleteAsync(agentId, cancellationToken);
+            await _configurationWriter.DeleteAsync(typedAgentId, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -737,7 +737,7 @@ public sealed class AgentsController : ControllerBase
     // Compensation: best-effort delete of a just-written config entry when a later lifecycle step
     // fails. A failure to compensate is logged but cannot itself surface a new error - the caller
     // is already returning a 500 for the primary failure.
-    private async Task CompensateConfigDeleteAsync(string agentId, CancellationToken cancellationToken)
+    private async Task CompensateConfigDeleteAsync(AgentId agentId, CancellationToken cancellationToken)
     {
         try
         {
@@ -745,7 +745,7 @@ public sealed class AgentsController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Rollback failed: could not delete persisted config for agent {AgentId} after a lifecycle failure.", agentId);
+            _logger.LogError(ex, "Rollback failed: could not delete persisted config for agent {AgentId} after a lifecycle failure.", agentId.Value);
         }
     }
 

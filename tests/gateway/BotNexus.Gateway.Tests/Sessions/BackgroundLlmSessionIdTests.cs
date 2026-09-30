@@ -155,10 +155,10 @@ public sealed class BackgroundLlmSessionIdTests
     // ── AC5: no behaviour change when the session id is unavailable ───────────────
 
     [Fact]
-    public async Task GenerateAndSaveAsync_NoSessionId_NoAuthManager_PreservesNullOptions()
+    public async Task GenerateAndSaveAsync_NoSessionId_NoAuthManager_UsesSemanticDefaults()
     {
-        // Behaviour-preserving: nothing to say about credentials OR session -> null options, exactly
-        // as before. A blank id must never manufacture an options object carrying an empty SessionId.
+        // The split mapping always creates provider-private options from semantic defaults. With no
+        // session identity, it must still avoid manufacturing an empty prompt-cache key.
         SimpleStreamOptions? captured = null;
         var observed = false;
         var svc = CreateAutoTitleService(opts => { captured = opts; observed = true; }, out _);
@@ -168,7 +168,9 @@ public sealed class BackgroundLlmSessionIdTests
 
         result.ShouldBe("Chat About Cats");
         observed.ShouldBeTrue("the provider must still have been called");
-        captured.ShouldBeNull();
+        captured.ShouldNotBeNull();
+        captured!.SessionId.ShouldBeNull();
+        captured.ApiKey.ShouldBeNull();
     }
 
     [Fact]
@@ -186,54 +188,6 @@ public sealed class BackgroundLlmSessionIdTests
         captured.ShouldNotBeNull();
         captured!.SessionId.ShouldBeNull();
         captured.ApiKey.ShouldBe("titling-token");
-    }
-
-    // ── The seam itself ───────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task CreateAuthenticatedOptionsAsync_AppliesSessionId_AndPreservesBaseOptions()
-    {
-        var auth = CreateAuthManagerWithToken("github-copilot", "copilot-token");
-
-        var options = await auth.CreateAuthenticatedOptionsAsync(
-            "github-copilot",
-            new SimpleStreamOptions { StreamSetupTimeoutMs = 15000 },
-            Domain.Primitives.SessionId.From("sess-seam-1"),
-            CancellationToken.None);
-
-        options.SessionId.ShouldBe("sess-seam-1");
-        options.ApiKey.ShouldBe("copilot-token");
-        options.StreamSetupTimeoutMs.ShouldBe(15000);
-    }
-
-    [Fact]
-    public async Task CreateAuthenticatedOptionsAsync_NullSessionId_DoesNotOverwriteBaseOptionsValue()
-    {
-        // A null argument must be inert, not destructive: a caller that already set SessionId on
-        // its baseOptions keeps it. Typing the parameter as SessionId? (#3099) means a BLANK id is
-        // not constructible at this seam at all - the blank/absent distinction is pinned one layer
-        // down, on the request builder itself, in CopilotResponsesPromptCacheKeyTests.
-        var auth = CreateAuthManagerWithToken("github-copilot", "copilot-token");
-
-        var options = await auth.CreateAuthenticatedOptionsAsync(
-            "github-copilot",
-            new SimpleStreamOptions { SessionId = "already-set" },
-            sessionId: null,
-            CancellationToken.None);
-
-        options.SessionId.ShouldBe("already-set");
-    }
-
-    [Fact]
-    public async Task CreateAuthenticatedOptionsAsync_NoSessionAnywhere_LeavesSessionIdNull()
-    {
-        var auth = CreateAuthManagerWithToken("github-copilot", "copilot-token");
-
-        var options = await auth.CreateAuthenticatedOptionsAsync(
-            "github-copilot", baseOptions: null, sessionId: null, CancellationToken.None);
-
-        options.SessionId.ShouldBeNull();
-        options.ApiKey.ShouldBe("copilot-token");
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────────

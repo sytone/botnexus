@@ -25,6 +25,32 @@ public class UpdateCommandTests
             => Task.FromResult(0);
     }
 
+    private sealed class DeploymentFailureUpdateCommand(IGatewayProcessManager processManager)
+        : UpdateCommand(processManager)
+    {
+        internal bool RestartCalled { get; private set; }
+        protected override Task<int> RunGitPullStepAsync(
+            string repoRoot, bool verbose, CancellationToken cancellationToken)
+            => Task.FromResult(0);
+
+        protected override Task<bool> CanSkipRebuildAsync(string repoRoot, CancellationToken cancellationToken)
+            => Task.FromResult(false);
+
+        protected override Task<bool> WaitForPortFreeAsync(int port, CancellationToken cancellationToken)
+            => Task.FromResult(true);
+
+        protected override Task<int> RunBuildAndDeployAsync(
+            string repoRoot, string home, bool verbose, CancellationToken cancellationToken)
+            => Task.FromResult(ExtensionDeploymentFailureExitCode);
+
+        protected override Task<int> RunRestartAsync(
+            string home, int port, string repoRoot, CancellationToken cancellationToken)
+        {
+            RestartCalled = true;
+            return Task.FromResult(0);
+        }
+    }
+
     private sealed class GitPullStepProbeCommand(IGatewayProcessManager processManager)
         : UpdateCommand(processManager)
     {
@@ -103,6 +129,41 @@ public class UpdateCommandTests
         pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStartResult(true, 99999, null));
         return new UpdateCommand(pm);
+    }
+
+    [Fact]
+    public void DeploymentExitCode_WhenReconciliationReportsInTreeFailure_ReturnsNonZero()
+    {
+        var result = new ExtensionDeploymentResult(
+            0,
+            Array.Empty<string>(),
+            [new ExtensionDeploymentFailure("in-tree:audio-transcription", "activation failed")]);
+
+        UpdateCommand.DeploymentExitCode(result).ShouldBe(UpdateCommand.ExtensionDeploymentFailureExitCode);
+    }
+
+    [Fact]
+    public async Task Update_WhenDeploymentFailsRestartsGatewayAndReturnsNonZero()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(new GatewayStopResult(true, "Stopped"));
+        pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new GatewayStartResult(true, 1234, null));
+        var command = new DeploymentFailureUpdateCommand(pm);
+        var tempDir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"botnexus-update-deployfail-{Guid.NewGuid():N}")).FullName;
+
+        try
+        {
+            var exitCode = await command.ExecuteAsync(tempDir, tempDir, 5005, false, CancellationToken.None);
+
+            exitCode.ShouldBe(UpdateCommand.ExtensionDeploymentFailureExitCode);
+            command.RestartCalled.ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     [Fact]

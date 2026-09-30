@@ -5,7 +5,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $scriptPath = Join-Path $PSScriptRoot 'Get-MaintenanceDispatchPlan.ps1'
-$azureScriptPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'repo/Invoke-AzureBuildTest.ps1'
+$repoScriptRoot = Join-Path (Split-Path $PSScriptRoot -Parent) 'repo'
+$sourceSnapshotModulePath = Join-Path $repoScriptRoot 'SourceSnapshot.psm1'
 $failures = [Collections.Generic.List[string]]::new()
 $script:pass = 0
 
@@ -35,9 +36,17 @@ function New-State {
     }
 }
 
-# Remote archive enumeration must filter empty path records before invoking tar.
-$azureScript = Get-Content -LiteralPath $azureScriptPath -Raw
-Assert-True ($azureScript.Contains('Where-Object { -not [string]::IsNullOrWhiteSpace($_) }')) 'Azure validation should not pass empty worktree paths to tar.'
+# Exact-source snapshot enumeration must accept portable paths and reject empty records
+# before any path can be captured into the ZIP transport.
+Import-Module $sourceSnapshotModulePath -Force
+$safePathAccepted = $true
+try { Assert-SourceSnapshotPath 'src/portable file.cs' }
+catch { $safePathAccepted = $false }
+Assert-True $safePathAccepted 'Azure exact-source snapshot should accept portable source paths.'
+$emptyPathRejected = $false
+try { Assert-SourceSnapshotPath '' }
+catch { $emptyPathRejected = $_.Exception.Message -like '*Unsafe source path*' }
+Assert-True $emptyPathRejected 'Azure exact-source snapshot should reject empty source paths.'
 
 # Repair work must not consume implementation capacity.
 $state = New-State

@@ -321,7 +321,7 @@ tail -f ~/.botnexus/logs/gateway.log | grep -i error
 ```
 
 **Reduce system prompt size:**
-- Remove unnecessary `systemPromptFiles`
+- Shorten or remove unnecessary content from standard workspace instruction files
 - Shorten prompt content
 
 **Reduce tool count:**
@@ -759,7 +759,7 @@ dotnet list package --include-transitive
 ```
 
 **Reduce system prompt size:**
-- Remove unused `systemPromptFiles`
+- Remove unused content from standard workspace instruction files
 - Shorten skill content
 
 ### High CPU Usage

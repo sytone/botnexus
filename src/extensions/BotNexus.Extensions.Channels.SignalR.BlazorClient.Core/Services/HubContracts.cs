@@ -177,9 +177,16 @@ public sealed record SendMessageResult(
     [property: JsonPropertyName("agentId")] string AgentId,
     [property: JsonPropertyName("channelType")] string? ChannelType);
 
+/// <summary>Authoritative server-owned activity for a run in flight at subscribe time.</summary>
+public sealed record RunActivitySnapshot(
+    [property: JsonPropertyName("sessionId")] string SessionId,
+    [property: JsonPropertyName("agentId")] string AgentId,
+    [property: JsonPropertyName("conversationId")] string? ConversationId);
+
 /// <summary>Result returned by <c>SubscribeAll</c>.</summary>
 public sealed record SubscribeAllResult(
-    [property: JsonPropertyName("sessions")] IReadOnlyList<SessionSummary> Sessions);
+    [property: JsonPropertyName("sessions")] IReadOnlyList<SessionSummary> Sessions,
+    [property: JsonPropertyName("activeRuns")] IReadOnlyList<RunActivitySnapshot> ActiveRuns);
 
 /// <summary>Session summary returned in <see cref="SubscribeAllResult"/> and GET /api/sessions.</summary>
 public sealed record SessionSummary(

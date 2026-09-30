@@ -91,14 +91,14 @@ public sealed class LogDiagnosticsRingBufferTests
     {
         var buffer = new LogDiagnosticsRingBuffer();
 
-        buffer.Record(LogLevel.Warning, "First template", "First template");
-        buffer.Record(LogLevel.Error, "Second template", "Second template");
+        buffer.Record(LogLevel.Warning, "First {Value}", "First template");
+        buffer.Record(LogLevel.Error, "Second {Value}", "Second template");
 
         var patterns = buffer.GetPatterns(TimeSpan.FromHours(1));
         patterns.Count.ShouldBe(2);
         // Second template was recorded last, should appear first
-        patterns[0].Template.ShouldBe("Second template");
-        patterns[1].Template.ShouldBe("First template");
+        patterns[0].Template.ShouldBe("Second {Value}");
+        patterns[1].Template.ShouldBe("First {Value}");
     }
 
     [Fact]
@@ -106,15 +106,133 @@ public sealed class LogDiagnosticsRingBufferTests
     {
         var buffer = new LogDiagnosticsRingBuffer(maxPatterns: 3);
 
-        buffer.Record(LogLevel.Warning, "Template 1", "Template 1");
-        buffer.Record(LogLevel.Warning, "Template 2", "Template 2");
-        buffer.Record(LogLevel.Warning, "Template 3", "Template 3");
-        buffer.Record(LogLevel.Warning, "Template 4", "Template 4");
+        buffer.Record(LogLevel.Warning, "Template {Value}", "Template 1");
+        buffer.Record(LogLevel.Warning, "Template {Value} two", "Template 2");
+        buffer.Record(LogLevel.Warning, "Template {Value} three", "Template 3");
+        buffer.Record(LogLevel.Warning, "Template {Value} four", "Template 4");
 
         // Capacity is 3, one should have been evicted
         buffer.PatternCount.ShouldBeLessThanOrEqualTo(3);
     }
 
+    [Fact]
+    public void Record_UsesFindingIdentityToSeparateAggregatesAndCoalesceRepeats()
+    {
+        var buffer = new LogDiagnosticsRingBuffer(maxRecentOccurrencesPerPattern: 2);
+        var findingA = new Dictionary<string, string?>
+        {
+            ["AgentId"] = "agent-a", ["SessionId"] = "session-a", ["FindingId"] = "finding-a"
+        };
+
+        buffer.Record(LogLevel.Warning, "scanner", new EventId(7, "Finding"), "Finding {FindingId}", "Finding one", findingA);
+        buffer.Record(LogLevel.Warning, "scanner", new EventId(7, "Finding"), "Finding {FindingId}", "Finding one repeated", findingA);
+        buffer.Record(LogLevel.Warning, "scanner", new EventId(7, "Finding"), "Finding {FindingId}", "Finding two",
+            new Dictionary<string, string?> { ["AgentId"] = "agent-b", ["SessionId"] = "session-b", ["FindingId"] = "finding-b" });
+
+        var patterns = buffer.GetPatterns(TimeSpan.FromHours(1));
+        patterns.Count.ShouldBe(2);
+        var repeated = patterns.Single(pattern => pattern.RecentOccurrences[0].Properties["FindingId"] == "finding-a");
+        repeated.Count.ShouldBe(2);
+        repeated.DistinctFindingCount.ShouldBe(1);
+        repeated.RecentOccurrences.Count.ShouldBe(2);
+        patterns.Single(pattern => pattern.RecentOccurrences[0].Properties["FindingId"] == "finding-b").Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Record_SnapshotsCanonicalAllowedBoundedPropertiesAtRingBoundary()
+    {
+        var buffer = new LogDiagnosticsRingBuffer();
+        var source = new Dictionary<string, string?>
+        {
+            ["findingid"] = "finding-a",
+            ["SESSIONID"] = new string('s', LogDiagnosticsRingBuffer.MaxPropertyValueLength + 20),
+            ["Secret"] = "must-not-be-retained"
+        };
+
+        buffer.Record(LogLevel.Warning, "scanner", new EventId(7, "Finding"), "Finding {FindingId}", "Finding one", source);
+        source["findingid"] = "mutated";
+        source["AgentId"] = "added-later";
+
+        var properties = buffer.GetPatterns(TimeSpan.FromHours(1)).Single().RecentOccurrences.Single().Properties;
+        properties.Keys.ShouldBe(["FindingId", "SessionId"], ignoreOrder: true);
+        properties["FindingId"].ShouldBe("finding-a");
+        properties["SessionId"].ShouldBe(LogDiagnosticsRingBuffer.RedactedOversizedValue);
+        properties.ShouldNotContainKey("AgentId");
+        properties.Values.ShouldNotContain("must-not-be-retained");
+        var mutableView = properties.ShouldBeAssignableTo<IDictionary<string, string?>>();
+        Should.Throw<NotSupportedException>(() => mutableView["FindingId"] = "changed");
+    }
+
+    [Fact]
+    public void Record_SanitisesEveryRetainedStringAtRingBoundary()
+    {
+        const string credential = "user:password";
+        const string querySecret = "token=abc123";
+        const string apiSecret = "api_key=xyz789";
+        var unsafeUrl = $"https://{credential}@example.test/path?{querySecret}";
+        var buffer = new LogDiagnosticsRingBuffer();
+
+        buffer.Record(
+            LogLevel.Error,
+            $"category {unsafeUrl}",
+            new EventId(9, $"event https://example.test/?{querySecret}"),
+            $"Template {unsafeUrl} and {apiSecret} {{FindingId}}",
+            $"Sample {unsafeUrl} and {apiSecret}",
+            new Dictionary<string, string?>
+            {
+                ["findingid"] = $"finding {unsafeUrl}",
+                ["DiagnosticCategory"] = $"category {apiSecret}",
+                ["NotAllowed"] = credential
+            });
+
+        var pattern = buffer.GetPatterns(TimeSpan.FromHours(1)).Single();
+        var occurrence = pattern.RecentOccurrences.Single();
+        var completeRetainedPattern = string.Join('|',
+            pattern.Fingerprint,
+            pattern.Template,
+            pattern.SampleMessage,
+            occurrence.Category,
+            occurrence.EventName,
+            occurrence.RenderedMessage,
+            string.Join(';', occurrence.Properties.Select(pair => $"{pair.Key}={pair.Value}")));
+
+        completeRetainedPattern.ShouldNotContain(credential);
+        completeRetainedPattern.ShouldNotContain(querySecret);
+        completeRetainedPattern.ShouldNotContain(apiSecret);
+        occurrence.Properties.Keys.ShouldBe(["FindingId", "DiagnosticCategory"], ignoreOrder: true);
+        pattern.Template.Length.ShouldBeLessThanOrEqualTo(LogDiagnosticsRingBuffer.MaxTemplateLength + 3);
+    }
+
+    [Fact]
+    public async Task Record_ConcurrentReadersObserveSynchronizedAggregateState()
+    {
+        const int writerCount = 4;
+        const int recordsPerWriter = 250;
+        var buffer = new LogDiagnosticsRingBuffer();
+        var properties = new Dictionary<string, string?> { ["FindingId"] = "finding-a" };
+
+        var writers = Enumerable.Range(0, writerCount).Select(_ => Task.Run(() =>
+        {
+            for (var index = 0; index < recordsPerWriter; index++)
+                buffer.Record(LogLevel.Warning, "scanner", new EventId(7, "Finding"), "Finding {FindingId}", "Finding one", properties);
+        }));
+        var readers = Enumerable.Range(0, writerCount).Select(_ => Task.Run(() =>
+        {
+            for (var index = 0; index < recordsPerWriter; index++)
+            {
+                foreach (var pattern in buffer.GetPatterns(TimeSpan.FromHours(1)))
+                {
+                    pattern.Count.ShouldBeGreaterThan(0);
+                    pattern.LastSeen.ShouldBeGreaterThanOrEqualTo(pattern.FirstSeen);
+                    pattern.RecentOccurrences.Count.ShouldBeLessThanOrEqualTo(20);
+                }
+            }
+        }));
+
+        await Task.WhenAll(writers.Concat(readers));
+
+        buffer.GetPatterns(TimeSpan.FromHours(1)).Single().Count.ShouldBe(writerCount * recordsPerWriter);
+    }
     [Fact]
     public void Clear_RemovesAllPatterns()
     {
@@ -138,7 +256,8 @@ public sealed class LogDiagnosticsRingBufferTests
 
         var patterns = buffer.GetPatterns(TimeSpan.FromHours(1));
         patterns.Count.ShouldBe(1);
-        patterns[0].Template.ShouldBe("A rendered message without template");
+        patterns[0].Template.ShouldBe(LogDiagnosticsRingBuffer.RedactedUnstructuredValue);
+        patterns[0].SampleMessage.ShouldBe(LogDiagnosticsRingBuffer.RedactedUnstructuredValue);
     }
 
     [Fact]
@@ -165,10 +284,9 @@ public sealed class LogDiagnosticsRingBufferTests
         var buffer = new LogDiagnosticsRingBuffer();
         var longMessage = new string('x', 1000);
 
-        buffer.Record(LogLevel.Warning, "Long message template", longMessage);
+        buffer.Record(LogLevel.Warning, "Long message {Value}", longMessage);
 
         var patterns = buffer.GetPatterns(TimeSpan.FromHours(1));
-        patterns[0].SampleMessage.Length.ShouldBe(503); // 500 + "..."
-        patterns[0].SampleMessage.ShouldEndWith("...");
+        patterns[0].SampleMessage.ShouldBe(LogDiagnosticsRingBuffer.RedactedOversizedValue);
     }
 }

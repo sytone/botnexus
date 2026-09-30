@@ -197,7 +197,8 @@ internal static class CopilotProviderSubcommand
             .AddColumn("Streaming")
             .AddColumn("Tools")
             .AddColumn("Vision")
-            .AddColumn("Premium");
+            .AddColumn("Premium")
+            .AddColumn("Multiplier");
 
         foreach (var m in entries.OrderBy(m => m.Vendor).ThenBy(m => m.Id))
         {
@@ -208,7 +209,8 @@ internal static class CopilotProviderSubcommand
                 Bool(m.Capabilities?.Supports?.Streaming),
                 Bool(m.Capabilities?.Supports?.ToolCalls),
                 Bool(m.Capabilities?.Supports?.Vision),
-                Bool(m.Billing?.IsPremium));
+                FormatPremium(m.Billing?.IsPremium),
+                FormatMultiplier(m.Billing?.Multiplier));
         }
 
         AnsiConsole.Write(table);
@@ -371,6 +373,17 @@ internal static class CopilotProviderSubcommand
         }
         return 0;
     }
+
+    internal static string FormatPremium(bool? value) => value switch
+    {
+        true => "[green]yes[/]",
+        false => "no",
+        null => "[dim]unknown[/]"
+    };
+
+    internal static string FormatMultiplier(double? value) => value is null
+        ? "[dim]unknown[/]"
+        : $"{value.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}×";
 
     private static string Bool(bool? value) => value switch
     {

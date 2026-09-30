@@ -62,6 +62,7 @@ public sealed class MobileInboundDeliveryIntentTests : IDisposable
         await cut.InvokeAsync(() => cut.Find(buttonSelector).Click());
 
         await _interaction.Received(1).DeliverMessageAsync(
-            AgentId, ConversationId, "same message", expectedMode, null);
+            AgentId, ConversationId, "same message", expectedMode,
+            Arg.Is<IReadOnlyList<DraftAttachment>>(attachments => attachments.Count == 0));
     }
 }

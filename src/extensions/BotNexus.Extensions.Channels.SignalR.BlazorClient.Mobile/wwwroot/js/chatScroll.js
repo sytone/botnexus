@@ -49,11 +49,6 @@ window.chatScroll = {
      * so that Blazor's onkeydown handler can send the message without a stray newline.
      * Shift+Enter still inserts a newline normally.
      */
-    /** Returns true when the viewport matches the mobile breakpoint (≤768px). */
-    isMobileView: function () {
-        return window.innerWidth <= 768;
-    },
-
     preventEnterSubmit: function (element) {
         if (!element || typeof element.addEventListener !== 'function' || element._preventEnterBound) return;
         element.addEventListener('keydown', function (e) {

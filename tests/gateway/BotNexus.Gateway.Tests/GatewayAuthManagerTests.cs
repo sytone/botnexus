@@ -1,5 +1,6 @@
 using System.Reflection;
 using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Gateway.Abstractions.Providers;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -290,7 +291,7 @@ public sealed class GatewayAuthManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateAuthenticatedOptionsAsync_WhenDeclaredAuthReferenceCannotResolve_PreservesBlankSentinel()
+    public async Task CreateExecutionOptionsAsync_WhenDeclaredAuthReferenceCannotResolve_PreservesBlankSentinel()
     {
         SetEnvironmentVariable("OPENAI_API_KEY", "ambient-openai-key");
         var manager = CreateManager(new PlatformConfig
@@ -304,10 +305,58 @@ public sealed class GatewayAuthManagerTests : IDisposable
             }
         });
 
-        var options = await manager.CreateAuthenticatedOptionsAsync("openai");
+        var options = await manager.CreateExecutionOptionsAsync("openai");
 
         options.ApiKey.ShouldBe(string.Empty);
         ProviderCredentialResolver.Resolve("openai", options.ApiKey).Source.ShouldBe(CredentialSource.Declared);
+    }
+
+    [Fact]
+    public async Task CreateExecutionOptionsAsync_AppliesIdleTimeout_AndPreservesBaseOptions()
+    {
+        var manager = CreateManager(new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["openai"] = new() { ApiKey = "resolved-key", StreamIdleTimeoutMs = 12_345 }
+            }
+        });
+        var headers = new Dictionary<string, string> { ["x-test"] = "preserved" };
+        var baseOptions = new ProviderExecutionOptions
+        {
+            Headers = headers,
+            Transport = Transport.WebSocket,
+            MaxRetryDelayMs = 4321,
+            StreamSetupTimeoutMs = 9876
+        };
+
+        var options = await manager.CreateExecutionOptionsAsync("OPENAI", baseOptions);
+
+        options.ShouldNotBeSameAs(baseOptions);
+        options.ApiKey.ShouldBe("resolved-key");
+        options.StreamIdleTimeoutMs.ShouldBe(12_345);
+        options.Headers.ShouldBeSameAs(headers);
+        options.Transport.ShouldBe(Transport.WebSocket);
+        options.MaxRetryDelayMs.ShouldBe(4321);
+        options.StreamSetupTimeoutMs.ShouldBe(9876);
+    }
+
+    [Fact]
+    public async Task CreateExecutionOptionsAsync_ExplicitIdleTimeout_IsNotOverwritten()
+    {
+        var manager = CreateManager(new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["openai"] = new() { StreamIdleTimeoutMs = 12_345 }
+            }
+        });
+
+        var options = await manager.CreateExecutionOptionsAsync(
+            "openai",
+            new ProviderExecutionOptions { StreamIdleTimeoutMs = 0 });
+
+        options.StreamIdleTimeoutMs.ShouldBe(0);
     }
 
     [Fact]

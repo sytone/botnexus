@@ -63,13 +63,13 @@ public class AgentLoopRunnerTests
             LlmClient: TestHelpers.CreateLlmClient(),
             ConvertToLlm: (messages, _) => Task.FromResult<IReadOnlyList<Message>>(ToProviderMessages(messages)),
             TransformContext: transformContext,
-            GetApiKey: (_, _) => Task.FromResult<string?>(null),
+            GetProviderExecutionOptions: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
             GetSteeringMessages: null,
             GetFollowUpMessages: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
             BeforeToolCall: null,
             AfterToolCall: null,
-            GenerationSettings: new SimpleStreamOptions());
+            GenerationSettings: new GenerationOptions());
     }
 
     private static IReadOnlyList<Message> ToProviderMessages(IReadOnlyList<AgentMessage> messages)

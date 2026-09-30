@@ -2,26 +2,15 @@ using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Agent.Providers.Core;
 
-/// <summary>
-/// Base options shared by all providers. Maps to pi-mono's StreamOptions.
-/// CancellationToken replaces AbortSignal from the TypeScript version.
-/// </summary>
-public record class StreamOptions
+/// <summary>Provider-private options retained for direct provider APIs and wire mapping.</summary>
+public record class StreamOptions : GenerationOptions
 {
-    public StreamOptions()
-    {
-    }
+    public StreamOptions() { }
 
-    protected StreamOptions(StreamOptions original)
+    protected StreamOptions(StreamOptions original) : base(original)
     {
-        Temperature = original.Temperature;
-        MaxTokens = original.MaxTokens;
-        ContextWindow = original.ContextWindow;
-        CancellationToken = original.CancellationToken;
         ApiKey = original.ApiKey;
         Transport = original.Transport;
-        CacheRetention = original.CacheRetention;
-        SessionId = original.SessionId;
         OnPayload = original.OnPayload;
         Headers = original.Headers is null ? null : new Dictionary<string, string>(original.Headers);
         MaxRetryDelayMs = original.MaxRetryDelayMs;
@@ -30,84 +19,23 @@ public record class StreamOptions
         StreamIdleTimeoutMs = original.StreamIdleTimeoutMs;
     }
 
-    /// <summary>
-    /// Gets or sets the temperature.
-    /// </summary>
-    public float? Temperature { get; init; }
-    /// <summary>
-    /// Gets or sets the max tokens.
-    /// </summary>
-    public int? MaxTokens { get; init; }
-    /// <summary>
-    /// Gets or sets the selected context-window size (in tokens). Leave unset to keep the
-    /// model's default window. Providers that support a selectable window (Anthropic-direct
-    /// 200K/1M) use this to decide whether to request the extended window; providers with a
-    /// fixed window (Copilot Claude, always 200K) ignore any larger value.
-    /// </summary>
-    public int? ContextWindow { get; init; }
-    /// <summary>
-    /// Gets a value indicating whether cancellation token.
-    /// </summary>
-    public CancellationToken CancellationToken { get; init; }
-    /// <summary>
-    /// Gets or sets the api key.
-    /// </summary>
+    /// <summary>Provider credential; null permits ambient resolution.</summary>
     public string? ApiKey { get; init; }
-    /// <summary>
-    /// Gets or sets the transport.
-    /// </summary>
+    /// <summary>Provider wire transport.</summary>
     public Transport Transport { get; init; } = Transport.Sse;
-    /// <summary>
-    /// Gets or sets the cache retention.
-    /// </summary>
-    public CacheRetention CacheRetention { get; init; } = CacheRetention.Short;
-    /// <summary>
-    /// Gets or sets the session id.
-    /// </summary>
-    public string? SessionId { get; init; }
-    /// <summary>
-    /// Gets or sets the on payload.
-    /// </summary>
+    /// <summary>Provider payload customization hook.</summary>
     public Func<object, LlmModel, Task<object?>>? OnPayload { get; init; }
-    /// <summary>
-    /// Gets or sets the headers.
-    /// </summary>
+    /// <summary>Additional provider request headers.</summary>
     public Dictionary<string, string>? Headers { get; init; }
-    /// <summary>
-    /// Gets or sets the max retry delay ms.
-    /// </summary>
+    /// <summary>Legacy provider retry-delay setting retained for direct APIs.</summary>
     public int MaxRetryDelayMs { get; init; } = 60000;
-    /// <summary>
-    /// Gets or sets the metadata.
-    /// </summary>
+    /// <summary>Provider-specific execution metadata.</summary>
     public Dictionary<string, object>? Metadata { get; init; }
-    /// <summary>
-    /// Gets or sets the stream setup timeout in milliseconds.
-    /// If the provider does not emit the first token within this window after
-    /// response headers are received, the stream is aborted.
-    /// Set to 0 or leave unset to disable (no setup-phase timeout).
-    /// </summary>
-    public int StreamSetupTimeoutMs { get; init; } = 0;
-
-    /// <summary>
-    /// Gets the maximum idle interval between reads from a streaming response body, in milliseconds.
-    /// A null value uses <see cref="Utilities.BoundedHttpContent.DefaultIdleChunkTimeout"/>;
-    /// zero disables the inter-chunk deadline; positive values override the default.
-    /// </summary>
+    /// <summary>First-token setup timeout in milliseconds; zero disables it.</summary>
+    public int StreamSetupTimeoutMs { get; init; }
+    /// <summary>Maximum idle interval between streaming reads.</summary>
     public int? StreamIdleTimeoutMs { get; init; }
 }
 
-/// <summary>
-/// Extended options with reasoning/thinking support. Maps to pi-mono's SimpleStreamOptions.
-/// </summary>
-public record class SimpleStreamOptions : StreamOptions
-{
-    /// <summary>
-    /// Gets or sets the reasoning.
-    /// </summary>
-    public ThinkingLevel? Reasoning { get; init; }
-    /// <summary>
-    /// Gets or sets the thinking budgets.
-    /// </summary>
-    public ThinkingBudgets? ThinkingBudgets { get; init; }
-}
+/// <summary>Provider-private direct-call options with semantic reasoning controls inherited.</summary>
+public record class SimpleStreamOptions : StreamOptions;

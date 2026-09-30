@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.IO.Abstractions;
 
 using BotNexus.Domain.World;
@@ -146,6 +147,12 @@ public sealed class BotNexusHome : IVerifiedHome
         "SOUL.md"
     ];
 
+    private static readonly string[] TrailguideBundledSkills =
+    [
+        "trailguide-documentation",
+        "trailguide-troubleshooting"
+    ];
+
     private static readonly string[] LegacyWorkspaceFiles =
     [
         .. WorkspaceScaffoldFiles,
@@ -156,6 +163,7 @@ public sealed class BotNexusHome : IVerifiedHome
     private readonly string? _worldId;
     private readonly ILogger _logger;
     private readonly WorldSentinelVerdict _verdict;
+    private readonly string? _documentationRootOverride;
     private int _adoptionWarned;
 
     /// <summary>
@@ -179,11 +187,13 @@ public sealed class BotNexusHome : IVerifiedHome
         string? homePath = null,
         string? dataPath = null,
         string? worldId = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        string? documentationRootOverride = null)
     {
         _fileSystem = fileSystem;
         _logger = logger ?? NullLogger.Instance;
         _worldId = string.IsNullOrWhiteSpace(worldId) ? null : worldId;
+        _documentationRootOverride = documentationRootOverride;
         RootPath = ResolveHomePath(homePath);
         DataPath = ResolveDataPath(dataPath) ?? RootPath;
 
@@ -387,19 +397,51 @@ public sealed class BotNexusHome : IVerifiedHome
         var assembly = typeof(BotNexusHome).Assembly;
         foreach (var file in TrailguideWorkspaceScaffoldFiles)
         {
-            var resourceName = assembly.GetManifestResourceNames()
-                .FirstOrDefault(n => n.EndsWith($"Templates.Trailguide.{file}", StringComparison.OrdinalIgnoreCase));
-            if (resourceName is null)
-                continue;
-
-            using var stream = assembly.GetManifestResourceStream(resourceName);
-            if (stream is null)
-                continue;
-
-            using var reader = new StreamReader(stream);
-            _fileSystem.File.WriteAllText(Path.Combine(workspacePath, file), reader.ReadToEnd());
+            WriteEmbeddedTrailguideFile(assembly, $"Templates.Trailguide.{file}", Path.Combine(workspacePath, file));
         }
+
+        foreach (var skill in TrailguideBundledSkills)
+        {
+            var skillDirectory = Path.Combine(workspacePath, "skills", skill);
+            _fileSystem.Directory.CreateDirectory(skillDirectory);
+            WriteEmbeddedTrailguideFile(
+                assembly,
+                $"Templates.Trailguide.skills.{skill.Replace('-', '_')}.SKILL.md",
+                Path.Combine(skillDirectory, "SKILL.md"));
+        }
+
+        var resolution = DocumentationRootResolver.Resolve(
+            _fileSystem,
+            _documentationRootOverride,
+            Environment.CurrentDirectory,
+            Path.Combine(ResolveUserProfile(), "botnexus"));
+        _fileSystem.File.WriteAllText(
+            Path.Combine(workspacePath, "DOCUMENTATION_ROOT.md"),
+            $"# BotNexus documentation root{Environment.NewLine}{Environment.NewLine}" +
+            $"Strategy: {resolution.Strategy}{Environment.NewLine}" +
+            $"Path: {resolution.DocsPath ?? "unresolved"}{Environment.NewLine}{Environment.NewLine}" +
+            resolution.Message + Environment.NewLine);
     }
+
+    private void WriteEmbeddedTrailguideFile(Assembly assembly, string resourceSuffix, string destination)
+    {
+        var resourceName = assembly.GetManifestResourceNames()
+            .FirstOrDefault(name => name.EndsWith(resourceSuffix, StringComparison.OrdinalIgnoreCase));
+        if (resourceName is null)
+            return;
+
+        using var stream = assembly.GetManifestResourceStream(resourceName);
+        if (stream is null)
+            return;
+
+        using var reader = new StreamReader(stream);
+        _fileSystem.File.WriteAllText(destination, reader.ReadToEnd());
+    }
+
+    private static string ResolveUserProfile()
+        => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) is { Length: > 0 } home
+            ? home
+            : Environment.GetEnvironmentVariable("HOME") ?? AppContext.BaseDirectory;
 
     private void MigrateLegacyWorkspace(string agentDirectory)
     {

@@ -96,11 +96,7 @@ public sealed class PostConfigureStoreNormalisationTests : IDisposable
         if (File.Exists(StorePath))
         {
             var store = new SqliteConfigStore($"Data Source={StorePath}");
-            var entries = store.ReadEntriesAsync().GetAwaiter().GetResult();
-            var rehydrated = ConfigDocumentRehydrator.Rehydrate(entries).ToJsonString();
-            ConfigStoreBootstrap.ReleaseConnections(StorePath);
-
-            builder.AddJsonStream(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rehydrated)));
+            builder.Add(new SqliteConfigurationSource { Store = store, StartChangeDetection = false });
         }
 
         var configuration = builder.Build();
@@ -190,30 +186,38 @@ public sealed class PostConfigureStoreNormalisationTests : IDisposable
     }
 
     /// <summary>
-    /// Clause 4 - the CONTROL. When config.json exists it remains the raw-JSON source and behaviour is
-    /// unchanged. Without this, a fix could "pass" by always preferring the store, which would be a
-    /// different bug in the opposite direction.
+    /// Clause 4: a populated store is authoritative even when a stale compatibility JSON mirror is
+    /// present. The disagreement makes this non-vacuous: reading the file produces the opposite
+    /// version/default values and misses the store-only legacy migration.
     /// </summary>
     [Fact]
-    public async Task FilePresent_StillNormalisesFromTheFile_NotTheStore()
+    public async Task DualBackendHome_NormalisesFromAuthoritativeStore_NotStaleJsonMirror()
     {
-        await SeedStoreOnlyAsync();
+        const string storeJson = """
+            {
+              "version": 2,
+              "gateway": { "extensions": { "path": "store/extensions", "enabled": false } },
+              "agents": { "defaults": { "memory": { "enabled": true, "indexing": "auto" } } }
+            }
+            """;
+        await SeedStoreOnlyAsync(storeJson);
 
-        // The file disagrees with the store on every recoverable field.
-        const string fileJson = """
+        const string staleJson = """
             {
               "version": 7,
+              "gateway": { "extensions": { "path": "stale/extensions", "enabled": true } },
               "agents": { "defaults": { "memory": { "enabled": false, "indexing": "manual" } } }
             }
             """;
-        await File.WriteAllTextAsync(_configPath, fileJson);
+        await File.WriteAllTextAsync(_configPath, staleJson);
 
         var config = BindAndPostConfigure();
 
-        config.PlatformVersion.ShouldBe(7);
-        config.AgentDefaults.ShouldNotBeNull();
-        config.AgentDefaults!.Memory!.Enabled.ShouldBe(false);
-        config.AgentDefaults.Memory.Indexing.ShouldBe("manual");
+        config.PlatformVersion.ShouldBe(2);
+        config.AgentDefaults!.Memory!.Enabled.ShouldBe(true);
+        config.AgentDefaults.Memory.Indexing.ShouldBe("auto");
+        config.Gateway!.ExtensionLoader!.Path.ShouldBe("store/extensions");
+        config.Gateway.ExtensionLoader.Enabled.ShouldBeFalse();
     }
 
     /// <summary>
@@ -244,6 +248,85 @@ public sealed class PostConfigureStoreNormalisationTests : IDisposable
         var config = Should.NotThrow(BindAndPostConfigure);
 
         config.ShouldNotBeNull();
+    }
+
+    [Theory]
+    [InlineData("true")]
+    [InlineData("123")]
+    [InlineData("null")]
+    public async Task SqliteRawDocument_PreservesExtensionOwnedLiteralStrings(string literal)
+    {
+        await SeedStoreOnlyAsync($$"""
+            { "world": { "extensions": { "sample": { "value": "{{literal}}" } } } }
+            """);
+
+        var config = BindAndPostConfigure();
+
+        config.World!.Extensions!["sample"].GetProperty("value").GetString().ShouldBe(literal);
+    }
+
+    [Fact]
+    public async Task SqliteRawDocument_PreservesExtensionArraysAndNulls()
+    {
+        await SeedStoreOnlyAsync("""
+            { "world": { "extensions": { "sample": { "values": ["true", 123, null], "empty": null } } } }
+            """);
+
+        var sample = BindAndPostConfigure().World!.Extensions!["sample"];
+
+        sample.GetProperty("values")[0].GetString().ShouldBe("true");
+        sample.GetProperty("values")[1].GetInt32().ShouldBe(123);
+        sample.GetProperty("values")[2].ValueKind.ShouldBe(JsonValueKind.Null);
+        sample.GetProperty("empty").ValueKind.ShouldBe(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public void JsonRawDocument_PreservesLiteralStringsArraysAndNulls()
+    {
+        const string json = """
+            { "world": { "extensions": { "sample": {
+              "truth": "true", "number": "123", "nothing": "null",
+              "values": ["true", 123, null], "empty": null
+            } } } }
+            """;
+        File.WriteAllText(_configPath, json);
+        var configuration = new ConfigurationBuilder()
+            .AddResilientJsonFile(_configPath, optional: false, reloadOnChange: false, validatePlatformConfig: false)
+            .Build();
+        var config = new PlatformConfig();
+        configuration.Bind(config);
+
+        new PlatformConfigPostConfigure(configuration).PostConfigure(Options.DefaultName, config);
+
+        var sample = config.World!.Extensions!["sample"];
+        sample.GetProperty("truth").GetString().ShouldBe("true");
+        sample.GetProperty("number").GetString().ShouldBe("123");
+        sample.GetProperty("nothing").GetString().ShouldBe("null");
+        sample.GetProperty("values")[2].ValueKind.ShouldBe(JsonValueKind.Null);
+        sample.GetProperty("empty").ValueKind.ShouldBe(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task HigherPrecedenceTypedOverlay_RemainsBound()
+    {
+        await SeedStoreOnlyAsync("""
+            { "gateway": { "extensions": { "path": "legacy/extensions", "enabled": false } } }
+            """);
+        var store = new SqliteConfigStore($"Data Source={StorePath}");
+        var configuration = new ConfigurationBuilder()
+            .Add(new SqliteConfigurationSource { Store = store, StartChangeDetection = false })
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["gateway:extensionLoader:path"] = "overlay/extensions"
+            })
+            .Build();
+        var config = new PlatformConfig();
+        configuration.Bind(config);
+
+        new PlatformConfigPostConfigure(configuration).PostConfigure(Options.DefaultName, config);
+
+        config.Gateway!.ExtensionLoader!.Path.ShouldBe("overlay/extensions");
+        config.Gateway.ExtensionLoader.Enabled.ShouldBeFalse();
     }
 
     public void Dispose()

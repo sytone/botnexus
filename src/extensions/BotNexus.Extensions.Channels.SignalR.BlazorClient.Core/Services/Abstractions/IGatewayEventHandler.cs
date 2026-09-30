@@ -8,6 +8,7 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 public interface IGatewayEventHandler
 {
     void HandleConnected(ConnectedPayload payload);
+    void ApplyRunActivitySnapshot(IReadOnlyList<RunActivitySnapshot> activeRuns);
     void HandleMessageStart(AgentStreamEvent evt);
     void HandleContentDelta(AgentStreamEvent evt);
     void HandleThinkingDelta(AgentStreamEvent evt);

@@ -147,9 +147,11 @@ botnexus install [OPTIONS]
 
 | Option | Default | Description |
 |---|---|---|
-| `--path <DIR>` | `%USERPROFILE%\botnexus` | Target directory for the clone. |
+| `--source <DIR>` | `~/botnexus` | Target directory for the clone. |
 | `--repo <URL>` | GitHub repo URL | Git repository URL to clone. |
 | `--build` | off | Build the solution in Release configuration after cloning. |
+| `--latest` | off | Select the configured development tip (`origin/main`) instead of a stable release. |
+| `--version <SEMVER>` | - | Select the exact `v<SEMVER>` release tag; do not include the leading `v`. |
 | `--verbose` | — | Show detailed output from git and build. |
 
 ### Examples
@@ -169,10 +171,10 @@ botnexus install --build
 **Clone to a custom directory:**
 
 ```powershell
-botnexus install --path D:\projects\botnexus
+botnexus install --source D:\projects\botnexus
 ```
 
-If the repository already exists at the target path, the command prints a message and skips the clone.
+`--latest` and `--version` cannot be combined. The target is resolved before the clone starts, so an invalid or missing release does not create or mutate the checkout. If a repository already exists at the target path, `install` refuses with exit code `2`; use `botnexus update` with the same selector so the requested release is actually checked out.
 
 ---
 
@@ -2262,12 +2264,13 @@ against the generated registry, so a check added to the code without a row here 
 
 ## doctor config
 
-Guided config migration. Compares your existing `config.json` against a set of built-in checks, reports any missing or outdated settings, and optionally applies the fixes in place. Operates offline — no running gateway required.
+Guided config migration. Reads the effective persisted configuration from `config.json`, the SQLite configuration store, or both; reports missing or outdated settings; and optionally applies fixes through the canonical writer to every configured backend. Operates offline — no running gateway required.
 
 Current checks are:
 
 | Check | Id | Reports |
 |---|---|---|
+| Legacy gateway extensions | `legacy-gateway-extensions` | Loader settings still use `gateway.extensions.path`/`enabled`, or shared agent defaults still use `gateway.extensions.defaults`. The fix moves them to `gateway.extensionLoader` and `agents.defaults.extensions` without overwriting canonical values. |
 | Extensions block | `extensions-block` | The `gateway.extensionLoader` block is absent or has extensions disabled. |
 | Skills agent default | `skills-world-default` | The Skills extension has no shared agent default in `agents.defaults.extensions`. |
 | Cron configuration | `cron-enabled` | The cron scheduler block is absent from config. |
@@ -2414,7 +2417,7 @@ botnexus locations delete docs
 
 ## update
 
-Pull the latest source, build, deploy extensions, and restart the BotNexus gateway. Run without a subcommand to perform the full update; use the `check` subcommand to see whether updates are available without applying them.
+Resolve a source release, check out its immutable commit, build, deploy extensions, and restart the BotNexus gateway. The default target is the highest stable `v<semver>` tag. Run without a subcommand to apply the update; use `check` to compare the installed commit with the same resolved target without applying it. This does not update the packaged `BotNexus.Cli` dotnet tool.
 
 ### Usage
 
@@ -2426,7 +2429,7 @@ botnexus update [COMMAND] [OPTIONS]
 
 | Command | Description |
 |---------|-------------|
-| `check` | Check whether updates are available from `origin/main` (does not apply them). |
+| `check` | Resolve the selected release and compare it with the installed source commit (does not apply it). |
 
 ### Options
 
@@ -2436,9 +2439,11 @@ botnexus update [COMMAND] [OPTIONS]
 | `--port <PORT>` | `update` | Gateway port to restart against. Defaults to `5005`. |
 | `--stash` | `update` | If the repo has uncommitted changes, stash them to a named, recoverable stash and continue. |
 | `--force` | `update` | If the repo has uncommitted changes, discard tracked-file changes and continue. Destructive. |
+| `--latest` | `update`, `check` | Select the configured development tip (`origin/main`) instead of a stable release. |
+| `--version <SEMVER>` | `update`, `check` | Select the exact `v<SEMVER>` release tag; do not include the leading `v`. |
 | `--verbose` | `update`, `check` | Show detailed update output. |
 
-`--stash` and `--force` cannot be combined (exit code `2`).
+`--stash` and `--force` cannot be combined. `--latest` and `--version` also cannot be combined (exit code `2`). Target resolution and failure happen before dirty-tree handling, checkout mutation, or gateway stop.
 
 ### Uncommitted changes in the deployment repo
 
@@ -2481,8 +2486,15 @@ own remediation line instead of a raw git error.
 # Check for updates without applying
 botnexus update check
 
-# Pull, build, and restart the gateway
+# Apply the highest stable release, build, and restart the gateway
 botnexus update
+
+# Check or apply the configured development tip
+botnexus update check --latest
+botnexus update --latest
+
+# Apply an exact release tag
+botnexus update --version 1.2.3
 
 # Update when the deployment repo has local edits you want to keep
 botnexus update --stash

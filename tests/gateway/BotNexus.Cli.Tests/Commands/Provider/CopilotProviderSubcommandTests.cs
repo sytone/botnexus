@@ -68,6 +68,24 @@ public class CopilotProviderSubcommandTests
         result.Errors.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData(null, "[dim]unknown[/]")]
+    [InlineData(false, "no")]
+    [InlineData(true, "[green]yes[/]")]
+    public void FormatPremium_preserves_provider_presence(bool? value, string expected)
+    {
+        CopilotProviderSubcommand.FormatPremium(value).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(null, "[dim]unknown[/]")]
+    [InlineData(0d, "0×")]
+    [InlineData(1.5d, "1.5×")]
+    public void FormatMultiplier_preserves_provider_presence(double? value, string expected)
+    {
+        CopilotProviderSubcommand.FormatMultiplier(value).ShouldBe(expected);
+    }
+
     [Fact]
     public async Task Login_subcommand_invokes_setup_alias_with_github_copilot_preselected()
     {

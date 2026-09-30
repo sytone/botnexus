@@ -160,7 +160,7 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
             """);
 
         var writer = new PlatformConfigAgentWriter(new PlatformConfigWriter(_configPath, _fileSystem), _home);
-        await writer.DeleteAsync("test-agent");
+        await writer.DeleteAsync(AgentId.From("test-agent"));
 
         var root = await ReadConfigAsync();
         root["agents"]!["test-agent"].ShouldBeNull();

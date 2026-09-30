@@ -17,6 +17,8 @@ public sealed class SkillToolTelemetryTests
     {
         public ConcurrentDictionary<string, int> Views { get; } = new();
         public ConcurrentDictionary<string, int> Uses { get; } = new();
+        public ConcurrentDictionary<string, int> SuppressedLoads { get; } = new();
+        public ConcurrentDictionary<string, int> ContextReloads { get; } = new();
         public ConcurrentDictionary<string, int> Patches { get; } = new();
         public ConcurrentDictionary<string, string> Created { get; } = new();
 
@@ -29,6 +31,18 @@ public sealed class SkillToolTelemetryTests
         public Task RecordUseAsync(string skillName, CancellationToken ct = default)
         {
             Uses.AddOrUpdate(skillName, 1, (_, v) => v + 1);
+            return Task.CompletedTask;
+        }
+
+        public Task RecordSuppressedLoadAsync(string skillName, CancellationToken ct = default)
+        {
+            SuppressedLoads.AddOrUpdate(skillName, 1, (_, v) => v + 1);
+            return Task.CompletedTask;
+        }
+
+        public Task RecordContextReloadAsync(string skillName, CancellationToken ct = default)
+        {
+            ContextReloads.AddOrUpdate(skillName, 1, (_, v) => v + 1);
             return Task.CompletedTask;
         }
 
@@ -56,6 +70,8 @@ public sealed class SkillToolTelemetryTests
     {
         public Task RecordViewAsync(string skillName, CancellationToken ct = default) => throw new InvalidOperationException("boom");
         public Task RecordUseAsync(string skillName, CancellationToken ct = default) => throw new InvalidOperationException("boom");
+        public Task RecordSuppressedLoadAsync(string skillName, CancellationToken ct = default) => throw new InvalidOperationException("boom");
+        public Task RecordContextReloadAsync(string skillName, CancellationToken ct = default) => throw new InvalidOperationException("boom");
         public Task RecordPatchAsync(string skillName, CancellationToken ct = default) => throw new InvalidOperationException("boom");
         public Task RecordCreatedAsync(string skillName, string createdBy, CancellationToken ct = default) => throw new InvalidOperationException("boom");
         public Task SetPinnedAsync(string skillName, bool pinned, CancellationToken ct = default) => throw new InvalidOperationException("boom");
@@ -106,6 +122,34 @@ public sealed class SkillToolTelemetryTests
         await tool.ExecuteAsync("call-1", Args("load", "git-workflow"));
 
         telemetry.Uses["git-workflow"].ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RepeatLoad_RecordsSuppressionWithoutRecordingFullUse()
+    {
+        var telemetry = new FakeTelemetry();
+        var tool = new SkillTool(new[] { MakeSkill("git-workflow") }, config: null, telemetry: telemetry);
+
+        await tool.ExecuteAsync("call-1", Args("load", "git-workflow"));
+        await tool.ExecuteAsync("call-2", Args("load", "git-workflow"));
+
+        telemetry.Uses["git-workflow"].ShouldBe(1);
+        telemetry.SuppressedLoads["git-workflow"].ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ContextReplacementReload_RecordsFullUseAndReload()
+    {
+        var telemetry = new FakeTelemetry();
+        var tool = new SkillTool(new[] { MakeSkill("git-workflow") }, config: null, telemetry: telemetry);
+
+        await tool.ExecuteAsync("call-1", Args("load", "git-workflow"));
+        tool.OnContextReplaced();
+        await tool.ExecuteAsync("call-2", Args("load", "git-workflow"));
+
+        telemetry.Uses["git-workflow"].ShouldBe(2);
+        telemetry.ContextReloads["git-workflow"].ShouldBe(1);
+        telemetry.SuppressedLoads.ShouldBeEmpty();
     }
 
     [Fact]

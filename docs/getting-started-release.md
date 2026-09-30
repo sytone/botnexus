@@ -14,7 +14,7 @@ For a complete first-agent exercise, follow [Your First AI Agent](tutorials/firs
 # Install the CLI as a global dotnet tool
 dotnet tool install -g BotNexus.Cli
 
-# Let the CLI download and prepare BotNexus
+# Let the CLI download the highest stable release and prepare BotNexus
 botnexus install --build
 
 # Set up your home directory and configure a provider
@@ -75,7 +75,7 @@ For a custom application location, use `--source`, not `--path`:
 botnexus install --source D:/botnexus --build
 ```
 
-For a non-default checkout, pass its path as `--source` to `gateway start` and `update`, but as `--path` to `build`. These commands do not share a single path-option name. If a checkout already exists, `install` keeps it rather than pulling updates; `--build` still builds it. To build the default existing checkout directly:
+For a non-default checkout, pass its path as `--source` to `gateway start` and `update`, but as `--path` to `build`. These commands do not share a single path-option name. If a checkout already exists, `install` refuses rather than silently ignoring the selected release. Use `botnexus update` to select a release in that checkout. To build the existing checkout directly:
 
 ```powershell
 botnexus build
@@ -326,7 +326,7 @@ botnexus agent add note-taker --provider github-copilot --model gpt-4o --display
 
 # Add optional per-agent settings by dotted path
 botnexus config set agents.researcher.toolIds '["read","web_search","web_fetch"]'
-botnexus config set agents.note-taker.systemPromptFiles '["SOUL.md","IDENTITY.md"]'
+# Add instructions to standard files in the note-taker workspace, such as AGENTS.md or SOUL.md.
 
 botnexus agent list
 botnexus validate
@@ -376,7 +376,9 @@ When a new release is available:
 botnexus update
 ```
 
-This pulls source, builds, deploys extensions and restarts the gateway when an update is needed; it is not a global-tool package update and does not select a release tag. It refuses a dirty checkout by default. Choose a maintenance window and review [the CLI reference](cli-reference.md#update) before updating. Update the global CLI package separately with `dotnet tool update -g BotNexus.Cli`.
+By default this resolves the highest stable `v<semver>` release tag, checks out its immutable commit, builds, deploys extensions and restarts the gateway when an update is needed. Use `botnexus update --latest` for the configured development tip (`origin/main`) or `botnexus update --version 1.2.3` for the exact `v1.2.3` tag. `botnexus update check` accepts the same selectors; `--latest` and `--version` cannot be combined.
+
+The source checkout is resolved before the gateway is stopped or the checkout is changed, and a dirty checkout is still refused by default. Choose a maintenance window and review [the CLI reference](cli-reference.md#update) before updating. This is separate from the packaged CLI tool: update that package with `dotnet tool update -g BotNexus.Cli`.
 
 ### Health diagnostics
 

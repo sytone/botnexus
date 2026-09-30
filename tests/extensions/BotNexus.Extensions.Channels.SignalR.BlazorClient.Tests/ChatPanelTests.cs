@@ -99,6 +99,27 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
+    public void Export_action_is_icon_only_and_opens_accessible_dialog()
+    {
+        CreateAndSeedAgent("agent-1");
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var button = cut.Find("[data-testid='chat-export-btn']");
+        Assert.Equal("Export conversation", button.GetAttribute("title"));
+        Assert.Equal("Export conversation", button.GetAttribute("aria-label"));
+        Assert.Equal(string.Empty, button.TextContent.Trim());
+        Assert.Contains("bn-icon-save", button.InnerHtml, StringComparison.Ordinal);
+
+        button.Click();
+
+        var dialog = cut.Find("[data-testid='export-dialog']");
+        Assert.Equal("Export conversation", dialog.GetAttribute("aria-label"));
+    }
+
+    [Fact]
     public void New_session_button_is_disabled_while_streaming()
     {
         CreateAndSeedAgent("agent-1", isStreaming: true);

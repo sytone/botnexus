@@ -702,13 +702,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             LlmClient: _llmClient,
             ConvertToLlm: null,
             TransformContext: null,
-            GetApiKey: (provider, cancellationToken) => _authManager.GetApiKeyAsync(provider, cancellationToken),
+            GetProviderExecutionOptions: async (provider, cancellationToken) =>
+                await _authManager.CreateExecutionOptionsAsync(provider, cancellationToken: cancellationToken).ConfigureAwait(false),
             GetSteeringMessages: null,
             GetFollowUpMessages: null,
             ToolExecutionMode: ToolExecutionMode.Parallel,
             BeforeToolCall: beforeToolCall,
             AfterToolCall: afterToolCall,
-            GenerationSettings: new SimpleStreamOptions
+            GenerationSettings: new GenerationOptions
             {
                 // Parse per-agent cacheRetentionMode string ("none", "short", "long").
                 // Falls back to Short when absent or unrecognised.
@@ -719,10 +720,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 // #1705: apply the effective thinking/context resolved through the centralized
                 // three-layer resolver. Null means "provider default" and leaves the option unset.
                 Reasoning = effectiveModel.Thinking,
-                ContextWindow = effectiveModel.ContextWindow,
-                StreamIdleTimeoutMs = ResolveStreamIdleTimeoutMs(
-                    platformConfig?.Value,
-                    descriptor.ApiProvider)
+                ContextWindow = effectiveModel.ContextWindow
             },
             SteeringMode: QueueMode.All,
             FollowUpMode: QueueMode.All,

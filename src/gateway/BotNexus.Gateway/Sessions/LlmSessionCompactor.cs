@@ -1087,9 +1087,8 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // background (non-interactive) compaction call. Always build the options so the cap is
         // applied even when apiKey is null (a null ApiKey falls back to environment keys in the
         // provider, exactly as passing null options did before - behaviour-preserving for auth).
-        // #2025: credential resolution + options threading go through the shared
-        // GatewayAuthManager.CreateAuthenticatedOptionsAsync seam so every background LLM caller
-        // (compaction, auto-title) authenticates identically instead of rolling its own.
+        // #2025/#2077: credential and wire policy flow through CreateExecutionOptionsAsync,
+        // the same seam used by foreground turns and every background LLM caller.
         // #3417: the compacted session's identity travels with the request. This is the single
         // largest prompt the gateway ever sends (up to MaxSummarizationPromptChars = 400,000 chars),
         // and without SessionId the Copilot Responses builder's prompt_cache_key branch never fires,
@@ -1106,19 +1105,18 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         AssistantMessage completion;
         try
         {
-            var baseOptions = new SimpleStreamOptions
+            var generationOptions = new GenerationOptions
             {
                 CancellationToken = attemptToken,
-                StreamSetupTimeoutMs = ResolveStreamSetupTimeoutMs(model, options),
                 SessionId = sessionId?.Value
             };
-
-            var streamOptions = _authManager is not null
-                ? await _authManager
-                    .CreateAuthenticatedOptionsAsync(model.Provider, baseOptions, sessionId, attemptToken)
-                    .ConfigureAwait(false)
-                : baseOptions;
-
+            var baseExecutionOptions = new ProviderExecutionOptions
+            {
+                StreamSetupTimeoutMs = ResolveStreamSetupTimeoutMs(model, options)
+            };
+            var executionOptions = _authManager is not null
+                ? await _authManager.CreateExecutionOptionsAsync(model.Provider, baseExecutionOptions, attemptToken).ConfigureAwait(false)
+                : baseExecutionOptions;
             // #3833: a credential that rotates mid-flight would otherwise fail this call with an
             // opaque 403 that the fallback ladder cannot distinguish from a genuinely bad key.
             // Routing through the auth manager's bounded retry means the rotation costs one wasted
@@ -1129,20 +1127,20 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                         model.Provider,
                         async (apiKey, _) =>
                         {
-                            var attemptOptions = streamOptions with
+                            var attemptOptions = executionOptions with
                             {
                                 ApiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey
                             };
 
                             return await _llmClient
-                                .CompleteSimpleAsync(model, context, attemptOptions)
+                                .CompleteSimpleAsync(model, context, generationOptions, attemptOptions)
                                 .WaitAsync(attemptToken)
                                 .ConfigureAwait(false);
                         },
                         attemptToken)
                     .ConfigureAwait(false)
                 : await _llmClient
-                    .CompleteSimpleAsync(model, context, streamOptions)
+                    .CompleteSimpleAsync(model, context, generationOptions, executionOptions)
                     .WaitAsync(attemptToken)
                     .ConfigureAwait(false);
         }

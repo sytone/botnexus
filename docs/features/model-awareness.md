@@ -16,9 +16,9 @@ the tool without the instruction gives it no reason to call it.
 ## Base instruction edit guard
 
 The gateway adds an advisory guard to the built-in `write` and `edit` tools. It triggers only when
-the exact target is a base instruction file: `AGENTS.md`, `SOUL.md`, `WORLD.md`, or a file named in
-the agent's `systemPromptFiles`. A workspace file in another directory does not become an instruction
-file merely because it shares the same name.
+the exact target is a standard base instruction file: `AGENTS.md`, `SOUL.md`, or `WORLD.md`.
+A workspace file in another directory does not become an instruction file merely because it shares
+the same name. Deprecated custom prompt-file selections remain guarded during their compatibility window.
 
 When the guard triggers, the mutation is not executed yet. The tool result asks the agent to call
 `model_profile`, decide whether the change is `agnostic` or `model-specific`, and retry with that

@@ -19,8 +19,14 @@ public sealed record SkillUsageRecord
     /// <summary>Number of times the skill was surfaced in a listing or had a support file viewed.</summary>
     public long ViewCount { get; init; }
 
-    /// <summary>Number of times the skill was explicitly loaded into context.</summary>
+    /// <summary>Number of times the full skill body was explicitly loaded into context.</summary>
     public long UseCount { get; init; }
+
+    /// <summary>Number of repeat loads suppressed because the skill body remained in context.</summary>
+    public long SuppressedLoadCount { get; init; }
+
+    /// <summary>Number of full reloads allowed after durable context replacement.</summary>
+    public long ContextReloadCount { get; init; }
 
     /// <summary>Number of times the skill was mutated via the skill-manage tool (patch/edit/write).</summary>
     public long PatchCount { get; init; }

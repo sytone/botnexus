@@ -37,10 +37,6 @@ window.chatScroll = {
         }, 100);
     },
 
-    /** Returns true when the viewport matches the mobile breakpoint (≤768px). */
-    isMobileView: function () {
-        return window.innerWidth <= 768;
-    },
 
     /** Auto-resizes a textarea to fit its content, capped at maxRows rows. */
     autoResizeTextarea: function (element, maxRows) {

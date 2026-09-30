@@ -30,33 +30,32 @@ public sealed class ExtensionsBlockCheck : IConfigCheck
 }
 
 /// <summary>
-/// Checks that <c>agents.defaults.extensions["botnexus-skills"]</c> is present and enabled.
+/// Checks that <c>agents.defaults.extensions["botnexus-skills"]</c> records the Skills defaults explicitly.
 /// </summary>
 [DoctorCheck(Id = "skills-world-default", Suite = DoctorSuite.Config, Order = 1)]
 public sealed class SkillsWorldDefaultCheck : IConfigCheck
 {
     private const string SkillsEntryPath = "agents.defaults.extensions.botnexus-skills";
     private const string SkillsEnabledPath = "agents.defaults.extensions.botnexus-skills.enabled";
+    private const string SharedManagementPath = "agents.defaults.extensions.botnexus-skills.allowSharedSkillManagement";
 
     public string Id => "skills-world-default";
-    public string Description => "Skills extension has no world-level default in agents.defaults.extensions.";
-    public string FixDescription => "Add agents.defaults.extensions[\"botnexus-skills\"].enabled = true";
+    public string Description => "Skills extension defaults are absent or do not record the all-agent shared-management decision.";
+    public string FixDescription => "Enable Skills and, only when absent, record allowSharedSkillManagement = true for all agents";
 
     public bool IsApplicable(ConfigDocument config)
     {
-        // Absent, or present as something other than a settings object, both mean "no usable
-        // agent default". Only an object carrying an explicit false is a deliberate opt-out
-        // that this check must still report.
         if (!config.HasObject(SkillsEntryPath))
             return true;
 
-        return config.GetBool(SkillsEnabledPath) is false;
+        return config.GetBool(SkillsEnabledPath) is false || !config.Exists(SharedManagementPath);
     }
 
     public void Apply(ConfigDocument config)
     {
-        config.Set(ExtensionsBlockCheck.ExtensionsEnabledPath, true);
         config.Set(SkillsEnabledPath, true);
+        if (!config.Exists(SharedManagementPath))
+            config.Set(SharedManagementPath, true);
     }
 }
 

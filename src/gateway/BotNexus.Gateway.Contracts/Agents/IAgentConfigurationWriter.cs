@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Abstractions.Agents;
@@ -19,5 +20,5 @@ public interface IAgentConfigurationWriter
     /// </summary>
     /// <param name="agentId">Agent identifier.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task DeleteAsync(string agentId, CancellationToken cancellationToken = default);
+    Task DeleteAsync(AgentId agentId, CancellationToken cancellationToken = default);
 }
