@@ -124,14 +124,15 @@ public class CopilotModelEndpointMappingTests
     }
 
     [Fact]
-    public void UnrecognisedAdvertisedList_falls_back_to_name_heuristic()
+    public void UnrecognisedAdvertisedList_is_not_guessed_from_the_model_name()
     {
-        // An advertised list that contains no known endpoint falls through to the name heuristic.
+        // A non-empty provider list is authoritative. Guessing here would expose an invocation
+        // route Copilot did not advertise and make the diagnostic contradict its own catalogue.
         var api = CopilotModelDiscoveryProvider.ResolveApiFormat(
             id: "gpt-5-mini", family: "gpt-5", vendor: "OpenAI",
             supportedEndpoints: new[] { "/some/unknown/path" });
 
-        api.ShouldBe("github-copilot-responses");
+        api.ShouldBeNull();
     }
 
     // --- End-to-end through MapToLlmModel ---
