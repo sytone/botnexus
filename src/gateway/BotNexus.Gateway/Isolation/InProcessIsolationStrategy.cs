@@ -704,6 +704,11 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             TransformContext: null,
             GetProviderExecutionOptions: async (provider, cancellationToken) =>
                 await _authManager.CreateExecutionOptionsAsync(provider, cancellationToken: cancellationToken).ConfigureAwait(false),
+            InvalidateProviderCredentials: (_, _) =>
+            {
+                _authManager.InvalidateCache();
+                return Task.CompletedTask;
+            },
             GetSteeringMessages: null,
             GetFollowUpMessages: null,
             ToolExecutionMode: ToolExecutionMode.Parallel,

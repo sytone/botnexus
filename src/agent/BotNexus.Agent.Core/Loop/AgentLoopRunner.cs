@@ -657,6 +657,7 @@ public static class AgentLoopRunner
         var attempt = 0;
         var backoffMs = 500;
         var overflowRecovered = false;
+        var authenticationRecovered = false;
 
         // #3015: the suspension's payoff. A provider + auth profile already known to be exhausted is
         // short-circuited BEFORE the first provider call, so a wedged credential costs zero
@@ -716,6 +717,17 @@ public static class AgentLoopRunner
                 var compacted = CompactForOverflow(messages);
                 messages.Clear();
                 messages.AddRange(compacted);
+                continue;
+            }
+            catch (ProviderAuthenticationException) when
+                (!authenticationRecovered && config.InvalidateProviderCredentials is not null)
+            {
+                RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
+                authenticationRecovered = true;
+                await config.InvalidateProviderCredentials(config.Model.Provider, cancellationToken)
+                    .ConfigureAwait(false);
+                executionOptions = await config.GetProviderExecutionOptions(config.Model.Provider, cancellationToken)
+                    .ConfigureAwait(false);
                 continue;
             }
             catch (Exception ex) when (ClassifyFailure(ex) == ProviderFailureClass.Exhausted)
