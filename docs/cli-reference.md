@@ -1680,7 +1680,9 @@ Add or update a provider entry non-interactively. A JSON-only home updates `conf
 
 When a provider with the given `--name` already exists, only the flags you pass are updated; unspecified fields preserve their previous values. To clear a previously-set value, pass an empty string explicitly.
 
-A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated provider models then become available for agent assignment without restarting the process. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact. If the canonical SQLite configuration provider has not yet delivered an out-of-process reload signal, the saved configuration remains persisted but the running gateway can still show its previous catalogue until that separate reload defect is resolved.
+A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated provider models then become available for agent assignment without restarting the process. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact.
+
+The command is an offline configuration writer, so its receipt distinguishes persistence from runtime activation: persistence succeeded, activation was not validated by the command, and no restart is required when the running gateway receives the reload. Verify activation with `botnexus debug gateway providers` before assigning an agent. If an out-of-process configuration change has not reached the running gateway yet, the saved provider can still be absent from that live catalogue; persistence alone is not a readiness result.
 
 ### Usage
 
