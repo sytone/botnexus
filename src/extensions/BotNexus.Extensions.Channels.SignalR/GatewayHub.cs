@@ -1106,11 +1106,10 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private static AgentId NormalizeAgentId(AgentId agentId) => agentId;
 
     /// <summary>
-    /// Resolves the authenticated user identifier from claims. The <see cref="ClaimsUserIdProvider"/>
-    /// populates <see cref="HubCallerContext.UserIdentifier"/> from the <c>oid</c> or <c>sub</c>
-    /// claim. When no authenticated identity is available (should not happen with [Authorize]),
-    /// falls back to <see cref="HubCallerContext.ConnectionId"/> for backward compatibility
-    /// during the transition period where auth may be configured but not enforced.
+    /// Resolves the server-owned reader identifier. <see cref="ClaimsUserIdProvider"/> populates
+    /// <see cref="HubCallerContext.UserIdentifier"/> from authenticated <c>oid</c>/<c>sub</c> claims
+    /// or the stable local-owner identity for an unauthenticated single-user host. The connection
+    /// fallback remains only for legacy/test hub contexts that bypass the registered provider.
     /// </summary>
     private string GetAuthenticatedUserId()
         => Context.UserIdentifier ?? Context.ConnectionId;
