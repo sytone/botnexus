@@ -39,6 +39,10 @@ public sealed class MobileChatConcurrentStoreMutationTests : IDisposable
         _portalLoad.InitializeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
+        var displayedConversation = Substitute.For<IDisplayedConversation>();
+        displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
+            .Returns(call => call.Arg<string?>() is { } agentId ? _store.GetAgent(agentId)?.ActiveConversationId : null);
+        _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.Services.AddSingleton(_interaction);

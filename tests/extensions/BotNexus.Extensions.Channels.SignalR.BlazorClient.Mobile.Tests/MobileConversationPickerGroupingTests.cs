@@ -304,6 +304,10 @@ public sealed class MobileConversationPickerGroupingTests : IDisposable
         store.GetMessages(Arg.Any<string>()).Returns(new List<ChatMessage>());
 
         _ctx.Services.AddSingleton(store);
+        var displayedConversation = Substitute.For<IDisplayedConversation>();
+        displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
+            .Returns(call => call.Arg<string?>() is { } agentId ? store.GetAgent(agentId)?.ActiveConversationId : null);
+        _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.Services.AddSingleton(interaction);

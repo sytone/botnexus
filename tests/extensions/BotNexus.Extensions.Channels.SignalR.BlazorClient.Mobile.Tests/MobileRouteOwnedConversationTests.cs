@@ -63,7 +63,8 @@ public sealed class MobileRouteOwnedConversationTests : IDisposable
         await cut.InvokeAsync(() => cut.Find(".send-btn").Click());
 
         await _interaction.Received(1).DeliverMessageAsync(
-            AgentId, RoutedConversationId, "route owned", InboundDeliveryMode.Auto, null);
+            AgentId, RoutedConversationId, "route owned", InboundDeliveryMode.Auto,
+            Arg.Is<IReadOnlyList<DraftAttachment>>(attachments => attachments.Count == 0));
         await _interaction.DidNotReceive().DeliverMessageAsync(
             AgentId, RecentConversationId, Arg.Any<string>(), Arg.Any<InboundDeliveryMode>(), Arg.Any<IReadOnlyList<DraftAttachment>?>());
     }
