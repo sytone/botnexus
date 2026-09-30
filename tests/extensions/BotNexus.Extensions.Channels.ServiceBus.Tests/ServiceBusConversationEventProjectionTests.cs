@@ -99,6 +99,40 @@ public sealed class ServiceBusConversationEventProjectionTests
 
         factory.Senders["reply-a"].SentMessages.Count.ShouldBe(3);
         factory.Senders.ShouldNotContainKey("reply-b");
+
+        foreach (var streamEvent in new[]
+                 {
+                     new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = "Second" },
+                     new AgentStreamEvent { Type = AgentStreamEventType.RunEnded },
+                 })
+        {
+            await publisher.PublishAsync(new ConversationAgentEvent
+            {
+                AgentId = AgentId.From("agent-a"),
+                ConversationId = conversationId,
+                SessionId = SessionId.From("session-b"),
+                Origin = new ConversationEventOrigin(originBindingId, CorrelationId: "request-b"),
+                Bindings = bindings,
+                StreamEvent = streamEvent with
+                {
+                    AgentId = AgentId.From("agent-a"),
+                    ConversationId = conversationId,
+                    SessionId = SessionId.From("session-b"),
+                },
+            });
+        }
+        await publisher.WaitForDrainAsync(CancellationToken.None);
+
+        var secondProjection = factory.Senders["reply-b"].SentMessages
+            .Select(message => JsonSerializer.Deserialize<ServiceBusOutboundEnvelope>(message.Body.ToString()))
+            .Select(envelope => envelope ?? throw new InvalidOperationException("Projection emitted an invalid envelope."))
+            .ToArray();
+
+        secondProjection.Select(envelope => envelope.Type).ShouldBe(["delta", "done"]);
+        secondProjection.Select(envelope => envelope.Sequence).ShouldBe([0L, 1L]);
+        secondProjection.Select(envelope => envelope.Content).ShouldBe(["Second", "Second"]);
+        secondProjection.Select(envelope => envelope.CorrelationId).ShouldAllBe(correlation => correlation == "corr-b");
+        factory.Senders["reply-a"].SentMessages.Count.ShouldBe(3);
     }
 
     private static ConversationBindingSnapshot Binding(
