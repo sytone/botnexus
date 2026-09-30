@@ -269,6 +269,150 @@ public sealed class DefaultInboundMessageOrchestratorTests
         await processorFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task AcceptAsync_ExecutionControlSignalsActualStartAndCancelsProcessor()
+    {
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        var processorStarted = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        processor
+            .ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>())
+            .Returns(async callInfo =>
+            {
+                var control = callInfo.ArgAt<InboundExecutionControl>(1);
+                control.CancellationToken.ThrowIfCancellationRequested();
+                await control.NotifyStartedAsync();
+                processorStarted.TrySetResult(control.CancellationToken);
+                await Task.Delay(Timeout.InfiniteTimeSpan, control.CancellationToken);
+                return new InboundProcessingOutcome(EmptyDispatches, false);
+            });
+
+        await using var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance);
+        using var execution = new CancellationTokenSource();
+        var actualStart = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var control = new InboundExecutionControl(
+            execution.Token,
+            () =>
+            {
+                actualStart.TrySetResult();
+                return Task.CompletedTask;
+            });
+
+        var accept = orchestrator.AcceptAsync(CreateMessage("addr-deadline"), control);
+        await actualStart.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var observedToken = await processorStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        observedToken.ShouldBe(execution.Token);
+        execution.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(
+            async () => await accept.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task AcceptAsync_ExecutionControlDoesNotReportStartedWhileQueued()
+    {
+        var firstGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invocation = 0;
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor
+            .ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(async _ =>
+            {
+                Interlocked.Increment(ref invocation);
+                firstStarted.TrySetResult();
+                await firstGate.Task;
+                return new InboundProcessingOutcome(EmptyDispatches, false);
+            });
+        processor
+            .ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>())
+            .Returns(async callInfo =>
+            {
+                var control = callInfo.ArgAt<InboundExecutionControl>(1);
+                control.CancellationToken.ThrowIfCancellationRequested();
+                await control.NotifyStartedAsync();
+                Interlocked.Increment(ref invocation);
+                return new InboundProcessingOutcome(EmptyDispatches, false);
+            });
+
+        await using var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance);
+        var first = orchestrator.AcceptAsync(CreateMessage("addr-queued"));
+        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var control = new InboundExecutionControl(
+            CancellationToken.None,
+            () =>
+            {
+                secondStarted.TrySetResult();
+                return Task.CompletedTask;
+            });
+        var second = orchestrator.AcceptAsync(CreateMessage("addr-queued"), control);
+
+        secondStarted.Task.IsCompleted.ShouldBeFalse(
+            "actual start must not be reported while the message is behind another turn");
+
+        firstGate.TrySetResult();
+        await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task AcceptAsync_ExecutionCancelledWhileQueued_NeverReportsStartedOrRunsProcessor()
+    {
+        var firstGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invocation = 0;
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor
+            .ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(async _ =>
+            {
+                Interlocked.Increment(ref invocation);
+                firstStarted.TrySetResult();
+                await firstGate.Task;
+                return new InboundProcessingOutcome(EmptyDispatches, false);
+            });
+        processor
+            .ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>())
+            .Returns(async callInfo =>
+            {
+                var control = callInfo.ArgAt<InboundExecutionControl>(1);
+                control.CancellationToken.ThrowIfCancellationRequested();
+                await control.NotifyStartedAsync();
+                Interlocked.Increment(ref invocation);
+                return new InboundProcessingOutcome(EmptyDispatches, false);
+            });
+
+        await using var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance);
+        var first = orchestrator.AcceptAsync(CreateMessage("addr-expired"));
+        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var execution = new CancellationTokenSource();
+        var actualStart = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = orchestrator.AcceptAsync(
+            CreateMessage("addr-expired"),
+            new InboundExecutionControl(
+                execution.Token,
+                () =>
+                {
+                    actualStart.TrySetResult();
+                    return Task.CompletedTask;
+                }));
+
+        execution.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(
+            async () => await second.WaitAsync(TimeSpan.FromSeconds(5)));
+        firstGate.TrySetResult();
+        await first.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await TestAwait.EventuallyAsync(
+            () => Volatile.Read(ref invocation) == 1,
+            "the cancelled queued item is removed without a processor invocation");
+        actualStart.Task.IsCompleted.ShouldBeFalse(
+            "a terminal queued timeout must never regress to Running when its slot later opens");
+    }
+
     private static InboundMessage CreateMessage(string address, string? sessionId = null)
         => new()
         {

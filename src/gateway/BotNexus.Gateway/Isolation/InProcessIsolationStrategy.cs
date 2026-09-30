@@ -1452,6 +1452,42 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         }
     }
 
+    /// <inheritdoc />
+    public async Task<AgentResponse> PromptWhenAvailableAsync(
+        AgentUserMessage message,
+        Func<Task> onStartedAsync,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(onStartedAsync);
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", AgentId);
+        activity?.SetTag("botnexus.session.id", SessionId);
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
+        _activityTracker?.RecordActivity();
+        try
+        {
+            var messages = await _agent.PromptWhenAvailableAsync(
+                message.ToCore(), onStartedAsync, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var response = BuildResponse(messages, _agent.State.LastCompletion);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return response;
+        }
+        catch (OperationCanceledException oce)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
+            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
+            throw BuildInterruptedException(oce);
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
     /// <summary>
     /// Writes the explicit incomplete record for every tool call that started and never reported a
     /// result (#2615 AC3/AC4). Safe to call more than once and on a handle constructed without a

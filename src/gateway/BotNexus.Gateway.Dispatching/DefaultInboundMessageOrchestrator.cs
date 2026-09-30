@@ -336,9 +336,25 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     }
 
     /// <inheritdoc />
-    public async Task<InboundDispatchResult> AcceptAsync(
+    public Task<InboundDispatchResult> AcceptAsync(
         InboundMessage message,
         CancellationToken cancellationToken = default)
+        => AcceptCoreAsync(message, executionControl: null, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<InboundDispatchResult> AcceptAsync(
+        InboundMessage message,
+        InboundExecutionControl executionControl,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(executionControl);
+        return AcceptCoreAsync(message, executionControl, cancellationToken);
+    }
+
+    private async Task<InboundDispatchResult> AcceptCoreAsync(
+        InboundMessage message,
+        InboundExecutionControl? executionControl,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(message);
         // CitizenId is a struct, so `required` can't catch `default`. Every channel
@@ -363,7 +379,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         }
 
         var queueKey = GetQueueKey(message);
-        var queueItem = new QueuedInboundMessage(message);
+        var queueItem = new QueuedInboundMessage(message, executionControl);
 
         if (!TryWriteToLiveQueue(queueKey, queueItem))
         {
@@ -582,15 +598,26 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 bool shouldCloseQueue = false;
                 try
                 {
+                    // A producer-owned deadline can expire while this item is still behind another
+                    // turn. Its completion is cancelled at that instant so the producer can persist
+                    // the terminal state without waiting for the head item to finish. When the queue
+                    // eventually reaches it, discard it before reporting start or invoking the processor.
+                    if (item.Completion.Task.IsCompleted)
+                    {
+                        continue;
+                    }
+
                     // #3600: signal that this item has left the queue and is now in the processor's
                     // hands. AcceptAsync bounds only the wait for THIS signal; everything after it is
                     // a real turn and is awaited without a time limit.
                     item.Started.TrySetResult(true);
 
-                    // Use a detached token for processor work so client disconnect
-                    // doesn't kill in-progress agent execution. The processor itself
-                    // owns whether to honour its own cooperative-cancellation hooks.
-                    var outcome = await _processor.ProcessAsync(item.Message, CancellationToken.None);
+                    // Ordinary transport calls remain detached so a client disconnect cannot kill
+                    // in-progress work. Durable producers carry a distinct execution contract into
+                    // the processor, which owns the precise point at which execution has started.
+                    var outcome = item.ExecutionControl is { } executionControl
+                        ? await _processor.ProcessAsync(item.Message, executionControl)
+                        : await _processor.ProcessAsync(item.Message, CancellationToken.None);
                     shouldCloseQueue = outcome.ShouldClosePerSessionQueue;
 
                     var status = outcome.Dispatches.Count == 0
@@ -611,6 +638,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 }
                 finally
                 {
+                    item.Dispose();
                     if (shouldCloseQueue && _sessionQueues.TryRemove(queueKey, out var state))
                     {
                         state.Queue.Writer.TryComplete();
@@ -660,9 +688,31 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         public Task WorkerTask { get; } = workerTask;
     }
 
-    private sealed class QueuedInboundMessage(InboundMessage message)
+    private sealed class QueuedInboundMessage : IDisposable
     {
-        public InboundMessage Message { get; } = message;
+        private readonly CancellationTokenRegistration _executionCancellation;
+
+        public QueuedInboundMessage(
+            InboundMessage message,
+            InboundExecutionControl? executionControl = null)
+        {
+            Message = message;
+            ExecutionControl = executionControl;
+            if (executionControl is { } control)
+            {
+                _executionCancellation = control.CancellationToken.Register(
+                    static state =>
+                    {
+                        var item = (QueuedInboundMessage)state!;
+                        item.Completion.TrySetCanceled(item.ExecutionControl!.CancellationToken);
+                    },
+                    this);
+            }
+        }
+
+        public InboundMessage Message { get; }
+
+        public InboundExecutionControl? ExecutionControl { get; }
 
         /// <summary>
         /// Signalled by the queue worker at the instant this item is handed to the processor (#3600).
@@ -675,5 +725,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
 
         public TaskCompletionSource<InboundDispatchResult> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Dispose() => _executionCancellation.Dispose();
     }
 }

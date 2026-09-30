@@ -221,6 +221,50 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ExecutingDelivery_ReportsRunningAtProcessorBoundary_AndHonoursDeadline()
+    {
+        var registration = await _registrations.CreateAsync(CreateRegistration(WebhookResponseMode.Async));
+        _webhookId = registration.Id;
+        var queue = new WebhookInboundQueue(new WebhookInboundQueueOptions
+        {
+            MaxQueueDepth = 1,
+            RunTimeout = TimeSpan.FromMilliseconds(100)
+        });
+        WebhookRun? observedAtProcessor = null;
+        var processorToken = new TaskCompletionSource<CancellationToken>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor
+            .ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>())
+            .Returns(async callInfo =>
+            {
+                var control = callInfo.ArgAt<InboundExecutionControl>(1);
+                control.CancellationToken.ThrowIfCancellationRequested();
+                await control.NotifyStartedAsync();
+                var runs = await _runs.ListByWebhookAsync(registration.Id, 10);
+                observedAtProcessor = runs.Single();
+                processorToken.TrySetResult(control.CancellationToken);
+                await Task.Delay(Timeout.InfiniteTimeSpan, control.CancellationToken);
+                return new InboundProcessingOutcome(Array.Empty<DispatchResult>(), false);
+            });
+        await using var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance);
+
+        var accepted = await InvokeOnceAsync(registration, orchestrator, queue);
+        accepted.ShouldBeOfType<AcceptedResult>();
+
+        var observedToken = await processorToken.Task.WaitAsync(TestTimeout);
+        observedAtProcessor.ShouldNotBeNull();
+        observedAtProcessor.Status.ShouldBe(WebhookRunStatus.Running);
+        observedAtProcessor.StartedAt.ShouldNotBeNull();
+        observedToken.CanBeCanceled.ShouldBeTrue("the webhook deadline must reach real processor work");
+
+        var timedOut = await WaitForStatusAsync(WebhookRunStatus.Timeout);
+        timedOut.StartedAt.ShouldNotBeNull("the run began before its execution deadline fired");
+        observedToken.IsCancellationRequested.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task UncontendedDelivery_NeverPassesThroughQueued()
     {
         // The queued state must carry information: a state set on every run would be no better than
