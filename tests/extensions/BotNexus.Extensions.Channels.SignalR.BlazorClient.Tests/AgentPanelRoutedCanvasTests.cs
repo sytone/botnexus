@@ -124,17 +124,15 @@ public sealed class AgentPanelRoutedCanvasTests : IDisposable
     }
 
     /// <summary>
-    /// A routed conversation id that does not belong to the routed agent must not be honoured -
-    /// otherwise a hand-edited or stale URL renders another agent's canvas under this agent.
+    /// A routed conversation id that does not belong to the routed agent must not be honoured or
+    /// replaced by ambient selected state.
     /// </summary>
     [Fact]
     public void Routed_conversation_belonging_to_another_agent_is_not_honoured()
     {
         var cut = RenderAt("/agent/agent-1/conversation/conv-other?tab=canvas", "agent-1", "conv-other");
 
-        var srcdoc = CanvasSrcdocFor(cut, "agent-1");
-        Assert.Contains("ACTIVE-CANVAS", srcdoc);
-        Assert.DoesNotContain("OTHER-AGENT-CANVAS", srcdoc);
+        cut.FindAll("#agent-1-canvas-panel iframe").ShouldBeEmpty();
     }
 
     private IRenderedComponent<Home> RenderAt(string uri, string agentId, string? conversationId)

@@ -41,7 +41,8 @@ else
     @foreach (var (agentId, _) in Store.Agents)
     {
         <div class="chat-panel-wrapper @(agentId == Store.ActiveAgentId ? "active" : "hidden")">
-            <AgentPanel AgentId="@agentId" RoutedConversationId="@RoutedConversationIdFor(agentId)" />
+            <AgentPanel AgentId="@agentId" RoutedConversationId="@RoutedConversationIdFor(agentId)"
+                        AllowAmbientConversationFallback="@AllowAmbientConversationFallbackFor(agentId)" />
         </div>
     }
 }
@@ -68,6 +69,11 @@ else
             : null;
     }
 
+    private bool AllowAmbientConversationFallbackFor(string agentId) =>
+        string.IsNullOrWhiteSpace(ConversationId) ||
+        string.IsNullOrWhiteSpace(AgentId) ||
+        !string.Equals(Uri.UnescapeDataString(AgentId), agentId, StringComparison.Ordinal);
+
     // #2293: re-entrancy guard. ApplyRouteSelectionAsync calls Store.NotifyChanged(), which raises
     // Store.OnChanged, which is wired to HandleStateChanged -> ApplyRouteSelectionAsync again. Without
     // a guard, the "agent not in Store.Agents" fallback branch (which used to return WITHOUT latching
@@ -80,9 +86,10 @@ else
     {
         get
         {
-            if (Store.ActiveAgentId is not { Length: > 0 } activeAgentId)
+            if (string.IsNullOrWhiteSpace(AgentId))
                 return "BotNexus";
 
+            var activeAgentId = Uri.UnescapeDataString(AgentId);
             var agent = Store.GetAgent(activeAgentId);
             if (agent is null)
                 return "BotNexus";
@@ -91,8 +98,8 @@ else
                 ? System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(activeAgentId.Replace("-", " "))
                 : agent.DisplayName;
 
-            if (agent.ActiveConversationId is not { Length: > 0 } convId ||
-                !agent.Conversations.TryGetValue(convId, out var conv) ||
+            if (string.IsNullOrWhiteSpace(ConversationId) ||
+                !agent.Conversations.TryGetValue(Uri.UnescapeDataString(ConversationId), out var conv) ||
                 string.IsNullOrWhiteSpace(conv.Title))
             {
                 return $"{agentLabel} - BotNexus";
