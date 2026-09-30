@@ -149,6 +149,29 @@ then apply a stale definition update. Both writes compose: the definition edit i
 the concurrently committed bookkeeping or conversation winner survives. Verification uses a fresh
 store against the same on-disk database, and no step relies on a sleep.
 
+### Webhook registrations and runs
+
+Webhook registration edits are narrow patches, not full-row replacements. Definition changes own
+only `label`, `default_response_mode`, and `enabled`; first-use bookkeeping and conversation pinning
+remain independent writes. Run updates similarly exclude immutable request identity and intent.
+
+| Entry point | Class | Owns |
+| --- | --- | --- |
+| registration `CreateAsync` | Create | one new registration row |
+| registration `UpdateAsync` | NarrowPatch | label, default response mode, enabled |
+| `TouchLastUsedAsync` | NarrowPatch | `last_used_at` only |
+| `TryPinConversationAsync` | CompareAndSwap | `pinned_conversation_id`, only while null |
+| registration `DeleteAsync` | NarrowPatch | one selected registration row |
+| run `CreateAsync` | Create | one new run row |
+| run `UpdateAsync` | NarrowPatch | mutable execution outcome columns; immutable request fields are excluded |
+| `PurgeOlderThanAsync` | NarrowPatch | predicate-selected terminal run rows |
+
+`WebhookWriteInventoryTests` reflects over both store interfaces and requires a non-empty exact
+classification in both directions. `WebhookLostUpdateSeamTests` takes a detached registration
+snapshot, commits either the conversation CAS or last-used bookkeeping through an independent real
+SQLite store, and then applies a stale registration edit. The accepted edit must preserve the
+concurrently committed state when read through a fresh store.
+
 ## The harness
 
 `tests/persistence/BotNexus.Persistence.Seam.Tests` provides two reusable pieces:
@@ -206,10 +229,10 @@ knowledge; a harness that guessed it would quietly weaken assertions.
 
 ## Scope today
 
-Conversations, **sessions**, and **cron jobs/runs**. Webhook registrations/runs and configuration
-writers are still uninventoried and untested, and remain tracked on issue #3327 along with an
-architecture test that flags new broad aggregate updates in high-risk services. Each domain ships
-as its own PR; #2130 closes only when all of them are covered.
+Conversations, **sessions**, **cron jobs/runs**, and **webhook registrations/runs**. Configuration
+writers remain uninventoried and untested, and issue #3327 also tracks an architecture test that
+flags new broad aggregate updates in high-risk services. Each domain ships as its own PR; #2130
+closes only when all of them are covered.
 
 
 ## Governed agent proposal ledger
