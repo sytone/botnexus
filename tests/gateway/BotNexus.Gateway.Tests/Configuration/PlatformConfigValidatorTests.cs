@@ -209,6 +209,25 @@ public sealed class PlatformConfigValidatorTests
             .ShouldHaveSingleItem();
     }
 
+    [Theory]
+    [InlineData("{\"systemPromptFile\":\"legacy.md\"}")]
+    [InlineData("{\"systemPromptFiles\":[\"legacy.md\"]}")]
+    [InlineData("{\"systemPromptFile\":null,\"systemPromptFiles\":[]}")]
+    public void MaterializeConfig_LegacyPromptFileKeys_AreToleratedWithoutTypedConfigurationProjection(
+        string agentJson)
+    {
+        var config = PlatformConfigLoader.MaterializeConfig(
+            $$"""{ "agents": { "assistant": {{agentJson}} } }""");
+
+        var agent = config.Agents!["assistant"];
+        agent.LegacyPromptFileKeysPresent.ShouldBeTrue();
+        typeof(AgentDefinitionConfig).GetProperty("SystemPromptFile").ShouldBeNull();
+        typeof(AgentDefinitionConfig).GetProperty("SystemPromptFiles").ShouldBeNull();
+        PlatformConfigValidator.ValidateWarnings(config)
+            .Where(message => message == PlatformConfigValidator.LegacyPromptFilesWarning)
+            .ShouldHaveSingleItem();
+    }
+
     [Fact]
     public void ValidateWarnings_AgentsOmitLegacyPromptFileKeys_ReturnsNoLegacyWarning()
     {

@@ -659,8 +659,6 @@ apply where the property description says so.
 | `summary` | string | `null` | `LocalOnly` | Agent-maintained account of what the agent is *currently* doing. Written by the agent itself through `update_agent`, and only for its own id - a cross-agent summary write is refused with a policy denial. Length is bounded by `gateway.agentSummary.maxLength` (default 500); a longer summary is refused rather than truncated. When unset the field is omitted from every projection entirely |
 | `model` | string | `null` | `ScalarOverride` | Model identifier (for example `gpt-4.1`) |
 | `allowedModels` | array | `null` | `ReplaceAsUnit` | Model ids this agent may use. Null or an empty list means unrestricted within the provider allowlist. A non-empty list also governs per-run and per-conversation overrides: `/model` and the conversation override API reject models outside it, and an older forbidden stored override is ignored at runtime in favor of the agent default |
-| `systemPromptFiles` | array | `null` | `ReplaceAsUnit` | Deprecated custom prompt-file list retained for compatibility; use standard workspace instruction files, `WORLD.md`, inline prompts, conversation instructions, or model-specific variants |
-| `systemPromptFile` | string | `null` | `ScalarOverride` | Deprecated custom prompt file retained for compatibility; use the supported instruction mechanisms above |
 | `toolIds` | array | `null` | `ReplaceAsUnit` | Tool identifiers this agent has access to |
 | `toolTimeoutSeconds` | int? | inherits | `ScalarOverride` | Per-tool timeout in seconds for this agent |
 | `subAgents` | array | `null` | `ReplaceAsUnit` | Agent ids this agent can call as sub-agents |
