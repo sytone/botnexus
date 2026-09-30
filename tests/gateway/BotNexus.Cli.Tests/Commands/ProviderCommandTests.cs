@@ -126,6 +126,43 @@ public class ProviderCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveAuthEntry_NamedInstance_PreservesOtherCredentialEntries()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var authPath = Path.Combine(tempDir, "auth.json");
+            await File.WriteAllTextAsync(authPath, """
+                {
+                  "github-copilot": {
+                    "type": "oauth",
+                    "refresh": "default-refresh",
+                    "access": "default-access",
+                    "expires": 1700000000000,
+                    "endpoint": "https://api.individual.githubcopilot.com"
+                  }
+                }
+                """);
+
+            ProviderCommand.SaveAuthEntry(
+                "copilot-work",
+                new OAuthCredentials("work-access", "work-refresh", 1800000000, "https://api.enterprise.githubcopilot.com"),
+                tempDir);
+
+            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(authPath));
+            var entries = document.RootElement;
+            entries.GetProperty("github-copilot").GetProperty("access").GetString().ShouldBe("default-access");
+            entries.GetProperty("copilot-work").GetProperty("access").GetString().ShouldBe("work-access");
+            entries.GetProperty("copilot-work").GetProperty("refresh").GetString().ShouldBe("work-refresh");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
     public async Task ExecuteAddAsync_creates_new_provider_with_all_fields()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));

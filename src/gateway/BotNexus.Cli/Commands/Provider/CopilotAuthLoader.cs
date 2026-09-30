@@ -7,7 +7,7 @@ using BotNexus.Gateway.Configuration;
 namespace BotNexus.Cli.Commands.Provider;
 
 /// <summary>
-/// Loads the <c>github-copilot</c> entry from <c>~/.botnexus/auth.json</c> and
+/// Loads a selected GitHub Copilot provider-instance entry from <c>~/.botnexus/auth.json</c> and
 /// turns it into a usable pair of credentials: the long-lived GitHub OAuth
 /// token (required to call <c>/copilot_internal/user</c>) and a short-lived
 /// Copilot session token (required to call the model endpoints). Auto-refreshes
@@ -19,7 +19,7 @@ namespace BotNexus.Cli.Commands.Provider;
 internal static class CopilotAuthLoader
 {
     private const string AuthFileName = "auth.json";
-    private const string ProviderKey = "github-copilot";
+    private const string DefaultProviderKey = "github-copilot";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -31,13 +31,17 @@ internal static class CopilotAuthLoader
     /// <summary>
     /// Resolves Copilot credentials from the BotNexus auth file under
     /// <paramref name="home"/>. Returns <see langword="null"/> if no entry
-    /// exists for <c>github-copilot</c>. The returned record contains the
+    /// exists for the selected <paramref name="providerInstance"/>. The returned record contains the
     /// GitHub OAuth token, a fresh Copilot session token, and the resolved API
     /// endpoint base URL. The auth file is rewritten with refreshed credentials
     /// when a token exchange occurs so the next CLI invocation reuses them.
     /// </summary>
-    public static async Task<CopilotResolvedAuth?> LoadAsync(string home, CancellationToken cancellationToken = default)
+    public static async Task<CopilotResolvedAuth?> LoadAsync(
+        string home,
+        string providerInstance = DefaultProviderKey,
+        CancellationToken cancellationToken = default)
     {
+        providerInstance = NormalizeProviderInstance(providerInstance);
         var authPath = Path.Combine(home, AuthFileName);
         if (!File.Exists(authPath))
         {
@@ -56,7 +60,7 @@ internal static class CopilotAuthLoader
             return null;
         }
 
-        if (!entries.TryGetValue(ProviderKey, out var entry))
+        if (!entries.TryGetValue(providerInstance, out var entry))
         {
             return null;
         }
@@ -95,7 +99,7 @@ internal static class CopilotAuthLoader
                 Endpoint = refreshed.ApiEndpoint ?? entry.Endpoint
             };
 
-            entries[ProviderKey] = entry;
+            entries[providerInstance] = entry;
 
             try
             {
@@ -119,6 +123,15 @@ internal static class CopilotAuthLoader
             CopilotSessionToken: entry.Access,
             ApiEndpoint: entry.Endpoint,
             ExpiresAtUnixMs: entry.Expires);
+    }
+
+    internal static string NormalizeProviderInstance(string providerInstance)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerInstance);
+        var normalized = providerInstance.Trim();
+        return string.Equals(normalized, "copilot", StringComparison.OrdinalIgnoreCase)
+            ? DefaultProviderKey
+            : normalized;
     }
 }
 
