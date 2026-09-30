@@ -132,6 +132,10 @@ public sealed class MainLayoutTests : IDisposable
         await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
 
         cut.Find(".sidebar-open");
+        var setItemCall = _ctx.JSInterop.Invocations["localStorage.setItem"]
+            .Last(invocation => invocation.Arguments.Count == 2
+                && (string?)invocation.Arguments[0] == "botnexus-sidebar-open");
+        Assert.Equal("true", setItemCall.Arguments[1]);
     }
 
     [Fact]
@@ -143,6 +147,44 @@ public sealed class MainLayoutTests : IDisposable
         await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
 
         cut.Find(".sidebar-closed");
+        var setItemCall = _ctx.JSInterop.Invocations["localStorage.setItem"]
+            .Last(invocation => invocation.Arguments.Count == 2
+                && (string?)invocation.Arguments[0] == "botnexus-sidebar-open");
+        Assert.Equal("false", setItemCall.Arguments[1]);
+    }
+
+    [Theory]
+    [InlineData("configuration")]
+    [InlineData("agents")]
+    [InlineData("cron")]
+    public async Task Desktop_top_level_navigation_preserves_open_sidebar(string route)
+    {
+        var cut = RenderLayout();
+        await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+
+        await cut.InvokeAsync(() => nav.NavigateTo(route));
+
+        cut.Find(".sidebar-open");
+    }
+
+    [Fact]
+    public async Task Desktop_subnavigation_preserves_open_sidebar_and_does_not_write_preference()
+    {
+        var cut = RenderLayout();
+        await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
+        var writesBeforeNavigation = _ctx.JSInterop.Invocations["localStorage.setItem"]
+            .Count(invocation => invocation.Arguments.Count == 2
+                && (string?)invocation.Arguments[0] == "botnexus-sidebar-open");
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+
+        await cut.InvokeAsync(() => nav.NavigateTo("release-history"));
+
+        cut.Find(".sidebar-open");
+        var writesAfterNavigation = _ctx.JSInterop.Invocations["localStorage.setItem"]
+            .Count(invocation => invocation.Arguments.Count == 2
+                && (string?)invocation.Arguments[0] == "botnexus-sidebar-open");
+        Assert.Equal(writesBeforeNavigation, writesAfterNavigation);
     }
 
     [Fact]
