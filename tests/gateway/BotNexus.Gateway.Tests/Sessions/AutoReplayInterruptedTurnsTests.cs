@@ -125,7 +125,8 @@ public sealed class AutoReplayInterruptedTurnsTests
         IInboundMessageOrchestrator? orchestrator = null,
         IActivityBroadcaster? broadcaster = null,
         IChannelManager? channelManager = null,
-        IConversationStore? conversationStore = null)
+        IConversationStore? conversationStore = null,
+        SessionLifecycleEvents? lifecycleEvents = null)
     {
         broadcaster ??= Mock.Of<IActivityBroadcaster>();
         channelManager ??= Mock.Of<IChannelManager>();
@@ -137,7 +138,8 @@ public sealed class AutoReplayInterruptedTurnsTests
             NullLogger<InterruptedTurnNotificationService>.Instance,
             orchestrator,
             options is not null ? Options.Create(options) : null,
-            conversationStore);
+            conversationStore,
+            lifecycleEvents);
     }
 
     // ── Tests ──────────────────────────────────────────────────────────────
@@ -241,6 +243,65 @@ public sealed class AutoReplayInterruptedTurnsTests
     }
 
     [Fact]
+    public async Task LiveTerminalFailure_AgentOnlyApiTurn_ReusesBoundedReplayWithoutRestart()
+    {
+        var session = CreateSession("sess-live", "agent-live", withSentinel: true,
+            callerId: "api:issue-delivery-pump", channelType: ChannelKey.From("api"),
+            lastUserContent: "execute issue 4406", initiatingRole: MessageRole.Assistant,
+            initiatingSenderId: "api:issue-delivery-pump");
+        var store = CreateStore(session);
+        var conversations = CreateConversationStore(session, hasHuman: false);
+        var orchestrator = CreateOrchestrator();
+        var lifecycle = new SessionLifecycleEvents(NullLogger<SessionLifecycleEvents>.Instance);
+        var options = new GatewayOptions { AutoReplayInterruptedTurns = false, MaxAutoReplayAttempts = 2 };
+        var service = CreateService(store.Object, CreateRegistry("agent-live"), options,
+            orchestrator.Object, conversationStore: conversations.Object, lifecycleEvents: lifecycle);
+        await service.StartAsync(CancellationToken.None);
+
+        await lifecycle.PublishAsync(new SessionLifecycleEvent(
+            session.SessionId.Value, session.AgentId.Value,
+            SessionLifecycleEventType.TerminalFailure, session));
+
+        orchestrator.Verify(o => o.Post(It.Is<InboundMessage>(m =>
+            m.Content == "execute issue 4406" && m.SpeakAs == MessageRole.Assistant)), Times.Once);
+        session.History.Count(e => e.IsReplayBanner).ShouldBe(1);
+        session.History.ShouldNotContain(e => e.IsCrashSentinel);
+        session.Metadata[InterruptedTurnNotificationService.MetadataKeyReplayCount].ShouldBe(1);
+
+        await lifecycle.PublishAsync(new SessionLifecycleEvent(
+            session.SessionId.Value, session.AgentId.Value,
+            SessionLifecycleEventType.TerminalFailure, session));
+
+        orchestrator.Verify(o => o.Post(It.IsAny<InboundMessage>()), Times.Once,
+            "the accepted replacement consumes the marker, making duplicate failure signals no-ops");
+        session.History.Count(e => e.IsReplayBanner).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task LiveTerminalFailure_WhenAdmissionRejected_PreservesMarkerAndAttemptBudget()
+    {
+        var session = CreateSession("sess-live-rejected", "agent-live", withSentinel: true,
+            callerId: "api:pump", channelType: ChannelKey.From("api"),
+            lastUserContent: "continue", initiatingRole: MessageRole.Assistant,
+            initiatingSenderId: "api:pump");
+        var store = CreateStore(session);
+        var lifecycle = new SessionLifecycleEvents(NullLogger<SessionLifecycleEvents>.Instance);
+        var service = CreateService(store.Object, CreateRegistry("agent-live"),
+            new GatewayOptions { MaxAutoReplayAttempts = 2 }, CreateOrchestrator(false).Object,
+            conversationStore: CreateConversationStore(session, hasHuman: false).Object,
+            lifecycleEvents: lifecycle);
+        await service.StartAsync(CancellationToken.None);
+
+        await lifecycle.PublishAsync(new SessionLifecycleEvent(
+            session.SessionId.Value, session.AgentId.Value,
+            SessionLifecycleEventType.TerminalFailure, session));
+
+        session.History.ShouldContain(e => e.IsCrashSentinel);
+        session.History.ShouldNotContain(e => e.IsReplayBanner);
+        session.Metadata.ShouldNotContainKey(InterruptedTurnNotificationService.MetadataKeyReplayCount);
+    }
+
+    [Fact]
     public async Task AutoReplay_CarriesIncompleteToolCallIdsForVerification()
     {
         var session = CreateSession("sess-tools", "agent-tools", withSentinel: false,
@@ -261,6 +322,34 @@ public sealed class AutoReplayInterruptedTurnsTests
             Role = MessageRole.System,
             Content = "[agent turn in progress — gateway restarted if visible]",
             IsCrashSentinel = true
+        });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool,
+            Content = "Tool 'github_issue_update' did not complete — result synthesized for transcript consistency.",
+            ToolName = "github_issue_update",
+            ToolCallId = "call-unknown",
+            ToolIsError = true,
+            ToolArgs = "{}",
+            Kind = MessageKind.ToolResult
+        });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool,
+            Content = "",
+            ToolName = "github_issue_get",
+            ToolCallId = "call-complete",
+            ToolArgs = "{}",
+            Kind = MessageKind.ToolStart
+        });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool,
+            Content = "issue loaded",
+            ToolName = "github_issue_get",
+            ToolCallId = "call-complete",
+            ToolArgs = "{}",
+            Kind = MessageKind.ToolResult
         });
         var store = CreateStore(session);
         var conversations = CreateConversationStore(session, hasHuman: false);
