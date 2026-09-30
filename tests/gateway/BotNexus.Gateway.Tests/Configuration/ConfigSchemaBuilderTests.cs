@@ -123,8 +123,11 @@ public sealed class ConfigSchemaBuilderTests
 
         GetPropertyNode(schema, "gateway", "sessionStore")["x-ui-group"]!.GetValue<string>()
             .ShouldBe("session-store");
-        GetPropertyNode(schema, "gateway", "locations")["x-ui-group"]!.GetValue<string>()
-            .ShouldBe("locations");
+
+        // GetPropertyNode intentionally descends through dictionary additionalProperties, but the
+        // subsection metadata belongs to the dictionary property itself rather than its value type.
+        var gatewayProperties = schema["schema"]!["properties"]!["gateway"]!["properties"]!.AsObject();
+        gatewayProperties["locations"]!["x-ui-group"]!.GetValue<string>().ShouldBe("locations");
     }
 
     [Fact]

@@ -140,15 +140,21 @@ else
         if (properties is null)
             return [];
 
-        return OrderAndGroup(properties)
-            .Select(group =>
-            {
-                var key = string.IsNullOrEmpty(group.Key) ? GeneralSubsectionKey : group.Key;
-                return (Key: key, Label: key == GeneralSubsectionKey ? "General" : GroupLabel(key));
-            })
-            .GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
-            .ToList();
+        // Preserve the schema's declared property order. x-ui-order remains the ordering contract
+        // inside each subsection; using it across groups would make groups with the same local
+        // order drift alphabetically when an unrelated field is added.
+        var result = new List<(string Key, string Label)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (_, value) in properties)
+        {
+            if (value is not JsonObject node)
+                continue;
+            var key = SubsectionKeyFor(node);
+            if (!seen.Add(key))
+                continue;
+            result.Add((key, key == GeneralSubsectionKey ? "General" : GroupLabel(key)));
+        }
+        return result;
     }
 
     private static string SubsectionKeyFor(JsonObject node) =>

@@ -475,6 +475,27 @@ public sealed class SchemaFormTests : IDisposable
     }
 
     [Fact]
+    public void Subsection_order_follows_schema_declaration_not_local_field_order()
+    {
+        var gateway = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["gatewayFirst"] = Scalar("string", "text", "Gateway", order: 10, group: "gateway"),
+                ["storageSecond"] = Scalar("string", "text", "Storage", order: 0, group: "storage"),
+                ["gatewayAgain"] = Scalar("string", "text", "Gateway again", order: 0, group: "gateway"),
+            },
+        };
+
+        var subsections = SchemaForm.DescribeSubsections(
+            Envelope(new JsonObject { ["gateway"] = gateway }),
+            "gateway");
+
+        subsections.Select(item => item.Key).ShouldBe(["gateway", "storage"]);
+    }
+
+    [Fact]
     public void SubsectionKey_renders_only_that_group_with_canonical_full_paths()
     {
         var gateway = new JsonObject

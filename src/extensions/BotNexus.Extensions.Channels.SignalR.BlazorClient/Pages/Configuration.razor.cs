@@ -107,6 +107,58 @@ public partial class Configuration : IDisposable
         Nav.NavigateTo($"/configuration/{ActiveSection}/{key}");
     }
 
+    private IReadOnlyList<ValidationErrorDisplay> ValidationErrors =>
+        _validationResult?.Errors.Select(error => new ValidationErrorDisplay(error, FindValidationTarget(error))).ToList()
+        ?? [];
+
+    private ValidationTarget? FindValidationTarget(string error)
+    {
+        var path = error.Split([' ', ':'], 2, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        if (string.IsNullOrEmpty(path))
+            return null;
+
+        var segments = path.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+            return null;
+
+        var section = Sections.FirstOrDefault(item =>
+            string.Equals(item.Key, segments[0], StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrEmpty(section.Key))
+            return null;
+
+        var propertyName = segments[1].Split('[', 2)[0];
+        var property = _schema?["schema"]?["properties"]?[section.Key]?["properties"]?[propertyName] as JsonObject;
+        if (property is null)
+            return null;
+
+        var subsections = SchemaForm.DescribeSubsections(_schema, section.Key);
+        var subsectionKey = property["x-ui-group"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(subsectionKey))
+            subsectionKey = "general";
+        var subsection = subsections.FirstOrDefault(item =>
+            string.Equals(item.Key, subsectionKey, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrEmpty(subsection.Key))
+            return null;
+
+        return new ValidationTarget(section.Key, section.Label, subsection.Key, subsection.Label);
+    }
+
+    private void SelectValidationTarget(ValidationTarget target)
+    {
+        _validationResult = null;
+        Section = target.SectionKey;
+        Subsection = target.SubsectionKey;
+        Nav.NavigateTo($"/configuration/{target.SectionKey}/{target.SubsectionKey}");
+    }
+
+    private sealed record ValidationTarget(
+        string SectionKey,
+        string SectionLabel,
+        string SubsectionKey,
+        string SubsectionLabel);
+
+    private sealed record ValidationErrorDisplay(string Message, ValidationTarget? Target);
+
     private PlatformConfigFormModel? _form;
     private PlatformConfigFormModel Form => _form ??= new PlatformConfigFormModel(ConfigService);
     private JsonObject? _config => Form.Config;

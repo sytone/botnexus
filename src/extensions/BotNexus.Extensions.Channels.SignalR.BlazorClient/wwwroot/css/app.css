@@ -5045,6 +5045,24 @@ h3.conversation-title.editable:hover {
     font-weight: 600;
 }
 
+.validation-error-link {
+    display: block;
+    margin: 0 0 0.25rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.validation-error-link:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+}
+
 @media (max-width: 768px) {
     .config-page-sectioned {
         flex-direction: column;

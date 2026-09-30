@@ -48,6 +48,7 @@
                     <button type="button"
                             class="config-sidebar-item @(string.Equals(key, ActiveSection, StringComparison.OrdinalIgnoreCase) ? "active" : "")"
                             data-section="@key"
+                            aria-current="@(string.Equals(key, ActiveSection, StringComparison.OrdinalIgnoreCase) ? "page" : null)"
                             @onclick="() => SelectSection(key)">
                         @label
                     </button>
@@ -62,6 +63,7 @@
                             <button type="button"
                                     class="config-subsection-item @(string.Equals(key, ActiveSubsection, StringComparison.OrdinalIgnoreCase) ? "active" : "")"
                                     data-subsection="@key"
+                                    aria-current="@(string.Equals(key, ActiveSubsection, StringComparison.OrdinalIgnoreCase) ? "page" : null)"
                                     @onclick="() => SelectSubsection(key)">
                                 @label
                             </button>
@@ -157,9 +159,19 @@
                 @if (_validationResult.Errors.Count > 0)
                 {
                     <div class="validation-list errors">
-                        @foreach (var err in _validationResult.Errors)
+                        @foreach (var err in ValidationErrors)
                         {
-                            <div class="validation-item error">@err</div>
+                            <div class="validation-item error">
+                                @if (err.Target is { } target)
+                                {
+                                    <button type="button"
+                                            class="validation-error-link"
+                                            @onclick="() => SelectValidationTarget(target)">
+                                        @target.SectionLabel / @target.SubsectionLabel
+                                    </button>
+                                }
+                                <span>@err.Message</span>
+                            </div>
                         }
                     </div>
                 }
