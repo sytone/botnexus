@@ -40,7 +40,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\persistence\BotNexus.Persistence.Sqlite\BotNexus.Persistence.Sqlite.csproj" /><ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
+    <ProjectReference Include="..\..\persistence\BotNexus.Persistence.Sqlite\BotNexus.Persistence.Sqlite.csproj" />
+    <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Telemetry.Abstractions\BotNexus.Gateway.Telemetry.Abstractions.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
@@ -48,12 +49,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.FeatureManagement" /><PackageReference Include="NJsonSchema" />
+    <PackageReference Include="Microsoft.FeatureManagement" />
+    <PackageReference Include="NJsonSchema" />
     <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
   </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Gateway" />
+    <InternalsVisibleTo Include="BotNexus.Gateway.Api.Tests" />
     <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
     <InternalsVisibleTo Include="BotNexus.Gateway.Configuration.Tests" />
   </ItemGroup>
