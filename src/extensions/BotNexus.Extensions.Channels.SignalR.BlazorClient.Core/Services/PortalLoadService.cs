@@ -158,7 +158,7 @@ public sealed class PortalLoadService : IPortalLoadService
             _hub.OnDisconnected += OnHubClosed;
 
             var subscribeResult = await _hub.SubscribeAllAsync();
-            _ = subscribeResult; // joined for the conversation GROUPS only; session data comes from REST (#2541)
+            _eventHandler.ApplyRunActivitySnapshot(subscribeResult.ActiveRuns);
             await SubscribeAgentsForNotificationsAsync();
 
             _ = _eventHandler; // force construction so hub event subscriptions are active
@@ -356,7 +356,8 @@ public sealed class PortalLoadService : IPortalLoadService
             if (!_hub.IsConnected)
             {
                 await _hub.ConnectAsync(_hubUrl, ClientKind, Tuning);
-                await _hub.SubscribeAllAsync();
+                var subscribeResult = await _hub.SubscribeAllAsync();
+                _eventHandler.ApplyRunActivitySnapshot(subscribeResult.ActiveRuns);
                 await SubscribeAgentsForNotificationsAsync();
             }
 
@@ -408,7 +409,8 @@ public sealed class PortalLoadService : IPortalLoadService
         _hub.OnReconnected += OnHubReconnected;
         _hub.OnDisconnected += OnHubClosed;
 
-        await _hub.SubscribeAllAsync();
+        var subscribeResult = await _hub.SubscribeAllAsync();
+        _eventHandler.ApplyRunActivitySnapshot(subscribeResult.ActiveRuns);
         await SubscribeAgentsForNotificationsAsync();
         await ReloadSessionRosterAsync();
 

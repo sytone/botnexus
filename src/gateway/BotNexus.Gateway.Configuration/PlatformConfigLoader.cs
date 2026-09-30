@@ -129,68 +129,25 @@ public static class PlatformConfigLoader
     /// because <c>TryRecoverFromBackup</c> hand-duplicated this sequence inline.
     /// </remarks>
     /// <exception cref="JsonException">The raw JSON is not valid (callers translate this as needed).</exception>
-    private static PlatformConfig MaterializeConfig(string rawJson)
+    internal static PlatformConfig MaterializeConfig(string rawJson)
     {
-        var config = JsonSerializer.Deserialize<PlatformConfig>(rawJson, JsonOptions)
+        if (string.IsNullOrWhiteSpace(rawJson))
+            return new PlatformConfig();
+
+        var document = ConfigDocument.Parse(rawJson);
+        var migration = LegacyGatewayExtensionsMigration.Apply(document);
+        if (!migration.Succeeded)
+            throw new JsonException(string.Join(" ", migration.Errors));
+        var migratedJson = document.ToJsonString();
+        var config = JsonSerializer.Deserialize<PlatformConfig>(migratedJson, JsonOptions)
             ?? new PlatformConfig();
 
-        if (string.IsNullOrWhiteSpace(rawJson))
-            return config;
+        using var parsed = JsonDocument.Parse(migratedJson);
+        var root = parsed.RootElement;
 
-        using var document = JsonDocument.Parse(rawJson);
-        var root = document.RootElement;
-
-        MigrateLegacyGatewayExtensionLoader(config, root);
         config = MigrateLegacyGatewaySettings(config, root);
         ExtractAgentDefaults(config, root);
         return config;
-    }
-
-    internal static void MigrateLegacyGatewayExtensionLoader(PlatformConfig config, JsonElement root)
-    {
-        if (root.ValueKind != JsonValueKind.Object
-            || !root.TryGetProperty("gateway", out var gateway)
-            || gateway.ValueKind != JsonValueKind.Object
-            || !gateway.TryGetProperty("extensions", out var extensions)
-            || extensions.ValueKind != JsonValueKind.Object)
-        {
-            return;
-        }
-
-        JsonElement? path = null;
-        JsonElement? enabled = null;
-        foreach (var property in extensions.EnumerateObject())
-        {
-            if (property.Name.Equals("defaults", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new JsonException("gateway.extensions.defaults is no longer supported; move it to agents.defaults.extensions. Loader path/enabled settings move to gateway.extensionLoader.");
-            }
-
-            if (property.Name.Equals("path", StringComparison.OrdinalIgnoreCase))
-                path = property.Value;
-            else if (property.Name.Equals("enabled", StringComparison.OrdinalIgnoreCase))
-                enabled = property.Value;
-        }
-
-        if (path is null && enabled is null)
-            return;
-
-        var hasExplicitLoader = gateway.TryGetProperty("extensionLoader", out _);
-        var loader = config.Gateway?.ExtensionLoader ?? new ExtensionLoaderConfig();
-        if (!hasExplicitLoader && path is JsonElement pathElement && pathElement.ValueKind == JsonValueKind.String)
-            loader.Path = pathElement.GetString();
-        if (!hasExplicitLoader && enabled is JsonElement enabledElement
-            && enabledElement.ValueKind is JsonValueKind.True or JsonValueKind.False)
-        {
-            loader.Enabled = enabledElement.GetBoolean();
-        }
-
-        config.Gateway ??= new GatewaySettingsConfig();
-        config.Gateway.ExtensionLoader = loader;
-        config.Gateway.Extensions?.Remove("path");
-        config.Gateway.Extensions?.Remove("enabled");
-        if (config.Gateway.Extensions is { Count: 0 })
-            config.Gateway.Extensions = null;
     }
 
     /// <summary>

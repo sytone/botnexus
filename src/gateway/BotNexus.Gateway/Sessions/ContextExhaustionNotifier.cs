@@ -16,8 +16,8 @@ namespace BotNexus.Gateway.Sessions;
 /// rest of the run's content already flows through, so the notice reaches every channel by the path
 /// that channel already renders. Doing it that way also keeps this type clear of the
 /// <c>ChannelKnowledgeFence</c> rule 5 ban on direct <c>IChannelAdapter</c> sends from generic
-/// orchestration code - the fence baselines <see cref="InterruptedTurnNotificationService"/>'s direct
-/// send as debt to be removed, so copying that shape would have added to a list contracted to shrink.
+/// orchestration code. Interrupted-turn recovery now uses the same channel-neutral conversation
+/// event architecture, so copying the former direct-send shape would regress that boundary.
 /// </remarks>
 public interface IContextExhaustionNotifier
 {

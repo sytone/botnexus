@@ -19,6 +19,7 @@ public sealed class GatewayController(IOptions<GatewayOptions> options) : Contro
     {
         startedAt     = GatewayBuildInfo.StartedAt,
         uptimeSeconds = (long)(DateTimeOffset.UtcNow - GatewayBuildInfo.StartedAt).TotalSeconds,
+        buildTimestamp = GatewayBuildInfo.BuildTimestamp,
         commitSha     = GatewayBuildInfo.CommitSha,
         commitShort   = GatewayBuildInfo.CommitShort,
         version       = GatewayBuildInfo.Version,

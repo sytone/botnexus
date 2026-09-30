@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Agent.Providers.Copilot.Discovery;
 using Shouldly;
@@ -12,6 +13,44 @@ namespace BotNexus.Agent.Providers.Copilot.Tests.Discovery;
 /// </summary>
 public class CopilotModelEndpointMappingTests
 {
+    [Fact]
+    public void Billing_absent_fields_remain_unknown_after_deserialization()
+    {
+        var model = JsonSerializer.Deserialize<CopilotModelInfo>("""
+            {
+              "id": "gpt-5.6-sol",
+              "billing": {
+                "restricted_to": ["enterprise"]
+              }
+            }
+            """);
+
+        model.ShouldNotBeNull();
+        model.Billing.ShouldNotBeNull();
+        model.Billing.IsPremium.ShouldBeNull();
+        model.Billing.Multiplier.ShouldBeNull();
+        model.Billing.RestrictedTo.ShouldBe(["enterprise"]);
+    }
+
+    [Fact]
+    public void Billing_explicit_false_and_zero_remain_provider_supplied_values()
+    {
+        var model = JsonSerializer.Deserialize<CopilotModelInfo>("""
+            {
+              "id": "gpt-5.6-sol",
+              "billing": {
+                "is_premium": false,
+                "multiplier": 0
+              }
+            }
+            """);
+
+        model.ShouldNotBeNull();
+        model.Billing.ShouldNotBeNull();
+        model.Billing.IsPremium.ShouldBe(false);
+        model.Billing.Multiplier.ShouldBe(0d);
+    }
+
     // --- Advertised endpoint wins over the name heuristic ---
 
     [Fact]

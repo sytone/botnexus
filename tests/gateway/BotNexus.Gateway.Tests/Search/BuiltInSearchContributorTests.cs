@@ -2,6 +2,8 @@ using System.IO.Abstractions.TestingHelpers;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Extensions;
+using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Contracts.Memory;
@@ -143,19 +145,171 @@ public sealed class BuiltInSearchContributorTests
 
         contributorTypes.ShouldContain(typeof(MemorySearchContributor));
         contributorTypes.ShouldContain(typeof(FileSearchContributor));
+        contributorTypes.ShouldContain(typeof(AgentSearchContributor));
+        contributorTypes.ShouldContain(typeof(ConversationSearchContributor));
+        contributorTypes.ShouldContain(typeof(SessionSearchContributor));
+    }
+
+    [Fact]
+    public async Task AgentContributor_MatchesCaseInsensitivelyOrdersDeterministicallyAndBoundsResults()
+    {
+        var registry = Substitute.For<IAgentRegistry>();
+        registry.GetAll().Returns([
+            Descriptor("zeta", description: "Needle worker"),
+            Descriptor("alpha", summary: "finds NEEDLE records"),
+            Descriptor("other", description: "unrelated")
+        ]);
+        var contributor = new AgentSearchContributor(registry);
+
+        var results = await contributor.SearchAsync(new SearchRequest("needle", 1));
+
+        contributor.SourceId.ShouldBe("agents");
+        contributor.Label.ShouldBe("Agents");
+        contributor.IsAvailable.ShouldBeTrue();
+        contributor.CanAssessProvenanceTrust.ShouldBeFalse();
+        results.Count.ShouldBe(1);
+        results[0].Title.ShouldBe("alpha");
+        results[0].Target.ShouldBe("/agents/alpha");
+        results[0].Snippet.Length.ShouldBeLessThanOrEqualTo(AgentSearchContributor.MaxSnippetLength);
+        results[0].ProvenanceTrust.ShouldBe(SearchProvenanceTrust.Untrusted);
+        (await contributor.SearchAsync(new SearchRequest("absent", 10))).ShouldBeEmpty();
+        (await contributor.SearchAsync(new SearchRequest("   ", 10))).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ConversationContributor_UsesNativeSummariesAndProducesChatTargets()
+    {
+        var store = Substitute.For<IConversationStore>();
+        store.ListAsync(null, Arg.Any<CancellationToken>()).Returns([
+            Conversation("c/late", "agent one", "Needle later", DateTimeOffset.Parse("2026-09-24T00:00:00Z"),
+                purpose: new string('x', 300) + " needle"),
+            Conversation("c-early", "agent-two", "NEEDLE earlier", DateTimeOffset.Parse("2026-09-23T00:00:00Z")),
+            Conversation("c-other", "agent-two", "unrelated", DateTimeOffset.Parse("2026-09-22T00:00:00Z"))
+        ]);
+        var contributor = new ConversationSearchContributor(store);
+
+        var results = await contributor.SearchAsync(new SearchRequest("needle", 2));
+
+        contributor.SourceId.ShouldBe("conversations");
+        contributor.Label.ShouldBe("Conversations");
+        contributor.IsAvailable.ShouldBeTrue();
+        contributor.CanAssessProvenanceTrust.ShouldBeFalse();
+        results.Select(result => result.Title).ShouldBe(["Needle later", "NEEDLE earlier"]);
+        results[0].Target.ShouldBe("/chat/agent%20one/c%2Flate");
+        results.ShouldAllBe(result => result.Snippet.Length <= ConversationSearchContributor.MaxSnippetLength);
+        results.ShouldAllBe(result => result.ProvenanceTrust == SearchProvenanceTrust.Untrusted);
+        (await contributor.SearchAsync(new SearchRequest("absent", 5))).ShouldBeEmpty();
+        (await contributor.SearchAsync(new SearchRequest(string.Empty, 5))).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task SessionContributor_UsesBoundedSummaryPageWithoutMaterializingTranscripts()
+    {
+        var store = Substitute.For<ISessionStore>();
+        store.ListSummaryPageAsync(Arg.Any<SessionSummaryQuery>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var query = call.Arg<SessionSummaryQuery>();
+                query.Limit.ShouldBe(SessionSearchContributor.MaxScannedSummaries);
+                query.IncludeInactive.ShouldBeTrue();
+                return Task.FromResult(new SessionSummaryPage([
+                    Summary("session/2", "agent one", "conversation/2", DateTimeOffset.Parse("2026-09-24T00:00:00Z")),
+                    Summary("session-1", "other", "conversation-1", DateTimeOffset.Parse("2026-09-23T00:00:00Z")),
+                    Summary("session-0", "agent one", "conversation-0", DateTimeOffset.Parse("2026-09-22T00:00:00Z"))
+                ], 3, false));
+            });
+        var contributor = new SessionSearchContributor(store);
+
+        var results = await contributor.SearchAsync(new SearchRequest("agent ONE", 1));
+
+        contributor.SourceId.ShouldBe("sessions");
+        contributor.Label.ShouldBe("Sessions");
+        contributor.IsAvailable.ShouldBeTrue();
+        contributor.CanAssessProvenanceTrust.ShouldBeFalse();
+        results.Count.ShouldBe(1);
+        results[0].Title.ShouldBe("session/2");
+        results[0].Target.ShouldBe("/chat/agent%20one/conversation%2F2");
+        results[0].Snippet.Length.ShouldBeLessThanOrEqualTo(SessionSearchContributor.MaxSnippetLength);
+        results[0].ProvenanceTrust.ShouldBe(SearchProvenanceTrust.Untrusted);
+        await store.DidNotReceive().ListAsync(Arg.Any<AgentId?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task NewBuiltInContributors_HonorEmptyBoundsCancellationAndAgentUnavailability()
+    {
+        var registry = Substitute.For<IAgentRegistry>();
+        registry.GetAll().Returns([]);
+        var conversationStore = Substitute.For<IConversationStore>();
+        var sessionStore = Substitute.For<ISessionStore>();
+        ISearchContributor[] contributors = [
+            new AgentSearchContributor(registry),
+            new ConversationSearchContributor(conversationStore),
+            new SessionSearchContributor(sessionStore)
+        ];
+
+        contributors[0].IsAvailable.ShouldBeFalse();
+        contributors[1].IsAvailable.ShouldBeTrue();
+        contributors[2].IsAvailable.ShouldBeTrue();
+        foreach (var contributor in contributors)
+        {
+            (await contributor.SearchAsync(new SearchRequest("needle", 0))).ShouldBeEmpty();
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(() =>
+                contributor.SearchAsync(new SearchRequest("needle", 5), cancellation.Token));
+        }
+
+        await conversationStore.DidNotReceive().ListAsync(Arg.Any<AgentId?>(), Arg.Any<CancellationToken>());
+        await sessionStore.DidNotReceive().ListSummaryPageAsync(Arg.Any<SessionSummaryQuery>(), Arg.Any<CancellationToken>());
     }
 
     private static AgentDescriptor Descriptor(
         string id,
         bool memoryEnabled = false,
-        IReadOnlyList<string>? deniedPaths = null)
+        IReadOnlyList<string>? deniedPaths = null,
+        string? description = null,
+        string? summary = null)
         => new()
         {
             AgentId = AgentId.From(id),
             DisplayName = id,
             ModelId = "test-model",
             ApiProvider = "test-provider",
+            Description = description,
+            Summary = summary,
             Memory = memoryEnabled ? new MemoryAgentConfig { Enabled = true } : null,
             FileAccess = deniedPaths is null ? null : new FileAccessPolicy { DeniedPaths = deniedPaths }
         };
+
+    private static Conversation Conversation(
+        string conversationId,
+        string agentId,
+        string title,
+        DateTimeOffset updatedAt,
+        string? purpose = null)
+        => new()
+        {
+            ConversationId = ConversationId.From(conversationId),
+            AgentId = AgentId.From(agentId),
+            Title = title,
+            Purpose = purpose,
+            UpdatedAt = updatedAt
+        };
+
+    private static SessionSummary Summary(
+        string sessionId,
+        string agentId,
+        string conversationId,
+        DateTimeOffset updatedAt)
+        => new(
+            sessionId,
+            agentId,
+            ChannelKey.From("web"),
+            SessionStatus.Active,
+            SessionType.UserAgent,
+            true,
+            3,
+            updatedAt.AddHours(-1),
+            updatedAt,
+            conversationId);
 }

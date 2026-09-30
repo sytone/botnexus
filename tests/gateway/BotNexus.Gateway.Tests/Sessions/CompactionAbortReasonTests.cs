@@ -296,7 +296,6 @@ public sealed class CompactionAbortReasonTests
                 .Returns(Task.CompletedTask);
         }
 
-        var channelManager = new Mock<IChannelManager>();
         var optionsMonitor = new Mock<IOptionsMonitor<CompactionOptions>>();
         optionsMonitor.Setup(o => o.CurrentValue).Returns(new CompactionOptions { PreservedTurns = 3 });
 
@@ -304,7 +303,8 @@ public sealed class CompactionAbortReasonTests
             compactor.Object,
             sessions.Object,
             supervisor.Object,
-            channelManager.Object,
+            eventPublisher: null,
+            conversations: null,
             optionsMonitor.Object,
             logger);
     }

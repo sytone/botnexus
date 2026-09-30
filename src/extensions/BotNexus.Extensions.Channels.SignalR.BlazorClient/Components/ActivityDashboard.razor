@@ -564,8 +564,11 @@
             "expired" => $" \u00b7 Expired: {health.ExpiresAt:u}",
             _ => string.Empty
         };
+        var errorDetail = ActivityDashboardProjection.CronHealthErrorSummary(row) is { } error
+            ? $" \u00b7 Error: {error}"
+            : string.Empty;
 
-        return $"Cron job: {name} \u00b7 Last run status: {status}{when}{livenessDetail}";
+        return $"Cron job: {name} \u00b7 Job id: {health.JobId} \u00b7 Last run status: {status}{when}{livenessDetail}{errorDetail}";
     }
 
     private static string FormatRelative(DateTimeOffset ts)

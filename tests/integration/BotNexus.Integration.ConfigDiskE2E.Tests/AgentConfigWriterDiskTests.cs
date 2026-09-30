@@ -82,7 +82,7 @@ public sealed class AgentConfigWriterDiskTests
         using var home = new ConfigHomeFixture(MaximalConfig.Json);
         var writer = new PlatformConfigAgentWriter(home.Writer, new BotNexusHome(home.FileSystem, home.RootPath));
 
-        await writer.DeleteAsync("builder");
+        await writer.DeleteAsync(AgentId.From("builder"));
 
         var after = home.ReadFromDisk();
         after["agents"]!.AsObject().KeyNames()

@@ -40,7 +40,7 @@ namespace BotNexus.Gateway.Configuration;
 /// here.
 /// </para>
 /// </remarks>
-public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDisposable
+public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDisposable, IAcceptedRawConfigDocumentProvider
 {
     private static readonly TimeSpan DefaultDetectionInterval = TimeSpan.FromSeconds(1);
 
@@ -52,6 +52,7 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
     private readonly CancellationTokenSource _disposeToken = new();
     private Task? _changeDetectionTask;
     private long _appliedRevision = -1;
+    private ConfigDocument? _acceptedRawDocument;
 
     /// <summary>Creates a provider over <paramref name="store"/>.</summary>
     /// <param name="store">The configuration store to read.</param>
@@ -138,9 +139,12 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
             }
 
             IDictionary<string, string?> candidate;
+            ConfigDocument rawDocument;
             try
             {
-                candidate = Parse(ConfigDocumentRehydrator.Rehydrate(snapshot.Entries));
+                var rehydrated = ConfigDocumentRehydrator.Rehydrate(snapshot.Entries);
+                rawDocument = new ConfigDocument(rehydrated.DeepClone().AsObject());
+                candidate = Parse(rehydrated);
             }
             catch (Exception ex)
             {
@@ -150,6 +154,7 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
             }
 
             Data = candidate;
+            _acceptedRawDocument = rawDocument;
             _appliedRevision = snapshot.Revision;
             if (notify)
             {
@@ -230,6 +235,9 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
     /// </summary>
     public void NotifyChanged()
         => _ = CheckForChangesAsync().GetAwaiter().GetResult();
+
+    ConfigDocument? IAcceptedRawConfigDocumentProvider.GetAcceptedRawDocument()
+        => _acceptedRawDocument?.DeepClone();
 
     /// <inheritdoc />
     public void Dispose()

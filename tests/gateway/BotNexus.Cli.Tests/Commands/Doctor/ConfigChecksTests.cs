@@ -70,10 +70,21 @@ public sealed class ConfigChecksTests
     }
 
     [Fact]
-    public void SkillsWorldDefaultCheck_NotApplicableWhenPresent()
+    public void SkillsWorldDefaultCheck_ApplicableWhenSharedManagementDecisionIsAbsent()
     {
         new SkillsWorldDefaultCheck()
             .IsApplicable(Parse("{\"agents\":{\"defaults\":{\"extensions\":{\"botnexus-skills\":{\"enabled\":true}}}}}"))
+            .ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SkillsWorldDefaultCheck_NotApplicableWhenSharedManagementDecisionIsExplicit(bool allowed)
+    {
+        var value = allowed ? "true" : "false";
+        new SkillsWorldDefaultCheck()
+            .IsApplicable(Parse("{\"agents\":{\"defaults\":{\"extensions\":{\"botnexus-skills\":{\"enabled\":true,\"allowSharedSkillManagement\":" + value + "}}}}}"))
             .ShouldBeFalse();
     }
 
@@ -92,8 +103,8 @@ public sealed class ConfigChecksTests
         new SkillsWorldDefaultCheck().Apply(config);
 
         config.GetBool("agents.defaults.extensions.botnexus-skills.enabled").ShouldBe(true);
-        // extensions block should also be enabled
-        config.GetBool("gateway.extensionLoader.enabled").ShouldBe(true);
+        config.GetBool("agents.defaults.extensions.botnexus-skills.allowSharedSkillManagement").ShouldBe(true);
+        config.GetBool("gateway.extensionLoader.enabled").ShouldBeNull();
     }
 
     [Fact]
@@ -105,6 +116,17 @@ public sealed class ConfigChecksTests
         var defaults = config.GetEntryKeys("agents.defaults.extensions");
         defaults.ShouldContain("other-ext");
         defaults.ShouldContain("botnexus-skills");
+    }
+
+    [Fact]
+    public void SkillsWorldDefaultCheck_Apply_PreservesExplicitSharedManagementFalse()
+    {
+        var config = Parse("{\"agents\":{\"defaults\":{\"extensions\":{\"botnexus-skills\":{\"enabled\":false,\"allowSharedSkillManagement\":false}}}}}");
+
+        new SkillsWorldDefaultCheck().Apply(config);
+
+        config.GetBool("agents.defaults.extensions.botnexus-skills.enabled").ShouldBe(true);
+        config.GetBool("agents.defaults.extensions.botnexus-skills.allowSharedSkillManagement").ShouldBeFalse();
     }
 
     // ── CronCheck ─────────────────────────────────────────────────────────────

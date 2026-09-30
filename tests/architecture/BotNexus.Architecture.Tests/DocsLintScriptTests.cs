@@ -468,9 +468,14 @@ public sealed class DocsLintScriptTests : ArchitectureTest, IDisposable
             var overrides = new Dictionary<string, string>
             {
                 ["PSModuleAnalysisCachePath"] = Path.Combine(Root, "ModuleAnalysisCache"),
+                // PowerShell unconditionally starts the optional multicore-JIT startup profile.
+                // Raising the runtime's minimum CPU requirement beyond any possible processor
+                // count keeps docs-lint children from reading or writing that shared profile.
+                ["DOTNET_MultiCoreJitMinNumCpus"] = int.MaxValue.ToString(),
             };
             // Unix PowerShell selects its ProfileOptimization root before running any script.
-            // Windows uses a known folder instead; XDG_CACHE_HOME does not isolate it there.
+            // Windows uses a known folder instead; disabling multicore JIT above is the only
+            // child-scoped boundary because XDG_CACHE_HOME and LOCALAPPDATA do not redirect it.
             if (!OperatingSystem.IsWindows())
             {
                 overrides["XDG_CACHE_HOME"] = Root;

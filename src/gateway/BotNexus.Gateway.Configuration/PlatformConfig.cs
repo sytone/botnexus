@@ -2040,22 +2040,48 @@ public sealed class AgentDefinitionConfig
         Order = 9)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 9)]
     public List<string>? AllowedModels { get; set; }
+    private List<string>? _systemPromptFiles;
+    private string? _systemPromptFile;
+
     /// <summary>Ordered list of files to load as the system prompt. Empty = default order.</summary>
     [Display(
         Name = "System prompt files",
-        Description = "Ordered list of files to load as the system prompt. Empty = default order.",
+        Description = "Deprecated custom prompt-file list. Use standard workspace instruction files, WORLD.md, inline prompts, conversation instructions, or model-specific variants.",
         GroupName = "Agent",
         Order = 10)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 10)]
-    public List<string>? SystemPromptFiles { get; set; }
-    /// <summary>Path to a single system prompt file (legacy, prefer SystemPromptFiles).</summary>
+    public List<string>? SystemPromptFiles
+    {
+        get => _systemPromptFiles;
+        set
+        {
+            _systemPromptFiles = value;
+            HasSystemPromptFilesKey = true;
+        }
+    }
+
+    /// <summary>Path to a single system prompt file.</summary>
     [Display(
         Name = "System prompt file",
-        Description = "Path to a single system prompt file (legacy, prefer SystemPromptFiles).",
+        Description = "Deprecated custom prompt file. Use standard workspace instruction files, WORLD.md, inline prompts, conversation instructions, or model-specific variants.",
         GroupName = "Agent",
         Order = 11)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 11)]
-    public string? SystemPromptFile { get; set; }
+    public string? SystemPromptFile
+    {
+        get => _systemPromptFile;
+        set
+        {
+            _systemPromptFile = value;
+            HasSystemPromptFileKey = true;
+        }
+    }
+
+    [JsonIgnore]
+    internal bool HasSystemPromptFilesKey { get; private set; }
+
+    [JsonIgnore]
+    internal bool HasSystemPromptFileKey { get; private set; }
     /// <summary>Tool identifiers this agent has access to.</summary>
     [Display(
         Name = "Tool ids",

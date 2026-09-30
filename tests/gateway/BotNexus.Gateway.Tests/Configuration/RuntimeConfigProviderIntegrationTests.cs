@@ -247,7 +247,7 @@ public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
     private static ServiceProvider BuildServiceProvider(string configPath)
     {
         var configuration = (IConfigurationRoot)new ConfigurationBuilder()
-            .AddJsonFile(configPath, optional: false, reloadOnChange: true)
+            .AddResilientJsonFile(configPath, optional: false, reloadOnChange: true)
             .Build();
 
         var services = new ServiceCollection();

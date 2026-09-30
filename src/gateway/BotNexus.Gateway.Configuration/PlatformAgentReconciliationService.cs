@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using System.IO.Abstractions;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -110,7 +111,7 @@ public sealed class PlatformAgentReconciliationService : IHostedService
         try
         {
             var snapshot = await _writer.ReadAsync(cancellationToken);
-            var missing = _catalog.Where(d => !EntryExists(snapshot, d.AgentId)).ToList();
+            var missing = _catalog.Where(d => !EntryExists(snapshot, AgentId.From(d.AgentId))).ToList();
             if (missing.Count == 0)
             {
                 _logger.LogDebug(
@@ -129,7 +130,7 @@ public sealed class PlatformAgentReconciliationService : IHostedService
             {
                 foreach (var definition in missing)
                 {
-                    if (EntryExists(root, definition.AgentId))
+                    if (EntryExists(root, AgentId.From(definition.AgentId)))
                         continue;
 
                     if (root["agents"] is not JsonObject agents)
@@ -177,8 +178,8 @@ public sealed class PlatformAgentReconciliationService : IHostedService
     /// counts as present: the user (or a previous run) put it there, and reconciliation is not
     /// entitled to an opinion about its contents.
     /// </remarks>
-    internal static bool EntryExists(JsonObject root, string agentId)
-        => root["agents"] is JsonObject agents && agents.ContainsKey(agentId);
+    internal static bool EntryExists(JsonObject root, AgentId agentId)
+        => root["agents"] is JsonObject agents && agents.ContainsKey(agentId.Value);
 
     private static JsonObject BuildEntry(JsonObject root, BundledAgentDefinition definition)
         => BuildEntry(definition, ResolveProviderAndModel(root));

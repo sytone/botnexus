@@ -155,6 +155,184 @@ public sealed class ExtensionDeploymentReconcilerTests : IDisposable
     }
 
     [Fact]
+    public void Reconcile_TransientActivationLockRetriesAndPublishesOneCompleteNestedCandidate()
+    {
+        var liveRoot = Directory.CreateDirectory(Path.Combine(_root, "live")).FullName;
+        var output = CreateOutput("audio-transcription", "audio.dll", "managed");
+        var nativeDirectory = Path.Combine(output, "runtimes", "win-x64", "native");
+        Directory.CreateDirectory(nativeDirectory);
+        File.WriteAllText(Path.Combine(nativeDirectory, "whisper.dll"), "native");
+        var activationAttempts = 0;
+        var hooks = new ExtensionDeploymentHooks
+        {
+            BeforeOperation = (operation, _, _) =>
+            {
+                if (operation == ExtensionDeploymentOperation.Activate && activationAttempts++ == 0)
+                    throw SharingViolation();
+            },
+            IsWindows = () => true,
+            Delay = _ => { }
+        };
+
+        var result = ExtensionDeploymentReconciler.Reconcile(
+            liveRoot,
+            [new ExtensionDeploymentSource("in-tree:audio-transcription", output, true, false)],
+            hooks);
+
+        result.Failures.ShouldBeEmpty();
+        activationAttempts.ShouldBe(2);
+        Directory.GetDirectories(liveRoot, "audio-transcription", SearchOption.TopDirectoryOnly).Length.ShouldBe(1);
+        File.ReadAllText(Path.Combine(liveRoot, "audio-transcription", "audio.dll")).ShouldBe("managed");
+        File.ReadAllText(Path.Combine(liveRoot, "audio-transcription", "runtimes", "win-x64", "native", "whisper.dll"))
+            .ShouldBe("native");
+        Directory.GetDirectories(liveRoot, ".deploy-*", SearchOption.TopDirectoryOnly).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Reconcile_PersistentActivationLockRestoresPriorBytesAndReportsEverySource(bool registered)
+    {
+        var liveRoot = Directory.CreateDirectory(Path.Combine(_root, "live")).FullName;
+        var output = CreateOutput("audio-transcription", "audio.dll", "last-known-good");
+        var sourceName = registered ? "repository:audio" : "in-tree:audio-transcription";
+        var source = new ExtensionDeploymentSource(sourceName, output, true, registered);
+        ExtensionDeploymentReconciler.Reconcile(liveRoot, [source]).Failures.ShouldBeEmpty();
+        var priorBytes = File.ReadAllBytes(Path.Combine(liveRoot, "audio-transcription", "audio.dll"));
+        File.WriteAllText(Path.Combine(output, "audio.dll"), "candidate");
+        var hooks = new ExtensionDeploymentHooks
+        {
+            BeforeOperation = (operation, _, _) =>
+            {
+                if (operation == ExtensionDeploymentOperation.Activate)
+                    throw SharingViolation();
+            },
+            IsWindows = () => true,
+            Delay = _ => { }
+        };
+
+        var result = ExtensionDeploymentReconciler.Reconcile(liveRoot, [source], hooks);
+
+        var failure = result.Failures.ShouldHaveSingleItem();
+        failure.Source.ShouldBe(sourceName);
+        failure.Message.ShouldContain("activation");
+        File.ReadAllBytes(Path.Combine(liveRoot, "audio-transcription", "audio.dll")).ShouldBe(priorBytes);
+    }
+
+    [Fact]
+    public void Reconcile_PersistentRollbackDeleteFailureReportsAndRetainsBackup()
+    {
+        var liveRoot = Directory.CreateDirectory(Path.Combine(_root, "live")).FullName;
+        var output = CreateOutput("audio-transcription", "audio.dll", "last-known-good");
+        var source = new ExtensionDeploymentSource("in-tree:audio-transcription", output, true, false);
+        ExtensionDeploymentReconciler.Reconcile(liveRoot, [source]).Failures.ShouldBeEmpty();
+        File.WriteAllText(Path.Combine(output, "audio.dll"), "candidate");
+        var hooks = new ExtensionDeploymentHooks
+        {
+            BeforeOperation = (operation, _, destination) =>
+            {
+                if (operation == ExtensionDeploymentOperation.Activate && destination is not null)
+                {
+                    Directory.CreateDirectory(destination);
+                    File.WriteAllText(Path.Combine(destination, "partial.txt"), "partial");
+                    throw SharingViolation();
+                }
+                if (operation == ExtensionDeploymentOperation.Rollback)
+                    throw SharingViolation();
+            },
+            IsWindows = () => true,
+            Delay = _ => { }
+        };
+
+        var result = ExtensionDeploymentReconciler.Reconcile(liveRoot, [source], hooks);
+
+        var failure = result.Failures.ShouldHaveSingleItem();
+        failure.Message.ShouldContain("retained backup");
+        var backup = Directory.GetDirectories(liveRoot, ".deploy-*-backup").ShouldHaveSingleItem();
+        File.ReadAllText(Path.Combine(backup, "audio.dll")).ShouldBe("last-known-good");
+    }
+
+    [Fact]
+    public void Reconcile_FirstActivationFailureDoesNotClaimPriorDeploymentWasRestored()
+    {
+        var liveRoot = Directory.CreateDirectory(Path.Combine(_root, "live")).FullName;
+        var output = CreateOutput("audio-transcription", "audio.dll", "candidate");
+        var hooks = new ExtensionDeploymentHooks
+        {
+            BeforeOperation = (operation, _, _) =>
+            {
+                if (operation == ExtensionDeploymentOperation.Activate)
+                    throw SharingViolation();
+            },
+            IsWindows = () => true,
+            Delay = _ => { }
+        };
+
+        var result = ExtensionDeploymentReconciler.Reconcile(
+            liveRoot,
+            [new ExtensionDeploymentSource("in-tree:audio-transcription", output, true, false)],
+            hooks);
+
+        var failure = result.Failures.ShouldHaveSingleItem();
+        failure.Message.ShouldContain("no prior deployment existed");
+        failure.Message.ShouldNotContain("prior deployment was restored");
+    }
+
+    [Fact]
+    public void Reconcile_ExhaustedCleanupReportsRetainedDeployResidue()
+    {
+        var liveRoot = Directory.CreateDirectory(Path.Combine(_root, "live")).FullName;
+        var output = CreateOutput("audio-transcription", "audio.dll", "candidate");
+        var cleanupAttempts = 0;
+        var hooks = new ExtensionDeploymentHooks
+        {
+            BeforeOperation = (operation, _, _) =>
+            {
+                if (operation == ExtensionDeploymentOperation.Cleanup)
+                {
+                    cleanupAttempts++;
+                    throw SharingViolation();
+                }
+            },
+            IsWindows = () => true,
+            Delay = _ => { }
+        };
+
+        var result = ExtensionDeploymentReconciler.Reconcile(
+            liveRoot,
+            [new ExtensionDeploymentSource("in-tree:audio-transcription", output, true, false)],
+            hooks);
+
+        var failure = result.Failures.ShouldHaveSingleItem();
+        cleanupAttempts.ShouldBe(4);
+        failure.Message.ShouldContain("retained deployment residue");
+        failure.Message.ShouldContain(".deploy-");
+    }
+
+    [Fact]
+    public void Reconcile_WhenAnotherProcessOwnsLockReturnsControlledFailureBeforeMutation()
+    {
+        var liveRoot = Directory.CreateDirectory(Path.Combine(_root, "live")).FullName;
+        var output = CreateOutput("audio-transcription", "audio.dll", "candidate");
+        using var heldLock = new FileStream(
+            Path.Combine(liveRoot, ".deployment.lock"),
+            FileMode.OpenOrCreate,
+            FileAccess.ReadWrite,
+            FileShare.None);
+
+        var result = ExtensionDeploymentReconciler.Reconcile(
+            liveRoot,
+            [new ExtensionDeploymentSource("in-tree:audio-transcription", output, true, false)]);
+
+        result.DeployedCount.ShouldBe(0);
+        result.Failures.ShouldHaveSingleItem().Message.ShouldContain("already in progress");
+        Directory.Exists(Path.Combine(liveRoot, "audio-transcription")).ShouldBeFalse();
+    }
+
+    private static IOException SharingViolation()
+        => new("simulated sharing violation", unchecked((int)0x80070020));
+
+    [Fact]
     public void Reconcile_ActivationFailureRestoresLastKnownGood()
     {
         var liveRoot = Directory.CreateDirectory(Path.Combine(_root, "live")).FullName;
@@ -166,7 +344,14 @@ public sealed class ExtensionDeploymentReconcilerTests : IDisposable
         var result = ExtensionDeploymentReconciler.Reconcile(
             liveRoot,
             [source],
-            (_, _) => throw new IOException("simulated activation failure"));
+            new ExtensionDeploymentHooks
+            {
+                BeforeOperation = (operation, _, _) =>
+                {
+                    if (operation == ExtensionDeploymentOperation.Activate)
+                        throw new IOException("simulated activation failure");
+                }
+            });
 
         result.Failures.Single().Message.ShouldContain("simulated activation failure");
         File.ReadAllText(Path.Combine(liveRoot, "community-tools", "community.dll"))
@@ -185,10 +370,15 @@ public sealed class ExtensionDeploymentReconcilerTests : IDisposable
         var result = ExtensionDeploymentReconciler.Reconcile(
             liveRoot,
             [source],
-            (_, destination) =>
+            new ExtensionDeploymentHooks
             {
-                Directory.CreateDirectory(destination);
-                File.WriteAllText(Path.Combine(destination, "racer.txt"), "unexpected");
+                BeforeOperation = (operation, _, destination) =>
+                {
+                    if (operation != ExtensionDeploymentOperation.Activate || destination is null)
+                        return;
+                    Directory.CreateDirectory(destination);
+                    File.WriteAllText(Path.Combine(destination, "racer.txt"), "unexpected");
+                }
             });
 
         result.Failures.ShouldHaveSingleItem();

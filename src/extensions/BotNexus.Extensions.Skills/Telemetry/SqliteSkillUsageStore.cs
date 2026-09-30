@@ -27,6 +27,8 @@ public sealed class SqliteSkillUsageStore : ISkillUsageTelemetry, IAsyncDisposab
     private const string SkillsNamespace = "skills";
     private const string ViewCounter = "view";
     private const string UseCounter = "use";
+    private const string SuppressedLoadCounter = "suppressed_load";
+    private const string ContextReloadCounter = "context_reload";
     private const string PatchCounter = "patch";
 
     private readonly string _dbPath;
@@ -61,6 +63,20 @@ public sealed class SqliteSkillUsageStore : ISkillUsageTelemetry, IAsyncDisposab
     {
         await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
         await _store.IncrementAsync(SkillsNamespace, skillName, UseCounter, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task RecordSuppressedLoadAsync(string skillName, CancellationToken cancellationToken = default)
+    {
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _store.IncrementAsync(SkillsNamespace, skillName, SuppressedLoadCounter, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task RecordContextReloadAsync(string skillName, CancellationToken cancellationToken = default)
+    {
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _store.IncrementAsync(SkillsNamespace, skillName, ContextReloadCounter, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -118,6 +134,8 @@ public sealed class SqliteSkillUsageStore : ISkillUsageTelemetry, IAsyncDisposab
         SkillName = record.Key,
         ViewCount = record.GetCounter(ViewCounter),
         UseCount = record.GetCounter(UseCounter),
+        SuppressedLoadCount = record.GetCounter(SuppressedLoadCounter),
+        ContextReloadCount = record.GetCounter(ContextReloadCounter),
         PatchCount = record.GetCounter(PatchCounter),
         LastUsedAt = record.LastUsedAt,
         CreatedBy = record.CreatedBy,

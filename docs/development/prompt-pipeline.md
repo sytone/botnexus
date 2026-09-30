@@ -104,30 +104,10 @@ public record PromptContribution
 - Memory systems injecting agent history
 - MCP servers adding capability descriptions
 
-**Example Contributor:**
-
-```csharp
-public class SkillPromptContributor : IPromptContributor
-{
-    public int Priority => 500;
-    public PromptSection? Target => null;  // Standalone block
-    
-    public bool ShouldInclude(PromptContext context)
-        => context.Extensions.ContainsKey("skills");
-    
-    public PromptContribution GetContribution(PromptContext context)
-    {
-        var skills = (IReadOnlyList<Skill>)context.Extensions["skills"];
-        
-        return new PromptContribution
-        {
-            SectionHeading = "Available Skills",
-            Lines = skills.Select(s => $"- **{s.Name}**: {s.Description}").ToList(),
-            Order = 600  // After tools section
-        };
-    }
-}
-```
+The repository intentionally has no built-in `IPromptContributor` implementation. The interface is
+the dynamic-extension seam; an extension registers its own implementation in DI. Only standalone
+contributors (`Target == null`) render today. See the source-backed extension example in
+[Extension Prompt Contributions](#extension-prompt-contributions).
 
 ## PromptContext
 
@@ -301,7 +281,9 @@ Injects project-specific documentation:
 
 **Context File Discovery:**
 
-Loads the agent workspace prompt files in the canonical order: `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `BOOTSTRAP.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md`. An agent-specific `systemPromptFile` replaces that default list. Owner-private files (`USER.md`, `MEMORY.md`, and daily memory notes) are withheld from shared conversations.
+Prompt-file selection normally loads the canonical workspace instruction files in this order: `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `BOOTSTRAP.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md`. The deprecated `systemPromptFile` and `systemPromptFiles` keys remain runtime-compatible during issue #2941 Stage 1 but should not be used in new configuration.
+
+When `memory.promptInjection` is `none`, `WorkspaceContextBuilder` filters memory prompt files from the selected set, including an explicitly selected `MEMORY.md` or model-specific memory variant. Daily-memory injection follows the same memory setting. Conversation scope independently withholds owner-private files (`USER.md`, `MEMORY.md`, and daily memory notes) from shared conversations.
 
 See [WorkspaceContextBuilder.cs](../../src/gateway/BotNexus.Gateway/Agents/WorkspaceContextBuilder.cs)
 

@@ -52,10 +52,12 @@ public sealed class GatewayBuildInfoTests
 
         root.TryGetProperty("startedAt", out _).ShouldBeTrue();
         root.TryGetProperty("uptimeSeconds", out _).ShouldBeTrue();
+        root.TryGetProperty("buildTimestamp", out var buildTimestamp).ShouldBeTrue();
         root.TryGetProperty("commitSha", out var commitSha).ShouldBeTrue();
         root.TryGetProperty("commitShort", out var commitShort).ShouldBeTrue();
         root.TryGetProperty("version", out _).ShouldBeTrue();
 
+        buildTimestamp.GetDateTimeOffset().ShouldBeGreaterThan(DateTimeOffset.MinValue);
         commitSha.GetString().ShouldNotBeNullOrWhiteSpace();
         commitShort.GetString()!.Length.ShouldBeLessThanOrEqualTo(7);
     }

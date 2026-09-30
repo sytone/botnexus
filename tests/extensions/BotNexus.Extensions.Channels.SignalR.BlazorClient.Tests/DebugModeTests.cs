@@ -111,6 +111,20 @@ public sealed class DebugModeTests : IDisposable
     }
 
     [Fact]
+    public async Task PortalSettingsPanel_contains_experimental_shell_selector_and_persists_immediately()
+    {
+        _prefs.Current.Returns(new PortalPreferences());
+        var settingsPanel = _ctx.Render<PortalSettingsPanel>();
+
+        await settingsPanel.InvokeAsync(() => settingsPanel.Instance.Open());
+        var selector = settingsPanel.Find("[data-testid='shell-select']");
+
+        selector.ParentElement?.TextContent.ShouldContain("Experimental");
+        await settingsPanel.InvokeAsync(() => selector.Change(PortalShell.Simplified));
+        await _prefs.Received(1).SetShellAsync(PortalShell.Simplified);
+    }
+
+    [Fact]
     public void Debug_button_appears_after_DebugModeEnabled_preference_changes()
     {
         var prefs = new PortalPreferences { DebugModeEnabled = false };

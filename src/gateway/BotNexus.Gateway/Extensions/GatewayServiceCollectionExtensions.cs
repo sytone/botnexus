@@ -194,6 +194,9 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, MemorySearchContributor>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, FileSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, AgentSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, ConversationSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, SessionSearchContributor>());
          services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
          services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
          // #3569: the backstop workspace sweep must consult a lifecycle authority before deleting.
@@ -318,7 +321,15 @@ public static class GatewayServiceCollectionExtensions
         // explicit MessageRole.Notification, discriminated against the SAME scope-resolved window.
         services.TryAddSingleton<IContextExhaustionNotifier, ContextExhaustionNotifier>();
         services.AddSingleton<IPreCompactionMemoryFlusher, PreCompactionMemoryFlusher>();
-        services.AddSingleton<ISessionCompactionCoordinator, SessionCompactionCoordinator>();
+        services.AddSingleton<ISessionCompactionCoordinator>(serviceProvider => new SessionCompactionCoordinator(
+            serviceProvider.GetRequiredService<ISessionCompactor>(),
+            serviceProvider.GetRequiredService<ISessionStore>(),
+            serviceProvider.GetRequiredService<IAgentSupervisor>(),
+            serviceProvider.GetRequiredService<IConversationEventPublisher>(),
+            serviceProvider.GetRequiredService<IConversationStore>(),
+            serviceProvider.GetRequiredService<IOptionsMonitor<CompactionOptions>>(),
+            serviceProvider.GetRequiredService<ILogger<SessionCompactionCoordinator>>(),
+            serviceProvider.GetService<IPreCompactionMemoryFlusher>()));
         services.AddSingleton<ISessionEndMemoryFlusher, SessionEndMemoryFlusher>();
         services.AddSingleton<IConversationResetService, DefaultConversationResetService>();
         services.AddSingleton<IMediaPipeline, MediaPipeline>();
@@ -484,7 +495,7 @@ public static class GatewayServiceCollectionExtensions
             sp.GetRequiredService<ISessionStore>(),
             sp.GetRequiredService<IAgentRegistry>(),
             sp.GetRequiredService<IActivityBroadcaster>(),
-            sp.GetRequiredService<IChannelManager>(),
+            sp.GetRequiredService<IConversationEventPublisher>(),
             sp.GetRequiredService<ILogger<InterruptedTurnNotificationService>>(),
             sp.GetService<IInboundMessageOrchestrator>(),
             sp.GetService<IOptions<GatewayOptions>>(),

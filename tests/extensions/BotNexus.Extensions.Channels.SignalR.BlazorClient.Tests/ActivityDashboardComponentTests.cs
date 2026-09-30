@@ -1145,6 +1145,44 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     }
 
     [Fact]
+    public void Failed_cron_health_tooltip_includes_bounded_reason_and_job_id_without_visible_prose()
+    {
+        var longLine = new string('x', ActivityDashboardProjection.CronErrorDisplayLength + 20);
+        SetupConversations(Conv("c1", title: "Nightly", source: "Cron", sourceId: "j1"));
+        SetupCronJobs($$"""[{"id":"j1","name":"Nightly digest","lastRunStatus":"failed","lastRunError":"  {{longLine}}\nstack trace"}]""");
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-cron-health']")));
+
+        var dot = cut.Find("[data-testid='activity-cron-health']");
+        var title = dot.GetAttribute("title");
+        Assert.NotNull(title);
+        Assert.Contains("Job id: j1", title, StringComparison.Ordinal);
+        Assert.Contains($"Error: {new string('x', ActivityDashboardProjection.CronErrorDisplayLength)}\u2026", title, StringComparison.Ordinal);
+        Assert.DoesNotContain("stack trace", title, StringComparison.Ordinal);
+        Assert.DoesNotContain('\n', title);
+        Assert.DoesNotContain(longLine, cut.Markup, StringComparison.Ordinal);
+        Assert.Empty(cut.FindAll("[data-testid='activity-cron-error']"));
+    }
+
+    [Theory]
+    [InlineData("ok")]
+    [InlineData(null)]
+    public void Nonfailed_cron_health_tooltip_suppresses_stale_error(string? status)
+    {
+        var statusJson = status is null ? "null" : $"\"{status}\"";
+        SetupConversations(Conv("c1", title: "Nightly", source: "Cron", sourceId: "j1"));
+        SetupCronJobs($$"""[{"id":"j1","lastRunStatus":{{statusJson}},"lastRunError":"stale failure"}]""");
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-cron']").Click();
+        cut.WaitForAssertion(() => Assert.Single(cut.FindAll("[data-testid='activity-cron-health']")));
+
+        Assert.DoesNotContain("stale failure", cut.Find("[data-testid='activity-cron-health']").GetAttribute("title"), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Expired_and_disabled_jobs_override_ok_without_losing_last_run_outcome()
     {
         SetupConversations(

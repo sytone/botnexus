@@ -3,6 +3,8 @@ using System.Text;
 using BotNexus.Extensions.Skills.Security;
 using BotNexus.Extensions.Skills.Telemetry;
 using BotNexus.Gateway.Abstractions.Extensions;
+using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -19,6 +21,8 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
     private const int DefaultTreeDepthLimit = 2;
     private const int MaximumTreeDepthLimit = 5;
     private const int MaximumFileReadBytes = 512 * 1024;
+    private const int MaximumAcknowledgementReasonLength = 1000;
+    private const string CallerIdentityItemKey = "BotNexus.Gateway.CallerIdentity";
 
     /// <inheritdoc />
     public void MapEndpoints(WebApplication app)
@@ -30,9 +34,222 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
         // "telemetry" is matched as a literal segment rather than a skills-relative file path.
         group.MapGet("/telemetry", (ISkillUsageTelemetry? telemetry) => GetTelemetry(telemetry));
         group.MapGet("/telemetry/{skillName}", (string skillName, ISkillUsageTelemetry? telemetry) => GetTelemetryForSkill(skillName, telemetry));
+        group.MapPost("/security-acknowledgements", (SkillSecurityAcknowledgementRequest request, HttpContext context,
+            IFileSystem fs, PlatformConfigWriter writer, ISecurityEventSink securityEvents) =>
+            AcknowledgeSecurityFinding(request, context, fs, writer, securityEvents));
         group.MapGet("/{**path}", (string path, IFileSystem fs) => GetSkillsPath(path, fs));
         group.MapPut("/{**path}", (string path, IFileSystem fs, HttpRequest req) => WriteSkillsPath(path, fs, req));
         group.MapDelete("/{**path}", (string path, IFileSystem fs, bool force = false) => DeleteSkillsPath(path, fs, force));
+    }
+
+    /// <summary>
+    /// Commits an administrator's acknowledgement only after re-reading and rescanning the exact
+    /// current shared-skill file inside the canonical configuration-writer mutation.
+    /// </summary>
+    internal static Task<IResult> AcknowledgeSecurityFinding(
+        SkillSecurityAcknowledgementRequest request,
+        HttpContext context,
+        IFileSystem fileSystem,
+        PlatformConfigWriter writer,
+        ISecurityEventSink securityEvents)
+        => AcknowledgeSecurityFinding(request, context, fileSystem, writer, securityEvents, GetSkillsRootPath());
+
+    internal static async Task<IResult> AcknowledgeSecurityFinding(
+        SkillSecurityAcknowledgementRequest request,
+        HttpContext context,
+        IFileSystem fileSystem,
+        PlatformConfigWriter writer,
+        ISecurityEventSink securityEvents,
+        string skillsRoot)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (!TryGetAdmin(context, out var caller))
+            return Results.Forbid();
+
+        var validationError = ValidateAcknowledgementRequest(request, out var severity, out var expectedHash);
+        if (validationError is not null)
+            return Results.BadRequest(new { error = validationError });
+
+        var normalizedRoot = NormalizePath(fileSystem, skillsRoot);
+        var skillRoot = fileSystem.Path.GetFullPath(fileSystem.Path.Combine(normalizedRoot, request.Skill.Trim()));
+        var absoluteFile = fileSystem.Path.GetFullPath(
+            fileSystem.Path.Combine(skillRoot, NormalizeRelativePath(fileSystem, request.File)));
+
+        if (!ValidateContainment(fileSystem, skillRoot, normalizedRoot)
+            || !ValidateContainment(fileSystem, absoluteFile, skillRoot)
+            || !SkillPathValidator.TryValidate(
+                absoluteFile, SkillPath.CreateRoot(normalizedRoot, fileSystem), fileSystem, out var validated, out _))
+        {
+            return Results.BadRequest(new { error = "Skill and file must identify a file under the shared skills root." });
+        }
+
+        var normalizedRelativeFile = ToRelativePath(fileSystem, skillRoot, validated.Value);
+        var operatorPseudonym = ActorPseudonym.For(caller.CallerId);
+        var acknowledgedAtUtc = DateTimeOffset.UtcNow;
+        var persisted = new SkillSecurityAcknowledgement
+        {
+            Skill = request.Skill.Trim(),
+            RuleId = request.RuleId.Trim(),
+            File = normalizedRelativeFile,
+            Severity = severity,
+            FindingId = request.FindingId.Trim().ToLowerInvariant(),
+            Sha256 = expectedHash,
+            Reason = request.Reason.Trim(),
+            OperatorPseudonym = operatorPseudonym,
+            AcknowledgedAtUtc = acknowledgedAtUtc
+        };
+
+        bool added = false;
+        string? rejection = null;
+        try
+        {
+            await writer.MutateDocumentAsync(document =>
+            {
+                rejection = ValidateCurrentFinding(
+                    fileSystem, validated.Value, persisted.RuleId, severity, persisted.FindingId, expectedHash);
+                if (rejection is not null)
+                    return;
+
+                if (!document.TryAppendUniqueFrom(
+                    ["agents", "defaults", "extensions", SkillsExtensionJson.ExtensionId, "securityAcknowledgements"],
+                    persisted,
+                    existing => IsSameAcknowledgement(existing, persisted),
+                    out added,
+                    out var error))
+                {
+                    rejection = error;
+                }
+            }, "before-skill-security-acknowledgement", context.RequestAborted);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            return Results.Conflict(new { error = "The current skill evidence could not be committed." });
+        }
+
+        if (rejection is not null)
+            return Results.Conflict(new { error = rejection });
+
+        var response = new
+        {
+            persisted.Skill,
+            persisted.RuleId,
+            persisted.File,
+            Severity = severity.ToString(),
+            persisted.FindingId,
+            persisted.Sha256,
+            persisted.OperatorPseudonym,
+            persisted.AcknowledgedAtUtc
+        };
+
+        if (!added)
+            return Results.Ok(response);
+
+        securityEvents.Record(new SecurityEvent(
+            SecurityEventCategory.Config,
+            "skill.security-finding.acknowledged",
+            SecurityEventOutcome.Success,
+            SecurityEventSeverity.High,
+            Actor: new SecurityEventActor(SecurityActorKind.Operator, operatorPseudonym),
+            Target: new SecurityEventTarget(SecurityTargetKind.Config, expectedHash),
+            Policy: SecurityPolicyDecision.Allow,
+            Control: SecurityControlFamily.SupplyChain));
+
+        return Results.Created($"/api/skills/security-acknowledgements/{expectedHash}", response);
+    }
+
+    private static bool IsSameAcknowledgement(
+        SkillSecurityAcknowledgement existing,
+        SkillSecurityAcknowledgement submitted)
+        => string.Equals(existing.Skill, submitted.Skill, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.RuleId, submitted.RuleId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.File.Replace('\\', '/'), submitted.File.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase)
+            && existing.Severity == submitted.Severity
+            && string.Equals(existing.FindingId, submitted.FindingId, StringComparison.Ordinal)
+            && string.Equals(existing.Sha256, submitted.Sha256, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(existing.Reason, submitted.Reason, StringComparison.Ordinal)
+            && string.Equals(existing.OperatorPseudonym, submitted.OperatorPseudonym, StringComparison.Ordinal);
+
+    private static string? ValidateAcknowledgementRequest(
+        SkillSecurityAcknowledgementRequest request,
+        out ScanSeverity severity,
+        out string expectedHash)
+    {
+        severity = default;
+        expectedHash = request.Sha256?.Trim().ToLowerInvariant() ?? string.Empty;
+
+        if (!request.Confirmed)
+            return "confirmed must be true for this security acknowledgement.";
+        if (string.IsNullOrWhiteSpace(request.Skill) || string.IsNullOrWhiteSpace(request.RuleId)
+            || string.IsNullOrWhiteSpace(request.File) || string.IsNullOrWhiteSpace(request.Severity)
+            || string.IsNullOrWhiteSpace(request.Sha256) || string.IsNullOrWhiteSpace(request.FindingId))
+            return "skill, ruleId, file, severity, findingId, and sha256 are required.";
+        if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length > MaximumAcknowledgementReasonLength)
+            return $"reason must be nonblank and at most {MaximumAcknowledgementReasonLength} characters.";
+        if (!SkillParser.IsValidName(request.Skill.Trim()))
+            return "skill must be a valid lowercase skill name.";
+        if (IsAbsolutePath(request.File) || request.File.Contains('\0'))
+            return "file must be a valid skill-relative path.";
+        if (!Enum.TryParse(request.Severity.Trim(), ignoreCase: true, out severity)
+            || !Enum.IsDefined(severity))
+            return "severity is not a recognized scanner severity.";
+        if (!SkillSecurityAcknowledgements.IsValidSha256(expectedHash))
+            return "sha256 must be exactly 64 hexadecimal characters.";
+        if (!SkillSecurityAcknowledgements.IsValidSha256(request.FindingId.Trim()))
+            return "findingId must be exactly 64 hexadecimal characters.";
+
+        return null;
+    }
+
+    private static string? ValidateCurrentFinding(
+        IFileSystem fileSystem,
+        string absoluteFile,
+        string ruleId,
+        ScanSeverity severity,
+        string findingId,
+        string expectedHash)
+    {
+        if (!fileSystem.File.Exists(absoluteFile))
+            return "The reviewed skill file no longer exists.";
+
+        var beforeHash = SkillSecurityAcknowledgements.ComputeSha256(fileSystem, absoluteFile);
+        if (!string.Equals(beforeHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+            return "The reviewed skill file hash changed before commit.";
+
+        string source;
+        try
+        {
+            source = fileSystem.File.ReadAllText(absoluteFile);
+        }
+        catch
+        {
+            return "The reviewed skill file could not be read at commit.";
+        }
+
+        var findingExists = SkillSecurityScanner.ScanSource(source, absoluteFile)
+            .Any(f => string.Equals(f.RuleId, ruleId, StringComparison.OrdinalIgnoreCase)
+                && f.Severity == severity
+                && string.Equals(SkillSecurityScanner.ComputeFindingId(f), findingId, StringComparison.OrdinalIgnoreCase));
+        if (!findingExists)
+            return "The submitted rule, severity, or finding identity is not present in the current scanner result.";
+
+        var afterHash = SkillSecurityAcknowledgements.ComputeSha256(fileSystem, absoluteFile);
+        return string.Equals(afterHash, expectedHash, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : "The reviewed skill file changed while scanner evidence was being checked.";
+    }
+
+    private static bool TryGetAdmin(HttpContext context, out GatewayCallerIdentity caller)
+    {
+        if (context.Items.TryGetValue(CallerIdentityItemKey, out var value)
+            && value is GatewayCallerIdentity { IsAdmin: true } identity)
+        {
+            caller = identity;
+            return true;
+        }
+
+        caller = null!;
+        return false;
     }
 
     /// <summary>
@@ -72,6 +289,8 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
         SkillName = record.SkillName,
         ViewCount = record.ViewCount,
         UseCount = record.UseCount,
+        SuppressedLoadCount = record.SuppressedLoadCount,
+        ContextReloadCount = record.ContextReloadCount,
         PatchCount = record.PatchCount,
         LastUsedAt = record.LastUsedAt,
         CreatedBy = record.CreatedBy,

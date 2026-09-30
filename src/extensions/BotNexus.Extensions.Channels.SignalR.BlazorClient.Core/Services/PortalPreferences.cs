@@ -26,11 +26,37 @@ public sealed class PortalPreferences
     public string Density { get; set; } = PortalDensity.Compact;
 
     /// <summary>
+    /// Portal shell variant. Existing users remain on <see cref="PortalShell.Classic"/> unless
+    /// they explicitly opt into the experimental simplified shell.
+    /// </summary>
+    public string Shell { get; set; } = PortalShell.Classic;
+
+    /// <summary>
     /// Colour theme, emitted as the <c>data-theme</c> attribute on the document element so the
     /// token block in <c>app.css</c> switches every colour at once. Dark is the default because it
     /// was the portal's only theme historically, and upgrading must not repaint an existing user.
     /// </summary>
     public string Theme { get; set; } = PortalTheme.Dark;
+}
+
+/// <summary>
+/// Canonical portal shell identifiers. These are the only legal values of
+/// <see cref="PortalPreferences.Shell"/> and are projected onto the app shell as
+/// <c>data-shell</c>.
+/// </summary>
+public static class PortalShell
+{
+    /// <summary>The existing portal shell and safe default.</summary>
+    public const string Classic = "classic";
+
+    /// <summary>The experimental simplified portal shell.</summary>
+    public const string Simplified = "simplified";
+
+    /// <summary>Coerces arbitrary input to a legal shell value.</summary>
+    public static string Normalize(string? value) =>
+        string.Equals(value?.Trim(), Simplified, StringComparison.OrdinalIgnoreCase)
+            ? Simplified
+            : Classic;
 }
 
 /// <summary>

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
 using Microsoft.Extensions.Logging;
@@ -38,7 +39,7 @@ namespace BotNexus.Extensions.Channels.Test;
 /// treat it as that channel, which is the only way to exercise those paths without a live bot.
 /// </para>
 /// </remarks>
-public sealed class TestChannelAdapter : ChannelAdapterBase
+public sealed class TestChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter, IConversationEventSink
 {
     private readonly ILogger<TestChannelAdapter> _logger;
     private readonly TestChannelOptions _options;
@@ -47,6 +48,8 @@ public sealed class TestChannelAdapter : ChannelAdapterBase
     // A single flat list would force every test to filter, and a test that forgets to filter would
     // pass on another address's message.
     private readonly ConcurrentDictionary<string, ConcurrentQueue<TestChannelOutboundRecord>> _outbound =
+        new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ConcurrentQueue<TestChannelConversationEventRecord>> _conversationEvents =
         new(StringComparer.Ordinal);
 
     private long _sequence;
@@ -96,6 +99,7 @@ public sealed class TestChannelAdapter : ChannelAdapterBase
     protected override Task OnStopAsync(CancellationToken cancellationToken)
     {
         _outbound.Clear();
+        _conversationEvents.Clear();
         return Task.CompletedTask;
     }
 
@@ -132,6 +136,52 @@ public sealed class TestChannelAdapter : ChannelAdapterBase
             isStreamDelta: true);
 
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task SendStreamEventAsync(
+        ChannelStreamTarget target,
+        AgentStreamEvent streamEvent,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(streamEvent);
+
+        var record = new TestChannelConversationEventRecord(
+            target.ChannelAddress.Value,
+            streamEvent.AgentId ?? throw new InvalidOperationException("Conversation stream event must carry AgentId."),
+            streamEvent.ConversationId ?? target.ConversationId,
+            streamEvent.SessionId ?? target.SessionId,
+            target.BindingId,
+            target.ChannelRequestId,
+            streamEvent,
+            Interlocked.Increment(ref _sequence),
+            DateTimeOffset.UtcNow);
+
+        _conversationEvents
+            .GetOrAdd(target.ChannelAddress.Value, _ => new ConcurrentQueue<TestChannelConversationEventRecord>())
+            .Enqueue(record);
+
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public async Task OnConversationEventAsync(
+        ConversationEvent conversationEvent,
+        CancellationToken cancellationToken = default)
+    {
+        if (conversationEvent is not ConversationAgentEvent agentEvent)
+            return;
+
+        foreach (var target in ConversationEventStreamRouting.GetTargets(
+                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
+        {
+            if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
+            {
+                await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>
@@ -209,6 +259,14 @@ public sealed class TestChannelAdapter : ChannelAdapterBase
     /// <returns>The number of records removed.</returns>
     public int ClearOutbound(string address)
         => _outbound.TryRemove(address, out var queue) ? queue.Count : 0;
+
+    /// <summary>Returns structured conversation events for one address in capture order.</summary>
+    public IReadOnlyList<TestChannelConversationEventRecord> GetConversationEvents(string address)
+        => _conversationEvents.TryGetValue(address, out var queue) ? [.. queue] : [];
+
+    /// <summary>Returns structured conversation events across all addresses in capture order.</summary>
+    public IReadOnlyList<TestChannelConversationEventRecord> GetAllConversationEvents()
+        => [.. _conversationEvents.Values.SelectMany(queue => queue).OrderBy(record => record.Sequence)];
 
     private void Record(
         string address,

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Xml.Linq;
 using BotNexus.Cli.Services;
+using BotNexus.Gateway.Contracts.Updates;
 using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
@@ -12,6 +13,7 @@ namespace BotNexus.Cli.Commands;
 /// </summary>
 internal class UpdateCommand
 {
+    internal const int ExtensionDeploymentFailureExitCode = 2;
     private const int CancelledExitCode = 130;
 
     /// <summary>
@@ -22,6 +24,13 @@ internal class UpdateCommand
     internal const int DirtyWorkingTreeExitCode = 3;
 
     private readonly IGatewayProcessManager _processManager;
+    private ReleaseTargetRequest? _releaseRequest;
+
+    internal ReleaseTargetRequest? ReleaseRequest
+    {
+        get => _releaseRequest;
+        set => _releaseRequest = value;
+    }
 
     /// <summary>
     /// How to handle uncommitted changes in the deployment repo before pulling. Set from the
@@ -41,13 +50,17 @@ internal class UpdateCommand
         var portOption = new Option<int>("--port", () => 5005, "Gateway port.");
         var stashOption = new Option<bool>("--stash", () => false, "If the repo has uncommitted changes, stash them (recoverable) and continue.");
         var forceOption = new Option<bool>("--force", () => false, "If the repo has uncommitted changes, discard tracked-file changes and continue. Destructive.");
+        var latestOption = new Option<bool>("--latest", "Update to the configured development tip (origin/main) instead of a stable release.");
+        var versionOption = new Option<string?>("--version", () => null, "Update to the exact release tag for this semantic version (for example, 1.2.3).");
 
-        var command = new Command("update", "Pull latest source, build, and restart the BotNexus gateway.")
+        var command = new Command("update", "Apply a selected source release, build, and restart the BotNexus gateway.")
         {
             sourceOption,
             portOption,
             stashOption,
-            forceOption
+            forceOption,
+            latestOption,
+            versionOption
         };
 
         command.SetHandler(async context =>
@@ -68,14 +81,31 @@ internal class UpdateCommand
                 return;
             }
 
+            try
+            {
+                _releaseRequest = ReleaseSelector.ToRequest(
+                    context.ParseResult.GetValueForOption(latestOption),
+                    context.ParseResult.GetValueForOption(versionOption));
+            }
+            catch (ArgumentException ex)
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(ex.Message)}");
+                context.ExitCode = 2;
+                return;
+            }
+
             DirtyTreeHandling = force ? DirtyTreeMode.Force : stash ? DirtyTreeMode.Stash : DirtyTreeMode.Abort;
             context.ExitCode = await ExecuteAsync(repoRoot, home, port, verbose, context.GetCancellationToken());
         });
 
         var checkSourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
-        var checkCommand = new Command("check", "Check whether updates are available from origin/main.")
+        var checkLatestOption = new Option<bool>("--latest", "Check against the configured development tip (origin/main) instead of a stable release.");
+        var checkVersionOption = new Option<string?>("--version", () => null, "Check against the exact release tag for this semantic version (for example, 1.2.3).");
+        var checkCommand = new Command("check", "Check whether the selected source release is installed.")
         {
-            checkSourceOption
+            checkSourceOption,
+            checkLatestOption,
+            checkVersionOption
         };
 
         checkCommand.SetHandler(async context =>
@@ -83,6 +113,18 @@ internal class UpdateCommand
             var source = context.ParseResult.GetValueForOption(checkSourceOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var repoRoot = CliPaths.ResolveSource(source);
+            try
+            {
+                _releaseRequest = ReleaseSelector.ToRequest(
+                    context.ParseResult.GetValueForOption(checkLatestOption),
+                    context.ParseResult.GetValueForOption(checkVersionOption));
+            }
+            catch (ArgumentException ex)
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(ex.Message)}");
+                context.ExitCode = 2;
+                return;
+            }
             context.ExitCode = await CheckAsync(repoRoot, verbose, context.GetCancellationToken());
         });
 
@@ -93,6 +135,33 @@ internal class UpdateCommand
 
     internal async Task<int> CheckAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
     {
+        if (_releaseRequest is not null)
+        {
+            AnsiConsole.MarkupLine("[blue][[update]][/] Resolving selected release...");
+            try
+            {
+                var status = await ResolveReleaseStatusAsync(repoRoot, _releaseRequest, cancellationToken);
+                if (string.Equals(status.Installed.CommitSha, status.Target.CommitSha, StringComparison.OrdinalIgnoreCase))
+                {
+                    AnsiConsole.MarkupLine($"[green]√[/] Already at [dim]{CliText.SafeDisplay(status.Target.SourceName)}[/].");
+                    return 0;
+                }
+
+                AnsiConsole.MarkupLine($"[yellow]![/] Update available: [dim]{CliText.SafeDisplay(status.Target.SourceName)}[/].");
+                return 1;
+            }
+            catch (OperationCanceledException)
+            {
+                AnsiConsole.MarkupLine("[yellow]![/] Update check cancelled.");
+                return CancelledExitCode;
+            }
+            catch (ReleaseTargetResolutionException ex)
+            {
+                AnsiConsole.MarkupLine($"[red]x[/] {CliText.SafeDisplay(ex.Message)}");
+                return 2;
+            }
+        }
+
         AnsiConsole.MarkupLine("[blue][[update]][/] Checking for updates...");
 
         var fetchResult = await RunGitFetchAsync(repoRoot, verbose, cancellationToken);
@@ -139,10 +208,62 @@ internal class UpdateCommand
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
-        // Step 1: git pull (safe to do while gateway is running)
-        var pullResult = await RunGitPullStepAsync(repoRoot, verbose, cancellationToken);
-        if (pullResult != 0)
-            return pullResult;
+        // Resolve the immutable target before dirty-tree handling, checkout mutation, or stopping
+        // the gateway. The command-tree path always supplies a request; the null branch preserves
+        // the existing internal test seam while callers migrate to release selection.
+        if (_releaseRequest is not null)
+        {
+            ReleaseUpdateStatus status;
+            try
+            {
+                status = await ResolveReleaseStatusAsync(repoRoot, _releaseRequest, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return CancelledExitCode;
+            }
+            catch (ReleaseTargetResolutionException ex)
+            {
+                AnsiConsole.MarkupLine($"[red]x[/] {CliText.SafeDisplay(ex.Message)}");
+                return 2;
+            }
+
+            var preflight = await EnsureWorkingTreeReadyAsync(repoRoot, cancellationToken);
+            if (preflight != 0)
+                return preflight;
+
+            LastPullWasNoOp = string.Equals(
+                status.Installed.CommitSha,
+                status.Target.CommitSha,
+                StringComparison.OrdinalIgnoreCase);
+            if (!LastPullWasNoOp)
+            {
+                try
+                {
+                    await CheckoutReleaseTargetAsync(repoRoot, status.Target, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return CancelledExitCode;
+                }
+                catch (ReleaseTargetResolutionException ex)
+                {
+                    AnsiConsole.MarkupLine($"[red]x[/] {CliText.SafeDisplay(ex.Message)}");
+                    return 2;
+                }
+                AnsiConsole.MarkupLine($"[green]√[/] Selected [dim]{CliText.SafeDisplay(status.Target.SourceName)}[/].");
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[green]√[/] Already at [dim]{CliText.SafeDisplay(status.Target.SourceName)}[/].");
+            }
+        }
+        else
+        {
+            var pullResult = await RunGitPullStepAsync(repoRoot, verbose, cancellationToken);
+            if (pullResult != 0)
+                return pullResult;
+        }
 
         // Step 1b: if the pull genuinely changed nothing, there is nothing to build and no
         // reason to bounce the gateway. Previously this case still stopped the gateway, ran a
@@ -243,12 +364,27 @@ internal class UpdateCommand
 
         // Steps 3 & 4: Build and deploy (gateway is now stopped, no file locks)
         var buildResult = await RunBuildAndDeployAsync(repoRoot, home, verbose, cancellationToken);
-        if (buildResult != 0)
+        if (buildResult != 0 && buildResult != ExtensionDeploymentFailureExitCode)
             return buildResult;
 
-        // Step 5: Start
-        return await RunRestartAsync(home, port, repoRoot, cancellationToken);
+        // Step 5: Start even after a controlled deployment failure. Atomic reconciliation has
+        // preserved or restored the usable deployment; leaving the stopped gateway offline would
+        // turn a recoverable update failure into an outage. Preserve the nonzero update result.
+        var restartResult = await RunRestartAsync(home, port, repoRoot, cancellationToken);
+        return restartResult != 0 ? restartResult : buildResult;
     }
+
+    protected virtual Task<ReleaseUpdateStatus> ResolveReleaseStatusAsync(
+        string repoRoot,
+        ReleaseTargetRequest request,
+        CancellationToken cancellationToken)
+        => ReleaseTargetGitResolver.ResolveLocalAsync(repoRoot, request, cancellationToken);
+
+    protected virtual Task CheckoutReleaseTargetAsync(
+        string repoRoot,
+        ResolvedReleaseTarget target,
+        CancellationToken cancellationToken)
+        => ReleaseTargetGitResolver.CheckoutAsync(repoRoot, target, cancellationToken);
 
     /// <summary>
     /// Runs git pull. Protected virtual so tests can override it.
@@ -417,8 +553,11 @@ internal class UpdateCommand
         }
         AnsiConsole.MarkupLine($"[green]✓[/] {deploymentResult.DeployedCount} extension(s) deployed");
 
-        return 0;
+        return DeploymentExitCode(deploymentResult);
     }
+
+    internal static int DeploymentExitCode(ExtensionDeploymentResult result)
+        => result.Failures.Count == 0 ? 0 : ExtensionDeploymentFailureExitCode;
 
     protected virtual async Task<int> RunRestartAsync(string home, int port, string repoRoot, CancellationToken cancellationToken)
     {

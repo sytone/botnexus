@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
@@ -41,6 +42,117 @@ public sealed class WorkspaceContextBuilderTests
             result.ShouldContain("TOOLS");
             result.ShouldNotContain("SOUL");
             _fileSystem.File.Exists(Path.Combine(workspacePath, "BOOTSTRAP.md")).ShouldBeFalse();
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WithDeniedPromptPaths_ExcludesExactAndDirectoryMatches()
+    {
+        var workspacePath = CreateWorkspace(
+            ("allowed/AGENTS.md", "ALLOWED NEIGHBOR SENTINEL"),
+            ("protected/exact.secret", "EXACT DENIED SENTINEL"),
+            ("protected/nested/directory.secret", "DIRECTORY DENIED SENTINEL"));
+        try
+        {
+            var descriptor = new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("policy-test"),
+                DisplayName = "Policy Test",
+                ModelId = "test-model",
+                ApiProvider = "test-provider",
+                SystemPromptFiles =
+                [
+                    "allowed/AGENTS.md",
+                    "protected/exact.secret",
+                    "protected/nested/directory.secret"
+                ],
+                FileAccess = new FileAccessPolicy
+                {
+                    DeniedPaths =
+                    [
+                        Path.Combine(workspacePath, "protected", "exact.secret"),
+                        Path.Combine(workspacePath, "protected", "nested")
+                    ]
+                }
+            };
+
+            var result = await new WorkspaceContextBuilder(new StubWorkspaceManager(workspacePath), _fileSystem)
+                .BuildSystemPromptAsync(descriptor);
+
+            result.ShouldContain("ALLOWED NEIGHBOR SENTINEL");
+            result.ShouldNotContain("EXACT DENIED SENTINEL");
+            result.ShouldNotContain("DIRECTORY DENIED SENTINEL");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WhenResolvedVariantIsDenied_DoesNotFallBackToBaseFile()
+    {
+        var workspacePath = CreateWorkspace(
+            ("AGENTS.md", "BASE SENTINEL"),
+            ("AGENTS.gpt-5.md", "DENIED VARIANT SENTINEL"),
+            ("SOUL.md", "ALLOWED VARIANT NEIGHBOR"));
+        try
+        {
+            var descriptor = new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("variant-policy-test"),
+                DisplayName = "Variant Policy Test",
+                ModelId = "gpt-5",
+                ApiProvider = "test-provider",
+                SystemPromptFiles = ["AGENTS.md", "SOUL.md"],
+                FileAccess = new FileAccessPolicy
+                {
+                    DeniedPaths = [Path.Combine(workspacePath, "AGENTS.gpt-5.md")]
+                }
+            };
+
+            var result = await new WorkspaceContextBuilder(new StubWorkspaceManager(workspacePath), _fileSystem)
+                .BuildSystemPromptAsync(descriptor);
+
+            result.ShouldContain("ALLOWED VARIANT NEIGHBOR");
+            result.ShouldNotContain("DENIED VARIANT SENTINEL");
+            result.ShouldNotContain("BASE SENTINEL");
+        }
+        finally
+        {
+            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task BuildSystemPromptAsync_WhenResolvedBootstrapVariantIsDenied_DoesNotReadOrDeleteIt()
+    {
+        var workspacePath = CreateWorkspace(("nested/BOOTSTRAP.gpt-5.md", "DENIED BOOTSTRAP SENTINEL"));
+        var bootstrapPath = Path.Combine(workspacePath, "nested", "BOOTSTRAP.gpt-5.md");
+        try
+        {
+            var descriptor = new AgentDescriptor
+            {
+                AgentId = BotNexus.Domain.Primitives.AgentId.From("bootstrap-policy-test"),
+                DisplayName = "Bootstrap Policy Test",
+                ModelId = "gpt-5",
+                ApiProvider = "test-provider",
+                SystemPromptFiles = ["nested/BOOTSTRAP.md"],
+                FileAccess = new FileAccessPolicy
+                {
+                    DeniedPaths = [bootstrapPath]
+                }
+            };
+
+            var result = await new WorkspaceContextBuilder(new StubWorkspaceManager(workspacePath), _fileSystem)
+                .BuildSystemPromptAsync(descriptor);
+
+            result.ShouldNotContain("DENIED BOOTSTRAP SENTINEL");
+            _fileSystem.File.Exists(bootstrapPath).ShouldBeTrue();
         }
         finally
         {

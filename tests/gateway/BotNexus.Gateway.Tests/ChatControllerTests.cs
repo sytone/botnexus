@@ -2,6 +2,8 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Tests.Dispatching;
 using System.Collections.Generic;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -26,7 +28,6 @@ public sealed class ChatControllerTests
     [Fact]
     public async Task Steer_WhenSessionExists_QueuesSteeringMessage()
     {
-        var handle = new Mock<IAgentHandle>();
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetInstance(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1")))
             .Returns(new AgentInstance
@@ -36,14 +37,19 @@ public sealed class ChatControllerTests
                 SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1"),
                 IsolationStrategy = "in-process"
             });
-        supervisor.Setup(s => s.GetOrCreateAsync(BotNexus.Domain.Primitives.AgentId.From("agent-a"), BotNexus.Domain.Primitives.SessionId.From("session-1"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(handle.Object);
-        var controller = new ChatController(supervisor.Object, Mock.Of<ISessionStore>());
+        var orchestrator = new CapturingInboundMessageOrchestrator
+        {
+            AdmissionStatus = InboundDispatchStatus.Steered
+        };
+        var controller = new ChatController(supervisor.Object, Mock.Of<ISessionStore>(), orchestrator: orchestrator);
 
         var result = await controller.Steer(new AgentControlRequest("agent-a", "session-1", "adjust"), CancellationToken.None);
 
         result.ShouldBeOfType<AcceptedResult>();
-        handle.Verify(h => h.SteerAsync("adjust", It.IsAny<CancellationToken>()), Times.Once);
+        var message = orchestrator.Captured.ShouldHaveSingleItem();
+        message.Content.ShouldBe("adjust");
+        message.RoutingHints.ShouldNotBeNull();
+        message.RoutingHints!.DeliveryMode.ShouldBe(InboundDeliveryMode.Steer);
     }
 
     [Fact]

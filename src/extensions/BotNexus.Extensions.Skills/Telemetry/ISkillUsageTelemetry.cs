@@ -11,8 +11,14 @@ public interface ISkillUsageTelemetry
     /// <summary>Increments the skill's view counter and refreshes <c>last_used_at</c>. Used when a skill is listed or a support file is viewed.</summary>
     Task RecordViewAsync(string skillName, CancellationToken cancellationToken = default);
 
-    /// <summary>Increments the skill's use counter and refreshes <c>last_used_at</c>. Used when a skill is loaded into context.</summary>
+    /// <summary>Increments the skill's use counter and refreshes <c>last_used_at</c>. Used when a full skill body is loaded into context.</summary>
     Task RecordUseAsync(string skillName, CancellationToken cancellationToken = default);
+
+    /// <summary>Increments the count of repeat loads suppressed while the skill body remains in context.</summary>
+    Task RecordSuppressedLoadAsync(string skillName, CancellationToken cancellationToken = default);
+
+    /// <summary>Increments the count of full reloads allowed after durable context replacement.</summary>
+    Task RecordContextReloadAsync(string skillName, CancellationToken cancellationToken = default);
 
     /// <summary>Increments the skill's patch counter and refreshes <c>last_used_at</c>. Used when a skill is mutated via the manage tool.</summary>
     Task RecordPatchAsync(string skillName, CancellationToken cancellationToken = default);

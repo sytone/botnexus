@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -81,7 +82,9 @@ public static class TestChannelServiceCollectionExtensions
         Action<TestChannelOptions>? configure = null)
     {
         services.AddBotNexusTestChannelSupport(configure);
-        services.AddSingleton<IChannelAdapter, TestChannelAdapter>();
+        services.AddSingleton<TestChannelAdapter>();
+        services.AddSingleton<IChannelAdapter>(provider => provider.GetRequiredService<TestChannelAdapter>());
+        services.AddSingleton<IConversationEventSink>(provider => provider.GetRequiredService<TestChannelAdapter>());
         services.AddSingleton<BotNexus.Gateway.Abstractions.Extensions.IEndpointContributor, TestChannelEndpointContributor>();
         return services;
     }

@@ -12,7 +12,7 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="Model">The model definition used for provider calls.</param>
 /// <param name="ConvertToLlm">Converts agent messages to provider chat messages before each LLM call.</param>
 /// <param name="TransformContext">Optional context transformer before provider invocation (defaults to identity passthrough).</param>
-/// <param name="GetApiKey">Resolves provider API keys on demand (called before each LLM invocation).</param>
+/// <param name="GetProviderExecutionOptions">Resolves provider execution policy on demand (called before each LLM invocation).</param>
 /// <param name="GetSteeringMessages">Provides steering messages when configured (drained at turn boundaries).</param>
 /// <param name="GetFollowUpMessages">Provides follow-up messages when configured (drained after runs complete).</param>
 /// <param name="ToolExecutionMode">Controls tool execution ordering (Sequential or Parallel).</param>
@@ -103,13 +103,13 @@ public record AgentLoopConfig(
     LlmClient LlmClient,
     ConvertToLlmDelegate ConvertToLlm,
     TransformContextDelegate? TransformContext,
-    GetApiKeyDelegate GetApiKey,
+    GetProviderExecutionOptionsDelegate GetProviderExecutionOptions,
     GetMessagesDelegate? GetSteeringMessages,
     GetMessagesDelegate? GetFollowUpMessages,
     ToolExecutionMode ToolExecutionMode,
     BeforeToolCallDelegate? BeforeToolCall,
     AfterToolCallDelegate? AfterToolCall,
-    SimpleStreamOptions GenerationSettings,
+    GenerationOptions GenerationSettings,
     int? MaxRetryDelayMs = AgentLoopConfig.DefaultMaxRetryDelayMs,
     bool SkipInitialSteeringPoll = false,
     TimeSpan? ToolTimeout = null,

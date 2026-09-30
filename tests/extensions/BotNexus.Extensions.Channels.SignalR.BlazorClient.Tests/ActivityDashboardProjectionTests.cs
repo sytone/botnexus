@@ -1552,7 +1552,8 @@ public sealed class ActivityDashboardProjectionTests
         DateTimeOffset? lastRunAt = null,
         DateTimeOffset? nextRunAt = null,
         bool enabled = true,
-        DateTimeOffset? expiresAt = null) =>
+        DateTimeOffset? expiresAt = null,
+        string? lastRunError = null) =>
         new()
         {
             Id = id,
@@ -1561,7 +1562,8 @@ public sealed class ActivityDashboardProjectionTests
             LastRunAt = lastRunAt,
             NextRunAt = nextRunAt,
             Enabled = enabled,
-            ExpiresAt = expiresAt
+            ExpiresAt = expiresAt,
+            LastRunError = lastRunError
         };
 
     private static ActivityRow ProjectOneWithCron(
@@ -1627,6 +1629,51 @@ public sealed class ActivityDashboardProjectionTests
 
         Assert.Null(map["j1"].Name);
         Assert.Null(map["j1"].LastRunStatus);
+    }
+
+    [Fact]
+    public void CronHealthById_carries_error_and_normalizes_blank_to_null()
+    {
+        var map = ActivityDashboardProjection.CronHealthById(
+            [Job("failed", lastRunError: "  request timed out  "), Job("blank", lastRunError: "  ")]);
+
+        Assert.Equal("request timed out", map["failed"].LastRunError);
+        Assert.Null(map["blank"].LastRunError);
+    }
+
+    [Fact]
+    public void CronHealthErrorSummary_returns_only_a_bounded_first_line_for_current_failures()
+    {
+        var error = $"  {new string('x', ActivityDashboardProjection.CronErrorDisplayLength + 20)}\r\nstack trace";
+        var failed = ProjectOneWithCron(
+            Conv("c1", source: "Cron", sourceId: "failed"),
+            [Job("failed", lastRunStatus: "failed", lastRunError: error)]);
+        var ok = ProjectOneWithCron(
+            Conv("c2", source: "Cron", sourceId: "ok"),
+            [Job("ok", lastRunStatus: "ok", lastRunError: "stale failure")]);
+        var unknown = ProjectOneWithCron(
+            Conv("c3", source: "Cron", sourceId: "unknown"),
+            [Job("unknown", lastRunStatus: null, lastRunError: "unclassified")]);
+
+        var summary = ActivityDashboardProjection.CronHealthErrorSummary(failed);
+
+        Assert.NotNull(summary);
+        Assert.Equal(ActivityDashboardProjection.CronErrorDisplayLength + 1, summary!.Length);
+        Assert.EndsWith("\u2026", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain('\r', summary);
+        Assert.DoesNotContain('\n', summary);
+        Assert.Null(ActivityDashboardProjection.CronHealthErrorSummary(ok));
+        Assert.Null(ActivityDashboardProjection.CronHealthErrorSummary(unknown));
+    }
+
+    [Fact]
+    public void CronHealthErrorSummary_returns_null_when_failure_has_no_error()
+    {
+        var row = ProjectOneWithCron(
+            Conv("c1", source: "Cron", sourceId: "j1"),
+            [Job("j1", lastRunStatus: "failed", lastRunError: "  ")]);
+
+        Assert.Null(ActivityDashboardProjection.CronHealthErrorSummary(row));
     }
 
     [Fact]

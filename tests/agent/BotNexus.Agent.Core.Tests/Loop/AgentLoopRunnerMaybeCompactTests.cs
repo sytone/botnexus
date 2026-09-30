@@ -23,6 +23,26 @@ using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 [Collection(ApiProviderRegistryCollection.Name)]
 public class AgentLoopRunnerMaybeCompactTests
 {
+    private sealed class ContextAwareTool : IAgentTool, IContextReplacementAwareTool
+    {
+        private static readonly JsonElement Schema = JsonDocument.Parse(
+            """{ "type": "object", "properties": {} }""").RootElement.Clone();
+
+        public int ReplacementCount { get; private set; }
+        public string Name => "context_aware";
+        public string Label => "Context aware";
+        public Tool Definition => new(Name, "Observes durable context replacement", Schema);
+        public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default) => Task.FromResult(arguments);
+        public Task<AgentToolResult> ExecuteAsync(
+            string toolCallId,
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default,
+            AgentToolUpdateCallback? onUpdate = null) => Task.FromResult(new AgentToolResult([]));
+        public void OnContextReplaced() => ReplacementCount++;
+    }
+
     private sealed class LargeResultTool : IAgentTool
     {
         private static readonly JsonElement Schema = JsonDocument.Parse(
@@ -150,6 +170,27 @@ public class AgentLoopRunnerMaybeCompactTests
             .ShouldBe(["retained tail"]);
         providerContexts[1].Messages.OfType<ToolResultMessage>().ShouldBeEmpty(
             "the next provider request must use the refreshed compacted snapshot, not stale tool output");
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenMaybeCompactReturnsContext_NotifiesContextAwareToolsOnce()
+    {
+        var tool = new ContextAwareTool();
+        using var provider = RegisterProvider("maybe-compact-tool-notification", (_, _, _) =>
+            TestStreamFactory.CreateTextResponse("done"));
+        var refreshed = new AgentContext("compacted", [], [tool]);
+        var config = CreateConfig(
+            "maybe-compact-tool-notification",
+            _ => Task.FromResult<AgentContext?>(refreshed));
+
+        _ = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("stale")],
+            new AgentContext("stale", [], [tool]),
+            config,
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        tool.ReplacementCount.ShouldBe(1);
     }
 
     [Fact]
@@ -309,13 +350,13 @@ public class AgentLoopRunnerMaybeCompactTests
                         DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
                     .ToList()),
             TransformContext: (messages, _) => Task.FromResult(messages),
-            GetApiKey: (_, _) => Task.FromResult<string?>(null),
+            GetProviderExecutionOptions: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
             GetSteeringMessages: null,
             GetFollowUpMessages: getFollowUpMessages,
             ToolExecutionMode: ToolExecutionMode.Sequential,
             BeforeToolCall: null,
             AfterToolCall: null,
-            GenerationSettings: new SimpleStreamOptions(),
+            GenerationSettings: new GenerationOptions(),
             MaxRetryDelayMs: 1,
             MaybeCompactAsync: maybeCompact);
     }

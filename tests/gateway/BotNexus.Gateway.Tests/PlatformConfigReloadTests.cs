@@ -85,7 +85,7 @@ public sealed class PlatformConfigReloadTests : IDisposable
             """);
 
         var configBuilder = new ConfigurationBuilder();
-        configBuilder.AddJsonFile(_configPath, optional: false, reloadOnChange: false);
+        configBuilder.AddResilientJsonFile(_configPath, optional: false, reloadOnChange: false);
         var configuration = configBuilder.Build();
 
         var services = new ServiceCollection();
@@ -122,7 +122,7 @@ public sealed class PlatformConfigReloadTests : IDisposable
             """);
 
         var configBuilder = new ConfigurationBuilder();
-        configBuilder.AddJsonFile(_configPath, optional: false, reloadOnChange: false);
+        configBuilder.AddResilientJsonFile(_configPath, optional: false, reloadOnChange: false);
         var configuration = configBuilder.Build();
 
         var services = new ServiceCollection();
@@ -156,7 +156,7 @@ public sealed class PlatformConfigReloadTests : IDisposable
             """);
 
         var configuration = new ConfigurationBuilder()
-            .AddJsonFile(_configPath, optional: false, reloadOnChange: false)
+            .AddResilientJsonFile(_configPath, optional: false, reloadOnChange: false)
             .Build();
         var config = new PlatformConfig();
         configuration.Bind(config);
@@ -175,24 +175,25 @@ public sealed class PlatformConfigReloadTests : IDisposable
     }
 
     [Fact]
-    public void PlatformConfigPostConfigure_RejectsLegacyGatewayExtensionDefaults()
+    public void PlatformConfigPostConfigure_MigratesLegacyGatewayExtensionDefaults()
     {
         File.WriteAllText(_configPath, """
-            { "gateway": { "extensions": { "defaults": { "legacy": {} } } } }
+            { "gateway": { "extensions": { "defaults": { "legacy": { "enabled": true } } } } }
             """);
 
         var configuration = new ConfigurationBuilder()
-            .AddJsonFile(_configPath, optional: false, reloadOnChange: false)
+            .AddResilientJsonFile(_configPath, optional: false, reloadOnChange: false)
             .Build();
         var config = new PlatformConfig();
         configuration.Bind(config);
 
-        var exception = Should.Throw<OptionsValidationException>(() =>
-            new PlatformConfigPostConfigure(configuration, _configPath)
-                .PostConfigure(Options.DefaultName, config));
+        new PlatformConfigPostConfigure(configuration, _configPath)
+            .PostConfigure(Options.DefaultName, config);
 
-        exception.Failures.ShouldContain(message =>
-            message.Contains("gateway.extensions.defaults", StringComparison.Ordinal));
+        var extensions = config.AgentDefaults?.Extensions;
+        extensions.ShouldNotBeNull();
+        extensions.ShouldContainKey("legacy");
+        extensions["legacy"].GetProperty("enabled").GetBoolean().ShouldBeTrue();
     }
 
     public void Dispose()

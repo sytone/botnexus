@@ -145,6 +145,7 @@ try
     // place in the gateway where the startup value could differ from the served value.
     startupPlatformConfig = new PlatformConfig();
     builder.Configuration.Bind(startupPlatformConfig);
+    PlatformConfigPostConfigure.ApplyAuthoritativeRawShape(builder.Configuration, startupPlatformConfig);
 }
 catch (Exception ex) when (ex is Microsoft.Extensions.Options.OptionsValidationException or System.Text.Json.JsonException)
 {

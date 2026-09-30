@@ -148,7 +148,17 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             sessions.Count,
             groupKeys.Count);
 
-        return new SubscribeAllResult(sessions);
+        var activeRuns = sessions
+            .Where(session => _supervisor.GetHandle(
+                AgentId.From(session.AgentId),
+                SessionId.From(session.SessionId))?.IsRunning == true)
+            .Select(session => new RunActivitySnapshot(
+                session.SessionId,
+                session.AgentId,
+                session.ConversationId))
+            .ToArray();
+
+        return new SubscribeAllResult(sessions, activeRuns);
     }
 
     /// <summary>
@@ -599,116 +609,28 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     {
         EnsureControlScope(nameof(Steer));
         var ctx = ResolveCallContext(agentId, sessionId);
-        var typedChannelType = ChannelKey.From("signalr");
         var parts = (contentParts ?? []).Select(ConvertToDomainContentPart).ToList();
         if (string.IsNullOrWhiteSpace(content) && parts.Count == 0)
             throw new ArgumentException("A steer must contain text or at least one attachment.", nameof(content));
-        var normalizedContent = content ?? string.Empty;
 
-        // Subscribe so post-compaction streams continue to arrive. #682
         await SubscribeInternalAsync(ctx.SessionId);
-
-        // Steering bypasses the per-session orchestrator queue entirely and injects
-        // directly into the agent's PendingMessageQueue via handle.SteerAsync().
-        //
-        // Uses GetOrCreateAsync instead of GetHandle to eliminate the race window
-        // between SendMessage (fire-and-forget to orchestrator) and Steer: the
-        // orchestrator may not have finished routing/registering the handle yet.
-        // GetOrCreateAsync waits for or creates the handle, avoiding a null lookup
-        // that would trigger the old fallback dispatch (which caused "Agent is
-        // already running" when the queued steer reached ProcessAsync on the same
-        // handle that was already streaming).
-        //
-        // SteerAsync works regardless of IsRunning: if running, the steer is drained
-        // at the next turn boundary; if idle, it's drained at the start of the next run.
-        //
-        // Dead-letter guard: a steer only makes sense against a RUNNING turn. Previously this
-        // always called GetOrCreateAsync, which would conjure a fresh idle handle for a session
-        // with no live run and "inject" a steer that never drains (the agent loop already ended,
-        // so its PendingMessageQueue is never read again). Combined with a client-side session
-        // mis-route, that silently swallowed the user's steer into an unrelated, idle session.
-        //
-        // First try GetHandle (no phantom creation). If there's no live handle, fall back to a
-        // single GetOrCreateAsync to win the race against an in-flight SendMessage that may still
-        // be routing/registering the handle (the original #-rationale for GetOrCreate). After that,
-        // if the resolved handle still isn't running, treat it as a non-delivery rather than
-        // dead-lettering the message.
-        IAgentHandle? handle = _supervisor.GetHandle(ctx.AgentId, ctx.SessionId);
-        if (handle is null || !handle.IsRunning)
-        {
-            try
-            {
-                handle = await _supervisor.GetOrCreateAsync(ctx.AgentId, ctx.SessionId, Context.ConnectionAborted);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to resolve agent handle for steering: agent {AgentId} session {SessionId}",
-                    ctx.AgentId.Value, ctx.SessionId.Value);
-
-                await PublishActivityAsync(
-                    ctx.AgentId,
-                    ctx.SessionId,
-                    GatewayActivityType.Error,
-                    Context.ConnectionAborted,
-                    conversationId: conversationId,
-                    message: $"Steering failed: {ex.Message}");
-
-                return new SendMessageResult(ctx.SessionId.Value, ctx.AgentId.Value, typedChannelType.Value);
-            }
-        }
-
-        // If the agent isn't running, there is no in-flight turn to steer. Do NOT persist the
-        // message into the session or inject it into an idle handle's queue (it would never drain).
-        // Surface a clear, user-visible signal so the steer isn't silently lost.
-        if (!handle.IsRunning)
-        {
-            await PublishActivityAsync(
+        var addressedConversationId = await ResolveConversationHintAsync(ctx.SessionId, conversationId);
+        var admission = await _app.PostAsync(
+            BuildInboundMessage(
                 ctx.AgentId,
-                ctx.SessionId,
-                GatewayActivityType.Error,
-                Context.ConnectionAborted,
-                conversationId: conversationId,
-                message: "Steering not applied: the agent isn't currently running in this conversation. Send the message instead to start a new turn.");
+                Context.ConnectionId,
+                content ?? string.Empty,
+                "steer",
+                new InboundMessageRoutingHints(
+                    RequestedAgentId: ctx.AgentId,
+                    RequestedSessionId: ctx.SessionId,
+                    RequestedConversationId: addressedConversationId,
+                    DeliveryMode: InboundDeliveryMode.Steer),
+                parts.Count == 0 ? null : parts),
+            Context.ConnectionAborted).ConfigureAwait(false);
+        EnsureMessageAccepted(admission);
 
-            _logger.LogInformation(
-                "Steering skipped (agent not running) for agent {AgentId} session {SessionId}",
-                ctx.AgentId.Value, ctx.SessionId.Value);
-
-            return new SendMessageResult(ctx.SessionId.Value, ctx.AgentId.Value, typedChannelType.Value);
-        }
-
-        // Record steering message in session history
-        var session = await _sessions.GetOrCreateAsync(ctx.SessionId, ctx.AgentId, Context.ConnectionAborted);
-        // #2484: persist the COMPOSED text so the transcript records the attachments too, matching
-        // what the agent actually receives.
-        var composed = AgentUserMessageComposer.Compose(normalizedContent, parts);
-        session.AddEntry(new SessionEntry
-        {
-            Role = BotNexus.Domain.Primitives.MessageRole.User,
-            Content = composed.Content
-        });
-        await _sessions.SaveAsync(session, Context.ConnectionAborted);
-
-        // Inject into agent's steering queue. With no attachments this stays on the string
-        // overload (unchanged behaviour); with attachments the composed multimodal message is
-        // injected so image parts reach the vision path instead of being dropped (#2484).
-        if (parts.Count == 0)
-            await handle.SteerAsync(normalizedContent, Context.ConnectionAborted);
-        else
-            await handle.SteerAsync(composed, Context.ConnectionAborted);
-
-        await PublishActivityAsync(
-            ctx.AgentId,
-            ctx.SessionId,
-            GatewayActivityType.SteeringInjected,
-            Context.ConnectionAborted,
-            conversationId: conversationId);
-
-        _logger.LogInformation(
-            "Steering injected for agent {AgentId} session {SessionId} (running={IsRunning})",
-            ctx.AgentId.Value, ctx.SessionId.Value, handle.IsRunning);
-
-        return new SendMessageResult(ctx.SessionId.Value, ctx.AgentId.Value, typedChannelType.Value);
+        return new SendMessageResult(ctx.SessionId.Value, ctx.AgentId.Value, SignalRChannel.Value);
     }
 
     /// <summary>
@@ -737,22 +659,27 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         IReadOnlyList<MediaContentPartDto> contentParts)
     {
         EnsureControlScope(nameof(InterruptAndSteer));
+        var ctx = ResolveCallContext(agentId, sessionId);
         var parts = (contentParts ?? []).Select(ConvertToDomainContentPart).ToList();
         if (string.IsNullOrWhiteSpace(message) && parts.Count == 0)
             throw new ArgumentException("A redirect must contain text or at least one attachment.", nameof(message));
-        var ctx = ResolveCallContext(agentId, sessionId);
 
-        var handle = _supervisor.GetHandle(ctx.AgentId, ctx.SessionId);
-        if (handle is null)
-            return false;
+        var addressedConversationId = await ResolveConversationHintAsync(ctx.SessionId);
+        var admission = await _app.PostAsync(
+            BuildInboundMessage(
+                ctx.AgentId,
+                Context.ConnectionId,
+                message ?? string.Empty,
+                "interrupt-and-steer",
+                new InboundMessageRoutingHints(
+                    RequestedAgentId: ctx.AgentId,
+                    RequestedSessionId: ctx.SessionId,
+                    RequestedConversationId: addressedConversationId,
+                    DeliveryMode: InboundDeliveryMode.Interrupt),
+                parts.Count == 0 ? null : parts),
+            Context.ConnectionAborted).ConfigureAwait(false);
 
-        if (parts.Count == 0)
-            await handle.InterruptAndSteerAsync(message, Context.ConnectionAborted);
-        else
-            await handle.InterruptAndSteerAsync(
-                AgentUserMessageComposer.Compose(message ?? string.Empty, parts),
-                Context.ConnectionAborted);
-        return true;
+        return admission is InboundDispatchStatus.Accepted or InboundDispatchStatus.Steered;
     }
 
     /// <summary>
@@ -1406,6 +1333,19 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// Adds the connection to the conversation group when the conversation id is already
     /// resolved. No-op when the conversation id is not initialised (legacy/orphan path).
     /// </summary>
+    private async Task<ConversationId?> ResolveConversationHintAsync(
+        SessionId sessionId,
+        string? conversationId = null)
+    {
+        if (!string.IsNullOrWhiteSpace(conversationId))
+            return ConversationId.From(conversationId);
+
+        var session = await _sessions.GetAsync(sessionId, Context.ConnectionAborted);
+        return session is not null && session.ConversationId.IsInitialized()
+            ? session.ConversationId
+            : null;
+    }
+
     private async Task SubscribeConversationInternalAsync(ConversationId conversationId)
     {
         if (!conversationId.IsInitialized())

@@ -121,6 +121,34 @@ for removing the fence-token check. That historical fence-mutation evidence is d
 the current append-preservation assertion; updating this guide does not constitute a new test
 or mutation run.
 
+### Cron aggregate (worked example)
+
+Cron has no broad `UpdateAsync`/full-row replacement entry point. The current source contract is
+`UpdateDefinitionAsync`, a `NarrowPatch` over caller-authored definition columns. Scheduler
+bookkeeping, run-history rows and the conversation reservation remain separate writes.
+
+| Entry point | Class | Owns |
+| --- | --- | --- |
+| `CreateAsync` | Create | one new `cron_jobs` row; the store initializes store-owned timestamps |
+| `UpdateDefinitionAsync` | NarrowPatch | definition columns, plus a store-owned schedule-activation stamp when schedule/time-zone inputs change |
+| `SetNextRunAtAsync` / `SetBackoffUntilAsync` | NarrowPatch | one scheduler bookkeeping column each |
+| `RecordRunFinalizationAsync` | NarrowPatch | `last_run_at`, `last_run_status`, `last_run_error` |
+| `TrySetConversationIdAsync` | CompareAndSwap | `conversation_id`, only while it is null |
+| `RecordRunStartAsync` | Create | one `cron_runs` row and the job's `last_run_*` bookkeeping |
+| `TryRecordMissedRunAsync` | Merge | one idempotent missed-run history row per scheduled occurrence |
+| `RecordRunSessionAsync` / `RecordRunCompleteAsync` | NarrowPatch | owned columns of one run-history row |
+| `DeleteAsync` / `PurgeRunsOlderThanAsync` | NarrowPatch | predicate-selected job/run rows |
+
+The executable `CronWriteInventoryTests` reflects over `ICronStore`, asserts a non-empty exact
+mutation set in both directions, and rejects stale inventory rows. This deliberately classifies
+`UpdateDefinitionAsync`; there is no obsolete broad `UpdateAsync` to document or test.
+
+`CronLostUpdateSeamTests` uses the real `SqliteCronStore` and `LostUpdateScenario<CronJob>` to take
+a detached job snapshot, commit run finalization or conversation CAS through an independent store,
+then apply a stale definition update. Both writes compose: the definition edit is accepted while
+the concurrently committed bookkeeping or conversation winner survives. Verification uses a fresh
+store against the same on-disk database, and no step relies on a sleep.
+
 ## The harness
 
 `tests/persistence/BotNexus.Persistence.Seam.Tests` provides two reusable pieces:
@@ -178,10 +206,10 @@ knowledge; a harness that guessed it would quietly weaken assertions.
 
 ## Scope today
 
-Conversations and **sessions**. Cron jobs, webhook registrations/runs and configuration writers
-are still uninventoried and untested, and remain tracked on issue #3327 along with an architecture
-test that flags new broad aggregate updates in high-risk services. Each domain ships as its own
-PR; #2130 closes only when all of them are covered.
+Conversations, **sessions**, and **cron jobs/runs**. Webhook registrations/runs and configuration
+writers are still uninventoried and untested, and remain tracked on issue #3327 along with an
+architecture test that flags new broad aggregate updates in high-risk services. Each domain ships
+as its own PR; #2130 closes only when all of them are covered.
 
 
 ## Governed agent proposal ledger

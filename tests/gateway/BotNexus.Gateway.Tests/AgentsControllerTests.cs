@@ -250,7 +250,7 @@ public sealed class AgentsControllerTests
 
         _ = await controller.Unregister("agent-a", CancellationToken.None);
 
-        writer.Verify(w => w.DeleteAsync("agent-a", It.IsAny<CancellationToken>()), Times.Once);
+        writer.Verify(w => w.DeleteAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -377,7 +377,7 @@ public sealed class AgentsControllerTests
         var result = await controller.Unregister("agent-a", CancellationToken.None);
 
         result.ShouldBeOfType<NoContentResult>();
-        writer.Verify(w => w.DeleteAsync("agent-a", It.IsAny<CancellationToken>()), Times.Once);
+        writer.Verify(w => w.DeleteAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once);
         registry.Get(BotNexus.Domain.Primitives.AgentId.From("agent-a")).ShouldBeNull();
     }
 
