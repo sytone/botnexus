@@ -139,6 +139,64 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
+    public async Task AddConversationBindingAsync_posts_typed_request_to_binding_endpoint()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/conversations/conv1/bindings", BindingJson());
+
+        var binding = await client.AddConversationBindingAsync(
+            "conv1",
+            new AddConversationBindingRequestDto("telegram", "chat:42/thread:7", "Interactive", "Single", "Support"));
+
+        handler.LastRequestMethod.ShouldBe("POST");
+        handler.LastRequestUrl.ShouldContain("/api/conversations/conv1/bindings");
+        using var body = JsonDocument.Parse(handler.LastRequestBody);
+        body.RootElement.GetProperty("channelType").GetString().ShouldBe("telegram");
+        body.RootElement.GetProperty("channelAddress").GetString().ShouldBe("chat:42/thread:7");
+        body.RootElement.TryGetProperty("threadId", out _).ShouldBeFalse();
+        binding?.BindingId.ShouldBe("b1");
+    }
+
+    [Fact]
+    public async Task RemoveConversationBindingAsync_deletes_binding_endpoint()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/conversations/conv1/bindings/b1", "{}");
+
+        var removed = await client.RemoveConversationBindingAsync("conv1", "b1");
+
+        removed.ShouldBeTrue();
+        handler.LastRequestMethod.ShouldBe("DELETE");
+        handler.LastRequestUrl.ShouldContain("/api/conversations/conv1/bindings/b1");
+    }
+
+    [Fact]
+    public async Task MoveConversationBindingAsync_posts_target_conversation()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/conversations/conv1/bindings/b1/move", BindingJson());
+
+        var binding = await client.MoveConversationBindingAsync(
+            "conv1", "b1", new MoveConversationBindingRequestDto("conv2"));
+
+        handler.LastRequestMethod.ShouldBe("POST");
+        using var body = JsonDocument.Parse(handler.LastRequestBody);
+        body.RootElement.GetProperty("targetConversationId").GetString().ShouldBe("conv2");
+        binding?.BindingId.ShouldBe("b1");
+    }
+
+    private static string BindingJson() => JsonSerializer.Serialize(new
+    {
+        bindingId = "b1",
+        channelType = "telegram",
+        channelAddress = "chat:42/thread:7",
+        mode = "Interactive",
+        threadingMode = "Single",
+        displayPrefix = "Support",
+        boundAt = DateTimeOffset.UtcNow
+    });
+
+    [Fact]
     public async Task ArchiveConversationAsync_calls_delete_conversation_endpoint()
     {
         var (client, handler) = CreateClient();
@@ -533,26 +591,30 @@ internal sealed class MockHttpMessageHandler : HttpMessageHandler
     private readonly Dictionary<string, (string Json, HttpStatusCode Status)> _responses = new();
     public string LastRequestUrl { get; private set; } = string.Empty;
     public string LastRequestMethod { get; private set; } = string.Empty;
+    public string LastRequestBody { get; private set; } = string.Empty;
 
     public void SetResponse(string urlPath, string json, HttpStatusCode status = HttpStatusCode.OK)
         => _responses[urlPath] = (json, status);
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         LastRequestUrl = request.RequestUri?.ToString() ?? string.Empty;
         LastRequestMethod = request.Method.Method;
+        LastRequestBody = request.Content is null
+            ? string.Empty
+            : await request.Content.ReadAsStringAsync(cancellationToken);
 
         foreach (var (path, response) in _responses)
         {
             if (LastRequestUrl.Contains(path))
             {
-                return Task.FromResult(new HttpResponseMessage(response.Status)
+                return new HttpResponseMessage(response.Status)
                 {
                     Content = new StringContent(response.Json, System.Text.Encoding.UTF8, "application/json")
-                });
+                };
             }
         }
 
-        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        return new HttpResponseMessage(HttpStatusCode.NotFound);
     }
 }

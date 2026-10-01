@@ -174,6 +174,51 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
     }
 
     /// <inheritdoc />
+    /// <inheritdoc />
+    public async Task<ConversationBindingDto?> AddConversationBindingAsync(
+        string conversationId,
+        AddConversationBindingRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var response = await _http.PostAsJsonAsync(
+            $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}/bindings",
+            request,
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ConversationBindingDto>(cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> RemoveConversationBindingAsync(
+        string conversationId,
+        string bindingId,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var response = await _http.DeleteAsync(
+            $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}/bindings/{Uri.EscapeDataString(bindingId)}",
+            cancellationToken);
+        return response.IsSuccessStatusCode;
+    }
+
+    /// <inheritdoc />
+    public async Task<ConversationBindingDto?> MoveConversationBindingAsync(
+        string conversationId,
+        string bindingId,
+        MoveConversationBindingRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var response = await _http.PostAsJsonAsync(
+            $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}/bindings/{Uri.EscapeDataString(bindingId)}/move",
+            request,
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ConversationBindingDto>(cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<ConversationCostDto>> GetConversationCostsAsync(
         CancellationToken cancellationToken = default)
     {

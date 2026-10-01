@@ -233,6 +233,22 @@ public sealed class AgentConfigPanelTests : IDisposable
     }
 
     [Fact]
+    public async Task Panel_includes_binding_management_for_the_active_conversation()
+    {
+        _http.Setup("/api/agents/farnsworth", DescriptorJson);
+        SeedAgentWithConversation("conv-abc");
+        _rest.GetConversationAsync("conv-abc", Arg.Any<CancellationToken>())
+            .Returns(new ConversationResponseDto(
+                "conv-abc", AgentId, "Chat", true, "Active", "sess-1", [],
+                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
+
+        var cut = await OpenAsync();
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='binding-add-open']"));
+        await _rest.Received().GetConversationAsync("conv-abc", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Panel_lists_installed_tool_extensions_and_shows_ungranted_state()
     {
         _http.Setup("/api/agents/farnsworth", DescriptorJson);

@@ -7959,3 +7959,20 @@ h3.conversation-title.editable:hover {
 .conversation-action-menu-item.destructive { color: var(--danger, #d9534f); }
 .chat-header > .conversation-action-context-target,
 .chat-header > .conversation-action-context-target > .conversation-actions-trigger { position: static; transform: none; flex: 0 0 auto; }
+/* Conversation binding management in the agent configuration dialog. */
+.conversation-bindings { border-top: 1px solid var(--border); padding-top: .75rem; }
+.binding-heading, .binding-card, .binding-confirm { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.binding-heading h4, .binding-heading p { margin: 0; }
+.binding-heading p, .binding-status, .binding-description span { color: var(--text-muted); font-size: var(--text-caption); }
+.binding-list, .binding-editor { display: grid; gap: .5rem; margin-top: .6rem; }
+.binding-card, .binding-editor, .binding-confirm, .binding-error { padding: .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); }
+.binding-description { display: grid; gap: .15rem; min-width: 0; }
+.binding-description code { overflow-wrap: anywhere; }
+.binding-actions, .binding-error { display: flex; align-items: center; gap: .4rem; }
+.binding-error { justify-content: space-between; color: var(--error); }
+.binding-editor label { display: grid; gap: .2rem; color: var(--text-muted); font-size: var(--text-caption); }
+.binding-editor input, .binding-editor select { padding: .4rem .5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text-primary); }
+.binding-button { padding: .3rem .55rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-primary); cursor: pointer; }
+.binding-button.primary { border-color: var(--accent); background: var(--accent); color: var(--color-on-accent); }
+.binding-button.danger { color: var(--error); }
+.binding-button:disabled { opacity: .5; cursor: not-allowed; }

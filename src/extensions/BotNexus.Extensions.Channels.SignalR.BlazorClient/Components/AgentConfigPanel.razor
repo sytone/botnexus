@@ -129,6 +129,11 @@
                                                       InitialContextWindow="@_conversation?.ContextWindowOverride"
                                                       OnOverlayChanged="HandleOverlayChanged" />
                     }
+
+                    @if (Agent?.ActiveConversationId is { } bindingConversationId)
+                    {
+                        <ConversationBindingsPanel ConversationId="@bindingConversationId" MoveTargets="@BindingMoveTargets" />
+                    }
                 </div>
 
                 <div class="config-actions">
@@ -179,6 +184,11 @@
     public string AgentId { get; set; } = default!;
 
     private AgentState? Agent => Store.GetAgent(AgentId);
+    private IReadOnlyList<ConversationBindingTargetDto> BindingMoveTargets => Agent?.Conversations.Values
+        .Where(conversation => !string.Equals(conversation.ConversationId, Agent.ActiveConversationId, StringComparison.Ordinal))
+        .OrderBy(conversation => conversation.Title, StringComparer.OrdinalIgnoreCase)
+        .Select(conversation => new ConversationBindingTargetDto(conversation.ConversationId, conversation.Title))
+        .ToList() ?? [];
     private bool _showPanel;
     private bool _loading;
     private bool _saving;
