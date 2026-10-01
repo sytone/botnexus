@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -90,7 +90,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             InboundDeliveryMode.Interrupt => "[redirect] " + content,
             _ => content
         };
-        AppendTo(conv, "User", localEcho);
+        AppendTo(conv, "User", localEcho, attachments.Select(ToChatAttachment).ToArray());
 
         if (deliveryMode == InboundDeliveryMode.Steer)
         {
@@ -250,7 +250,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             return;
         var convId = conversationId;
 
-        AppendTo(conv, "User", content);
+        AppendTo(conv, "User", content, attachments.Select(ToChatAttachment).ToArray());
 
         // Add entry to steering queue panel with FollowUp kind
         var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.FollowUp, SteeringEntryStatus.Pending);
@@ -1236,11 +1236,32 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// redirect, reset, compact, gateway command) onto this helper too, so a local echo can no
     /// longer appear in a conversation other than the one the action targeted.
     /// </summary>
-    private void AppendTo(ConversationState conversation, string role, string content)
+    private void AppendTo(
+        ConversationState conversation,
+        string role,
+        string content,
+        IReadOnlyList<ChatAttachment>? attachments = null)
     {
-        conversation.AppendMessage(new ChatMessage(role, content, DateTimeOffset.UtcNow));
+        conversation.AppendMessage(new ChatMessage(role, content, DateTimeOffset.UtcNow)
+        {
+            Attachments = attachments ?? []
+        });
         _store.NotifyChanged();
     }
+
+    private static ChatAttachment ToChatAttachment(DraftAttachment attachment) =>
+        new(
+            attachment.FileName,
+            attachment.MimeType,
+            attachment.Size,
+            attachment.Base64Data);
+
+    private static IReadOnlyList<ChatAttachment> ToChatAttachments(IReadOnlyList<HistoryAttachmentDto>? attachments) =>
+        attachments?.Select(attachment => new ChatAttachment(
+            attachment.FileName,
+            attachment.MimeType,
+            attachment.Size,
+            attachment.Base64Data)).ToArray() ?? [];
 
     private void AppendError(string agentId, string message)
     {
@@ -1291,7 +1312,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
             entry.ToolCallId,
             entry.ToolArgs,
             entry.ToolIsError,
-            entry.ThinkingContent);
+            entry.ThinkingContent,
+            ToChatAttachments(entry.Attachments));
 
     // Shared projection logic for both transcript-entry DTO shapes. An entry is treated
     // as a tool call when it carries a tool name; only then is its content surfaced as the
@@ -1305,7 +1327,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
         string? toolCallId,
         string? toolArgs,
         bool toolIsError,
-        string? thinkingContent)
+        string? thinkingContent,
+        IReadOnlyList<ChatAttachment>? attachments = null)
     {
         var isToolCall = toolName is not null;
         return new ChatMessage(MapRole(role ?? "system"), content ?? string.Empty, timestamp)
@@ -1315,6 +1338,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             ToolArgs = toolArgs,
             ToolIsError = toolIsError,
             ThinkingContent = thinkingContent,
+            Attachments = attachments ?? [],
             IsToolCall = isToolCall,
             ToolResult = isToolCall ? AnsiStripper.Strip(content) : null
         };

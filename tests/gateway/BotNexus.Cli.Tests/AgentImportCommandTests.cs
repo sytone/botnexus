@@ -126,7 +126,7 @@ public sealed class AgentImportCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task Import_PersistsSystemPromptToFile()
+    public async Task Import_PersistsSystemPromptToStandardIdentityFile()
     {
         var templatePath = WriteTemplate();
 
@@ -134,14 +134,14 @@ public sealed class AgentImportCommandTests : IDisposable
         await commands.ExecuteImportAsync(
             templatePath, _configPath, idOverride: "assistant", sets: [], overwrite: false, verbose: false, CancellationToken.None);
 
+        var identityPath = Path.Combine(_rootPath, "agents", "assistant", "IDENTITY.md");
+        File.Exists(identityPath).ShouldBeTrue();
+        (await File.ReadAllTextAsync(identityPath)).ShouldContain("You are a helpful assistant.");
+
         var agent = await LoadAgentAsync(_configPath, "assistant");
         agent.ShouldNotBeNull();
-        agent!.SystemPromptFile.ShouldNotBeNullOrWhiteSpace();
-        var promptPath = Path.IsPathRooted(agent.SystemPromptFile!)
-            ? agent.SystemPromptFile!
-            : Path.Combine(_rootPath, agent.SystemPromptFile!);
-        File.Exists(promptPath).ShouldBeTrue();
-        (await File.ReadAllTextAsync(promptPath)).ShouldContain("You are a helpful assistant.");
+        typeof(AgentDefinitionConfig).GetProperty("SystemPromptFile").ShouldBeNull();
+        typeof(AgentDefinitionConfig).GetProperty("SystemPromptFiles").ShouldBeNull();
     }
 
     [Fact]

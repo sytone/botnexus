@@ -3,24 +3,28 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using BotNexus.Gateway.Abstractions.Extensions;
 
-namespace BotNexus.Cli.Commands;
+namespace BotNexus.Gateway.Configuration;
 
 /// <summary>Describes one already-built extension output eligible for deployment.</summary>
-internal sealed record ExtensionDeploymentSource(
+public sealed record ExtensionDeploymentSource(
     string Source,
     string OutputDirectory,
     bool Enabled,
     bool Registered,
     string? ManifestPath = null);
 
-internal sealed record ExtensionDeploymentFailure(string Source, string Message);
+public sealed record ExtensionDeploymentFailure(string Source, string Message);
 
-internal sealed record ExtensionDeploymentResult(
+public sealed record ExtensionDeploymentResult(
     int DeployedCount,
     IReadOnlyCollection<string> DeployedIds,
-    IReadOnlyList<ExtensionDeploymentFailure> Failures);
+    IReadOnlyList<ExtensionDeploymentFailure> Failures)
+{
+    public bool Accepted { get; init; } = true;
+    public string? TransactionFailure { get; init; }
+}
 
-internal enum ExtensionDeploymentOperation
+public enum ExtensionDeploymentOperation
 {
     Backup,
     Activate,
@@ -28,11 +32,11 @@ internal enum ExtensionDeploymentOperation
     Cleanup
 }
 
-internal sealed class ExtensionDeploymentHooks
+public sealed class ExtensionDeploymentHooks
 {
-    internal Action<ExtensionDeploymentOperation, string, string?>? BeforeOperation { get; init; }
-    internal Func<bool>? IsWindows { get; init; }
-    internal Action<TimeSpan>? Delay { get; init; }
+    public Action<ExtensionDeploymentOperation, string, string?>? BeforeOperation { get; init; }
+    public Func<bool>? IsWindows { get; init; }
+    public Action<TimeSpan>? Delay { get; init; }
 }
 
 /// <summary>
@@ -40,7 +44,7 @@ internal sealed class ExtensionDeploymentHooks
 /// a same-parent staging rename. Registered validation failures retain source-owned last-known-good
 /// directories so stale pruning cannot turn an unavailable build into an undeploy.
 /// </summary>
-internal static partial class ExtensionDeploymentReconciler
+public static partial class ExtensionDeploymentReconciler
 {
     private const int MaximumAttempts = 4;
     private const string ManifestFileName = "botnexus-extension.json";
@@ -48,7 +52,7 @@ internal static partial class ExtensionDeploymentReconciler
     private const string DeploymentLockFileName = ".deployment.lock";
     private static readonly JsonSerializerOptions ManifestOptions = new() { PropertyNameCaseInsensitive = true };
 
-    internal static ExtensionDeploymentResult Reconcile(
+    public static ExtensionDeploymentResult Reconcile(
         string liveRoot,
         IReadOnlyCollection<ExtensionDeploymentSource> sources,
         ExtensionDeploymentHooks? hooks = null)

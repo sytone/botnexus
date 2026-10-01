@@ -228,6 +228,24 @@ public sealed class Agent
     }
 
     /// <summary>
+    /// Waits for any active run, atomically starts this prompt next, and invokes
+    /// <paramref name="onStartedAsync"/> after owning the run slot but before model execution.
+    /// </summary>
+    public Task<IReadOnlyList<AgentMessage>> PromptWhenAvailableAsync(
+        AgentMessage message,
+        Func<Task> onStartedAsync,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(onStartedAsync);
+        return RunAsync(
+            (context, config, emit, ct) => AgentLoopRunner.RunAsync([message], context, config, emit, ct),
+            cancellationToken,
+            waitForAvailability: true,
+            onStartedAsync);
+    }
+
+    /// <summary>
     /// Start a new agent run with one or more messages.
     /// </summary>
     /// <param name="messages">The messages to append to the timeline.</param>
@@ -470,31 +488,50 @@ public sealed class Agent
 
     private async Task<IReadOnlyList<AgentMessage>> RunAsync(
         Func<AgentContext, AgentLoopConfig, Func<AgentEvent, Task>, CancellationToken, Task<IReadOnlyList<AgentMessage>>> runner,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool waitForAvailability = false,
+        Func<Task>? onStartedAsync = null)
     {
-        await _runLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-
         CancellationTokenSource linkedCts;
         TaskCompletionSource activeRun;
-        try
+        while (true)
         {
-            lock (_lifecycleLock)
+            await _runLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            Task? priorRun = null;
+            try
             {
-                if (_status != AgentStatus.Idle)
+                lock (_lifecycleLock)
                 {
-                    throw new InvalidOperationException("Agent is already running.");
-                }
+                    if (_status != AgentStatus.Idle)
+                    {
+                        if (!waitForAvailability)
+                        {
+                            throw new InvalidOperationException("Agent is already running.");
+                        }
 
-                linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                activeRun = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                _cts = linkedCts;
-                _activeRun = activeRun;
-                _status = AgentStatus.Running;
+                        priorRun = _activeRun?.Task;
+                    }
+                    else
+                    {
+                        linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        activeRun = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        _cts = linkedCts;
+                        _activeRun = activeRun;
+                        _status = AgentStatus.Running;
+                        break;
+                    }
+                }
             }
-        }
-        finally
-        {
-            _runLock.Release();
+            finally
+            {
+                _runLock.Release();
+            }
+
+            if (priorRun is null)
+            {
+                continue;
+            }
+            await priorRun.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         lock (_stateLock)
@@ -505,6 +542,11 @@ public sealed class Agent
 
         try
         {
+            if (onStartedAsync is not null)
+            {
+                await onStartedAsync().ConfigureAwait(false);
+            }
+
             return await runner(
                     BuildContextSnapshot(),
                     BuildLoopConfig(),
@@ -663,7 +705,8 @@ public sealed class Agent
             OnToolCallDisposition: _options.OnToolCallDisposition,
             SanitizeToolResultText: _options.SanitizeToolResultText,
             EvaluateRunCompletion: _options.EvaluateRunCompletion,
-            MaxCompletionContinuations: _options.MaxCompletionContinuations);
+            MaxCompletionContinuations: _options.MaxCompletionContinuations,
+            InvalidateProviderCredentials: _options.InvalidateProviderCredentials);
     }
 
     private Func<CancellationToken, Task<AgentContext?>>? BuildMaybeCompactDelegate()

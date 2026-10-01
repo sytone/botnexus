@@ -70,8 +70,6 @@ public static class PluginAgentDescriptorFence
         nameof(AgentDescriptor.Soul),
         nameof(AgentDescriptor.Summary),
         nameof(AgentDescriptor.SystemPrompt),
-        nameof(AgentDescriptor.SystemPromptFile),
-        nameof(AgentDescriptor.SystemPromptFiles),
         nameof(AgentDescriptor.Thinking),
         nameof(AgentDescriptor.ToolIds),
     ];

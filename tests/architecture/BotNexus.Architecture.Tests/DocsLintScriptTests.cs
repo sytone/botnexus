@@ -340,7 +340,7 @@ public sealed class DocsLintScriptTests : ArchitectureTest, IDisposable
     internal static async Task<LintRun> RunLintAtAsync(
         string repoRoot, string scriptPath, string rules, bool asJson,
         CancellationToken cancellationToken = default,
-        Action<Process, string>? onStarted = null, TimeSpan? timeout = null)
+        Func<Process, string, CancellationToken, Task>? onStarted = null, TimeSpan? timeout = null)
     {
         var args = new StringBuilder();
         args.Append("-NoProfile -NonInteractive -File \"").Append(scriptPath).Append('"');
@@ -372,8 +372,6 @@ public sealed class DocsLintScriptTests : ArchitectureTest, IDisposable
         var diagnostics = $"Executable: {process.StartInfo.FileName}; arguments: {process.StartInfo.Arguments}; "
             + $"owned cache root: {startupState.Root}";
         var budget = timeout ?? TimeSpan.FromSeconds(60);
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(budget);
         using var drainCancellation = new CancellationTokenSource();
         var started = false;
         var cleanupAttempted = false;
@@ -391,7 +389,13 @@ public sealed class DocsLintScriptTests : ArchitectureTest, IDisposable
             // Start both drains before waiting for either pipe or for process termination.
             stdout = process.StandardOutput.ReadToEndAsync(drainCancellation.Token);
             stderr = process.StandardError.ReadToEndAsync(drainCancellation.Token);
-            onStarted?.Invoke(process, startupState.Root);
+            if (onStarted is not null)
+            {
+                await onStarted(process, startupState.Root, cancellationToken);
+            }
+
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(budget);
             try
             {
                 await Task.WhenAll(stdout, stderr, process.WaitForExitAsync(deadline.Token))

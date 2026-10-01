@@ -281,7 +281,7 @@ Injects project-specific documentation:
 
 **Context File Discovery:**
 
-Prompt-file selection normally loads the canonical workspace instruction files in this order: `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `BOOTSTRAP.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md`. The deprecated `systemPromptFile` and `systemPromptFiles` keys remain runtime-compatible during issue #2941 Stage 1 but should not be used in new configuration.
+Prompt-file selection normally loads the canonical workspace instruction files in this order: `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `BOOTSTRAP.md`, `IDENTITY.md`, `USER.md`, and `MEMORY.md`.
 
 When `memory.promptInjection` is `none`, `WorkspaceContextBuilder` filters memory prompt files from the selected set, including an explicitly selected `MEMORY.md` or model-specific memory variant. Daily-memory injection follows the same memory setting. Conversation scope independently withholds owner-private files (`USER.md`, `MEMORY.md`, and daily memory notes) from shared conversations.
 

@@ -159,7 +159,7 @@ internal sealed class GatewayCommand
             AnsiConsole.WriteLine();
         }
 
-        ServeCommand.DeployExtensions(repoRoot, home, verbose);
+        await ServeCommand.ReconcileLifecycleAsync(repoRoot, home, verbose, cancellationToken, "gateway");
 
         // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
         // argument below, so probe where it will actually listen rather than where we asked.
@@ -265,7 +265,7 @@ internal sealed class GatewayCommand
             return 1;
         }
 
-        ServeCommand.DeployExtensions(repoRoot, home, verbose);
+        await ServeCommand.ReconcileLifecycleAsync(repoRoot, home, verbose, cancellationToken, "gateway");
 
         // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
         // argument below, so probe where it will actually listen rather than where we asked.

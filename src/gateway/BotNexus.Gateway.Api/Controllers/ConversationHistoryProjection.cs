@@ -102,6 +102,7 @@ public static class ConversationHistoryProjection
                     && !entry.IsCompactionSummary
                     && string.IsNullOrWhiteSpace(entry.Content)
                     && string.IsNullOrWhiteSpace(entry.ThinkingContent)
+                    && entry.OriginalContentParts is not { Count: > 0 }
                     && entry.ToolCallId is null
                     && entry.ToolName is null)
                     continue;
@@ -132,6 +133,7 @@ public static class ConversationHistoryProjection
                     AgentId = session.AgentId.Value,
                     Role = entry.Role.ToString().ToLowerInvariant(),
                     Content = entry.Content,
+                    Attachments = ProjectAttachments(entry.OriginalContentParts),
                     Timestamp = entry.Timestamp,
                     ToolName = entry.ToolName,
                     ToolCallId = entry.ToolCallId,
@@ -150,5 +152,37 @@ public static class ConversationHistoryProjection
         }
 
         return allEntries;
+    }
+
+    private static IReadOnlyList<ConversationHistoryAttachment>? ProjectAttachments(
+        IReadOnlyList<MessageContentPart>? contentParts)
+    {
+        if (contentParts is not { Count: > 0 })
+            return null;
+
+        var attachments = new List<ConversationHistoryAttachment>();
+        foreach (var part in contentParts)
+        {
+            switch (part)
+            {
+                case BinaryContentPart binary:
+                    attachments.Add(new ConversationHistoryAttachment(
+                        binary.FileName ?? "attachment",
+                        binary.MimeType,
+                        binary.Data.LongLength,
+                        Convert.ToBase64String(binary.Data)));
+                    break;
+                case TextContentPart text:
+                    var bytes = System.Text.Encoding.UTF8.GetBytes(text.Text);
+                    attachments.Add(new ConversationHistoryAttachment(
+                        text.FileName ?? "attachment.txt",
+                        text.MimeType,
+                        bytes.LongLength,
+                        Convert.ToBase64String(bytes)));
+                    break;
+            }
+        }
+
+        return attachments.Count == 0 ? null : attachments;
     }
 }

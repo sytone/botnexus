@@ -1,4 +1,5 @@
 using Bunit;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands;
@@ -39,8 +40,8 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
 
         _store.SeedAgents([new AgentSummary("agent-1", "Alpha"), new AgentSummary("agent-2", "Beta")]);
         _store.SeedConversations("agent-1", [
-            Conversation("conv-active", "agent-1", ActiveTitle, isDefault: true),
-            Conversation("conv-routed", "agent-1", RoutedTitle, isDefault: false)
+            Conversation("conv-active", "agent-1", ActiveTitle, isDefault: false, isPinned: true),
+            Conversation("conv-routed", "agent-1", RoutedTitle, isDefault: false, isPinned: false)
         ]);
         _store.SeedConversations("agent-2", [Conversation("conv-other", "agent-2", OtherAgentTitle, isDefault: true)]);
 
@@ -66,7 +67,12 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
 
     public void Dispose() => _ctx.Dispose();
 
-    private static ConversationSummaryDto Conversation(string id, string agentId, string title, bool isDefault) => new(
+    private static ConversationSummaryDto Conversation(
+        string id,
+        string agentId,
+        string title,
+        bool isDefault,
+        bool isPinned = false) => new(
         ConversationId: id,
         AgentId: agentId,
         Title: title,
@@ -75,7 +81,9 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
         ActiveSessionId: null,
         BindingCount: 0,
         CreatedAt: DateTimeOffset.UtcNow,
-        UpdatedAt: DateTimeOffset.UtcNow);
+        UpdatedAt: DateTimeOffset.UtcNow,
+        IsPinned: isPinned,
+        PinnedAt: isPinned ? DateTimeOffset.UtcNow : null);
 
     /// <summary>
     /// AC3: on <c>/agent/{a}/conversation/{c}</c> where <c>c</c> is NOT the agent's
@@ -91,9 +99,43 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
         Assert.DoesNotContain(ActiveTitle, chat);
     }
 
+    [Fact]
+    public async Task Pin_action_retargets_the_new_route_and_rebuilds_both_pin_states_without_recreating_the_page()
+    {
+        var interaction = _ctx.Services.GetRequiredService<IAgentInteractionService>();
+        var cut = RenderAt("/agent/agent-1/conversation/conv-active", "agent-1", "conv-active");
+
+        PinActionLabel(cut, "conv-active").ShouldBe("Unpin");
+
+        _ctx.Services.GetRequiredService<NavigationManager>()
+            .NavigateTo("/agent/agent-1/conversation/conv-routed");
+        cut.Render(parameters => parameters
+            .Add(component => component.AgentId, "agent-1")
+            .Add(component => component.ConversationId, "conv-routed"));
+
+        PinActionLabel(cut, "conv-routed").ShouldBe("Pin");
+        var routedPanel = cut.FindComponents<ChatPanel>()
+            .Single(component => component.Instance.ConversationId == "conv-routed");
+        await cut.InvokeAsync(() =>
+        {
+            routedPanel.Find("[data-testid='conversation-actions-trigger']").Click();
+            routedPanel.Find("[data-action-id='pin']").Click();
+        });
+
+        await interaction.Received(1).SetConversationPinnedAsync("agent-1", "conv-routed", true);
+        await interaction.DidNotReceive().SetConversationPinnedAsync("agent-1", "conv-active", Arg.Any<bool>());
+
+        _store.GetConversation("conv-active")!.IsPinned = false;
+        _store.GetConversation("conv-routed")!.IsPinned = true;
+        _store.SetActiveConversation("agent-1", "conv-active");
+        cut.Render();
+
+        PinActionLabel(cut, "conv-routed").ShouldBe("Unpin");
+    }
+
     /// <summary>
-    /// AC4: a routed id naming a conversation owned by a DIFFERENT agent is not adopted; the panel
-    /// falls back to that agent's own active conversation rather than leaking a foreign transcript.
+    /// AC4: a routed id naming a conversation owned by a different agent is not adopted and does
+    /// not fall back to ambient selected state on the explicit conversation route.
     /// </summary>
     [Fact]
     public void Chat_pane_does_not_adopt_a_routed_conversation_owned_by_another_agent()
@@ -101,7 +143,7 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
         var cut = RenderAt("/agent/agent-1/conversation/conv-other", "agent-1", "conv-other");
 
         var chat = ChatPaneMarkupFor(cut, "agent-1");
-        Assert.Contains(ActiveTitle, chat);
+        Assert.DoesNotContain(ActiveTitle, chat);
         Assert.DoesNotContain(OtherAgentTitle, chat);
     }
 
@@ -174,5 +216,15 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
     {
         var section = cut.Find($"#{agentId}-conversation-panel");
         return section.InnerHtml;
+    }
+
+    private static string PinActionLabel(IRenderedComponent<Home> cut, string conversationId)
+    {
+        var panel = cut.FindComponents<ChatPanel>()
+            .Single(component => component.Instance.ConversationId == conversationId);
+        panel.Find("[data-testid='conversation-actions-trigger']").Click();
+        var label = panel.Find("[data-action-id='pin']").TextContent.Trim();
+        panel.Find("[data-testid='conversation-action-menu-dismiss']").Click();
+        return label;
     }
 }

@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
@@ -1018,5 +1018,30 @@ public sealed class AgentInteractionServiceTests
 
         Assert.Empty(_store.GetSteeringQueue("conv-1"));
     }
+
+    [Fact]
+    public async Task DeliverMessageAsync_AttachmentSnapshot_RemainsOnLocalEcho()
+    {
+        const string agentId = "agent-attachment-echo";
+        const string conversationId = "conversation-attachment-echo";
+        _store.UpsertAgent(new AgentState { AgentId = agentId, DisplayName = "Agent", IsConnected = true });
+        _store.SeedConversations(agentId,
+        [
+            new ConversationSummaryDto(conversationId, agentId, "Conversation", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        var attachment = new DraftAttachment("photo.png", "image/png", "AQID", 3);
+
+        await _service.DeliverMessageAsync(agentId, conversationId, "caption", attachments: [attachment]);
+
+        var messages = _store.GetAgent(agentId)?.Conversations[conversationId].Messages;
+        messages.ShouldNotBeNull();
+        var echo = messages.Where(message => message.Role == "User").ShouldHaveSingleItem();
+        var snapshot = echo.Attachments.ShouldHaveSingleItem();
+        snapshot.FileName.ShouldBe("photo.png");
+        snapshot.MimeType.ShouldBe("image/png");
+        snapshot.Size.ShouldBe(3);
+        snapshot.DataUrl.ShouldBe("data:image/png;base64,AQID");
+    }
+
 }
 

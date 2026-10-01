@@ -72,6 +72,13 @@ public static class ConfigSchemaBuilder
             typeof(PlatformConfig),
             exporterOptions);
 
+        // JsonSchemaExporter does not consistently retain PropertyInfo when it transforms
+        // dictionary-valued property nodes. Reapply only missing presentation metadata from the
+        // same annotations so collection properties participate in the schema-driven grouping
+        // contract instead of silently falling into General.
+        if (schema is JsonObject schemaObject)
+            OverlayMissingPropertyMetadata(schemaObject, typeof(PlatformConfig));
+
         return new JsonObject
         {
             ["schemaVersion"] = SchemaVersion,
@@ -159,6 +166,69 @@ public static class ConfigSchemaBuilder
         OverlayDefault(member, obj);
 
         return node;
+    }
+
+    private static void OverlayMissingPropertyMetadata(JsonObject schema, Type type, int depth = 0)
+    {
+        if (depth > 20 || schema["properties"] is not JsonObject properties)
+            return;
+
+        foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public))
+        {
+            var jsonName = property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name
+                ?? SchemaSerializerOptions.PropertyNamingPolicy?.ConvertName(property.Name)
+                ?? property.Name;
+            if (properties[jsonName] is not JsonObject propertySchema)
+                continue;
+
+            var display = property.GetCustomAttribute<DisplayAttribute>();
+            var configField = property.GetCustomAttribute<ConfigFieldAttribute>();
+            if (propertySchema["x-ui-group"] is null)
+            {
+                var group = configField is not null && !string.IsNullOrWhiteSpace(configField.Group)
+                    ? configField.Group
+                    : display?.GetGroupName();
+                if (!string.IsNullOrWhiteSpace(group))
+                    propertySchema["x-ui-group"] = group;
+            }
+
+            if (propertySchema["x-ui-order"] is null)
+            {
+                var order = configField is not null && configField.Order != 0
+                    ? configField.Order
+                    : display?.GetOrder();
+                if (order is { } orderValue)
+                    propertySchema["x-ui-order"] = orderValue;
+            }
+
+            var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+            if (TryGetDictionaryValueType(propertyType, out var valueType) &&
+                propertySchema["additionalProperties"] is JsonObject valueSchema)
+            {
+                OverlayMissingPropertyMetadata(valueSchema, valueType, depth + 1);
+            }
+            else if (propertySchema["properties"] is JsonObject)
+            {
+                OverlayMissingPropertyMetadata(propertySchema, propertyType, depth + 1);
+            }
+        }
+    }
+
+    private static bool TryGetDictionaryValueType(Type type, out Type valueType)
+    {
+        var dictionary = type.GetInterfaces()
+            .Append(type)
+            .FirstOrDefault(candidate => candidate.IsGenericType &&
+                candidate.GetGenericTypeDefinition() == typeof(IDictionary<,>) &&
+                candidate.GetGenericArguments()[0] == typeof(string));
+        if (dictionary is null)
+        {
+            valueType = typeof(object);
+            return false;
+        }
+
+        valueType = dictionary.GetGenericArguments()[1];
+        return true;
     }
 
     private static void OverlayValidation(MemberInfo member, JsonObject obj)
