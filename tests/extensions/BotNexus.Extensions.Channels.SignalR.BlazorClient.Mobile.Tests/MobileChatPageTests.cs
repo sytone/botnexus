@@ -392,6 +392,38 @@ public sealed class MobileChatPageTests : IDisposable
         content.ClassList.ShouldNotContain("markdown-content");
     }
 
+    [Fact]
+    public void Active_turn_marks_mobile_composer_and_exposes_working_status()
+    {
+        ConfigureReadyConversation();
+        _store.GetStreamState("conv-1").Returns(new ConversationStreamState { IsRunActive = true });
+
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var composer = cut.Find("[data-testid='mobile-composer']");
+        composer.ClassList.ShouldContain("composer-active");
+        composer.GetAttribute("aria-busy").ShouldBe("true");
+        cut.Find("[data-testid='mobile-composer-status']").TextContent.ShouldContain("Agent is working");
+        cut.Find("[data-testid='chat-steer-btn']");
+        cut.Find("[data-testid='chat-redirect-btn']");
+    }
+
+    [Fact]
+    public void Authoritative_idle_state_removes_mobile_composer_treatment()
+    {
+        ConfigureReadyConversation();
+        var streamState = new ConversationStreamState { IsRunActive = true };
+        _store.GetStreamState("conv-1").Returns(streamState);
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        streamState.IsRunActive = false;
+        _store.OnChanged += Raise.Event<Action>();
+
+        cut.Find("[data-testid='mobile-composer']").ClassList.ShouldNotContain("composer-active");
+        cut.Find("[data-testid='mobile-composer']").GetAttribute("aria-busy").ShouldBe("false");
+        cut.FindAll("[data-testid='mobile-composer-status']").ShouldBeEmpty();
+    }
+
     private void ConfigureReadyConversation(params ChatMessage[] messages)
     {
         _portalLoad.IsReady.Returns(true);

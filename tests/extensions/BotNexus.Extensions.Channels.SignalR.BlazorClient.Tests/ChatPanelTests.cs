@@ -168,6 +168,70 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
+    public void Active_conversation_marks_composer_and_exposes_stable_working_status()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.GetStreamState("conv-1").IsRunActive = true;
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        var composer = cut.Find("[data-testid='chat-composer']");
+        composer.ClassList.ShouldContain("composer-active");
+        composer.GetAttribute("aria-busy").ShouldBe("true");
+        cut.Find("[data-testid='chat-composer-status']").TextContent.ShouldContain("Agent is working");
+        cut.Find("[data-testid='chat-input']").GetAttribute("placeholder").ShouldNotBeNull().ShouldContain("steer");
+        cut.Find("[data-testid='chat-steer-btn']");
+        cut.Find("[data-testid='chat-redirect-btn']");
+        cut.Find("[data-testid='chat-followup-btn']");
+        cut.Find("[data-testid='chat-abort-btn']");
+    }
+
+    [Fact]
+    public void Authoritative_completion_removes_composer_treatment_without_reload()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SetActiveConversation("agent-1", "conv-1");
+        var streamState = _store.GetStreamState("conv-1");
+        streamState.IsRunActive = true;
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+
+        streamState.IsRunActive = false;
+        _store.NotifyChanged();
+
+        cut.Find("[data-testid='chat-composer']").ClassList.ShouldNotContain("composer-active");
+        cut.Find("[data-testid='chat-composer']").GetAttribute("aria-busy").ShouldBe("false");
+        cut.FindAll("[data-testid='chat-composer-status']").ShouldBeEmpty();
+        cut.Find("[data-testid='chat-send']");
+    }
+
+    [Fact]
+    public void Routed_idle_conversation_does_not_inherit_active_composer_treatment()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1",
+        [
+            MakeConvDto("active", "agent-1"),
+            MakeConvDto("idle", "agent-1")
+        ]);
+        _store.GetStreamState("active").IsRunActive = true;
+
+        using var activeCut = _ctx.Render<ChatPanel>(p => p
+            .Add(c => c.AgentId, "agent-1")
+            .Add(c => c.ConversationId, "active"));
+        activeCut.Find("[data-testid='chat-composer']").ClassList.ShouldContain("composer-active");
+
+        using var idleCut = _ctx.Render<ChatPanel>(p => p
+            .Add(c => c.AgentId, "agent-1")
+            .Add(c => c.ConversationId, "idle"));
+
+        idleCut.Find("[data-testid='chat-composer']").ClassList.ShouldNotContain("composer-active");
+        idleCut.FindAll("[data-testid='chat-composer-status']").ShouldBeEmpty();
+    }
+
+    [Fact]
     public void Shows_empty_state_when_no_active_conversation()
     {
         CreateAndSeedAgent("agent-1");

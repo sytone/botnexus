@@ -2099,6 +2099,8 @@ html, body, #app {
 /* ── Input area ─────────────────────────────────────────────────────── */
 
 .chat-input-area {
+    position: relative;
+    isolation: isolate;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: end;
@@ -2106,6 +2108,80 @@ html, body, #app {
     padding: 0.75rem 1rem;
     border-top: 1px solid var(--border);
     background: var(--bg-secondary);
+}
+
+.chat-input-area.composer-active::before {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    top: 0.3rem;
+    left: 0.55rem;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0.45rem var(--color-accent-ring);
+    offset-path: inset(0.3rem 0.55rem round calc(var(--radius) + 5px));
+    offset-anchor: center;
+    pointer-events: none;
+    animation: composer-perimeter-travel 3.2s linear infinite;
+}
+
+@keyframes composer-perimeter-travel {
+    to { offset-distance: 100%; }
+}
+
+.composer-active-status {
+    position: absolute;
+    z-index: 3;
+    top: 0.08rem;
+    left: 1.15rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0 0.3rem;
+    border-radius: var(--radius-pill);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: var(--text-caption);
+    line-height: 1.2;
+    pointer-events: none;
+}
+
+.composer-active-status-dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .chat-input-area.composer-active::before {
+        inset: 0.3rem 0.55rem;
+        width: auto;
+        height: auto;
+        border: 2px solid var(--accent);
+        border-radius: calc(var(--radius) + 5px);
+        background: none;
+        box-shadow: none;
+        offset-path: none;
+        animation: none;
+    }
+}
+
+@media (forced-colors: active) {
+    .chat-input-area.composer-active::before {
+        animation: none;
+        border: 0;
+        background: none;
+        mask: none;
+        outline: 2px solid Highlight;
+        outline-offset: -2px;
+    }
+
+    .composer-active-status-dot {
+        background: Highlight;
+    }
 }
 
 .composer-toolbar {

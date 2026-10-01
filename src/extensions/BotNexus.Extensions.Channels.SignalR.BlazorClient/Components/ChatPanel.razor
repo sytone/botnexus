@@ -532,9 +532,18 @@
     }
     else
     {
-        <div class="chat-input-area">
+        <div class="chat-input-area @(IsStreaming ? "composer-active" : null)"
+             data-testid="chat-composer"
+             aria-busy="@(IsStreaming ? "true" : "false")">
             @if (!IsReadOnly)
             {
+                @if (IsStreaming)
+                {
+                    <span class="composer-active-status" data-testid="chat-composer-status" role="status">
+                        <span class="composer-active-status-dot" aria-hidden="true"></span>
+                        Agent is working
+                    </span>
+                }
                 <textarea class="chat-input @ExpandingInputClass"
                           data-testid="chat-input"
                           data-composer-context="@ComposerContextToken"
