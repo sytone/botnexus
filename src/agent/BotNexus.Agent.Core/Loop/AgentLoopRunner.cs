@@ -1,4 +1,4 @@
-﻿using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -663,6 +663,30 @@ public static class AgentLoopRunner
         var authenticationRecovered = false;
         var recoveryIncidentId = Guid.NewGuid();
         var recoveryScope = new ProviderRecoveryScope(config.Model.Provider, config.AuthProfile ?? string.Empty);
+        var pendingRecoveryObservations = new System.Collections.Concurrent.ConcurrentQueue<ProviderRecoveryObservation>();
+
+        Task EmitRecoveryAsync(ProviderRecoveryObservation observation)
+            => emit(new ProviderRecoveryEvent(observation, DateTimeOffset.UtcNow));
+
+        ProviderRecoveryObservation AttemptObservation(
+            ProviderRecoveryStage stage,
+            int currentAttempt,
+            TimeSpan? delay = null)
+        {
+            var snapshot = config.RecoveryCoordinator?.GetSnapshot(recoveryScope)
+                ?? new ProviderRecoverySnapshot(ProviderRecoveryState.Closed, 0, 0, 0, 0, null);
+            return new ProviderRecoveryObservation(
+                stage,
+                recoveryScope.Provider,
+                snapshot.State,
+                snapshot.Generation,
+                snapshot.InFlightCalls,
+                snapshot.QueuedCalls,
+                snapshot.NextProbeAt,
+                currentAttempt,
+                maxAttempts,
+                delay);
+        }
 
         // #3015: the suspension's payoff. A provider + auth profile already known to be exhausted is
         // short-circuited BEFORE the first provider call, so a wedged credential costs zero
@@ -703,8 +727,13 @@ public static class AgentLoopRunner
                             recoveryScope,
                             recoveryIncidentId,
                             config.RecoveryAdmissionTimeout ?? TimeSpan.FromMilliseconds(config.EffectiveMaxRetryDelayMs),
-                            cancellationToken)
+                            cancellationToken,
+                            pendingRecoveryObservations.Enqueue)
                         .ConfigureAwait(false);
+                    while (pendingRecoveryObservations.TryDequeue(out var observation))
+                    {
+                        await EmitRecoveryAsync(observation).ConfigureAwait(false);
+                    }
                 }
 
                 var stream = config.LlmClient.StreamSimple(config.Model, providerContext, generationOptions, executionOptions);
@@ -727,6 +756,12 @@ public static class AgentLoopRunner
                 }
 
                 recoveryLease?.ReportSuccess();
+                if (attempt > 0)
+                {
+                    await EmitRecoveryAsync(AttemptObservation(ProviderRecoveryStage.Recovered, attempt + 1))
+                        .ConfigureAwait(false);
+                }
+
                 var consumptionOutcome = assistantMessage.FinishReason switch
                 {
                     StopReason.Stop or StopReason.ToolUse => ToolResultConsumptionOutcome.Success,
@@ -788,6 +823,11 @@ public static class AgentLoopRunner
                 var retryAfterDelay = (ex as ProviderRateLimitException)?.RetryAfter;
                 recoveryLease?.ReportTransientFailure(retryAfterDelay);
                 var delayMs = ComputeRetryDelayMs(backoffMs, retryAfterDelay, config);
+                await EmitRecoveryAsync(AttemptObservation(
+                        ProviderRecoveryStage.RetryScheduled,
+                        attempt + 1,
+                        TimeSpan.FromMilliseconds(delayMs)))
+                    .ConfigureAwait(false);
                 await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
                 attempt++;
                 backoffMs *= 2;
@@ -798,6 +838,8 @@ public static class AgentLoopRunner
                 if (ClassifyFailure(ex) == ProviderFailureClass.Transient)
                 {
                     recoveryLease?.ReportTransientFailure((ex as ProviderRateLimitException)?.RetryAfter);
+                    await EmitRecoveryAsync(AttemptObservation(ProviderRecoveryStage.Exhausted, attempt + 1))
+                        .ConfigureAwait(false);
                 }
                 else
                 {

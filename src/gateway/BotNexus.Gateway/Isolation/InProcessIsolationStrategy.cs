@@ -1915,6 +1915,22 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 },
             TurnEndEvent
                 => new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = messageId },
+            ProviderRecoveryEvent recovery
+                => new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.ProviderRecovery,
+                    MessageId = messageId,
+                    ProviderRecovery = new ProviderRecoverySignal(
+                        recovery.Stage.ToString(),
+                        recovery.Provider,
+                        recovery.State.ToString(),
+                        recovery.Attempt,
+                        recovery.MaxAttempts,
+                        recovery.Delay?.TotalMilliseconds,
+                        recovery.Observation.InFlightCalls,
+                        recovery.Observation.QueueLength,
+                        recovery.Observation.NextProbeAt)
+                },
             ClaimAuditEvent claimAudit
                 => new AgentStreamEvent
                 {
