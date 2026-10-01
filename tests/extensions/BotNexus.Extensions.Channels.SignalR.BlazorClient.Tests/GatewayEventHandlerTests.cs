@@ -324,9 +324,22 @@ public sealed class GatewayEventHandlerTests
         Assert.True(conv.StreamState.IsRunActive);
         Assert.True(conv.StreamState.IsTurnActive);
 
+        // Simulate a missed terminal edge: every client-side constituent can remain asserted even
+        // though the next authoritative server snapshot says no run is active.
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.ActiveToolCalls["stale-tool"] = new ActiveToolCall
+        {
+            ToolCallId = "stale-tool",
+            ToolName = "read",
+            StartedAt = DateTimeOffset.UtcNow,
+            MessageId = "stale-tool-message"
+        };
+
         _handler.ApplyRunActivitySnapshot([]);
 
         Assert.False(conv.StreamState.IsRunActive);
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Empty(conv.StreamState.ActiveToolCalls);
         Assert.False(conv.StreamState.IsTurnActive);
     }
 

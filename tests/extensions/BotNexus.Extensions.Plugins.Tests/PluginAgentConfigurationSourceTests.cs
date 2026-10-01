@@ -77,7 +77,6 @@ public sealed class PluginAgentConfigurationSourceTests
               "model": "gpt-5",
               "provider": "github-copilot",
               "systemPrompt": "Use the supplied prompt.",
-              "systemPromptFiles": ["SOUL.md", "IDENTITY.md"],
               "toolIds": ["read", "grep"],
               "allowedModels": ["gpt-5", "gpt-5-mini"],
               "thinking": "high",
@@ -92,7 +91,6 @@ public sealed class PluginAgentConfigurationSourceTests
         descriptor.Emoji.ShouldBe("robot");
         descriptor.Description.ShouldBe("Exercises the serialized contract.");
         descriptor.SystemPrompt.ShouldBe("Use the supplied prompt.");
-        descriptor.SystemPromptFiles.ShouldBe(["SOUL.md", "IDENTITY.md"]);
         descriptor.ToolIds.ShouldBe(["read", "grep"]);
         descriptor.AllowedModelIds.ShouldBe(["gpt-5", "gpt-5-mini"]);
         descriptor.Thinking.ShouldBe("high");

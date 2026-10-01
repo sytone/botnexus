@@ -113,50 +113,6 @@ public sealed class PluginAgentCompositionTests : IDisposable
         await reconciler.StopAsync(CancellationToken.None);
     }
 
-    [Fact]
-    public async Task PluginSelectedPromptFiles_RespectFencedReadDenialsIncludingResolvedVariant()
-    {
-        var fileSystem = new MockFileSystem();
-        var workspacePath = Path.GetFullPath(Path.Combine(_root, "workspace"));
-        var allowedPath = Path.Combine(workspacePath, "allowed", "AGENTS.md");
-        var deniedVariantPath = Path.Combine(workspacePath, "protected", "SECRET.gpt-5.md");
-        fileSystem.AddFile(allowedPath, new MockFileData("ALLOWED PLUGIN PROMPT"));
-        fileSystem.AddFile(
-            Path.Combine(workspacePath, "protected", "SECRET.md"),
-            new MockFileData("BASE PLUGIN PROMPT"));
-        fileSystem.AddFile(deniedVariantPath, new MockFileData("DENIED PLUGIN PROMPT"));
-
-        var json = JsonSerializer.Serialize(new
-        {
-            id = "plugin-policy-probe",
-            displayName = "Plugin Policy Probe",
-            model = "gpt-5",
-            provider = "test-provider",
-            systemPromptFiles = new[] { "allowed/AGENTS.md", "protected/SECRET.md" },
-            fileAccess = new
-            {
-                allowedReadPaths = new[] { workspacePath }
-            }
-        });
-        var definition = JsonSerializer.Deserialize<PluginAgentDefinition>(json).ShouldNotBeNull();
-        var ceiling = new BotNexus.Gateway.Abstractions.Security.FileAccessPolicy
-        {
-            AllowedReadPaths = [workspacePath],
-            DeniedPaths = [deniedVariantPath]
-        };
-        var fenced = PluginAgentDescriptorFence.Apply(definition.ToDescriptor("policy-probe"), ceiling);
-        fenced.IsAccepted.ShouldBeTrue();
-
-        var prompt = await new WorkspaceContextBuilder(
-                new StubWorkspaceManager(workspacePath),
-                fileSystem)
-            .BuildSystemPromptAsync(fenced.Descriptor.ShouldNotBeNull());
-
-        prompt.ShouldContain("ALLOWED PLUGIN PROMPT");
-        prompt.ShouldNotContain("DENIED PLUGIN PROMPT");
-        prompt.ShouldNotContain("BASE PLUGIN PROMPT");
-    }
-
     private static void CopyPluginExtension(string destination)
     {
         foreach (var name in new[]

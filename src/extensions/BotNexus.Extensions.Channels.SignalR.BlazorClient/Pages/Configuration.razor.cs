@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.AspNetCore.Components;
 
@@ -22,6 +23,9 @@ public partial class Configuration : IDisposable
     /// an unknown key falls back to the first section.
     /// </summary>
     [Parameter] public string? Section { get; set; }
+
+    /// <summary>Optional schema-derived group within <see cref="Section"/>.</summary>
+    [Parameter] public string? Subsection { get; set; }
 
     [Inject] private NavigationManager Nav { get; set; } = default!;
 
@@ -72,13 +76,88 @@ public partial class Configuration : IDisposable
         }
     }
 
+    private IReadOnlyList<(string Key, string Label)> ActiveSubsections =>
+        string.IsNullOrEmpty(ActiveSection) ? [] : SchemaForm.DescribeSubsections(_schema, ActiveSection);
+
+    private string ActiveSubsection
+    {
+        get
+        {
+            var subsections = ActiveSubsections;
+            if (subsections.Count == 0)
+                return string.Empty;
+            return subsections.FirstOrDefault(item =>
+                       string.Equals(item.Key, Subsection, StringComparison.OrdinalIgnoreCase)).Key
+                   ?? subsections[0].Key;
+        }
+    }
+
     private async Task SelectSection(string key)
     {
         Section = key;
+        Subsection = null;
         Nav.NavigateTo($"/configuration/{key}");
         if (string.Equals(key, SecretsSectionKey, StringComparison.OrdinalIgnoreCase))
             await LoadSecrets();
     }
+
+    private void SelectSubsection(string key)
+    {
+        Subsection = key;
+        Nav.NavigateTo($"/configuration/{ActiveSection}/{key}");
+    }
+
+    private IReadOnlyList<ValidationErrorDisplay> ValidationErrors =>
+        _validationResult?.Errors.Select(error => new ValidationErrorDisplay(error, FindValidationTarget(error))).ToList()
+        ?? [];
+
+    private ValidationTarget? FindValidationTarget(string error)
+    {
+        var path = error.Split([' ', ':'], 2, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        if (string.IsNullOrEmpty(path))
+            return null;
+
+        var segments = path.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+            return null;
+
+        var section = Sections.FirstOrDefault(item =>
+            string.Equals(item.Key, segments[0], StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrEmpty(section.Key))
+            return null;
+
+        var propertyName = segments[1].Split('[', 2)[0];
+        var property = _schema?["schema"]?["properties"]?[section.Key]?["properties"]?[propertyName] as JsonObject;
+        if (property is null)
+            return null;
+
+        var subsections = SchemaForm.DescribeSubsections(_schema, section.Key);
+        var subsectionKey = property["x-ui-group"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(subsectionKey))
+            subsectionKey = "general";
+        var subsection = subsections.FirstOrDefault(item =>
+            string.Equals(item.Key, subsectionKey, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrEmpty(subsection.Key))
+            return null;
+
+        return new ValidationTarget(section.Key, section.Label, subsection.Key, subsection.Label);
+    }
+
+    private void SelectValidationTarget(ValidationTarget target)
+    {
+        _validationResult = null;
+        Section = target.SectionKey;
+        Subsection = target.SubsectionKey;
+        Nav.NavigateTo($"/configuration/{target.SectionKey}/{target.SubsectionKey}");
+    }
+
+    private sealed record ValidationTarget(
+        string SectionKey,
+        string SectionLabel,
+        string SubsectionKey,
+        string SubsectionLabel);
+
+    private sealed record ValidationErrorDisplay(string Message, ValidationTarget? Target);
 
     private PlatformConfigFormModel? _form;
     private PlatformConfigFormModel Form => _form ??= new PlatformConfigFormModel(ConfigService);

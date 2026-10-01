@@ -52,6 +52,21 @@ public sealed class MatrixHttpClientMediaTests
     }
 
     [Fact]
+    public async Task SendReadReceiptAsync_PostsEmptyBodyToExactRoomAndEvent()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        var client = CreateClient(handler);
+
+        await client.SendReadReceiptAsync("!room/one:example.com", "$event/one", CancellationToken.None);
+
+        var request = handler.Requests.ShouldHaveSingleItem();
+        request.Method.ShouldBe(HttpMethod.Post);
+        request.RequestUri.ShouldBe(new Uri("https://matrix.example.com/_matrix/client/v3/rooms/%21room%2Fone%3Aexample.com/receipt/m.read/%24event%2Fone"));
+        request.Authorization.ShouldBe(new AuthenticationHeaderValue("Bearer", Token));
+        Encoding.UTF8.GetString(request.Body).ShouldBe("{}");
+    }
+
+    [Fact]
     public async Task DownloadMediaAsync_ContentLengthAboveCap_RejectsBeforeReadingBody()
     {
         var content = new TrackingContent([1, 2, 3, 4]);

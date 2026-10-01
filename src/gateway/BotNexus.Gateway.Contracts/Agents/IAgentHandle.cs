@@ -48,6 +48,22 @@ public interface IAgentHandle : IAsyncDisposable
     Task<AgentResponse> PromptAsync(AgentUserMessage message, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Waits for the agent's run slot, reports when this message actually owns it, then executes the
+    /// prompt with producer-owned cancellation.
+    /// </summary>
+    /// <remarks>
+    /// Handles that cannot provide an atomic wait/start boundary fail closed. Falling back to
+    /// <see cref="PromptAsync(AgentUserMessage, CancellationToken)"/> would either reject a busy
+    /// agent or falsely report a queued message as running.
+    /// </remarks>
+    Task<AgentResponse> PromptWhenAvailableAsync(
+        AgentUserMessage message,
+        Func<Task> onStartedAsync,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support producer-owned queued execution.");
+
+    /// <summary>
     /// Sends a message to the agent and streams back events in real time.
     /// Events include content deltas, tool execution updates, and completion.
     /// </summary>

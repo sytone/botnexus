@@ -1,6 +1,7 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -49,6 +50,7 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
     private readonly IAskUserResponseRegistry? _askUserResponseRegistry;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ILogger<DefaultConversationResetService> _logger;
+    private readonly IConversationEventPublisher _eventPublisher;
     private readonly TimeProvider _timeProvider;
 
     public DefaultConversationResetService(
@@ -57,6 +59,7 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
         IAgentSupervisor supervisor,
         IOptionsMonitor<CompactionOptions> compactionOptions,
         ILogger<DefaultConversationResetService> logger,
+        IConversationEventPublisher eventPublisher,
         ISessionEndMemoryFlusher? sessionEndFlusher = null,
         IAskUserResponseRegistry? askUserResponseRegistry = null,
         TimeProvider? timeProvider = null)
@@ -66,6 +69,7 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
         ArgumentNullException.ThrowIfNull(supervisor);
         ArgumentNullException.ThrowIfNull(compactionOptions);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(eventPublisher);
 
         _conversations = conversations;
         _sessions = sessions;
@@ -74,6 +78,7 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
         _askUserResponseRegistry = askUserResponseRegistry;
         _compactionOptions = compactionOptions;
         _logger = logger;
+        _eventPublisher = eventPublisher;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -114,6 +119,11 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
             conversation.ActiveSessionId = null;
             conversation.UpdatedAt = _timeProvider.GetUtcNow();
             await _conversations.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+            await TryPublishActiveSessionChangedAsync(
+                conversation,
+                activeSessionId,
+                activeSessionId,
+                cancellationToken).ConfigureAwait(false);
             return new ConversationResetResult(ConversationResetOutcome.NoActiveSession, SealedSessionId: null, AgentId: agentId);
         }
 
@@ -170,11 +180,53 @@ internal sealed class DefaultConversationResetService : IConversationResetServic
         conversation.ActiveSessionId = null;
         conversation.UpdatedAt = _timeProvider.GetUtcNow();
         await _conversations.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
+        await TryPublishActiveSessionChangedAsync(
+            conversation,
+            activeSessionId,
+            activeSessionId,
+            cancellationToken).ConfigureAwait(false);
 
         _logger.LogInformation(
             "Reset conversation {ConversationId}: sealed session {SessionId}, cleared ActiveSessionId.",
             conversationId, activeSessionId);
 
         return new ConversationResetResult(ConversationResetOutcome.Reset, SealedSessionId: activeSessionId, AgentId: agentId);
+    }
+
+    private async Task TryPublishActiveSessionChangedAsync(
+        Conversation conversation,
+        SessionId previousSessionId,
+        SessionId transitionSessionId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var accepted = await _eventPublisher.PublishAsync(new ConversationActiveSessionChangedEvent
+            {
+                AgentId = conversation.AgentId,
+                ConversationId = conversation.ConversationId,
+                SessionId = transitionSessionId,
+                PreviousSessionId = previousSessionId,
+                ActiveSessionId = conversation.ActiveSessionId,
+                Bindings = ConversationBindingSnapshot.FromMany(conversation.ChannelBindings),
+                OccurredAt = conversation.UpdatedAt
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (!accepted)
+            {
+                _logger.LogWarning(
+                    "Conversation event publisher rejected active-session transition for conversation {ConversationId}; clients must reconcile from durable conversation state.",
+                    conversation.ConversationId);
+            }
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Publication is deliberately non-transactional. The committed conversation remains
+            // authoritative and clients recover a missed live event by hydrating current state.
+            _logger.LogWarning(
+                ex,
+                "Failed to publish active-session transition for conversation {ConversationId}; clients must reconcile from durable conversation state.",
+                conversation.ConversationId);
+        }
     }
 }

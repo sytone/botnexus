@@ -187,24 +187,6 @@
                     <label>System Prompt</label>
                     <textarea class="cfg-textarea" rows="6" @oninput="OnSystemPromptInput">@_model.SystemPrompt</textarea>
 
-                    <label>System Prompt File</label>
-                    <input class="cfg-input" value="@_model.SystemPromptFile" @oninput="OnSystemPromptFileInput" placeholder="Legacy single file path" />
-
-                    <label>System Prompt Files</label>
-                    <div>
-                        @for (int i = 0; i < _model.SystemPromptFiles.Count; i++)
-                        {
-                            var idx = i;
-                            <div class="agent-list-row">
-                                <input class="cfg-input" value="@_model.SystemPromptFiles[idx]"
-                                       @oninput="@(e => OnSpfInput(idx, e))" />
-                                <button class="toolbar-btn" @onclick="@(() => MoveSpfUp(idx))">&#x2191;</button>
-                                <button class="toolbar-btn" @onclick="@(() => MoveSpfDown(idx))">&#x2193;</button>
-                                <button class="toolbar-btn danger" aria-label="@($"Remove system prompt file {_model.SystemPromptFiles[idx]}")" @onclick="@(() => RemoveSpf(idx))"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button>
-                            </div>
-                        }
-                        <button class="toolbar-btn" @onclick="AddSpf">+ Add File</button>
-                    </div>
                 </div>
             </div>
         </details>
@@ -577,10 +559,8 @@
         public string ModelId { get; set; } = "";
         public List<string> AllowedModelIds { get; set; } = [];
         public string? SystemPrompt { get; set; }
-        public string? SystemPromptFile { get; set; }
         public string? Thinking { get; set; }
         public int? ContextWindow { get; set; }
-        public List<string> SystemPromptFiles { get; set; } = [];
         public List<string> ToolIds { get; set; } = [];
         public int? ToolTimeoutSeconds { get; set; }
         public List<string> SubAgentIds { get; set; } = [];
@@ -769,17 +749,11 @@
         }
     }
     private void OnSystemPromptInput(ChangeEventArgs e) { _model!.SystemPrompt = e.Value?.ToString(); MarkDirty(); }
-    private void OnSystemPromptFileInput(ChangeEventArgs e) { _model!.SystemPromptFile = e.Value?.ToString(); MarkDirty(); }
     private void OnToolTimeoutInput(ChangeEventArgs e) { if (int.TryParse(e.Value?.ToString(), out var v)) { _model!.ToolTimeoutSeconds = v == 0 ? null : v; MarkDirty(); } }
     private void OnIsolationChange(ChangeEventArgs e) { _model!.IsolationStrategy = e.Value?.ToString() ?? "in-process"; MarkDirty(); }
     private void OnMaxSessionsInput(ChangeEventArgs e) { if (int.TryParse(e.Value?.ToString(), out var v)) { _model!.MaxConcurrentSessions = v; MarkDirty(); } }
 
     // SPF handlers
-    private void OnSpfInput(int idx, ChangeEventArgs e) { _model!.SystemPromptFiles[idx] = e.Value?.ToString() ?? ""; MarkDirty(); }
-    private void MoveSpfUp(int idx) { if (idx > 0) { var t = _model!.SystemPromptFiles[idx - 1]; _model.SystemPromptFiles[idx - 1] = _model.SystemPromptFiles[idx]; _model.SystemPromptFiles[idx] = t; MarkDirty(); } }
-    private void MoveSpfDown(int idx) { if (idx < _model!.SystemPromptFiles.Count - 1) { var t = _model.SystemPromptFiles[idx + 1]; _model.SystemPromptFiles[idx + 1] = _model.SystemPromptFiles[idx]; _model.SystemPromptFiles[idx] = t; MarkDirty(); } }
-    private void RemoveSpf(int idx) { _model!.SystemPromptFiles.RemoveAt(idx); MarkDirty(); }
-    private void AddSpf() { _model!.SystemPromptFiles.Add(""); MarkDirty(); }
 
     // Tool handlers
     private void OnToolIdKeyDown(KeyboardEventArgs e) { if (e.Key == "Enter") AddToolId(); }
@@ -985,7 +959,6 @@
             ApiProvider = GetStr(el, "apiProvider") ?? "",
             ModelId = GetStr(el, "modelId") ?? "",
             SystemPrompt = GetStr(el, "systemPrompt"),
-            SystemPromptFile = GetStr(el, "systemPromptFile"),
             Thinking = GetStr(el, "thinking"),
             ContextWindow = el.TryGetProperty("contextWindow", out var cwp) && cwp.ValueKind == JsonValueKind.Number ? cwp.GetInt32() : null,
             IsolationStrategy = GetStr(el, "isolationStrategy") ?? "in-process",
@@ -993,9 +966,7 @@
             ToolTimeoutSeconds = el.TryGetProperty("toolTimeoutSeconds", out var tp) && tp.ValueKind != JsonValueKind.Null ? tp.GetInt32() : null,
         };
 
-        if (el.TryGetProperty("systemPromptFiles", out var p) && p.ValueKind == JsonValueKind.Array)
-            m.SystemPromptFiles = p.EnumerateArray().Select(x => x.GetString() ?? "").ToList();
-        if (el.TryGetProperty("toolIds", out p) && p.ValueKind == JsonValueKind.Array)
+        if (el.TryGetProperty("toolIds", out var p) && p.ValueKind == JsonValueKind.Array)
             m.ToolIds = p.EnumerateArray().Select(x => x.GetString() ?? "").ToList();
         if (el.TryGetProperty("allowedModelIds", out p) && p.ValueKind == JsonValueKind.Array)
             m.AllowedModelIds = p.EnumerateArray().Select(x => x.GetString() ?? "").ToList();

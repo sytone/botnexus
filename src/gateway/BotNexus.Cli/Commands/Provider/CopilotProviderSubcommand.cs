@@ -200,6 +200,7 @@ internal static class CopilotProviderSubcommand
         }
 
         var entries = models.Data ?? new List<CopilotModelInfo>();
+        var effectiveModels = CopilotModelDiscoveryProvider.ProjectModels(models, auth.ApiEndpoint);
         if (entries.Count == 0)
         {
             AnsiConsole.MarkupLine("[yellow]No models returned.[/]");
@@ -214,9 +215,12 @@ internal static class CopilotProviderSubcommand
             .AddColumn("Tools")
             .AddColumn("Vision")
             .AddColumn("Premium")
-            .AddColumn("Multiplier");
+            .AddColumn("Multiplier")
+            .AddColumn("Invocation");
 
-        foreach (var m in entries.OrderBy(m => m.Vendor).ThenBy(m => m.Id))
+        foreach (var m in entries
+                     .OrderBy(m => m.Vendor)
+                     .ThenBy(m => m.Id))
         {
             table.AddRow(
                 CliText.SafeDisplay(m.Id ?? "—"),
@@ -226,11 +230,12 @@ internal static class CopilotProviderSubcommand
                 Bool(m.Capabilities?.Supports?.ToolCalls),
                 Bool(m.Capabilities?.Supports?.Vision),
                 FormatPremium(m.Billing?.IsPremium),
-                FormatMultiplier(m.Billing?.Multiplier));
+                FormatMultiplier(m.Billing?.Multiplier),
+                FormatInvocation(m));
         }
 
         AnsiConsole.Write(table);
-        AnsiConsole.MarkupLine($"[dim]{entries.Count} models for {CliText.SafeDisplay(instance)} from {CliText.SafeDisplay(auth.ApiEndpoint)}[/]");
+        AnsiConsole.MarkupLine($"[dim]{effectiveModels.Count} models for {CliText.SafeDisplay(instance)} from {CliText.SafeDisplay(auth.ApiEndpoint)}[/]");
         return 0;
     }
 
@@ -303,19 +308,41 @@ internal static class CopilotProviderSubcommand
             return 1;
         }
 
-        // #1639: register the models with the account's resolved endpoint so the model is born with
-        // the correct host (enterprise vs individual). The carved-out providers read BaseUrl off the
-        // model, so no post-hoc BaseUrl patch is needed here anymore.
-        var registry = new ModelRegistry();
-        new BuiltInModels().RegisterCopilotInstance(registry, instance, providerKey =>
-            string.Equals(providerKey, instance, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(auth.ApiEndpoint)
-                ? auth.ApiEndpoint
-                : null);
-        var model = registry.GetModel(instance, modelId);
+        if (string.IsNullOrWhiteSpace(auth.ApiEndpoint))
+        {
+            AnsiConsole.MarkupLine("[red]No Copilot API endpoint cached.[/] Run [green]botnexus provider copilot whoami[/] first.");
+            return 1;
+        }
+
+        CopilotModelsResponse discovered;
+        try
+        {
+            using var discoveryHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            discovered = await new CopilotDiscoveryClient(discoveryHttp)
+                .GetModelsAsync(auth.ApiEndpoint, auth.CopilotSessionToken, ct);
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Failed to discover the effective Copilot model catalogue:[/] {CliText.SafeDisplay(ex.Message)}");
+            return 2;
+        }
+
+        var model = ResolveEffectiveModel(discovered, auth.ApiEndpoint, modelId, instance);
         if (model is null)
         {
-            AnsiConsole.MarkupLine($"[red]Unknown Copilot model:[/] {CliText.SafeDisplay(modelId)}");
-            AnsiConsole.MarkupLine("Run [green]botnexus provider copilot models[/] to see what your account is entitled to.");
+            var discoveredEntry = discovered.Data?.FirstOrDefault(entry =>
+                string.Equals(entry.Id, modelId, StringComparison.Ordinal));
+            if (discoveredEntry?.SupportedEndpoints is { Count: > 0 })
+            {
+                AnsiConsole.MarkupLine(
+                    $"[red]Copilot advertises model '{CliText.SafeDisplay(modelId)}' only on unsupported endpoint contract(s):[/] " +
+                    CliText.SafeDisplay(string.Join(", ", discoveredEntry.SupportedEndpoints)));
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[red]Copilot discovery did not return an invokable model named:[/] {CliText.SafeDisplay(modelId)}");
+            }
+            AnsiConsole.MarkupLine("Run [green]botnexus provider copilot models[/] to inspect the same effective catalogue.");
             return 1;
         }
 
@@ -390,6 +417,24 @@ internal static class CopilotProviderSubcommand
         return 0;
     }
 
+    internal static LlmModel? ResolveEffectiveModel(
+        CopilotModelsResponse discovered,
+        string apiEndpoint,
+        string modelId,
+        string providerInstance = "github-copilot")
+    {
+        var registry = new ModelRegistry();
+        new BuiltInModels().RegisterCopilotInstance(registry, providerInstance, providerKey =>
+            string.Equals(providerKey, providerInstance, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(apiEndpoint)
+                ? apiEndpoint
+                : null);
+
+        foreach (var discoveredModel in CopilotModelDiscoveryProvider.ProjectModels(discovered, apiEndpoint))
+            registry.Register(providerInstance, discoveredModel);
+
+        return registry.GetModel(providerInstance, modelId);
+    }
+
     internal static string FormatPremium(bool? value) => value switch
     {
         true => "[green]yes[/]",
@@ -406,6 +451,18 @@ internal static class CopilotProviderSubcommand
 
     private static string ResolveInstance(string? instance)
         => CopilotAuthLoader.NormalizeProviderInstance(instance ?? "github-copilot");
+
+    internal static string FormatInvocation(CopilotModelInfo model)
+    {
+        var api = CopilotModelDiscoveryProvider.ResolveApiFormat(
+            model.Id ?? string.Empty,
+            model.Capabilities?.Family ?? string.Empty,
+            model.Vendor ?? string.Empty,
+            model.SupportedEndpoints);
+        return api is null
+            ? $"[red]unsupported: {CliText.SafeDisplay(string.Join(", ", model.SupportedEndpoints ?? []))}[/]"
+            : CliText.SafeDisplay(api);
+    }
 
     private static string Bool(bool? value) => value switch
     {

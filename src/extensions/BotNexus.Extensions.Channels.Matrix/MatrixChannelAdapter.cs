@@ -25,7 +25,7 @@ namespace BotNexus.Extensions.Channels.Matrix;
 /// </para>
 /// <para>
 /// Explicitly deferred: end-to-end encryption (including encrypted file descriptors),
-/// federation-specific trust decisions, read receipts, and Spaces mapping. The client seam also
+/// federation-specific trust decisions, and Spaces mapping. The client seam also
 /// exposes authenticated media upload for callers even though the outbound message model does not
 /// yet carry content parts.
 /// </para>
@@ -676,7 +676,7 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
         // message reaching the agent.
         await TrySetTypingAsync(runtime, roomId, typing: true, cancellationToken);
 
-        await DispatchInboundAsync(
+        var outcome = await DispatchInboundAsync(
             new InboundMessage
             {
                 ChannelType = ChannelType,
@@ -701,6 +701,9 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
                 },
             },
             cancellationToken);
+
+        if (outcome == ChannelDispatchOutcome.Dispatched && !string.IsNullOrWhiteSpace(evt.EventId))
+            await TrySendReadReceiptAsync(runtime, roomId, evt.EventId, cancellationToken);
     }
 
     /// <summary>
@@ -782,6 +785,33 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
                 roomId,
                 evt.EventId);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Acknowledges a successfully dispatched event as read without making receipt delivery part of
+    /// inbound settlement. Once dispatch succeeds, a homeserver receipt failure must not throw and
+    /// cause the sync batch to replay an already handled user turn.
+    /// </summary>
+    private async Task TrySendReadReceiptAsync(
+        MatrixAccountRuntime runtime,
+        string roomId,
+        string eventId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await runtime.Client.SendReadReceiptAsync(roomId, eventId, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "{DisplayName} account '{AccountName}' dispatched event '{EventId}' in room '{RoomId}' but failed to send its read receipt; the handled event will not be replayed for receipt delivery",
+                DisplayName,
+                runtime.AccountName,
+                eventId,
+                roomId);
         }
     }
 

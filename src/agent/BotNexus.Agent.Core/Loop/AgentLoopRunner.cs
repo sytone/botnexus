@@ -131,6 +131,7 @@ public static class AgentLoopRunner
         bool firstTurn)
     {
         var messages = currentContext.Messages.ToList();
+        var toolResultContextLease = new ToolResultContextLease();
         IReadOnlyList<AgentMessage> followUpSeed = [];
         var completionContinuationAttempts = 0;
         RunCompletionDecision? lastCompletionDecision = null;
@@ -226,6 +227,7 @@ public static class AgentLoopRunner
                         generationOptions,
                         executionOptions,
                         emit,
+                        toolResultContextLease,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -651,12 +653,14 @@ public static class AgentLoopRunner
         GenerationOptions generationOptions,
         ProviderExecutionOptions? executionOptions,
         Func<AgentEvent, Task> emit,
+        ToolResultContextLease toolResultContextLease,
         CancellationToken cancellationToken)
     {
         const int maxAttempts = 4;
         var attempt = 0;
         var backoffMs = 500;
         var overflowRecovered = false;
+        var authenticationRecovered = false;
 
         // #3015: the suspension's payoff. A provider + auth profile already known to be exhausted is
         // short-circuited BEFORE the first provider call, so a wedged credential costs zero
@@ -673,10 +677,13 @@ public static class AgentLoopRunner
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Re-run transforms per attempt so context overflow compaction is visible.
+            // Re-run transforms per attempt so context overflow compaction is visible. Typed
+            // stored-result detail remains leased across retries; only a successful assistant
+            // continuation commits the offered batch and makes later requests receipt-only.
+            var toolResultProjection = toolResultContextLease.Project(messages);
             var transformedMessages = config.TransformContext is null
-                ? messages
-                : await config.TransformContext(messages, cancellationToken).ConfigureAwait(false);
+                ? toolResultProjection.Messages
+                : await config.TransformContext(toolResultProjection.Messages, cancellationToken).ConfigureAwait(false);
             var transformedContext = new AgentContext(systemPrompt, transformedMessages, tools);
             var providerContext = await ContextConverter.ToProviderContext(
                     transformedContext,
@@ -705,6 +712,14 @@ public static class AgentLoopRunner
                     continue;
                 }
 
+                var consumptionOutcome = assistantMessage.FinishReason switch
+                {
+                    StopReason.Stop or StopReason.ToolUse => ToolResultConsumptionOutcome.Success,
+                    StopReason.Sensitive => ToolResultConsumptionOutcome.ContentFiltered,
+                    StopReason.Aborted => ToolResultConsumptionOutcome.Cancelled,
+                    _ => ToolResultConsumptionOutcome.ProviderFailure,
+                };
+                toolResultContextLease.Complete(toolResultProjection, consumptionOutcome);
                 return assistantMessage;
             }
             catch (Exception ex) when (ContextOverflowDetector.IsContextOverflow(ex) && !overflowRecovered)
@@ -716,6 +731,17 @@ public static class AgentLoopRunner
                 var compacted = CompactForOverflow(messages);
                 messages.Clear();
                 messages.AddRange(compacted);
+                continue;
+            }
+            catch (ProviderAuthenticationException) when
+                (!authenticationRecovered && config.InvalidateProviderCredentials is not null)
+            {
+                RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
+                authenticationRecovered = true;
+                await config.InvalidateProviderCredentials(config.Model.Provider, cancellationToken)
+                    .ConfigureAwait(false);
+                executionOptions = await config.GetProviderExecutionOptions(config.Model.Provider, cancellationToken)
+                    .ConfigureAwait(false);
                 continue;
             }
             catch (Exception ex) when (ClassifyFailure(ex) == ProviderFailureClass.Exhausted)

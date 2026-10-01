@@ -203,6 +203,7 @@ internal sealed class ProviderCommand
             ? $"[green]✓[/] Provider [green]{name}[/] updated."
             : $"[green]✓[/] Provider [green]{name}[/] added.");
         exitCode.PrintReceipt();
+        PrintProviderActivationReceipt();
 
         if (verbose)
         {
@@ -212,6 +213,15 @@ internal sealed class ProviderCommand
         }
 
         return 0;
+    }
+
+    internal static void PrintProviderActivationReceipt()
+    {
+        AnsiConsole.MarkupLine("  Persistence: [green]succeeded[/].");
+        AnsiConsole.MarkupLine("  Runtime activation: [yellow]not validated[/] by this offline command.");
+        AnsiConsole.MarkupLine(
+            "  Restart required: [green]no[/] when the running gateway receives the configuration reload; " +
+            "verify the provider appears in its live model catalogue before assigning an agent.");
     }
 
     /// <summary>Raw-document path of the providers section.</summary>
@@ -460,6 +470,7 @@ internal sealed class ProviderCommand
 
                 AnsiConsole.MarkupLine($"[green]✓[/] Provider [green]{providerName}[/] configured successfully.");
                 wizardExit.PrintReceipt();
+                PrintProviderActivationReceipt();
 
                 if (c.Get<bool>("verbose"))
                 {

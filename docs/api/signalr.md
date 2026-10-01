@@ -53,6 +53,14 @@ is `"SignalRHubAuth"`. `SignalRAuthRequirementHandler` evaluates it at runtime:
 | One or more authentication schemes are registered (e.g. JWT Bearer) | An authenticated user is required. |
 | No authentication schemes are registered | The requirement always succeeds (backward compatibility). |
 
+The server also owns the reader identity used for durable per-reader state. For authenticated
+connections it resolves the Entra `oid` claim (long form, then short form), followed by the OIDC
+`sub` claim. Clients cannot submit or override that identity. When the gateway has no authentication
+scheme, every connection maps to the explicit `local-owner` reader. This is a single-user trust
+model: all clients that can reach that unauthenticated gateway share read state, so do not expose
+such a gateway to users who should be isolated from one another. Connection IDs and browser storage
+are never durable reader identities.
+
 ### 2. Per-method scope guard
 
 `HubScopeGuard` enforces least privilege per method. Scopes are read from the OAuth-style

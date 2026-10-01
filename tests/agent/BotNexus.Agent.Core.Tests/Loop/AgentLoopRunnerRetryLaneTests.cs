@@ -73,31 +73,95 @@ public class AgentLoopRunnerRetryLaneTests
     }
 
     /// <summary>
-    /// AC2. A typed <see cref="ProviderAuthenticationException"/> is an exhaustion condition:
-    /// retrying with the same rejected credential cannot produce a different answer.
+    /// #3833. A typed authentication failure re-resolves provider execution options and retries
+    /// exactly once. This is distinct from the ordinary transient retry budget: the second
+    /// credential succeeds and the auth profile is never suspended.
     /// </summary>
     [Fact]
-    public async Task RunAsync_TypedAuthenticationFailure_InvokesProviderExactlyOnce()
+    public async Task RunAsync_TypedAuthenticationFailure_ReResolvesCredentialAndRetriesOnce()
     {
         var attempts = 0;
+        var resolutions = 0;
+        var invalidations = 0;
         var registry = new ProviderSuspensionRegistry();
-        using var _ = RegisterProvider("exhaustion-typed-test", (_, _, _) =>
+        using var _ = RegisterProvider("auth-refresh-test", (_, _, options) =>
         {
             Interlocked.Increment(ref attempts);
-            throw new ProviderAuthenticationException("credentials rejected", 401, "test-provider");
+            if (options?.ApiKey == "stale-key")
+            {
+                throw new ProviderAuthenticationException("credentials rejected", 401, "test-provider");
+            }
+
+            return TestStreamFactory.CreateTextResponse("refreshed");
         });
+
+        var config = CreateConfig("auth-refresh-test", registry, authProfile: "profile-a") with
+        {
+            GetProviderExecutionOptions = (_, _) => Task.FromResult<ProviderExecutionOptions?>(
+                new ProviderExecutionOptions
+                {
+                    ApiKey = Interlocked.Increment(ref resolutions) == 1 ? "stale-key" : "fresh-key"
+                }),
+            InvalidateProviderCredentials = (_, _) =>
+            {
+                Interlocked.Increment(ref invalidations);
+                return Task.CompletedTask;
+            }
+        };
+
+        var result = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("test")],
+            new AgentContext(null, [], []),
+            config,
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        attempts.ShouldBe(2, "an authentication failure must receive one bounded retry");
+        resolutions.ShouldBe(2, "the retry must re-resolve provider execution options");
+        invalidations.ShouldBe(1, "the rejected credential cache must be invalidated exactly once");
+        registry.IsSuspended("test-provider", "profile-a").ShouldBeFalse();
+        result.OfType<AssistantAgentMessage>().ShouldContain(message => message.Content == "refreshed");
+    }
+
+    [Fact]
+    public async Task RunAsync_PersistentAuthenticationFailure_RetriesOnlyOnceThenSuspends()
+    {
+        var attempts = 0;
+        var resolutions = 0;
+        var invalidations = 0;
+        var registry = new ProviderSuspensionRegistry();
+        using var _ = RegisterProvider("auth-persistent-test", (_, _, _) =>
+        {
+            Interlocked.Increment(ref attempts);
+            throw new ProviderAuthenticationException("credentials rejected", 403, "test-provider");
+        });
+
+        var config = CreateConfig("auth-persistent-test", registry, authProfile: "profile-a") with
+        {
+            GetProviderExecutionOptions = (_, _) =>
+            {
+                Interlocked.Increment(ref resolutions);
+                return Task.FromResult<ProviderExecutionOptions?>(new ProviderExecutionOptions());
+            },
+            InvalidateProviderCredentials = (_, _) =>
+            {
+                Interlocked.Increment(ref invalidations);
+                return Task.CompletedTask;
+            }
+        };
 
         var act = () => AgentLoopRunner.RunAsync(
             [new AgentUserMessage("test")],
             new AgentContext(null, [], []),
-            CreateConfig("exhaustion-typed-test", registry, authProfile: "profile-a"),
+            config,
             _ => Task.CompletedTask,
             CancellationToken.None);
 
         await act.ShouldThrowAsync<ProviderAuthenticationException>();
-        attempts.ShouldBe(1, "a rejected credential must not be retried three more times");
-        registry.IsSuspended("test-provider", "profile-a")
-            .ShouldBeTrue("a rejected credential is an exhaustion condition, not a terminal one");
+        attempts.ShouldBe(2);
+        resolutions.ShouldBe(2);
+        invalidations.ShouldBe(1);
+        registry.IsSuspended("test-provider", "profile-a").ShouldBeTrue();
     }
 
     /// <summary>

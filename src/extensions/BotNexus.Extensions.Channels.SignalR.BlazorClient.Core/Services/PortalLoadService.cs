@@ -266,11 +266,13 @@ public sealed class PortalLoadService : IPortalLoadService
     /// either. A no-op when nothing is active, when the row is a locally synthesised sub-agent
     /// observer transcript (no server conversation behind it), or when history was never loaded.
     /// </remarks>
-    private async Task RefreshActiveTranscriptAsync(CancellationToken cancellationToken)
+    private async Task RefreshConversationTranscriptAsync(
+        string? conversationId,
+        CancellationToken cancellationToken)
     {
         try
         {
-            if (_store.ActiveConversationId is not { Length: > 0 } conversationId)
+            if (string.IsNullOrWhiteSpace(conversationId))
                 return;
 
             var conversation = _store.GetConversation(conversationId);
@@ -309,7 +311,23 @@ public sealed class PortalLoadService : IPortalLoadService
     }
 
     /// <inheritdoc />
-    public async Task RefreshAsync(CancellationToken cancellationToken = default)
+    public Task RefreshAsync(CancellationToken cancellationToken = default) =>
+        RefreshCoreAsync(_store.ActiveConversationId, cancellationToken);
+
+    /// <inheritdoc />
+    public Task RefreshAsync(
+        string agentId,
+        string conversationId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
+        return RefreshCoreAsync(conversationId, cancellationToken);
+    }
+
+    private async Task RefreshCoreAsync(
+        string? conversationId,
+        CancellationToken cancellationToken)
     {
         if (_hubUrl is null || IsLoading)
             return;
@@ -350,7 +368,7 @@ public sealed class PortalLoadService : IPortalLoadService
             // was the one thing it could not fix. Placed here, before the optional re-dial, for the
             // same #2541 reason the roster load is: a failed re-dial must not cost the user the REST
             // refresh they asked for. The call is independently guarded and never throws.
-            await RefreshActiveTranscriptAsync(cancellationToken);
+            await RefreshConversationTranscriptAsync(conversationId, cancellationToken);
 
             // Reconnect SignalR if needed
             if (!_hub.IsConnected)
