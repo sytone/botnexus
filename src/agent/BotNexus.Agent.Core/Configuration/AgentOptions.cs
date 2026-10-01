@@ -101,4 +101,6 @@ public record AgentOptions(
     Func<string, string>? SanitizeToolResultText = null,
     Loop.EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
     int MaxCompletionContinuations = 2,
-    InvalidateProviderCredentialsDelegate? InvalidateProviderCredentials = null);
+    InvalidateProviderCredentialsDelegate? InvalidateProviderCredentials = null,
+    Loop.IProviderRecoveryCoordinator? RecoveryCoordinator = null,
+    TimeSpan? RecoveryAdmissionTimeout = null);

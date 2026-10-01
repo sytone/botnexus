@@ -61,6 +61,20 @@ public sealed class MobileBootFailureDiagnosticsTests
     }
 
     [Fact]
+    public void Mobile_standalone_shell_declares_and_applies_safe_area_geometry()
+    {
+        var index = File.ReadAllText(Path.Combine(MobileWwwroot, "index.html"));
+        var css = File.ReadAllText(Path.Combine(MobileWwwroot, "css", "mobile.css"));
+
+        Assert.Contains("viewport-fit=cover", index, StringComparison.Ordinal);
+        Assert.Contains("class=\"mobile-boot-screen\"", index, StringComparison.Ordinal);
+        Assert.Contains("env(safe-area-inset-top)", css, StringComparison.Ordinal);
+        Assert.Contains("env(safe-area-inset-bottom)", css, StringComparison.Ordinal);
+        Assert.Contains("padding-top: env(safe-area-inset-top)", css, StringComparison.Ordinal);
+        Assert.Contains("padding-bottom: env(safe-area-inset-bottom)", css, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Mobile_boot_diagnostics_has_not_drifted_from_the_desktop_copy()
     {
         // The two clients are separate BlazorWebAssembly projects with separate wwwroot trees, so

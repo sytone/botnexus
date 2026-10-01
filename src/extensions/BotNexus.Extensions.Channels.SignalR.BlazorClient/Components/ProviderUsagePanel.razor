@@ -84,16 +84,28 @@
                     </div>
 
                     <div class="usage-totals t-body">
-                        <span><strong>@_current.Burn.Requests</strong> @Plural(_current.Burn.Requests, "call")</span>
-                        <span><strong>@Compact(_current.Burn.InputTokens)</strong> in</span>
-                        <span><strong>@Compact(_current.Burn.OutputTokens)</strong> out</span>
-                        @* Only rendered when non-zero: a permanent "0 failed" trains the reader to
-                           stop seeing the row, which is the one row that must be noticed. *@
+                        <span><strong>@_current.Burn.Requests</strong> @Plural(_current.Burn.Requests, "wire attempt")</span>
+                        @if (_current.Burn.TotalTokens is { } totalTokens)
+                        {
+                            <span><strong>@Compact(totalTokens)</strong> total tokens</span>
+                        }
+                        else
+                        {
+                            <span><strong>@TokenValue(_current.Burn.InputTokens)</strong> in</span>
+                            <span><strong>@TokenValue(_current.Burn.OutputTokens)</strong> out</span>
+                        }
                         @if (_current.Burn.Failures > 0)
                         {
-                            <span class="usage-fail"><strong>@_current.Burn.Failures</strong> failed</span>
+                            <span class="usage-fail"><strong>@_current.Burn.Failures</strong> failed responses</span>
                         }
                     </div>
+
+                    @if (_isTruncated)
+                    {
+                        <p class="usage-empty t-caption" data-testid="usage-truncated">
+                            This requested window is incomplete because older samples were removed by bounded global retention.
+                        </p>
+                    }
 
                     @if (_current.Burn.Models.Count == 0)
                     {
@@ -105,13 +117,20 @@
                             @foreach (var m in _current.Burn.Models)
                             {
                                 <div class="usage-model-row">
-                                    <span class="usage-model-name t-mono">@m.Model</span>
-                                    <span class="t-caption usage-dim">@m.Requests @Plural(m.Requests, "call")</span>
+                                    <span class="usage-model-name @(m.ModelKnown ? "t-mono" : "")">@m.ModelDisplayName</span>
+                                    <span class="t-caption usage-dim">@m.Requests @Plural(m.Requests, "attempt")</span>
                                     @if (m.Failures > 0)
                                     {
                                         <span class="t-caption usage-fail">@m.Failures failed</span>
                                     }
-                                    <span class="t-caption usage-dim">@Compact(m.InputTokens) / @Compact(m.OutputTokens)</span>
+                                    @if (m.TotalTokens is { } modelTotal)
+                                    {
+                                        <span class="t-caption usage-dim">@Compact(modelTotal) total</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="t-caption usage-dim">@TokenValue(m.InputTokens) in / @TokenValue(m.OutputTokens) out</span>
+                                    }
                                 </div>
                             }
                         </div>
@@ -120,9 +139,10 @@
                     @* Stated plainly rather than buried. A number shown without its provenance
                        invites being trusted for billing, which this is not. *@
                     <p class="usage-note t-caption">
-                        Calls are counted exactly. Token figures come from the provider's own
-                        rate-limit counters, so concurrent calls to different models may be
-                        attributed to whichever returned last. Not a billing source.
+                        Counts are HTTP response wire attempts; transport exceptions have no response
+                        and are not observed here. Unknown model identity and unavailable token splits
+                        are shown explicitly. Token figures are estimates derived from available
+                        provider rate-limit counters. Not a billing source.
                     </p>
                 </section>
             }
@@ -135,6 +155,7 @@
     private string? _error;
     private string? _selectedProvider;
     private int _windowMinutes = 60;
+    private bool _isTruncated;
     private List<ProviderUsage> _providers = [];
     private ProviderUsage? _current;
     private Timer? _poll;
@@ -217,6 +238,7 @@
             if (!Owns(generation, cancellationToken) || res?.WindowMinutes != windowMinutes) return;
 
             _providers = res.Providers;
+            _isTruncated = res.IsTruncated;
             _error = null;
 
             // Keep the operator's choice across refreshes; fall back only if it disappeared.
@@ -314,6 +336,8 @@
     private static string Severity(double pct) => pct >= 90 ? "is-critical" : pct >= 75 ? "is-warning" : "is-ok";
 
     /// <summary>Short human number: 1234 -> 1.2k, 5000000 -> 5.0M.</summary>
+    private static string TokenValue(long? value) => value is { } available ? Compact(available) : "unavailable";
+
     private static string Compact(long n) => n switch
     {
         >= 1_000_000_000 => (n / 1_000_000_000d).ToString("0.#", CultureInfo.InvariantCulture) + "B",
@@ -346,7 +370,7 @@
         return $"seen {Math.Max(0, (int)d.TotalSeconds)}s ago";
     }
 
-    private sealed record UsageResponse(int WindowMinutes, List<ProviderUsage> Providers);
+    private sealed record UsageResponse(int WindowMinutes, bool IsTruncated, List<ProviderUsage> Providers);
 
     private sealed record ProviderUsage(
         string Provider, DateTimeOffset ObservedAtUtc, List<LimitDimension> Limits, Burn Burn);
@@ -354,7 +378,21 @@
     private sealed record LimitDimension(
         string Id, string Label, long Limit, long Remaining, long Used, double PercentUsed, DateTimeOffset? ResetUtc);
 
-    private sealed record Burn(long Requests, long Failures, long InputTokens, long OutputTokens, List<ModelBurn> Models);
+    private sealed record Burn(
+        long Requests,
+        long Failures,
+        long? InputTokens,
+        long? OutputTokens,
+        long? TotalTokens,
+        List<ModelBurn> Models);
 
-    private sealed record ModelBurn(string Model, long Requests, long Failures, long InputTokens, long OutputTokens);
+    private sealed record ModelBurn(
+        string? Model,
+        bool ModelKnown,
+        string ModelDisplayName,
+        long Requests,
+        long Failures,
+        long? InputTokens,
+        long? OutputTokens,
+        long? TotalTokens);
 }

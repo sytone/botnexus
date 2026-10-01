@@ -391,7 +391,23 @@ public sealed class WebhookInboundController(
 
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Agent run did not complete." });
         }
-        catch (WebhookNotDispatchedException ex) when (!ct.IsCancellationRequested)
+        catch (WebhookNotDispatchedException) when (ct.IsCancellationRequested)
+        {
+            // The request disappeared while this accepted run was still queued. Persist with a
+            // non-cancelled token before preserving the caller's cancellation contract; otherwise
+            // the durable row remains Queued forever even though the ticket returned its capacity.
+            try
+            {
+                await MarkCallerCancelledAsync(run, agentId);
+            }
+            finally
+            {
+                ct.ThrowIfCancellationRequested();
+            }
+
+            throw new InvalidOperationException("The caller cancellation token was expected to be cancelled.");
+        }
+        catch (WebhookNotDispatchedException ex)
         {
             // The deadline expired while still queued: the agent never saw this message at all.
             // Say so, rather than reporting a timeout of work that never started.
@@ -512,6 +528,23 @@ public sealed class WebhookInboundController(
         logger.LogInformation(
             "Webhook run '{RunId}' queued for agent '{AgentId}' - {Waiting} delivery(s) waiting, bound {Depth}.",
             run.Id, agentId.Value, InboundQueue.WaitingCount(agentId), InboundQueue.MaxQueueDepth);
+    }
+
+    /// <summary>
+    /// Records an accepted run abandoned by its caller before dispatch. Failed is the existing
+    /// terminal non-timeout state; the explicit error preserves cancellation provenance without a
+    /// persisted-status migration.
+    /// </summary>
+    private async Task MarkCallerCancelledAsync(WebhookRun run, AgentId agentId)
+    {
+        run.Status = WebhookRunStatus.Failed;
+        run.CompletedAt = DateTimeOffset.UtcNow;
+        run.Error = "The webhook caller cancelled the request before the queued delivery was dispatched.";
+        await runStore.UpdateAsync(run, CancellationToken.None);
+
+        logger.LogInformation(
+            "Webhook run '{RunId}' for agent '{AgentId}' was cancelled by its caller before dispatch.",
+            run.Id, agentId.Value);
     }
 
     /// <summary>

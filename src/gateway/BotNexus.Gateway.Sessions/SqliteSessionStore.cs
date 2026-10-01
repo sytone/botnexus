@@ -176,6 +176,10 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         _agentIdCache = new BoundedLruCache<ConversationId, AgentId>(cacheCapacity);
     }
 
+    /// <summary>Commits one bounded legacy tool-invocation normalization batch.</summary>
+    public LegacyToolInvocationBackfillReport BackfillLegacyToolInvocations(int batchSize) =>
+        LegacyToolInvocationBackfill.RunConnectionString(_connectionString, batchSize, commit: true);
+
     /// <inheritdoc />
     public override async Task<GatewaySession?> GetAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {

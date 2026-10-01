@@ -706,7 +706,9 @@ public sealed class Agent
             SanitizeToolResultText: _options.SanitizeToolResultText,
             EvaluateRunCompletion: _options.EvaluateRunCompletion,
             MaxCompletionContinuations: _options.MaxCompletionContinuations,
-            InvalidateProviderCredentials: _options.InvalidateProviderCredentials);
+            InvalidateProviderCredentials: _options.InvalidateProviderCredentials,
+            RecoveryCoordinator: _options.RecoveryCoordinator,
+            RecoveryAdmissionTimeout: _options.RecoveryAdmissionTimeout);
     }
 
     private Func<CancellationToken, Task<AgentContext?>>? BuildMaybeCompactDelegate()

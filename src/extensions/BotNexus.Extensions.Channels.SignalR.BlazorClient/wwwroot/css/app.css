@@ -2099,11 +2099,73 @@ html, body, #app {
 /* ── Input area ─────────────────────────────────────────────────────── */
 
 .chat-input-area {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
     border-top: 1px solid var(--border);
     background: var(--bg-secondary);
+}
+
+.composer-toolbar {
+    display: flex;
+    align-items: center;
+    align-self: end;
+    gap: 0.3rem;
+    padding: 0.2rem;
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) + 2px);
+    background: var(--bg-surface);
+}
+
+.composer-action-btn {
+    display: grid;
+    place-items: center;
+    flex: 0 0 2.25rem;
+    width: 2.25rem;
+    height: 2.25rem;
+    min-width: 2.25rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text-secondary);
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.composer-action-btn:hover:not(:disabled),
+.composer-action-btn:focus-visible {
+    border-color: var(--border);
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.composer-action-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.composer-action-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.composer-toolbar-divider {
+    width: 1px;
+    height: 1.5rem;
+    margin: 0 0.1rem;
+    background: var(--border);
+}
+
+.composer-attachments {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
 }
 
 .chat-input-area.ask-user-input-area {
@@ -2193,7 +2255,8 @@ html, body, #app {
 }
 
 .chat-input {
-    flex: 1;
+    width: 100%;
+    min-width: 0;
     padding: 0.6rem 0.75rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -2635,91 +2698,37 @@ html, body, #app {
     flex: 1 1 auto;
 }
 
-/* ── Steer / Abort buttons ──────────────────────────────────────────── */
+/* ── Run action intent colours ──────────────────────────────────────── */
 
-.steer-btn {
-    padding: 0.6rem 1rem;
-    border: 1px solid var(--accent);
-    border-radius: var(--radius);
+.composer-action-btn.steer-btn {
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
     background: var(--color-accent-wash);
     color: var(--accent);
-    font-weight: 600;
-    font-size: var(--text-body);
-    cursor: pointer;
-    transition: background 0.15s;
-    align-self: flex-end;
-    white-space: nowrap;
 }
 
-.steer-btn:hover:not(:disabled) {
-    background: var(--color-accent-wash-strong);
-}
-
-.steer-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-.interrupt-steer-btn {
-    padding: 0.6rem 0.85rem;
-    border: 1px solid var(--warning);
-    border-radius: var(--radius);
+.composer-action-btn.interrupt-steer-btn {
+    border-color: color-mix(in srgb, var(--warning) 55%, transparent);
     background: var(--color-warning-wash);
     color: var(--warning);
-    font-weight: 600;
-    font-size: var(--text-body);
-    cursor: pointer;
-    transition: background 0.15s;
-    align-self: flex-end;
-    white-space: nowrap;
 }
 
-.interrupt-steer-btn:hover:not(:disabled) {
-    background: var(--color-warning-wash);
-}
-
-.interrupt-steer-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-.followup-btn {
-    padding: 0.6rem 0.85rem;
-    border: 1px solid var(--success);
-    border-radius: var(--radius);
+.composer-action-btn.followup-btn {
+    border-color: color-mix(in srgb, var(--success) 55%, transparent);
     background: var(--color-success-wash);
     color: var(--success);
-    font-weight: 600;
-    font-size: var(--text-body);
-    cursor: pointer;
-    transition: background 0.15s;
-    align-self: flex-end;
-    white-space: nowrap;
 }
 
-.followup-btn:hover:not(:disabled) {
-    background: var(--color-success-wash);
-}
-
-.followup-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-.abort-btn {
-    padding: 0.6rem 0.85rem;
-    border: 1px solid var(--error);
-    border-radius: var(--radius);
+.composer-action-btn.abort-btn {
+    border-color: color-mix(in srgb, var(--error) 55%, transparent);
     background: var(--color-danger-wash);
     color: var(--error);
-    font-weight: 600;
-    font-size: var(--text-body);
-    cursor: pointer;
-    transition: background 0.15s;
-    align-self: flex-end;
-    white-space: nowrap;
 }
 
-.abort-btn:hover {
-    background: var(--color-danger-wash);
+.composer-action-btn.steer-btn:hover:not(:disabled),
+.composer-action-btn.interrupt-steer-btn:hover:not(:disabled),
+.composer-action-btn.followup-btn:hover:not(:disabled),
+.composer-action-btn.abort-btn:hover:not(:disabled) {
+    filter: brightness(1.15);
 }
 
 /* ── History loading spinner ────────────────────────────────────────── */
@@ -3010,11 +3019,17 @@ html, body, #app {
     }
 
     .chat-input-area {
-        flex-wrap: wrap;
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .chat-input {
         min-width: 0;
+    }
+
+    .composer-toolbar {
+        justify-self: end;
+        max-width: 100%;
+        overflow-x: auto;
     }
 
     .chat-header-actions {
@@ -6581,18 +6596,6 @@ h3.conversation-title.editable:hover {
 }
 
 /* Expanded desktop composer */
-.expand-composer-btn {
-    display: grid;
-    place-items: center;
-    align-self: flex-end;
-    width: 2.5rem;
-    height: 2.5rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-surface);
-    color: var(--text-secondary);
-    cursor: pointer;
-}
 .expand-composer-btn:hover { color: var(--text-primary); border-color: var(--accent); }
 .expanded-composer-overlay {
     position: fixed;
@@ -6648,8 +6651,9 @@ h3.conversation-title.editable:hover {
 }
 
 /* Chat attachments */
-.attachment-composer { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; max-width: 55%; }
-.attach-btn { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }
+.attachment-composer { display: contents; }
+.attach-btn { position: relative; cursor: pointer; }
+.attach-paperclip { font-size: 1.1rem; line-height: 1; }
 .attach-btn:focus-within { outline: 2px solid var(--accent); }
 .attachment-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .attachment-chip { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 15rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: var(--radius-pill); font-size: var(--text-label); }
@@ -7902,7 +7906,7 @@ h3.conversation-title.editable:hover {
 }
 
 /* Prompt-template composer picker (#4299). */
-.prompt-template-open-btn { align-self: center; padding: .45rem .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text); cursor: pointer; }
+.prompt-template-open-btn { color: var(--text-secondary); }
 .prompt-template-overlay { position: fixed; inset: 0; z-index: 220; display: grid; place-items: center; padding: 1rem; background: var(--color-scrim); }
 .prompt-template-dialog { width: min(680px, 96vw); max-height: min(720px, 90vh); overflow: auto; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-secondary); box-shadow: var(--shadow-overlay); }
 .prompt-template-dialog header, .prompt-template-dialog footer { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }

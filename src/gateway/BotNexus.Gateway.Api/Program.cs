@@ -399,9 +399,9 @@ builder.Services.AddHttpClient("BotNexus", client =>
     return sp.GetRequiredService<ProviderLoggingHandler>();
 })
 .AddHttpMessageHandler(sp =>
-    // Innermost of the provider handlers, deliberately: it must observe the response that was actually
-    // returned to the caller, after the retry handler has finished replaying failures. Sitting
-    // outside it would capture the headroom of an attempt that got discarded.
+    // Innermost of the provider handlers, deliberately: the retry handler invokes this inner
+    // pipeline once per HTTP wire attempt, so usage records every response, including intermediate
+    // retriable failures. Transport exceptions have no response and are therefore not observed.
     sp.GetRequiredService<ProviderRateLimitHandler>());
 builder.Services.AddSingleton<HttpClient>(sp =>
 {

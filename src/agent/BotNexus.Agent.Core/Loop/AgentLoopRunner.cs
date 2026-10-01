@@ -661,6 +661,8 @@ public static class AgentLoopRunner
         var backoffMs = 500;
         var overflowRecovered = false;
         var authenticationRecovered = false;
+        var recoveryIncidentId = Guid.NewGuid();
+        var recoveryScope = new ProviderRecoveryScope(config.Model.Provider, config.AuthProfile ?? string.Empty);
 
         // #3015: the suspension's payoff. A provider + auth profile already known to be exhausted is
         // short-circuited BEFORE the first provider call, so a wedged credential costs zero
@@ -692,8 +694,19 @@ public static class AgentLoopRunner
                 .ConfigureAwait(false);
 
             var messageCountBeforeStream = messages.Count;
+            ProviderRecoveryLease? recoveryLease = null;
             try
             {
+                if (config.RecoveryCoordinator is not null)
+                {
+                    recoveryLease = await config.RecoveryCoordinator.AcquireAsync(
+                            recoveryScope,
+                            recoveryIncidentId,
+                            config.RecoveryAdmissionTimeout ?? TimeSpan.FromMilliseconds(config.EffectiveMaxRetryDelayMs),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
                 var stream = config.LlmClient.StreamSimple(config.Model, providerContext, generationOptions, executionOptions);
                 var assistantMessage = await StreamAccumulator
                     .AccumulateAsync(stream, emit, cancellationToken, messages)
@@ -702,6 +715,7 @@ public static class AgentLoopRunner
                     && ContextOverflowDetector.IsContextOverflow(assistantMessage.ErrorMessage)
                     && !overflowRecovered)
                 {
+                    recoveryLease?.ReportNonTransientFailure();
                     RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                     overflowRecovered = true;
                     config.OnDiagnostic?.Invoke(
@@ -712,6 +726,7 @@ public static class AgentLoopRunner
                     continue;
                 }
 
+                recoveryLease?.ReportSuccess();
                 var consumptionOutcome = assistantMessage.FinishReason switch
                 {
                     StopReason.Stop or StopReason.ToolUse => ToolResultConsumptionOutcome.Success,
@@ -724,6 +739,7 @@ public static class AgentLoopRunner
             }
             catch (Exception ex) when (ContextOverflowDetector.IsContextOverflow(ex) && !overflowRecovered)
             {
+                recoveryLease?.ReportNonTransientFailure();
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 overflowRecovered = true;
                 config.OnDiagnostic?.Invoke(
@@ -746,6 +762,7 @@ public static class AgentLoopRunner
             }
             catch (Exception ex) when (ClassifyFailure(ex) == ProviderFailureClass.Exhausted)
             {
+                recoveryLease?.ReportNonTransientFailure();
                 // #3015 -- the non-transient exhaustion lane. Quota exhausted / billing disabled /
                 // credential rejected will not clear by waiting, so spending the remaining three
                 // attempts plus 500+1000+2000ms of backoff buys exactly the same answer three more
@@ -769,14 +786,24 @@ public static class AgentLoopRunner
             {
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 var retryAfterDelay = (ex as ProviderRateLimitException)?.RetryAfter;
+                recoveryLease?.ReportTransientFailure(retryAfterDelay);
                 var delayMs = ComputeRetryDelayMs(backoffMs, retryAfterDelay, config);
                 await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
                 attempt++;
                 backoffMs *= 2;
                 continue;
             }
-            catch
+            catch (Exception ex)
             {
+                if (ClassifyFailure(ex) == ProviderFailureClass.Transient)
+                {
+                    recoveryLease?.ReportTransientFailure((ex as ProviderRateLimitException)?.RetryAfter);
+                }
+                else
+                {
+                    recoveryLease?.ReportNonTransientFailure();
+                }
+
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 throw;
             }

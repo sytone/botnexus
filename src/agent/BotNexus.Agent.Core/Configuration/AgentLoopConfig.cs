@@ -132,7 +132,9 @@ public record AgentLoopConfig(
     BotNexus.Agent.Core.Tools.SatelliteToolExecutionOptions? SatelliteToolExecution = null,
     EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
     int MaxCompletionContinuations = 2,
-    InvalidateProviderCredentialsDelegate? InvalidateProviderCredentials = null)
+    InvalidateProviderCredentialsDelegate? InvalidateProviderCredentials = null,
+    IProviderRecoveryCoordinator? RecoveryCoordinator = null,
+    TimeSpan? RecoveryAdmissionTimeout = null)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).

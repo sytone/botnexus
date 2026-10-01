@@ -757,6 +757,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // strategy without the full service graph keep working (null simply records nothing;
             // the one-attempt fail-fast still applies).
             SuspensionRegistry: _serviceProvider.GetService<BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry>(),
+            RecoveryCoordinator: _serviceProvider.GetService<BotNexus.Agent.Core.Loop.IProviderRecoveryCoordinator>(),
             AuthProfile: authProfileId,
             // #3162: the central tool-output backstop. Reads gateway:toolOutputBudget and defaults
             // ON (256 KiB) when the section is absent; disabled (0) only when Enabled=false or

@@ -2,17 +2,30 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
 
-namespace BotNexus.Cli.Commands;
+namespace BotNexus.Gateway.Sessions;
 
-internal static class LegacyToolInvocationBackfill
+public static class LegacyToolInvocationBackfill
 {
-    internal static LegacyToolInvocationBackfillReport Run(string databasePath, int batchSize, bool commit)
+    public static LegacyToolInvocationBackfillReport Run(string databasePath, int batchSize, bool commit)
+    {
+        var mode = commit ? SqliteOpenMode.ReadWrite : SqliteOpenMode.ReadOnly;
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = mode
+        }.ToString();
+        return RunConnectionString(connectionString, batchSize, commit);
+    }
+
+    internal static LegacyToolInvocationBackfillReport RunConnectionString(
+        string connectionString,
+        int batchSize,
+        bool commit)
     {
         if (batchSize < 1)
             throw new ArgumentOutOfRangeException(nameof(batchSize), "Batch size must be positive.");
 
-        var mode = commit ? "ReadWrite" : "ReadOnly";
-        using var connection = new SqliteConnection($"Data Source={databasePath};Mode={mode}");
+        using var connection = new SqliteConnection(connectionString);
         connection.Open();
         using var transaction = commit ? connection.BeginTransaction() : null;
         var rows = ReadBatch(connection, transaction, batchSize);
@@ -188,7 +201,7 @@ internal static class LegacyToolInvocationBackfill
         bool IsStart);
 }
 
-internal sealed record LegacyToolInvocationBackfillReport(
+public sealed record LegacyToolInvocationBackfillReport(
     int ScannedRows,
     int LinkedRows,
     int InvocationCount,

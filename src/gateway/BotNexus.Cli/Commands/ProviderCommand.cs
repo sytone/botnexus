@@ -67,7 +67,7 @@ internal sealed class ProviderCommand
         command.AddCommand(BuildRemoveCommand(verboseOption, targetOption));
         command.AddCommand(CopilotProviderSubcommand.Build(
             verboseOption, targetOption,
-            (configPath, home, verbose, ct) => ExecuteSetupAsync(configPath, home, verbose, "github-copilot", ct)));
+            (configPath, home, verbose, instance, ct) => ExecuteCopilotSetupAsync(configPath, home, verbose, instance, ct)));
         command.AddCommand(OllamaProviderSubcommand.Build(targetOption));
 
         // Default to setup when no subcommand given
@@ -322,16 +322,39 @@ internal sealed class ProviderCommand
     }
 
     internal async Task<int> ExecuteSetupAsync(bool verbose, CancellationToken cancellationToken)
-        => await ExecuteSetupAsync(PlatformConfigLoader.DefaultConfigPath, PlatformConfigLoader.DefaultHomePath, verbose, null, cancellationToken);
+        => await ExecuteSetupAsync(PlatformConfigLoader.DefaultConfigPath, PlatformConfigLoader.DefaultHomePath, verbose, null, null, cancellationToken);
 
     internal async Task<int> ExecuteSetupAsync(string configPath, string home, bool verbose, CancellationToken cancellationToken)
-        => await ExecuteSetupAsync(configPath, home, verbose, null, cancellationToken);
+        => await ExecuteSetupAsync(configPath, home, verbose, null, null, cancellationToken);
 
     internal async Task<int> ExecuteSetupAsync(string configPath, string home, bool verbose, string? preselectedProvider, CancellationToken cancellationToken)
+        => await ExecuteSetupAsync(configPath, home, verbose, preselectedProvider, null, cancellationToken);
+
+    internal async Task<int> ExecuteCopilotSetupAsync(
+        string configPath,
+        string home,
+        bool verbose,
+        string providerInstance,
+        CancellationToken cancellationToken)
+        => await ExecuteSetupAsync(
+            configPath,
+            home,
+            verbose,
+            CopilotAuthLoader.NormalizeProviderInstance(providerInstance),
+            "github-copilot",
+            cancellationToken);
+
+    private async Task<int> ExecuteSetupAsync(
+        string configPath,
+        string home,
+        bool verbose,
+        string? preselectedProvider,
+        string? providerType,
+        CancellationToken cancellationToken)
     {
         if (preselectedProvider is not null)
         {
-            if (!KnownProviders.Contains(preselectedProvider, StringComparer.OrdinalIgnoreCase))
+            if (providerType is null && !KnownProviders.Contains(preselectedProvider, StringComparer.OrdinalIgnoreCase))
             {
                 AnsiConsole.MarkupLine($"[red]Unknown provider '{CliText.SafeDisplay(preselectedProvider)}'. Known providers: {string.Join(", ", KnownProviders)}.[/]");
                 AnsiConsole.MarkupLine("[dim]For other providers (e.g. local OpenAI-compatible servers or 'integration-mock'), use [green]botnexus provider add[/].[/]");
@@ -358,8 +381,12 @@ internal sealed class ProviderCommand
         else
         {
             // Pre-seed the provider key and use a no-op action so the wizard stays linear.
-            var resolved = KnownProviders.First(p => string.Equals(p, preselectedProvider, StringComparison.OrdinalIgnoreCase));
+            var resolved = providerType is null
+                ? KnownProviders.First(p => string.Equals(p, preselectedProvider, StringComparison.OrdinalIgnoreCase))
+                : preselectedProvider;
             ctx.Set("provider", resolved);
+            if (providerType is not null)
+                ctx.Set("providerType", providerType);
             wizardBuilder.Action("pick-provider", (_, _) => Task.CompletedTask);
         }
 
@@ -368,7 +395,8 @@ internal sealed class ProviderCommand
             {
                 var name = c.Get<string>("provider");
                 AnsiConsole.MarkupLine($"\nConfiguring [green]{name}[/]...\n");
-                c.Set("authMode", ProviderAuthModes.GetValueOrDefault(name, "apikey"));
+                var effectiveType = c.TryGet<string>("providerType", out var type) ? type : name;
+                c.Set("authMode", ProviderAuthModes.GetValueOrDefault(effectiveType, "apikey"));
                 return Task.CompletedTask;
             })
             .Check("route-auth", (c, _) =>
@@ -421,6 +449,8 @@ internal sealed class ProviderCommand
                 var wizardPatch = new ConfigValueMap()
                     .Set("enabled", true)
                     .Set("apiKey", apiKeyValue);
+                if (c.TryGet<string>("providerType", out var configuredType))
+                    wizardPatch.Set("type", configuredType);
                 if (c.TryGet<string>("baseUrl", out var baseUrl))
                     wizardPatch.Set("baseUrl", baseUrl);
                 if (c.TryGet<string>("api", out var api))
@@ -499,7 +529,16 @@ internal sealed class ProviderCommand
             var providerName = context.Get<string>("provider");
 
             var modelRegistry = new ModelRegistry();
-            new BuiltInModels().RegisterAll(modelRegistry);
+            var builtInModels = new BuiltInModels();
+            if (context.TryGet<string>("providerType", out var providerType) &&
+                string.Equals(providerType, "github-copilot", StringComparison.OrdinalIgnoreCase))
+            {
+                builtInModels.RegisterCopilotInstance(modelRegistry, providerName);
+            }
+            else
+            {
+                builtInModels.RegisterAll(modelRegistry);
+            }
 
             var registryKey = GetModelRegistryKey(providerName);
             var availableModels = modelRegistry.GetModels(registryKey);
@@ -578,7 +617,7 @@ internal sealed class ProviderCommand
         SaveAuthEntry(providerName, credentials, PlatformConfigLoader.DefaultHomePath);
     }
 
-    private static void SaveAuthEntry(string providerName, OAuthCredentials credentials, string homePath)
+    internal static void SaveAuthEntry(string providerName, OAuthCredentials credentials, string homePath)
     {
         var authPath = Path.Combine(homePath, "auth.json");
         var entries = new Dictionary<string, AuthFileEntry>(StringComparer.OrdinalIgnoreCase);

@@ -221,6 +221,43 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CallerCancellationWhileQueued_TerminalizesRunWithoutDispatch_AndRestoresCapacity()
+    {
+        var registration = await _registrations.CreateAsync(CreateRegistration());
+        _webhookId = registration.Id;
+        var queue = CreateQueue(depth: 1);
+        var orchestrator = new GatedOrchestrator();
+
+        var holder = InvokeAsync(registration, orchestrator, queue);
+        await orchestrator.FirstEntered.Task.WaitAsync(TestTimeout);
+
+        using var callerCancellation = new CancellationTokenSource();
+        var cancelled = InvokeOnceAsync(
+            registration, orchestrator, queue, cancellationToken: callerCancellation.Token);
+        await WaitForWaitingCountAsync(queue, registration.AgentId, 1);
+        await WaitForStatusAsync(WebhookRunStatus.Queued);
+
+        callerCancellation.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() => cancelled);
+
+        var terminal = await WaitForStatusAsync(WebhookRunStatus.Failed);
+        terminal.StartedAt.ShouldBeNull("caller cancellation while queued never dispatches the agent");
+        terminal.CompletedAt.ShouldNotBeNull("an abandoned durable run must be terminal for retention");
+        terminal.Error.ShouldNotBeNull();
+        terminal.Error.ShouldContain("caller cancelled", Case.Insensitive);
+        queue.WaitingCount(registration.AgentId).ShouldBe(0, "caller cancellation returns waiting capacity exactly once");
+        orchestrator.CallCount.ShouldBe(1, "the cancelled delivery must not reach the orchestrator");
+
+        var replacement = InvokeAsync(registration, orchestrator, queue);
+        await WaitForWaitingCountAsync(queue, registration.AgentId, 1);
+        orchestrator.Release();
+        await Task.WhenAll(holder, replacement).WaitAsync(TestTimeout);
+
+        queue.WaitingCount(registration.AgentId).ShouldBe(0);
+        orchestrator.CallCount.ShouldBe(2, "a subsequent delivery reuses the returned capacity");
+    }
+
+    [Fact]
     public async Task ExecutingDelivery_ReportsRunningAtProcessorBoundary_AndHonoursDeadline()
     {
         var registration = await _registrations.CreateAsync(CreateRegistration(WebhookResponseMode.Async));
@@ -348,7 +385,8 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
         WebhookInboundQueue queue,
         IWebhookRunStore? runStore = null,
         IHostApplicationLifetime? applicationLifetime = null,
-        string? callbackUrl = null)
+        string? callbackUrl = null,
+        CancellationToken cancellationToken = default)
     {
         var rawBody = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
@@ -373,7 +411,7 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
             WebhookSecretHelper.ComputeSignature(registration.Secret, rawBody);
 
         return await controller.Receive(
-            registration.AgentId.Value, registration.Id.Value, CancellationToken.None);
+            registration.AgentId.Value, registration.Id.Value, cancellationToken);
     }
 
     // Sync mode so the controller awaits the turn inline: every assertion then observes a run row
@@ -397,12 +435,14 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
         private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource FirstEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int CallCount { get; private set; }
 
         public void Release() => _release.TrySetResult();
 
         public async Task<InboundDispatchResult> AcceptAsync(
             InboundMessage message, CancellationToken cancellationToken = default)
         {
+            CallCount++;
             FirstEntered.TrySetResult();
             await _release.Task.WaitAsync(TestTimeout);
             return Resolve(message);

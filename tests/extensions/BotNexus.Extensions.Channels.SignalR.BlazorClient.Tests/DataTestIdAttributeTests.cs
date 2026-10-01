@@ -263,6 +263,43 @@ public sealed class DataTestIdAttributeTests : IDisposable
     }
 
     [Fact]
+    public void ChatPanel_run_controls_are_compact_accessible_icon_buttons()
+    {
+        var agent = new AgentState
+        {
+            AgentId = "stream-agent",
+            DisplayName = "Stream Agent",
+            IsConnected = true
+        };
+        agent.Conversations["conv-1"] = new ConversationState
+        {
+            ConversationId = "conv-1",
+            Title = "Active",
+            IsDefault = true
+        };
+        agent.ActiveConversationId = "conv-1";
+        _store.UpsertAgent(agent);
+        _store.SelectView("stream-agent", string.Empty, SelectionSource.UserClick);
+        _store.GetStreamState("conv-1").IsRunActive = true;
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "stream-agent"));
+        var toolbar = cut.Find("[data-testid='chat-composer-toolbar']");
+
+        Assert.Equal("toolbar", toolbar.GetAttribute("role"));
+        Assert.Equal("Conversation actions", toolbar.GetAttribute("aria-label"));
+
+        var attach = cut.Find("[data-testid='chat-attach']");
+        Assert.Equal("Attach files", attach.GetAttribute("aria-label"));
+        Assert.Contains("📎", attach.TextContent);
+        Assert.Empty(attach.QuerySelectorAll("svg"));
+
+        AssertIconButton(cut, "chat-steer-btn", "Steer at next turn boundary");
+        AssertIconButton(cut, "chat-redirect-btn", "Redirect immediately");
+        AssertIconButton(cut, "chat-followup-btn", "Queue follow-up after completion");
+        AssertIconButton(cut, "chat-abort-btn", "Stop agent");
+    }
+
+    [Fact]
     public void ChatPanel_shows_run_controls_in_the_between_tools_gap_when_run_active()
     {
         // End-to-end UI proof of the flicker fix: the run is active (RunStarted seen) but no text
@@ -444,6 +481,18 @@ public sealed class DataTestIdAttributeTests : IDisposable
     // ───────────────────────────────────────────────────────────────────────
     // Helpers
     // ───────────────────────────────────────────────────────────────────────
+
+    private static void AssertIconButton(
+        IRenderedComponent<ChatPanel> cut,
+        string testId,
+        string accessibleName)
+    {
+        var button = cut.Find($"[data-testid='{testId}']");
+        Assert.Equal(accessibleName, button.GetAttribute("aria-label"));
+        Assert.False(string.IsNullOrWhiteSpace(button.GetAttribute("title")));
+        Assert.Single(button.QuerySelectorAll("svg"));
+        Assert.Equal(string.Empty, button.TextContent.Trim());
+    }
 
     private static string GetComponentFileContent(string fileName)
     {

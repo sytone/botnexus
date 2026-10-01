@@ -166,19 +166,18 @@ public class CopilotProviderSubcommandTests
     }
 
     [Fact]
-    public async Task Login_subcommand_invokes_setup_alias_with_github_copilot_preselected()
+    public async Task Login_subcommand_defaults_to_canonical_github_copilot_instance()
     {
         var verbose = new Option<bool>("--verbose");
-        var captured = new List<(string ConfigPath, string Home, bool Verbose)>();
-        Func<string, string, bool, CancellationToken, Task<int>> alias = (configPath, home, v, _) =>
+        var captured = new List<(string ConfigPath, string Home, bool Verbose, string Instance)>();
+        Func<string, string, bool, string, CancellationToken, Task<int>> alias = (configPath, home, v, instance, _) =>
         {
-            captured.Add((configPath, home, v));
+            captured.Add((configPath, home, v, instance));
             return Task.FromResult(0);
         };
 
         var copilot = CopilotProviderSubcommand.Build(verbose, new Option<string?>("--target"), alias);
 
-        // Build a root command so System.CommandLine can resolve handlers.
         var root = new RootCommand();
         root.AddCommand(copilot);
         var exit = await root.InvokeAsync(new[] { "copilot", "login" });
@@ -187,5 +186,46 @@ public class CopilotProviderSubcommandTests
         captured.Count.ShouldBe(1);
         captured[0].ConfigPath.ShouldEndWith("config.json");
         captured[0].Home.ShouldNotBeNullOrWhiteSpace();
+        captured[0].Instance.ShouldBe("github-copilot");
+    }
+
+    [Fact]
+    public async Task Login_subcommand_passes_selected_named_instance_to_setup()
+    {
+        var verbose = new Option<bool>("--verbose");
+        string? capturedInstance = null;
+        Func<string, string, bool, string, CancellationToken, Task<int>> alias = (_, _, _, instance, _) =>
+        {
+            capturedInstance = instance;
+            return Task.FromResult(0);
+        };
+
+        var copilot = CopilotProviderSubcommand.Build(verbose, new Option<string?>("--target"), alias);
+        var root = new RootCommand();
+        root.AddCommand(copilot);
+
+        var exit = await root.InvokeAsync(new[] { "copilot", "login", "--instance", "copilot-work" });
+
+        exit.ShouldBe(0);
+        capturedInstance.ShouldBe("copilot-work");
+    }
+
+    [Theory]
+    [InlineData("login")]
+    [InlineData("whoami")]
+    [InlineData("models")]
+    [InlineData("quota")]
+    [InlineData("test")]
+    public void Copilot_subcommands_accept_named_instance(string subcommand)
+    {
+        var verbose = new Option<bool>("--verbose");
+        Func<string, string, bool, string, CancellationToken, Task<int>> alias = (_, _, _, _, _) => Task.FromResult(0);
+        var copilot = CopilotProviderSubcommand.Build(verbose, new Option<string?>("--target"), alias);
+        var root = new RootCommand();
+        root.AddCommand(copilot);
+
+        var result = root.Parse($"copilot {subcommand} --instance copilot-work");
+
+        result.Errors.ShouldBeEmpty();
     }
 }
