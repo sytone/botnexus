@@ -24,8 +24,7 @@ public static class PlatformConfigValidator
     internal const string LegacyPromptFilesWarning =
         "agents.*.systemPromptFile and agents.*.systemPromptFiles are deprecated (#2941). " +
         "Move instructions to standard workspace instruction files, WORLD.md, an inline system prompt, " +
-        "conversation instructions, or model-specific variants. The legacy keys still apply until they " +
-        "are removed in a later release.";
+        "conversation instructions, or model-specific variants. The legacy keys are ignored.";
 
     /// <summary>Validates non-fatal configuration concerns and returns warnings.</summary>
     public static IReadOnlyList<string> ValidateWarnings(PlatformConfig config)
@@ -518,7 +517,7 @@ public static class PlatformConfigValidator
         List<string> warnings)
     {
         if (agents?.Values.Any(agent => agent is not null &&
-                (agent.HasSystemPromptFileKey || agent.HasSystemPromptFilesKey)) == true)
+                agent.LegacyPromptFileKeysPresent) == true)
         {
             warnings.Add(LegacyPromptFilesWarning);
         }

@@ -196,7 +196,7 @@ internal static class CliApp
         root.AddCommand(serviceProvider.GetRequiredService<SecretCommand>().Build(verboseOption, targetOption));
         root.AddCommand(serviceProvider.GetRequiredService<DoctorCommand>().Build(verboseOption, targetOption));
         root.AddCommand(serviceProvider.GetRequiredService<InstallCommand>().Build(verboseOption, targetOption));
-        root.AddCommand(serviceProvider.GetRequiredService<BuildCommand>().Build(verboseOption));
+        root.AddCommand(serviceProvider.GetRequiredService<BuildCommand>().Build(verboseOption, targetOption));
         root.AddCommand(serviceProvider.GetRequiredService<ServeCommand>().Build(verboseOption, targetOption));
         root.AddCommand(serviceProvider.GetRequiredService<GatewayCommand>().Build(verboseOption, targetOption));
         root.AddCommand(serviceProvider.GetRequiredService<PromptCommands>().Build(verboseOption, targetOption));

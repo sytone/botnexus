@@ -1,10 +1,15 @@
 using System.Collections.Immutable;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Channels;
+using BotNexus.Gateway.Conversations;
+using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using NSubstitute;
 
 namespace BotNexus.Extensions.Channels.Test.Tests;
 
@@ -62,6 +67,55 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
         return bindingId;
     }
 
+    public async Task<SessionEntry> PublishCompactionAsync()
+    {
+        var conversations = new InMemoryConversationStore();
+        await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId,
+            AgentId = _agentId,
+            ActiveSessionId = _sessionId,
+            ChannelBindings = [.. _bindings.Select(binding => new ChannelBinding
+            {
+                BindingId = binding.Snapshot.BindingId,
+                ChannelType = binding.Snapshot.ChannelType,
+                AdapterId = binding.Snapshot.AdapterId,
+                ChannelAddress = binding.Snapshot.ChannelAddress,
+                Mode = binding.Snapshot.Mode,
+                ThreadingMode = binding.Snapshot.ThreadingMode,
+            })],
+        });
+
+        var sessions = new InMemorySessionStore(redactor: null, conversations);
+        var session = new GatewaySession
+        {
+            SessionId = _sessionId,
+            AgentId = _agentId,
+            ConversationId = ConversationId,
+        };
+        await sessions.SaveAsync(session);
+
+        var coordinator = new SessionCompactionCoordinator(
+            Substitute.For<ISessionCompactor>(),
+            sessions,
+            Substitute.For<IAgentSupervisor>(),
+            _publisher,
+            conversations,
+            new OptionsMonitor<CompactionOptions>(new CompactionOptions()),
+            NullLogger<SessionCompactionCoordinator>.Instance);
+
+        var accepted = await coordinator.TryPublishNotificationAsync(
+            new SessionCompactionOutcome(true, true, HistoryReplaceOutcome.Applied, 4, 2, 600, 200, null),
+            _agentId,
+            session,
+            CancellationToken.None);
+        if (!accepted)
+            throw new InvalidOperationException("The production conversation-event publisher refused the compaction event.");
+
+        await _publisher.WaitForDrainAsync(CancellationToken.None);
+        return session.History.ShouldHaveSingleItem();
+    }
+
     public async Task PublishAsync(
         BindingId originBindingId,
         string? correlationId,
@@ -96,6 +150,9 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
     public IReadOnlyList<TestChannelConversationEventRecord> Events(string channelId, string address)
         => _adapters[channelId].GetConversationEvents(address);
 
+    public IReadOnlyList<TestChannelLifecycleEventRecord> LifecycleEvents(string channelId, string address)
+        => _adapters[channelId].GetLifecycleEvents(address);
+
     public ValueTask DisposeAsync() => _publisher.DisposeAsync();
 
     internal sealed record ChannelDefinition(string ChannelId);
@@ -103,4 +160,11 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
     private sealed record ScenarioBinding(
         ConversationId ConversationId,
         ConversationBindingSnapshot Snapshot);
+
+    private sealed class OptionsMonitor<T>(T value) : IOptionsMonitor<T>
+    {
+        public T CurrentValue { get; } = value;
+        public T Get(string? name) => CurrentValue;
+        public IDisposable? OnChange(Action<T, string?> listener) => null;
+    }
 }

@@ -1,3 +1,6 @@
+using System.Net;
+using System.Text;
+using BotNexus.Agent.Core.Types;
 using BotNexus.Extensions.WebTools.Tests.Helpers;
 
 namespace BotNexus.Extensions.WebTools.Tests;
@@ -538,10 +541,198 @@ public class WebFetchToolTests
         result.Content[0].Value.ShouldContain("within cap");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Success_DisposesTerminalResponseContent()
+    {
+        var content = TrackingHttpContent.FromText("<html><body>ok</body></html>");
+        var result = await ExecuteWithContentAsync(HttpStatusCode.OK, content);
+
+        result.Content[0].Value.ShouldContain("ok");
+        content.IsDisposed.ShouldBeTrue();
+        content.WriteCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NonSuccessWithoutReadingBody_DisposesTerminalResponseContent()
+    {
+        var content = TrackingHttpContent.FromText("must remain unread");
+        var result = await ExecuteWithContentAsync(HttpStatusCode.BadGateway, content);
+
+        result.Content[0].Value.ShouldContain("HTTP 502");
+        content.WriteCount.ShouldBe(0);
+        content.IsDisposed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MalformedRedirect_DisposesTerminalResponseContent()
+    {
+        var content = TrackingHttpContent.FromText("must remain unread");
+        var result = await ExecuteWithContentAsync(HttpStatusCode.Redirect, content);
+
+        result.Content[0].Value.ShouldContain("HTTP 302");
+        content.WriteCount.ShouldBe(0);
+        content.IsDisposed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OversizedDeclaredContentLength_DisposesTerminalResponseContentWithoutReading()
+    {
+        var content = TrackingHttpContent.FromText("must remain unread", declaredLength: 2048);
+        var result = await ExecuteWithContentAsync(HttpStatusCode.OK, content, maxResponseBytes: 1024);
+
+        result.Content[0].Value.ShouldContain("exceeded");
+        content.WriteCount.ShouldBe(0);
+        content.IsDisposed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BodyReadFailure_DisposesTerminalResponseContent()
+    {
+        var content = new TrackingHttpContent((_, _) => throw new IOException("read failed"));
+        var result = await ExecuteWithContentAsync(HttpStatusCode.OK, content);
+
+        result.Content[0].Value.ShouldContain("read failed");
+        content.WriteCount.ShouldBe(1);
+        content.IsDisposed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CancellationDuringBodyRead_DisposesTerminalResponseContent()
+    {
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var content = new TrackingHttpContent(async (_, token) =>
+        {
+            entered.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        });
+        using var cancellation = new CancellationTokenSource();
+        var handler = new MockHttpMessageHandler();
+        handler.SetResponder((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content }));
+        using var client = new HttpClient(handler);
+        var config = new WebFetchConfig { MaxLengthChars = 20_000, TimeoutSeconds = 5 };
+        using var tool = new WebFetchTool(config, client);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com" });
+
+        var pending = tool.ExecuteAsync("call-1", args, cancellation.Token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await cancellation.CancelAsync();
+        var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.Content[0].Value.ShouldContain("cancelled");
+        content.IsDisposed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PublicRedirect_DisposesIntermediateAndTerminalResponseContent()
+    {
+        var intermediate = TrackingHttpContent.FromText("intermediate");
+        var terminal = TrackingHttpContent.FromText("<html><body>final</body></html>");
+        var responses = new Queue<HttpResponseMessage>(
+        [
+            new HttpResponseMessage(HttpStatusCode.Redirect)
+            {
+                Content = intermediate,
+                Headers = { Location = new Uri("https://example.org/final") }
+            },
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = terminal }
+        ]);
+        var handler = new MockHttpMessageHandler();
+        handler.SetResponder((_, _) => Task.FromResult(responses.Dequeue()));
+        using var client = new HttpClient(handler);
+        var config = new WebFetchConfig { MaxLengthChars = 20_000, TimeoutSeconds = 5 };
+        using var tool = new WebFetchTool(config, client);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com/start" });
+
+        var result = await tool.ExecuteAsync("call-1", args);
+
+        result.Content[0].Value.ShouldContain("final");
+        intermediate.IsDisposed.ShouldBeTrue();
+        terminal.IsDisposed.ShouldBeTrue();
+    }
+
+    private static async Task<AgentToolResult> ExecuteWithContentAsync(
+        HttpStatusCode statusCode,
+        TrackingHttpContent content,
+        long maxResponseBytes = 4096)
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.SetResponder((_, _) => Task.FromResult(new HttpResponseMessage(statusCode) { Content = content }));
+        using var client = new HttpClient(handler);
+        var config = new WebFetchConfig
+        {
+            MaxLengthChars = 20_000,
+            TimeoutSeconds = 5,
+            MaxResponseBytes = maxResponseBytes
+        };
+        using var tool = new WebFetchTool(config, client);
+        var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["url"] = "https://example.com" });
+
+        return await tool.ExecuteAsync("call-1", args);
+    }
+
     private static WebFetchTool CreateTool(MockHttpMessageHandler handler)
     {
         var httpClient = new HttpClient(handler);
         var config = new WebFetchConfig { MaxLengthChars = 20_000, TimeoutSeconds = 5 };
         return new WebFetchTool(config, httpClient);
+    }
+
+    private sealed class TrackingHttpContent(
+        Func<Stream, CancellationToken, Task> write,
+        long? declaredLength = null) : HttpContent
+    {
+        private int _writeCount;
+
+        public bool IsDisposed { get; private set; }
+        public int WriteCount => Volatile.Read(ref _writeCount);
+
+        public static TrackingHttpContent FromText(string text, long? declaredLength = null)
+        {
+            var bytes = Encoding.UTF8.GetBytes(text);
+            return new TrackingHttpContent(
+                (stream, token) => stream.WriteAsync(bytes, token).AsTask(),
+                declaredLength ?? bytes.Length);
+        }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+            => SerializeToStreamAsync(stream, context, CancellationToken.None);
+
+        protected override Task SerializeToStreamAsync(
+            Stream stream,
+            TransportContext? context,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _writeCount);
+            return write(stream, cancellationToken);
+        }
+
+        protected override async Task<Stream> CreateContentReadStreamAsync()
+        {
+            var stream = new MemoryStream();
+            await SerializeToStreamAsync(stream, context: null, CancellationToken.None);
+            stream.Position = 0;
+            return stream;
+        }
+
+        protected override async Task<Stream> CreateContentReadStreamAsync(CancellationToken cancellationToken)
+        {
+            var stream = new MemoryStream();
+            await SerializeToStreamAsync(stream, context: null, cancellationToken);
+            stream.Position = 0;
+            return stream;
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = declaredLength.GetValueOrDefault();
+            return declaredLength.HasValue;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+                IsDisposed = true;
+            base.Dispose(disposing);
+        }
     }
 }

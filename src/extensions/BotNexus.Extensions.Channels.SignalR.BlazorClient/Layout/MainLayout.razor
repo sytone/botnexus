@@ -27,7 +27,7 @@
                 <span class="burger-line"></span>
                 <span class="burger-line"></span>
             </button>
-            <a href="" class="banner-home-link" data-testid="banner-home-link" title="Home" @onclick="CloseSidebar">
+            <a href="" class="banner-home-link" data-testid="banner-home-link" title="Home">
                 <span class="banner-logo">&#x1F916;</span>
                 <span class="banner-title">BotNexus</span>
             </a>
@@ -330,8 +330,7 @@
         <a href="@route"
            class="sidebar-nav-item @NavClass(NavKeyForRoute(route))"
            data-testid="@(testIdOverride ?? NavTestId(route))"
-           data-testid-alias="@(testIdOverride is null ? null : NavTestId(route))"
-           @onclick="OnNavClick">@label</a>
+           data-testid-alias="@(testIdOverride is null ? null : NavTestId(route))">@label</a>
     };
 
     /// <summary>
@@ -373,8 +372,7 @@
         <a href="@route"
            class="sidebar-subnav-item @extraClass"
            data-testid="@(legacyTestId ?? SubNavTestId(route))"
-           data-testid-alias="@(legacyTestId is null ? null : SubNavTestId(route))"
-           @onclick="CloseSidebar">@label</a>
+           data-testid-alias="@(legacyTestId is null ? null : SubNavTestId(route))">@label</a>
     };
 
     /// <summary>
@@ -969,8 +967,6 @@
     }
 
     private void CloseSidebar() => _sidebarOpen = false;
-
-    private void OnNavClick() => _sidebarOpen = false;
 
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
     {

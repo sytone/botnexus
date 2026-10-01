@@ -25,6 +25,62 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
             cancelAfterStart: true);
     }
 
+    [Fact]
+    public async Task RunLintAt_DeadlineBeginsAfterReadinessBoundary()
+    {
+        var fixture = Directory.CreateTempSubdirectory("lint-readiness-").FullName;
+        var script = Path.Combine(fixture, "child.ps1");
+        var readyFile = Path.Combine(fixture, "ready");
+        File.WriteAllText(script,
+            $"param($RepoRoot, $Rule)\n[Console]::Out.Write('ready-never-exit'); [Console]::Out.Flush(); [IO.File]::WriteAllText('{readyFile.Replace("'", "''")}', 'ready'); [Threading.Tasks.Task]::Delay(-1).GetAwaiter().GetResult()");
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReadiness = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var watcher = new FileSystemWatcher(fixture, Path.GetFileName(readyFile))
+        {
+            EnableRaisingEvents = true,
+        };
+        watcher.Created += (_, _) => ready.TrySetResult();
+        Process? observed = null;
+        try
+        {
+            var run = DocsLintScriptTests.RunLintAtAsync(fixture, script, "literal-drift", false,
+                onStarted: async (child, _, token) =>
+                {
+                    observed = Process.GetProcessById(child.Id);
+                    if (File.Exists(readyFile))
+                    {
+                        ready.TrySetResult();
+                    }
+                    await ready.Task.WaitAsync(token).WaitAsync(TimeSpan.FromSeconds(10));
+                    await releaseReadiness.Task.WaitAsync(token);
+                }, timeout: TimeSpan.FromMilliseconds(100));
+
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            run.IsCompleted.ShouldBeFalse("the execution deadline must not consume child startup time");
+            releaseReadiness.TrySetResult();
+
+            var failure = await Should.ThrowAsync<TimeoutException>(async () =>
+                await run.WaitAsync(TimeSpan.FromSeconds(10)));
+            failure.Message.ShouldContain("ready-never-exit");
+            observed.ShouldNotBeNull();
+            observed.HasExited.ShouldBeTrue();
+        }
+        finally
+        {
+            releaseReadiness.TrySetResult();
+            if (observed is not null)
+            {
+                if (!observed.HasExited)
+                {
+                    observed.Kill(entireProcessTree: true);
+                }
+                await observed.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                observed.Dispose();
+            }
+            Directory.Delete(fixture, recursive: true);
+        }
+    }
+
     private static async Task ExerciseLintBoundaryAsync(
         string body,
         bool cancelAfterStart,
@@ -44,11 +100,12 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
         try
         {
             run = DocsLintScriptTests.RunLintAtAsync(fixture, script, "literal-drift", false,
-                cancellation.Token, (child, root) =>
+                cancellation.Token, (child, root, _) =>
                 {
                     observed = Process.GetProcessById(child.Id);
                     cache = root;
                     Directory.Exists(root).ShouldBeTrue("cache must remain owned while the child is live");
+                    return Task.CompletedTask;
                 }, timeout: TimeSpan.FromSeconds(10));
             if (cancelAfterStart)
             {
@@ -168,10 +225,49 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
     }
 
     [Fact]
+    public async Task ProbeCleanup_RetainsOnlyCacheWhoseTerminationFailed()
+    {
+        var first = new DocsLintScriptTests.PowerShellStartupState();
+        var second = new DocsLintScriptTests.PowerShellStartupState();
+        using var a = new Process();
+        using var b = new Process();
+        var attempted = new System.Collections.Concurrent.ConcurrentBag<Process>();
+        var bothAttempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var cleanup = CleanupProbesAsync(
+            [(a, true, first), (b, true, second)],
+            async (process, _, token) =>
+            {
+                attempted.Add(process);
+                if (attempted.Count == 2)
+                {
+                    bothAttempted.TrySetResult();
+                }
+                await release.Task.WaitAsync(token);
+                if (process == b)
+                {
+                    throw new InvalidOperationException("fixture termination failure");
+                }
+            });
+
+        await bothAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cleanup.IsCompleted.ShouldBeFalse("both termination attempts must begin before either is awaited");
+        release.TrySetResult();
+        var failure = await Should.ThrowAsync<AggregateException>(async () => await cleanup);
+
+        attempted.ShouldBe([a, b], ignoreOrder: true);
+        Directory.Exists(first.Root).ShouldBeFalse("confirmed termination permits owned cache cleanup");
+        Directory.Exists(second.Root).ShouldBeTrue("failed termination must retain owned cache state");
+        failure.Message.ShouldContain(second.Root);
+        second.Dispose();
+    }
+
+    [Fact]
     public async Task ConcurrentChildren_ReportActualPowerShellCacheRoots()
     {
-        using var first = new DocsLintScriptTests.PowerShellStartupState();
-        using var second = new DocsLintScriptTests.PowerShellStartupState();
+        var first = new DocsLintScriptTests.PowerShellStartupState();
+        var second = new DocsLintScriptTests.PowerShellStartupState();
         using var a = CreateProbe(first);
         using var b = CreateProbe(second);
         // Safety deadline only: success depends on child observations, never elapsed time.
@@ -205,9 +301,38 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
             // A cancelled protocol token must not cancel cleanup. Start both cleanup attempts
             // before awaiting either, so one failure cannot strand the other child.
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            await Task.WhenAll(
-                StopIfRunningAsync(a, startedA, cleanup.Token),
-                StopIfRunningAsync(b, startedB, cleanup.Token)).WaitAsync(cleanup.Token);
+            await CleanupProbesAsync(
+                [(a, startedA, first), (b, startedB, second)],
+                StopIfRunningAsync, cleanup.Token).WaitAsync(cleanup.Token);
+        }
+    }
+
+    private static async Task CleanupProbesAsync(
+        IReadOnlyList<(Process Process, bool Started, DocsLintScriptTests.PowerShellStartupState State)> probes,
+        Func<Process, bool, CancellationToken, Task> stop,
+        CancellationToken token = default)
+    {
+        var outcomes = await Task.WhenAll(probes.Select(async probe =>
+        {
+            try
+            {
+                await stop(probe.Process, probe.Started, token);
+                probe.State.Dispose();
+                return (probe.State.Root, Error: (Exception?)null);
+            }
+            catch (Exception error)
+            {
+                return (probe.State.Root, Error: error);
+            }
+        }));
+        var failures = outcomes
+            .Where(outcome => outcome.Error is not null)
+            .Select(outcome => new InvalidOperationException(
+                $"PowerShell probe cleanup failed; cache retained: {outcome.Root}", outcome.Error))
+            .ToArray();
+        if (failures.Length > 0)
+        {
+            throw new AggregateException(failures);
         }
     }
 

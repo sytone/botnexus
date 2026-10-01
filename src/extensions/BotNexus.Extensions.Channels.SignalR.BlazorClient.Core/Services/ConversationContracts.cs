@@ -114,6 +114,9 @@ public sealed class ConversationHistoryEntryDto
     [JsonPropertyName("content")]
     public string? Content { get; init; }
 
+    [JsonPropertyName("attachments")]
+    public IReadOnlyList<HistoryAttachmentDto>? Attachments { get; init; }
+
     [JsonPropertyName("toolName")]
     public string? ToolName { get; init; }
 
@@ -149,6 +152,12 @@ public sealed class ConversationHistoryEntryDto
     [JsonPropertyName("messageKind")]
     public string? MessageKind { get; init; }
 }
+
+public sealed record HistoryAttachmentDto(
+    [property: JsonPropertyName("fileName")] string FileName,
+    [property: JsonPropertyName("mimeType")] string MimeType,
+    [property: JsonPropertyName("size")] long? Size,
+    [property: JsonPropertyName("base64Data")] string Base64Data);
 
 public sealed record SessionHistoryResponseDto(
     [property: JsonPropertyName("offset")] int Offset,

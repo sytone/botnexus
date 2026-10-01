@@ -1530,17 +1530,18 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
-    public async Task GatewayHub_SendMessage_NullUserIdentifier_FallsBackToConnectionId()
+    public async Task GatewayHub_SendMessage_NullUserIdentifier_FallsBackToConnectionIdForLegacyHubContexts()
     {
         var orchestrator = new CapturingInboundMessageOrchestrator();
 
-        // Simulate edge case where UserIdentifier is null (transition period)
+        // Legacy/test hub contexts can still bypass IUserIdProvider. Production unauthenticated
+        // connections receive the server-owned local-owner identity from ClaimsUserIdProvider.
         var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-fallback", userIdentifier: null);
 
         await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello");
 
         var dispatched = orchestrator.Captured.ShouldHaveSingleItem();
-        // Falls back to connectionId when no UserIdentifier is available
+        // The compatibility fallback is confined to a hub context with no resolved identifier.
         dispatched.Sender.Value.ShouldBe("conn-fallback");
         dispatched.SenderId.ShouldBe("conn-fallback");
     }

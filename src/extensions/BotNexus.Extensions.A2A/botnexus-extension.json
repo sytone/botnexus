@@ -1,0 +1,20 @@
+{
+  "id": "botnexus-a2a",
+  "name": "A2A Delegation",
+  "description": "Provider-neutral bounded task delegation to configured A2A service profiles.",
+  "version": "1.0.0",
+  "entryAssembly": "BotNexus.Extensions.A2A.dll",
+  "extensionTypes": ["tool"],
+  "configurationScopes": [
+    "agent"
+  ],
+  "configSchema": [
+    {
+      "id": "profiles",
+      "type": "array",
+      "required": true,
+      "sensitive": false,
+      "description": "Allowed registered A2A service profile IDs."
+    }
+  ]
+}

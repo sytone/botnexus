@@ -64,6 +64,9 @@ namespace BotNexus.Agent.Core.Configuration;
 /// </param>
 /// <param name="EvaluateRunCompletion">Optional authoritative host completion evaluator.</param>
 /// <param name="MaxCompletionContinuations">Bound on automatic completion-gate continuation turns.</param>
+/// <param name="InvalidateProviderCredentials">
+/// Optional host-owned credential invalidation invoked before one bounded authentication retry.
+/// </param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
 /// InitialState is used to seed AgentState - changes to InitialState after construction have no effect.
@@ -98,5 +101,6 @@ public record AgentOptions(
     Func<string, string>? SanitizeToolResultText = null,
     Loop.EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
     int MaxCompletionContinuations = 2,
+    InvalidateProviderCredentialsDelegate? InvalidateProviderCredentials = null,
     Loop.IProviderRecoveryCoordinator? RecoveryCoordinator = null,
     TimeSpan? RecoveryAdmissionTimeout = null);

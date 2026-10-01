@@ -33,6 +33,45 @@ public sealed class SubAgentTurnBudgetTests
         result.Status.ShouldBe(SubAgentStatus.BudgetExhausted);
     }
 
+    /// <summary>
+    /// #4286: the typed interrupted response remains useful when the hard turn ceiling wins.
+    /// Child narration stays explicitly unverified; successful tool output is projected separately.
+    /// </summary>
+    [Fact]
+    public async Task RunSubAgent_BudgetExhausted_PreservesStructuredPartialEvidence()
+    {
+        var partial = new AgentResponse
+        {
+            Content = "Found the relevant manager boundary; implementation remains.",
+            RunUsage = new AgentResponseUsage(InputTokens: 120, OutputTokens: 30, CacheRead: 10),
+            TurnCount = 2,
+            ToolCalls =
+            [
+                new AgentToolCallInfo("read-1", "read", false, ResultContent: "DefaultSubAgentManager.cs:1398"),
+                new AgentToolCallInfo("write-1", "write", false, IsIncomplete: true)
+            ]
+        };
+        var handle = new TurnDrivingHandle(turnsToAttempt: 50, interruptedResponse: partial);
+        var manager = CreateManager(handle, out _);
+
+        var result = await SpawnAndAwaitTerminalAsync(manager, maxTurns: 2);
+
+        result.Status.ShouldBe(SubAgentStatus.BudgetExhausted);
+        result.PartialResult.ShouldNotBeNull();
+        result.PartialResult.Completion.ShouldBe(SubAgentCompletion.Partial);
+        result.PartialResult.StopReason.ShouldBe(SubAgentStopReason.TurnLimit);
+        result.PartialResult.Summary.ShouldBe(partial.Content);
+        result.PartialResult.SummaryIsVerified.ShouldBeFalse();
+        result.PartialResult.TurnsUsed.ShouldBe(2);
+        result.PartialResult.Usage.ShouldBe(partial.RunUsage);
+        result.PartialResult.VerifiedEvidence.ShouldHaveSingleItem().ToolCallId.ShouldBe("read-1");
+        result.PartialResult.ActionsTaken.Count.ShouldBe(2);
+        result.PartialResult.ActionsTaken.Single(action => action.ToolCallId == "write-1").Completed.ShouldBeFalse();
+        result.ResultSummary.ShouldNotBeNull();
+        result.ResultSummary.ShouldContain("[partial:turn_limit]");
+        result.ResultSummary.ShouldContain(partial.Content);
+    }
+
     /// <summary>AC2: budget exhaustion is a DIFFERENT disposition from a wall-clock timeout.</summary>
     [Fact]
     public async Task RunSubAgent_BudgetExhausted_DispositionDiffersFromTimeout()
@@ -209,7 +248,10 @@ public sealed class SubAgentTurnBudgetTests
     /// It fires turn notifications in a tight loop with no timing dependency and stops as soon as
     /// its prompt token is cancelled, which is exactly what the budget enforcement does.
     /// </summary>
-    private sealed class TurnDrivingHandle(int turnsToAttempt, bool hangUntilCancelled = false) : IAgentHandle
+    private sealed class TurnDrivingHandle(
+        int turnsToAttempt,
+        bool hangUntilCancelled = false,
+        AgentResponse? interruptedResponse = null) : IAgentHandle
     {
         private readonly List<Action> _observers = [];
         private int _observedTurns;
@@ -261,6 +303,9 @@ public sealed class SubAgentTurnBudgetTests
                 // without any dependency on elapsed time.
                 await Task.Yield();
             }
+
+            if (cancellationToken.IsCancellationRequested && interruptedResponse is not null)
+                throw new AgentPromptInterruptedException(interruptedResponse, cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();
             return new AgentResponse { Content = "Completed the work." };

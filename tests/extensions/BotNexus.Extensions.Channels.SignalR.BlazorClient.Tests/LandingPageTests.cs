@@ -29,6 +29,7 @@ public sealed class LandingPageTests : IDisposable
     private readonly IClientStateStore _store = Substitute.For<IClientStateStore>();
     private readonly IGatewayRestClient _rest = Substitute.For<IGatewayRestClient>();
     private readonly IStartConversationService _start = Substitute.For<IStartConversationService>();
+    private readonly IPortalPreferencesService _prefs = Substitute.For<IPortalPreferencesService>();
     private readonly StubModelOptionsProvider _models = new();
     private readonly StubBackendHandler _backend = new();
 
@@ -40,6 +41,7 @@ public sealed class LandingPageTests : IDisposable
         _portalLoad.InitializeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
 
         _rest.ApiBaseUrl.Returns(ApiBase);
+        _prefs.Current.Returns(new PortalPreferences());
 
         SeedAgents(("alpha", "Alpha"), ("beta", "Beta"));
 
@@ -64,6 +66,7 @@ public sealed class LandingPageTests : IDisposable
         _ctx.Services.AddSingleton(_store);
         _ctx.Services.AddSingleton(_rest);
         _ctx.Services.AddSingleton(_start);
+        _ctx.Services.AddSingleton(_prefs);
         _ctx.Services.AddSingleton<IModelOptionsProvider>(_models);
         _ctx.Services.AddSingleton(http);
         _ctx.Services.AddSingleton(new GatewayInfoService(http, _rest));
@@ -162,6 +165,48 @@ public sealed class LandingPageTests : IDisposable
         cut.Find("[data-testid='home-agent-select']");
         cut.Find("[data-testid='home-model-select']");
         cut.Find("[data-testid='home-send']");
+    }
+
+    [Fact]
+    public void Classic_shell_keeps_summary_before_the_conversation_starter()
+    {
+        var cut = RenderPage();
+
+        var ordered = cut.FindAll("[data-testid='home-summary'], textarea[data-testid='home-message-input']");
+        Assert.Equal("home-summary", ordered[0].GetAttribute("data-testid"));
+        Assert.Equal("home-message-input", ordered[1].GetAttribute("data-testid"));
+    }
+
+    [Fact]
+    public void Simplified_shell_puts_the_composer_before_the_quiet_summary_and_roster()
+    {
+        _prefs.Current.Returns(new PortalPreferences { Shell = PortalShell.Simplified });
+
+        var cut = RenderPage();
+
+        var ordered = cut.FindAll("textarea[data-testid='home-message-input'], [data-testid='home-summary'], [data-testid='home-agent-roster']");
+        Assert.Equal(3, ordered.Count);
+        Assert.Equal("home-message-input", ordered[0].GetAttribute("data-testid"));
+        Assert.Equal("home-summary", ordered[1].GetAttribute("data-testid"));
+        Assert.Equal("home-agent-roster", ordered[2].GetAttribute("data-testid"));
+        Assert.Contains("home-summary-quiet", ordered[1].ClassName);
+    }
+
+    [Fact]
+    public void Shell_preference_change_updates_home_hierarchy_without_reload()
+    {
+        var preferences = new PortalPreferences();
+        _prefs.Current.Returns(preferences);
+        var cut = RenderPage();
+
+        preferences.Shell = PortalShell.Simplified;
+        _prefs.OnChanged += Raise.Event<Action>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var ordered = cut.FindAll("textarea[data-testid='home-message-input'], [data-testid='home-summary']");
+            Assert.Equal("home-message-input", ordered[0].GetAttribute("data-testid"));
+        });
     }
 
     [Fact]

@@ -697,9 +697,9 @@ public sealed class GatewaySettingsConfig
     [Display(
         Name = "Session store",
         Description = "Backend used to persist sessions and conversation history.",
-        GroupName = "Storage",
-        Order = 2)]
-    [ConfigField(Group = "storage", Order = 2)]
+        GroupName = "Session store",
+        Order = 0)]
+    [ConfigField(Group = "session-store", Order = 0)]
     public SessionStoreConfig? SessionStore { get; set; }
 
     /// <summary>Interval in minutes between periodic PASSIVE SQLite WAL checkpoints (#1438). Default 30.</summary>
@@ -836,9 +836,9 @@ public sealed class GatewaySettingsConfig
     [Display(
         Name = "Locations",
         Description = "Named locations registry used for resource management and path resolution.",
-        GroupName = "Storage",
-        Order = 3)]
-    [ConfigField(Group = "storage", Order = 3)]
+        GroupName = "Locations",
+        Order = 0)]
+    [ConfigField(Group = "locations", Order = 0)]
     public Dictionary<string, LocationConfig>? Locations { get; set; }
     /// <summary>Optional explicit cross-world communication permissions.</summary>
     [Display(
@@ -2040,48 +2040,9 @@ public sealed class AgentDefinitionConfig
         Order = 9)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 9)]
     public List<string>? AllowedModels { get; set; }
-    private List<string>? _systemPromptFiles;
-    private string? _systemPromptFile;
-
-    /// <summary>Ordered list of files to load as the system prompt. Empty = default order.</summary>
-    [Display(
-        Name = "System prompt files",
-        Description = "Deprecated custom prompt-file list. Use standard workspace instruction files, WORLD.md, inline prompts, conversation instructions, or model-specific variants.",
-        GroupName = "Agent",
-        Order = 10)]
-    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 10)]
-    public List<string>? SystemPromptFiles
-    {
-        get => _systemPromptFiles;
-        set
-        {
-            _systemPromptFiles = value;
-            HasSystemPromptFilesKey = true;
-        }
-    }
-
-    /// <summary>Path to a single system prompt file.</summary>
-    [Display(
-        Name = "System prompt file",
-        Description = "Deprecated custom prompt file. Use standard workspace instruction files, WORLD.md, inline prompts, conversation instructions, or model-specific variants.",
-        GroupName = "Agent",
-        Order = 11)]
-    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 11)]
-    public string? SystemPromptFile
-    {
-        get => _systemPromptFile;
-        set
-        {
-            _systemPromptFile = value;
-            HasSystemPromptFileKey = true;
-        }
-    }
-
+    /// <summary>Whether the source JSON contained either retired custom prompt-file key.</summary>
     [JsonIgnore]
-    internal bool HasSystemPromptFilesKey { get; private set; }
-
-    [JsonIgnore]
-    internal bool HasSystemPromptFileKey { get; private set; }
+    internal bool LegacyPromptFileKeysPresent { get; set; }
     /// <summary>Tool identifiers this agent has access to.</summary>
     [Display(
         Name = "Tool ids",

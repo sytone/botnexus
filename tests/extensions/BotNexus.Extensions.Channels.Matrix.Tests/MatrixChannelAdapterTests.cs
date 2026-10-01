@@ -119,16 +119,23 @@ public sealed class MatrixChannelAdapterTests
     private static async Task<Mock<IChannelDispatcher>> ProcessAsync(
         MatrixChannelAdapter adapter,
         MatrixSyncResponse response,
-        string accountName = "farnsworth")
+        string accountName = "farnsworth",
+        Mock<IChannelDispatcher>? dispatcher = null)
     {
-        var dispatcher = CreateDispatcher();
+        dispatcher ??= CreateDispatcher();
         await adapter.StartAsync(dispatcher.Object);
 
         var runtime = adapter.GetAccount(accountName);
         runtime.ShouldNotBeNull();
 
-        await adapter.ProcessSyncResponseAsync(runtime!, response, CancellationToken.None);
-        await adapter.StopAsync();
+        try
+        {
+            await adapter.ProcessSyncResponseAsync(runtime!, response, CancellationToken.None);
+        }
+        finally
+        {
+            await adapter.StopAsync();
+        }
 
         return dispatcher;
     }
@@ -467,6 +474,80 @@ public sealed class MatrixChannelAdapterTests
         var dispatcher = await ProcessAsync(adapter, SyncWithMessage(HumanUser, "still arrives"));
 
         Dispatched(dispatcher).ShouldHaveSingleItem().Content.ShouldBe("still arrives");
+    }
+
+    [Fact]
+    public async Task Inbound_SuccessfulDispatch_SendsReadReceiptForExactRoomAndEvent()
+    {
+        var factory = new FakeMatrixClientFactory();
+        var adapter = CreateAdapter(BuildOptions(), factory);
+
+        var dispatcher = await ProcessAsync(adapter, SyncWithMessage(HumanUser, "handled"));
+
+        Dispatched(dispatcher).ShouldHaveSingleItem();
+        factory.ClientFor("farnsworth").ReadReceiptCalls.ShouldBe([new ReadReceiptCall(Room, "$evt1")]);
+    }
+
+    [Fact]
+    public async Task Inbound_RejectedMessage_DoesNotSendReadReceipt()
+    {
+        var options = BuildOptions(a => a.AllowedUserIds.Add("@someone-else:example.com"));
+        var factory = new FakeMatrixClientFactory();
+        var adapter = CreateAdapter(options, factory);
+
+        await ProcessAsync(adapter, SyncWithMessage(HumanUser, "rejected"));
+
+        factory.ClientFor("farnsworth").ReadReceiptCalls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Inbound_FailedDispatch_DoesNotSendReadReceipt()
+    {
+        var factory = new FakeMatrixClientFactory();
+        var adapter = CreateAdapter(BuildOptions(), factory);
+        var dispatcher = CreateDispatcher();
+        dispatcher
+            .Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("dispatch failed"));
+
+        Func<Task> act = () => ProcessAsync(adapter, SyncWithMessage(HumanUser, "fails"), dispatcher: dispatcher);
+
+        await Should.ThrowAsync<InvalidOperationException>(act);
+        factory.ClientFor("farnsworth").ReadReceiptCalls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Inbound_CancelledDispatch_DoesNotSendReadReceipt()
+    {
+        var factory = new FakeMatrixClientFactory();
+        var adapter = CreateAdapter(BuildOptions(), factory);
+        var dispatcher = CreateDispatcher();
+        dispatcher
+            .Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        Func<Task> act = () => ProcessAsync(adapter, SyncWithMessage(HumanUser, "cancelled"), dispatcher: dispatcher);
+
+        await Should.ThrowAsync<OperationCanceledException>(act);
+        factory.ClientFor("farnsworth").ReadReceiptCalls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Inbound_ReadReceiptFailure_DoesNotReplaySuccessfulDispatch()
+    {
+        var factory = new FakeMatrixClientFactory();
+        factory.ClientFor("farnsworth").ReadReceiptFailure = new InvalidOperationException("receipt failed");
+        var adapter = CreateAdapter(BuildOptions(), factory);
+        var dispatcher = CreateDispatcher();
+        await adapter.StartAsync(dispatcher.Object);
+        var runtime = adapter.GetAccount("farnsworth").ShouldNotBeNull();
+        var response = SyncWithMessage(HumanUser, "handled once");
+
+        await adapter.ProcessSyncResponseAsync(runtime, response, CancellationToken.None);
+        await adapter.StopAsync();
+
+        Dispatched(dispatcher).ShouldHaveSingleItem().Content.ShouldBe("handled once");
+        factory.ClientFor("farnsworth").ReadReceiptCalls.ShouldBe([new ReadReceiptCall(Room, "$evt1")]);
     }
 
     // ── Auto-join ──────────────────────────────────────────────────────────────

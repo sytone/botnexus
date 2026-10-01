@@ -375,6 +375,10 @@ public sealed class PlatformConfigService
     public async Task<(bool Success, string? Error)> SetExtensionRepositoryEnabledAsync(string id, bool enabled)
         => await SendRepositoryMutationAsync(HttpMethod.Put, $"/api/extension-repositories/{Uri.EscapeDataString(id)}/enabled", new { enabled });
 
+    /// <summary>Requests immediate reconciliation for one extension repository.</summary>
+    public async Task<(bool Success, string? Error)> SyncExtensionRepositoryAsync(string id)
+        => await SendRepositoryMutationAsync(HttpMethod.Post, $"/api/extension-repositories/{Uri.EscapeDataString(id)}/sync", new { });
+
     /// <summary>Removes extension repository registration metadata.</summary>
     public async Task<(bool Success, string? Error)> RemoveExtensionRepositoryAsync(string id)
     {

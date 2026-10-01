@@ -12,8 +12,9 @@ namespace BotNexus.Gateway.Abstractions.Events;
 public static class ConversationEventStreamRouting
 {
     /// <summary>
-    /// Returns this adapter's non-muted targets for an agent event. Only the originating binding
-    /// receives the origin correlation id; observer bindings cannot inherit transport correlation.
+    /// Returns this adapter's non-muted targets for a session-scoped conversation event. Only the
+    /// originating binding receives the origin correlation id; observer bindings cannot inherit
+    /// transport correlation.
     /// </summary>
     /// <param name="conversationEvent">The immutable event offered to the channel extension.</param>
     /// <param name="channelType">The adapter's channel family.</param>
@@ -25,8 +26,7 @@ public static class ConversationEventStreamRouting
     {
         ArgumentNullException.ThrowIfNull(conversationEvent);
 
-        if (conversationEvent is not ConversationAgentEvent ||
-            conversationEvent.SessionId is not { } sessionId)
+        if (conversationEvent.SessionId is not { } sessionId)
         {
             return ImmutableArray<ChannelStreamTarget>.Empty;
         }

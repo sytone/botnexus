@@ -58,7 +58,10 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             // #3596: the agent-owned summary persists on the same path as every other descriptor
             // field, so a self-written summary survives a gateway restart without a second store.
             SetOptionalString(entry, "summary", descriptor.Summary);
-            SetOptionalString(entry, "systemPromptFile", descriptor.SystemPromptFile);
+            // Retired prompt-file keys remain load-tolerated, but any supported agent write removes
+            // them so the persisted document converges on the current contract (#2941).
+            entry.Remove("systemPromptFile");
+            entry.Remove("systemPromptFiles");
             SetOptionalString(entry, "isolationStrategy", descriptor.IsolationStrategy);
             SetOptionalString(entry, "cacheRetention", descriptor.CacheRetentionMode);
             SetOptionalString(entry, "thinking", descriptor.Thinking);
@@ -66,7 +69,6 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             SetOptionalCount(entry, "maxConcurrentSessions", descriptor.MaxConcurrentSessions);
 
             // List surface.
-            SetOptionalList(entry, "systemPromptFiles", descriptor.SystemPromptFiles);
             SetOptionalList(entry, "allowedModels", descriptor.AllowedModelIds);
             SetOptionalList(entry, "subAgents", descriptor.SubAgentIds);
             SetOptionalList(entry, "subAgentRoles", descriptor.SubAgentRoles);

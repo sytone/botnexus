@@ -1,0 +1,69 @@
+@using System.Globalization
+
+@if (Attachments.Count > 0)
+{
+    <div class="attachment-host" @onkeydown="HandleKeyDown">
+        <div class="attachment-list" data-testid="attachment-list">
+            @foreach (var attachment in Attachments)
+            {
+                <div class="message-attachment" data-testid="message-attachment">
+                    @if (attachment.IsImage)
+                    {
+                        <button type="button" class="attachment-image-button" data-testid="attachment-image-open"
+                                aria-label="Open @attachment.FileName" @onclick="() => Open(attachment)">
+                            <img class="attachment-thumbnail" data-testid="attachment-image"
+                                 src="@attachment.DataUrl" alt="@attachment.FileName" />
+                        </button>
+                        <span class="attachment-caption">@attachment.FileName (@FormatSize(attachment.Size))</span>
+                    }
+                    else
+                    {
+                        <a class="attachment-download" data-testid="attachment-download"
+                           href="@attachment.DataUrl" download="@attachment.FileName">
+                            @attachment.FileName <span class="attachment-size">@FormatSize(attachment.Size)</span>
+                        </a>
+                    }
+                </div>
+            }
+        </div>
+
+        @if (_openAttachment is not null)
+        {
+            <div class="attachment-lightbox" data-testid="attachment-lightbox" role="dialog" aria-modal="true"
+                 aria-label="@_openAttachment.FileName" tabindex="0" @onclick="Close" @onkeydown="HandleKeyDown">
+                <div class="attachment-lightbox-dialog" @onclick:stopPropagation="true">
+                    <button type="button" class="attachment-lightbox-close" aria-label="Close" @onclick="Close">&#x2715;</button>
+                    <img class="attachment-lightbox-image" src="@_openAttachment.DataUrl" alt="@_openAttachment.FileName" />
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<ChatAttachment> Attachments { get; set; } = [];
+
+    private ChatAttachment? _openAttachment;
+
+    private void Open(ChatAttachment attachment) => _openAttachment = attachment;
+
+    private void Close() => _openAttachment = null;
+
+    private void HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape")
+            Close();
+    }
+
+    private static string FormatSize(long? size)
+    {
+        if (size is null)
+            return "size unknown";
+        if (size < 1024)
+            return $"{size.Value.ToString(CultureInfo.InvariantCulture)} B";
+        if (size < 1024 * 1024)
+            return $"{(size.Value / 1024d).ToString("0.#", CultureInfo.InvariantCulture)} KB";
+        return $"{(size.Value / (1024d * 1024d)).ToString("0.#", CultureInfo.InvariantCulture)} MB";
+    }
+}

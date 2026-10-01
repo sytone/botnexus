@@ -116,21 +116,6 @@ public sealed record AgentDescriptor : ICitizen
     public string? SystemPrompt { get; init; }
 
     /// <summary>
-    /// Path to a file containing the system prompt (alternative to <see cref="SystemPrompt" />).
-    /// Relative paths are resolved from the agent configuration directory.
-    /// </summary>
-    [Obsolete("Custom prompt-file selection is deprecated (#2941). Use standard workspace instruction files, WORLD.md, inline system prompts, conversation instructions, or model-specific variants.", DiagnosticId = "BNX2941")]
-    public string? SystemPromptFile { get; init; }
-
-    /// <summary>
-    /// Ordered list of system prompt file paths to load and concatenate.
-    /// Resolved relative to the agent's workspace directory.
-    /// If empty, uses default load order: AGENTS.md, SOUL.md, TOOLS.md, BOOTSTRAP.md, IDENTITY.md, USER.md.
-    /// </summary>
-    [Obsolete("Custom prompt-file selection is deprecated (#2941). Use standard workspace instruction files, WORLD.md, inline system prompts, conversation instructions, or model-specific variants.", DiagnosticId = "BNX2941")]
-    public IReadOnlyList<string> SystemPromptFiles { get; init; } = [];
-
-    /// <summary>
     /// Tool identifiers this agent has access to.
     /// Resolved through the tool registry at agent creation time.
     /// </summary>

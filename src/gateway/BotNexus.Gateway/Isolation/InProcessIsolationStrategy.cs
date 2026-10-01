@@ -704,6 +704,11 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             TransformContext: null,
             GetProviderExecutionOptions: async (provider, cancellationToken) =>
                 await _authManager.CreateExecutionOptionsAsync(provider, cancellationToken: cancellationToken).ConfigureAwait(false),
+            InvalidateProviderCredentials: (_, _) =>
+            {
+                _authManager.InvalidateCache();
+                return Task.CompletedTask;
+            },
             GetSteeringMessages: null,
             GetFollowUpMessages: null,
             ToolExecutionMode: ToolExecutionMode.Parallel,
@@ -1436,6 +1441,42 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             var messages = await _agent.PromptAsync(message.ToCore(), cancellationToken);
             var response = BuildResponse(messages, _agent.State.LastCompletion);
 
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return response;
+        }
+        catch (OperationCanceledException oce)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
+            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
+            throw BuildInterruptedException(oce);
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<AgentResponse> PromptWhenAvailableAsync(
+        AgentUserMessage message,
+        Func<Task> onStartedAsync,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(onStartedAsync);
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", AgentId);
+        activity?.SetTag("botnexus.session.id", SessionId);
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
+        _activityTracker?.RecordActivity();
+        try
+        {
+            var messages = await _agent.PromptWhenAvailableAsync(
+                message.ToCore(), onStartedAsync, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var response = BuildResponse(messages, _agent.State.LastCompletion);
             activity?.SetStatus(ActivityStatusCode.Ok);
             return response;
         }

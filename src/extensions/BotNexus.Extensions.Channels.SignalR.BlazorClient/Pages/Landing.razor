@@ -21,6 +21,7 @@
 @inject GatewayInfoService GatewayInfo
 @inject HttpClient Http
 @inject NavigationManager Nav
+@inject IPortalPreferencesService Prefs
 @implements IDisposable
 
 <PageTitle>Home - BotNexus</PageTitle>
@@ -41,17 +42,20 @@
 else
 {
     <div class="home-page" data-testid="home-page">
-        <section class="home-summary" data-testid="home-summary" aria-label="Site and agent summary">
-            <PlatformStatsPanel />
-            <div class="home-agent-summary">
-                <span class="home-agent-count" data-testid="home-agent-count">@_agents.Count</span>
-                <span class="home-agent-count-label">@(_agents.Count == 1 ? "agent" : "agents") available</span>
-                @if (_connectedCount > 0)
-                {
-                    <span class="home-agent-connected" data-testid="home-agent-connected">@_connectedCount connected</span>
-                }
-            </div>
-        </section>
+        @if (!IsSimplifiedShell)
+        {
+            <section class="home-summary" data-testid="home-summary" aria-label="Site and agent summary">
+                <PlatformStatsPanel />
+                <div class="home-agent-summary">
+                    <span class="home-agent-count" data-testid="home-agent-count">@_agents.Count</span>
+                    <span class="home-agent-count-label">@(_agents.Count == 1 ? "agent" : "agents") available</span>
+                    @if (_connectedCount > 0)
+                    {
+                        <span class="home-agent-connected" data-testid="home-agent-connected">@_connectedCount connected</span>
+                    }
+                </div>
+            </section>
+        }
 
         @if (_agents.Count == 0)
         {
@@ -151,6 +155,21 @@ else
                 }
             </section>
 
+            @if (IsSimplifiedShell)
+            {
+                <section class="home-summary home-summary-quiet" data-testid="home-summary" aria-label="Site and agent summary">
+                    <PlatformStatsPanel />
+                    <div class="home-agent-summary">
+                        <span class="home-agent-count" data-testid="home-agent-count">@_agents.Count</span>
+                        <span class="home-agent-count-label">@(_agents.Count == 1 ? "agent" : "agents") available</span>
+                        @if (_connectedCount > 0)
+                        {
+                            <span class="home-agent-connected" data-testid="home-agent-connected">@_connectedCount connected</span>
+                        }
+                    </div>
+                </section>
+            }
+
             <section class="home-agent-roster" data-testid="home-agent-roster" aria-labelledby="home-agent-roster-title">
                 <div class="home-agent-roster-heading">
                     <h2 id="home-agent-roster-title">Meet your agents</h2>
@@ -193,6 +212,8 @@ else
 
     private bool CanSend => !_starting && !string.IsNullOrWhiteSpace(_draft) && _selectedAgentId is { Length: > 0 };
 
+    private bool IsSimplifiedShell => PortalShell.Normalize(Prefs.Current.Shell) == PortalShell.Simplified;
+
     private IReadOnlyList<string> ThinkingLevels =>
         _models.FirstOrDefault(m => m.ModelId == _selectedModel)?.SupportedThinkingLevels ?? [];
 
@@ -206,6 +227,7 @@ else
     {
         PortalLoad.OnReadyChanged += HandleReadyChanged;
         Store.OnChanged += HandleStateChanged;
+        Prefs.OnChanged += HandlePreferencesChanged;
     }
 
     protected override async Task OnInitializedAsync()
@@ -242,6 +264,8 @@ else
             await RefreshRosterAsync();
             StateHasChanged();
         });
+
+    private void HandlePreferencesChanged() => _ = InvokeAsync(StateHasChanged);
 
     /// <summary>
     /// Rebuilds the agent list from the shared client state store and, on first population, resolves
@@ -434,6 +458,7 @@ else
     {
         PortalLoad.OnReadyChanged -= HandleReadyChanged;
         Store.OnChanged -= HandleStateChanged;
+        Prefs.OnChanged -= HandlePreferencesChanged;
     }
 
     /// <summary>
