@@ -166,7 +166,7 @@ public sealed class ReleaseHistoryControllerTests
             var result = new TestRepository(path);
             result.Run("init", "-b", "main");
             result.Run("config", "user.name", "BotNexus Test");
-            result.Run("config", "user.email", "botnexus-test@example.invalid");
+            result.Run("config", "user.email", "botnexus-test@botnexus.invalid");
             return result;
         }
 
