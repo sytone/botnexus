@@ -7088,12 +7088,33 @@ h3.conversation-title.editable:hover {
     font-size: var(--text-title);
 }
 
+.home-composer-surface {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-raised);
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.home-composer-surface:focus-within {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px var(--color-accent-ring), var(--shadow-raised);
+}
+
 .home-message-input {
     width: 100%;
     box-sizing: border-box;
     resize: vertical;
     min-height: 6rem;
-    padding: 0.75rem;
+    padding: 0.35rem;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text-primary);
     font: inherit;
 }
 
@@ -7117,16 +7138,51 @@ h3.conversation-title.editable:hover {
     opacity: 0.7;
 }
 
+.home-starter-controls select {
+    min-height: 2.4rem;
+    padding: 0.45rem 2rem 0.45rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font: inherit;
+}
+
+.home-starter-controls select:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
+}
+
 .home-send-btn {
     margin-left: auto;
+    min-height: 2.4rem;
     padding: 0.5rem 1.25rem;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--color-on-accent);
     font: inherit;
+    font-weight: 600;
     cursor: pointer;
+    transition: background 0.15s, transform 0.1s, opacity 0.15s;
+}
+
+.home-send-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+}
+
+.home-send-btn:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.home-send-btn:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
 }
 
 .home-send-btn:disabled {
     cursor: not-allowed;
-    opacity: 0.55;
+    opacity: 0.45;
 }
 
 .home-error {
