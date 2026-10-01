@@ -34,6 +34,13 @@ public interface IPortalPreferencesService
     Task SetDensityAsync(string density);
 
     /// <summary>
+    /// Update the portal shell variant and persist. Unrecognised values are coerced to
+    /// <see cref="PortalShell.Classic"/> by <see cref="PortalShell.Normalize"/>.
+    /// </summary>
+    /// <param name="shell">Requested shell variant; see <see cref="PortalShell"/>.</param>
+    Task SetShellAsync(string shell);
+
+    /// <summary>
     /// Sets the colour theme, applies it to the document element immediately, and persists it.
     /// </summary>
     /// <param name="theme">A <see cref="PortalTheme"/> value; coerced if unrecognised.</param>

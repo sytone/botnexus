@@ -11,7 +11,7 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="Model">The model definition used for provider calls (can be overridden in InitialState).</param>
 /// <param name="ConvertToLlm">Optional converter for agent messages to provider chat messages before each LLM call.</param>
 /// <param name="TransformContext">Optional context transformer before provider invocation (defaults to identity passthrough).</param>
-/// <param name="GetApiKey">Resolves provider API keys on demand.</param>
+/// <param name="GetProviderExecutionOptions">Resolves provider execution policy, including credentials, on demand.</param>
 /// <param name="GetSteeringMessages">Provides steering messages when configured (combined with Agent.Steer queues).</param>
 /// <param name="GetFollowUpMessages">Provides follow-up messages when configured (combined with Agent.FollowUp queues).</param>
 /// <param name="ToolExecutionMode">Controls tool execution ordering (Sequential or Parallel).</param>
@@ -64,6 +64,9 @@ namespace BotNexus.Agent.Core.Configuration;
 /// </param>
 /// <param name="EvaluateRunCompletion">Optional authoritative host completion evaluator.</param>
 /// <param name="MaxCompletionContinuations">Bound on automatic completion-gate continuation turns.</param>
+/// <param name="InvalidateProviderCredentials">
+/// Optional host-owned credential invalidation invoked before one bounded authentication retry.
+/// </param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
 /// InitialState is used to seed AgentState - changes to InitialState after construction have no effect.
@@ -74,13 +77,13 @@ public record AgentOptions(
     LlmClient LlmClient,
     ConvertToLlmDelegate? ConvertToLlm,
     TransformContextDelegate? TransformContext,
-    GetApiKeyDelegate GetApiKey,
+    GetProviderExecutionOptionsDelegate GetProviderExecutionOptions,
     GetMessagesDelegate? GetSteeringMessages,
     GetMessagesDelegate? GetFollowUpMessages,
     ToolExecutionMode ToolExecutionMode,
     BeforeToolCallDelegate? BeforeToolCall,
     AfterToolCallDelegate? AfterToolCall,
-    SimpleStreamOptions GenerationSettings,
+    GenerationOptions GenerationSettings,
     QueueMode SteeringMode,
     QueueMode FollowUpMode,
     string? SessionId = null,
@@ -97,4 +100,7 @@ public record AgentOptions(
     ToolCallDispositionDelegate? OnToolCallDisposition = null,
     Func<string, string>? SanitizeToolResultText = null,
     Loop.EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
-    int MaxCompletionContinuations = 2);
+    int MaxCompletionContinuations = 2,
+    InvalidateProviderCredentialsDelegate? InvalidateProviderCredentials = null,
+    Loop.IProviderRecoveryCoordinator? RecoveryCoordinator = null,
+    TimeSpan? RecoveryAdmissionTimeout = null);

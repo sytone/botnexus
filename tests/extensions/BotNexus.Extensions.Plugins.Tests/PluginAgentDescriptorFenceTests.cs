@@ -451,6 +451,31 @@ public sealed class PluginAgentDescriptorFenceTests
     [Theory]
     [InlineData("omitted")]
     [InlineData("null")]
+    [InlineData("explicit")]
+    public void Apply_SerializedPolicy_PreservesFilesystemRootCeilingDeny_InRealValidator(string shape)
+    {
+        var workspace = Path.Combine(Path.GetTempPath(), "plugin-root-denial-4041", "workspace");
+        var filesystemRoot = Path.GetPathRoot(workspace).ShouldNotBeNull();
+        var result = PluginAgentDescriptorFence.Apply(DeserializePolicyShape(shape), new FileAccessPolicy
+        {
+            DeniedPaths = [filesystemRoot]
+        });
+
+        result.IsAccepted.ShouldBeTrue();
+        var policy = result.Descriptor.ShouldNotBeNull().FileAccess.ShouldNotBeNull();
+        policy.AllowedReadPaths.ShouldBeEmpty();
+        policy.AllowedWritePaths.ShouldBeEmpty();
+        policy.DeniedPaths.ShouldContain(filesystemRoot);
+
+        var validator = new BotNexus.Gateway.Security.DefaultPathValidator(policy, workspace);
+        var descendant = Path.Combine(workspace, "nested", "secret.txt");
+        validator.CanRead(descendant).ShouldBeFalse("plugin composition must retain root read denials");
+        validator.CanWrite(descendant).ShouldBeFalse("plugin composition must retain root write denials");
+    }
+
+    [Theory]
+    [InlineData("omitted")]
+    [InlineData("null")]
     [InlineData("empty")]
     [InlineData("explicit")]
     public void Apply_SerializedPolicy_RejectsAmbiguousCeilingDeny_EvenWhenOmitted(string shape)
@@ -549,12 +574,13 @@ public sealed class PluginAgentDescriptorFenceTests
             + "plugin-declarable privilege surface the moment it exists.");
     }
 
-    // AgentId is required to construct the candidate and the fence intentionally copies that same
-    // identity into its reference descriptor. It cannot be independently mutated into a declaration;
-    // every other live fenced member must have a concrete non-default mutation recipe below.
+    // AgentId is required to construct the candidate and cannot be independently mutated into a
+    // declaration. DefaultExtensionConfig is populated by the server from agents.defaults and is
+    // not plugin-owned. Every other live fenced member must have a concrete mutation recipe below.
     private static IReadOnlyList<string> IdentityOnlyFencedExemptions { get; } =
     [
         nameof(AgentDescriptor.AgentId),
+        nameof(AgentDescriptor.DefaultExtensionConfig),
     ];
 
     private static IReadOnlyDictionary<string, Func<AgentDescriptor, AgentDescriptor>> MutationRecipes { get; } =

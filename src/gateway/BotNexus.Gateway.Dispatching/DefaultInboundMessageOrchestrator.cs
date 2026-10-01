@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Extensions.Logging;
@@ -98,6 +99,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     private readonly IChannelManager? _channelManager;
     private readonly IInboundDeliveryResolver? _deliveryResolver;
     private readonly IInboundSteerDeliverer? _steerDeliverer;
+    private readonly IActivityBroadcaster? _activityBroadcaster;
     private readonly int _queueCapacity;
     private readonly TimeSpan _queueWaitTimeout;
     private readonly Func<TimeSpan, CancellationToken, Task> _queueDelay;
@@ -129,7 +131,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         IInboundSteerDeliverer? steerDeliverer = null,
         TimeSpan? queueWaitTimeout = null,
         Func<TimeSpan, CancellationToken, Task>? queueDelay = null,
-        Func<Task<InboundDispatchResult>, CancellationToken, Task<InboundDispatchResult>>? waitForRunningCompletion = null)
+        Func<Task<InboundDispatchResult>, CancellationToken, Task<InboundDispatchResult>>? waitForRunningCompletion = null,
+        IActivityBroadcaster? activityBroadcaster = null)
     {
         ArgumentNullException.ThrowIfNull(processor);
         ArgumentNullException.ThrowIfNull(logger);
@@ -144,6 +147,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         _queueCapacity = queueCapacity;
         _deliveryResolver = deliveryResolver;
         _steerDeliverer = steerDeliverer;
+        _activityBroadcaster = activityBroadcaster;
         if (queueWaitTimeout is { } supplied && supplied <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(queueWaitTimeout), supplied,
@@ -176,6 +180,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 nameof(message));
         }
 
+        _ = PublishInboundActivityBestEffortAsync(message);
+
         var queueKey = GetQueueKey(message);
         var queueItem = new QueuedInboundMessage(message);
         return TryWriteToLiveQueue(queueKey, queueItem);
@@ -194,6 +200,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 $"Channel '{message.ChannelType}' producer must populate it (see #526).",
                 nameof(message));
         }
+
+        await PublishInboundActivityBestEffortAsync(message).ConfigureAwait(false);
 
         if (await TrySteerAsync(message, cancellationToken).ConfigureAwait(false))
         {
@@ -336,9 +344,25 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     }
 
     /// <inheritdoc />
-    public async Task<InboundDispatchResult> AcceptAsync(
+    public Task<InboundDispatchResult> AcceptAsync(
         InboundMessage message,
         CancellationToken cancellationToken = default)
+        => AcceptCoreAsync(message, executionControl: null, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<InboundDispatchResult> AcceptAsync(
+        InboundMessage message,
+        InboundExecutionControl executionControl,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(executionControl);
+        return AcceptCoreAsync(message, executionControl, cancellationToken);
+    }
+
+    private async Task<InboundDispatchResult> AcceptCoreAsync(
+        InboundMessage message,
+        InboundExecutionControl? executionControl,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(message);
         // CitizenId is a struct, so `required` can't catch `default`. Every channel
@@ -352,6 +376,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 nameof(message));
         }
 
+        await PublishInboundActivityBestEffortAsync(message).ConfigureAwait(false);
+
         // #3028: the steer/queue decision is made HERE, server-side, before anything touches the
         // FIFO queue. The resolver reads the caller's stated intent and the server-owned evidence
         // (is a turn actually running?) and collapses them to one mechanism. Absent the seam this
@@ -363,7 +389,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         }
 
         var queueKey = GetQueueKey(message);
-        var queueItem = new QueuedInboundMessage(message);
+        var queueItem = new QueuedInboundMessage(message, executionControl);
 
         if (!TryWriteToLiveQueue(queueKey, queueItem))
         {
@@ -399,6 +425,42 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
             // we let the processor finish in the background on a detached token — do
             // not surface the inner exception to a now-disconnected caller.
             throw;
+        }
+    }
+
+    private async Task PublishInboundActivityBestEffortAsync(InboundMessage message)
+    {
+        if (_activityBroadcaster is null)
+        {
+            return;
+        }
+
+        var hints = InboundMessageRoutingHints.FromMessage(message);
+        try
+        {
+            // Activity is observability, not an admission receipt. It deliberately uses an
+            // independent token and cannot turn an otherwise accepted, refused, or cancelled
+            // submission into a different delivery outcome.
+            await _activityBroadcaster.PublishAsync(new GatewayActivity
+            {
+                Type = GatewayActivityType.MessageReceived,
+                AgentId = hints.RequestedAgentId?.Value,
+                SessionId = hints.RequestedSessionId?.Value,
+                ConversationId = hints.RequestedConversationId?.Value,
+                ChannelType = message.ChannelType,
+                Message = message.Content,
+                Data = new Dictionary<string, object?>
+                {
+                    ["requestedDeliveryIntent"] = hints.DeliveryMode.ToString()
+                }
+            }, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to publish inbound activity for channel '{ChannelType}'; delivery continues.",
+                message.ChannelType);
         }
     }
 
@@ -582,15 +644,26 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 bool shouldCloseQueue = false;
                 try
                 {
+                    // A producer-owned deadline can expire while this item is still behind another
+                    // turn. Its completion is cancelled at that instant so the producer can persist
+                    // the terminal state without waiting for the head item to finish. When the queue
+                    // eventually reaches it, discard it before reporting start or invoking the processor.
+                    if (item.Completion.Task.IsCompleted)
+                    {
+                        continue;
+                    }
+
                     // #3600: signal that this item has left the queue and is now in the processor's
                     // hands. AcceptAsync bounds only the wait for THIS signal; everything after it is
                     // a real turn and is awaited without a time limit.
                     item.Started.TrySetResult(true);
 
-                    // Use a detached token for processor work so client disconnect
-                    // doesn't kill in-progress agent execution. The processor itself
-                    // owns whether to honour its own cooperative-cancellation hooks.
-                    var outcome = await _processor.ProcessAsync(item.Message, CancellationToken.None);
+                    // Ordinary transport calls remain detached so a client disconnect cannot kill
+                    // in-progress work. Durable producers carry a distinct execution contract into
+                    // the processor, which owns the precise point at which execution has started.
+                    var outcome = item.ExecutionControl is { } executionControl
+                        ? await _processor.ProcessAsync(item.Message, executionControl)
+                        : await _processor.ProcessAsync(item.Message, CancellationToken.None);
                     shouldCloseQueue = outcome.ShouldClosePerSessionQueue;
 
                     var status = outcome.Dispatches.Count == 0
@@ -611,6 +684,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 }
                 finally
                 {
+                    item.Dispose();
                     if (shouldCloseQueue && _sessionQueues.TryRemove(queueKey, out var state))
                     {
                         state.Queue.Writer.TryComplete();
@@ -660,9 +734,31 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         public Task WorkerTask { get; } = workerTask;
     }
 
-    private sealed class QueuedInboundMessage(InboundMessage message)
+    private sealed class QueuedInboundMessage : IDisposable
     {
-        public InboundMessage Message { get; } = message;
+        private readonly CancellationTokenRegistration _executionCancellation;
+
+        public QueuedInboundMessage(
+            InboundMessage message,
+            InboundExecutionControl? executionControl = null)
+        {
+            Message = message;
+            ExecutionControl = executionControl;
+            if (executionControl is { } control)
+            {
+                _executionCancellation = control.CancellationToken.Register(
+                    static state =>
+                    {
+                        var item = (QueuedInboundMessage)state!;
+                        item.Completion.TrySetCanceled(item.ExecutionControl!.CancellationToken);
+                    },
+                    this);
+            }
+        }
+
+        public InboundMessage Message { get; }
+
+        public InboundExecutionControl? ExecutionControl { get; }
 
         /// <summary>
         /// Signalled by the queue worker at the instant this item is handed to the processor (#3600).
@@ -675,5 +771,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
 
         public TaskCompletionSource<InboundDispatchResult> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Dispose() => _executionCancellation.Dispose();
     }
 }

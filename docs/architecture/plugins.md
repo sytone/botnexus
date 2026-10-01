@@ -315,7 +315,7 @@ isolation escalation, or file access beyond the installing user's own ceiling.**
 |---|---|---|
 | Identity and presentation | `id`, `displayName`, `emoji`, `description` | Bound and projected |
 | Model selection | `model`, `provider`, `allowedModels`, `thinking`, `contextWindow` | Bound and projected |
-| Prompt content | `systemPrompt`, `systemPromptFiles` | Bound and projected |
+| Prompt content | `systemPrompt` | Bound and projected as inline instructions. |
 | Tool ids and limits | `toolIds`, `maxConcurrentSessions` | Bound and projected |
 | File access | `fileAccess` | Bound, then **narrowed** to the installing user's ceiling |
 | Host provenance | `metadata` | Unsupported as plugin input; ignored. The host writes only `metadata.plugin`. |

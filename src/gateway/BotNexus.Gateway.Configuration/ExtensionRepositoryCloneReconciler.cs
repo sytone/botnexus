@@ -2,26 +2,26 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using BotNexus.Gateway.Configuration;
 
-namespace BotNexus.Cli.Commands;
+namespace BotNexus.Gateway.Configuration;
 
-internal sealed record ExtensionRepositoryReconciliationResult(string Id, bool Succeeded, string? ResolvedCommit, string? FailureName, string? Diagnostic);
+public sealed record ExtensionRepositoryReconciliationResult(string Id, bool Succeeded, string? ResolvedCommit, string? FailureName, string? Diagnostic);
 
 /// <summary>Materializes registered sources without reset, clean, force, or deletion.</summary>
-internal sealed class ExtensionRepositoryCloneReconciler
+public sealed class ExtensionRepositoryCloneReconciler
 {
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> CloneLocks = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly string _home;
     private readonly ExtensionRepositoryRegistryService _registry;
     private readonly TimeProvider _timeProvider;
 
-    internal ExtensionRepositoryCloneReconciler(string home, ExtensionRepositoryRegistryService registry, TimeProvider? timeProvider = null)
+    public ExtensionRepositoryCloneReconciler(string home, ExtensionRepositoryRegistryService registry, TimeProvider? timeProvider = null)
     {
         _home = Path.GetFullPath(home);
         _registry = registry;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    internal async Task<IReadOnlyList<ExtensionRepositoryReconciliationResult>> ReconcileEnabledAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ExtensionRepositoryReconciliationResult>> ReconcileEnabledAsync(CancellationToken cancellationToken = default)
     {
         var registrations = await _registry.ListAsync(cancellationToken).ConfigureAwait(false);
         var results = new List<ExtensionRepositoryReconciliationResult>();
@@ -30,7 +30,7 @@ internal sealed class ExtensionRepositoryCloneReconciler
         return results;
     }
 
-    internal async Task<ExtensionRepositoryReconciliationResult> ReconcileAsync(ExtensionRepositoryRegistrationInfo registration, CancellationToken cancellationToken = default)
+    public async Task<ExtensionRepositoryReconciliationResult> ReconcileAsync(ExtensionRepositoryRegistrationInfo registration, CancellationToken cancellationToken = default)
     {
         var clonePath = Path.GetFullPath(Path.Combine(_home, "extension-repositories", registration.Id, "repository"));
         var cloneLock = CloneLocks.GetOrAdd(clonePath, _ => new SemaphoreSlim(1, 1));
@@ -39,9 +39,7 @@ internal sealed class ExtensionRepositoryCloneReconciler
         {
             await _registry.RecordReconciliationAttemptAsync(registration.Id, clonePath, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
             var outcome = await ReconcileLockedAsync(registration, clonePath, cancellationToken).ConfigureAwait(false);
-            if (outcome.Succeeded)
-                await _registry.RecordReconciliationSuccessAsync(registration.Id, outcome.ResolvedCommit!, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
-            else
+            if (!outcome.Succeeded)
                 await _registry.RecordReconciliationFailureAsync(registration.Id, outcome.FailureName!, outcome.Diagnostic!, cancellationToken).ConfigureAwait(false);
             return outcome;
         }

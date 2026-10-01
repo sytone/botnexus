@@ -34,7 +34,7 @@ public sealed class PlatformConfigWriterRegistrationTests : IDisposable
         _directory = Path.Combine(Path.GetTempPath(), $"bn-writer-reg-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_directory);
         _configPath = Path.Combine(_directory, "config.json");
-        _storePath = Path.Combine(_directory, "config.db");
+        _storePath = Path.Combine(_directory, ConfigStoreBootstrap.StoreFileName);
         File.WriteAllText(_configPath, """{ "gateway": { "listenUrl": "http://localhost:5000" } }""");
     }
 

@@ -154,6 +154,96 @@ public sealed class PlatformConfigValidatorTests
         warnings.Where(w => w.Contains("version '2'", StringComparison.Ordinal)).ShouldHaveSingleItem();
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void ValidateWarnings_AgentUsesLegacyPromptFileKey_ReturnsOneActionableWarning(
+        bool includeSingular,
+        bool includePlural)
+    {
+        var agentJson = (includeSingular, includePlural) switch
+        {
+            (true, true) => "{\"systemPromptFile\":null,\"systemPromptFiles\":[]}",
+            (true, false) => "{\"systemPromptFile\":null}",
+            (false, true) => "{\"systemPromptFiles\":[]}",
+            _ => "{}"
+        };
+        var config = PlatformConfigLoader.MaterializeConfig(
+            $$"""
+            {
+              "agents": {
+                "assistant": {{agentJson}}
+              }
+            }
+            """);
+
+        var warning = PlatformConfigValidator.ValidateWarnings(config)
+            .Where(message => message == PlatformConfigValidator.LegacyPromptFilesWarning)
+            .ShouldHaveSingleItem();
+
+        warning.ShouldContain("systemPromptFile");
+        warning.ShouldContain("systemPromptFiles");
+        warning.ShouldContain("standard workspace instruction files");
+        warning.ShouldContain("WORLD.md");
+        warning.ShouldContain("inline system prompt");
+        warning.ShouldContain("conversation instructions");
+        warning.ShouldContain("model-specific variants");
+    }
+
+    [Fact]
+    public void ValidateWarnings_MultipleAgentsUseLegacyPromptFileKeys_ReturnsOneWarning()
+    {
+        var config = PlatformConfigLoader.MaterializeConfig(
+            """
+            {
+              "agents": {
+                "assistant": { "systemPromptFiles": ["AGENTS.md"] },
+                "reviewer": { "systemPromptFile": "reviewer.md" }
+              }
+            }
+            """);
+
+        PlatformConfigValidator.ValidateWarnings(config)
+            .Where(message => message == PlatformConfigValidator.LegacyPromptFilesWarning)
+            .ShouldHaveSingleItem();
+    }
+
+    [Theory]
+    [InlineData("{\"systemPromptFile\":\"legacy.md\"}")]
+    [InlineData("{\"systemPromptFiles\":[\"legacy.md\"]}")]
+    [InlineData("{\"systemPromptFile\":null,\"systemPromptFiles\":[]}")]
+    public void MaterializeConfig_LegacyPromptFileKeys_AreToleratedWithoutTypedConfigurationProjection(
+        string agentJson)
+    {
+        var config = PlatformConfigLoader.MaterializeConfig(
+            $$"""{ "agents": { "assistant": {{agentJson}} } }""");
+
+        var agent = config.Agents!["assistant"];
+        agent.LegacyPromptFileKeysPresent.ShouldBeTrue();
+        typeof(AgentDefinitionConfig).GetProperty("SystemPromptFile").ShouldBeNull();
+        typeof(AgentDefinitionConfig).GetProperty("SystemPromptFiles").ShouldBeNull();
+        PlatformConfigValidator.ValidateWarnings(config)
+            .Where(message => message == PlatformConfigValidator.LegacyPromptFilesWarning)
+            .ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public void ValidateWarnings_AgentsOmitLegacyPromptFileKeys_ReturnsNoLegacyWarning()
+    {
+        var config = PlatformConfigLoader.MaterializeConfig(
+            """
+            {
+              "agents": {
+                "assistant": {}
+              }
+            }
+            """);
+
+        PlatformConfigValidator.ValidateWarnings(config)
+            .ShouldNotContain(PlatformConfigValidator.LegacyPromptFilesWarning);
+    }
+
     [Fact]
     public void ValidateWarnings_KnownVersion_ReturnsNoWarnings()
         => PlatformConfigValidator.ValidateWarnings(new PlatformConfig { PlatformVersion = 1 }).ShouldBeEmpty();

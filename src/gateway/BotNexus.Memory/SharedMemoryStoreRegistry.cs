@@ -1,11 +1,12 @@
 using System.Collections.Concurrent;
 using System.IO.Abstractions;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Memory;
 
 /// <summary>
 /// In-memory registry of shared memory stores backed by SQLite.
-/// Stores are located at {basePath}/shared/{store-name}.db.
+/// Stores are located at {basePath}/shared/{store-name}.sqlite.
 /// </summary>
 public sealed class SharedMemoryStoreRegistry : ISharedMemoryStoreRegistry
 {
@@ -34,7 +35,10 @@ public sealed class SharedMemoryStoreRegistry : ISharedMemoryStoreRegistry
 
         return _stores.GetOrAdd(storeName, name =>
         {
-            var dbPath = Path.Combine(_basePath, "shared", $"{name}.db");
+            var dbPath = SqliteStorePathPolicy.ResolveOwnedStorePath(
+                Path.Combine(_basePath, "shared"),
+                name,
+                _fileSystem);
             return new SqliteMemoryStore(dbPath, _fileSystem);
         });
     }

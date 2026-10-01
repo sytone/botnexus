@@ -1,5 +1,6 @@
 using BotNexus.Agent.Core.Hooks;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Agent.Core.Configuration;
@@ -40,16 +41,27 @@ public delegate Task<IReadOnlyList<AgentMessage>> TransformContextDelegate(
     CancellationToken cancellationToken);
 
 /// <summary>
-/// Resolves an API key for the requested provider identifier.
+/// Resolves provider-owned execution policy for the requested provider identifier.
 /// </summary>
 /// <param name="provider">The provider identifier.</param>
 /// <param name="cancellationToken">The cancellation token.</param>
-/// <returns>The API key when available.</returns>
+/// <returns>Execution policy when the caller must override provider defaults; otherwise null.</returns>
 /// <remarks>
-/// Called before each LLM invocation. Return null if no key is available or the provider
-/// does not require authentication. Must not throw.
+/// Called before each LLM invocation. The result may carry credentials, transport policy,
+/// provider retry settings, or wire timeouts. Semantic generation controls do not belong here.
 /// </remarks>
-public delegate Task<string?> GetApiKeyDelegate(string provider, CancellationToken cancellationToken);
+public delegate Task<ProviderExecutionOptions?> GetProviderExecutionOptionsDelegate(string provider, CancellationToken cancellationToken);
+
+/// <summary>
+/// Invalidates host-owned provider credentials after an authentication rejection.
+/// </summary>
+/// <param name="provider">The rejected provider identifier.</param>
+/// <param name="cancellationToken">The current provider-turn cancellation token.</param>
+/// <remarks>
+/// The agent layer cannot depend on the gateway credential store. Hosts that cache credentials use
+/// this seam to invalidate that cache before the loop re-resolves execution options exactly once.
+/// </remarks>
+public delegate Task InvalidateProviderCredentialsDelegate(string provider, CancellationToken cancellationToken);
 
 /// <summary>
 /// Produces contextual message lists such as steering or follow-up messages.

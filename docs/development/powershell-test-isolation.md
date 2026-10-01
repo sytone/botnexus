@@ -5,10 +5,10 @@ Each launch owns a temporary cache directory until the child exits. Overrides ar
 applied only to `ProcessStartInfo.Environment` through the existing
 `ProcessEnvironment.Merge` seam; the test host's environment is not changed.
 
-| Platform | Isolated state | Remaining limitation |
+| Platform | Child startup boundary | Remaining limitation |
 | --- | --- | --- |
-| Unix | `XDG_CACHE_HOME` points to the owned directory, selecting its `powershell` subdirectory for startup profiles; `PSModuleAnalysisCachePath` selects an owned module-cache file | Isolation prevents sharing these paths; it does not establish the cause of a historical crash |
-| Windows | `PSModuleAnalysisCachePath` selects an owned module-cache file | Startup-profile isolation is **not** claimed: PowerShell uses `Environment.SpecialFolder.LocalApplicationData`, not the Unix XDG selector |
+| Unix | `XDG_CACHE_HOME` points to the owned directory, `PSModuleAnalysisCachePath` selects an owned module-cache file, and `DOTNET_MultiCoreJitMinNumCpus` disables the optional startup profile | The redundant disable prevents profile reads and writes; it does not establish the cause of a historical crash |
+| Windows | `PSModuleAnalysisCachePath` selects an owned module-cache file and `DOTNET_MultiCoreJitMinNumCpus` disables the optional startup profile | PowerShell still resolves its cache directory through `Environment.SpecialFolder.LocalApplicationData`; the docs-lint child does not consume that startup profile |
 
 ## Why `-NoProfile` is insufficient
 
@@ -20,6 +20,16 @@ resolves Unix cache state beneath `XDG_CACHE_HOME/powershell`.
 The [module analysis cache](https://github.com/PowerShell/PowerShell/blob/b9ff1da7/src/System.Management.Automation/engine/Modules/AnalysisCache.cs)
 honors `PSModuleAnalysisCachePath` separately. Isolating only that file does not
 isolate startup JIT profile data.
+
+PowerShell has no supported per-process cache-root selector on Windows: it derives
+the root through `Environment.SpecialFolder.LocalApplicationData`, and a child-only
+`LOCALAPPDATA` override does not redirect that known folder. The docs-lint launcher
+therefore sets the .NET runtime's `DOTNET_MultiCoreJitMinNumCpus` threshold to
+`2147483647`. The runtime declines multicore-JIT profile use when the available CPU
+count is below that threshold, so these short-lived lint children neither read nor
+write `StartupProfileData-NonInteractive`. This disables an optional startup
+optimization; it does not change script semantics, lint exit codes, or ordinary JIT
+compilation.
 
 Issue [#3968](https://github.com/Sytone/botnexus/issues/3968) records six child
 startup aborts with exit 134 and a truncated assembly identity. Public reports
@@ -39,13 +49,19 @@ children reach the stdin readiness boundary before release; success never depend
 on sleeping or elapsed-time assertions.
 
 The protocol has a 60-second safety cancellation deadline. Cleanup has a separate
-10-second deadline and attempts both owned children before awaiting completion.
-Deadline expiry is failure, never a retry or an accepted startup result.
+10-second deadline and starts both owned termination attempts before awaiting their
+outcomes. Each cache root is deleted only after its child termination is confirmed;
+a failed termination retains that child's cache and reports its path while cleanup
+continues for the other child. Deadline expiry is failure, never a retry or an
+accepted startup result.
 
-The named mutation **omit Unix startup-profile override** retains module-cache
-isolation but removes `overrides["XDG_CACHE_HOME"] = Root`. It must fail the
-inherited-input, independent-path and actual child-cache-root assertions. This
-separates the regression oracle from stochastic corruption or module-cache behavior.
+The named mutation **omit startup-profile disable** retains module-cache and Unix
+cache-root isolation but removes the `DOTNET_MultiCoreJitMinNumCpus` override. It
+must fail three assertions: inherited inputs are not replaced, two configured
+launches do not carry the disable contract, and concurrent child probes report the
+wrong numeric threshold. The existing **omit Unix startup-profile override** mutation
+continues to fail its three Unix cache-root assertions. These deterministic oracles
+are independent of stochastic corruption or module-cache behavior.
 
 Every original docs lint assertion remains, including exact exit codes 0, 1 and 2.
 Exit 134 remains failure. Launch diagnostics attach executable selection, arguments,
@@ -63,9 +79,10 @@ scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>
 ```
 
 Read `result.json` test counters and named TRX results, not merely the wrapper exit
-code. Keep issue #3968 open for a captured failing startup with full identity and
-cache evidence, and for separately scoped Windows startup-profile investigation.
-No runner deployment or live gateway rebuild is part of this test-only change.
+code. The original failed container's cache bytes were never captured, so historical
+root cause remains a bounded unknown; the launch contract no longer shares or uses
+startup-profile state on either platform. No runner deployment or live gateway
+rebuild is part of this test-only change.
 
 ## Actual lint-launch pipe and deadline safety (#3982)
 
@@ -73,7 +90,9 @@ The fifteen lint regressions use `RunLintAtAsync` through the existing synchrono
 adapter. The helper starts asynchronous stdout and stderr drains together, then
 awaits both drains and process exit under a linked 60-second safety deadline.
 Tests may supply a shorter deadline to exercise failure; elapsed time is not a
-success oracle. Caller cancellation remains cancellation; the helper's deadline
+success oracle. A test readiness callback may observe child startup before the
+execution deadline is armed, so startup latency and deliberate non-termination are
+separate contracts. Caller cancellation remains cancellation; the helper's deadline
 produces an explicit `TimeoutException`, never a lint exit code.
 
 On cancellation or failure, the helper attempts owned process-tree termination

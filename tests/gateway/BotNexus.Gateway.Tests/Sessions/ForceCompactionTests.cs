@@ -171,7 +171,6 @@ public sealed class ForceCompactionTests
         supervisor.Setup(s => s.StopAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var channelManager = new Mock<IChannelManager>();
         var options = Options.Create(new CompactionOptions { PreservedTurns = preservedTurns });
         var optionsMonitor = new Mock<IOptionsMonitor<CompactionOptions>>();
         optionsMonitor.Setup(o => o.CurrentValue).Returns(options.Value);
@@ -180,7 +179,8 @@ public sealed class ForceCompactionTests
             compactor.Object,
             sessions.Object,
             supervisor.Object,
-            channelManager.Object,
+            eventPublisher: null,
+            conversations: null,
             optionsMonitor.Object,
             NullLogger<SessionCompactionCoordinator>.Instance);
     }

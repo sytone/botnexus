@@ -32,9 +32,10 @@
 }
 else
 {
-    var activeAgent = Store.ActiveAgentId is not null ? Store.GetAgent(Store.ActiveAgentId) : null;
-    var activeConvId = activeAgent?.ActiveConversationId;
-    var activeConversation = ActiveConversation(activeAgent);
+    var activeAgentId = DisplayedAgentId;
+    var activeAgent = activeAgentId is not null ? Store.GetAgent(activeAgentId) : null;
+    var activeConvId = DisplayedConversationId;
+    var activeConversation = DisplayedConversation(activeAgent, activeConvId);
     var showComposer = !(activeAgent?.IsReadOnly ?? false)
         && (activeConversation?.Project(Store.ActiveSelectionSource).ShowComposer ?? true);
     @* #2320: Store.GetMessages returns a LIVE view over the conversation's backing List, and
@@ -77,13 +78,13 @@ else
         }
         <!-- TOP BAR -->
         <div class="top-bar">
-            <select class="agent-select" value="@Store.ActiveAgentId" @onchange="OnAgentChanged">
+            <select class="agent-select" value="@activeAgentId" @onchange="OnAgentChanged">
                 @foreach (var (agentId, agent) in agentEntries)
                 {
                     <option value="@agentId">@(agent.Emoji is not null ? agent.Emoji + " " : "")@agent.DisplayName</option>
                 }
             </select>
-            <select @key="Store.ActiveAgentId" class="conv-select" value="@activeConvId" @onchange="OnConvChanged">
+            <select @key="activeAgentId" class="conv-select" value="@activeConvId" @onchange="OnConvChanged">
                 @foreach (var group in conversationGroups)
                 {
                     <optgroup label="@group.Label">
@@ -122,9 +123,11 @@ else
                            6/6 of #1579, issue #1615). It renders the SAME shared SchemaForm the
                            desktop uses, so no mobile-specific field code is needed. Always available. *@
                         <button class="menu-action" data-testid="settings-btn" @onclick="OpenSettings">Settings</button>
+                        <a class="menu-action menu-action-link" data-testid="desktop-view-link" href="/">Desktop view</a>
+                        <span class="menu-build-info" data-testid="client-build-info">@GatewayInfoService.FormatBuildIdentity(BuildInfo?.Info)</span>
                         @* Archive (or close, for virtual cron sessions) the active conversation.
                            Hidden when no conversation is selected since there is nothing to archive. *@
-                        @if (ActiveConversation(activeAgent) is { } activeConv)
+                        @if (DisplayedConversation(activeAgent, activeConvId) is { } activeConv)
                         {
                             <button class="menu-action menu-action-archive" data-testid="archive-conversation-btn" @onclick="() => Archive(activeConv)">
                                 @(IsUnattended(activeConv) ? "Close conversation" : "Archive conversation")
@@ -199,6 +202,7 @@ else
                         {
                             <div class="message-content plain-text-content">@msg.Content</div>
                         }
+                        <AttachmentList Attachments="@msg.Attachments" />
                         <div class="message-time">@FormatTimestamp(msg.Timestamp)</div>
                     </div>
                 }
@@ -228,28 +232,46 @@ else
         <!-- BOTTOM BAR -->
         @if (showComposer)
         {
-            <div class="bottom-bar">
-                <textarea
-                    class="input-textarea"
-                    placeholder="/ for commands"
-                    rows="1"
-                    @bind="_inputText"
-                    @bind:event="oninput"
-                    @bind:after="UpdateCommandPalette"
-                    @onkeydown="OnKeyDown"
-                    disabled="@_isSending">
-                </textarea>
+            <div class="mobile-composer">
+                @if (_attachments.Count > 0)
+                {
+                    <div class="mobile-attachment-list">
+                        @foreach (var attachment in _attachments)
+                        {
+                            <span class="mobile-attachment-chip" data-testid="mobile-attachment-chip">
+                                <span class="mobile-attachment-name">@attachment.FileName</span>
+                                <span class="mobile-attachment-size">@FormatBytes(attachment.Size)</span>
+                                <button type="button" data-testid="mobile-attachment-remove" aria-label="@($"Remove {attachment.FileName}")" @onclick="() => RemoveAttachment(attachment)">&#x00D7;</button>
+                            </span>
+                        }
+                    </div>
+                }
+                @if (_composerError is not null) { <div class="mobile-composer-error" role="alert">@_composerError</div> }
+                <div class="bottom-bar">
+                    <label class="mobile-attach-btn" data-testid="mobile-attach" aria-label="Attach files">&#x1F4CE;<InputFile class="mobile-attachment-input" data-testid="mobile-attachment-input" OnChange="HandleFilesSelected" multiple disabled="@_isSending" /></label>
+                    <label class="mobile-attach-btn" data-testid="mobile-camera" aria-label="Take photo">&#x1F4F7;<InputFile class="mobile-attachment-input" data-testid="mobile-camera-input" OnChange="HandleFilesSelected" accept="image/*" capture="environment" disabled="@_isSending" /></label>
+                    <textarea
+                        class="input-textarea"
+                        placeholder="/ for commands"
+                        rows="1"
+                        @bind="_inputText"
+                        @bind:event="oninput"
+                        @bind:after="UpdateCommandPalette"
+                        @onkeydown="OnKeyDown"
+                        disabled="@_isSending">
+                    </textarea>
                 @if (streamState?.IsTurnActive == true)
                 {
-                    <button class="send-btn" data-testid="chat-steer-btn" @onclick="SteerMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">Steer</button>
-                    <button class="send-btn" data-testid="chat-redirect-btn" @onclick="RedirectMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">Redirect</button>
+                    <button class="send-btn" data-testid="chat-steer-btn" @onclick="SteerMessage" disabled="@(_isSending || !HasDraft)">Steer</button>
+                    <button class="send-btn" data-testid="chat-redirect-btn" @onclick="RedirectMessage" disabled="@(_isSending || !HasDraft)">Redirect</button>
                 }
                 else
                 {
-                    <button class="send-btn" @onclick="SendMessage" disabled="@(_isSending || string.IsNullOrWhiteSpace(_inputText))">
+                    <button class="send-btn" data-testid="mobile-send" @onclick="SendMessage" disabled="@(_isSending || !HasDraft)">
                         &#x21A6;
                     </button>
                 }
+                </div>
             </div>
         }
         @* #1491: when the agent is blocked on an ask_user prompt for the active
@@ -305,9 +327,9 @@ else
         </div>
     }
     <!-- CANVAS PANEL -->
-    @if (Store.ActiveAgentId is not null)
+    @if (activeAgentId is not null)
     {
-        <MobileCanvasPanel AgentId="@Store.ActiveAgentId"
+        <MobileCanvasPanel AgentId="@activeAgentId"
                            ConversationId="@activeConvId"
                            Open="_canvasOpen"
                            OnClose="CloseCanvas" />
@@ -352,6 +374,9 @@ else
 
     private string _inputText = "";
     private bool _isSending;
+    private readonly List<DraftAttachment> _attachments = [];
+    private string? _composerError;
+    private bool HasDraft => !string.IsNullOrWhiteSpace(_inputText) || _attachments.Count > 0;
 
     // #1951: slash-command palette state. The command surface and execute-mapping live in the
     // shared BlazorClient.Core registry/dispatcher so mobile and desktop stay in lock-step.
@@ -392,6 +417,7 @@ else
     private IReadOnlySet<string> _cronConversationIds = PortalConversationGrouping.CronConversationIds(null);
 
     private CronApiClient? CronApi => Services.GetService(typeof(CronApiClient)) as CronApiClient;
+    private GatewayInfoService? BuildInfo => Services.GetService(typeof(GatewayInfoService)) as GatewayInfoService;
     private PortalPreferences Preferences =>
         (Services.GetService(typeof(IPortalPreferencesService)) as IPortalPreferencesService)?.Current
         ?? new PortalPreferences();
@@ -399,9 +425,29 @@ else
     // Route application guard -- prevents re-applying the same route key twice.
     private string? _appliedRouteKey;
 
-    // Scroll guard state -- tracks last-known active context to prevent cross-agent scroll
-    private string? _lastActiveAgentId;
-    private string? _lastActiveConversationId;
+    private IDisplayedConversation? DisplayedConversationResolver =>
+        Services.GetService(typeof(IDisplayedConversation)) as IDisplayedConversation;
+
+    private string? DisplayedAgentId => string.IsNullOrWhiteSpace(AgentId)
+        ? Store.ActiveAgentId
+        : Uri.UnescapeDataString(AgentId);
+
+    private string? DisplayedConversationId
+    {
+        get
+        {
+            var agentId = DisplayedAgentId;
+            if (agentId is null)
+                return null;
+
+            return DisplayedConversationResolver?.DisplayedConversationIdFor(agentId)
+                ?? (string.IsNullOrWhiteSpace(ConversationId) ? null : Uri.UnescapeDataString(ConversationId));
+        }
+    }
+
+    // Scroll guard state -- tracks last-known displayed route context to prevent cross-agent scroll.
+    private string? _lastDisplayedAgentId;
+    private string? _lastDisplayedConversationId;
     private int _lastRenderedMessageCount;
 
     protected override void OnInitialized()
@@ -425,6 +471,8 @@ else
         // hub build so a tunnelled, backgrounded PWA stops churning through sub-second reconnects.
         PortalLoad.Tuning = HubTuning.ToTuning();
         await PortalLoad.InitializeAsync(hubUrl);
+        if (BuildInfo is { } buildInfo)
+            await buildInfo.LoadAsync();
         await LoadCronConversationIdsAsync();
         await ApplyRouteSelectionAsync();
     }
@@ -461,12 +509,10 @@ else
             // Seed scroll-tracking state so the first Store.OnChanged event from
             // streaming is not treated as an agent/conversation switch, which would
             // cause an unconditional force-scroll even when the user has scrolled up.
-            _lastActiveAgentId = Store.ActiveAgentId;
-            _lastActiveConversationId = Store.ActiveAgentId is not null
-                ? Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId
-                : null;
-            _lastRenderedMessageCount = _lastActiveConversationId is not null
-                ? Store.GetMessages(_lastActiveConversationId).Count
+            _lastDisplayedAgentId = DisplayedAgentId;
+            _lastDisplayedConversationId = DisplayedConversationId;
+            _lastRenderedMessageCount = _lastDisplayedConversationId is not null
+                ? Store.GetMessages(_lastDisplayedConversationId).Count
                 : 0;
             await ForceScrollToBottomAsync();
 
@@ -563,10 +609,9 @@ else
 
     private async Task LoadMoreHistory()
     {
-        if (_isLoadingMore || Store.ActiveAgentId is not { } agentId)
+        if (_isLoadingMore || DisplayedAgentId is not { } agentId || DisplayedConversationId is not { } convId)
             return;
-        var convId = Store.GetAgent(agentId)?.ActiveConversationId;
-        if (convId is null || !HasMoreHistory)
+        if (!HasMoreHistory)
             return;
 
         _isLoadingMore = true;
@@ -607,7 +652,10 @@ else
         StateHasChanged();
         try
         {
-            await PortalLoad.RefreshAsync();
+            if (DisplayedAgentId is { } agentId && DisplayedConversationId is { } conversationId)
+                await PortalLoad.RefreshAsync(agentId, conversationId);
+            else
+                await PortalLoad.RefreshAsync();
             await ForceScrollToBottomAsync();
         }
         finally
@@ -662,8 +710,7 @@ else
         if (agent is null || !agent.Conversations.ContainsKey(routeConversationId))
             return;
 
-        if (!string.Equals(agent.ActiveConversationId, routeConversationId, StringComparison.Ordinal))
-            await Interaction.SelectConversationAsync(routeAgentId, routeConversationId);
+        await Interaction.SelectConversationAsync(routeAgentId, routeConversationId);
 
         _appliedRouteKey = routeKey;
     }
@@ -709,32 +756,85 @@ else
 
     private async Task DeliverMessage(InboundDeliveryMode deliveryMode)
     {
-        if (string.IsNullOrWhiteSpace(_inputText) || Store.ActiveAgentId is null) return;
-        var agent = Store.GetAgent(Store.ActiveAgentId);
-        var conversation = ActiveConversation(agent);
-        if ((agent?.IsReadOnly ?? false)
-            || conversation?.Project(Store.ActiveSelectionSource).ShowComposer != true)
-            return;
-        // #3063: the send path takes the conversation explicitly; mobile uses the same conversation
-        // the page is currently rendering rather than letting the service re-derive one.
-        if (Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId is not { } convId) return;
+        if (!HasDraft || DisplayedAgentId is not { } agentId || DisplayedConversationId is not { } convId) return;
+        var agent = Store.GetAgent(agentId);
+        var conversation = DisplayedConversation(agent, convId);
+        if ((agent?.IsReadOnly ?? false) || conversation?.Project(Store.ActiveSelectionSource).ShowComposer != true) return;
         var content = _inputText.Trim();
-        _inputText = "";
-        _showCommandPalette = false;
+        var attachments = _attachments.ToArray();
+        var messageCountBeforeDelivery = conversation.Messages.Count;
+        _composerError = null;
         _isSending = true;
         try
         {
-            await Interaction.DeliverMessageAsync(Store.ActiveAgentId, convId, content, deliveryMode);
+            await Interaction.DeliverMessageAsync(agentId, convId, content, deliveryMode, attachments);
+            // The shared interaction service reports transport rejection by appending an Error row
+            // rather than throwing. Treat that as a failed delivery so camera drafts stay retryable.
+            var deliveryError = conversation.Messages
+                .Skip(messageCountBeforeDelivery)
+                .LastOrDefault(message => string.Equals(message.Role, "Error", StringComparison.OrdinalIgnoreCase));
+            if (deliveryError is not null)
+            {
+                _composerError = deliveryError.Content;
+                return;
+            }
+            if (string.Equals(_inputText.Trim(), content, StringComparison.Ordinal) && _attachments.SequenceEqual(attachments))
+            {
+                _inputText = "";
+                _attachments.Clear();
+                _showCommandPalette = false;
+            }
         }
         catch (Exception ex)
         {
+            _composerError = $"Could not send: {ex.Message}";
             Console.Error.WriteLine($"[Mobile] Send failed: {ex.Message}");
         }
-        finally
-        {
-            _isSending = false;
-        }
+        finally { _isSending = false; }
     }
+
+    private async Task HandleFilesSelected(InputFileChangeEventArgs e)
+    {
+        var drafts = new List<DraftAttachment>();
+        try
+        {
+            // Ask Blazor for the complete picker result so the shared per-item validator can keep
+            // earlier accepted drafts and reject only later offending files. Passing MaxCount here
+            // would make InputFile throw for the whole selection before that contract can run.
+            foreach (var file in e.GetMultipleFiles(int.MaxValue))
+            {
+                if (file.Size > AttachmentLimits.MaxFileBytes)
+                {
+                    await AddDraftAttachmentsAsync([new(file.Name, file.ContentType, string.Empty, file.Size)]);
+                    continue;
+                }
+                await using var stream = file.OpenReadStream(AttachmentLimits.MaxFileBytes);
+                using var memory = new MemoryStream();
+                await stream.CopyToAsync(memory);
+                drafts.Add(new(file.Name, string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType, Convert.ToBase64String(memory.ToArray()), file.Size));
+            }
+            await AddDraftAttachmentsAsync(drafts);
+        }
+        catch (Exception ex) { _composerError = $"Could not attach files: {ex.Message}"; }
+    }
+
+    /// <summary>Adds drafts through shared attachment-limit validation; exposed for component-level file-selection tests.</summary>
+    public Task AddDraftAttachmentsAsync(IReadOnlyList<DraftAttachment> attachments)
+    {
+        _composerError = null;
+        foreach (var attachment in attachments)
+        {
+            if (_attachments.Count >= AttachmentLimits.MaxCount) { _composerError = $"You can attach up to {AttachmentLimits.MaxCount} files."; break; }
+            if (attachment.Size > AttachmentLimits.MaxFileBytes) { _composerError = $"{attachment.FileName} is too large. Maximum file size is {FormatBytes(AttachmentLimits.MaxFileBytes)}."; continue; }
+            if (_attachments.Sum(item => item.Size) + attachment.Size > AttachmentLimits.MaxTotalBytes) { _composerError = $"Attachments exceed the {FormatBytes(AttachmentLimits.MaxTotalBytes)} total limit."; break; }
+            _attachments.Add(attachment);
+        }
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void RemoveAttachment(DraftAttachment attachment) { _attachments.Remove(attachment); _composerError = null; }
+    private static string FormatBytes(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / (1024d * 1024d):0.#} MB" : $"{Math.Max(1, bytes / 1024d):0.#} KB";
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
@@ -804,13 +904,10 @@ else
             return;
         }
 
-        if (Store.ActiveAgentId is null || CommandDispatcher is null)
+        if (DisplayedAgentId is not { } agentId || DisplayedConversationId is not { } convId || CommandDispatcher is null)
             return;
 
-        if (Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId is not { } convId)
-            return;
-
-        await CommandDispatcher.ExecuteAsync(Store.ActiveAgentId, convId, cmd);
+        await CommandDispatcher.ExecuteAsync(agentId, convId, cmd);
     }
 
     // #1691: whether the active conversation has older history to page in on scroll-up.
@@ -818,11 +915,11 @@ else
     {
         get
         {
-            var activeConvId = Store.ActiveAgentId is not null
-                ? Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId
-                : null;
-            return activeConvId is not null
-                && Store.GetAgent(Store.ActiveAgentId!)?.Conversations.GetValueOrDefault(activeConvId) is { HasMoreHistory: true };
+            var displayedAgentId = DisplayedAgentId;
+            var displayedConversationId = DisplayedConversationId;
+            return displayedAgentId is not null
+                && displayedConversationId is not null
+                && Store.GetAgent(displayedAgentId)?.Conversations.GetValueOrDefault(displayedConversationId) is { HasMoreHistory: true };
         }
     }
 
@@ -833,10 +930,8 @@ else
     {
         get
         {
-            var activeConvId = Store.ActiveAgentId is not null
-                ? Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId
-                : null;
-            return activeConvId is not null ? Store.GetPendingAskUser(activeConvId) : null;
+            var displayedConversationId = DisplayedConversationId;
+            return displayedConversationId is not null ? Store.GetPendingAskUser(displayedConversationId) : null;
         }
     }
 
@@ -922,11 +1017,11 @@ else
     private async Task NewConversation()
     {
         _menuOpen = false;
-        if (Store.ActiveAgentId is null) return;
-        var convId = await Interaction.CreateConversationAsync(Store.ActiveAgentId);
+        if (DisplayedAgentId is not { } agentId) return;
+        var convId = await Interaction.CreateConversationAsync(agentId);
         if (convId is not null)
         {
-            Nav.NavigateTo($"agent/{Uri.EscapeDataString(Store.ActiveAgentId)}/conversation/{Uri.EscapeDataString(convId)}");
+            Nav.NavigateTo($"agent/{Uri.EscapeDataString(agentId)}/conversation/{Uri.EscapeDataString(convId)}");
             await ForceScrollToBottomAsync();
         }
     }
@@ -937,7 +1032,7 @@ else
         var pending = _pendingConfirmCommand;
         _pendingConfirmCommand = null;
 
-        if (Store.ActiveAgentId is null)
+        if (DisplayedAgentId is not { } agentId)
             return;
 
         // #1951: a slash command routed here (/new or /clear) is dispatched through the shared Core
@@ -948,14 +1043,11 @@ else
             // #3063: the dispatcher requires the conversation explicitly. With no conversation there
             // is nothing for /clear or /new to act on, so this is a no-op rather than a silent
             // fall-through to the unconditional session reset below.
-            if (Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId is { } convId)
-                await CommandDispatcher.ExecuteAsync(Store.ActiveAgentId, convId, pending);
+            if (DisplayedConversationId is { } convId)
+                await CommandDispatcher.ExecuteAsync(agentId, convId, pending);
         }
-        // #3211 made ResetSessionAsync conversation-explicit. The mobile shell still derives its
-        // conversation from ambient state (that migration is #3213); it is passed through here so
-        // the call site is explicit even while the source of the id is not yet route-owned.
-        else if (Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId is { } resetConvId)
-            await Interaction.ResetSessionAsync(Store.ActiveAgentId, resetConvId);
+        else if (DisplayedConversationId is { } resetConvId)
+            await Interaction.ResetSessionAsync(agentId, resetConvId);
 
         await ForceScrollToBottomAsync();
     }
@@ -970,12 +1062,10 @@ else
     /// Returns the active conversation for the menu's archive action, or null when
     /// no conversation is selected (nothing to archive).
     /// </summary>
-    private static ConversationState? ActiveConversation(AgentState? agent)
-    {
-        if (agent?.ActiveConversationId is not { } convId)
-            return null;
-        return agent.Conversations.TryGetValue(convId, out var conv) ? conv : null;
-    }
+    private static ConversationState? DisplayedConversation(AgentState? agent, string? conversationId) =>
+        agent is not null && conversationId is not null && agent.Conversations.TryGetValue(conversationId, out var conversation)
+            ? conversation
+            : null;
 
     // #2305 (epic #2300): "close" vs "archive" wording is a pure projection of the conversation's
     // IMMUTABLE server-stamped (Kind, Source) origin, replacing the deleted mutable
@@ -1006,7 +1096,7 @@ else
             return;
         }
 
-        if (Store.ActiveAgentId is not { } agentId)
+        if (DisplayedAgentId is not { } agentId)
             return;
 
         await Interaction.ArchiveConversationAsync(agentId, conversation.ConversationId);
@@ -1016,8 +1106,8 @@ else
     {
         var target = _archiveTarget;
         _archiveTarget = null;
-        if (target is null || Store.ActiveAgentId is null) return;
-        await Interaction.ArchiveConversationAsync(Store.ActiveAgentId, target.ConversationId);
+        if (target is null || DisplayedAgentId is not { } agentId) return;
+        await Interaction.ArchiveConversationAsync(agentId, target.ConversationId);
     }
 
     private void CancelArchive()
@@ -1044,17 +1134,11 @@ else
         _canvasOpen = false;
     }
 
-    private static bool HasCanvasContent(AgentState? agent)
+    private bool HasCanvasContent(AgentState? agent)
     {
         if (agent is null) return false;
         if (!string.IsNullOrWhiteSpace(agent.CanvasHtml)) return true;
-        if (agent.ActiveConversationId is not null)
-        {
-            // Check if any conversation has canvas content
-            if (agent.Conversations.TryGetValue(agent.ActiveConversationId, out var conv))
-                return !string.IsNullOrWhiteSpace(conv.CanvasHtml);
-        }
-        return false;
+        return DisplayedConversation(agent, DisplayedConversationId) is { CanvasHtml: { Length: > 0 } };
     }
 
     private void OpenToolModal(ChatMessage msg)
@@ -1101,9 +1185,7 @@ else
 
     private async Task RenderMarkdownAsync()
     {
-        var activeConvId = Store.ActiveAgentId is not null
-            ? Store.GetAgent(Store.ActiveAgentId)?.ActiveConversationId
-            : null;
+        var activeConvId = DisplayedConversationId;
         if (activeConvId is null) return;
         var needsRender = false;
         // #2320: snapshot BEFORE the loop. This loop awaits JS interop per message, so the
@@ -1134,17 +1216,15 @@ else
     /// </summary>
     private async Task ConditionalScrollAsync()
     {
-        var activeAgentId = Store.ActiveAgentId;
-        var activeConvId = activeAgentId is not null
-            ? Store.GetAgent(activeAgentId)?.ActiveConversationId
-            : null;
+        var activeAgentId = DisplayedAgentId;
+        var activeConvId = DisplayedConversationId;
 
         // Agent or conversation switched -- force scroll immediately
-        bool switched = activeAgentId != _lastActiveAgentId || activeConvId != _lastActiveConversationId;
+        bool switched = activeAgentId != _lastDisplayedAgentId || activeConvId != _lastDisplayedConversationId;
         if (switched)
         {
-            _lastActiveAgentId = activeAgentId;
-            _lastActiveConversationId = activeConvId;
+            _lastDisplayedAgentId = activeAgentId;
+            _lastDisplayedConversationId = activeConvId;
             _lastRenderedMessageCount = activeConvId is not null ? Store.GetMessages(activeConvId).Count : 0;
             await ForceScrollToBottomAsync();
             return;

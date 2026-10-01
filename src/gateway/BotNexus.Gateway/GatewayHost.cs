@@ -189,7 +189,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 compactor,
                 sessions,
                 supervisor,
-                channelManager,
+                conversationEventPublisher,
+                conversationStore,
                 compactionOptions,
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<BotNexus.Gateway.Sessions.SessionCompactionCoordinator>.Instance,
                 memoryFlusher);
@@ -211,7 +212,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             new AgentHandleSteerDeliverer(
                 supervisor,
                 sessions,
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentHandleSteerDeliverer>.Instance));
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentHandleSteerDeliverer>.Instance),
+            activityBroadcaster: activity);
     }
 
     /// <summary>
@@ -291,7 +293,25 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     /// describing per-agent dispatch results and whether the queue should now
     /// close (e.g. session was sealed).
     /// </summary>
-    public async Task<InboundProcessingOutcome> ProcessAsync(InboundMessage message, CancellationToken cancellationToken)
+    public Task<InboundProcessingOutcome> ProcessAsync(InboundMessage message, CancellationToken cancellationToken)
+        => ProcessCoreAsync(message, cancellationToken, onStartedAsync: null);
+
+    /// <inheritdoc />
+    public Task<InboundProcessingOutcome> ProcessAsync(
+        InboundMessage message,
+        InboundExecutionControl executionControl)
+    {
+        ArgumentNullException.ThrowIfNull(executionControl);
+        return ProcessCoreAsync(
+            message,
+            executionControl.CancellationToken,
+            executionControl.NotifyStartedAsync);
+    }
+
+    private async Task<InboundProcessingOutcome> ProcessCoreAsync(
+        InboundMessage message,
+        CancellationToken cancellationToken,
+        Func<Task>? onStartedAsync)
     {
         _activityTracker?.RecordActivity();
         var dispatches = new List<DispatchResult>();
@@ -311,14 +331,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         GatewayTelemetry.MessagesProcessed.Add(1,
             new KeyValuePair<string, object?>("botnexus.channel.type", message.ChannelType),
             new KeyValuePair<string, object?>("botnexus.session.id", requestedSessionIdValue));
-
-        await _activity.PublishAsync(new GatewayActivity
-        {
-            Type = GatewayActivityType.MessageReceived,
-            ChannelType = message.ChannelType,
-            Message = message.Content,
-            SessionId = requestedSessionIdValue
-        }, cancellationToken);
 
         var targetAgents = await _router.ResolveAsync(message, cancellationToken);
         if (targetAgents.Count == 0)
@@ -616,7 +628,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 // runs inline as before, and a bounded-queue overflow surfaces as an exception
                 // rather than a silent drop. The user's message has already been written to the
                 // transcript by the write-ahead save above, so it is retained either way.
-                if (await handle.TryFollowUpWhileRunningAsync(
+                if (onStartedAsync is null && await handle.TryFollowUpWhileRunningAsync(
                         BuildUserMessage(message, processedParts ?? originalParts, agentDescriptor),
                         cancellationToken))
                 {
@@ -638,6 +650,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
 
                 if (resolvedChannel is { } channel && shouldStream)
                 {
+                    if (onStartedAsync is not null)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        await onStartedAsync().ConfigureAwait(false);
+                    }
+
                     // Streaming uses the message's opaque ChannelAddress as the stream key.
                     // Adapters that need to disambiguate native sub-addresses (e.g. Telegram
                     // forum topics) already fold them into the address itself.
@@ -775,6 +793,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     {
                         _activeLoopTracker?.TrackEnd(streamingLoopRegistration);
                     }
+                    cancellationToken.ThrowIfCancellationRequested();
                     sessionSaved = true;
                 }
                 else
@@ -788,7 +807,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     AgentResponse response;
                     try
                     {
-                        response = await handle.PromptAsync(userMessage, cancellationToken);
+                        response = onStartedAsync is null
+                            ? await handle.PromptAsync(userMessage, cancellationToken)
+                            : await handle.PromptWhenAvailableAsync(
+                                userMessage, onStartedAsync, cancellationToken);
                         blockingResponse = response;
 
                         // #2522 residual: the blocking branch must stamp the provider's reported
@@ -972,6 +994,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     new KeyValuePair<string, object?>("botnexus.channel.type", message.ChannelType),
                     new KeyValuePair<string, object?>("outcome", "cancelled"));
                 _logger.LogInformation("Processing cancelled for agent '{AgentId}' session '{SessionId}' (client disconnected)", agentId, sessionId);
+                if (onStartedAsync is not null)
+                {
+                    throw;
+                }
             }
             catch (Exception ex) when (
                 TurnCancellationClassifier.IsCancellation(ex) && cancellationToken.IsCancellationRequested)
@@ -989,6 +1015,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     new KeyValuePair<string, object?>("botnexus.channel.type", message.ChannelType),
                     new KeyValuePair<string, object?>("outcome", "cancelled"));
                 _logger.LogInformation("Processing cancelled for agent '{AgentId}' session '{SessionId}' (client disconnected)", agentId, sessionId);
+                if (onStartedAsync is not null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw();
+                }
             }
             catch (Exception ex)
             {
@@ -1243,11 +1273,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 var outcome = await _compactionCoordinator.CompactAsync(session.AgentId, session, cancellationToken).ConfigureAwait(false);
                 if (outcome.Applied)
                 {
-                    await _compactionCoordinator.TrySendChannelNotificationAsync(
+                    _ = await _compactionCoordinator.TryPublishNotificationAsync(
                         outcome,
-                        message.ChannelType,
-                        message.ChannelAddress,
-                        sessionId,
+                        typedAgentId,
+                        session,
                         cancellationToken).ConfigureAwait(false);
                 }
             }
@@ -1510,11 +1539,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         // Always notify on this path — channel-driven /compact callers expect feedback
         // even on failure so the user knows the command landed. Use the canonical
         // text (including the FailureReason when applicable).
-        await _compactionCoordinator.TrySendChannelNotificationAsync(
+        _ = await _compactionCoordinator.TryPublishNotificationAsync(
             outcome,
-            message.ChannelType,
-            message.ChannelAddress,
-            typedSessionId.Value,
+            session.AgentId,
+            session,
             cancellationToken).ConfigureAwait(false);
     }
 

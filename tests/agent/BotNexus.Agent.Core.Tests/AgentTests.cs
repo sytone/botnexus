@@ -76,7 +76,7 @@ public class AgentTests
                 }));
         var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel(api)) with
         {
-            GetApiKey = (_, _) => Task.FromResult<string?>(string.Empty)
+            GetProviderExecutionOptions = (_, _) => Task.FromResult<ProviderExecutionOptions?>(new ProviderExecutionOptions { ApiKey = string.Empty })
         };
         var agent = new BotNexus.Agent.Core.Agent(options);
 

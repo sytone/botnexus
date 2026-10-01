@@ -2,7 +2,9 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Audit;
+using BotNexus.Gateway.Dispatching;
 using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 using Microsoft.AspNetCore.Mvc;
 
@@ -24,6 +26,7 @@ public sealed class ChatController : ControllerBase
     private readonly IAgentSupervisor _supervisor;
     private readonly ISessionStore _sessions;
     private readonly IToolAuditSink _toolAudit;
+    private readonly IInboundMessageOrchestrator? _orchestrator;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatController"/> class.
@@ -36,11 +39,17 @@ public sealed class ChatController : ControllerBase
     /// instance gateway composition registers, so the audit guarantee never depends on whether
     /// this controller happened to be resolved from DI.
     /// </param>
-    public ChatController(IAgentSupervisor supervisor, ISessionStore sessions, IToolAuditSink? toolAudit = null)
+    /// <param name="orchestrator">The unified inbound message entry point used by steer requests.</param>
+    public ChatController(
+        IAgentSupervisor supervisor,
+        ISessionStore sessions,
+        IToolAuditSink? toolAudit = null,
+        IInboundMessageOrchestrator? orchestrator = null)
     {
         _supervisor = supervisor;
         _sessions = sessions;
         _toolAudit = toolAudit ?? DefaultToolAuditSink.Instance;
+        _orchestrator = orchestrator;
     }
 
     /// <summary>
@@ -181,20 +190,41 @@ public sealed class ChatController : ControllerBase
     [HttpPost("steer")]
     public async Task<IActionResult> Steer([FromBody] AgentControlRequest request, CancellationToken cancellationToken)
     {
-        var instance = _supervisor.GetInstance(AgentId.From(request.AgentId), SessionId.From(request.SessionId));
+        var agentId = AgentId.From(request.AgentId);
+        var sessionId = SessionId.From(request.SessionId);
+        var instance = _supervisor.GetInstance(agentId, sessionId);
         if (instance is null)
             return NotFound(new { message = "Agent session not found." });
 
-        try
+        if (_orchestrator is null)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Inbound message orchestration is unavailable." });
+
+        var session = await _sessions.GetAsync(sessionId, cancellationToken);
+        var conversationId = session is not null && session.ConversationId.IsInitialized()
+            ? session.ConversationId
+            : (ConversationId?)null;
+        var status = await _orchestrator.PostAsync(
+            new InboundMessage
+            {
+                ChannelType = ChannelKey.From("rest"),
+                SenderId = "rest-api",
+                Sender = CitizenId.Of(UserId.From("rest-api")),
+                ChannelAddress = ChannelAddress.From(agentId.Value),
+                Content = request.Message,
+                RoutingHints = new InboundMessageRoutingHints(
+                    RequestedAgentId: agentId,
+                    RequestedSessionId: sessionId,
+                    RequestedConversationId: conversationId,
+                    DeliveryMode: InboundDeliveryMode.Steer)
+            },
+            cancellationToken);
+
+        return status switch
         {
-            var handle = await _supervisor.GetOrCreateAsync(AgentId.From(request.AgentId), SessionId.From(request.SessionId), cancellationToken);
-            await handle.SteerAsync(request.Message, cancellationToken);
-            return Accepted();
-        }
-        catch (AgentConcurrencyLimitExceededException ex)
-        {
-            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = ex.Message });
-        }
+            InboundDispatchStatus.Accepted or InboundDispatchStatus.Steered => Accepted(),
+            InboundDispatchStatus.Busy => StatusCode(StatusCodes.Status429TooManyRequests, new { error = "Inbound queue is busy." }),
+            _ => Conflict(new { error = $"Steering was not accepted ({status})." })
+        };
     }
 
     /// <summary>

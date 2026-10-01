@@ -63,9 +63,9 @@ A malformed variant never throws and never silently substitutes the wrong instru
 
 ## Where it applies
 
-The default prompt file set — `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `BOOTSTRAP.md`, `IDENTITY.md`,
-`USER.md`, `MEMORY.md` — plus any file named in `systemPromptFiles`, and the world-level
-`~/.botnexus/WORLD.md`.
+The standard workspace instruction-file set — `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `BOOTSTRAP.md`,
+`IDENTITY.md`, `USER.md`, and `MEMORY.md` — plus the world-level `~/.botnexus/WORLD.md`. Deprecated
+custom prompt-file selections also retain variant behavior during their compatibility window.
 
 Existing behaviour is preserved for variants of special files:
 

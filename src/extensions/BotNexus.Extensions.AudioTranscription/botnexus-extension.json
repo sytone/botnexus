@@ -4,7 +4,9 @@
   "description": "Whisper-based audio transcription media handler",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.AudioTranscription.dll",
-  "extensionTypes": ["media-handler"],
+  "extensionTypes": [
+    "media-handler"
+  ],
   "enabled": true,
   "configSchema": [
     {
@@ -30,5 +32,8 @@
       "sensitive": false,
       "description": "Maximum number of concurrent transcription operations."
     }
+  ],
+  "configurationScopes": [
+    "agent"
   ]
 }

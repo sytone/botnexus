@@ -236,7 +236,7 @@ public sealed class GatewayEventHandlerTests
     }
 
     [Fact]
-    public void IsTurnActive_is_false_after_tool_end_and_message_end_both_complete()
+    public void IsTurnActive_remains_true_after_tool_end_and_message_end_until_RunEnded()
     {
         var agent = _store.GetAgent("agent-1")!;
         var conv = agent.Conversations["conv-1"];
@@ -259,13 +259,89 @@ public sealed class GatewayEventHandlerTests
             ToolResult = "file contents"
         });
 
-        // After both MessageEnd and ToolEnd: turn is fully complete
+        // MessageEnd and ToolEnd are per-step boundaries. They cannot prove that the whole run
+        // settled, so the recovered run bracket must remain active until RunEnded.
         Assert.False(conv.StreamState.IsStreaming);
         Assert.False(conv.StreamState.ActiveToolCalls.ContainsKey("tool-xyz"));
+        Assert.True(conv.StreamState.IsTurnActive);
+
+        _handler.HandleRunEnded(new AgentStreamEvent { SessionId = "sess-1" });
+
         Assert.False(conv.StreamState.IsTurnActive);
     }
 
     // ---- RunStarted/RunEnded authoritative bracket tests (steering flicker, full fix) ----
+
+    [Fact]
+    public void Message_events_recover_the_run_bracket_when_RunStarted_was_missed()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        _handler.HandleContentDelta(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1", ContentDelta = "working" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.True(conv.StreamState.IsRunActive);
+        Assert.True(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public void Tool_first_event_recovers_the_run_bracket_when_RunStarted_was_missed()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+
+        _handler.HandleToolStart(new AgentStreamEvent
+        {
+            SessionId = "sess-1",
+            ConversationId = "conv-1",
+            ToolCallId = "tool-1",
+            ToolName = "read"
+        });
+        _handler.HandleToolEnd(new AgentStreamEvent
+        {
+            SessionId = "sess-1",
+            ConversationId = "conv-1",
+            ToolCallId = "tool-1",
+            ToolName = "read",
+            ToolResult = "done"
+        });
+
+        Assert.Empty(conv.StreamState.ActiveToolCalls);
+        Assert.True(conv.StreamState.IsRunActive);
+        Assert.True(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public void ApplyRunActivitySnapshot_reconciles_mid_run_subscription_and_authoritative_idle()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+
+        _handler.ApplyRunActivitySnapshot([
+            new RunActivitySnapshot("sess-1", "agent-1", "conv-1")
+        ]);
+
+        Assert.True(conv.StreamState.IsRunActive);
+        Assert.True(conv.StreamState.IsTurnActive);
+
+        // Simulate a missed terminal edge: every client-side constituent can remain asserted even
+        // though the next authoritative server snapshot says no run is active.
+        conv.StreamState.IsStreaming = true;
+        conv.StreamState.ActiveToolCalls["stale-tool"] = new ActiveToolCall
+        {
+            ToolCallId = "stale-tool",
+            ToolName = "read",
+            StartedAt = DateTimeOffset.UtcNow,
+            MessageId = "stale-tool-message"
+        };
+
+        _handler.ApplyRunActivitySnapshot([]);
+
+        Assert.False(conv.StreamState.IsRunActive);
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Empty(conv.StreamState.ActiveToolCalls);
+        Assert.False(conv.StreamState.IsTurnActive);
+    }
 
     [Fact]
     public void HandleRunStarted_marks_run_active_and_streaming()

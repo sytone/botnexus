@@ -62,7 +62,7 @@ public sealed class AgentLifecycleAtomicityTests
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         var writer = new Mock<IAgentConfigurationWriter>();
         writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        writer.Setup(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         var heartbeat = new Mock<IHeartbeatProvisioner>();
         heartbeat.Setup(p => p.ProvisionAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("cron store offline"));
@@ -73,7 +73,7 @@ public sealed class AgentLifecycleAtomicityTests
 
         // Provisioning failed after persist+register, so both must be rolled back.
         registry.Get(AgentId.From("agent-a")).ShouldBeNull();
-        writer.Verify(w => w.DeleteAsync("agent-a", It.IsAny<CancellationToken>()), Times.Once);
+        writer.Verify(w => w.DeleteAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once);
         result.ShouldBeOfType<ObjectResult>().StatusCode.ShouldBe(500);
     }
 
@@ -155,7 +155,7 @@ public sealed class AgentLifecycleAtomicityTests
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(Descriptor("agent-a"));
         var writer = new Mock<IAgentConfigurationWriter>();
-        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        writer.Setup(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IOException("disk full"));
         var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object]);
 
@@ -172,13 +172,13 @@ public sealed class AgentLifecycleAtomicityTests
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(Descriptor("agent-a"));
         var writer = new Mock<IAgentConfigurationWriter>();
-        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        writer.Setup(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object]);
 
         var result = await controller.Unregister("agent-a", CancellationToken.None);
 
         registry.Get(AgentId.From("agent-a")).ShouldBeNull();
-        writer.Verify(w => w.DeleteAsync("agent-a", It.IsAny<CancellationToken>()), Times.Once);
+        writer.Verify(w => w.DeleteAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once);
         result.ShouldBeOfType<NoContentResult>();
     }
 
@@ -190,7 +190,7 @@ public sealed class AgentLifecycleAtomicityTests
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(Descriptor("agent-a"));
         var writer = new Mock<IAgentConfigurationWriter>();
-        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        writer.Setup(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         var heartbeat = new Mock<IHeartbeatProvisioner>();
         heartbeat.Setup(p => p.DeprovisionAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -220,7 +220,7 @@ public sealed class AgentLifecycleAtomicityTests
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(Descriptor("agent-a"));
         var writer = new Mock<IAgentConfigurationWriter>();
-        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        writer.Setup(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         var heartbeat = new Mock<IHeartbeatProvisioner>();
         heartbeat.Setup(p => p.DeprovisionAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("cron store offline"));
@@ -248,7 +248,7 @@ public sealed class AgentLifecycleAtomicityTests
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         var writer = new Mock<IAgentConfigurationWriter>();
-        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        writer.Setup(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         var heartbeat = new Mock<IHeartbeatProvisioner>();
         heartbeat.Setup(p => p.DeprovisionAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -279,7 +279,7 @@ public sealed class AgentLifecycleAtomicityTests
             var skillReview = new SkillReviewCronProvisioner(registry, store, NullLogger<SkillReviewCronProvisioner>.Instance);
             var writer = new Mock<IAgentConfigurationWriter>();
             writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-            writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+            writer.Setup(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
             var controller = new AgentsController(
                 registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object], heartbeat, skillReview);
 
@@ -343,7 +343,7 @@ public sealed class AgentLifecycleAtomicityTests
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         var writer = new Mock<IAgentConfigurationWriter>();
         writer.Setup(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        writer.Setup(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         var webhooks = new Mock<IAgentWebhookProvisioner>();
         webhooks.Setup(p => p.ProvisionAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("registration store offline"));
@@ -359,7 +359,7 @@ public sealed class AgentLifecycleAtomicityTests
         // heartbeat provisioner already gets.
         result.ShouldBeOfType<ObjectResult>().StatusCode.ShouldBe(500);
         registry.Get(AgentId.From("agent-a")).ShouldBeNull();
-        writer.Verify(w => w.DeleteAsync("agent-a", It.IsAny<CancellationToken>()), Times.Once);
+        writer.Verify(w => w.DeleteAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -391,7 +391,7 @@ public sealed class AgentLifecycleAtomicityTests
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         registry.Register(Descriptor("agent-a"));
         var writer = new Mock<IAgentConfigurationWriter>();
-        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        writer.Setup(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         var webhooks = new Mock<IAgentWebhookProvisioner>();
         webhooks.Setup(p => p.DeprovisionAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("downstream offline"));
@@ -429,7 +429,24 @@ public sealed class AgentLifecycleAtomicityTests
 
         result.ShouldBeOfType<BadRequestObjectResult>();
         // Nothing may be attempted on disk for an id that never parsed.
-        writer.Verify(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        writer.Verify(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Unregister_WithPaddedRouteId_DeletesNormalizedAgentId()
+    {
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(Descriptor("agent-a"));
+        var writer = new Mock<IAgentConfigurationWriter>();
+        writer.Setup(w => w.DeleteAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object]);
+
+        var result = await controller.Unregister("  agent-a  ", CancellationToken.None);
+
+        result.ShouldBeOfType<NoContentResult>();
+        writer.Verify(w => w.DeleteAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once);
+        registry.Get(AgentId.From("agent-a")).ShouldBeNull();
     }
 
     [Theory]
@@ -468,7 +485,7 @@ public sealed class AgentLifecycleAtomicityTests
         var result = await controller.Unregister(overlong, CancellationToken.None);
 
         result.ShouldBeOfType<BadRequestObjectResult>();
-        writer.Verify(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        writer.Verify(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -476,7 +493,7 @@ public sealed class AgentLifecycleAtomicityTests
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
         var writer = new Mock<IAgentConfigurationWriter>();
-        writer.Setup(w => w.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        writer.Setup(w => w.DeleteAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         var controller = new AgentsController(registry, Mock.Of<IAgentSupervisor>(), writer.Object, [Notifier().Object]);
 
         // Boundary asserted explicitly so the guard cannot drift into rejecting valid ids.

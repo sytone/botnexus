@@ -1,6 +1,7 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
-using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Extensions.Logging;
@@ -14,7 +15,8 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
     private readonly ISessionCompactor _compactor;
     private readonly ISessionStore _sessions;
     private readonly IAgentSupervisor _supervisor;
-    private readonly IChannelManager _channelManager;
+    private readonly IConversationEventPublisher? _eventPublisher;
+    private readonly IConversationStore? _conversations;
     private readonly IOptionsMonitor<CompactionOptions> _options;
     private readonly IPreCompactionMemoryFlusher? _memoryFlusher;
     private readonly ILogger<SessionCompactionCoordinator> _logger;
@@ -23,7 +25,8 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         ISessionCompactor compactor,
         ISessionStore sessions,
         IAgentSupervisor supervisor,
-        IChannelManager channelManager,
+        IConversationEventPublisher? eventPublisher,
+        IConversationStore? conversations,
         IOptionsMonitor<CompactionOptions> options,
         ILogger<SessionCompactionCoordinator> logger,
         IPreCompactionMemoryFlusher? memoryFlusher = null)
@@ -31,7 +34,8 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         _compactor = compactor;
         _sessions = sessions;
         _supervisor = supervisor;
-        _channelManager = channelManager;
+        _eventPublisher = eventPublisher;
+        _conversations = conversations;
         _options = options;
         _logger = logger;
         _memoryFlusher = memoryFlusher;
@@ -305,43 +309,83 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         return $"_[Session context compacted: {outcome.EntriesSummarized} older messages summarised, {outcome.EntriesPreserved} recent messages preserved{rebased}. Continuing…]_";
     }
 
-    public async Task<bool> TrySendChannelNotificationAsync(
+    public async Task<bool> TryPublishNotificationAsync(
         SessionCompactionOutcome outcome,
-        ChannelKey channelType,
-        ChannelAddress channelAddress,
-        string sessionId,
+        AgentId agentId,
+        GatewaySession session,
         CancellationToken cancellationToken)
     {
-        var adapter = _channelManager.Get(channelType);
-        if (adapter is null)
-        {
-            // #3541: a non-deliverable channel type (cron / exchange / webhook) has no adapter by
-            // design, so "notification dropped" is the expected outcome, not a fault. Reached
-            // through the single OutboundResponseDeliverer seam rather than a local copy of the set.
-            if (OutboundResponseDeliverer.IsNonDeliverableChannel(channelType))
-            {
-                _logger.LogDebug("Skipping compaction notification for non-deliverable channel type '{ChannelType}' (session {SessionId}).", channelType, sessionId);
-                return false;
-            }
+        ArgumentNullException.ThrowIfNull(outcome);
+        ArgumentNullException.ThrowIfNull(session);
 
-            _logger.LogWarning("No channel adapter found for type '{ChannelType}' — compaction notification dropped for session {SessionId}.", channelType, sessionId);
+        var notification = new SessionEntry
+        {
+            Role = MessageRole.Notification,
+            Content = BuildNotificationText(outcome),
+            Timestamp = DateTimeOffset.UtcNow
+        };
+        session.AddEntry(notification);
+        await _sessions.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+
+        if (!session.ConversationId.IsInitialized())
+        {
+            _logger.LogWarning(
+                "Persisted compaction notification for session {SessionId} has no conversation id; live event publication was skipped.",
+                session.SessionId.Value);
             return false;
+        }
+
+        if (_eventPublisher is null)
+        {
+            _logger.LogWarning(
+                "Persisted compaction notification for session {SessionId} cannot be published because no conversation event publisher is configured.",
+                session.SessionId.Value);
+            return false;
+        }
+
+        var bindings = System.Collections.Immutable.ImmutableArray<ConversationBindingSnapshot>.Empty;
+        try
+        {
+            var conversation = _conversations is null
+                ? null
+                : await _conversations.GetAsync(session.ConversationId, cancellationToken).ConfigureAwait(false);
+            bindings = ConversationBindingSnapshot.FromMany(conversation?.ChannelBindings);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to snapshot bindings for persisted compaction notification in conversation {ConversationId}; publishing with no bindings.",
+                session.ConversationId.Value);
         }
 
         try
         {
-            await adapter.SendAsync(new OutboundMessage
+            var accepted = await _eventPublisher.PublishAsync(new ConversationSessionItemPersistedEvent
             {
-                ChannelType = channelType,
-                ChannelAddress = channelAddress,
-                Content = BuildNotificationText(outcome),
-                SessionId = sessionId
+                AgentId = agentId,
+                ConversationId = session.ConversationId,
+                SessionId = session.SessionId,
+                Bindings = bindings,
+                Item = notification,
+                OccurredAt = notification.Timestamp
             }, cancellationToken).ConfigureAwait(false);
-            return true;
+
+            if (!accepted)
+            {
+                _logger.LogWarning(
+                    "Conversation event publisher rejected persisted compaction notification for session {SessionId}; the committed session item will not be retried.",
+                    session.SessionId.Value);
+            }
+
+            return accepted;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
-            _logger.LogWarning(ex, "Failed to send compaction notification for session {SessionId}.", sessionId);
+            _logger.LogWarning(
+                ex,
+                "Failed to publish persisted compaction notification for session {SessionId}; the committed session item will not be retried.",
+                session.SessionId.Value);
             return false;
         }
     }

@@ -320,7 +320,6 @@ X-Api-Key: your-api-key
 - `modelId` (string, required) — Model identifier (e.g., "gpt-4.1", "claude-sonnet-4-5")
 - `apiProvider` (string, required) — Provider name (e.g., "copilot", "openai", "anthropic")
 - `systemPrompt` (string, optional) — System instruction for the agent
-- `systemPromptFile` (string, optional) — Path to an external system prompt file
 - `isolationStrategy` (string, optional) — Execution strategy (default: "in-process")
 - `toolIds` (array of strings, optional) — Tool identifiers the agent can access
 - `subAgentIds` (array of strings, optional) — Agent IDs this agent can call as sub-agents

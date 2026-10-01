@@ -194,6 +194,9 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, MemorySearchContributor>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, FileSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, AgentSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, ConversationSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, SessionSearchContributor>());
          services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
          services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
          // #3569: the backstop workspace sweep must consult a lifecycle authority before deleting.
@@ -318,7 +321,15 @@ public static class GatewayServiceCollectionExtensions
         // explicit MessageRole.Notification, discriminated against the SAME scope-resolved window.
         services.TryAddSingleton<IContextExhaustionNotifier, ContextExhaustionNotifier>();
         services.AddSingleton<IPreCompactionMemoryFlusher, PreCompactionMemoryFlusher>();
-        services.AddSingleton<ISessionCompactionCoordinator, SessionCompactionCoordinator>();
+        services.AddSingleton<ISessionCompactionCoordinator>(serviceProvider => new SessionCompactionCoordinator(
+            serviceProvider.GetRequiredService<ISessionCompactor>(),
+            serviceProvider.GetRequiredService<ISessionStore>(),
+            serviceProvider.GetRequiredService<IAgentSupervisor>(),
+            serviceProvider.GetRequiredService<IConversationEventPublisher>(),
+            serviceProvider.GetRequiredService<IConversationStore>(),
+            serviceProvider.GetRequiredService<IOptionsMonitor<CompactionOptions>>(),
+            serviceProvider.GetRequiredService<ILogger<SessionCompactionCoordinator>>(),
+            serviceProvider.GetService<IPreCompactionMemoryFlusher>()));
         services.AddSingleton<ISessionEndMemoryFlusher, SessionEndMemoryFlusher>();
         services.AddSingleton<IConversationResetService, DefaultConversationResetService>();
         services.AddSingleton<IMediaPipeline, MediaPipeline>();
@@ -428,7 +439,9 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IExtensionStateStore>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
-            var dbPath = Path.Combine(home.RootPath, "data", "extension-state.db");
+            var dbPath = SqliteStorePathPolicy.ResolveOwnedStorePath(
+                Path.Combine(home.RootPath, "data"),
+                "extension-state");
             serviceProvider.GetRequiredService<ISqliteDatabaseRegistry>().Register(dbPath);
             var fs = serviceProvider.GetRequiredService<IFileSystem>();
             var storeLogger = serviceProvider.GetRequiredService<ILogger<SqliteExtensionStateStore>>();
@@ -482,17 +495,19 @@ public static class GatewayServiceCollectionExtensions
             sp.GetRequiredService<ISessionStore>(),
             sp.GetRequiredService<IAgentRegistry>(),
             sp.GetRequiredService<IActivityBroadcaster>(),
-            sp.GetRequiredService<IChannelManager>(),
+            sp.GetRequiredService<IConversationEventPublisher>(),
             sp.GetRequiredService<ILogger<InterruptedTurnNotificationService>>(),
             sp.GetService<IInboundMessageOrchestrator>(),
             sp.GetService<IOptions<GatewayOptions>>(),
-            sp.GetService<IConversationStore>()));
+            sp.GetService<IConversationStore>(),
+            sp.GetService<SessionLifecycleEvents>()));
         services.AddHostedService<SessionCleanupService>();
         // Session/conversation consistency monitor + safe auto-heal path (#2046).
         services.TryAddSingleton<Sessions.SessionConsistencyChecker>();
         services.AddHostedService<SessionConsistencyHostedService>();
         services.TryAddSingleton<IConversationChangeNotifier, NullConversationChangeNotifier>();
         services.AddHostedService<ConversationRetentionHostedService>();
+        services.AddHostedService<LegacyToolInvocationBackfillHostedService>();
         services.AddHostedService<SubAgentWorkspaceSweepHostedService>();
         services.AddHostedService<MemoryIndexer>();
 
@@ -581,6 +596,8 @@ public static class GatewayServiceCollectionExtensions
         // restore the four-round-trips-per-turn tax the split exists to remove.
         services.TryAddSingleton<BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry>(
             _ => new BotNexus.Agent.Core.Loop.ProviderSuspensionRegistry());
+        services.TryAddSingleton<BotNexus.Agent.Core.Loop.IProviderRecoveryCoordinator>(
+            _ => new BotNexus.Agent.Core.Loop.ProviderRecoveryCoordinator());
 
         services.TryAddSingleton<ILocationResolver>(serviceProvider =>
             new DefaultLocationResolver(
@@ -670,7 +687,10 @@ public static class GatewayServiceCollectionExtensions
             // back" is an obvious operation for whoever needs it at 3am.
             var fs = sp.GetRequiredService<IFileSystem>();
             var directory = PlatformConfigLoader.GetDefaultConfigDirectory(fs);
-            return new SqliteConfigStore($"Data Source={Path.Combine(directory, "config.db")}");
+            var storePath = ConfigStoreBootstrap.ResolveStorePath(
+                Path.Combine(directory, "config.json"),
+                fs);
+            return new SqliteConfigStore($"Data Source={storePath}");
         });
 
         // #2635: additively reconcile the bundled agent catalog into config.json. Registered

@@ -146,6 +146,10 @@ public static class IconLibrary
                 """
                 <path d="M12 3a9 9 0 1 0 9 9"/>
                 """),
+            ["save"] = new("currentColor",
+                """
+                <path d="M5 3h12l2 2v16H5z"/><path d="M8 3v6h8V3"/><path d="M8 21v-7h8v7"/>
+                """),
             ["search"] = new("currentColor",
                 """
                 <circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/>
@@ -228,6 +232,7 @@ public static class IconLibrary
         "refresh",
         "reports",
         "running",
+        "save",
         "search",
         "send",
         "skills",

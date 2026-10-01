@@ -8,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Gateway.Prompts;
+using BotNexus.Gateway.Security;
 using System.IO.Abstractions;
 
 namespace BotNexus.Gateway.Agents;
@@ -235,8 +236,13 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
         var effectiveModelId = effectiveSettings?.Model ?? descriptor.ModelId;
         var effectiveProviderId = effectiveSettings?.Provider ?? descriptor.ApiProvider;
 
+        // Prompt-file selection is also a file-read capability. Apply the descriptor's effective
+        // host-owned policy to the resolved path (including model variants) before content is read.
+        // WORLD.md is operator-owned platform context outside the agent workspace and deliberately
+        // remains outside this agent policy boundary.
+        var pathValidator = new DefaultPathValidator(descriptor.FileAccess, workspacePath);
         var contextFiles = (await LoadContextFilesAsync(
-            _fileSystem, workspacePath, promptFiles, effectiveModelId, effectiveProviderId, cancellationToken)).ToList();
+            _fileSystem, pathValidator, workspacePath, promptFiles, effectiveModelId, effectiveProviderId, cancellationToken)).ToList();
 
         // Inject world-level instructions if WORLD.md exists at ~/.botnexus/WORLD.md
         if (!string.IsNullOrWhiteSpace(_homePath))
@@ -255,11 +261,9 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             }
         }
 
-        // Automatic daily memory injection is governed by the memory config (`memory.promptInjection`)
-        // alone. It is deliberately NOT gated on `systemPromptFiles` / `systemPromptFile`: those settings
-        // select which workspace prompt files to load, and must not silently disable memory. Note that
-        // `none` suppresses only this automatic pass; a memory file named explicitly in `systemPromptFiles`
-        // is still loaded by the prompt-file pass above, because an explicit list is an explicit request.
+        // Automatic daily memory injection is governed by `memory.promptInjection`. Standard workspace
+        // instruction-file loading and daily-memory loading are independent passes so either can be
+        // filtered without silently disabling the other.
         // NOTE: like MEMORY.md and USER.md, daily notes are owner-private content. They are loaded
         // unconditionally here and withheld later by FilterOwnerPrivateContextFiles when the
         // conversation is shared (#2846), so this pass stays concerned only with memory config.
@@ -484,6 +488,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
     private static async Task<ContextFile[]> LoadContextFilesAsync(
         IFileSystem fileSystem,
+        IPathValidator pathValidator,
         string workspacePath,
         IReadOnlyList<string> promptFiles,
         string? modelId,
@@ -502,8 +507,12 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             var resolvedPromptFile = ResolveVariantPromptFile(fileSystem, workspacePath, promptFile, modelId, providerId);
 
             var filePath = Path.GetFullPath(Path.Combine(workspacePath, resolvedPromptFile));
-            if (!IsPathUnderWorkspace(workspacePath, filePath) || !fileSystem.File.Exists(filePath))
+            if (!IsPathUnderWorkspace(workspacePath, filePath)
+                || pathValidator.ValidateAndResolve(filePath, FileAccessMode.Read) is null
+                || !fileSystem.File.Exists(filePath))
+            {
                 continue;
+            }
 
             var content = await fileSystem.File.ReadAllTextAsync(filePath, cancellationToken);
             if (!string.IsNullOrWhiteSpace(content))
@@ -513,8 +522,11 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             // varies. A bootstrap variant that survived first read would re-run its one-shot
             // instructions on every turn.
             if (ContextFileVariants.GetBaseFileName(Path.GetFileName(resolvedPromptFile))
-                .Equals(BootstrapFileName, StringComparison.OrdinalIgnoreCase))
+                .Equals(BootstrapFileName, StringComparison.OrdinalIgnoreCase)
+                && pathValidator.ValidateAndResolve(filePath, FileAccessMode.Write) is not null)
+            {
                 DeleteBootstrapFile(fileSystem, filePath);
+            }
         }
 
         return [.. contextFiles];
@@ -609,8 +621,8 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
     /// <summary>
     /// Appends <paramref name="additions"/> to <paramref name="contextFiles"/>, skipping any whose
-    /// normalized path is already present. A daily note listed explicitly in <c>systemPromptFiles</c>
-    /// is loaded by the prompt-file pass and would otherwise be emitted twice.
+    /// normalized path is already present. This keeps independently contributed context sections from
+    /// emitting the same physical file twice.
     /// </summary>
     private static void AddContextFilesWithoutDuplicates(List<ContextFile> contextFiles, IReadOnlyList<ContextFile> additions)
     {
@@ -713,15 +725,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     }
 
     private static IReadOnlyList<string> ResolvePromptFiles(AgentDescriptor descriptor, bool includeMemoryFile)
-    {
-        if (descriptor.SystemPromptFiles.Count > 0)
-            return FilterMemoryFiles(descriptor.SystemPromptFiles, includeMemoryFile);
-
-        if (!string.IsNullOrWhiteSpace(descriptor.SystemPromptFile))
-            return includeMemoryFile || !IsMemoryPromptFile(descriptor.SystemPromptFile) ? [descriptor.SystemPromptFile] : [];
-
-        return includeMemoryFile ? DefaultPromptFiles : FilterMemoryFiles(DefaultPromptFiles, includeMemoryFile);
-    }
+        => includeMemoryFile ? DefaultPromptFiles : FilterMemoryFiles(DefaultPromptFiles, includeMemoryFile);
 
     private static IReadOnlyList<string> FilterMemoryFiles(IReadOnlyList<string> promptFiles, bool includeMemoryFile)
     {

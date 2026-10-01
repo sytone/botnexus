@@ -127,7 +127,8 @@ public sealed class GatewayHubDisconnectCleanupTokenTests
             Mock.Of<ISessionCompactor>(),
             sessionStore,
             Mock.Of<IAgentSupervisor>(),
-            Mock.Of<IChannelManager>(),
+            eventPublisher: null,
+            conversations: convStore,
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
             NullLogger<SessionCompactionCoordinator>.Instance);
         var app = new GatewayHubApplicationService(

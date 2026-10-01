@@ -35,6 +35,7 @@ public sealed class PortalPreferencesService : IPortalPreferencesService
                     // A hand-edited or stale localStorage entry must never leak an unknown density
                     // token into the DOM, so normalise on the way in as well as on the way out.
                     loaded.Density = PortalDensity.Normalize(loaded.Density);
+                    loaded.Shell = PortalShell.Normalize(loaded.Shell);
                     loaded.Theme = PortalTheme.Normalize(loaded.Theme);
                     _current = loaded;
                 }
@@ -50,6 +51,9 @@ public sealed class PortalPreferencesService : IPortalPreferencesService
     /// <inheritdoc/>
     public async Task SaveAsync()
     {
+        _current.Density = PortalDensity.Normalize(_current.Density);
+        _current.Shell = PortalShell.Normalize(_current.Shell);
+        _current.Theme = PortalTheme.Normalize(_current.Theme);
         var json = JsonSerializer.Serialize(_current);
         await _js.InvokeAsync<object>("portalPrefs.save", StorageKey, json);
     }
@@ -82,6 +86,14 @@ public sealed class PortalPreferencesService : IPortalPreferencesService
     public async Task SetDensityAsync(string density)
     {
         _current.Density = PortalDensity.Normalize(density);
+        await SaveAsync();
+        OnChanged.Invoke();
+    }
+
+    /// <inheritdoc/>
+    public async Task SetShellAsync(string shell)
+    {
+        _current.Shell = PortalShell.Normalize(shell);
         await SaveAsync();
         OnChanged.Invoke();
     }

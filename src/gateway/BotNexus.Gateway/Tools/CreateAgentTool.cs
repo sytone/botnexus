@@ -282,7 +282,7 @@ public sealed class CreateAgentTool(
     {
         var config = new Dictionary<string, JsonElement>();
 
-        var extensionDefaults = platformConfig?.Gateway?.Extensions?.Defaults;
+        var extensionDefaults = platformConfig?.AgentDefaults?.Extensions;
         if (extensionDefaults is not null &&
             extensionDefaults.TryGetValue("botnexus-skills", out var skillsDefault) &&
             skillsDefault.ValueKind == JsonValueKind.Object &&

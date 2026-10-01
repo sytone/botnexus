@@ -104,7 +104,7 @@ public static class WorldDescriptorBuilder
         var homePath = BotNexusHome.ResolveHomePath();
         var agentsDirectory = NormalizePath(config.Gateway?.AgentsDirectory) ?? Path.Combine(homePath, "agents");
         var sessionsDirectory = NormalizePath(config.Gateway?.SessionsDirectory) ?? Path.Combine(homePath, "sessions");
-        var extensionsDirectory = NormalizePath(config.Gateway?.Extensions?.Path) ?? Path.Combine(homePath, "extensions");
+        var extensionsDirectory = NormalizePath(config.Gateway?.ExtensionLoader?.Path) ?? Path.Combine(homePath, "extensions");
 
         UpsertLocation(new Location
         {

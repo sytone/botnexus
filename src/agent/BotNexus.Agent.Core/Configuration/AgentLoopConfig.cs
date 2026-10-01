@@ -12,7 +12,7 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="Model">The model definition used for provider calls.</param>
 /// <param name="ConvertToLlm">Converts agent messages to provider chat messages before each LLM call.</param>
 /// <param name="TransformContext">Optional context transformer before provider invocation (defaults to identity passthrough).</param>
-/// <param name="GetApiKey">Resolves provider API keys on demand (called before each LLM invocation).</param>
+/// <param name="GetProviderExecutionOptions">Resolves provider execution policy on demand (called before each LLM invocation).</param>
 /// <param name="GetSteeringMessages">Provides steering messages when configured (drained at turn boundaries).</param>
 /// <param name="GetFollowUpMessages">Provides follow-up messages when configured (drained after runs complete).</param>
 /// <param name="ToolExecutionMode">Controls tool execution ordering (Sequential or Parallel).</param>
@@ -94,6 +94,10 @@ namespace BotNexus.Agent.Core.Configuration;
 /// Maximum automatic turns added when <paramref name="EvaluateRunCompletion"/> reports actionable
 /// work. Exhausting the bound records an incomplete outcome rather than successful completion.
 /// </param>
+/// <param name="InvalidateProviderCredentials">
+/// Optional host-owned credential invalidation seam. When set, one authentication rejection
+/// invalidates credentials, re-resolves provider execution options, and retries exactly once.
+/// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
 /// It is immutable and passed through the loop to ensure consistent configuration.
@@ -103,13 +107,13 @@ public record AgentLoopConfig(
     LlmClient LlmClient,
     ConvertToLlmDelegate ConvertToLlm,
     TransformContextDelegate? TransformContext,
-    GetApiKeyDelegate GetApiKey,
+    GetProviderExecutionOptionsDelegate GetProviderExecutionOptions,
     GetMessagesDelegate? GetSteeringMessages,
     GetMessagesDelegate? GetFollowUpMessages,
     ToolExecutionMode ToolExecutionMode,
     BeforeToolCallDelegate? BeforeToolCall,
     AfterToolCallDelegate? AfterToolCall,
-    SimpleStreamOptions GenerationSettings,
+    GenerationOptions GenerationSettings,
     int? MaxRetryDelayMs = AgentLoopConfig.DefaultMaxRetryDelayMs,
     bool SkipInitialSteeringPoll = false,
     TimeSpan? ToolTimeout = null,
@@ -127,7 +131,10 @@ public record AgentLoopConfig(
     Func<string, string>? SanitizeToolResultText = null,
     BotNexus.Agent.Core.Tools.SatelliteToolExecutionOptions? SatelliteToolExecution = null,
     EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
-    int MaxCompletionContinuations = 2)
+    int MaxCompletionContinuations = 2,
+    InvalidateProviderCredentialsDelegate? InvalidateProviderCredentials = null,
+    IProviderRecoveryCoordinator? RecoveryCoordinator = null,
+    TimeSpan? RecoveryAdmissionTimeout = null)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).

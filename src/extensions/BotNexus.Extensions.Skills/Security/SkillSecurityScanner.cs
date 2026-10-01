@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Text;
 using System.IO.Abstractions;
 
 using BotNexus.Gateway.Abstractions.Text;
@@ -144,6 +146,20 @@ public static class SkillSecurityScanner
     // -----------------------------------------------------------------------
     // Public API
     // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Computes a stable identity from scanner-owned fields. File location and evidence are
+    /// deliberately excluded because evidence is hostile source text and line numbers can drift.
+    /// </summary>
+    public static string ComputeFindingId(ScanFinding finding)
+        => ComputeFindingId(finding.RuleId, finding.Severity, finding.Message);
+
+    /// <summary>Computes the canonical identity for submitted scanner fields.</summary>
+    internal static string ComputeFindingId(string ruleId, ScanSeverity severity, string message)
+    {
+        var canonical = $"{ruleId.Trim().ToLowerInvariant()}\n{severity}\n{message}";
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
 
     /// <summary>
     /// Scans all scannable files in <paramref name="dirPath"/> and returns an

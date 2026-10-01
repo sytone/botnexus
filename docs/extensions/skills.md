@@ -129,11 +129,11 @@ edit/patch/delete/write_file/remove_file the existing skill is matched across al
 
 #### Managing shared (all-agent) skills
 
-By default `skill_manage` can only write to agent and workspace scopes. Writing to the global
-`~/.botnexus/skills/` directory -- visible to every agent -- requires the opt-in gate
-`AllowSharedSkillManagement`. Because a shared skill changes behaviour for all agents, treat
-this as a wide blast radius: enable it only for trusted operator agents. Deleting a shared
-skill (or removing a supporting file from one) additionally requires `AllowSkillDeletion`.
+By default `skill_manage` can write shared skills in the global `~/.botnexus/skills/`
+directory, which is visible to every agent. Set `AllowSharedSkillManagement` to `false` at
+agent-default scope to make shared skills read-only for inheriting agents, or at named-agent
+scope to opt out one agent. Deleting a shared skill (or removing a supporting file from one)
+additionally requires `AllowSkillDeletion`.
 Symlink, path-traversal, size, and security scans apply to shared skills exactly as they do
 to agent and workspace skills.
 
@@ -171,7 +171,7 @@ These flags live in the agent extension config under `botnexus-skills`:
 |---------|---------|--------|
 | `AllowSkillCreation` | `true` | Enables `skill_manage` (create/edit/patch/write_file). |
 | `AllowSkillDeletion` | `true` | Allows `delete` and `remove_file`. |
-| `AllowSharedSkillManagement` | `false` | Allows writing to the global all-agent skills dir via `scope: shared`. Wide blast radius -- opt-in. |
+| `AllowSharedSkillManagement` | `true` | Allows writing to the global all-agent skills dir via `scope: shared`. Set `false` to make shared skills read-only. |
 
 Key names bind **case-insensitively**, so `allowSharedSkillManagement` and `AllowSharedSkillManagement`
 are equivalent — write whichever matches the rest of your config file's style. Before #3495 the

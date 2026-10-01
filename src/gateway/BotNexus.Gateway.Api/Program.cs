@@ -33,6 +33,7 @@ using BotNexus.Cron;
 using BotNexus.Cron.Extensions;
 using BotNexus.Domain.World;
 using Microsoft.AspNetCore.Routing;
+using BotNexus.Persistence.Sqlite;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Trace;
 using BotNexus.Gateway.Telemetry;
@@ -118,7 +119,7 @@ try
     var configStoreDirectory = Path.GetDirectoryName(resolvedConfigPath);
     if (!string.IsNullOrEmpty(configStoreDirectory))
     {
-        var configStorePath = Path.Combine(configStoreDirectory, "config.db");
+        var configStorePath = SqliteStorePathPolicy.ResolveOwnedStorePath(configStoreDirectory, "config");
         if (File.Exists(configStorePath))
         {
             builder.Configuration.AddSqliteConfigStore(
@@ -144,6 +145,7 @@ try
     // place in the gateway where the startup value could differ from the served value.
     startupPlatformConfig = new PlatformConfig();
     builder.Configuration.Bind(startupPlatformConfig);
+    PlatformConfigPostConfigure.ApplyAuthoritativeRawShape(builder.Configuration, startupPlatformConfig);
 }
 catch (Exception ex) when (ex is Microsoft.Extensions.Options.OptionsValidationException or System.Text.Json.JsonException)
 {
@@ -161,8 +163,9 @@ builder.Services.AddBotNexusTelemetry(builder.Configuration);
 // gives extensions the same telemetry seam the platform core uses (no privileged internal-only
 // path): metrics auto-prefixed to botnexus.ext.<id>.*, durable usage isolated to the extension
 // id namespace within one shared SQLite file (so extensions never new up their own database).
-var usageTelemetryPath = System.IO.Path.Combine(
-    BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath(), "data", "usage-telemetry.db");
+var usageTelemetryPath = SqliteStorePathPolicy.ResolveOwnedStorePath(
+    System.IO.Path.Combine(BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath(), "data"),
+    "usage-telemetry");
 builder.Services.AddExtensionTelemetry(usageTelemetryPath);
 
 builder.Services.AddOpenTelemetry()
@@ -206,6 +209,9 @@ builder.Services.AddProviderHealthCheck();
 builder.Services.AddBotNexusCron();
 builder.Services.AddPlatformConfiguration(resolvedConfigPath, builder.Configuration);
 builder.Services.AddSingleton(new ExtensionRepositoryRegistryService(resolvedConfigPath, new System.IO.Abstractions.FileSystem()));
+builder.Services.AddSingleton(sp => ExtensionLifecycleReconciler.CreateDefault(
+    Path.GetDirectoryName(resolvedConfigPath)!,
+    builder.Environment.ContentRootPath));
 builder.Services.Configure<CronOptions>(options =>
 {
     options.PromptTemplates = startupPlatformConfig.PromptTemplates?
@@ -354,6 +360,7 @@ builder.Services.AddTransient<ProviderRateLimitHandler>(sp => new ProviderRateLi
     sp.GetRequiredService<ILogger<ProviderRateLimitHandler>>()));
 
 builder.Services.AddHttpClient();
+builder.Services.AddTransient<ProviderExceptionalDiagnosticsHandler>();
 builder.Services.AddTransient<ProviderLoggingHandler>(sp =>
 {
     // Always wire the gateway's shared SecretRedactor into the handler so that any API key or
@@ -374,10 +381,12 @@ builder.Services.AddHttpClient("BotNexus", client =>
 {
     client.Timeout = TimeSpan.FromMinutes(10);
 })
+.AddHttpMessageHandler<ProviderExceptionalDiagnosticsHandler>()
 .AddHttpMessageHandler(sp =>
-    // Outermost handler: retry transient provider transport failures (notably HTTP 421
-    // Misdirected Request from Copilot endpoints) on a fresh connection before they are
-    // converted into exceptions/empty responses. Benefits every provider that flows through
+    // Retry transient provider transport failures (notably HTTP 421 Misdirected Request from
+    // Copilot endpoints) inside the terminal exceptional-diagnostics handler, so exhausted retries
+    // produce one payload-free event before they are converted into exceptions/empty responses.
+    // Benefits every provider that flows through
     // the shared provider HttpClient, including the session compaction summary call.
     new TransientHttpRetryHandler(
         sp.GetService<ILoggerFactory>()?.CreateLogger<TransientHttpRetryHandler>()))
@@ -390,9 +399,9 @@ builder.Services.AddHttpClient("BotNexus", client =>
     return sp.GetRequiredService<ProviderLoggingHandler>();
 })
 .AddHttpMessageHandler(sp =>
-    // Innermost of the three, deliberately: it must observe the response that was actually
-    // returned to the caller, after the retry handler has finished replaying failures. Sitting
-    // outside it would capture the headroom of an attempt that got discarded.
+    // Innermost of the provider handlers, deliberately: the retry handler invokes this inner
+    // pipeline once per HTTP wire attempt, so usage records every response, including intermediate
+    // retriable failures. Transport exceptions have no response and are therefore not observed.
     sp.GetRequiredService<ProviderRateLimitHandler>());
 builder.Services.AddSingleton<HttpClient>(sp =>
 {

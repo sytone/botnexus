@@ -1,5 +1,6 @@
 using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.Hooks;
 using BotNexus.Agent.Core.Tests.TestUtils;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -20,12 +21,7 @@ public sealed class SatelliteToolExecutionTests
             new TrackingTool("process")
         };
         var remote = new CoherentSatelliteExecutor();
-        var scope = new SatelliteExecutionScope(
-            SatelliteId: "satellite-1",
-            WorkspaceId: "workspace-1",
-            RunId: "run-1",
-            AttemptId: "attempt-1",
-            FencingGeneration: 7);
+        var scope = CreateScope();
         var config = CreateConfig(scope, remote, localTools.Select(tool => tool.Name));
         var context = new AgentContext(null, [], localTools);
 
@@ -62,7 +58,7 @@ public sealed class SatelliteToolExecutionTests
     {
         var localTool = new TrackingTool("conversation");
         var remote = new CoherentSatelliteExecutor();
-        var scope = new SatelliteExecutionScope("satellite-1", "workspace-1", "run-1", "attempt-1", 7);
+        var scope = CreateScope();
         var config = TestHelpers.CreateTestConfig(satelliteToolExecution: new SatelliteToolExecutionOptions(
             Scope: scope,
             Executor: remote,
@@ -84,7 +80,7 @@ public sealed class SatelliteToolExecutionTests
     {
         var localTool = new TrackingTool("exec");
         var remote = new CoherentSatelliteExecutor { Available = false };
-        var scope = new SatelliteExecutionScope("satellite-1", "workspace-1", "run-1", "attempt-1", 7);
+        var scope = CreateScope();
         var config = TestHelpers.CreateTestConfig(satelliteToolExecution: new SatelliteToolExecutionOptions(
             Scope: scope,
             Executor: remote,
@@ -100,6 +96,130 @@ public sealed class SatelliteToolExecutionTests
             Case.Insensitive);
         localTool.ExecuteCount.ShouldBe(0);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_RemoteRequestCarriesCallerAndWorkingDirectory()
+    {
+        var localTool = new TrackingTool("read");
+        var remote = new CoherentSatelliteExecutor();
+        var scope = CreateScope();
+        var config = CreateConfig(scope, remote, [localTool.Name]);
+        var context = new AgentContext(null, [], [localTool]);
+
+        await ExecuteAsync(context, config, "read", new Dictionary<string, object?>
+        {
+            ["path"] = "generated.txt"
+        });
+
+        var request = remote.Requests.ShouldHaveSingleItem();
+        request.ProtocolVersion.ShouldBe(2);
+        request.Scope.CallerIdentity.ShouldBe("agent:test-agent");
+        request.Scope.WorkingDirectory.ShouldBe("workspace/project");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RemoteResultPreservesOutcomeAndBoundedMetadata()
+    {
+        var localTool = new TrackingTool("read");
+        var artifact = new SatelliteArtifactReference(
+            ArtifactId: "artifact-1",
+            MediaType: "text/plain",
+            Length: 4096,
+            Sha256: "abc123");
+        var remoteDetails = new Dictionary<string, object?> { ["encoding"] = "utf-8" };
+        var remote = new FixedSatelliteExecutor(SatelliteToolResult.Completed(
+            new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "bounded")], remoteDetails),
+            new SatelliteToolResultMetadata(
+                IsTruncated: true,
+                IsIncomplete: false,
+                Artifacts: [artifact])));
+        var config = CreateConfig(CreateScope(), remote, [localTool.Name]);
+        var context = new AgentContext(null, [], [localTool]);
+
+        var result = await ExecuteAsync(context, config, "read", new Dictionary<string, object?>
+        {
+            ["path"] = "large.txt"
+        });
+
+        result.IsError.ShouldBeFalse();
+        result.Result.Details.ShouldBeSameAs(remoteDetails);
+        var delivery = result.Result.DeliveryDetails.ShouldBeOfType<SatelliteToolResultDetails>();
+        delivery.Outcome.ShouldBe(SatelliteToolOutcome.Completed);
+        delivery.IsTruncated.ShouldBeTrue();
+        delivery.IsIncomplete.ShouldBeFalse();
+        delivery.Artifacts.ShouldBe([artifact]);
+        delivery.PriorDeliveryDetails.ShouldBeNull();
+        localTool.ExecuteCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AfterHookPreservesSatelliteDeliveryMetadataAndCanReplaceToolDetails()
+    {
+        var originalDetails = new object();
+        var replacementDetails = new object();
+        var remote = new FixedSatelliteExecutor(SatelliteToolResult.Completed(
+            new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "bounded")], originalDetails),
+            new SatelliteToolResultMetadata(true, false, [])));
+        var baseConfig = CreateConfig(CreateScope(), remote, ["read"]);
+        var config = baseConfig with
+        {
+            AfterToolCall = (_, _) => Task.FromResult<AfterToolCallResult?>(new AfterToolCallResult(Details: replacementDetails))
+        };
+        var context = new AgentContext(null, [], [new TrackingTool("read")]);
+
+        var result = await ExecuteAsync(context, config, "read", new Dictionary<string, object?> { ["path"] = "large.txt" });
+
+        result.Result.Details.ShouldBeSameAs(replacementDetails);
+        var delivery = result.Result.DeliveryDetails.ShouldBeOfType<SatelliteToolResultDetails>();
+        delivery.IsTruncated.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MissingRemoteMetadataRemainsUnknown()
+    {
+        var remote = new FixedSatelliteExecutor(SatelliteToolResult.Completed(Text("legacy")));
+        var config = CreateConfig(CreateScope(), remote, ["read"]);
+        var context = new AgentContext(null, [], [new TrackingTool("read")]);
+
+        var result = await ExecuteAsync(context, config, "read", new Dictionary<string, object?> { ["path"] = "legacy.txt" });
+
+        var delivery = result.Result.DeliveryDetails.ShouldBeOfType<SatelliteToolResultDetails>();
+        delivery.IsTruncated.ShouldBeNull();
+        delivery.IsIncomplete.ShouldBeNull();
+        delivery.Artifacts.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ExistingPublicConstructorsRemainAvailable()
+    {
+        var scope = new SatelliteExecutionScope("satellite-1", "workspace-1", "run-1", "attempt-1", 7);
+        var result = new SatelliteToolResult(SatelliteToolOutcome.Completed, Text("ok"), false);
+
+        scope.CallerIdentity.ShouldBeNull();
+        scope.WorkingDirectory.ShouldBeNull();
+        result.Metadata.ShouldBeNull();
+    }
+
+    [Fact]
+    public void ErrorFactory_RejectsCompletedOutcomeAndDoesNotInventIncompleteMetadata()
+    {
+        Should.Throw<ArgumentOutOfRangeException>(() => SatelliteToolResult.Error(SatelliteToolOutcome.Completed, "invalid"));
+
+        var failed = SatelliteToolResult.Error(SatelliteToolOutcome.Failed, "failed");
+        failed.Metadata.ShouldBeNull();
+        failed.IsError.ShouldBeTrue();
+    }
+
+    private static SatelliteExecutionScope CreateScope() => new(
+        SatelliteId: "satellite-1",
+        WorkspaceId: "workspace-1",
+        RunId: "run-1",
+        AttemptId: "attempt-1",
+        FencingGeneration: 7)
+    {
+        CallerIdentity = "agent:test-agent",
+        WorkingDirectory = "workspace/project"
+    };
 
     private static AgentLoopConfig CreateConfig(
         SatelliteExecutionScope scope,
@@ -158,6 +278,14 @@ public sealed class SatelliteToolExecutionTests
             ExecuteCount++;
             return Task.FromResult(Text("local"));
         }
+    }
+
+    private sealed class FixedSatelliteExecutor(SatelliteToolResult result) : ISatelliteToolExecutor
+    {
+        public Task<SatelliteToolResult> ExecuteAsync(
+            SatelliteToolRequest request,
+            CancellationToken cancellationToken = default,
+            AgentToolUpdateCallback? onUpdate = null) => Task.FromResult(result);
     }
 
     private sealed class CoherentSatelliteExecutor : ISatelliteToolExecutor

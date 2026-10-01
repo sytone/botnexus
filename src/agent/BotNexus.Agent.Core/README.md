@@ -46,17 +46,20 @@ var options = new AgentOptions(
         // Optional: filter, summarize, or rewrite messages
         return messages;
     },
-    GetApiKey: async (provider, ct) =>
+    GetProviderExecutionOptions: async (provider, ct) =>
     {
-        // Resolve API key for the provider
-        return Environment.GetEnvironmentVariable($"{provider.ToUpper()}_API_KEY");
+        // Resolve provider-owned execution policy without mixing it into generation settings.
+        return new ProviderExecutionOptions
+        {
+            ApiKey = Environment.GetEnvironmentVariable($"{provider.ToUpper()}_API_KEY")
+        };
     },
     GetSteeringMessages: null,
     GetFollowUpMessages: null,
     ToolExecutionMode: ToolExecutionMode.Sequential,
     BeforeToolCall: null,
     AfterToolCall: null,
-    GenerationSettings: new SimpleStreamOptions
+    GenerationSettings: new GenerationOptions
     {
         Temperature = 0.7,
         MaxTokens = 2048
@@ -209,13 +212,13 @@ public record AgentOptions(
     LlmModel Model,                                     // Model to use
     ConvertToLlmDelegate ConvertToLlm,                 // Message conversion (required)
     TransformContextDelegate TransformContext,          // Context transformation (required)
-    GetApiKeyDelegate GetApiKey,                        // API key resolution (required)
+    GetProviderExecutionOptionsDelegate GetProviderExecutionOptions, // Provider execution policy (required)
     GetMessagesDelegate? GetSteeringMessages,           // Steering message producer
     GetMessagesDelegate? GetFollowUpMessages,           // Follow-up message producer
     ToolExecutionMode ToolExecutionMode,                // Sequential or Parallel
     BeforeToolCallDelegate? BeforeToolCall,             // Pre-execution hook
     AfterToolCallDelegate? AfterToolCall,               // Post-execution hook
-    SimpleStreamOptions GenerationSettings,             // Temperature, maxTokens, etc.
+    GenerationOptions GenerationSettings,               // Semantic generation controls
     QueueMode SteeringMode,                             // All or OneAtATime
     QueueMode FollowUpMode,                             // All or OneAtATime
     string? SessionId = null);                          // Optional session identifier
@@ -227,7 +230,7 @@ public record AgentOptions(
 - **Model**: The LLM model to use (e.g., `new LlmModel("claude-3-5-sonnet", "anthropic")`).
 - **ConvertToLlm**: Must convert `IReadOnlyList<AgentMessage>` to provider `Message[]`. Called before each LLM invocation.
 - **TransformContext**: Optional message filtering/summarization. Called after ConvertToLlm.
-- **GetApiKey**: Resolves API keys on demand for the provider. Return `null` if key unavailable.
+- **GetProviderExecutionOptions**: Resolves provider credentials and wire execution policy on demand. Return `null` when provider defaults apply.
 - **ToolExecutionMode**: Controls whether tools run sequentially or in parallel:
   - `Sequential`: Tools execute one after another.
   - `Parallel`: Tools execute concurrently (ensure thread safety).
@@ -623,7 +626,7 @@ var loopConfig = new AgentLoopConfig(
     Model: agent.State.Model,
     ConvertToLlm: options.ConvertToLlm,
     TransformContext: options.TransformContext,
-    GetApiKey: options.GetApiKey,
+    GetProviderExecutionOptions: options.GetProviderExecutionOptions,
     GetSteeringMessages: options.GetSteeringMessages,
     GetFollowUpMessages: options.GetFollowUpMessages,
     ToolExecutionMode: options.ToolExecutionMode,

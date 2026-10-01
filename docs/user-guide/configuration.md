@@ -114,8 +114,8 @@ botnexus config set gateway.cors.allowedOrigins '["http://localhost:3000","https
 botnexus config set gateway.rateLimit.requestsPerMinute 300
 botnexus config set gateway.rateLimit.windowSeconds 60
 botnexus config set gateway.logLevel Information
-botnexus config set gateway.extensions.path '~/.botnexus/extensions'
-botnexus config set gateway.extensions.enabled true
+botnexus config set gateway.extensionLoader.path '~/.botnexus/extensions'
+botnexus config set gateway.extensionLoader.enabled true
 botnexus config set gateway.world.id local-gateway
 ```
 
@@ -242,7 +242,6 @@ botnexus config set agents.assistant.description 'General-purpose AI assistant'
 botnexus config set agents.assistant.provider copilot
 botnexus config set agents.assistant.model gpt-4.1
 botnexus config set agents.assistant.allowedModels '["gpt-4.1","gpt-4o","claude-sonnet-4-20250514"]'
-botnexus config set agents.assistant.systemPromptFiles '["SOUL.md","IDENTITY.md","TOOLS.md"]'
 botnexus config set agents.assistant.toolIds '["read_file","write_file","web_search"]'
 botnexus config set agents.assistant.subAgents '["specialist","reviewer"]'
 botnexus config set agents.assistant.isolationStrategy in-process
@@ -281,8 +280,7 @@ The value supports `~` (home directory) and environment-variable expansion and i
 | `allowedModels` | array | `[]` | Models this agent can use. Empty = unrestricted within provider |
 | `thinking` | string | `null` | Agent-level default reasoning level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Agent layer of the 3-layer model/thinking/context override stack (model default -> agent -> conversation); `null` falls through to the model default. Rejected at registration if the selected model does not support it |
 | `contextWindow` | int | `null` | Agent-level default context-window size in tokens. Agent layer of the override stack; `null` falls through to the model default. Only sizes the model advertises as supported are accepted |
-| `systemPromptFiles` | array | `[]` | System prompt files to load (in order). Empty = default order: `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `BOOTSTRAP.md`, `IDENTITY.md`, `USER.md` |
-| `systemPromptFile` | string | `null` | (Legacy) Single system prompt file path |
+| Standard workspace instruction files | files | canonical order | Add per-agent instructions to `AGENTS.md`, `SOUL.md`, and the other standard files in the agent workspace. Use `WORLD.md` for installation-wide instructions and model-specific variants when needed |
 | `toolIds` | array | `[]` | Tool identifiers this agent can use |
 | `subAgents` | array | `[]` | Agent IDs this agent can call as sub-agents |
 | `isolationStrategy` | string | `in-process` | Execution isolation: `in-process` or `sandbox` |
@@ -381,9 +379,9 @@ botnexus config set agents.my-agent.fileAccess.deniedPaths '["Q:/repos/botnexus/
 - Per-agent `fileAccess` replaces the world default (not merged)
 - If no policy set (agent or world), workspace-only mode
 
-### System Prompt Files
+### Workspace instruction files
 
-System prompt files are loaded from `~/.botnexus/agents/<agentId>/` directory. If `systemPromptFiles` is empty, BotNexus loads these files in order (if they exist):
+BotNexus loads standard instruction files from `~/.botnexus/agents/<agentId>/` in this order (if they exist):
 
 1. `AGENTS.md` — Multi-agent coordination patterns
 2. `SOUL.md` — Agent personality and values
@@ -392,13 +390,7 @@ System prompt files are loaded from `~/.botnexus/agents/<agentId>/` directory. I
 5. `IDENTITY.md` — Agent role and expertise
 6. `USER.md` — User preferences and context
 
-Create a custom order by explicitly listing files:
-
-```json
-{
-  "systemPromptFiles": ["IDENTITY.md", "SOUL.md", "custom-rules.md"]
-}
-```
+Put per-agent instructions in these standard files. Use `~/.botnexus/WORLD.md` for installation-wide instructions, inline `systemPrompt` text for short configuration-owned instructions, conversation instructions for one conversation, and model-specific instruction-file variants when instructions depend on the selected model.
 
 ---
 
@@ -902,14 +894,14 @@ botnexus config set gateway.compaction.preservedTurns 3
 botnexus config set gateway.compaction.tokenThresholdRatio 0.6
 botnexus config set gateway.cors.allowedOrigins '["http://localhost:3000"]'
 botnexus config set gateway.rateLimit.requestsPerMinute 120
-botnexus config set gateway.extensions.path '~/.botnexus/extensions'
-botnexus config set gateway.extensions.enabled true
+botnexus config set gateway.extensionLoader.path '~/.botnexus/extensions'
+botnexus config set gateway.extensionLoader.enabled true
 botnexus config set gateway.world.id production-gateway
 botnexus config set agents.assistant.displayName 'General Assistant'
 botnexus config set agents.assistant.description 'Multi-purpose AI assistant'
 botnexus config set agents.assistant.provider copilot
 botnexus config set agents.assistant.model gpt-4.1
-botnexus config set agents.assistant.systemPromptFiles '["SOUL.md","IDENTITY.md"]'
+# Edit AGENTS.md or SOUL.md in the assistant workspace.
 botnexus config set agents.assistant.toolIds '["web_search","web_fetch"]'
 botnexus config set agents.assistant.enabled true
 botnexus config set agents.coder.displayName 'Coding Agent'
@@ -917,7 +909,7 @@ botnexus config set agents.coder.description 'Code generation and review'
 botnexus config set agents.coder.provider copilot
 botnexus config set agents.coder.model claude-opus-4.6
 botnexus config set agents.coder.allowedModels '["claude-opus-4.6","gpt-5.4"]'
-botnexus config set agents.coder.systemPromptFiles '["SOUL.md","IDENTITY.md","TOOLS.md"]'
+# Edit AGENTS.md or SOUL.md in the coder workspace.
 botnexus config set agents.coder.toolIds '["read_file","write_file","grep","glob"]'
 botnexus config set agents.coder.subAgents '["reviewer"]'
 botnexus config set agents.coder.enabled true
@@ -925,7 +917,7 @@ botnexus config set agents.reviewer.displayName 'Code Reviewer'
 botnexus config set agents.reviewer.description 'Code review specialist'
 botnexus config set agents.reviewer.provider anthropic
 botnexus config set agents.reviewer.model claude-sonnet-4-20250514
-botnexus config set agents.reviewer.systemPromptFiles '["SOUL.md","reviewer-guidelines.md"]'
+# Put reviewer guidance in AGENTS.md or SOUL.md in the reviewer workspace.
 botnexus config set agents.reviewer.enabled true
 botnexus config set providers.copilot.enabled true
 botnexus config set providers.copilot.apiKey auth:copilot

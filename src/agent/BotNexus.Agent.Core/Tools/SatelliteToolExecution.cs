@@ -25,7 +25,14 @@ public sealed record SatelliteExecutionScope(
     string WorkspaceId,
     string RunId,
     string AttemptId,
-    long FencingGeneration);
+    long FencingGeneration)
+{
+    /// <summary>The authenticated identity on whose behalf the tool executes.</summary>
+    public string? CallerIdentity { get; init; }
+
+    /// <summary>The explicit satellite-relative working directory; never a host-path inference.</summary>
+    public string? WorkingDirectory { get; init; }
+}
 
 /// <summary>
 /// Host-selected satellite routing and policy context for an agent run.
@@ -65,6 +72,33 @@ public enum SatelliteToolOutcome
 }
 
 /// <summary>
+/// Reference to a bounded artifact retained by the satellite instead of copied into the tool result.
+/// </summary>
+public sealed record SatelliteArtifactReference(
+    string ArtifactId,
+    string MediaType,
+    long Length,
+    string Sha256);
+
+/// <summary>
+/// Bounded delivery facts supplied by the satellite executor.
+/// </summary>
+public sealed record SatelliteToolResultMetadata(
+    bool IsTruncated,
+    bool IsIncomplete,
+    IReadOnlyList<SatelliteArtifactReference> Artifacts);
+
+/// <summary>
+/// Satellite delivery facts retained alongside tool-specific result details.
+/// </summary>
+public sealed record SatelliteToolResultDetails(
+    SatelliteToolOutcome Outcome,
+    bool? IsTruncated,
+    bool? IsIncomplete,
+    IReadOnlyList<SatelliteArtifactReference> Artifacts,
+    object? PriorDeliveryDetails);
+
+/// <summary>
 /// Typed remote tool result compatible with the local normalized tool-result contract.
 /// </summary>
 public sealed record SatelliteToolResult(
@@ -72,17 +106,37 @@ public sealed record SatelliteToolResult(
     AgentToolResult Result,
     bool IsError)
 {
-    public static SatelliteToolResult Completed(AgentToolResult result) =>
-        new(SatelliteToolOutcome.Completed, result, false);
+    /// <summary>
+    /// Bounded delivery facts. Null means the executor did not report them; it never implies completeness.
+    /// </summary>
+    public SatelliteToolResultMetadata? Metadata { get; init; }
+
+    public static SatelliteToolResult Completed(
+        AgentToolResult result,
+        SatelliteToolResultMetadata? metadata = null) =>
+        new(SatelliteToolOutcome.Completed, result, false) { Metadata = metadata };
 
     public static SatelliteToolResult Unavailable(string message) =>
         Error(SatelliteToolOutcome.Unavailable, message);
 
-    public static SatelliteToolResult Error(SatelliteToolOutcome outcome, string message) =>
-        new(
+    public static SatelliteToolResult Error(
+        SatelliteToolOutcome outcome,
+        string message,
+        SatelliteToolResultMetadata? metadata = null)
+    {
+        if (outcome == SatelliteToolOutcome.Completed)
+        {
+            throw new ArgumentOutOfRangeException(nameof(outcome), outcome, "An error result cannot have a completed outcome.");
+        }
+
+        return new SatelliteToolResult(
             outcome,
             new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, message)]),
-            true);
+            true)
+        {
+            Metadata = metadata
+        };
+    }
 }
 
 /// <summary>

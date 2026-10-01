@@ -1,8 +1,8 @@
 using System.IO.Abstractions;
 
-namespace BotNexus.Cli.Commands;
+namespace BotNexus.Gateway.Configuration;
 
-internal sealed class ExtensionProjectBuildService(
+public sealed class ExtensionProjectBuildService(
     IExtensionProjectBuildRunner runner,
     Func<string> userProfileProvider,
     Action<string> report,
@@ -10,7 +10,7 @@ internal sealed class ExtensionProjectBuildService(
 {
     private readonly IFileSystem _fileSystem = fileSystem ?? new FileSystem();
 
-    internal async Task<ExtensionProjectBuildResult> BuildAfterMainAsync(
+    public async Task<ExtensionProjectBuildResult> BuildAfterMainAsync(
         Func<CancellationToken, Task<int>> buildMainAsync,
         string projectPath,
         string stagingDirectory,
@@ -24,7 +24,7 @@ internal sealed class ExtensionProjectBuildService(
         return await BuildAsync(projectPath, stagingDirectory, botNexusRepoRoot, cancellationToken);
     }
 
-    internal async Task<ExtensionProjectBuildResult> BuildAsync(
+    public async Task<ExtensionProjectBuildResult> BuildAsync(
         string projectPath,
         string stagingDirectory,
         string? botNexusRepoRoot,
@@ -45,32 +45,53 @@ internal sealed class ExtensionProjectBuildService(
         return new ExtensionProjectBuildResult(exitCode, resolvedRoot, resolvedStaging);
     }
 
-    internal static string ResolveBotNexusRepoRoot(string? explicitRoot, string userProfile)
+    public static string ResolveBotNexusRepoRoot(string? explicitRoot, string userProfile)
         => Path.GetFullPath(explicitRoot ?? Path.Combine(userProfile, "botnexus"));
 }
 
-internal sealed record ExtensionProjectBuildInvocation(
+public sealed record ExtensionProjectBuildInvocation(
     string ProjectPath,
     string BotNexusRepoRoot,
     string StagingDirectory);
 
-internal sealed record ExtensionProjectBuildResult(
+public sealed record ExtensionProjectBuildResult(
     int ExitCode,
     string BotNexusRepoRoot,
     string StagingDirectory);
 
-internal interface IExtensionProjectBuildRunner
+public interface IExtensionProjectBuildRunner
 {
     Task<int> RunAsync(ExtensionProjectBuildInvocation invocation, CancellationToken cancellationToken);
 }
 
-internal sealed class BuildOutputExtensionProjectRunner(bool verbose) : IExtensionProjectBuildRunner
+public sealed class DotNetExtensionProjectBuildRunner(bool verbose) : IExtensionProjectBuildRunner
 {
-    public Task<int> RunAsync(ExtensionProjectBuildInvocation invocation, CancellationToken cancellationToken)
-        => BuildOutputStreamer.RunExtensionAsync(
-            invocation.ProjectPath,
-            invocation.BotNexusRepoRoot,
-            invocation.StagingDirectory,
-            verbose,
-            cancellationToken);
+    public async Task<int> RunAsync(ExtensionProjectBuildInvocation invocation, CancellationToken cancellationToken)
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = invocation.BotNexusRepoRoot,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        foreach (var argument in new[]
+        {
+            "build", invocation.ProjectPath, "-c", "Release", "--nologo", "--tl:off",
+            $"/p:BotNexusRepoRoot={invocation.BotNexusRepoRoot}",
+            $"/p:OutputPath={invocation.StagingDirectory}{Path.DirectorySeparatorChar}",
+            "/p:AppendTargetFrameworkToOutputPath=false",
+            "/p:AppendRuntimeIdentifierToOutputPath=false"
+        }) startInfo.ArgumentList.Add(argument);
+
+        using var process = System.Diagnostics.Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Could not start extension build process.");
+        var output = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var error = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        var text = (await output.ConfigureAwait(false)) + (await error.ConfigureAwait(false));
+        if (verbose || process.ExitCode != 0) Console.Write(text);
+        return process.ExitCode;
+    }
 }

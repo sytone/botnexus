@@ -235,70 +235,27 @@ public sealed class GatewayAuthManager
     }
 
     /// <summary>
-    /// #2025: the single credential-threading seam for background (non-agent-loop) LLM callers.
-    /// Resolves the provider API key via <see cref="GetApiKeyAsync"/> and returns a
-    /// <see cref="SimpleStreamOptions"/> carrying it, mirroring what the foreground agent loop
-    /// (<c>AgentLoopRunner.BuildStreamOptionsAsync</c>) does for interactive turns. Background
-    /// callers (auto-title, compaction) route through this instead of rolling their own
-    /// key-resolution + options-building, so every LLM call authenticates the same way.
+    /// Creates the provider-owned execution policy used by foreground and background LLM calls.
+    /// The resolved credential and configured stream-idle timeout are applied without overwriting
+    /// explicit base options. A blank credential sentinel is preserved to suppress ambient fallback.
     /// </summary>
-    /// <param name="provider">The model's provider (e.g. <c>github-copilot</c>).</param>
-    /// <param name="baseOptions">Optional caller-supplied options to preserve (timeouts, cancellation,
-    /// stream-setup watchdog). A copy is returned with <see cref="SimpleStreamOptions.ApiKey"/> set;
-    /// the caller's instance is not mutated. When null a fresh options instance is created.</param>
-    /// <param name="sessionId">
-    /// #3417: the identity of the session this background call is acting on. Threading it HERE - at
-    /// the shared seam - rather than at each call site is deliberate: <c>SessionId</c> is what drives
-    /// the Copilot Responses <c>prompt_cache_key</c>, and the two existing background callers
-    /// (compaction, auto-title) had each independently omitted it, leaving that branch dead for the
-    /// largest prompt the gateway ever sends. A third background caller now inherits the behaviour by
-    /// construction instead of having to remember.
-    /// <para>
-    /// Typed as <see cref="SessionId"/> rather than a raw string (#3099 primitive-ID fence): the value
-    /// object cannot hold a blank, so "no session identity" is representable only as <c>null</c> and
-    /// an empty cache key cannot be constructed at this seam at all. A null value is inert - the
-    /// caller's <paramref name="baseOptions"/> value, if any, survives untouched.
-    /// </para>
-    /// </param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>
-    /// Options with the resolved key applied. Null leaves <c>ApiKey</c> unset so a genuinely
-    /// undeclared provider may use its ambient fallback. Blank is preserved when configuration
-    /// declared a credential that could not resolve, preventing provider-level ambient substitution.
-    /// </returns>
-    public async Task<SimpleStreamOptions> CreateAuthenticatedOptionsAsync(
+    /// <param name="provider">The model provider whose execution policy is required.</param>
+    /// <param name="baseOptions">Optional provider policy to copy and enrich.</param>
+    /// <param name="cancellationToken">Cancellation for credential resolution.</param>
+    /// <returns>A fresh execution-policy value with gateway authentication and timeout policy applied.</returns>
+    public async Task<ProviderExecutionOptions> CreateExecutionOptionsAsync(
         string provider,
-        SimpleStreamOptions? baseOptions = null,
-        SessionId? sessionId = null,
+        ProviderExecutionOptions? baseOptions = null,
         CancellationToken cancellationToken = default)
     {
         var apiKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
-        var options = baseOptions ?? new SimpleStreamOptions();
+        var options = baseOptions ?? new ProviderExecutionOptions();
         if (options.StreamIdleTimeoutMs is null)
-        {
             options = options with { StreamIdleTimeoutMs = ResolveStreamIdleTimeoutMs(provider) };
-        }
-
-        // Null means no declaration was present, so provider-level ambient resolution remains
-        // permitted. An empty string means a declaration was present but unusable and must be
-        // carried through to suppress that fallback (#4043).
         if (apiKey is not null)
-        {
             options = options with { ApiKey = apiKey };
-        }
-
-        // A null id must leave SessionId exactly as the caller left it. Writing null through would
-        // erase a value the caller had already set, and an empty string would become an empty
-        // prompt_cache_key on the wire - a different (and worse) failure than the absent key this
-        // fix removes.
-        if (sessionId is { } resolvedSessionId)
-        {
-            options = options with { SessionId = resolvedSessionId.Value };
-        }
-
         return options;
     }
-
     private int? ResolveStreamIdleTimeoutMs(string provider)
     {
         var providers = _platformConfig.CurrentValue.Providers;

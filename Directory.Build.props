@@ -20,7 +20,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <Version>0.46.0</Version>
-    <InformationalVersion>0.46.0</InformationalVersion>
+    <!-- #2941 Stage 1 keeps the obsolete prompt-file properties alive internally so existing
+         configurations retain identical runtime behavior until the removal stage. -->
+    <NoWarn>$(NoWarn);BNX2941</NoWarn>
+    <Version>0.47.0</Version>
+    <InformationalVersion>0.47.0</InformationalVersion>
   </PropertyGroup>
 </Project>

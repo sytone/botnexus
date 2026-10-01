@@ -1,5 +1,44 @@
 /* ── BotNexus Blazor Client — Dark Theme ─────────────────────────────── */
 
+.release-history-content {
+    display: grid;
+    gap: 16px;
+    max-width: 64rem;
+    padding: 24px;
+}
+
+.release-history-entry {
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    padding: 24px;
+}
+
+.release-history-heading,
+.release-history-links {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.release-history-heading h3,
+.release-history-category h4 {
+    margin: 0;
+}
+
+.release-history-heading time {
+    color: var(--text-muted);
+}
+
+.release-history-category {
+    margin-top: 16px;
+}
+
+.release-history-category li a {
+    margin-left: 8px;
+}
+
 /* ── Inter ────────────────────────────────────────────────────────────────
    Self-hosted rather than loaded from the Google Fonts CDN: the portal is
    reachable on a LAN (and offline via the service worker), so text must not
@@ -116,6 +155,7 @@
        same red. --color-danger stays bright where it is a 1px border or an 8px dot and
        contrast against text does not apply. */
     --color-danger-fill: #ce433d;
+    --color-danger-fill-hover: #b63631;
     --color-danger-bg: #2c1315;
     --color-danger-text: #ff7b72;
 
@@ -368,6 +408,7 @@
 
     --color-danger: #cf222e;
     --color-danger-fill: #cf222e;
+    --color-danger-fill-hover: #a40e26;
     --color-danger-bg: #fbe3e4;
     --color-danger-text: #a40e26;
 
@@ -1066,6 +1107,25 @@ html, body, #app {
     margin-top: auto;
     padding-top: 0.75rem;
     border-top: 1px solid var(--border);
+}
+
+.client-view-link {
+    display: block;
+    color: var(--accent);
+    font-size: var(--text-body-sm);
+    text-decoration: none;
+}
+
+.client-view-link:hover,
+.client-view-link:focus-visible {
+    text-decoration: underline;
+}
+
+.client-build-info {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--text-muted);
+    font-size: var(--text-caption);
 }
 
 .restart-btn {
@@ -2039,11 +2099,73 @@ html, body, #app {
 /* ── Input area ─────────────────────────────────────────────────────── */
 
 .chat-input-area {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
     border-top: 1px solid var(--border);
     background: var(--bg-secondary);
+}
+
+.composer-toolbar {
+    display: flex;
+    align-items: center;
+    align-self: end;
+    gap: 0.3rem;
+    padding: 0.2rem;
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) + 2px);
+    background: var(--bg-surface);
+}
+
+.composer-action-btn {
+    display: grid;
+    place-items: center;
+    flex: 0 0 2.25rem;
+    width: 2.25rem;
+    height: 2.25rem;
+    min-width: 2.25rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text-secondary);
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.composer-action-btn:hover:not(:disabled),
+.composer-action-btn:focus-visible {
+    border-color: var(--border);
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.composer-action-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.composer-action-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.composer-toolbar-divider {
+    width: 1px;
+    height: 1.5rem;
+    margin: 0 0.1rem;
+    background: var(--border);
+}
+
+.composer-attachments {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
 }
 
 .chat-input-area.ask-user-input-area {
@@ -2133,7 +2255,8 @@ html, body, #app {
 }
 
 .chat-input {
-    flex: 1;
+    width: 100%;
+    min-width: 0;
     padding: 0.6rem 0.75rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -2353,7 +2476,7 @@ html, body, #app {
 }
 
 .confirm-btn:hover {
-    background: var(--color-danger);
+    background: var(--color-danger-fill-hover);
 }
 
 /* ── Tool call display ──────────────────────────────────────────────── */
@@ -2575,91 +2698,37 @@ html, body, #app {
     flex: 1 1 auto;
 }
 
-/* ── Steer / Abort buttons ──────────────────────────────────────────── */
+/* ── Run action intent colours ──────────────────────────────────────── */
 
-.steer-btn {
-    padding: 0.6rem 1rem;
-    border: 1px solid var(--accent);
-    border-radius: var(--radius);
+.composer-action-btn.steer-btn {
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
     background: var(--color-accent-wash);
     color: var(--accent);
-    font-weight: 600;
-    font-size: var(--text-body);
-    cursor: pointer;
-    transition: background 0.15s;
-    align-self: flex-end;
-    white-space: nowrap;
 }
 
-.steer-btn:hover:not(:disabled) {
-    background: var(--color-accent-wash-strong);
-}
-
-.steer-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-.interrupt-steer-btn {
-    padding: 0.6rem 0.85rem;
-    border: 1px solid var(--warning);
-    border-radius: var(--radius);
+.composer-action-btn.interrupt-steer-btn {
+    border-color: color-mix(in srgb, var(--warning) 55%, transparent);
     background: var(--color-warning-wash);
     color: var(--warning);
-    font-weight: 600;
-    font-size: var(--text-body);
-    cursor: pointer;
-    transition: background 0.15s;
-    align-self: flex-end;
-    white-space: nowrap;
 }
 
-.interrupt-steer-btn:hover:not(:disabled) {
-    background: var(--color-warning-wash);
-}
-
-.interrupt-steer-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-.followup-btn {
-    padding: 0.6rem 0.85rem;
-    border: 1px solid var(--success);
-    border-radius: var(--radius);
+.composer-action-btn.followup-btn {
+    border-color: color-mix(in srgb, var(--success) 55%, transparent);
     background: var(--color-success-wash);
     color: var(--success);
-    font-weight: 600;
-    font-size: var(--text-body);
-    cursor: pointer;
-    transition: background 0.15s;
-    align-self: flex-end;
-    white-space: nowrap;
 }
 
-.followup-btn:hover:not(:disabled) {
-    background: var(--color-success-wash);
-}
-
-.followup-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-.abort-btn {
-    padding: 0.6rem 0.85rem;
-    border: 1px solid var(--error);
-    border-radius: var(--radius);
+.composer-action-btn.abort-btn {
+    border-color: color-mix(in srgb, var(--error) 55%, transparent);
     background: var(--color-danger-wash);
     color: var(--error);
-    font-weight: 600;
-    font-size: var(--text-body);
-    cursor: pointer;
-    transition: background 0.15s;
-    align-self: flex-end;
-    white-space: nowrap;
 }
 
-.abort-btn:hover {
-    background: var(--color-danger-wash);
+.composer-action-btn.steer-btn:hover:not(:disabled),
+.composer-action-btn.interrupt-steer-btn:hover:not(:disabled),
+.composer-action-btn.followup-btn:hover:not(:disabled),
+.composer-action-btn.abort-btn:hover:not(:disabled) {
+    filter: brightness(1.15);
 }
 
 /* ── History loading spinner ────────────────────────────────────────── */
@@ -2950,11 +3019,17 @@ html, body, #app {
     }
 
     .chat-input-area {
-        flex-wrap: wrap;
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .chat-input {
         min-width: 0;
+    }
+
+    .composer-toolbar {
+        justify-self: end;
+        max-width: 100%;
+        overflow-x: auto;
     }
 
     .chat-header-actions {
@@ -4950,6 +5025,77 @@ h3.conversation-title.editable:hover {
     font-weight: 600;
 }
 
+.config-sidebar-item:focus-visible,
+.config-subsection-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.config-subsection-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin: 0 0 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.config-subsection-item {
+    padding: 0.35rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text);
+    cursor: pointer;
+}
+
+.config-subsection-item:hover {
+    background: var(--bg-hover);
+}
+
+.config-subsection-item.active {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-weight: 600;
+}
+
+.validation-error-link {
+    display: block;
+    margin: 0 0 0.25rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.validation-error-link:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+    .config-page-sectioned {
+        flex-direction: column;
+        min-width: 0;
+    }
+
+    .config-sidebar {
+        width: 100%;
+        max-height: 12rem;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .config-panel-canvas {
+        min-width: 0;
+    }
+}
+
 /* ── Activity sub-navigation shell (#2897) ───────────────────────────── */
 .activity-subnav {
     display: flex;
@@ -6450,18 +6596,6 @@ h3.conversation-title.editable:hover {
 }
 
 /* Expanded desktop composer */
-.expand-composer-btn {
-    display: grid;
-    place-items: center;
-    align-self: flex-end;
-    width: 2.5rem;
-    height: 2.5rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-surface);
-    color: var(--text-secondary);
-    cursor: pointer;
-}
 .expand-composer-btn:hover { color: var(--text-primary); border-color: var(--accent); }
 .expanded-composer-overlay {
     position: fixed;
@@ -6517,8 +6651,9 @@ h3.conversation-title.editable:hover {
 }
 
 /* Chat attachments */
-.attachment-composer { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; max-width: 55%; }
-.attach-btn { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }
+.attachment-composer { display: contents; }
+.attach-btn { position: relative; cursor: pointer; }
+.attach-paperclip { font-size: 1.1rem; line-height: 1; }
 .attach-btn:focus-within { outline: 2px solid var(--accent); }
 .attachment-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .attachment-chip { display: inline-flex; align-items: center; gap: 0.3rem; max-width: 15rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: var(--radius-pill); font-size: var(--text-label); }
@@ -6898,6 +7033,31 @@ h3.conversation-title.editable:hover {
     flex-wrap: wrap;
     align-items: center;
     gap: 1rem;
+}
+
+[data-shell="simplified"] .home-page {
+    min-height: 100%;
+}
+
+[data-shell="simplified"] .home-starter {
+    min-height: min(32rem, calc(100vh - var(--density-bar-h) - 3rem));
+    justify-content: center;
+}
+
+[data-shell="simplified"] .home-summary-quiet {
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--color-hairline);
+    color: var(--text-muted);
+}
+
+[data-shell="simplified"] .home-summary-quiet .platform-stats-panel {
+    margin: 0;
+}
+
+[data-shell="simplified"] .home-summary-quiet .home-agent-count {
+    font-size: var(--text-body);
 }
 
 .home-agent-summary {
@@ -7746,7 +7906,7 @@ h3.conversation-title.editable:hover {
 }
 
 /* Prompt-template composer picker (#4299). */
-.prompt-template-open-btn { align-self: center; padding: .45rem .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text); cursor: pointer; }
+.prompt-template-open-btn { color: var(--text-secondary); }
 .prompt-template-overlay { position: fixed; inset: 0; z-index: 220; display: grid; place-items: center; padding: 1rem; background: var(--color-scrim); }
 .prompt-template-dialog { width: min(680px, 96vw); max-height: min(720px, 90vh); overflow: auto; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-secondary); box-shadow: var(--shadow-overlay); }
 .prompt-template-dialog header, .prompt-template-dialog footer { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
@@ -7773,3 +7933,29 @@ h3.conversation-title.editable:hover {
 .repository-status { display: grid; grid-template-columns: minmax(9rem, auto) 1fr; gap: .35rem .75rem; margin: 0; }
 .repository-status dt { color: var(--text-muted); }
 .repository-status dd { margin: 0; overflow-wrap: anywhere; }
+
+
+/* Shared conversation command surface (#2326). */
+.conversation-action-context-target { display: contents; }
+.conversation-actions-trigger {
+    min-width: 32px; min-height: 32px; border: 0; border-radius: 4px;
+    background: transparent; color: var(--text-muted); cursor: pointer; touch-action: manipulation;
+}
+.conversation-actions-trigger:hover, .conversation-actions-trigger:focus-visible { background: var(--bg-hover); color: var(--text-primary); }
+.conversation-list-item > .conversation-action-context-target > .conversation-actions-trigger,
+.conversation-list-item .conversation-actions-trigger { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
+.conversation-action-menu-dismiss { position: fixed; inset: 0; z-index: 1098; border: 0; padding: 0; background: transparent; }
+.conversation-action-menu {
+    position: fixed; z-index: 1099; min-width: 180px; max-width: min(280px, calc(100vw - 16px));
+    max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px;
+    border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary);
+    box-shadow: 0 8px 24px rgba(0,0,0,.28);
+}
+.conversation-action-menu-item {
+    display: block; width: 100%; min-height: 36px; padding: 7px 10px; border: 0; border-radius: 4px;
+    background: transparent; color: var(--text-primary); text-align: left; cursor: pointer;
+}
+.conversation-action-menu-item:hover, .conversation-action-menu-item:focus-visible { background: var(--bg-hover); outline: none; }
+.conversation-action-menu-item.destructive { color: var(--danger, #d9534f); }
+.chat-header > .conversation-action-context-target,
+.chat-header > .conversation-action-context-target > .conversation-actions-trigger { position: static; transform: none; flex: 0 0 auto; }

@@ -85,7 +85,6 @@ internal static class AgentDescriptorFingerprint
         builder.Append(d.ModelId).Append('\u001f');
         builder.Append(d.ApiProvider).Append('\u001f');
         builder.Append(d.SystemPrompt).Append('\u001f');
-        builder.Append(d.SystemPromptFile).Append('\u001f');
         builder.Append(d.IsolationStrategy).Append('\u001f');
         builder.Append(d.CacheRetentionMode).Append('\u001f');
         builder.Append(d.Thinking).Append('\u001f');
@@ -97,7 +96,6 @@ internal static class AgentDescriptorFingerprint
         AppendList(builder, d.AllowedModelIds);
         AppendList(builder, d.SubAgentIds);
         AppendList(builder, d.SubAgentRoles);
-        AppendList(builder, d.SystemPromptFiles);
         AppendList(builder, d.SessionAllowedAgents);
         AppendList(builder, d.ConversationAllowedAgents);
         AppendList(builder, d.ShellCommand);
@@ -105,6 +103,7 @@ internal static class AgentDescriptorFingerprint
         // that inline config edits (e.g. metadata, extensions, memory) are also reflected.
         builder.Append(SerializeStable(d.Metadata)).Append('\u001f');
         builder.Append(SerializeStable(d.IsolationOptions)).Append('\u001f');
+        builder.Append(SerializeExtensions(d.DefaultExtensionConfig)).Append('\u001f');
         builder.Append(SerializeExtensions(d.ExtensionConfig)).Append('\u001f');
         builder.Append(SerializeStable(d.Memory)).Append('\u001f');
         builder.Append(SerializeStable(d.Soul)).Append('\u001f');

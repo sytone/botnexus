@@ -18,6 +18,7 @@ builder.Services.AddScoped<IClientStateStore, ClientStateStore>();
 // constructing a second store, or the predicate would answer from an empty selection.
 builder.Services.AddScoped<IDisplayedConversation>(sp => (ClientStateStore)sp.GetRequiredService<IClientStateStore>());
 builder.Services.AddScoped<IGatewayRestClient, GatewayRestClient>();
+builder.Services.AddScoped<GatewayInfoService>();
 builder.Services.AddScoped<IChannelErrorReporter>(sp => (GatewayRestClient)sp.GetRequiredService<IGatewayRestClient>());
 builder.Services.AddScoped<IGatewayEventHandler, GatewayEventHandler>();
 builder.Services.AddScoped<IAgentInteractionService, AgentInteractionService>();

@@ -1,5 +1,6 @@
 using System.IO.Abstractions;
 using System.Security.Cryptography;
+using System.Text.Json.Serialization;
 
 namespace BotNexus.Extensions.Skills.Security;
 
@@ -27,6 +28,13 @@ public sealed class SkillSecurityAcknowledgement
     /// </summary>
     public string File { get; set; } = string.Empty;
 
+    /// <summary>Scanner severity reviewed by the operator. Required for authorization.</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter<ScanSeverity>))]
+    public ScanSeverity? Severity { get; set; }
+
+    /// <summary>Stable scanner-owned identity of the exact finding that was reviewed.</summary>
+    public string? FindingId { get; set; }
+
     /// <summary>
     /// Optional SHA-256 (hex) of the reviewed file content. When set, the acknowledgement applies
     /// only while the file still hashes to this value, so an edit to an already-approved file
@@ -36,6 +44,12 @@ public sealed class SkillSecurityAcknowledgement
 
     /// <summary>Free-text operator justification. Not matched on; carried for audit only.</summary>
     public string? Reason { get; set; }
+
+    /// <summary>Pseudonymized identity of the operator who acknowledged the finding.</summary>
+    public string? OperatorPseudonym { get; set; }
+
+    /// <summary>UTC instant at which the acknowledgement was persisted.</summary>
+    public DateTimeOffset? AcknowledgedAtUtc { get; set; }
 }
 
 /// <summary>Matching logic for <see cref="SkillSecurityAcknowledgement"/>.</summary>
@@ -52,27 +66,33 @@ public static class SkillSecurityAcknowledgements
         string skillName,
         string relativeFile,
         string ruleId,
+        ScanSeverity severity,
+        string findingId,
         IFileSystem fileSystem,
         string absoluteFilePath)
     {
         ArgumentNullException.ThrowIfNull(acknowledgement);
 
-        if (!string.Equals(acknowledgement.Skill, skillName, StringComparison.OrdinalIgnoreCase))
+        if (acknowledgement.Severity is null
+            || string.IsNullOrWhiteSpace(acknowledgement.FindingId)
+            || !IsValidSha256(acknowledgement.Sha256))
             return false;
 
-        if (!string.Equals(acknowledgement.RuleId, ruleId, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(acknowledgement.Skill, skillName, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(acknowledgement.RuleId, ruleId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(Normalise(acknowledgement.File), Normalise(relativeFile), StringComparison.OrdinalIgnoreCase)
+            || acknowledgement.Severity != severity
+            || !string.Equals(acknowledgement.FindingId, findingId, StringComparison.Ordinal))
             return false;
-
-        if (!string.Equals(Normalise(acknowledgement.File), Normalise(relativeFile), StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        if (string.IsNullOrWhiteSpace(acknowledgement.Sha256))
-            return true;
 
         var actual = ComputeSha256(fileSystem, absoluteFilePath);
         return actual is not null
-            && string.Equals(actual, acknowledgement.Sha256.Trim(), StringComparison.OrdinalIgnoreCase);
+            && string.Equals(actual, acknowledgement.Sha256!.Trim(), StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>Returns whether a value is exactly a hexadecimal SHA-256 digest.</summary>
+    public static bool IsValidSha256(string? value)
+        => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 
     /// <summary>Lower-case hex SHA-256 of a file's bytes, or <c>null</c> when it cannot be read.</summary>
     public static string? ComputeSha256(IFileSystem fileSystem, string absoluteFilePath)

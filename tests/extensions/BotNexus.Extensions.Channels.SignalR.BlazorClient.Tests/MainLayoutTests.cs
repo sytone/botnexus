@@ -100,6 +100,16 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void Renders_explicit_mobile_view_link()
+    {
+        var cut = RenderLayout();
+
+        var link = cut.Find("[data-testid='mobile-view-link']");
+        link.TextContent.Trim().ShouldBe("Mobile view");
+        link.GetAttribute("href").ShouldBe("/mobile");
+    }
+
+    [Fact]
     public void Renders_sidebar_closed_by_default()
     {
         var cut = RenderLayout();
@@ -122,6 +132,10 @@ public sealed class MainLayoutTests : IDisposable
         await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
 
         cut.Find(".sidebar-open");
+        var setItemCall = _ctx.JSInterop.Invocations["localStorage.setItem"]
+            .Last(invocation => invocation.Arguments.Count == 2
+                && (string?)invocation.Arguments[0] == "botnexus-sidebar-open");
+        Assert.Equal("true", setItemCall.Arguments[1]);
     }
 
     [Fact]
@@ -133,6 +147,44 @@ public sealed class MainLayoutTests : IDisposable
         await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
 
         cut.Find(".sidebar-closed");
+        var setItemCall = _ctx.JSInterop.Invocations["localStorage.setItem"]
+            .Last(invocation => invocation.Arguments.Count == 2
+                && (string?)invocation.Arguments[0] == "botnexus-sidebar-open");
+        Assert.Equal("false", setItemCall.Arguments[1]);
+    }
+
+    [Theory]
+    [InlineData("configuration")]
+    [InlineData("agents")]
+    [InlineData("cron")]
+    public async Task Desktop_top_level_navigation_preserves_open_sidebar(string route)
+    {
+        var cut = RenderLayout();
+        await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+
+        await cut.InvokeAsync(() => nav.NavigateTo(route));
+
+        cut.Find(".sidebar-open");
+    }
+
+    [Fact]
+    public async Task Desktop_subnavigation_preserves_open_sidebar_and_does_not_write_preference()
+    {
+        var cut = RenderLayout();
+        await cut.InvokeAsync(() => cut.Find(".burger-btn").Click());
+        var writesBeforeNavigation = _ctx.JSInterop.Invocations["localStorage.setItem"]
+            .Count(invocation => invocation.Arguments.Count == 2
+                && (string?)invocation.Arguments[0] == "botnexus-sidebar-open");
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+
+        await cut.InvokeAsync(() => nav.NavigateTo("release-history"));
+
+        cut.Find(".sidebar-open");
+        var writesAfterNavigation = _ctx.JSInterop.Invocations["localStorage.setItem"]
+            .Count(invocation => invocation.Arguments.Count == 2
+                && (string?)invocation.Arguments[0] == "botnexus-sidebar-open");
+        Assert.Equal(writesBeforeNavigation, writesAfterNavigation);
     }
 
     [Fact]
@@ -257,7 +309,7 @@ public sealed class MainLayoutTests : IDisposable
     /// purely because the SERVER stamped <c>source="Cron"</c>. No mutable flag, no id prefix.
     /// </summary>
     [Fact]
-    public async Task Cron_source_conversation_shows_badge_and_close_button()
+    public async Task Cron_source_conversation_shows_badge_without_mutating_actions()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
@@ -272,10 +324,7 @@ public sealed class MainLayoutTests : IDisposable
         await cut.InvokeAsync(() => cut.Find("[data-testid='cron-group-toggle']").Click());
 
         Assert.Contains("Cron", cut.Markup);
-        var archiveBtn = cut.Find(".conversation-archive-btn");
-        // An unattended conversation reopens on its next trigger, so it pauses rather than deletes.
-        Assert.Contains("bn-icon-pause", archiveBtn.InnerHtml);
-        Assert.Contains("Close conversation", archiveBtn.GetAttribute("title"));
+        Assert.Empty(cut.FindAll("[data-testid='conversation-actions-trigger']"));
     }
 
     /// <summary>
@@ -375,7 +424,7 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
         // WaitForState stabilises the first render, then await InvokeAsync so any subsequent
-        // async re-renders (e.g. isMobileView JS interop in OnAfterRenderAsync) complete and
+        // async re-renders from OnAfterRenderAsync complete and
         // event handler IDs are stable before we assert.
         cut.WaitForState(() => cut.FindAll(".agent-session-item").Count > 0);
         await cut.InvokeAsync(() => cut.Find(".agent-session-item").Click());
@@ -408,7 +457,7 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Non_default_conversation_shows_archive_button()
+    public async Task Non_default_conversation_shows_archive_button()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
@@ -418,13 +467,13 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
 
-        var archiveBtn = cut.Find(".conversation-archive-btn");
-        Assert.Contains("bn-icon-delete", archiveBtn.InnerHtml);
-        Assert.Contains("Archive conversation", archiveBtn.GetAttribute("title"));
+        await cut.InvokeAsync(() => cut.Find("[data-testid='conversation-actions-trigger']").Click());
+        cut.WaitForAssertion(() =>
+            Assert.Equal("Archive", cut.Find("[data-action-id='archive']").TextContent.Trim()));
     }
 
     [Fact]
-    public void Default_conversation_hides_archive_button()
+    public async Task Default_conversation_hides_archive_button()
     {
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
@@ -434,7 +483,8 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
 
-        Assert.Empty(cut.FindAll(".conversation-archive-btn"));
+        await cut.InvokeAsync(() => cut.Find("[data-testid='conversation-actions-trigger']").Click());
+        cut.WaitForAssertion(() => Assert.Empty(cut.FindAll("[data-action-id='archive']")));
     }
 
     [Fact]
@@ -701,36 +751,15 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void AgentDropdown_Rendered_EvenWhenIsMobileIsTrue()
+    public void AgentDropdown_Rendered_WithoutViewportDetection()
     {
-        // Desktop MainLayout always renders agent dropdown regardless of viewport width.
-        // Narrow viewport on desktop still uses MainLayout (not MobileLayout), so the
-        // agent list must remain visible.
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.NotifyChanged();
 
-        // Simulate narrow viewport: chatScroll.isMobileView returns true
-        _ctx.JSInterop.Setup<bool>("chatScroll.isMobileView").SetResult(true);
-
         var cut = RenderLayout();
 
-        // Agent dropdown must still be present
         Assert.NotEmpty(cut.FindAll("[data-testid='agent-select']"));
-    }
-
-    [Fact]
-    public void AgentDropdown_Rendered_WhenIsMobileIsFalse()
-    {
-        // Desktop default: isMobileView returns false (default Loose mock behavior)
-        _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
-        _store.NotifyChanged();
-
-        _ctx.JSInterop.Setup<bool>("chatScroll.isMobileView").SetResult(false);
-
-        var cut = RenderLayout();
-
-        // Dropdown should be visible on desktop
-        cut.Find(".agent-dropdown-select");
+        _ctx.JSInterop.Invocations.ShouldNotContain(invocation => invocation.Identifier == "chatScroll.isMobileView");
     }
 
     [Fact]
@@ -794,11 +823,8 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
-    public void Agent_dropdown_visible_even_when_viewport_is_narrow()
+    public void Agent_dropdown_stays_in_the_desktop_component_tree()
     {
-        // Simulate narrow viewport: chatScroll.isMobileView returns true
-        _ctx.JSInterop.Setup<bool>("chatScroll.isMobileView").SetResult(true);
-
         _store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "General", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
@@ -807,8 +833,7 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
 
-        // The agent dropdown must still be rendered in MainLayout even on narrow viewports
-        // because desktop users resize their browser but stay on MainLayout (not MobileLayout)
+        // CSS may reflow at a narrow width, but the desktop component tree remains unchanged.
         var select = cut.Find("[data-testid='agent-select']");
         Assert.NotNull(select);
     }
@@ -1059,6 +1084,13 @@ public sealed class MainLayoutTests : IDisposable
     }
 
     [Fact]
+    public void App_shell_carries_classic_shell_attribute_by_default()
+    {
+        var cut = RenderLayout();
+        Assert.Equal("classic", cut.Find(".app-shell").GetAttribute("data-shell"));
+    }
+
+    [Fact]
     public void Tools_section_renders_configured_tools_from_fake_source()
     {
         _toolsHandler.SetTools("""
@@ -1251,6 +1283,16 @@ public sealed class MainLayoutTests : IDisposable
         Assert.Contains("sidebar-nav-item", home.ClassName);
         // Blazor resolves an empty href against the base href, i.e. the application root.
         Assert.Equal(string.Empty, home.GetAttribute("href"));
+    }
+
+    [Fact]
+    public void Home_nav_contains_change_history_subnavigation()
+    {
+        var cut = RenderLayout();
+
+        var link = cut.Find("[data-testid='subnav-release-history']");
+        Assert.Equal("release-history", link.GetAttribute("href"));
+        Assert.Equal("Change history", link.TextContent.Trim());
     }
 
     [Fact]

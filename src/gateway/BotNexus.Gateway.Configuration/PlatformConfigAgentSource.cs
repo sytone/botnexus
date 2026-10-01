@@ -189,8 +189,6 @@ public sealed class PlatformConfigAgentSource(
                     Summary = effectiveConfig.Summary,
                     ModelId = effectiveConfig.Model ?? string.Empty,
                     ApiProvider = effectiveConfig.Provider ?? string.Empty,
-                    SystemPromptFile = effectiveConfig.SystemPromptFile,
-                    SystemPromptFiles = ResolveSystemPromptFiles(effectiveConfig),
                     ToolIds = effectiveConfig.ToolIds?.ToArray() ?? [],
                     AllowedModelIds = effectiveConfig.AllowedModels?.ToArray() ?? [],
                     SubAgentIds = effectiveConfig.SubAgents?.ToArray() ?? [],
@@ -224,6 +222,7 @@ public sealed class PlatformConfigAgentSource(
                     // a null JsonElement reaching an extension's own binder is not an absent key, it
                     // is a malformed value. Passing them through 500s agent registration.
                     ExtensionConfig = StripNullExtensionEntries(effectiveConfig.Extensions),
+                    DefaultExtensionConfig = StripNullExtensionEntries(platformConfig.AgentDefaults?.Extensions),
                     Kind = effectiveConfig.Kind ?? AgentKind.Named,
                     ShellCommand = effectiveConfig.ShellCommand
                 };
@@ -270,17 +269,6 @@ public sealed class PlatformConfigAgentSource(
         }
 
         return null;
-    }
-
-    private static IReadOnlyList<string> ResolveSystemPromptFiles(AgentDefinitionConfig agentConfig)
-    {
-        if (agentConfig.SystemPromptFiles is { Count: > 0 })
-            return agentConfig.SystemPromptFiles.ToArray();
-
-        if (!string.IsNullOrWhiteSpace(agentConfig.SystemPromptFile))
-            return [agentConfig.SystemPromptFile];
-
-        return [];
     }
 
     private static MemoryAgentConfig? CloneMemoryConfig(MemoryAgentConfig? memoryConfig)

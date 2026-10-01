@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.Text.Json;
+using BotNexus.Agent.Providers.Copilot.Discovery;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Commands.Provider;
 using Shouldly;
@@ -68,20 +70,114 @@ public class CopilotProviderSubcommandTests
         result.Errors.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData(null, "[dim]unknown[/]")]
+    [InlineData(false, "no")]
+    [InlineData(true, "[green]yes[/]")]
+    public void FormatPremium_preserves_provider_presence(bool? value, string expected)
+    {
+        CopilotProviderSubcommand.FormatPremium(value).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(null, "[dim]unknown[/]")]
+    [InlineData(0d, "0×")]
+    [InlineData(1.5d, "1.5×")]
+    public void FormatMultiplier_preserves_provider_presence(double? value, string expected)
+    {
+        CopilotProviderSubcommand.FormatMultiplier(value).ShouldBe(expected);
+    }
+
     [Fact]
-    public async Task Login_subcommand_invokes_setup_alias_with_github_copilot_preselected()
+    public void FormatInvocation_ReportsUnsupportedAdvertisedContracts()
+    {
+        var model = new CopilotModelInfo
+        {
+            Id = "future-model",
+            SupportedEndpoints = ["/v1/future-contract"]
+        };
+
+        CopilotProviderSubcommand.FormatInvocation(model)
+            .ShouldBe("[red]unsupported: /v1/future-contract[/]");
+    }
+
+    [Fact]
+    public void ResolveEffectiveModel_UsesDiscoveredModelAbsentFromBuiltIns()
+    {
+        var response = new CopilotModelsResponse
+        {
+            Data =
+            [
+                new CopilotModelInfo
+                {
+                    Id = "future-model-from-discovery",
+                    Name = "Future Model",
+                    Vendor = "OpenAI",
+                    SupportedEndpoints = ["/responses"],
+                    Capabilities = new CopilotModelCapabilities
+                    {
+                        Family = "gpt",
+                        Supports = new CopilotModelSupports { Vision = true },
+                        Limits = new Dictionary<string, JsonElement>
+                        {
+                            ["max_prompt_tokens"] = JsonDocument.Parse("922000").RootElement.Clone(),
+                            ["max_output_tokens"] = JsonDocument.Parse("128000").RootElement.Clone()
+                        }
+                    }
+                }
+            ]
+        };
+
+        var model = CopilotProviderSubcommand.ResolveEffectiveModel(
+            response,
+            "https://api.enterprise.githubcopilot.com",
+            "future-model-from-discovery");
+
+        model.ShouldNotBeNull();
+        model.Id.ShouldBe("future-model-from-discovery");
+        model.Api.ShouldBe("github-copilot-responses");
+        model.BaseUrl.ShouldBe("https://api.enterprise.githubcopilot.com");
+        model.ContextWindow.ShouldBe(922000);
+        model.MaxTokens.ShouldBe(128000);
+        model.Input.ShouldBe(["text", "image"]);
+    }
+
+    [Fact]
+    public void ResolveEffectiveModel_RejectsUnsupportedAdvertisedContract()
+    {
+        var response = new CopilotModelsResponse
+        {
+            Data =
+            [
+                new CopilotModelInfo
+                {
+                    Id = "gpt-6-future",
+                    Vendor = "OpenAI",
+                    SupportedEndpoints = ["/v1/future-contract"],
+                    Capabilities = new CopilotModelCapabilities { Family = "gpt" }
+                }
+            ]
+        };
+
+        CopilotProviderSubcommand.ResolveEffectiveModel(
+            response,
+            "https://api.enterprise.githubcopilot.com",
+            "gpt-6-future").ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Login_subcommand_defaults_to_canonical_github_copilot_instance()
     {
         var verbose = new Option<bool>("--verbose");
-        var captured = new List<(string ConfigPath, string Home, bool Verbose)>();
-        Func<string, string, bool, CancellationToken, Task<int>> alias = (configPath, home, v, _) =>
+        var captured = new List<(string ConfigPath, string Home, bool Verbose, string Instance)>();
+        Func<string, string, bool, string, CancellationToken, Task<int>> alias = (configPath, home, v, instance, _) =>
         {
-            captured.Add((configPath, home, v));
+            captured.Add((configPath, home, v, instance));
             return Task.FromResult(0);
         };
 
         var copilot = CopilotProviderSubcommand.Build(verbose, new Option<string?>("--target"), alias);
 
-        // Build a root command so System.CommandLine can resolve handlers.
         var root = new RootCommand();
         root.AddCommand(copilot);
         var exit = await root.InvokeAsync(new[] { "copilot", "login" });
@@ -90,5 +186,46 @@ public class CopilotProviderSubcommandTests
         captured.Count.ShouldBe(1);
         captured[0].ConfigPath.ShouldEndWith("config.json");
         captured[0].Home.ShouldNotBeNullOrWhiteSpace();
+        captured[0].Instance.ShouldBe("github-copilot");
+    }
+
+    [Fact]
+    public async Task Login_subcommand_passes_selected_named_instance_to_setup()
+    {
+        var verbose = new Option<bool>("--verbose");
+        string? capturedInstance = null;
+        Func<string, string, bool, string, CancellationToken, Task<int>> alias = (_, _, _, instance, _) =>
+        {
+            capturedInstance = instance;
+            return Task.FromResult(0);
+        };
+
+        var copilot = CopilotProviderSubcommand.Build(verbose, new Option<string?>("--target"), alias);
+        var root = new RootCommand();
+        root.AddCommand(copilot);
+
+        var exit = await root.InvokeAsync(new[] { "copilot", "login", "--instance", "copilot-work" });
+
+        exit.ShouldBe(0);
+        capturedInstance.ShouldBe("copilot-work");
+    }
+
+    [Theory]
+    [InlineData("login")]
+    [InlineData("whoami")]
+    [InlineData("models")]
+    [InlineData("quota")]
+    [InlineData("test")]
+    public void Copilot_subcommands_accept_named_instance(string subcommand)
+    {
+        var verbose = new Option<bool>("--verbose");
+        Func<string, string, bool, string, CancellationToken, Task<int>> alias = (_, _, _, _, _) => Task.FromResult(0);
+        var copilot = CopilotProviderSubcommand.Build(verbose, new Option<string?>("--target"), alias);
+        var root = new RootCommand();
+        root.AddCommand(copilot);
+
+        var result = root.Parse($"copilot {subcommand} --instance copilot-work");
+
+        result.Errors.ShouldBeEmpty();
     }
 }

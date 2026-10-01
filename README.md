@@ -136,8 +136,9 @@ dotnet tool install -g BotNexus.Cli
 Once installed, run the setup sequence:
 
 ```bash
-# 1. Clone the BotNexus platform to ~/botnexus and build it
+# 1. Clone the highest stable BotNexus release to ~/botnexus and build it
 botnexus install --build
+# Use --latest for origin/main, or --version 1.2.3 for an exact release tag.
 
 # 2. Initialize ~/.botnexus with a default config and required directories
 botnexus init
@@ -254,11 +255,15 @@ dotnet tool update -g BotNexus.Cli
 botnexus gateway restart
 ```
 
-**Source build:**
+**Source installation:**
 
 ```bash
-botnexus update   # git pull → build → redeploy extensions → restart gateway
+botnexus update                 # highest stable release
+botnexus update --latest        # configured development tip (origin/main)
+botnexus update --version 1.2.3 # exact v1.2.3 release tag
 ```
+
+`botnexus update check` accepts the same selectors and compares the installed source commit with the resolved target. `--latest` and `--version` are mutually exclusive. These commands update the source checkout; they do not update the packaged CLI tool. Use `dotnet tool update -g BotNexus.Cli` for the tool package.
 
 ## Diagnostics
 

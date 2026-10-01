@@ -1,39 +1,61 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using BotNexus.Gateway.Abstractions.Extensions;
 
-namespace BotNexus.Cli.Commands;
+namespace BotNexus.Gateway.Configuration;
 
 /// <summary>Describes one already-built extension output eligible for deployment.</summary>
-internal sealed record ExtensionDeploymentSource(
+public sealed record ExtensionDeploymentSource(
     string Source,
     string OutputDirectory,
     bool Enabled,
     bool Registered,
     string? ManifestPath = null);
 
-internal sealed record ExtensionDeploymentFailure(string Source, string Message);
+public sealed record ExtensionDeploymentFailure(string Source, string Message);
 
-internal sealed record ExtensionDeploymentResult(
+public sealed record ExtensionDeploymentResult(
     int DeployedCount,
     IReadOnlyCollection<string> DeployedIds,
-    IReadOnlyList<ExtensionDeploymentFailure> Failures);
+    IReadOnlyList<ExtensionDeploymentFailure> Failures)
+{
+    public bool Accepted { get; init; } = true;
+    public string? TransactionFailure { get; init; }
+}
+
+public enum ExtensionDeploymentOperation
+{
+    Backup,
+    Activate,
+    Rollback,
+    Cleanup
+}
+
+public sealed class ExtensionDeploymentHooks
+{
+    public Action<ExtensionDeploymentOperation, string, string?>? BeforeOperation { get; init; }
+    public Func<bool>? IsWindows { get; init; }
+    public Action<TimeSpan>? Delay { get; init; }
+}
 
 /// <summary>
 /// Validates extension outputs before live mutation, then replaces each deployment directory through
 /// a same-parent staging rename. Registered validation failures retain source-owned last-known-good
 /// directories so stale pruning cannot turn an unavailable build into an undeploy.
 /// </summary>
-internal static partial class ExtensionDeploymentReconciler
+public static partial class ExtensionDeploymentReconciler
 {
+    private const int MaximumAttempts = 4;
     private const string ManifestFileName = "botnexus-extension.json";
     private const string SourceMarkerFileName = ".botnexus-deployment-source";
+    private const string DeploymentLockFileName = ".deployment.lock";
     private static readonly JsonSerializerOptions ManifestOptions = new() { PropertyNameCaseInsensitive = true };
 
-    internal static ExtensionDeploymentResult Reconcile(
+    public static ExtensionDeploymentResult Reconcile(
         string liveRoot,
         IReadOnlyCollection<ExtensionDeploymentSource> sources,
-        Action<string, string>? beforeActivate = null)
+        ExtensionDeploymentHooks? hooks = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(liveRoot);
         ArgumentNullException.ThrowIfNull(sources);
@@ -79,17 +101,22 @@ internal static partial class ExtensionDeploymentReconciler
         }
 
         Directory.CreateDirectory(liveRoot);
+        using var deploymentLock = TryAcquireDeploymentLock(liveRoot, failures);
+        if (deploymentLock is null)
+            return new ExtensionDeploymentResult(0, retainedSources.Keys.ToArray(), failures);
+
         var deployedIds = new HashSet<string>(retainedSources.Keys, StringComparer.OrdinalIgnoreCase);
+        var retainedResidue = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var deployedCount = 0;
         foreach (var candidate in candidates)
         {
             try
             {
-                DeployAtomically(liveRoot, candidate, beforeActivate);
+                DeployAtomically(liveRoot, candidate, hooks, failures, retainedResidue);
                 deployedIds.Add(candidate.Manifest.Id);
                 deployedCount++;
             }
-            catch (Exception ex) when (candidate.Source.Registered && ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
                 failures.Add(new ExtensionDeploymentFailure(candidate.Source.Source, ex.Message));
                 var retainedAfterFailure = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -101,12 +128,15 @@ internal static partial class ExtensionDeploymentReconciler
         foreach (var directory in Directory.GetDirectories(liveRoot))
         {
             var name = Path.GetFileName(directory);
-            if (name.StartsWith(".deploy-", StringComparison.Ordinal) || deployedIds.Contains(name))
+            if (deployedIds.Contains(name) || retainedResidue.Contains(directory))
                 continue;
 
-            try { Directory.Delete(directory, recursive: true); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            if (!TryDeleteWithRetry(directory, hooks, out var cleanupFailure))
+            {
+                failures.Add(new ExtensionDeploymentFailure(
+                    name.StartsWith(".deploy-", StringComparison.Ordinal) ? "deployment-cleanup" : name,
+                    $"Could not remove retained deployment residue '{directory}': {cleanupFailure!.Message}"));
+            }
         }
 
         return new ExtensionDeploymentResult(deployedCount, deployedIds.ToArray(), failures);
@@ -167,7 +197,9 @@ internal static partial class ExtensionDeploymentReconciler
     private static void DeployAtomically(
         string liveRoot,
         ValidatedSource candidate,
-        Action<string, string>? beforeActivate)
+        ExtensionDeploymentHooks? hooks,
+        List<ExtensionDeploymentFailure> failures,
+        HashSet<string> retainedResidue)
     {
         var token = Guid.NewGuid().ToString("N");
         var stagingRoot = Path.Combine(liveRoot, $".deploy-{token}");
@@ -183,32 +215,134 @@ internal static partial class ExtensionDeploymentReconciler
             File.WriteAllText(Path.Combine(staged, SourceMarkerFileName), candidate.Source.Source);
 
             if (Directory.Exists(destination))
-                Directory.Move(destination, backup);
+                MoveWithRetry(destination, backup, ExtensionDeploymentOperation.Backup, hooks);
 
             try
             {
-                beforeActivate?.Invoke(staged, destination);
-                Directory.Move(staged, destination);
+                MoveWithRetry(staged, destination, ExtensionDeploymentOperation.Activate, hooks);
             }
-            catch
+            catch (Exception activationFailure)
             {
-                if (Directory.Exists(backup))
+                if (!Directory.Exists(backup))
+                {
+                    throw new InvalidOperationException(
+                        $"Extension activation failed for '{destination}'; no prior deployment existed: {activationFailure.Message}",
+                        activationFailure);
+                }
+
+                try
                 {
                     if (Directory.Exists(destination))
-                        Directory.Delete(destination, recursive: true);
-                    Directory.Move(backup, destination);
+                        DeleteWithRetry(destination, ExtensionDeploymentOperation.Rollback, hooks);
+                    MoveWithRetry(backup, destination, ExtensionDeploymentOperation.Rollback, hooks);
                 }
-                throw;
+                catch (Exception rollbackFailure)
+                {
+                    throw new InvalidOperationException(
+                        $"Extension activation failed for '{destination}', and restoring its prior deployment from retained backup '{backup}' also failed: {rollbackFailure.Message}",
+                        new AggregateException(activationFailure, rollbackFailure));
+                }
+
+                throw new InvalidOperationException(
+                    $"Extension activation failed for '{destination}'; the prior deployment was restored: {activationFailure.Message}",
+                    activationFailure);
             }
 
             if (Directory.Exists(backup))
-                Directory.Delete(backup, recursive: true);
+                CleanupOrReport(backup, candidate.Source.Source, hooks, failures, retainedResidue);
         }
         finally
         {
             if (Directory.Exists(stagingRoot))
-                Directory.Delete(stagingRoot, recursive: true);
+                CleanupOrReport(stagingRoot, candidate.Source.Source, hooks, failures, retainedResidue);
         }
+    }
+
+    private static FileStream? TryAcquireDeploymentLock(string liveRoot, List<ExtensionDeploymentFailure> failures)
+    {
+        var lockPath = Path.Combine(liveRoot, DeploymentLockFileName);
+        try
+        {
+            return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            failures.Add(new ExtensionDeploymentFailure(
+                "extension-deployment",
+                $"Extension reconciliation is already in progress or its lock is unavailable at '{lockPath}': {ex.Message}"));
+            return null;
+        }
+    }
+
+    private static void MoveWithRetry(string source, string destination, ExtensionDeploymentOperation operation, ExtensionDeploymentHooks? hooks)
+        => ExecuteWithRetry(operation, source, destination, () => Directory.Move(source, destination), hooks);
+
+    private static void DeleteWithRetry(string path, ExtensionDeploymentOperation operation, ExtensionDeploymentHooks? hooks)
+        => ExecuteWithRetry(operation, path, null, () => Directory.Delete(path, recursive: true), hooks);
+
+    private static bool TryDeleteWithRetry(string path, ExtensionDeploymentHooks? hooks, out Exception? failure)
+    {
+        try
+        {
+            DeleteWithRetry(path, ExtensionDeploymentOperation.Cleanup, hooks);
+            failure = null;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            failure = ex;
+            return false;
+        }
+    }
+
+    private static void CleanupOrReport(
+        string path,
+        string source,
+        ExtensionDeploymentHooks? hooks,
+        List<ExtensionDeploymentFailure> failures,
+        HashSet<string> retainedResidue)
+    {
+        if (TryDeleteWithRetry(path, hooks, out var cleanupFailure))
+            return;
+
+        retainedResidue.Add(path);
+        failures.Add(new ExtensionDeploymentFailure(
+            source,
+            $"Could not remove retained deployment residue '{path}': {cleanupFailure!.Message}"));
+    }
+
+    private static void ExecuteWithRetry(
+        ExtensionDeploymentOperation operation,
+        string path,
+        string? destination,
+        Action action,
+        ExtensionDeploymentHooks? hooks)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                hooks?.BeforeOperation?.Invoke(operation, path, destination);
+                action();
+                return;
+            }
+            catch (Exception ex) when (attempt < MaximumAttempts && IsWindowsTransient(ex, hooks))
+            {
+                var delay = TimeSpan.FromMilliseconds(50 * (1 << (attempt - 1)));
+                (hooks?.Delay ?? Thread.Sleep)(delay);
+            }
+        }
+    }
+
+    private static bool IsWindowsTransient(Exception exception, ExtensionDeploymentHooks? hooks)
+    {
+        var isWindows = hooks?.IsWindows?.Invoke()
+            ?? RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        if (!isWindows || exception is not IOException and not UnauthorizedAccessException)
+            return false;
+
+        var error = exception.HResult & 0xffff;
+        return error is 5 or 32 or 33;
     }
 
     private static void CopyTree(string sourceRoot, string destinationRoot)

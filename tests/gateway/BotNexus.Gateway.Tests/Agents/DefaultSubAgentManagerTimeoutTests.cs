@@ -60,6 +60,50 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         AssertTimedOut(result, dispatcher, timeoutSeconds: 300);
     }
 
+    /// <summary>#4286: timeout preserves the typed response, including incomplete tool state and usage.</summary>
+    [Fact]
+    public async Task RunSubAgentAsync_InterruptedAtTimeout_PreservesStructuredPartialEvidence()
+    {
+        var partial = new AgentResponse
+        {
+            Content = "Read the configuration and started the final write.",
+            RunUsage = new AgentResponseUsage(InputTokens: 80, OutputTokens: 12),
+            TurnCount = 3,
+            ToolCalls =
+            [
+                new AgentToolCallInfo("read-1", "read", false, ResultContent: "configuration evidence"),
+                new AgentToolCallInfo("write-1", "write", false, IsIncomplete: true)
+            ]
+        };
+        var handle = CreateHandle(async token =>
+        {
+            var cancellationObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = token.Register(() => cancellationObserved.SetResult());
+            await cancellationObserved.Task;
+            throw new AgentPromptInterruptedException(partial, token);
+        });
+        var time = new ControllableTimeProvider();
+        var (manager, _, dispatched) = CreateManager(handle, time, timeoutSecondsBudget: 300);
+
+        var result = await SpawnAndAwaitTerminalAsync(
+            manager,
+            dispatched,
+            time,
+            advanceBy: TimeSpan.FromSeconds(300),
+            timeoutSeconds: 300);
+
+        result.Status.ShouldBe(SubAgentStatus.TimedOut);
+        result.PartialResult.ShouldNotBeNull();
+        result.PartialResult.StopReason.ShouldBe(SubAgentStopReason.Timeout);
+        result.PartialResult.TurnsUsed.ShouldBe(3);
+        result.PartialResult.Usage.ShouldBe(partial.RunUsage);
+        result.PartialResult.VerifiedEvidence.ShouldHaveSingleItem().ToolCallId.ShouldBe("read-1");
+        result.PartialResult.ActionsTaken.Single(action => action.ToolCallId == "write-1").Completed.ShouldBeFalse();
+        result.ResultSummary.ShouldNotBeNull();
+        result.ResultSummary.ShouldContain("[partial:timeout]");
+        result.ResultSummary.ShouldContain(partial.Content);
+    }
+
     [Fact]
     public async Task RunSubAgentAsync_SnapshotFailure_PreservesTimedOutStatusAndReportsFailure()
     {

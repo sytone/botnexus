@@ -93,7 +93,8 @@ public sealed class ExecTool : IAgentTool
         "On Windows PowerShell: foreach/if/switch/while are STATEMENTS and cannot be piped from directly - wrap them in a " +
         "subexpression, '$(foreach ($x in $xs) { ... }) | <cmd>', not 'foreach ($x in $xs) { ... } | <cmd>' which fails with " +
         "'An empty pipe element is not allowed'; wrap a variable followed by ':' as ${var} inside double-quoted strings (or use single quotes); " +
-        "no backtick line-continuations; for multi-line/complex scripts write a tmp/*.ps1 file and run it. Inline Python prints " +
+        "$PID is a read-only automatic variable, so use a name such as $processId for your own value; no backtick line-continuations; " +
+        "for multi-line/complex scripts write a tmp/*.ps1 file and run it. Inline Python prints " +
         "cp1252 by default (UnicodeEncodeError on emoji/em-dash/box glyphs) -- set $env:PYTHONUTF8=1 or write a tmp/*.py file " +
         "and run 'python -X utf8 file.py'. Never pipe a here-string into an interpreter; write a temp file and execute it.",
         JsonDocument.Parse("""

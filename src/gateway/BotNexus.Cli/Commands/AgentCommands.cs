@@ -498,7 +498,6 @@ internal sealed class AgentCommands
                 Emoji = agent.Emoji,
                 ModelId = agent.Model,
                 ApiProvider = provider,
-                SystemPrompt = ResolveSystemPrompt(agent, configPath),
                 ToolIds = agent.ToolIds is { Count: > 0 } ? new List<string>(agent.ToolIds) : null,
                 Thinking = agent.Thinking,
                 ContextWindow = agent.ContextWindow
@@ -523,19 +522,6 @@ internal sealed class AgentCommands
             AnsiConsole.MarkupLine($"[dim]Schema: {AgentTemplate.CurrentSchema}; requiredSecrets: {template.RequiredSecrets.Count}[/]");
 
         return 0;
-    }
-
-    private static string? ResolveSystemPrompt(AgentDefinitionConfig agent, string configPath)
-    {
-        if (string.IsNullOrWhiteSpace(agent.SystemPromptFile))
-            return null;
-
-        var homeDir = Path.GetDirectoryName(configPath) ?? BotNexusHome.ResolveHomePath();
-        var promptPath = Path.IsPathRooted(agent.SystemPromptFile)
-            ? agent.SystemPromptFile
-            : Path.Combine(homeDir, agent.SystemPromptFile);
-
-        return File.Exists(promptPath) ? File.ReadAllText(promptPath) : null;
     }
 
     private static List<RequiredSecret> BuildRequiredSecrets(string provider)
@@ -685,15 +671,16 @@ internal sealed class AgentCommands
 
         var homeDir = Path.GetDirectoryName(Path.GetFullPath(configPath)) ?? BotNexusHome.ResolveHomePath();
 
-        // Restore the system prompt into the agent workspace and reference it by relative
-        // path so the reconstructed agent is self-contained and portable.
+        // Preserve imported instructions through the standard workspace contract rather than
+        // recreating a retired custom prompt-file reference (#2941). IDENTITY.md is loaded for
+        // every agent and remains eligible for model variants and normal file-policy checks.
         if (!string.IsNullOrWhiteSpace(descriptor.SystemPrompt))
         {
-            var botNexusHome = new BotNexusHome(homeDir);
-            var agentDir = botNexusHome.GetAgentDirectory(targetId);
-            var promptPath = Path.Combine(agentDir, "IMPORTED_SYSTEM_PROMPT.md");
-            await File.WriteAllTextAsync(promptPath, descriptor.SystemPrompt, cancellationToken);
-            agent.SystemPromptFile = Path.GetRelativePath(homeDir, promptPath).Replace('\\', '/');
+            var agentDirectory = new BotNexusHome(homeDir).GetAgentDirectory(targetId);
+            await File.WriteAllTextAsync(
+                Path.Combine(agentDirectory, "IDENTITY.md"),
+                descriptor.SystemPrompt,
+                cancellationToken);
         }
 
         var saveCode = await CliConfigMutation.ApplyAsync(

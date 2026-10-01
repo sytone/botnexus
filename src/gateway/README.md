@@ -211,7 +211,6 @@ The Gateway reads from `~/.botnexus/config.json`. Configure via nested `gateway`
     "assistant": {
       "provider": "copilot",
       "model": "gpt-4.1",
-      "systemPromptFile": "prompts/assistant.txt",
       "isolationStrategy": "in-process",
       "enabled": true
     }

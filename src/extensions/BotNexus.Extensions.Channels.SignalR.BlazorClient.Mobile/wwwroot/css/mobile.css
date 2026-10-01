@@ -11,11 +11,27 @@ body {
 }
 
 /* ── App shell ────────────────────────────────────────────────────────────── */
+.mobile-app,
+.mobile-settings-page,
+.mobile-boot-screen {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
 .mobile-app {
     height: 100dvh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+}
+
+.mobile-boot-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100dvh;
+    background: #0a1628;
+    color: #d0dff0;
 }
 
 /* ── Loading / error states ───────────────────────────────────────────────── */
@@ -146,6 +162,18 @@ body {
 }
 
 .menu-action:hover { background: rgba(100, 160, 220, 0.08); }
+
+.menu-action-link {
+    box-sizing: border-box;
+    text-decoration: none;
+}
+
+.menu-build-info {
+    display: block;
+    padding: 2px 16px 9px;
+    color: #8296ad;
+    font-size: 11px;
+}
 
 /* Small "has content" indicator dot shown next to the Canvas menu action when
    the active agent/conversation currently has published canvas HTML. The Canvas
@@ -279,6 +307,16 @@ body {
     50%       { opacity: 0; }
 }
 
+.mobile-composer { position: sticky; bottom: 0; background: #111d2e; }
+.mobile-attachment-list { display: flex; gap: 6px; overflow-x: auto; padding: 8px 12px 0; }
+.mobile-attachment-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; padding: 5px 8px; border: 1px solid rgba(100, 160, 220, 0.25); border-radius: 999px; background: #0d1926; font-size: 12px; flex: none; }
+.mobile-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-attachment-size { color: #7a9cbf; flex: none; }
+.mobile-attachment-chip button { border: 0; background: transparent; color: #a9c4e0; font-size: 16px; padding: 0 2px; }
+.mobile-composer-error { padding: 6px 12px 0; color: #f87171; font-size: 13px; }
+.mobile-attach-btn { width: 38px; height: 44px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(100, 160, 220, 0.2); border-radius: 8px; cursor: pointer; flex: none; }
+.mobile-attachment-input { display: none; }
+
 /* ── Bottom bar ───────────────────────────────────────────────────────────── */
 .bottom-bar {
     position: sticky;
@@ -343,7 +381,7 @@ body {
     right: 0;
     background: #7b2121;
     color: #fff;
-    padding: 10px 16px;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
     z-index: 1000;
     font-size: 14px;
 }

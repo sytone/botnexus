@@ -258,6 +258,7 @@ public sealed record ActivityAgentRef(string AgentId, string? Role = null);
 /// </param>
 /// <param name="Enabled">Whether the scheduler permits the job to fire.</param>
 /// <param name="ExpiresAt">The hard suppression instant, or <see langword="null"/> for no expiry.</param>
+/// <param name="LastRunError">The last recorded run error, or <see langword="null"/> when absent.</param>
 public sealed record ActivityCronHealth(
     string JobId,
     string? Name,
@@ -265,7 +266,8 @@ public sealed record ActivityCronHealth(
     DateTimeOffset? LastRunAt = null,
     DateTimeOffset? NextRunAt = null,
     bool Enabled = true,
-    DateTimeOffset? ExpiresAt = null);
+    DateTimeOffset? ExpiresAt = null,
+    string? LastRunError = null);
 
 /// <summary>
 /// A single projected row on the Home / Activity dashboard: one active conversation plus the derived
@@ -595,7 +597,8 @@ public static class ActivityDashboardProjection
                 job.LastRunAt,
                 job.NextRunAt,
                 job.Enabled,
-                job.ExpiresAt);
+                job.ExpiresAt,
+                string.IsNullOrWhiteSpace(job.LastRunError) ? null : job.LastRunError.Trim());
         }
 
         return map;
@@ -695,6 +698,9 @@ public static class ActivityDashboardProjection
     /// </summary>
     public const int CronNameDisplayLength = SourceIdDisplayLength;
 
+    /// <summary>Maximum characters retained from a cron failure's first line before elision.</summary>
+    public const int CronErrorDisplayLength = 80;
+
     /// <summary>
     /// Renders the name of the cron job that minted a row (#3421), replacing the opaque job id
     /// <see cref="SourceLabel"/> shows. Returns <see langword="null"/> when the row resolved no job
@@ -754,6 +760,31 @@ public static class ActivityDashboardProjection
             "error" or "failed" or "failure" or "timeout" or "aborted" or "no_tool_calls" => "failed",
             _ => "unknown"
         };
+    }
+
+    /// <summary>
+    /// Returns a bounded first-line failure reason for the current failed run. Stale errors on
+    /// successful or unclassifiable runs are deliberately suppressed.
+    /// </summary>
+    public static string? CronHealthErrorSummary(ActivityRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+
+        if (!string.Equals(CronHealthModifier(row), "failed", StringComparison.Ordinal))
+            return null;
+
+        var error = row.CronHealth?.LastRunError;
+        if (string.IsNullOrWhiteSpace(error))
+            return null;
+
+        var firstLineLength = error.IndexOfAny(['\r', '\n']);
+        var firstLine = (firstLineLength >= 0 ? error[..firstLineLength] : error).Trim();
+        if (firstLine.Length == 0)
+            return null;
+
+        return firstLine.Length <= CronErrorDisplayLength
+            ? firstLine
+            : string.Concat(firstLine.AsSpan(0, CronErrorDisplayLength), "\u2026");
     }
 
     /// <summary>

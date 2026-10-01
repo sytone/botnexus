@@ -55,7 +55,12 @@ public sealed partial class ConfigMutationReceiptTests : IDisposable
 
         exitCode.ShouldBe(0);
         var output = Normalize(_output.ToString());
-        output.ShouldContain($"✓ Provider receipt-test added.{Environment.NewLine}  Config saved to: {_configPath}");
+        output.ShouldContain(
+            $"✓ Provider receipt-test added.{Environment.NewLine}" +
+            $"  Config saved to: {_configPath}{Environment.NewLine}" +
+            $"  Persistence: succeeded.{Environment.NewLine}" +
+            $"  Runtime activation: not validated by this offline command.{Environment.NewLine}" +
+            $"  Restart required: no when the running gateway receives the configuration reload; verify the provider appears in its live model catalogue before assigning an agent.");
         output.ShouldNotContain("SQLite:");
         output.ShouldNotContain(Secret);
 
@@ -76,7 +81,10 @@ public sealed partial class ConfigMutationReceiptTests : IDisposable
             $"✓ Provider receipt-test added.{Environment.NewLine}" +
             $"  Updated configuration backends:{Environment.NewLine}" +
             $"    JSON:   {_configPath}{Environment.NewLine}" +
-            $"    SQLite: {_storePath} (wins on read)");
+            $"    SQLite: {_storePath} (wins on read){Environment.NewLine}" +
+            $"  Persistence: succeeded.{Environment.NewLine}" +
+            $"  Runtime activation: not validated by this offline command.{Environment.NewLine}" +
+            $"  Restart required: no when the running gateway receives the configuration reload; verify the provider appears in its live model catalogue before assigning an agent.");
         output.ShouldNotContain(Secret);
 
         var json = JsonNode.Parse(await File.ReadAllTextAsync(_configPath))!.AsObject();
@@ -84,6 +92,18 @@ public sealed partial class ConfigMutationReceiptTests : IDisposable
 
         var entries = await new SqliteConfigStore($"Data Source={_storePath}").ReadEntriesAsync();
         entries["providers.receipt-test.apiKey"].Value.ShouldBe(System.Text.Json.JsonSerializer.Serialize(Secret));
+    }
+
+    [Fact]
+    public void ProviderActivationReceipt_StatesPersistenceActivationAndRestartBoundaries()
+    {
+        ProviderCommand.PrintProviderActivationReceipt();
+
+        var output = Normalize(_output.ToString());
+        output.ShouldBe(
+            $"  Persistence: succeeded.{Environment.NewLine}" +
+            $"  Runtime activation: not validated by this offline command.{Environment.NewLine}" +
+            $"  Restart required: no when the running gateway receives the configuration reload; verify the provider appears in its live model catalogue before assigning an agent.{Environment.NewLine}");
     }
 
     [Fact]

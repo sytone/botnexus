@@ -90,21 +90,23 @@ public static class CodingAgent
             LlmClient: llmClient,
             ConvertToLlm: DefaultMessageConverter.Create(),
             TransformContext: (messages, _) => Task.FromResult(messages),
-            GetApiKey: async (provider, ct) =>
-                await capturedAuthManager.GetApiKeyAsync(capturedConfig, provider, ct),
+            GetProviderExecutionOptions: async (provider, ct) => new ProviderExecutionOptions
+            {
+                ApiKey = await capturedAuthManager.GetApiKeyAsync(capturedConfig, provider, ct),
+                OnPayload = async (payload, payloadModel) =>
+                    extensionRunner is null
+                        ? payload
+                        : await extensionRunner.OnModelRequestAsync(payload, payloadModel).ConfigureAwait(false)
+            },
             GetSteeringMessages: null,
             GetFollowUpMessages: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
             BeforeToolCall: (context, ct) => ExecuteBeforeHookAsync(context, safetyHooks, auditHooks, extensionRunner, config, ct),
             AfterToolCall: (context, ct) => ExecuteAfterHookAsync(context, auditHooks, extensionRunner, ct),
-            GenerationSettings: new SimpleStreamOptions
+            GenerationSettings: new GenerationOptions
             {
                 MaxTokens = model.MaxTokens,
-                Reasoning = thinkingLevel,
-                OnPayload = async (payload, payloadModel) =>
-                    extensionRunner is null
-                        ? payload
-                        : await extensionRunner.OnModelRequestAsync(payload, payloadModel).ConfigureAwait(false)
+                Reasoning = thinkingLevel
             },
             SteeringMode: QueueMode.OneAtATime,
             FollowUpMode: QueueMode.OneAtATime,

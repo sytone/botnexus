@@ -24,8 +24,8 @@ namespace BotNexus.Gateway.Security;
 /// </remarks>
 public sealed class SqliteSecretProvider : ISecretProvider
 {
-    /// <summary>File name of the secret store inside the BotNexus home.</summary>
-    public const string StoreFileName = "secrets.db";
+    /// <summary>Canonical file name of the secret store inside the BotNexus home.</summary>
+    public const string StoreFileName = "secrets" + SqliteStorePathPolicy.CanonicalExtension;
 
     private readonly Func<string> _resolveStorePath;
 
@@ -33,7 +33,7 @@ public sealed class SqliteSecretProvider : ISecretProvider
     public SqliteSecretProvider(BotNexusHome home)
     {
         ArgumentNullException.ThrowIfNull(home);
-        _resolveStorePath = () => Path.Combine(home.RootPath, StoreFileName);
+        _resolveStorePath = () => SqliteStorePathPolicy.ResolveOwnedStorePath(home.RootPath, "secrets");
     }
 
     /// <summary>Creates a provider over an explicit store path, for tests.</summary>

@@ -1,5 +1,6 @@
 using System.IO.Abstractions.TestingHelpers;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Extensions.Skills;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -109,6 +110,33 @@ public sealed class BotNexusHomeTests
         agents.ShouldContain("Labs are optional");
         fs.File.Exists(Path.Combine(workspace, "BOOTSTRAP.md")).ShouldBeFalse();
         fs.File.Exists(Path.Combine(workspace, "IDENTITY.md")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void GetAgentDirectory_TrailguideReceivesDiscoverableBundledSkillsAndSharedDocsResolution()
+    {
+        var docsRoot = Path.Combine(HomePath, "installed-source");
+        var fs = new MockFileSystem();
+        fs.AddDirectory(Path.Combine(docsRoot, "docs"));
+        fs.AddFile(Path.Combine(docsRoot, "BotNexus.slnx"), new MockFileData(string.Empty));
+        var home = new BotNexusHome(fs, HomePath, documentationRootOverride: docsRoot);
+
+        var workspace = Path.Combine(home.GetAgentDirectory("nexus-trailguide"), "workspace");
+
+        foreach (var skill in new[] { "trailguide-documentation", "trailguide-troubleshooting" })
+        {
+            var skillPath = Path.Combine(workspace, "skills", skill, "SKILL.md");
+            fs.File.Exists(skillPath).ShouldBeTrue();
+            fs.File.ReadAllText(skillPath).ShouldContain($"name: {skill}");
+        }
+
+        var discovered = SkillDiscovery.Discover(null, null, Path.Combine(workspace, "skills"), fs);
+        discovered.Select(skill => skill.Name).OrderBy(name => name, StringComparer.Ordinal).ShouldBe(
+            new[] { "trailguide-documentation", "trailguide-troubleshooting" });
+
+        var resolution = fs.File.ReadAllText(Path.Combine(workspace, "DOCUMENTATION_ROOT.md"));
+        resolution.ShouldContain(Path.GetFullPath(Path.Combine(docsRoot, "docs")));
+        resolution.ShouldContain("Override");
     }
 
     [Fact]

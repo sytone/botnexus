@@ -87,6 +87,12 @@ public sealed record SubAgentInfo
     public string? ResultSummary { get; init; }
 
     /// <summary>
+    /// Gets the structured result retained when a bounded run stops before ordinary completion.
+    /// Narrated summary text is explicitly unverified; tool-backed evidence is projected separately.
+    /// </summary>
+    public SubAgentPartialResult? PartialResult { get; init; }
+
+    /// <summary>
     /// Gets the budget reduction applied to this spawn, or <c>null</c> when the request fitted
     /// inside every ceiling (#2789). Deliberately absent rather than always present: an
     /// unconditional field is boilerplate a calling model learns to skip, so its presence alone
@@ -127,6 +133,59 @@ public sealed record SubAgentInfo
     /// rather than only "it did not arrive".
     /// </summary>
     public string? CompletionDeliveryError { get; init; }
+}
+
+/// <summary>Structured disposition of a bounded sub-agent result.</summary>
+public enum SubAgentCompletion
+{
+    Complete,
+    Partial,
+    Parked,
+    Failed,
+    Cancelled
+}
+
+/// <summary>Authoritative reason a bounded run stopped.</summary>
+public enum SubAgentStopReason
+{
+    TurnLimit,
+    Timeout,
+    TokenLimit,
+    NoProgress,
+    CallerCancelled
+}
+
+/// <summary>A tool action retained from the interrupted run's authoritative timeline.</summary>
+public sealed record SubAgentPartialAction(
+    string ToolCallId,
+    string ToolName,
+    bool Completed,
+    bool Succeeded);
+
+/// <summary>Successful tool evidence retained separately from unverified child narration.</summary>
+public sealed record SubAgentVerifiedEvidence(
+    string ToolCallId,
+    string ToolName,
+    string? Result);
+
+/// <summary>
+/// Machine-readable result retained when a bounded run is interrupted. Unknown usage remains
+/// <c>null</c>; a missing measurement is never serialized as measured zero.
+/// </summary>
+public sealed record SubAgentPartialResult
+{
+    public required SubAgentCompletion Completion { get; init; }
+    public required SubAgentStopReason StopReason { get; init; }
+    public string? Summary { get; init; }
+    public bool SummaryIsVerified { get; init; }
+    public IReadOnlyList<SubAgentVerifiedEvidence> VerifiedEvidence { get; init; } = [];
+    public IReadOnlyList<string> UnresolvedWork { get; init; } = [];
+    public IReadOnlyList<SubAgentPartialAction> ActionsTaken { get; init; } = [];
+    public IReadOnlyList<string> SideEffects { get; init; } = [];
+    public int TurnsUsed { get; init; }
+    public AgentResponseUsage? Usage { get; init; }
+    public SessionId? CheckpointSessionId { get; init; }
+    public ConversationId? CheckpointConversationId { get; init; }
 }
 
 /// <summary>

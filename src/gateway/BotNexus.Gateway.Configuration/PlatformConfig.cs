@@ -58,6 +58,15 @@ public sealed class PlatformConfig : IValidatableObject
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 2)]
     public string? WorldId { get; set; }
 
+    /// <summary>World-scoped extension-owned runtime configuration.</summary>
+    [Display(
+        Name = "World",
+        Description = "World-scoped settings shared across the BotNexus installation, including extension-owned world configuration.",
+        GroupName = "General",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 5)]
+    public WorldSettingsConfig? World { get; set; }
+
     /// <summary>Gateway-specific settings.</summary>
     [Display(
         Name = "Gateway",
@@ -612,9 +621,27 @@ public sealed class ProviderEmbeddingsConfig
     public int? Dimensions { get; set; }
 }
 
+/// <summary>Configuration owned by the singular BotNexus world.</summary>
+public sealed class WorldSettingsConfig
+{
+    /// <summary>World-scoped extension-owned runtime configuration, keyed by extension ID.</summary>
+    [Display(
+        Name = "World extensions",
+        Description = "Extension-owned configuration that applies once to the whole BotNexus world.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extensions", Order = 0)]
+    public Dictionary<string, JsonElement>? Extensions { get; set; }
+}
+
 /// <summary>Gateway runtime configuration.</summary>
 public sealed class GatewaySettingsConfig
 {
+    /// <summary>Gateway-scoped extension-owned runtime configuration, keyed by extension ID.</summary>
+    [Display(
+        Name = "Gateway extensions",
+        Description = "Extension-owned configuration for the singular gateway runtime.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extensions", Order = 1)]
+    public Dictionary<string, JsonElement>? Extensions { get; set; }
+
     /// <summary>Gateway HTTP listen URL.</summary>
     [Display(
         Name = "Listen URL",
@@ -670,9 +697,9 @@ public sealed class GatewaySettingsConfig
     [Display(
         Name = "Session store",
         Description = "Backend used to persist sessions and conversation history.",
-        GroupName = "Storage",
-        Order = 2)]
-    [ConfigField(Group = "storage", Order = 2)]
+        GroupName = "Session store",
+        Order = 0)]
+    [ConfigField(Group = "session-store", Order = 0)]
     public SessionStoreConfig? SessionStore { get; set; }
 
     /// <summary>Interval in minutes between periodic PASSIVE SQLite WAL checkpoints (#1438). Default 30.</summary>
@@ -793,14 +820,10 @@ public sealed class GatewaySettingsConfig
     // .GetSection_GatewaySection_RedactsApiKeysConnectionStringsAndCrossWorldSecrets.
     [ConfigField(Group = "security", Order = 0)]
     public Dictionary<string, ApiKeyConfig>? ApiKeys { get; set; }
-    /// <summary>Extensions loading settings.</summary>
-    [Display(
-        Name = "Extensions",
-        Description = "Dynamic extension loading: whether extensions load, from where, and their world-level defaults.",
-        GroupName = "Extensions",
-        Order = 0)]
+    /// <summary>Dynamic extension discovery and loading settings.</summary>
+    [Display(Name = "Extension loader", Description = "Dynamic extension loading settings.", GroupName = "Extensions", Order = 0)]
     [ConfigField(Group = "extensions", Order = 0)]
-    public ExtensionsConfig? Extensions { get; set; }
+    public ExtensionLoaderConfig? ExtensionLoader { get; set; }
     /// <summary>World identity shown by gateway clients.</summary>
     [Display(
         Name = "World identity",
@@ -813,9 +836,9 @@ public sealed class GatewaySettingsConfig
     [Display(
         Name = "Locations",
         Description = "Named locations registry used for resource management and path resolution.",
-        GroupName = "Storage",
-        Order = 3)]
-    [ConfigField(Group = "storage", Order = 3)]
+        GroupName = "Locations",
+        Order = 0)]
+    [ConfigField(Group = "locations", Order = 0)]
     public Dictionary<string, LocationConfig>? Locations { get; set; }
     /// <summary>Optional explicit cross-world communication permissions.</summary>
     [Display(
@@ -1926,7 +1949,7 @@ public sealed class PromptTemplateParameterConfig
 }
 
 /// <summary>Configuration for dynamic extension discovery and loading.</summary>
-public sealed class ExtensionsConfig
+public sealed class ExtensionLoaderConfig
 {
     /// <summary>
     /// Root directory containing extension folders with botnexus-extension.json manifests.
@@ -1950,17 +1973,6 @@ public sealed class ExtensionsConfig
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "extensions", Order = 1)]
     public bool Enabled { get; set; } = true;
 
-    /// <summary>
-    /// World-level default extension configuration, keyed by extension ID.
-    /// Deep-merged with agent-level overrides to produce effective config per agent.
-    /// </summary>
-    [Display(
-        Name = "Defaults",
-        Description = "World-level default extension configuration, keyed by extension ID. Deep-merged with agent-level overrides to produce effective config per agent.",
-        GroupName = "Extensions",
-        Order = 2)]
-    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extensions", Order = 2)]
-    public Dictionary<string, JsonElement>? Defaults { get; set; }
 }
 
 /// <summary>Agent definition in platform config.</summary>
@@ -2028,22 +2040,9 @@ public sealed class AgentDefinitionConfig
         Order = 9)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 9)]
     public List<string>? AllowedModels { get; set; }
-    /// <summary>Ordered list of files to load as the system prompt. Empty = default order.</summary>
-    [Display(
-        Name = "System prompt files",
-        Description = "Ordered list of files to load as the system prompt. Empty = default order.",
-        GroupName = "Agent",
-        Order = 10)]
-    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 10)]
-    public List<string>? SystemPromptFiles { get; set; }
-    /// <summary>Path to a single system prompt file (legacy, prefer SystemPromptFiles).</summary>
-    [Display(
-        Name = "System prompt file",
-        Description = "Path to a single system prompt file (legacy, prefer SystemPromptFiles).",
-        GroupName = "Agent",
-        Order = 11)]
-    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 11)]
-    public string? SystemPromptFile { get; set; }
+    /// <summary>Whether the source JSON contained either retired custom prompt-file key.</summary>
+    [JsonIgnore]
+    internal bool LegacyPromptFileKeysPresent { get; set; }
     /// <summary>Tool identifiers this agent has access to.</summary>
     [Display(
         Name = "Tool ids",

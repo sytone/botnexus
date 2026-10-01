@@ -2,8 +2,12 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Channels;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -74,16 +78,20 @@ public sealed class InterruptedTurnNotificationServiceTests
         ISessionStore store,
         IAgentRegistry registry,
         IActivityBroadcaster? broadcaster = null,
-        IChannelManager? channelManager = null)
+        IConversationEventPublisher? eventPublisher = null,
+        IConversationStore? conversationStore = null)
     {
         broadcaster ??= Mock.Of<IActivityBroadcaster>();
-        channelManager ??= Mock.Of<IChannelManager>();
+        eventPublisher ??= Mock.Of<IConversationEventPublisher>();
         return new InterruptedTurnNotificationService(
             store,
             registry,
             broadcaster,
-            channelManager,
-            NullLogger<InterruptedTurnNotificationService>.Instance);
+            eventPublisher,
+            NullLogger<InterruptedTurnNotificationService>.Instance,
+            orchestrator: null,
+            options: null,
+            conversationStore);
     }
 
     // ── Tests ──────────────────────────────────────────────────────────────
@@ -158,11 +166,163 @@ public sealed class InterruptedTurnNotificationServiceTests
     }
 
     [Fact]
+    public async Task StartedAsync_PersistedNotification_PublishesTypedEventAfterCommitWithBindingSnapshots()
+    {
+        var agentId = AgentId.From("agent-events");
+        var conversationId = ConversationId.From("conv-events");
+        var sessionId = SessionId.From("sess-events");
+        var binding = new ChannelBinding
+        {
+            BindingId = BindingId.Create(),
+            ChannelType = ChannelKey.From("test"),
+            ChannelAddress = ChannelAddress.From("recipient-1"),
+            Mode = BindingMode.Interactive,
+            ThreadingMode = ThreadingMode.Single
+        };
+        var conversations = new InMemoryConversationStore();
+        await conversations.CreateAsync(new Conversation
+        {
+            AgentId = agentId,
+            ConversationId = conversationId,
+            ActiveSessionId = sessionId,
+            ChannelBindings = [binding]
+        });
+        var sessions = new InMemorySessionStore(redactor: null, conversations);
+        var session = await sessions.GetOrCreateAsync(sessionId, agentId);
+        session.ConversationId = conversationId;
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.System,
+            Content = "interrupted",
+            IsCrashSentinel = true
+        });
+        await sessions.SaveAsync(session);
+
+        var sink = new PersistedNotificationCapturingSink(sessions);
+        await using var publisher = new ConversationEventPublisher([sink]);
+        var service = CreateService(
+            sessions,
+            CreateRegistry(agentId.Value),
+            eventPublisher: publisher,
+            conversationStore: conversations);
+
+        await service.StartedAsync(CancellationToken.None);
+        binding.ChannelAddress = ChannelAddress.From("mutated-after-save");
+        await publisher.WaitForDrainAsync(new CancellationTokenSource(TimeSpan.FromSeconds(30)).Token);
+
+        var received = sink.Received.ShouldHaveSingleItem();
+        received.AgentId.ShouldBe(agentId);
+        received.ConversationId.ShouldBe(conversationId);
+        received.SessionId.ShouldBe(sessionId);
+        received.Item.Role.ShouldBe(MessageRole.Notification);
+        received.Item.Content.ShouldContain("gateway was restarted");
+        received.Bindings.ShouldHaveSingleItem().ChannelAddress.ShouldBe(ChannelAddress.From("recipient-1"));
+        sink.NotificationWasPersistedWhenConsumed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task StartedAsync_SaveFails_DoesNotPublishSuccessEvent()
+    {
+        var session = CreateSession("sess-save-fails", "agent-save-fails", withSentinel: true);
+        session.ConversationId = ConversationId.From("conv-save-fails");
+        var store = CreateStore(session);
+        store.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("save failed"));
+        var publisher = new Mock<IConversationEventPublisher>();
+        var service = CreateService(store.Object, CreateRegistry("agent-save-fails"), eventPublisher: publisher.Object);
+
+        await service.StartedAsync(CancellationToken.None);
+
+        publisher.Verify(
+            p => p.PublishAsync(It.IsAny<ConversationEvent>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task StartedAsync_PublisherRejectsEvent_DoesNotRollBackCommittedNotification()
+    {
+        var agentId = AgentId.From("agent-rejected-event");
+        var conversationId = ConversationId.From("conv-rejected-event");
+        var sessionId = SessionId.From("sess-rejected-event");
+        var conversations = new InMemoryConversationStore();
+        await conversations.CreateAsync(new Conversation { AgentId = agentId, ConversationId = conversationId });
+        var sessions = new InMemorySessionStore(redactor: null, conversations);
+        var session = await sessions.GetOrCreateAsync(sessionId, agentId);
+        session.ConversationId = conversationId;
+        session.AddEntry(new SessionEntry { Role = MessageRole.System, Content = "interrupted", IsCrashSentinel = true });
+        await sessions.SaveAsync(session);
+        var publisher = new ConversationEventPublisher([]);
+        await publisher.DisposeAsync();
+        var service = CreateService(sessions, CreateRegistry(agentId.Value), eventPublisher: publisher, conversationStore: conversations);
+
+        await service.StartedAsync(CancellationToken.None);
+
+        var persisted = await sessions.GetAsync(sessionId);
+        persisted.ShouldNotBeNull();
+        persisted.History.ShouldContain(entry => entry.Role == MessageRole.Notification);
+        persisted.History.ShouldNotContain(entry => entry.IsCrashSentinel);
+    }
+
+    [Fact]
+    public async Task StartedAsync_PublisherThrows_DoesNotRollBackCommittedNotification()
+    {
+        var agentId = AgentId.From("agent-publisher-fails");
+        var conversationId = ConversationId.From("conv-publisher-fails");
+        var sessionId = SessionId.From("sess-publisher-fails");
+        var conversations = new InMemoryConversationStore();
+        await conversations.CreateAsync(new Conversation { AgentId = agentId, ConversationId = conversationId });
+        var sessions = new InMemorySessionStore(redactor: null, conversations);
+        var session = await sessions.GetOrCreateAsync(sessionId, agentId);
+        session.ConversationId = conversationId;
+        session.AddEntry(new SessionEntry { Role = MessageRole.System, Content = "interrupted", IsCrashSentinel = true });
+        await sessions.SaveAsync(session);
+        var service = CreateService(
+            sessions,
+            CreateRegistry(agentId.Value),
+            eventPublisher: new ThrowingConversationEventPublisher(),
+            conversationStore: conversations);
+
+        await service.StartedAsync(CancellationToken.None);
+
+        var persisted = await sessions.GetAsync(sessionId);
+        persisted.ShouldNotBeNull();
+        persisted.History.ShouldContain(entry => entry.Role == MessageRole.Notification);
+        persisted.History.ShouldNotContain(entry => entry.IsCrashSentinel);
+    }
+
+    [Fact]
     public async Task StopAsync_IsNoOp()
     {
         var store = CreateStore();
         var service = CreateService(store.Object, CreateRegistry());
         var ex = await Record.ExceptionAsync(() => service.StopAsync(CancellationToken.None));
         ex.ShouldBeNull();
+    }
+
+    private sealed class PersistedNotificationCapturingSink(ISessionStore sessions) : IConversationEventSink
+    {
+        public List<ConversationSessionItemPersistedEvent> Received { get; } = [];
+
+        public bool NotificationWasPersistedWhenConsumed { get; private set; }
+
+        public async Task OnConversationEventAsync(ConversationEvent conversationEvent, CancellationToken cancellationToken = default)
+        {
+            if (conversationEvent is not ConversationSessionItemPersistedEvent persistedEvent)
+                return;
+
+            var persisted = await sessions.GetAsync(persistedEvent.SessionId!.Value, cancellationToken);
+            NotificationWasPersistedWhenConsumed = persisted?.History.Any(entry =>
+                entry.Role == MessageRole.Notification &&
+                entry.Content == persistedEvent.Item.Content) == true;
+            Received.Add(persistedEvent);
+        }
+    }
+
+    private sealed class ThrowingConversationEventPublisher : IConversationEventPublisher
+    {
+        public ValueTask<bool> PublishAsync(ConversationEvent conversationEvent, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("publisher failed");
+
+        public Task WaitForDrainAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

@@ -1531,10 +1531,33 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 await OnCompletedAsync(subAgentId, response.Content, SubAgentRunOutcome.From(response));
             }
         }
+        catch (AgentPromptInterruptedException interrupted) when (record.BudgetExhausted)
+        {
+            // The budget latch wins over any cancellation-shaped exception. Preserve the typed
+            // partial response assembled by the handle instead of replacing spent work with only
+            // the generic turn-limit diagnostic (#4286).
+            await CompleteInterruptedAsync(
+                subAgentId,
+                record,
+                interrupted.PartialResponse,
+                SubAgentStatus.BudgetExhausted,
+                SubAgentStopReason.TurnLimit,
+                $"Sub-agent exhausted its turn budget after {maxTurns} {(maxTurns == 1 ? "turn" : "turns")}.");
+        }
+        catch (AgentPromptInterruptedException interrupted) when (timeoutCts.IsCancellationRequested)
+        {
+            await CompleteInterruptedAsync(
+                subAgentId,
+                record,
+                interrupted.PartialResponse,
+                SubAgentStatus.TimedOut,
+                SubAgentStopReason.Timeout,
+                $"Sub-agent timed out after {timeoutSeconds} {(timeoutSeconds == 1 ? "second" : "seconds")}.");
+        }
         catch (Exception) when (record.BudgetExhausted)
         {
-            // The budget latch wins over any cancellation-shaped exception: the run was stopped
-            // because it ran out of turns, not because the deadline elapsed.
+            // Handles that cannot project a typed partial response retain the historical generic
+            // diagnostic while the hard turn ceiling remains authoritative.
             await CompleteBudgetExhaustedAsync(subAgentId, maxTurns);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
@@ -1680,6 +1703,92 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     /// </summary>
     private static readonly TimeSpan DescendantPollInterval = TimeSpan.FromMilliseconds(25);
 
+    private async Task CompleteInterruptedAsync(
+        string subAgentId,
+        SubAgentRecord record,
+        AgentResponse response,
+        SubAgentStatus status,
+        SubAgentStopReason stopReason,
+        string diagnostic)
+    {
+        await PersistToolAuditAsync(response, record).ConfigureAwait(false);
+
+        var summary = SubAgentSummaryNormalizer.Normalize(response.Content);
+        var partial = new SubAgentPartialResult
+        {
+            Completion = SubAgentCompletion.Partial,
+            StopReason = stopReason,
+            Summary = summary,
+            SummaryIsVerified = false,
+            VerifiedEvidence =
+            [
+                .. response.ToolCalls
+                    .Where(call => !call.IsError && !call.IsIncomplete)
+                    .Select(call => new SubAgentVerifiedEvidence(
+                        call.ToolCallId,
+                        call.ToolName,
+                        call.ResultContent))
+            ],
+            UnresolvedWork = response.ToolCalls
+                .Where(call => call.IsError || call.IsIncomplete)
+                .Select(call => $"{call.ToolName} ({call.ToolCallId}) did not complete successfully.")
+                .ToArray(),
+            ActionsTaken =
+            [
+                .. response.ToolCalls.Select(call => new SubAgentPartialAction(
+                    call.ToolCallId,
+                    call.ToolName,
+                    Completed: !call.IsIncomplete,
+                    Succeeded: !call.IsError && !call.IsIncomplete))
+            ],
+            TurnsUsed = response.TurnCount ?? record.Info.TurnsUsed,
+            Usage = response.RunUsage,
+            CheckpointSessionId = record.Info.ChildSessionId,
+            CheckpointConversationId = record.Info.ChildConversationId
+        };
+
+        var rendered = RenderPartialResult(diagnostic, partial);
+        await CompleteTerminalAsync(subAgentId, status, rendered, partial).ConfigureAwait(false);
+    }
+
+    internal static string RenderPartialResult(string diagnostic, SubAgentPartialResult partial)
+    {
+        var stopReason = partial.StopReason switch
+        {
+            SubAgentStopReason.TurnLimit => "turn_limit",
+            SubAgentStopReason.Timeout => "timeout",
+            SubAgentStopReason.TokenLimit => "token_limit",
+            SubAgentStopReason.NoProgress => "no_progress",
+            SubAgentStopReason.CallerCancelled => "caller_cancelled",
+            _ => throw new ArgumentOutOfRangeException(nameof(partial), partial.StopReason, null)
+        };
+
+        var text = $"[partial:{stopReason}] {diagnostic}";
+        if (!string.IsNullOrWhiteSpace(partial.Summary))
+        {
+            text += Environment.NewLine
+                + Environment.NewLine
+                + "Unverified child summary:"
+                + Environment.NewLine
+                + partial.Summary;
+        }
+
+        if (partial.VerifiedEvidence.Count > 0)
+        {
+            text += Environment.NewLine
+                + Environment.NewLine
+                + "Verified tool evidence:"
+                + Environment.NewLine
+                + string.Join(
+                    Environment.NewLine,
+                    partial.VerifiedEvidence.Select(evidence =>
+                        $"- {evidence.ToolName} ({evidence.ToolCallId})"
+                        + (string.IsNullOrWhiteSpace(evidence.Result) ? string.Empty : $": {evidence.Result}")));
+        }
+
+        return text;
+    }
+
     private Task CompleteBudgetExhaustedAsync(string subAgentId, int maxTurns)
         => CompleteTerminalAsync(
             subAgentId,
@@ -1698,7 +1807,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private async Task CompleteTerminalAsync(
         string subAgentId,
         SubAgentStatus status,
-        string diagnostic)
+        string diagnostic,
+        SubAgentPartialResult? partialResult = null)
     {
         if (!_records.TryGetValue(subAgentId, out var record))
             return;
@@ -1727,7 +1837,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // Publish the terminal disposition and its recovery evidence in one compare-and-swap. A
         // concurrent kill therefore sees Running until capture finishes and can win cleanly; no
         // observer can see timeout/budget status without the corresponding snapshot result.
-        if (!record.TryPublishTerminal(status, diagnostic, snapshot, out _))
+        if (!record.TryPublishTerminal(status, diagnostic, snapshot, partialResult, out _))
         {
             if (snapshot?.ArtifactPath is { } orphanedArtifact && _worktreeSnapshotService is not null)
                 await _worktreeSnapshotService.DeleteArtifactAsync(orphanedArtifact, CancellationToken.None).ConfigureAwait(false);
@@ -2172,6 +2282,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             SubAgentStatus status,
             string diagnostic,
             SubAgentWorktreeSnapshot? snapshot,
+            SubAgentPartialResult? partialResult,
             out SubAgentInfo updatedInfo)
         {
             while (true)
@@ -2188,6 +2299,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                     Status = status,
                     CompletedAt = DateTimeOffset.UtcNow,
                     ResultSummary = diagnostic,
+                    PartialResult = partialResult,
                     WorktreeSnapshot = snapshot
                 };
                 if (ReferenceEquals(Interlocked.CompareExchange(ref _info, terminal, current), current))

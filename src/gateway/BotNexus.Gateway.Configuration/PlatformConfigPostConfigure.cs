@@ -1,255 +1,192 @@
-using BotNexus.Gateway.Configuration.Store;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
-using System.IO.Abstractions;
 using System.Text.Json;
 
 namespace BotNexus.Gateway.Configuration;
 
 /// <summary>
-/// Applies BotNexus-specific normalization to <see cref="PlatformConfig"/> after standard IConfiguration binding.
-/// Handles agents.defaults extraction, AgentRawElements capture, JsonElement field population,
-/// and legacy root-level gateway field migration.
+/// Applies normalization that ordinary configuration binding cannot represent while preserving the
+/// already-bound effective graph, including environment, command-line, and later-provider overlays.
 /// </summary>
 public sealed class PlatformConfigPostConfigure(IConfiguration configuration, string? configFilePath = null) : IPostConfigureOptions<PlatformConfig>
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
-
     /// <inheritdoc />
     public void PostConfigure(string? name, PlatformConfig config)
     {
-        var rawJson = configFilePath is not null && File.Exists(configFilePath)
-            ? TryReadFile(configFilePath)
-            : ReadRawJson(configuration) ?? ReadRawJsonFromStore(configFilePath);
-
-        if (!string.IsNullOrWhiteSpace(rawJson))
+        // Retained for source compatibility; authoritative raw data now comes from the composed
+        // provider graph so last-known-good and provider precedence cannot be bypassed.
+        _ = configFilePath;
+        try
         {
-            // A malformed config.json must not crash IOptions resolution (which would take down
-            // the host the first time any service resolves IOptions<PlatformConfig>). The raw-JSON
-            // helpers below call JsonDocument.Parse and throw on invalid JSON; fall back to the
-            // already-bound config so the gateway can start on defaults.
-            try
-            {
-                PlatformConfigLoader.MigrateLegacyGatewaySettings(config, rawJson);
-                PlatformConfigLoader.ExtractAgentDefaults(config, rawJson);
-                PopulateVersionFromRawJson(config, rawJson);
-                PopulateJsonElementFields(config, rawJson);
-            }
-            catch (JsonException)
-            {
-                // Invalid JSON — keep bound defaults. The startup config loader already logged the
-                // parse failure; here we just avoid re-throwing during options resolution.
-            }
+            ApplyAuthoritativeRawShape(configuration, config);
         }
-        else
+        catch (JsonException)
         {
-            if (config.Agents is not null)
-            {
-                var keysToRemove = config.Agents.Keys
-                    .Where(k => string.Equals(k, "defaults", StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                foreach (var key in keysToRemove)
-                    config.Agents.Remove(key);
-            }
+            // Providers own last-known-good handling. If an unusual custom provider still exposes a
+            // malformed shape, retain the graph that binding already produced.
         }
 
-        // IConfiguration cannot bind JsonElement fields — null out any that were left in
-        // an invalid/undefined state to prevent serialization crashes (e.g. schema validation).
         NullifyInvalidJsonElements(config);
     }
 
     /// <summary>
-    /// Populate Version from raw JSON since IConfiguration binding uses a remapped key
-    /// (via ConfigurationKeyName) to avoid collision with DOTNET_VERSION env var.
+    /// Rehydrates the already-composed configuration and applies only the raw-shape normalizations
+    /// that binding cannot express. This is shared by options and startup extension bootstrap.
     /// </summary>
-    private static void PopulateVersionFromRawJson(PlatformConfig config, string rawJson)
+    public static void ApplyAuthoritativeRawShape(IConfiguration configuration, PlatformConfig config)
     {
-        try
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(config);
+
+        if (configuration is not IConfigurationRoot configurationRoot)
+            return;
+
+        var providers = configurationRoot.Providers.ToArray();
+        var rawProviderIndex = -1;
+        ConfigDocument? document = null;
+        for (var index = providers.Length - 1; index >= 0; index--)
         {
-            using var doc = JsonDocument.Parse(rawJson);
-            if (doc.RootElement.TryGetProperty("version", out var versionEl) &&
-                versionEl.TryGetInt32(out var version))
+            if (providers[index] is not IAcceptedRawConfigDocumentProvider rawProvider)
+                continue;
+
+            document = rawProvider.GetAcceptedRawDocument();
+            if (document is not null)
             {
-                config.PlatformVersion = version;
+                rawProviderIndex = index;
+                break;
             }
         }
-        catch { /* non-fatal — Version defaults to 1 */ }
+
+        if (document is null)
+            return;
+        var migration = LegacyGatewayExtensionsMigration.Apply(document);
+        if (!migration.Succeeded)
+        {
+            throw new OptionsValidationException(
+                nameof(PlatformConfig),
+                typeof(PlatformConfig),
+                migration.Errors);
+        }
+
+        var rawJson = document.ToJsonString();
+        using var parsed = JsonDocument.Parse(rawJson);
+        var root = parsed.RootElement;
+
+        // These methods mutate only normalization-owned values; they never replace the bound root.
+        PlatformConfigLoader.MigrateLegacyGatewaySettings(config, root);
+        PopulateVersionFromRawJson(config, root);
+        PlatformConfigLoader.ExtractAgentDefaults(config, root);
+        var rawDefaultExtensions = config.AgentDefaults?.Extensions;
+        config.AgentDefaults ??= new AgentDefaultsConfig();
+        configuration.GetSection("agents:defaults").Bind(config.AgentDefaults);
+        config.AgentDefaults.Extensions = rawDefaultExtensions;
+        PopulateJsonElementFields(config, root);
+
+        // Loader values are the one typed subtree introduced by this migration. Materialize that
+        // subtree from the composed raw shape, where canonical provider overlays already won.
+        var migrated = PlatformConfigLoader.MaterializeConfig(rawJson);
+        if (migrated.Gateway?.ExtensionLoader is { } rawLoader)
+        {
+            config.Gateway ??= new GatewaySettingsConfig();
+            config.Gateway.ExtensionLoader ??= new ExtensionLoaderConfig();
+            if (!HasHigherPrecedenceValue(providers, rawProviderIndex, "gateway:extensionLoader:path"))
+                config.Gateway.ExtensionLoader.Path = rawLoader.Path;
+            if (!HasHigherPrecedenceValue(providers, rawProviderIndex, "gateway:extensionLoader:enabled"))
+                config.Gateway.ExtensionLoader.Enabled = rawLoader.Enabled;
+        }
     }
 
-    /// <summary>
-    /// Populate JsonElement fields on AgentDefinitionConfig from raw JSON.
-    /// IConfiguration cannot bind JsonElement — these fields are left invalid after binding.
-    /// </summary>
-    private static void PopulateJsonElementFields(PlatformConfig config, string rawJson)
+    private static bool HasHigherPrecedenceValue(
+        IReadOnlyList<IConfigurationProvider> providers,
+        int rawProviderIndex,
+        string key)
     {
-        try
+        for (var index = providers.Count - 1; index > rawProviderIndex; index--)
         {
-            using var doc = JsonDocument.Parse(rawJson);
+            if (providers[index].TryGet(key, out _))
+                return true;
+        }
+        return false;
+    }
 
-            // Populate gateway.extensions.defaults (Dictionary<string, JsonElement>)
-            if (config.Gateway?.Extensions is not null &&
-                doc.RootElement.TryGetProperty("gateway", out var gatewayEl) &&
-                gatewayEl.TryGetProperty("extensions", out var extEl) &&
-                extEl.TryGetProperty("defaults", out var defaultsEl) &&
-                defaultsEl.ValueKind == JsonValueKind.Object)
+    private static void PopulateVersionFromRawJson(PlatformConfig config, JsonElement root)
+    {
+        if (root.TryGetProperty("version", out var versionElement) && versionElement.TryGetInt32(out var version))
+            config.PlatformVersion = version;
+    }
+
+    private static void PopulateJsonElementFields(PlatformConfig config, JsonElement root)
+    {
+        PopulateExtensionBag(root, "world", bag =>
+        {
+            config.World ??= new WorldSettingsConfig();
+            config.World.Extensions = bag;
+        });
+        PopulateExtensionBag(root, "gateway", bag =>
+        {
+            config.Gateway ??= new GatewaySettingsConfig();
+            config.Gateway.Extensions = bag;
+        });
+
+        if (config.Agents is null || !root.TryGetProperty("agents", out var agentsElement))
+            return;
+
+        foreach (var (agentId, agentConfig) in config.Agents)
+        {
+            if (!agentsElement.TryGetProperty(agentId, out var agentElement))
+                continue;
+            if (agentElement.TryGetProperty("metadata", out var metadata))
+                agentConfig.Metadata = metadata.Clone();
+            if (agentElement.TryGetProperty("isolationOptions", out var isolation))
+                agentConfig.IsolationOptions = isolation.Clone();
+            if (agentElement.TryGetProperty("extensions", out var extensions) && extensions.ValueKind == JsonValueKind.Object)
             {
-                config.Gateway.Extensions.Defaults = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
-                foreach (var prop in defaultsEl.EnumerateObject())
-                    config.Gateway.Extensions.Defaults[prop.Name] = prop.Value.Clone();
-            }
-
-            // Populate per-agent JsonElement fields
-            if (config.Agents is not null && config.Agents.Count > 0 &&
-                doc.RootElement.TryGetProperty("agents", out var agentsEl))
-            {
-                foreach (var (agentId, agentConfig) in config.Agents)
-                {
-                    if (!agentsEl.TryGetProperty(agentId, out var agentEl))
-                        continue;
-
-                    if (agentEl.TryGetProperty("metadata", out var meta))
-                        agentConfig.Metadata = meta.Clone();
-                    if (agentEl.TryGetProperty("isolationOptions", out var iso))
-                        agentConfig.IsolationOptions = iso.Clone();
-                    if (agentEl.TryGetProperty("extensions", out var ext) &&
-                        ext.ValueKind == JsonValueKind.Object)
-                    {
-                        agentConfig.Extensions = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
-                        foreach (var prop in ext.EnumerateObject())
-                            agentConfig.Extensions[prop.Name] = prop.Value.Clone();
-                    }
-                }
+                agentConfig.Extensions = extensions.EnumerateObject().ToDictionary(
+                    property => property.Name,
+                    property => property.Value.Clone(),
+                    StringComparer.OrdinalIgnoreCase);
             }
         }
-        catch { /* non-fatal */ }
     }
 
-    /// <summary>
-    /// Null out any JsonElement fields left in an undefined state by IConfiguration binding.
-    /// </summary>
+    private static void PopulateExtensionBag(JsonElement root, string scope, Action<Dictionary<string, JsonElement>> setter)
+    {
+        if (root.TryGetProperty(scope, out var scopeElement)
+            && scopeElement.TryGetProperty("extensions", out var extensions)
+            && extensions.ValueKind == JsonValueKind.Object)
+        {
+            setter(extensions.EnumerateObject().ToDictionary(
+                property => property.Name,
+                property => property.Value.Clone(),
+                StringComparer.OrdinalIgnoreCase));
+        }
+    }
+
+    private static void NullifyInvalidExtensionBag(Dictionary<string, JsonElement>? bag)
+    {
+        if (bag is null)
+            return;
+        foreach (var key in bag.Where(pair => pair.Value.ValueKind == JsonValueKind.Undefined).Select(pair => pair.Key).ToArray())
+            bag.Remove(key);
+    }
+
     private static void NullifyInvalidJsonElements(PlatformConfig config)
     {
-        // gateway.extensions.defaults
-        if (config.Gateway?.Extensions?.Defaults is not null)
-        {
-            var badKeys = config.Gateway.Extensions.Defaults
-                .Where(kvp => kvp.Value.ValueKind == JsonValueKind.Undefined)
-                .Select(kvp => kvp.Key).ToList();
-            foreach (var key in badKeys)
-                config.Gateway.Extensions.Defaults.Remove(key);
-            if (config.Gateway.Extensions.Defaults.Count == 0)
-                config.Gateway.Extensions.Defaults = null;
-        }
+        NullifyInvalidExtensionBag(config.World?.Extensions);
+        NullifyInvalidExtensionBag(config.Gateway?.Extensions);
+        NullifyInvalidExtensionBag(config.AgentDefaults?.Extensions);
 
         if (config.Agents is null)
             return;
-
         foreach (var agentConfig in config.Agents.Values)
         {
             if (agentConfig.Metadata.HasValue && agentConfig.Metadata.Value.ValueKind == JsonValueKind.Undefined)
                 agentConfig.Metadata = null;
             if (agentConfig.IsolationOptions.HasValue && agentConfig.IsolationOptions.Value.ValueKind == JsonValueKind.Undefined)
                 agentConfig.IsolationOptions = null;
-            if (agentConfig.Extensions is not null)
-            {
-                var badKeys = agentConfig.Extensions
-                    .Where(kvp => kvp.Value.ValueKind == JsonValueKind.Undefined)
-                    .Select(kvp => kvp.Key).ToList();
-                foreach (var key in badKeys)
-                    agentConfig.Extensions.Remove(key);
-                if (agentConfig.Extensions.Count == 0)
-                    agentConfig.Extensions = null;
-            }
+            NullifyInvalidExtensionBag(agentConfig.Extensions);
+            if (agentConfig.Extensions is { Count: 0 })
+                agentConfig.Extensions = null;
         }
-    }
-
-    private static string? TryReadFile(string path)
-    {
-        try { return File.ReadAllText(path); }
-        catch { return null; }
-    }
-
-    /// <summary>
-    /// Rebuilds the raw configuration document from the SQLite config store when no
-    /// <c>config.json</c> exists on disk.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Why this fallback is load-bearing.</b> Every normalisation step above operates on the raw
-    /// JSON document rather than on the bound config, because each handles something IConfiguration
-    /// binding cannot express: <c>agents.defaults</c> extraction, <c>version</c> (bound under a
-    /// remapped key to avoid colliding with the <c>DOTNET_VERSION</c> environment variable), legacy
-    /// root-level gateway field migration, and <c>JsonElement</c> fields. With no raw document, none
-    /// of them run.
-    /// </para>
-    /// <para>
-    /// On a store-only home that was silent data loss rather than a skipped step: the fallback branch
-    /// does not merely decline to extract <c>agents.defaults</c>, it removes the key from the bound
-    /// config. Measured against a real 690-entry store, <c>version</c>,
-    /// <c>agents.defaults.memory.enabled</c> and <c>agents.defaults.memory.indexing</c> existed only
-    /// in the store and were dropped with no error and no warning (#3842).
-    /// </para>
-    /// <para>
-    /// This mirrors the pristine-document seam the writer uses (#3826) and the identity seam
-    /// <c>WorldIdResolver</c> uses at DI registration (#3824), so the store is authoritative
-    /// consistently rather than only on whichever paths happened to be fixed. Deliberately
-    /// best-effort: a missing, locked or malformed store yields null and the caller behaves exactly
-    /// as it did before.
-    /// </para>
-    /// </remarks>
-    private static string? ReadRawJsonFromStore(string? configFilePath)
-    {
-        if (string.IsNullOrWhiteSpace(configFilePath))
-            return null;
-
-        try
-        {
-            var storePath = ConfigStoreBootstrap.ResolveStorePath(configFilePath, new FileSystem());
-            if (!File.Exists(storePath))
-                return null;
-
-            var store = new SqliteConfigStore($"Data Source={storePath}");
-            var entries = store.ReadEntriesAsync().GetAwaiter().GetResult();
-            if (entries.Count == 0)
-                return null;
-
-            return ConfigDocumentRehydrator.Rehydrate(entries).ToJsonString();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static string? ReadRawJson(IConfiguration configuration)
-    {
-        if (configuration is not IConfigurationRoot root)
-            return null;
-
-        foreach (var provider in root.Providers.Reverse())
-        {
-            var type = provider.GetType();
-            if (!type.FullName!.Contains("Json", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            var sourceProp = type.GetProperty("Source");
-            if (sourceProp?.GetValue(provider) is not { } source)
-                continue;
-
-            var pathProp = source.GetType().GetProperty("Path");
-            if (pathProp?.GetValue(source) is not string filePath || string.IsNullOrWhiteSpace(filePath))
-                continue;
-
-            if (!filePath.EndsWith("config.json", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            if (!File.Exists(filePath))
-                return null;
-
-            try { return File.ReadAllText(filePath); }
-            catch { return null; }
-        }
-
-        return null;
     }
 }

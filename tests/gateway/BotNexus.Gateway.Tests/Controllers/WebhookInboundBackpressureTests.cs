@@ -221,6 +221,87 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task CallerCancellationWhileQueued_TerminalizesRunWithoutDispatch_AndRestoresCapacity()
+    {
+        var registration = await _registrations.CreateAsync(CreateRegistration());
+        _webhookId = registration.Id;
+        var queue = CreateQueue(depth: 1);
+        var orchestrator = new GatedOrchestrator();
+
+        var holder = InvokeAsync(registration, orchestrator, queue);
+        await orchestrator.FirstEntered.Task.WaitAsync(TestTimeout);
+
+        using var callerCancellation = new CancellationTokenSource();
+        var cancelled = InvokeOnceAsync(
+            registration, orchestrator, queue, cancellationToken: callerCancellation.Token);
+        await WaitForWaitingCountAsync(queue, registration.AgentId, 1);
+        await WaitForStatusAsync(WebhookRunStatus.Queued);
+
+        callerCancellation.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() => cancelled);
+
+        var terminal = await WaitForStatusAsync(WebhookRunStatus.Failed);
+        terminal.StartedAt.ShouldBeNull("caller cancellation while queued never dispatches the agent");
+        terminal.CompletedAt.ShouldNotBeNull("an abandoned durable run must be terminal for retention");
+        terminal.Error.ShouldNotBeNull();
+        terminal.Error.ShouldContain("caller cancelled", Case.Insensitive);
+        queue.WaitingCount(registration.AgentId).ShouldBe(0, "caller cancellation returns waiting capacity exactly once");
+        orchestrator.CallCount.ShouldBe(1, "the cancelled delivery must not reach the orchestrator");
+
+        var replacement = InvokeAsync(registration, orchestrator, queue);
+        await WaitForWaitingCountAsync(queue, registration.AgentId, 1);
+        orchestrator.Release();
+        await Task.WhenAll(holder, replacement).WaitAsync(TestTimeout);
+
+        queue.WaitingCount(registration.AgentId).ShouldBe(0);
+        orchestrator.CallCount.ShouldBe(2, "a subsequent delivery reuses the returned capacity");
+    }
+
+    [Fact]
+    public async Task ExecutingDelivery_ReportsRunningAtProcessorBoundary_AndHonoursDeadline()
+    {
+        var registration = await _registrations.CreateAsync(CreateRegistration(WebhookResponseMode.Async));
+        _webhookId = registration.Id;
+        var queue = new WebhookInboundQueue(new WebhookInboundQueueOptions
+        {
+            MaxQueueDepth = 1,
+            RunTimeout = TimeSpan.FromMilliseconds(100)
+        });
+        WebhookRun? observedAtProcessor = null;
+        var processorToken = new TaskCompletionSource<CancellationToken>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor
+            .ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>())
+            .Returns(async callInfo =>
+            {
+                var control = callInfo.ArgAt<InboundExecutionControl>(1);
+                control.CancellationToken.ThrowIfCancellationRequested();
+                await control.NotifyStartedAsync();
+                var runs = await _runs.ListByWebhookAsync(registration.Id, 10);
+                observedAtProcessor = runs.Single();
+                processorToken.TrySetResult(control.CancellationToken);
+                await Task.Delay(Timeout.InfiniteTimeSpan, control.CancellationToken);
+                return new InboundProcessingOutcome(Array.Empty<DispatchResult>(), false);
+            });
+        await using var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance);
+
+        var accepted = await InvokeOnceAsync(registration, orchestrator, queue);
+        accepted.ShouldBeOfType<AcceptedResult>();
+
+        var observedToken = await processorToken.Task.WaitAsync(TestTimeout);
+        observedAtProcessor.ShouldNotBeNull();
+        observedAtProcessor.Status.ShouldBe(WebhookRunStatus.Running);
+        observedAtProcessor.StartedAt.ShouldNotBeNull();
+        observedToken.CanBeCanceled.ShouldBeTrue("the webhook deadline must reach real processor work");
+
+        var timedOut = await WaitForStatusAsync(WebhookRunStatus.Timeout);
+        timedOut.StartedAt.ShouldNotBeNull("the run began before its execution deadline fired");
+        observedToken.IsCancellationRequested.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task UncontendedDelivery_NeverPassesThroughQueued()
     {
         // The queued state must carry information: a state set on every run would be no better than
@@ -304,7 +385,8 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
         WebhookInboundQueue queue,
         IWebhookRunStore? runStore = null,
         IHostApplicationLifetime? applicationLifetime = null,
-        string? callbackUrl = null)
+        string? callbackUrl = null,
+        CancellationToken cancellationToken = default)
     {
         var rawBody = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
@@ -329,7 +411,7 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
             WebhookSecretHelper.ComputeSignature(registration.Secret, rawBody);
 
         return await controller.Receive(
-            registration.AgentId.Value, registration.Id.Value, CancellationToken.None);
+            registration.AgentId.Value, registration.Id.Value, cancellationToken);
     }
 
     // Sync mode so the controller awaits the turn inline: every assertion then observes a run row
@@ -353,12 +435,14 @@ public sealed class WebhookInboundBackpressureTests : IAsyncLifetime
         private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource FirstEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int CallCount { get; private set; }
 
         public void Release() => _release.TrySetResult();
 
         public async Task<InboundDispatchResult> AcceptAsync(
             InboundMessage message, CancellationToken cancellationToken = default)
         {
+            CallCount++;
             FirstEntered.TrySetResult();
             await _release.Task.WaitAsync(TestTimeout);
             return Resolve(message);

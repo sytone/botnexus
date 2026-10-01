@@ -122,7 +122,7 @@ botnexus --target D:\my-botnexus agent list
 botnexus --target /opt/botnexus-prod validate
 ```
 
-### `--verbose` (or `-v`)
+### `--verbose`
 
 Show additional command output, including file paths and full JSON responses.
 
@@ -147,9 +147,11 @@ botnexus install [OPTIONS]
 
 | Option | Default | Description |
 |---|---|---|
-| `--path <DIR>` | `%USERPROFILE%\botnexus` | Target directory for the clone. |
+| `--source <DIR>` | `~/botnexus` | Target directory for the clone. |
 | `--repo <URL>` | GitHub repo URL | Git repository URL to clone. |
 | `--build` | off | Build the solution in Release configuration after cloning. |
+| `--latest` | off | Select the configured development tip (`origin/main`) instead of a stable release. |
+| `--version <SEMVER>` | - | Select the exact `v<SEMVER>` release tag; do not include the leading `v`. |
 | `--verbose` | — | Show detailed output from git and build. |
 
 ### Examples
@@ -169,10 +171,10 @@ botnexus install --build
 **Clone to a custom directory:**
 
 ```powershell
-botnexus install --path D:\projects\botnexus
+botnexus install --source D:\projects\botnexus
 ```
 
-If the repository already exists at the target path, the command prints a message and skips the clone.
+`--latest` and `--version` cannot be combined. The target is resolved before the clone starts, so an invalid or missing release does not create or mutate the checkout. If a repository already exists at the target path, `install` refuses with exit code `2`; use `botnexus update` with the same selector so the requested release is actually checked out.
 
 ---
 
@@ -235,20 +237,34 @@ If the process exits or crashes, serve waits 5 seconds and restarts automaticall
 
 ```powershell
 botnexus serve [OPTIONS]
-botnexus serve gateway [OPTIONS]
 botnexus serve probe [OPTIONS]
+botnexus serve gateway <COMMAND> [OPTIONS]
 ```
 
-### serve / serve gateway
+### serve
 
-Start the BotNexus Gateway.
+Start the BotNexus Gateway in the foreground with automatic restart after an unexpected exit.
 
 | Option | Default | Description |
 |---|---|---|
 | `--port <PORT>` | `5005` | Port to listen on. |
-| `--path <DIR>` | Install location | Path to the repository root. |
-| `--dev` | off | Use the current working directory as the repo root. |
+| `--source <DIR>` | `~/botnexus` | Path to the repository root. |
 | `--verbose` | — | Show detailed output. |
+
+### serve gateway
+
+Manage the same gateway lifecycle exposed by the top-level [`gateway`](#gateway) group. This is a command group, not a foreground-start alias.
+
+| Child command | Purpose |
+|---|---|
+| `start` | Start the gateway as a detached process. |
+| `stop` | Stop the gateway process. |
+| `status` | Show whether the gateway is running. |
+| `restart` | Stop and start the gateway. |
+| `install` | Install gateway service files for the current operating system. |
+| `uninstall` | Remove installed gateway service files. |
+
+Use the child-specific options documented under [`gateway`](#gateway), for example `botnexus serve gateway start --port 8080`.
 
 ### serve probe
 
@@ -257,9 +273,7 @@ Start the BotNexus Probe diagnostic tool. Probe binds its UI, APIs, static files
 | Option | Default | Description |
 |---|---|---|
 | `--port <PORT>` | `5050` | Port for the Probe web UI. |
-| `--listen-any` | off | Bind every Probe surface to all network interfaces. This explicitly exposes unauthenticated diagnostic data and OTLP ingestion to the network. |
-| `--path <DIR>` | Install location | Path to the repository root. |
-| `--dev` | off | Use the current working directory as the repo root. |
+| `--source <DIR>` | `~/botnexus` | Path to the repository root. |
 | `--gateway-url <URL>` | `http://localhost:5005` | URL of a running BotNexus Gateway. |
 | `--verbose` | — | Show detailed output. |
 
@@ -271,17 +285,16 @@ Start the BotNexus Probe diagnostic tool. Probe binds its UI, APIs, static files
 botnexus serve
 ```
 
-**Start the gateway from a dev clone:**
+**Start the gateway from a different source clone:**
 
 ```powershell
-cd D:\repos\botnexus
-botnexus serve --dev
+botnexus serve --source D:\repos\botnexus
 ```
 
 **Start the gateway on a custom port:**
 
 ```powershell
-botnexus serve gateway --port 8080
+botnexus serve --port 8080
 ```
 
 **Start the probe connected to a running gateway:**
@@ -295,8 +308,8 @@ botnexus serve probe --gateway-url http://localhost:5005
 | Scenario | Command |
 |---|---|
 | Run from the default install clone | `botnexus serve` |
-| Run from your active dev repo | `botnexus serve --dev` |
-| Build and serve in one flow | `botnexus build --dev && botnexus serve --dev` |
+| Run from another source clone | `botnexus serve --source <DIR>` |
+| Build and serve in one flow | `botnexus build --path <DIR> && botnexus serve --source <DIR>` |
 
 Both modes produce Release builds so the gateway DLLs don't collide with Debug builds from your IDE or test runner.
 
@@ -420,6 +433,8 @@ botnexus init --force
 
 ## agent list
 
+The `agent` command group also accepts the alias `agents`.
+
 List all configured agents from `config.json`.
 
 ### Usage
@@ -488,6 +503,10 @@ botnexus agent add <ID> [OPTIONS]
 | `--provider` | `github-copilot` | Agent provider name (must match a configured provider; e.g. `github-copilot`, `openai`, `anthropic`, or any provider added via `botnexus provider add`). |
 | `--model` | `gpt-4.1` | Model name for this agent (e.g., `gpt-4o`, `claude-3-sonnet`). |
 | `--enabled` | `true` | Whether the agent is enabled (`true` or `false`). |
+| `--display-name <NAME>` | Agent ID | Human-readable name shown in clients. |
+| `--description <TEXT>` | — | Description of the agent's purpose. |
+| `--emoji <EMOJI>` | — | Emoji shown with the agent name. |
+| `--disabled` | off | Disable the agent. This takes precedence over `--enabled`. |
 | `--verbose` | — | Show the updated configuration. |
 
 ### Examples
@@ -1259,7 +1278,7 @@ botnexus config schema --output my-schema.json
 
 ## config store
 
-Manage the SQLite configuration store (`config.db`). When the store is enabled it serves
+Manage the SQLite configuration store (`config.sqlite`). When the store is enabled it serves
 configuration to the gateway and **its values win over `config.json`**; the file stays on disk and
 is never modified by these commands.
 
@@ -1273,9 +1292,9 @@ botnexus config store <COMMAND> [OPTIONS]
 
 | Subcommand | Description |
 |---|---|
-| `enable` | Create `config.db` from the current `config.json`. The store then serves configuration, with its values winning over the file. |
+| `enable` | Create `config.sqlite` from the current `config.json`. The store then serves configuration, with its values winning over the file. |
 | `status` | Report whether the store exists and how many entries it holds. |
-| `disable` | Delete `config.db`. The gateway returns to file-only configuration on the next start. |
+| `disable` | Delete `config.sqlite`. The gateway returns to file-only configuration on the next start. |
 
 ### Options
 
@@ -1292,7 +1311,7 @@ botnexus config store <COMMAND> [OPTIONS]
 - `enable` reports how many entries were imported and requires a **gateway restart** to take
   effect. It exits `1` if `config.json` is missing (run `botnexus init` first) or is not a JSON
   object.
-- `status` exits `0` in both states: it prints `Configuration store not enabled.` when `config.db`
+- `status` exits `0` in both states: it prints `Configuration store not enabled.` when `config.sqlite`
   is absent, and the entry count plus the store-wins note when it is present.
 - Targeted mutations such as `config set`, `agent`, `locations`, and `provider` writes update
   `config.json` and the enabled store together. Their success receipt lists the backends actually
@@ -1314,7 +1333,7 @@ botnexus config store enable
 Output:
 
 ```text
-Configuration store enabled. ~/.botnexus/config.db
+Configuration store enabled. ~/.botnexus/config.sqlite
   184 entries imported from config.json.
   Restart the gateway for the store to take effect.
 ```
@@ -1383,7 +1402,7 @@ botnexus secret list
 ```
 
 ```text
-Secrets (~/.botnexus/secrets.db)
+Secrets (~/.botnexus/secrets.sqlite)
   contoso-api  2026-08-28T09:14:02.1234567Z
 ```
 
@@ -1678,7 +1697,9 @@ Add or update a provider entry non-interactively. A JSON-only home updates `conf
 
 When a provider with the given `--name` already exists, only the flags you pass are updated; unspecified fields preserve their previous values. To clear a previously-set value, pass an empty string explicitly.
 
-A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated provider models then become available for agent assignment without restarting the process. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact. If the canonical SQLite configuration provider has not yet delivered an out-of-process reload signal, the saved configuration remains persisted but the running gateway can still show its previous catalogue until that separate reload defect is resolved.
+A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated provider models then become available for agent assignment without restarting the process. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact.
+
+The command is an offline configuration writer, so its receipt distinguishes persistence from runtime activation: persistence succeeded, activation was not validated by the command, and no restart is required when the running gateway receives the reload. Verify activation with `botnexus debug gateway providers` before assigning an agent. If an out-of-process configuration change has not reached the running gateway yet, the saved provider can still be absent from that live catalogue; persistence alone is not a readiness result.
 
 ### Usage
 
@@ -1869,13 +1890,15 @@ botnexus provider ollama models
 Send a simple chat completion request to verify end-to-end inference.
 
 ```powershell
-botnexus provider ollama test --model llama3
+botnexus provider ollama test
+botnexus provider ollama test --model llama3 --prompt "Reply with ok."
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--url <URL>` | `http://localhost:11434` | Ollama server URL |
-| `--model <ID>` | (required) | Model to test |
+| `--model <ID>` | First available model | Model to test |
+| `--prompt <TEXT>` | `Respond with the single word: ok.` | Prompt to send |
 
 See [Ollama Provider](providers/ollama.md) for full setup and configuration details.
 
@@ -1904,6 +1927,17 @@ botnexus prompt [COMMAND] [OPTIONS]
 - `render` — Render a template to stdout (substitute parameters)
 - `run` — Render and execute a template against the gateway
 - `create samples` — Copy bundled sample templates into `~/.botnexus/prompts/`
+
+### prompt create samples
+
+```powershell
+botnexus prompt create samples [--config <PATH>] [--target <DIR>]
+```
+
+| Option | Description |
+|---|---|
+| `--config <PATH>` | Explicit path to `config.json`. Overrides `--target`; samples are copied to the corresponding BotNexus home. |
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus/`. |
 
 ---
 
@@ -2080,7 +2114,7 @@ Output:
 
 ```text
 [Agent response...]
-Engineering team is on track with all Q1 deliverables. 
+Engineering team is on track with all Q1 deliverables.
 Three items in progress, two completed this week.
 ```
 
@@ -2136,6 +2170,8 @@ Output includes:
 ---
 
 ## satellite
+
+The `satellite` command group also accepts the alias `satellites`. The `satellite remove` command also accepts the alias `delete`.
 
 Manage satellite nodes — remote presence points that extend BotNexus to additional machines (desktop notifications, canvas windows, remote command execution).
 
@@ -2262,14 +2298,15 @@ against the generated registry, so a check added to the code without a row here 
 
 ## doctor config
 
-Guided config migration. Compares your existing `config.json` against a set of built-in checks, reports any missing or outdated settings, and optionally applies the fixes in place. Operates offline — no running gateway required.
+Guided config migration. Reads the effective persisted configuration from `config.json`, the SQLite configuration store, or both; reports missing or outdated settings; and optionally applies fixes through the canonical writer to every configured backend. Operates offline — no running gateway required.
 
 Current checks are:
 
 | Check | Id | Reports |
 |---|---|---|
-| Extensions block | `extensions-block` | The `gateway.extensions` block is absent or has extensions disabled. |
-| Skills world default | `skills-world-default` | The Skills extension has no world-level default in `gateway.extensions.defaults`. |
+| Legacy gateway extensions | `legacy-gateway-extensions` | Loader settings still use `gateway.extensions.path`/`enabled`, or shared agent defaults still use `gateway.extensions.defaults`. The fix moves them to `gateway.extensionLoader` and `agents.defaults.extensions` without overwriting canonical values. |
+| Extensions block | `extensions-block` | The `gateway.extensionLoader` block is absent or has extensions disabled. |
+| Skills agent default | `skills-world-default` | The Skills extension has no shared agent default in `agents.defaults.extensions`. |
 | Cron configuration | `cron-enabled` | The cron scheduler block is absent from config. |
 | Memory agent default | `memory-agent-default` | The `agents.defaults.memory` block is absent, so memory indexing is not enabled by default. |
 | Compaction model | `compaction-model` | `gateway.compaction.summarizationModel` names an expensive reasoning model, which may fail or waste tokens on a summarization call. |
@@ -2414,7 +2451,7 @@ botnexus locations delete docs
 
 ## update
 
-Pull the latest source, build, deploy extensions, and restart the BotNexus gateway. Run without a subcommand to perform the full update; use the `check` subcommand to see whether updates are available without applying them.
+Resolve a source release, check out its immutable commit, build, deploy extensions, and restart the BotNexus gateway. The default target is the highest stable `v<semver>` tag. Run without a subcommand to apply the update; use `check` to compare the installed commit with the same resolved target without applying it. This does not update the packaged `BotNexus.Cli` dotnet tool.
 
 ### Usage
 
@@ -2426,7 +2463,7 @@ botnexus update [COMMAND] [OPTIONS]
 
 | Command | Description |
 |---------|-------------|
-| `check` | Check whether updates are available from `origin/main` (does not apply them). |
+| `check` | Resolve the selected release and compare it with the installed source commit (does not apply it). |
 
 ### Options
 
@@ -2436,9 +2473,11 @@ botnexus update [COMMAND] [OPTIONS]
 | `--port <PORT>` | `update` | Gateway port to restart against. Defaults to `5005`. |
 | `--stash` | `update` | If the repo has uncommitted changes, stash them to a named, recoverable stash and continue. |
 | `--force` | `update` | If the repo has uncommitted changes, discard tracked-file changes and continue. Destructive. |
+| `--latest` | `update`, `check` | Select the configured development tip (`origin/main`) instead of a stable release. |
+| `--version <SEMVER>` | `update`, `check` | Select the exact `v<SEMVER>` release tag; do not include the leading `v`. |
 | `--verbose` | `update`, `check` | Show detailed update output. |
 
-`--stash` and `--force` cannot be combined (exit code `2`).
+`--stash` and `--force` cannot be combined. `--latest` and `--version` also cannot be combined (exit code `2`). Target resolution and failure happen before dirty-tree handling, checkout mutation, or gateway stop.
 
 ### Uncommitted changes in the deployment repo
 
@@ -2481,8 +2520,15 @@ own remediation line instead of a raw git error.
 # Check for updates without applying
 botnexus update check
 
-# Pull, build, and restart the gateway
+# Apply the highest stable release, build, and restart the gateway
 botnexus update
+
+# Check or apply the configured development tip
+botnexus update check --latest
+botnexus update --latest
+
+# Apply an exact release tag
+botnexus update --version 1.2.3
 
 # Update when the deployment repo has local edits you want to keep
 botnexus update --stash
@@ -2642,16 +2688,19 @@ botnexus debug sessions <COMMAND> [OPTIONS]
 | Command | Description |
 |---------|-------------|
 | `list` | List all sessions with summary info |
-| `get` | Show details for a specific session |
-| `compaction` | Show compaction history for a session |
+| `get <session-id>` | Show details for a specific session |
+| `compaction <session-id>` | Show compaction history for a session |
 | `stats` | Database-wide statistics |
 
 ### Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
-| `--format` | `table` | Output format: `table` or `json` |
+| Option | Applies to | Default | Description |
+|--------|------------|---------|-------------|
+| `--target <DIR>` | all | `~/.botnexus` | BotNexus home directory |
+| `--format` | all | `table` | Output format: `table` or `json` |
+| `--agent <ID>` | `list` | (all) | Filter by agent ID |
+| `--status <STATUS>` | `list` | (all) | Filter by `active`, `sealed`, `expired`, or `all` |
+| `--limit <N>` | `list` | 20 | Maximum sessions to return |
 
 ### Examples
 
@@ -2660,16 +2709,16 @@ botnexus debug sessions <COMMAND> [OPTIONS]
 botnexus debug sessions list
 
 # Get session details
-botnexus debug sessions get --id "session-abc123"
+botnexus debug sessions get "session-abc123"
 
 # Show compaction history
-botnexus debug sessions compaction --id "session-abc123"
+botnexus debug sessions compaction "session-abc123"
 
 # Database statistics
 botnexus debug sessions stats
 
 # JSON output for scripting
-botnexus debug sessions list --format json
+botnexus debug sessions --format json list
 ```
 
 ---
@@ -2778,7 +2827,7 @@ botnexus debug memory --format json
 
 Directly inspect raw SQLite databases in the BotNexus home directory. Useful for understanding schema and diagnosing storage issues.
 
-Discovery covers **every registered platform store**, not just files ending in `.db`. BotNexus mixes two SQLite file extensions — `.db` (`sessions`, `data/skill-usage`) and `.sqlite` (`cron`, `webhooks`, per-agent `memory`) — and keeps some databases in a `data/` subfolder. All of these are enumerated automatically, so `debug db tables` should be your first-line investigation tool instead of hand-rolled `sqlite3` scripts.
+Discovery covers **every registered platform store**. BotNexus-owned stores use the canonical `.sqlite` extension and may live in the home root, its `data/` subfolder, or an agent workspace. A lone legacy `.db` file is migrated synchronously and archived before the writer receives the canonical path; no prompt is involved. If both active names already exist for one logical store, the CLI fails closed rather than silently reading an arbitrary database. Use `debug db tables` as the first-line investigation tool instead of hand-rolled `sqlite3` scripts.
 
 ### Usage
 
@@ -2796,12 +2845,12 @@ botnexus debug db <COMMAND> [OPTIONS]
 
 ### Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
-| `--db <NAME>` | (all) | Filter to a specific database by name — `sessions`, `cron`, `webhooks`, `skill-usage` (extension optional) |
-| `--include-agents` | off | Also include per-agent memory databases (`agents/<id>/data/memory.sqlite`) |
-| `--format` | `table` | Output format: `table` or `json` |
+| Option | Applies to | Default | Description |
+|--------|------------|---------|-------------|
+| `--target <DIR>` | all | `~/.botnexus` | BotNexus home directory |
+| `--db <NAME>` | `tables`, `schema` | (all) | Filter to a specific database by name — `sessions`, `cron`, `webhooks`, `skill-usage` (extension optional) |
+| `--include-agents` | `tables`, `schema`, `size` | off | Also include per-agent memory databases (`agents/<id>/data/memory.sqlite`) |
+| `--format` | all | `table` | Output format: `table` or `json` |
 
 > `--format` is a `debug db` group option, so it goes **before** the subcommand: `botnexus debug db --format json tables`.
 
@@ -2904,12 +2953,12 @@ botnexus debug cron <COMMAND> [OPTIONS]
 
 ### Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
-| `--job <ID>` | (all) | Filter to a specific job |
-| `--limit <N>` | 20 | Maximum history entries |
-| `--format` | `table` | Output format: `table` or `json` |
+| Option | Applies to | Default | Description |
+|--------|------------|---------|-------------|
+| `--target <DIR>` | all | `~/.botnexus` | BotNexus home directory |
+| `--job <ID>` | `history` | (all) | Filter to a specific job |
+| `--limit <N>` | `history` | 20 | Maximum history entries |
+| `--format` | all | `table` | Output format: `table` or `json` |
 
 ### Examples
 

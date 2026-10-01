@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Diagnostics;
+using BotNexus.Gateway.Contracts.Updates;
 using Spectre.Console;
 
 namespace BotNexus.Cli.Commands;
@@ -24,11 +25,22 @@ internal sealed class InstallCommand
             "--build",
             "Build the solution after cloning.");
 
-        var command = new Command("install", "Clone the BotNexus repository and optionally build it.")
+        var latestOption = new Option<bool>(
+            "--latest",
+            "Install the configured development tip (origin/main) instead of a stable release.");
+
+        var versionOption = new Option<string?>(
+            "--version",
+            () => null,
+            "Install the exact release tag for this semantic version (for example, 1.2.3).");
+
+        var command = new Command("install", "Install a selected BotNexus source release and optionally build it.")
         {
             sourceOption,
             repoOption,
-            buildOption
+            buildOption,
+            latestOption,
+            versionOption
         };
 
         command.SetHandler(async context =>
@@ -38,7 +50,19 @@ internal sealed class InstallCommand
             var build = context.ParseResult.GetValueForOption(buildOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var targetPath = CliPaths.ResolveSource(source);
-            context.ExitCode = await ExecuteAsync(targetPath, repo, build, verbose, context.GetCancellationToken());
+            try
+            {
+                var request = ReleaseSelector.ToRequest(
+                    context.ParseResult.GetValueForOption(latestOption),
+                    context.ParseResult.GetValueForOption(versionOption));
+                context.ExitCode = await ExecuteAsync(
+                    targetPath, repo, build, verbose, request, context.GetCancellationToken());
+            }
+            catch (ArgumentException ex)
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(ex.Message)}");
+                context.ExitCode = 2;
+            }
         });
 
         return command;
@@ -83,7 +107,16 @@ internal sealed class InstallCommand
     internal static string BuildCloneArguments(string repo, string targetPath)
         => $"clone --no-local -- \"{repo}\" \"{targetPath}\"";
 
-    internal static async Task<int> ExecuteAsync(string targetPath, string repo, bool build, bool verbose, CancellationToken cancellationToken)
+    internal static Task<int> ExecuteAsync(string targetPath, string repo, bool build, bool verbose, CancellationToken cancellationToken)
+        => ExecuteAsync(targetPath, repo, build, verbose, ReleaseTargetRequest.Stable, cancellationToken);
+
+    internal static async Task<int> ExecuteAsync(
+        string targetPath,
+        string repo,
+        bool build,
+        bool verbose,
+        ReleaseTargetRequest request,
+        CancellationToken cancellationToken)
     {
         var repoError = ValidateRepo(repo);
         if (repoError is not null)
@@ -94,21 +127,53 @@ internal sealed class InstallCommand
 
         if (Directory.Exists(Path.Combine(targetPath, ".git")))
         {
-            AnsiConsole.MarkupLine($"Repository already exists at: [dim]{CliText.SafeDisplay(targetPath)}[/]");
-            AnsiConsole.MarkupLine("Use [green]git pull[/] to update, or remove the directory and re-run install.");
+            AnsiConsole.MarkupLine(
+                $"[red]Error:[/] A repository already exists at [dim]{CliText.SafeDisplay(targetPath)}[/]. " +
+                "Use [dim]botnexus update[/] to select a release in an existing source checkout.");
+            return 2;
         }
-        else
-        {
-            AnsiConsole.MarkupLine($"Cloning [dim]{CliText.SafeDisplay(repo)}[/]  [dim]{CliText.SafeDisplay(targetPath)}[/]");
-            var cloneResult = await RunProcessAsync("git", BuildCloneArguments(repo, targetPath), null, verbose, cancellationToken);
-            if (cloneResult != 0)
-            {
-                AnsiConsole.MarkupLine("[red]Error:[/] Clone failed.");
-                return cloneResult;
-            }
 
-            AnsiConsole.MarkupLine($"[green]\u2713[/] Repository cloned to: [dim]{CliText.SafeDisplay(targetPath)}[/]");
+        ResolvedReleaseTarget target;
+        try
+        {
+            target = await ReleaseTargetGitResolver.ResolveRemoteAsync(repo, request, cancellationToken);
         }
+        catch (OperationCanceledException)
+        {
+            return 130;
+        }
+        catch (ReleaseTargetResolutionException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(ex.Message)}");
+            return 2;
+        }
+
+        AnsiConsole.MarkupLine($"Cloning [dim]{CliText.SafeDisplay(repo)}[/]  [dim]{CliText.SafeDisplay(targetPath)}[/]");
+        var cloneResult = await RunProcessAsync("git", BuildCloneArguments(repo, targetPath), null, verbose, cancellationToken);
+        if (cloneResult != 0)
+        {
+            AnsiConsole.MarkupLine("[red]Error:[/] Clone failed.");
+            return cloneResult;
+        }
+
+        AnsiConsole.MarkupLine($"[green]\u2713[/] Repository cloned to: [dim]{CliText.SafeDisplay(targetPath)}[/]");
+        try
+        {
+            await ReleaseTargetGitResolver.CheckoutAsync(targetPath, target, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return 130;
+        }
+        catch (ReleaseTargetResolutionException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(ex.Message)}");
+            return 2;
+        }
+
+        AnsiConsole.MarkupLine(
+            $"[green]\u2713[/] Selected [dim]{CliText.SafeDisplay(target.SourceName)}[/] " +
+            $"({CliText.SafeDisplay(target.CommitSha[..Math.Min(12, target.CommitSha.Length)])})");
 
         if (build)
         {
