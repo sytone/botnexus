@@ -289,6 +289,53 @@ public class ProviderCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteRemoveAsync_refuses_provider_assigned_to_agents_without_mutation()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "providers": {
+                    "copilot-work": {
+                      "type": "github-copilot",
+                      "enabled": true
+                    }
+                  },
+                  "agents": {
+                    "aurum": {
+                      "provider": "COPILOT-WORK",
+                      "model": "gpt-5.6"
+                    },
+                    "quill": {
+                      "provider": "copilot-work",
+                      "model": "claude-sonnet-4.6"
+                    },
+                    "nova": {
+                      "provider": "github-copilot",
+                      "model": "gpt-5.6"
+                    }
+                  }
+                }
+                """);
+
+            var exit = await new ProviderCommand().ExecuteRemoveAsync(
+                configPath, "copilot-work", verbose: false, CancellationToken.None);
+
+            exit.ShouldBe(1);
+            var json = await File.ReadAllTextAsync(configPath);
+            using var doc = JsonDocument.Parse(json);
+            doc.RootElement.GetProperty("providers").TryGetProperty("copilot-work", out _).ShouldBeTrue();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
     public async Task ExecuteRemoveAsync_returns_zero_when_provider_missing()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
