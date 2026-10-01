@@ -180,6 +180,15 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     public LegacyToolInvocationBackfillReport BackfillLegacyToolInvocations(int batchSize) =>
         LegacyToolInvocationBackfill.RunConnectionString(_connectionString, batchSize, commit: true);
 
+    /// <summary>Commits one bounded cleanup batch after legacy rows have been normalized.</summary>
+    public LegacyToolPayloadCleanupReport CleanupLegacyToolPayloads(int batchSize)
+    {
+        var report = LegacyToolPayloadCleanup.RunConnectionString(_connectionString, batchSize);
+        if (report.CleanedInvocations > 0)
+            _cache.Clear();
+        return report;
+    }
+
     /// <inheritdoc />
     public override async Task<GatewaySession?> GetAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
@@ -1998,10 +2007,16 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
         await using var historyCommand = connection.CreateCommand();
         historyCommand.CommandText = """
-            SELECT id, persistence_key, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id, is_replay_banner
-            FROM session_history
-            WHERE session_id = $sessionId
-            ORDER BY id ASC
+            SELECT h.id, h.persistence_key, h.role,
+                   COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END) AS content,
+                   h.timestamp, h.tool_name, h.tool_call_id, h.is_compaction_summary,
+                   CASE WHEN h.tool_args IS NOT NULL THEN h.tool_args WHEN h.message_kind='tool-start' THEN i.arguments_json END AS tool_args,
+                   h.tool_is_error, h.is_crash_sentinel, h.is_history, h.trigger_type, h.thinking_content,
+                   h.message_kind, h.sender_id, h.is_replay_banner
+            FROM session_history h
+            LEFT JOIN tool_invocations i ON i.id=h.tool_invocation_id AND i.session_id=h.session_id
+            WHERE h.session_id = $sessionId
+            ORDER BY h.id ASC
             """;
         historyCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
 
@@ -2210,12 +2225,16 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         {
             select.Transaction = transaction;
             select.CommandText = """
-                SELECT id, message_kind, role, tool_call_id, tool_name, tool_args, content, timestamp, tool_is_error
-                FROM session_history
-                WHERE session_id = $sessionId
-                  AND tool_call_id IS NOT NULL
-                  AND (message_kind IN ('tool-start', 'tool-result') OR (message_kind IS NULL AND role = 'tool'))
-                ORDER BY id
+                SELECT h.id, h.message_kind, h.role, h.tool_call_id, h.tool_name,
+                       CASE WHEN h.tool_args IS NOT NULL THEN h.tool_args WHEN h.message_kind='tool-start' THEN i.arguments_json END,
+                       COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END),
+                       h.timestamp, h.tool_is_error
+                FROM session_history h
+                LEFT JOIN tool_invocations i ON i.id=h.tool_invocation_id AND i.session_id=h.session_id
+                WHERE h.session_id = $sessionId
+                  AND h.tool_call_id IS NOT NULL
+                  AND (h.message_kind IN ('tool-start', 'tool-result') OR (h.message_kind IS NULL AND h.role = 'tool'))
+                ORDER BY h.id
                 """;
             select.Parameters.AddWithValue("$sessionId", sessionId.Value);
             await using var reader = await select.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
