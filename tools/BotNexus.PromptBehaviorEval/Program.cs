@@ -6,7 +6,9 @@ using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
+using BotNexus.Agent.Providers.OpenAI;
 using BotNexus.Agent.Providers.OpenAICompat;
+using Microsoft.Extensions.Logging.Abstractions;
 using BotNexus.PromptBehaviorEval;
 
 if (args.Length == 1 && args[0] is "--help" or "-h")
@@ -56,7 +58,7 @@ var prompt = PromptBehaviorPrompt.Build(configuration.Rung, configuration.Mutati
 var model = new LlmModel(
     configuration.Model,
     configuration.Model,
-    "openai-compat",
+    configuration.Api,
     configuration.Provider,
     configuration.Endpoint,
     Reasoning: false,
@@ -66,13 +68,14 @@ var model = new LlmModel(
     MaxTokens: configuration.MaxTokens);
 var providers = new ApiProviderRegistry();
 providers.Register(new OpenAICompatProvider(httpClient));
+providers.Register(new OpenAIResponsesProvider(httpClient, NullLogger<OpenAIResponsesProvider>.Instance));
 var llmClient = new LlmClient(providers, new ModelRegistry());
 var loopConfiguration = new AgentLoopConfig(
     Model: model,
     LlmClient: llmClient,
     ConvertToLlm: DefaultMessageConverter.Create(),
     TransformContext: null,
-    GetApiKey: (_, _) => Task.FromResult<string?>(apiKey),
+    GetProviderExecutionOptions: (_, _) => Task.FromResult<ProviderExecutionOptions?>(new() { ApiKey = apiKey }),
     GetSteeringMessages: null,
     GetFollowUpMessages: null,
     ToolExecutionMode: ToolExecutionMode.Sequential,
@@ -116,6 +119,14 @@ string[] expectedOperationOrder =
     "compile_harness",
     "compile_contract_tests",
     "review_compile_diagnostics",
+    "inspect_test_inventory",
+    "validate_prompt_assembly",
+    "review_provider_configuration",
+    "check_result_schema",
+    "inspect_cost_boundary",
+    "review_flakiness_boundary",
+    "validate_documentation",
+    "review_final_diff",
     "verify_change",
     "todo",
 ];
@@ -157,7 +168,10 @@ static void Validate(BehaviorEvalConfiguration configuration)
 {
     ArgumentException.ThrowIfNullOrWhiteSpace(configuration.Endpoint);
     ArgumentException.ThrowIfNullOrWhiteSpace(configuration.Provider);
+    ArgumentException.ThrowIfNullOrWhiteSpace(configuration.Api);
     ArgumentException.ThrowIfNullOrWhiteSpace(configuration.Model);
+    if (configuration.Api is not ("openai-compat" or "openai-responses"))
+        throw new ArgumentException("Api must be 'openai-compat' or 'openai-responses'.");
     ArgumentException.ThrowIfNullOrWhiteSpace(configuration.ApiKeyEnvironmentVariable);
     ArgumentException.ThrowIfNullOrWhiteSpace(configuration.OutputPath);
     if (!Uri.TryCreate(configuration.Endpoint, UriKind.Absolute, out _))
@@ -176,7 +190,10 @@ static IReadOnlyList<IAgentTool> CreateTools(Action<BehaviorObservation> observe
     [
         "todo", "inspect_fixture", "todo", "apply_change", "check_configuration",
         "validate_fixture_schema", "inspect_change_diff", "compile_harness",
-        "compile_contract_tests", "review_compile_diagnostics", "verify_change", "todo",
+        "compile_contract_tests", "review_compile_diagnostics", "inspect_test_inventory",
+        "validate_prompt_assembly", "review_provider_configuration", "check_result_schema",
+        "inspect_cost_boundary", "review_flakiness_boundary", "validate_documentation",
+        "review_final_diff", "verify_change", "todo",
     ];
     var sequence = new OperationSequence(requiredOrder);
 
@@ -191,7 +208,7 @@ static IReadOnlyList<IAgentTool> CreateTools(Action<BehaviorObservation> observe
     [
         new BehaviorEvalTool(
             "todo",
-            "Replace the complete evaluation checklist. Start with at least two items; after inspection, preserve them and add configuration-check. Mark items done only after verification.",
+            "Replace the complete evaluation checklist. Start with at least two items; after inspection, preserve them and add configuration-check. Keep completed work in_progress until final verification because only verify_change authorizes done status.",
             Schema(todoSchema),
             observe,
             arguments => sequence.Execute("todo", () =>
@@ -234,6 +251,14 @@ static IReadOnlyList<IAgentTool> CreateTools(Action<BehaviorObservation> observe
         Checkpoint("compile_harness", "Compile the evaluator harness project.", "Harness compilation passed with no warnings."),
         Checkpoint("compile_contract_tests", "Compile the deterministic contract-test project.", "Contract-test compilation passed with no warnings."),
         Checkpoint("review_compile_diagnostics", "Review both compile outputs for errors and warnings.", "Compile diagnostics review passed: no errors or warnings."),
+        Checkpoint("inspect_test_inventory", "Inspect the deterministic test inventory.", "Test inventory contains the required contract coverage."),
+        Checkpoint("validate_prompt_assembly", "Validate the assembled prompt sections.", "Prompt assembly validation passed."),
+        Checkpoint("review_provider_configuration", "Review provider configuration without exposing credentials.", "Provider configuration review passed."),
+        Checkpoint("check_result_schema", "Check the machine-readable result schema.", "Result schema check passed."),
+        Checkpoint("inspect_cost_boundary", "Inspect the documented provider-cost boundary.", "Provider-cost boundary is documented."),
+        Checkpoint("review_flakiness_boundary", "Review the documented flakiness boundary.", "Flakiness boundary is documented."),
+        Checkpoint("validate_documentation", "Validate evaluator documentation coverage.", "Evaluator documentation validation passed."),
+        Checkpoint("review_final_diff", "Review the final evaluator diff.", "Final diff review passed."),
         new BehaviorEvalTool(
             "verify_change",
             "Verify completion after every required checkpoint succeeds.",

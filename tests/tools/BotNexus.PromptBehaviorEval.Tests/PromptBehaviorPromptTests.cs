@@ -44,19 +44,21 @@ public sealed class PromptBehaviorPromptTests
         task.ShouldContain("inspect the fixture");
         task.ShouldContain("add any newly required work");
         task.ShouldContain("complete at least two checklist items");
-        task.ShouldContain("check configuration");
-        task.ShouldContain("compile the harness and contract-test projects");
-        task.ShouldContain("review compile diagnostics");
+        task.ShouldContain("complete every named validation and review operation");
+        task.ShouldContain("verify completion");
     }
 
     [Theory]
     [InlineData(PromptMutation.FormerTodoInstruction, true, false)]
     [InlineData(PromptMutation.FormerResultWaitInstruction, false, true)]
     [InlineData(PromptMutation.FormerTodoInstruction | PromptMutation.FormerResultWaitInstruction, true, true)]
-    public void Build_MutationsInjectExactFormerInstructionsIndependently(PromptMutation mutation, bool hasTodoInstruction, bool hasResultWaitInstruction)
+    public void Build_MutationsRestoreExactFormerInstructionsIndependently(PromptMutation mutation, bool hasTodoInstruction, bool hasResultWaitInstruction)
     {
         var prompt = PromptBehaviorPrompt.Build(PromptGuidanceRung.Default, mutation, "unknown-model", "custom-provider");
         prompt.Contains(PromptBehaviorPrompt.FormerTodoInstruction, StringComparison.Ordinal).ShouldBe(hasTodoInstruction);
         prompt.Contains(PromptBehaviorPrompt.FormerResultWaitInstruction, StringComparison.Ordinal).ShouldBe(hasResultWaitInstruction);
+        prompt.Contains("There is no per-turn item budget", StringComparison.Ordinal).ShouldBe(!hasTodoInstruction);
+        prompt.Contains("Revise this list as you learn", StringComparison.Ordinal).ShouldBe(!hasTodoInstruction);
+        prompt.Contains("For multi-step work, never claim a step's outcome before its tool result arrives:", StringComparison.Ordinal).ShouldBe(!hasResultWaitInstruction);
     }
 }

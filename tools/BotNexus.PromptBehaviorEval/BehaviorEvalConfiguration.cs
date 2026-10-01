@@ -9,6 +9,8 @@ public sealed record BehaviorEvalConfiguration
     public required string Endpoint { get; init; }
     /// <summary>Provider identity recorded in the result and sent with the model definition.</summary>
     public required string Provider { get; init; }
+    /// <summary>Wire API used by the configured endpoint.</summary>
+    public string Api { get; init; } = "openai-compat";
     /// <summary>Exact model identifier transmitted to the endpoint.</summary>
     public required string Model { get; init; }
     /// <summary>Environment variable containing the API key; the key is never serialized.</summary>
@@ -20,7 +22,7 @@ public sealed record BehaviorEvalConfiguration
     [JsonConverter(typeof(JsonStringEnumConverter<PromptMutation>))]
     public PromptMutation Mutation { get; init; }
     /// <summary>User task matching issue #3668's discovery and multi-item completion scenario.</summary>
-    public string Task { get; init; } = "Start a checklist with at least two items, inspect the fixture, add any newly required work revealed by inspection, apply the requested change, then check configuration, validate the fixture schema, inspect the change diff, compile the harness and contract-test projects, review compile diagnostics, verify completion, complete at least two checklist items, and finish all work in this turn.";
+    public string Task { get; init; } = "Start a checklist with at least two items, inspect the fixture, add any newly required work revealed by inspection, apply the requested change, then complete every named validation and review operation, verify completion, complete at least two checklist items, and finish all work in this turn.";
     /// <summary>Provider output-token ceiling.</summary>
     public int MaxTokens { get; init; } = 2048;
     /// <summary>Request timeout in seconds.</summary>
