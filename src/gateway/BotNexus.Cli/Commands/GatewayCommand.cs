@@ -163,7 +163,7 @@ internal sealed class GatewayCommand
 
         // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
         // argument below, so probe where it will actually listen rather than where we asked.
-        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromConfig(port);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(port, home);
         var options = new GatewayStartOptions(
             ExecutablePath: gatewayDll,
             Arguments: $"--urls \"{gatewayUrl}\" --environment Development",
@@ -269,7 +269,7 @@ internal sealed class GatewayCommand
 
         // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
         // argument below, so probe where it will actually listen rather than where we asked.
-        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromConfig(port);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(port, home);
         var lastExitCode = 0;
 
         while (true)
@@ -318,9 +318,9 @@ internal sealed class GatewayCommand
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
         var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
-        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromConfig(
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(
             fallbackPort: 5005,
-            configPath: Path.Combine(home, "config.json"));
+            homePath: home);
         GatewayStopResult result;
 
         if (interactive)
@@ -358,9 +358,9 @@ internal sealed class GatewayCommand
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
         var repoRoot = CliPaths.ResolveSource(explicitSource: null);
         var gatewayBinaryPath = ResolveGatewayBinaryPath(repoRoot);
-        var healthUrl = GatewayProbeUrlResolver.ResolveFromConfig(
+        var healthUrl = GatewayProbeUrlResolver.ResolveFromHome(
             fallbackPort: 5005,
-            configPath: Path.Combine(home, "config.json")) + "/health";
+            homePath: home) + "/health";
         GatewayStatus status;
 
         if (interactive)
@@ -465,9 +465,9 @@ internal sealed class GatewayCommand
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
         var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
-        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromConfig(
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(
             fallbackPort: port,
-            configPath: Path.Combine(home, "config.json"));
+            homePath: home);
 
         // Stop
         GatewayStopResult stopResult;
