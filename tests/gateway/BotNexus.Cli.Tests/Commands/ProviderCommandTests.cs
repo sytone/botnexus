@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Wizard;
@@ -7,7 +8,7 @@ using Spectre.Console;
 namespace BotNexus.Cli.Tests.Commands;
 
 [Collection("AnsiConsole")]
-public class ProviderCommandTests : IDisposable
+public partial class ProviderCommandTests : IDisposable
 {
     private readonly IAnsiConsole _originalConsole;
     private readonly StringWriter _output = new();
@@ -176,9 +177,10 @@ public class ProviderCommandTests : IDisposable
             server.BaseUrl, "new-instance", CancellationToken.None);
 
         exit.ShouldBe(0);
-        _output.ToString().ShouldContain("Provider new-instance is active and validated by the running gateway");
-        _output.ToString().ShouldContain("Models: 1");
-        _output.ToString().ShouldContain("Credentials: resolved");
+        var output = NormalizeOutput(_output.ToString());
+        output.ShouldContain("Provider new-instance is active and validated by the running gateway");
+        output.ShouldContain("Models: 1");
+        output.ShouldContain("Credentials: resolved");
     }
 
     [Fact]
@@ -192,8 +194,9 @@ public class ProviderCommandTests : IDisposable
             server.BaseUrl, "new-instance", CancellationToken.None);
 
         exit.ShouldBe(1);
-        _output.ToString().ShouldContain("Provider new-instance is not ready in the running gateway");
-        _output.ToString().ShouldContain("absent from the live model registry");
+        var output = NormalizeOutput(_output.ToString());
+        output.ShouldContain("Provider new-instance is not ready in the running gateway");
+        output.ShouldContain("absent from the live model registry");
     }
 
     [Fact]
@@ -207,8 +210,9 @@ public class ProviderCommandTests : IDisposable
             server.BaseUrl, "new-instance", CancellationToken.None);
 
         exit.ShouldBe(1);
-        _output.ToString().ShouldContain("Provider new-instance is not ready in the running gateway");
-        _output.ToString().ShouldContain("No models registered for this provider");
+        var output = NormalizeOutput(_output.ToString());
+        output.ShouldContain("Provider new-instance is not ready in the running gateway");
+        output.ShouldContain("No models registered for this provider");
     }
 
     [Fact]
@@ -412,6 +416,12 @@ public class ProviderCommandTests : IDisposable
         result.Outcome.ShouldBe(StepOutcome.GoTo);
         result.GoToStep.ShouldBe("pick-model");
     }
+
+    private static string NormalizeOutput(string value)
+        => AnsiEscapeSequence().Replace(value, string.Empty);
+
+    [GeneratedRegex("\\x1B\\[[0-?]*[ -/]*[@-~]")]
+    private static partial Regex AnsiEscapeSequence();
 
     [Fact]
     public async Task OAuthFlowStep_on_failure_aborts()
