@@ -77,13 +77,18 @@ public sealed class PortalLoadRefreshTranscriptTests
 
     private async Task InitializeAsync(string? activeConversationId)
     {
-        _restClient.GetHistoryAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(new ConversationHistoryResponseDto("conv-1", 0, 0, 200, []));
-
         await _service.InitializeAsync("http://localhost:5000/hub/gateway");
 
         if (activeConversationId is not null)
-            _store.SetActiveConversation("agent-1", activeConversationId);
+        {
+            _store.SelectView("agent-1", activeConversationId, SelectionSource.RouteNavigation);
+            var interaction = new AgentInteractionService(
+                _store,
+                _hub,
+                _restClient,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentInteractionService>.Instance);
+            await interaction.SelectConversationAsync("agent-1", activeConversationId);
+        }
 
         _restClient.ClearReceivedCalls();
     }
@@ -101,7 +106,7 @@ public sealed class PortalLoadRefreshTranscriptTests
         _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new ConversationHistoryResponseDto("conv-1", 1, 0, 200, [Entry("hello", 1)]));
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         await _restClient.Received(1).GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
@@ -122,7 +127,7 @@ public sealed class PortalLoadRefreshTranscriptTests
 
         _hub.IsConnected.ShouldBeFalse("the re-dial branch must be the one under test");
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         // The REST transcript fetch happened despite the re-dial that follows it failing, and the
         // fetched row landed in the store.
@@ -144,7 +149,7 @@ public sealed class PortalLoadRefreshTranscriptTests
             .Returns<ConversationHistoryResponseDto?>(_ =>
                 throw new HttpRequestException("boom", null, HttpStatusCode.InternalServerError));
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         // Roster halves still ran.
         await _restClient.Received(1).GetAgentsAsync(Arg.Any<CancellationToken>());
@@ -181,13 +186,12 @@ public sealed class PortalLoadRefreshTranscriptTests
         var page = new ConversationHistoryResponseDto("conv-1", 2, 0, 200, [Entry("one", 1), Entry("two", 2, "assistant")]);
         _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(page);
 
-        await _service.InitializeAsync("http://localhost:5000/hub/gateway");
-        _store.SetActiveConversation("agent-1", "conv-1");
+        await InitializeAsync("conv-1");
 
         var before = _store.GetConversation("conv-1")!.Messages.Select(m => m.Content).ToList();
         before.ShouldBe(["one", "two"]);
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         _store.GetConversation("conv-1")!.Messages.Select(m => m.Content).ShouldBe(["one", "two"]);
     }
@@ -205,8 +209,7 @@ public sealed class PortalLoadRefreshTranscriptTests
         _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new ConversationHistoryResponseDto("conv-1", 2, 0, 200, [Entry("one", 1), Entry("three", 3)]));
 
-        await _service.InitializeAsync("http://localhost:5000/hub/gateway");
-        _store.SetActiveConversation("agent-1", "conv-1");
+        await InitializeAsync("conv-1");
         _store.GetConversation("conv-1")!.Messages.Select(m => m.Content).ShouldBe(["one", "three"]);
 
         // The server now returns the complete transcript.
@@ -214,7 +217,7 @@ public sealed class PortalLoadRefreshTranscriptTests
             .Returns(new ConversationHistoryResponseDto("conv-1", 3, 0, 200,
                 [Entry("one", 1), Entry("two", 2, "assistant"), Entry("three", 3)]));
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         _store.GetConversation("conv-1")!.Messages.Select(m => m.Content).ShouldBe(["one", "two", "three"]);
     }
@@ -254,7 +257,7 @@ public sealed class PortalLoadRefreshTranscriptTests
             .Returns(new ConversationHistoryResponseDto("conv-1", 1, 0, 200,
                 [ToolEntry("tool-lost-end", result, isError, 10)]));
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         var repaired = conversation.Messages.Single(message => message.ToolCallId == "tool-lost-end");
         repaired.Content.ShouldBe(result);
@@ -265,7 +268,7 @@ public sealed class PortalLoadRefreshTranscriptTests
         conversation.StreamState.ActiveToolCalls.ContainsKey("tool-lost-end").ShouldBeFalse();
         conversation.StreamState.ActiveToolCalls.ContainsKey("tool-still-running").ShouldBeTrue();
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         conversation.Messages.Count(message => message.ToolCallId == "tool-lost-end").ShouldBe(1);
         conversation.Messages.Single(message => message.ToolCallId == "tool-still-running")
@@ -292,7 +295,7 @@ public sealed class PortalLoadRefreshTranscriptTests
                 Entry("missing response", 11, "assistant", "s-1#1")
             ]));
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         conversation.Messages.Select(message => message.Content).ShouldBe(["live response", "missing response"]);
         conversation.LoadedHistoryRows.ShouldBe(2);
@@ -314,7 +317,7 @@ public sealed class PortalLoadRefreshTranscriptTests
         _restClient.GetHistoryAsync("conv-1", 20, 0, Arg.Any<CancellationToken>())
             .Returns(new ConversationHistoryResponseDto("conv-1", 25, 0, 20, newestPage));
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         conversation.LoadedHistoryRows.ShouldBe(20);
         conversation.HasMoreHistory.ShouldBeTrue();
@@ -350,8 +353,7 @@ public sealed class PortalLoadRefreshTranscriptTests
         _restClient.GetHistoryAsync("conv-1", 20, 0, Arg.Any<CancellationToken>())
             .Returns(new ConversationHistoryResponseDto("conv-1", 20, 0, 20, newestPage));
 
-        await _service.InitializeAsync("http://localhost:5000/hub/gateway");
-        _store.SetActiveConversation("agent-1", "conv-1");
+        await InitializeAsync("conv-1");
         _restClient.ClearReceivedCalls();
 
         var conversation = _store.GetConversation("conv-1")!;
@@ -361,7 +363,7 @@ public sealed class PortalLoadRefreshTranscriptTests
         _restClient.GetHistoryAsync("conv-1", 20, 0, Arg.Any<CancellationToken>())
             .Returns(new ConversationHistoryResponseDto("conv-1", 25, 0, 20, newestPage));
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         conversation.Messages.Count.ShouldBe(20);
         conversation.LoadedHistoryRows.ShouldBe(20);
@@ -376,8 +378,7 @@ public sealed class PortalLoadRefreshTranscriptTests
             .Returns(new ConversationHistoryResponseDto("conv-1", 1, 0, 20,
                 [Entry("msg-24", 24, entryId: "s-1#24")]));
 
-        await _service.InitializeAsync("http://localhost:5000/hub/gateway");
-        _store.SetActiveConversation("agent-1", "conv-1");
+        await InitializeAsync("conv-1");
         _restClient.ClearReceivedCalls();
 
         var newestPage = Enumerable.Range(5, 20)
@@ -386,7 +387,7 @@ public sealed class PortalLoadRefreshTranscriptTests
         _restClient.GetHistoryAsync("conv-1", 20, 0, Arg.Any<CancellationToken>())
             .Returns(new ConversationHistoryResponseDto("conv-1", 25, 0, 20, newestPage));
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         var conversation = _store.GetConversation("conv-1")!;
         conversation.Messages.Count.ShouldBe(20);
@@ -412,9 +413,8 @@ public sealed class PortalLoadRefreshTranscriptTests
         var page = new ConversationHistoryResponseDto("conv-1", 1, 0, 200, [compaction]);
         _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(page);
 
-        await _service.InitializeAsync("http://localhost:5000/hub/gateway");
-        _store.SetActiveConversation("agent-1", "conv-1");
-        await _service.RefreshAsync();
+        await InitializeAsync("conv-1");
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         var message = _store.GetConversation("conv-1")!.Messages.ShouldHaveSingleItem();
         message.IsCompaction.ShouldBeTrue();
@@ -437,7 +437,7 @@ public sealed class PortalLoadRefreshTranscriptTests
             .Returns<ConversationHistoryResponseDto?>(_ =>
                 throw new HttpRequestException("Not Found", null, HttpStatusCode.NotFound));
 
-        await _service.RefreshAsync();
+        await _service.RefreshAsync("agent-1", "conv-1");
 
         await _restClient.Received(1).GetAgentsAsync(Arg.Any<CancellationToken>());
     }

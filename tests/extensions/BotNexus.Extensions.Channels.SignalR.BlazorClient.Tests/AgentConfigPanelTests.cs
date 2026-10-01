@@ -69,12 +69,17 @@ public sealed class AgentConfigPanelTests : IDisposable
         _store.SeedConversations(AgentId, [new ConversationSummaryDto(
             conversationId, AgentId, "Chat", true, "Active", sessionId, 1,
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)]);
-        _store.SetActiveConversation(AgentId, conversationId);
+        _store.SelectView(AgentId, conversationId, SelectionSource.RouteNavigation);
     }
+
+    private string? StoreConversationId() =>
+        (_store as IDisplayedConversation).DisplayedConversationIdFor(AgentId);
 
     private async Task<IRenderedComponent<AgentConfigPanel>> OpenAsync()
     {
-        var cut = _ctx.Render<AgentConfigPanel>(p => p.Add(c => c.AgentId, AgentId));
+        var cut = _ctx.Render<AgentConfigPanel>(p => p
+            .Add(c => c.AgentId, AgentId)
+            .Add(c => c.ConversationId, (StoreConversationId())));
         await cut.InvokeAsync(() => cut.Instance.Open());
         return cut;
     }

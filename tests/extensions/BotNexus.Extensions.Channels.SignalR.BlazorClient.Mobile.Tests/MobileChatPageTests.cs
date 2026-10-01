@@ -43,7 +43,7 @@ public sealed class MobileChatPageTests : IDisposable
         _ctx.Services.AddSingleton(_store);
         var displayedConversation = Substitute.For<IDisplayedConversation>();
         displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
-            .Returns(call => call.Arg<string?>() is { } agentId ? _store.GetAgent(agentId)?.ActiveConversationId : null);
+            .Returns(call => call.Arg<string?>() is { } agentId ? (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agentId) : null);
         _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
@@ -104,7 +104,6 @@ public sealed class MobileChatPageTests : IDisposable
         {
             AgentId = "agent-2",
             DisplayName = "Beta",
-            ActiveConversationId = "c-1"
         };
         targetAgent.Conversations["c-1"] = new ConversationState { ConversationId = "c-1", Title = "First" };
         targetAgent.Conversations["c-2"] = new ConversationState { ConversationId = "c-2", Title = "Second" };
@@ -156,7 +155,6 @@ public sealed class MobileChatPageTests : IDisposable
         {
             AgentId = decodedAgentId,
             DisplayName = "Encoded Agent",
-            ActiveConversationId = "fallback"
         };
         targetAgent.Conversations[decodedConversationId] = new ConversationState
         {
@@ -292,7 +290,6 @@ public sealed class MobileChatPageTests : IDisposable
         {
             AgentId = "agent-1",
             DisplayName = "Alpha",
-            ActiveConversationId = "conv-1",
             IsConnected = true
         };
         agent.Conversations["conv-1"] = new ConversationState { ConversationId = "conv-1", Title = "C" };
@@ -303,7 +300,7 @@ public sealed class MobileChatPageTests : IDisposable
         _store.GetMessages("conv-1").Returns(messages.AsReadOnly());
         _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true).SetResult("<p><strong>bold</strong></p>");
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
         // Markdown caching runs in response to store changes (streaming/load), so fire one.
         _store.OnChanged += Raise.Event<Action>();
 
@@ -325,7 +322,6 @@ public sealed class MobileChatPageTests : IDisposable
         {
             AgentId = "agent-1",
             DisplayName = "Alpha",
-            ActiveConversationId = "conv-1",
             IsConnected = true
         };
         agent.Conversations["conv-1"] = new ConversationState { ConversationId = "conv-1", Title = "C" };
@@ -336,7 +332,7 @@ public sealed class MobileChatPageTests : IDisposable
         _store.GetMessages("conv-1").Returns(messages.AsReadOnly());
         _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true).SetResult("<p><strong>not rendered</strong></p>");
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
         _store.OnChanged += Raise.Event<Action>();
 
         // System messages stay on raw text rendering.
@@ -352,7 +348,7 @@ public sealed class MobileChatPageTests : IDisposable
         _ctx.JSInterop.Setup<string>("BotNexus.renderMarkdown", _ => true)
             .SetResult("<p>line one<br>line two</p>`n<p>next paragraph</p>`n");
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
         _store.OnChanged += Raise.Event<Action>();
 
         cut.WaitForAssertion(() =>
@@ -368,7 +364,7 @@ public sealed class MobileChatPageTests : IDisposable
     {
         ConfigureReadyConversation(new ChatMessage("system", "line one`n  indented", DateTimeOffset.UtcNow));
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         var content = cut.Find(".message-content.plain-text-content");
         content.TextContent.ShouldBe("line one`n  indented");
@@ -385,7 +381,7 @@ public sealed class MobileChatPageTests : IDisposable
             Buffer = "line one`n  indented"
         });
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         var content = cut.Find(".message.streaming .message-content.plain-text-content");
         content.TextContent.ShouldContain("line one`n  indented");
@@ -399,7 +395,6 @@ public sealed class MobileChatPageTests : IDisposable
         {
             AgentId = "agent-1",
             DisplayName = "Alpha",
-            ActiveConversationId = "conv-1",
             IsConnected = true
         };
         agent.Conversations["conv-1"] = new ConversationState { ConversationId = "conv-1", Title = "C" };
@@ -419,7 +414,6 @@ public sealed class MobileChatPageTests : IDisposable
         {
             AgentId = "agent-1",
             DisplayName = "Alpha",
-            ActiveConversationId = "conv-1",
             IsConnected = true
         };
         agent.Conversations["conv-1"] = new ConversationState
@@ -435,7 +429,7 @@ public sealed class MobileChatPageTests : IDisposable
         _store.GetAgent("agent-1").Returns(agent);
         _store.GetMessages("conv-1").Returns(new List<ChatMessage>().AsReadOnly());
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         Assert.NotNull(cut.Find("[data-testid='mobile-load-more']"));
     }
@@ -450,7 +444,6 @@ public sealed class MobileChatPageTests : IDisposable
         {
             AgentId = "agent-1",
             DisplayName = "Alpha",
-            ActiveConversationId = "conv-1",
             IsConnected = true
         };
         agent.Conversations["conv-1"] = new ConversationState
@@ -467,7 +460,7 @@ public sealed class MobileChatPageTests : IDisposable
         _store.GetMessages("conv-1").Returns(new List<ChatMessage>().AsReadOnly());
         _interaction.LoadMoreHistoryAsync("agent-1", "conv-1").Returns(20);
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         await cut.InvokeAsync(() => cut.Instance.OnScrolledToTop());
 

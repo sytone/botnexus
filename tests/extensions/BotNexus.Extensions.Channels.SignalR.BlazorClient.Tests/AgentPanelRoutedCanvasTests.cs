@@ -49,8 +49,8 @@ public sealed class AgentPanelRoutedCanvasTests : IDisposable
         // route-application path in Home cannot converge active onto routed - which is exactly
         // the real-world state a stale deep link produces.
         _store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
-        _store.SetActiveConversation("agent-1", "conv-active");
-        _store.SetActiveConversation("agent-2", "conv-other");
+        _store.SelectView("agent-1", "conv-active", SelectionSource.RouteNavigation);
+        _store.SelectView("agent-2", "conv-other", SelectionSource.RouteNavigation);
 
         _store.GetConversation("conv-active")!.CanvasHtml = ActiveCanvas;
         _store.GetConversation("conv-routed")!.CanvasHtml = RoutedCanvas;
@@ -98,13 +98,11 @@ public sealed class AgentPanelRoutedCanvasTests : IDisposable
     /// behaviour is preserved.
     /// </summary>
     [Fact]
-    public void Canvas_pane_falls_back_to_active_conversation_when_route_has_no_conversation()
+    public void Canvas_pane_has_no_ambient_fallback_when_route_has_no_conversation()
     {
         var cut = RenderAt("/agent/agent-1?tab=canvas", "agent-1", conversationId: null);
 
-        var srcdoc = CanvasSrcdocFor(cut, "agent-1");
-        Assert.Contains("ACTIVE-CANVAS", srcdoc);
-        Assert.DoesNotContain("ROUTED-CANVAS", srcdoc);
+        cut.FindAll("#agent-1-canvas-panel iframe").ShouldBeEmpty();
     }
 
     /// <summary>
@@ -114,13 +112,11 @@ public sealed class AgentPanelRoutedCanvasTests : IDisposable
     /// GetConversation lookup.
     /// </summary>
     [Fact]
-    public void Routed_conversation_does_not_leak_into_a_different_agents_canvas_pane()
+    public void Non_routed_agent_canvas_pane_has_no_ambient_conversation_fallback()
     {
         var cut = RenderAt("/agent/agent-1/conversation/conv-routed?tab=canvas", "agent-1", "conv-routed");
 
-        var srcdoc = CanvasSrcdocFor(cut, "agent-2");
-        Assert.Contains("OTHER-AGENT-CANVAS", srcdoc);
-        Assert.DoesNotContain("ROUTED-CANVAS", srcdoc);
+        cut.FindAll("#agent-2-canvas-panel iframe").ShouldBeEmpty();
     }
 
     /// <summary>

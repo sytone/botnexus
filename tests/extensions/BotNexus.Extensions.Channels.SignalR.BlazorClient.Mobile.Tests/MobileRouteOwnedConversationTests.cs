@@ -31,7 +31,6 @@ public sealed class MobileRouteOwnedConversationTests : IDisposable
                 DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
         _store.SelectView(AgentId, RoutedConversationId, SelectionSource.RouteNavigation);
-        _store.GetAgent(AgentId)!.ActiveConversationId = RecentConversationId;
         _store.AppendMessage(RoutedConversationId, new ChatMessage("assistant", "routed transcript", DateTimeOffset.UtcNow));
         _store.AppendMessage(RecentConversationId, new ChatMessage("assistant", "recent transcript", DateTimeOffset.UtcNow));
 

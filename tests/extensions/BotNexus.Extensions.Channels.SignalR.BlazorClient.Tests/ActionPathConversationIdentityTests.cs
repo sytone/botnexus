@@ -56,7 +56,7 @@ public sealed class ActionPathConversationIdentityTests
         };
 
         // Ambient state points at the MOST RECENT conversation - the pre-#3211 fallback target.
-        agent.ActiveConversationId = MostRecentConversationId;
+        _store.SelectView(agent.AgentId, MostRecentConversationId ?? string.Empty, SelectionSource.RouteNavigation);
     }
 
     private ConversationState DeepLinked => _store.GetAgent(AgentId)!.Conversations[DeepLinkedConversationId];

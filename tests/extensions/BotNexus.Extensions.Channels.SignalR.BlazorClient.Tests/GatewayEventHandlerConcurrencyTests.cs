@@ -31,7 +31,6 @@ public sealed class GatewayEventHandlerConcurrencyTests
             AgentId = "agent-1",
             DisplayName = "Agent 1",
             IsConnected = true,
-            ActiveConversationId = "conv-1"
         });
         var agent = _store.GetAgent("agent-1")!;
         agent.Conversations["conv-1"] = new ConversationState
@@ -186,8 +185,7 @@ public sealed class GatewayEventHandlerConcurrencyTests
                 AgentId = id,
                 DisplayName = id,
                 IsConnected = true,
-                IsStreaming = true,
-                ActiveConversationId = $"conv-{a}"
+                IsStreaming = true
             });
             _store.GetAgent(id)!.Conversations[$"conv-{a}"] = new ConversationState
             {
