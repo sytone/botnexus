@@ -1,10 +1,13 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Conversations;
+using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -171,6 +174,90 @@ public sealed class DefaultConversationResetServiceTests
         fixture.Conversations.Verify(c => c.SaveAsync(conversation, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task Reset_WithRealStoresAndPublisher_PublishesCommittedActiveSessionTransition()
+    {
+        var conversations = new InMemoryConversationStore();
+        var sessions = new InMemorySessionStore();
+        var conversation = new Conversation
+        {
+            ConversationId = TestConversation,
+            AgentId = TestAgent,
+            ActiveSessionId = TestSession,
+            ChannelBindings =
+            [
+                new ChannelBinding
+                {
+                    BindingId = BindingId.Create(),
+                    ChannelType = ChannelKey.From("signalr"),
+                    ChannelAddress = ChannelAddress.From("connection-1")
+                }
+            ]
+        };
+        var session = BuildSession(SessionType.UserAgent);
+        await conversations.CreateAsync(conversation);
+        await sessions.SaveAsync(session);
+        var sink = new CapturingEventSink();
+        await using var publisher = new ConversationEventPublisher([sink]);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.StopAsync(TestAgent, TestSession, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var service = new DefaultConversationResetService(
+            conversations,
+            sessions,
+            supervisor.Object,
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
+            NullLogger<DefaultConversationResetService>.Instance,
+            eventPublisher: publisher);
+
+        var result = await service.ResetActiveSessionAsync(TestConversation);
+        await publisher.WaitForDrainAsync();
+
+        result.Outcome.ShouldBe(ConversationResetOutcome.Reset);
+        var committed = await conversations.GetAsync(TestConversation);
+        committed.ShouldNotBeNull();
+        committed.ActiveSessionId.ShouldBeNull();
+        var transition = sink.Received.ShouldHaveSingleItem().ShouldBeOfType<ConversationActiveSessionChangedEvent>();
+        transition.AgentId.ShouldBe(TestAgent);
+        transition.ConversationId.ShouldBe(TestConversation);
+        transition.SessionId.ShouldBe(TestSession);
+        transition.PreviousSessionId.ShouldBe(TestSession);
+        transition.ActiveSessionId.ShouldBeNull();
+        transition.Bindings.ShouldHaveSingleItem().ChannelType.ShouldBe(ChannelKey.From("signalr"));
+    }
+
+    [Fact]
+    public async Task Reset_WhenConversationSaveFails_PublishesNoActiveSessionTransition()
+    {
+        var fixture = new Fixture();
+        var (conversation, _) = fixture.SetupInteractiveConversationWithSession();
+        fixture.Conversations.Setup(c => c.SaveAsync(conversation, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("conversation store unavailable"));
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            fixture.Service.ResetActiveSessionAsync(TestConversation));
+
+        fixture.EventPublisher.Verify(
+            p => p.PublishAsync(It.IsAny<ConversationEvent>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Reset_WhenPublisherThrows_KeepsCommittedReset()
+    {
+        var fixture = new Fixture();
+        var (conversation, _) = fixture.SetupInteractiveConversationWithSession();
+        fixture.EventPublisher.Setup(
+                p => p.PublishAsync(It.IsAny<ConversationEvent>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("publisher unavailable"));
+
+        var result = await fixture.Service.ResetActiveSessionAsync(TestConversation);
+
+        result.Outcome.ShouldBe(ConversationResetOutcome.Reset);
+        conversation.ActiveSessionId.ShouldBeNull();
+        fixture.Conversations.Verify(c => c.SaveAsync(conversation, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ─── Best-effort error handling ──────────────────────────────────────────
 
     [Fact]
@@ -306,6 +393,7 @@ public sealed class DefaultConversationResetServiceTests
         public Mock<IAgentSupervisor> Supervisor { get; } = new(MockBehavior.Strict);
         public Mock<ISessionEndMemoryFlusher> Flusher { get; } = new(MockBehavior.Strict);
         public Mock<IAskUserResponseRegistry> AskUserRegistry { get; } = new(MockBehavior.Strict);
+        public Mock<IConversationEventPublisher> EventPublisher { get; } = new(MockBehavior.Strict);
         public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
 
         public bool IncludeFlusher { get; init; } = true;
@@ -331,6 +419,8 @@ public sealed class DefaultConversationResetServiceTests
             Flusher.Setup(f => f.FlushAsync(It.IsAny<AgentId>(), It.IsAny<Session>(), It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
             AskUserRegistry.Setup(a => a.CancelAllForConversation(It.IsAny<ConversationId>()));
+            EventPublisher.Setup(p => p.PublishAsync(It.IsAny<ConversationEvent>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
         }
 
         public IConversationResetService Service => new DefaultConversationResetService(
@@ -339,6 +429,7 @@ public sealed class DefaultConversationResetServiceTests
             Supervisor.Object,
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions { MemoryFlush = new MemoryFlushOptions { Enabled = true } }),
             NullLogger<DefaultConversationResetService>.Instance,
+            EventPublisher.Object,
             IncludeFlusher ? Flusher.Object : null,
             IncludeAskUserRegistry ? AskUserRegistry.Object : null,
             TimeProvider);
@@ -362,6 +453,19 @@ public sealed class DefaultConversationResetServiceTests
             SetupConversation(conversation);
             SetupSession(session);
             return (conversation, session);
+        }
+    }
+
+    private sealed class CapturingEventSink : IConversationEventSink
+    {
+        public List<ConversationEvent> Received { get; } = [];
+
+        public Task OnConversationEventAsync(
+            ConversationEvent conversationEvent,
+            CancellationToken cancellationToken = default)
+        {
+            Received.Add(conversationEvent);
+            return Task.CompletedTask;
         }
     }
 

@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.Text.Json;
+using BotNexus.Agent.Providers.Copilot.Discovery;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Commands.Provider;
 using Shouldly;
@@ -84,6 +86,83 @@ public class CopilotProviderSubcommandTests
     public void FormatMultiplier_preserves_provider_presence(double? value, string expected)
     {
         CopilotProviderSubcommand.FormatMultiplier(value).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void FormatInvocation_ReportsUnsupportedAdvertisedContracts()
+    {
+        var model = new CopilotModelInfo
+        {
+            Id = "future-model",
+            SupportedEndpoints = ["/v1/future-contract"]
+        };
+
+        CopilotProviderSubcommand.FormatInvocation(model)
+            .ShouldBe("[red]unsupported: /v1/future-contract[/]");
+    }
+
+    [Fact]
+    public void ResolveEffectiveModel_UsesDiscoveredModelAbsentFromBuiltIns()
+    {
+        var response = new CopilotModelsResponse
+        {
+            Data =
+            [
+                new CopilotModelInfo
+                {
+                    Id = "future-model-from-discovery",
+                    Name = "Future Model",
+                    Vendor = "OpenAI",
+                    SupportedEndpoints = ["/responses"],
+                    Capabilities = new CopilotModelCapabilities
+                    {
+                        Family = "gpt",
+                        Supports = new CopilotModelSupports { Vision = true },
+                        Limits = new Dictionary<string, JsonElement>
+                        {
+                            ["max_prompt_tokens"] = JsonDocument.Parse("922000").RootElement.Clone(),
+                            ["max_output_tokens"] = JsonDocument.Parse("128000").RootElement.Clone()
+                        }
+                    }
+                }
+            ]
+        };
+
+        var model = CopilotProviderSubcommand.ResolveEffectiveModel(
+            response,
+            "https://api.enterprise.githubcopilot.com",
+            "future-model-from-discovery");
+
+        model.ShouldNotBeNull();
+        model.Id.ShouldBe("future-model-from-discovery");
+        model.Api.ShouldBe("github-copilot-responses");
+        model.BaseUrl.ShouldBe("https://api.enterprise.githubcopilot.com");
+        model.ContextWindow.ShouldBe(922000);
+        model.MaxTokens.ShouldBe(128000);
+        model.Input.ShouldBe(["text", "image"]);
+    }
+
+    [Fact]
+    public void ResolveEffectiveModel_RejectsUnsupportedAdvertisedContract()
+    {
+        var response = new CopilotModelsResponse
+        {
+            Data =
+            [
+                new CopilotModelInfo
+                {
+                    Id = "gpt-6-future",
+                    Vendor = "OpenAI",
+                    SupportedEndpoints = ["/v1/future-contract"],
+                    Capabilities = new CopilotModelCapabilities { Family = "gpt" }
+                }
+            ]
+        };
+
+        CopilotProviderSubcommand.ResolveEffectiveModel(
+            response,
+            "https://api.enterprise.githubcopilot.com",
+            "gpt-6-future").ShouldBeNull();
     }
 
     [Fact]

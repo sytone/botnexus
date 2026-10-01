@@ -83,9 +83,10 @@ public sealed class SubAgentOptions
 
     /// <summary>
     /// Gets or sets the hard upper bound, in seconds, for an agent-supplied <c>timeoutSeconds</c>
-    /// on a spawn request. Today only the timeout is wired to a real cancellation budget, so an
-    /// unclamped <c>timeoutSeconds</c> (e.g. hundreds of millions) would let a background sub-agent
-    /// run effectively forever. A caller may request a shorter timeout, but anything above this
+    /// on a spawn request. Timeout and turn limits are both enforced cancellation budgets; this
+    /// property bounds the wall-clock dimension specifically. An unclamped <c>timeoutSeconds</c>
+    /// (e.g. hundreds of millions) would let a background sub-agent run effectively forever.
+    /// A caller may request a shorter timeout, but anything above this
     /// maximum is clamped down to it. A value of zero or less disables the ceiling.
     /// </summary>
     [Display(

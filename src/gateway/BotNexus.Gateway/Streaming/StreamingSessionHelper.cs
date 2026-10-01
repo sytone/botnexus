@@ -424,8 +424,15 @@ public static class StreamingSessionHelper
             }
         }
 
-        // Remove crash sentinel on clean completion (#363).
-        session.RemoveCrashSentinels();
+        // A failed terminal completion is recoverable work, not a clean lease release. Keep the
+        // sentinel through the authoritative save so the live recovery subscriber (or startup scan
+        // after a crash) has the same durable marker to accept-before-consume (#4406).
+        var terminalFailure = string.Equals(
+            runCompletion?.Status,
+            "Failed",
+            StringComparison.OrdinalIgnoreCase);
+        if (!terminalFailure)
+            session.RemoveCrashSentinels();
 
         // #1518: the final write is the authoritative post-run finalizer save. When a fence was
         // supplied, honour it so a delete/reset that landed mid-stream cannot be undone here. On
@@ -441,7 +448,9 @@ public static class StreamingSessionHelper
                 new SessionLifecycleEvent(
                     session.SessionId.Value,
                     session.AgentId.Value,
-                    SessionLifecycleEventType.Closed,
+                    terminalFailure
+                        ? SessionLifecycleEventType.TerminalFailure
+                        : SessionLifecycleEventType.Closed,
                     session),
                 cancellationToken);
         }

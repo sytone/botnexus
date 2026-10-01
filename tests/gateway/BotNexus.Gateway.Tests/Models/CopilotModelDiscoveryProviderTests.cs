@@ -12,6 +12,9 @@ public sealed class CopilotModelDiscoveryProviderTests
     [InlineData("gpt-5", "gpt", "OpenAI", "github-copilot-responses")]
     [InlineData("gpt-5.2", "gpt", "OpenAI", "github-copilot-responses")]
     [InlineData("gpt-5.4-mini", "gpt", "OpenAI", "github-copilot-responses")]
+    [InlineData("gpt-6-astra", "gpt", "OpenAI", "github-copilot-responses")]
+    [InlineData("gpt-6-luna", "gpt", "OpenAI", "github-copilot-responses")]
+    [InlineData("gpt-6-sol", "gpt", "OpenAI", "github-copilot-responses")]
     [InlineData("gpt-4.1", "gpt", "OpenAI", "github-copilot-completions")]
     [InlineData("gpt-4o", "gpt", "OpenAI", "github-copilot-completions")]
     [InlineData("gemini-2.5-pro", "gemini", "Google", "github-copilot-completions")]
@@ -58,6 +61,28 @@ public sealed class CopilotModelDiscoveryProviderTests
     {
         var result = CopilotModelDiscoveryProvider.SupportsExtraHighThinking(modelId, family);
         result.ShouldBe(expected);
+    }
+
+    [Fact]
+    public void ResolveApiFormat_UnsupportedAdvertisedEndpoint_ReturnsNull()
+    {
+        CopilotModelDiscoveryProvider.ResolveApiFormat(
+            "gpt-6-future",
+            "gpt",
+            "OpenAI",
+            ["/v1/future-contract"]).ShouldBeNull();
+    }
+
+    [Fact]
+    public void MapToLlmModel_UnsupportedAdvertisedEndpoint_ReturnsNull()
+    {
+        CopilotModelDiscoveryProvider.MapToLlmModel(new CopilotModelInfo
+        {
+            Id = "gpt-6-future",
+            Vendor = "OpenAI",
+            SupportedEndpoints = ["/v1/future-contract"],
+            Capabilities = new CopilotModelCapabilities { Family = "gpt" }
+        }).ShouldBeNull();
     }
 
     [Fact]

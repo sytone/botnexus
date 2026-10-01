@@ -113,7 +113,7 @@ public sealed class CopilotResponsesProvider : IApiProvider
             Metadata = options?.Metadata
         };
         if (reasoning is not null && model.Reasoning)
-            responsesOptions.ReasoningEffort = MapThinkingLevel(reasoning.Value);
+            responsesOptions.ReasoningEffort = MapThinkingLevel(model, reasoning.Value);
         return Stream(model, context, responsesOptions);
     }
 
@@ -387,14 +387,21 @@ public sealed class CopilotResponsesProvider : IApiProvider
         OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current),
         SecretRedactor: secretRedactor);
 
-    private static string MapThinkingLevel(ThinkingLevel level) => level switch
+    internal static string MapThinkingLevel(LlmModel model, ThinkingLevel level)
     {
-        ThinkingLevel.Minimal => "minimal",
-        ThinkingLevel.Low => "low",
-        ThinkingLevel.Medium => "medium",
-        ThinkingLevel.High => "high",
-        ThinkingLevel.ExtraHigh => "xhigh",
-        ThinkingLevel.Max => "xhigh",
-        _ => "medium"
-    };
+        if (level == ThinkingLevel.Minimal &&
+            ModelFamilyVersion.IsAtLeast(model.Id, "gpt", major: 6))
+            return "none";
+
+        return level switch
+        {
+            ThinkingLevel.Minimal => "minimal",
+            ThinkingLevel.Low => "low",
+            ThinkingLevel.Medium => "medium",
+            ThinkingLevel.High => "high",
+            ThinkingLevel.ExtraHigh => "xhigh",
+            ThinkingLevel.Max => "max",
+            _ => "medium"
+        };
+    }
 }

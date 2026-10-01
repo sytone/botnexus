@@ -110,6 +110,13 @@ public sealed class BuiltInModels
         Register(modelRegistry, providerInstance, "gpt-5.6-sol", "GPT-5.6 Sol", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
         Register(modelRegistry, providerInstance, "gpt-5.6-terra", "GPT-5.6 Terra", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
 
+        // GPT-6 fallback metadata is sourced from the provider discovery contract and the official
+        // model pages: 1,050,000 total context consists of at most 922,000 input tokens plus
+        // 128,000 output tokens. LlmModel.ContextWindow represents the input budget, not their sum.
+        Register(modelRegistry, providerInstance, "gpt-6-astra", "GPT-6 Astra", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-6-luna", "GPT-6 Luna", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+        Register(modelRegistry, providerInstance, "gpt-6-sol", "GPT-6 Sol", "github-copilot-responses", copilotBaseUrl, true, ["text", "image"], 922000, 128000, supportsExtraHighThinking: true, headers: CopilotHeaders);
+
         Register(modelRegistry, providerInstance, "grok-code-fast-1", "Grok Code Fast 1", "github-copilot-completions", copilotBaseUrl, true, ["text"], 128000, 64000, headers: CopilotHeaders, compat: CopilotCompletionsCompat);
     }
 

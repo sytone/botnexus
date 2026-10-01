@@ -780,6 +780,11 @@ disagree. **Extra-high** marks a model that accepts the `xhigh` thinking level.
 | `gpt-5.6-luna` | GPT-5.6 Luna | **Yes** | **Yes** | 922K | 128K | text, image |
 | `gpt-5.6-sol` | GPT-5.6 Sol | **Yes** | **Yes** | 922K | 128K | text, image |
 | `gpt-5.6-terra` | GPT-5.6 Terra | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-6-astra` | GPT-6 Astra | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-6-luna` | GPT-6 Luna | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-6-sol` | GPT-6 Sol | **Yes** | **Yes** | 922K | 128K | text, image |
+
+The GPT-6 model pages describe a 1,050,000-token total context composed of up to 922,000 input tokens and 128,000 output tokens. The registry's **Context** column records the maximum input budget rather than adding input and output together.
 
 ##### Gemini Models (OpenAI Completions API)
 | Model ID | Name | Reasoning | Extra-high | Context | Max Output | Input Types |

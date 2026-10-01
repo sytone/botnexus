@@ -140,12 +140,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// cannot spoof, reusing the #2300 provenance vocabulary at message level rather than a literal
     /// stamped into the text. Content is still control-character stripped so it cannot fabricate
     /// extra transcript lines.</description></item>
-    /// <item><description><b>Mid-turn (degraded, pending #2438).</b> When the bound conversation
-    /// already has an active turn the submission is REJECTED here with an explicit "agent is busy"
-    /// reason, before it reaches the transport. It is not queued and not silently dropped: an
-    /// inbound message arriving mid-run is currently lost server-side (#2388) and the follow-up
-    /// queue that would defer it (#2438) does not exist yet. When #2438 lands this path should
-    /// enqueue instead of refusing.</description></item>
+    /// <item><description><b>Authoritative run state.</b> Client stream state is a projection and may
+    /// be stale. It never rejects a submission locally. The dedicated hub verb submits with the
+    /// existing automatic delivery intent so the server-side inbound orchestrator decides whether
+    /// the turn can start, queue, steer, or reject against authoritative state.</description></item>
     /// <item><description><b>Bounds.</b> Prompt and instruction length are capped by an arbitrary
     /// guardrail (see <see cref="CanvasSubmitGuards.MaxPromptLength"/>). There is deliberately no
     /// rate limiting, in-flight tracking or content inspection.</description></item>
@@ -179,9 +177,6 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 return CanvasSubmitResult.Rejected(
                     $"Instructions must be at most {CanvasSubmitGuards.MaxInstructionsLength} characters.");
         }
-
-        if (conv.StreamState.IsTurnActive)
-            return CanvasSubmitResult.Rejected("Agent is already running; try again when the current turn finishes.");
 
         var now = DateTimeOffset.UtcNow;
         var content = CanvasSubmitGuards.ComposeContent(safePrompt, safeInstructions);
