@@ -228,6 +228,96 @@ public sealed class ProviderUsagePanelTests : IDisposable
     }
 
     [Fact]
+    public async Task Opening_empty_provider_state_fetches_account_quota_once_and_renders_unknown_usage_honestly()
+    {
+        _handler.Enqueue(60, """{"windowMinutes":60,"isTruncated":false,"providers":[]}""");
+        _handler.Enqueue(15, """{"windowMinutes":15,"isTruncated":false,"providers":[]}""");
+        _handler.QuotaObservedAtUtc = DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        var cut = _ctx.Render<ProviderUsagePanel>();
+
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync());
+
+        Assert.Contains("No provider calls observed yet", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("Copilot account quota", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("250 of 500 premium interactions remaining", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("Usage not reported by Copilot", cut.Markup, StringComparison.Ordinal);
+        Assert.Equal(1, _handler.AccountQuotaRequests);
+
+        var selectWindow = typeof(ProviderUsagePanel).GetMethod("SelectWindow", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(selectWindow);
+        await cut.InvokeAsync(() => (Task)selectWindow.Invoke(cut.Instance, [new ChangeEventArgs { Value = "15" }])!);
+
+        Assert.Equal(1, _handler.AccountQuotaRequests);
+    }
+
+    [Fact]
+    public async Task Copilot_account_quota_is_rendered_alongside_existing_provider_usage()
+    {
+        _handler.Enqueue(60, UsageJson(60, requests: 4));
+        var cut = _ctx.Render<ProviderUsagePanel>();
+
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync());
+
+        Assert.Contains("Copilot account quota", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("250 of 500 premium interactions remaining", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("4 wire attempts", cut.Find(".usage-totals").TextContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("No provider calls observed yet", cut.Markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Missing_copilot_quota_is_shown_as_unknown_not_zero()
+    {
+        _handler.QuotaNoData = true;
+        _handler.Enqueue(60, UsageJson(60, requests: 1));
+        var cut = _ctx.Render<ProviderUsagePanel>();
+
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync());
+
+        Assert.Contains("No premium-interaction quota data is available", cut.Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("0 of 0", cut.Markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Unlimited_copilot_quota_is_shown_as_unlimited()
+    {
+        _handler.QuotaUnlimited = true;
+        _handler.Enqueue(60, UsageJson(60, requests: 1));
+        var cut = _ctx.Render<ProviderUsagePanel>();
+
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync());
+
+        Assert.Contains("Premium interactions: unlimited", cut.Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("250 of 500", cut.Markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Stale_copilot_quota_is_not_presented_as_current()
+    {
+        _handler.QuotaObservedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-11).ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        _handler.Enqueue(60, UsageJson(60, requests: 4));
+        var cut = _ctx.Render<ProviderUsagePanel>();
+
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync());
+
+        Assert.Contains("Premium-interaction quota data is stale", cut.Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("250 of 500 premium interactions remaining", cut.Markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Copilot_quota_failure_is_explicit_and_does_not_hide_provider_usage()
+    {
+        _handler.QuotaFailure = true;
+        _handler.Enqueue(60, UsageJson(60, requests: 4));
+        var cut = _ctx.Render<ProviderUsagePanel>();
+
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync());
+
+        Assert.Contains("Copilot account quota is currently unavailable", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("4 wire attempts", cut.Find(".usage-totals").TextContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("Could not load usage", cut.Markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Truncated_window_displays_explicit_incomplete_message()
     {
         _handler.Enqueue(60, UsageJson(60, requests: 20_000, isTruncated: true));
@@ -298,6 +388,11 @@ public sealed class ProviderUsagePanelTests : IDisposable
         private readonly Dictionary<int, Queue<Response>> _responses = [];
 
         public List<int> Requests { get; } = [];
+        public int AccountQuotaRequests { get; private set; }
+        public bool QuotaFailure { get; set; }
+        public bool QuotaNoData { get; set; }
+        public bool QuotaUnlimited { get; set; }
+        public string QuotaObservedAtUtc { get; set; } = DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
 
         public Response Enqueue(
             int windowMinutes,
@@ -321,6 +416,23 @@ public sealed class ProviderUsagePanelTests : IDisposable
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri?.AbsolutePath == "/api/copilot/quota")
+            {
+                AccountQuotaRequests++;
+                if (QuotaFailure)
+                    return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                    {
+                        Content = new StringContent("quota unavailable", Encoding.UTF8, "text/plain")
+                    };
+                if (QuotaNoData)
+                    return new HttpResponseMessage(HttpStatusCode.NoContent);
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"{{\"quotaId\":\"premium_interactions\",\"entitlement\":{(QuotaUnlimited ? 0 : 500)},\"remaining\":{(QuotaUnlimited ? 0 : 250)},\"percentRemaining\":50,\"isUnlimited\":{QuotaUnlimited.ToString().ToLowerInvariant()},\"resetDate\":\"2099-01-01\",\"observedAtUtc\":\"{QuotaObservedAtUtc}\"}}", Encoding.UTF8, "application/json")
+                };
+            }
+
             var query = System.Web.HttpUtility.ParseQueryString(request.RequestUri?.Query ?? string.Empty);
             var windowMinutes = int.Parse(query["windowMinutes"]!, System.Globalization.CultureInfo.InvariantCulture);
             Response response;

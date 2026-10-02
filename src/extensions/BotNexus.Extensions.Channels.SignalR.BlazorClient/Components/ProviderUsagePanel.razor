@@ -31,121 +31,160 @@
             {
                 <p class="usage-empty t-body">@_error</p>
             }
-            else if (_current is null)
-            {
-                <p class="usage-empty t-body">
-                    No provider calls observed yet. Send a message and the limits will appear here.
-                </p>
-            }
             else
             {
-                <section class="usage-section">
-                    <div class="usage-section-head">
-                        <span class="t-label">Rate limits</span>
-                        <span class="t-caption usage-dim">@Ago(_current.ObservedAtUtc)</span>
-                    </div>
+                @if (_current is null)
+                {
+                    <p class="usage-empty t-body">
+                        No provider calls observed yet. Send a message and the limits will appear here.
+                    </p>
+                }
+                else
+                {
+                    <section class="usage-section">
+                        <div class="usage-section-head">
+                            <span class="t-label">Rate limits</span>
+                            <span class="t-caption usage-dim">@Ago(_current.ObservedAtUtc)</span>
+                        </div>
 
-                    @if (_current.Limits.Count == 0)
-                    {
-                        <p class="usage-empty t-caption">This provider reports no rate-limit headers.</p>
-                    }
-                    else
-                    {
-                        @foreach (var d in _current.Limits)
+                        @if (_current.Limits.Count == 0)
                         {
-                            <div class="usage-row">
-                                <span class="usage-row-label t-body">@d.Label</span>
-                                <span class="usage-row-value t-caption usage-dim">
-                                    @Compact(d.Remaining) left of @Compact(d.Limit)
-                                </span>
-                                <span class="usage-row-reset t-caption usage-dim">@ResetIn(d.ResetUtc)</span>
-                                <span class="usage-row-pct t-caption">@d.PercentUsed.ToString("0.#", CultureInfo.InvariantCulture)%</span>
-                            </div>
-                            <div class="usage-bar" role="progressbar"
-                                 aria-valuenow="@((int)Math.Round(d.PercentUsed))" aria-valuemin="0" aria-valuemax="100"
-                                 aria-label="@d.Label used">
-                                <span class="usage-bar-fill @Severity(d.PercentUsed)"
-                                      style="width:@Width(d.PercentUsed)"></span>
-                            </div>
-                        }
-                    }
-                </section>
-
-                <section class="usage-section">
-                    <div class="usage-section-head">
-                        <span class="t-label">Burn</span>
-                        <select class="usage-select t-caption" data-testid="usage-window-select"
-                                value="@_windowMinutes" @onchange="SelectWindow" aria-label="Window">
-                            <option value="15">last 15 min</option>
-                            <option value="60">last hour</option>
-                            <option value="360">last 6 hours</option>
-                            <option value="1440">last 24 hours</option>
-                        </select>
-                    </div>
-
-                    <div class="usage-totals t-body">
-                        <span><strong>@_current.Burn.Requests</strong> @Plural(_current.Burn.Requests, "wire attempt")</span>
-                        @if (_current.Burn.TotalTokens is { } totalTokens)
-                        {
-                            <span><strong>@Compact(totalTokens)</strong> total tokens</span>
+                            <p class="usage-empty t-caption">This provider reports no rate-limit headers.</p>
                         }
                         else
                         {
-                            <span><strong>@TokenValue(_current.Burn.InputTokens)</strong> in</span>
-                            <span><strong>@TokenValue(_current.Burn.OutputTokens)</strong> out</span>
+                            @foreach (var d in _current.Limits)
+                            {
+                                <div class="usage-row">
+                                    <span class="usage-row-label t-body">@d.Label</span>
+                                    <span class="usage-row-value t-caption usage-dim">
+                                        @Compact(d.Remaining) left of @Compact(d.Limit)
+                                    </span>
+                                    <span class="usage-row-reset t-caption usage-dim">@ResetIn(d.ResetUtc)</span>
+                                    <span class="usage-row-pct t-caption">@d.PercentUsed.ToString("0.#", CultureInfo.InvariantCulture)%</span>
+                                </div>
+                                <div class="usage-bar" role="progressbar"
+                                     aria-valuenow="@((int)Math.Round(d.PercentUsed))" aria-valuemin="0" aria-valuemax="100"
+                                     aria-label="@d.Label used">
+                                    <span class="usage-bar-fill @Severity(d.PercentUsed)"
+                                          style="width:@Width(d.PercentUsed)"></span>
+                                </div>
+                            }
                         }
-                        @if (_current.Burn.Failures > 0)
+                    </section>
+
+                    <section class="usage-section">
+                        <div class="usage-section-head">
+                            <span class="t-label">Burn</span>
+                            <select class="usage-select t-caption" data-testid="usage-window-select"
+                                    value="@_windowMinutes" @onchange="SelectWindow" aria-label="Window">
+                                <option value="15">last 15 min</option>
+                                <option value="60">last hour</option>
+                                <option value="360">last 6 hours</option>
+                                <option value="1440">last 24 hours</option>
+                            </select>
+                        </div>
+
+                        <div class="usage-totals t-body">
+                            <span><strong>@_current.Burn.Requests</strong> @Plural(_current.Burn.Requests, "wire attempt")</span>
+                            @if (_current.Burn.TotalTokens is { } totalTokens)
+                            {
+                                <span><strong>@Compact(totalTokens)</strong> total tokens</span>
+                            }
+                            else
+                            {
+                                <span><strong>@TokenValue(_current.Burn.InputTokens)</strong> in</span>
+                                <span><strong>@TokenValue(_current.Burn.OutputTokens)</strong> out</span>
+                            }
+                            @if (_current.Burn.Failures > 0)
+                            {
+                                <span class="usage-fail"><strong>@_current.Burn.Failures</strong> failed responses</span>
+                            }
+                        </div>
+
+                        @if (_isTruncated)
                         {
-                            <span class="usage-fail"><strong>@_current.Burn.Failures</strong> failed responses</span>
+                            <p class="usage-empty t-caption" data-testid="usage-truncated">
+                                This requested window is incomplete because older samples were removed by bounded global retention.
+                            </p>
                         }
-                    </div>
 
-                    @if (_isTruncated)
-                    {
-                        <p class="usage-empty t-caption" data-testid="usage-truncated">
-                            This requested window is incomplete because older samples were removed by bounded global retention.
+                        @if (_current.Burn.Models.Count == 0)
+                        {
+                            <p class="usage-empty t-caption">Nothing in this window.</p>
+                        }
+                        else
+                        {
+                            <div class="usage-models">
+                                @foreach (var m in _current.Burn.Models)
+                                {
+                                    <div class="usage-model-row">
+                                        <span class="usage-model-name @(m.ModelKnown ? "t-mono" : "")">@m.ModelDisplayName</span>
+                                        <span class="t-caption usage-dim">@m.Requests @Plural(m.Requests, "attempt")</span>
+                                        @if (m.Failures > 0)
+                                        {
+                                            <span class="t-caption usage-fail">@m.Failures failed</span>
+                                        }
+                                        @if (m.TotalTokens is { } modelTotal)
+                                        {
+                                            <span class="t-caption usage-dim">@Compact(modelTotal) total</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="t-caption usage-dim">@TokenValue(m.InputTokens) in / @TokenValue(m.OutputTokens) out</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        @* Stated plainly rather than buried. A number shown without its provenance
+                           invites being trusted for billing, which this is not. *@
+                        <p class="usage-note t-caption">
+                            Counts are HTTP response wire attempts; transport exceptions have no response
+                            and are not observed here. Unknown model identity and unavailable token splits
+                            are shown explicitly. Token figures are estimates derived from available
+                            provider rate-limit counters. Not a billing source.
                         </p>
-                    }
+                    </section>
+                }
+            }
 
-                    @if (_current.Burn.Models.Count == 0)
+            <section class="usage-section" data-testid="copilot-account-quota">
+                <div class="usage-section-head">
+                    <span class="t-label">Copilot account quota</span>
+                    @if (_copilotQuota is not null)
                     {
-                        <p class="usage-empty t-caption">Nothing in this window.</p>
+                        <span class="t-caption usage-dim">@QuotaObserved(_copilotQuota.ObservedAtUtc)</span>
+                    }
+                </div>
+                @if (_copilotQuota is null)
+                {
+                    <p class="usage-empty t-caption">@(_copilotQuotaStatus ?? "Premium-interaction quota status is unknown.")</p>
+                }
+                else if (QuotaIsStale(_copilotQuota.ObservedAtUtc))
+                {
+                    <p class="usage-empty t-caption">Premium-interaction quota data is stale; refresh the panel to check again.</p>
+                }
+                else
+                {
+                    @if (_copilotQuota.IsUnlimited)
+                    {
+                        <p class="usage-empty t-body">Premium interactions: unlimited</p>
                     }
                     else
                     {
-                        <div class="usage-models">
-                            @foreach (var m in _current.Burn.Models)
-                            {
-                                <div class="usage-model-row">
-                                    <span class="usage-model-name @(m.ModelKnown ? "t-mono" : "")">@m.ModelDisplayName</span>
-                                    <span class="t-caption usage-dim">@m.Requests @Plural(m.Requests, "attempt")</span>
-                                    @if (m.Failures > 0)
-                                    {
-                                        <span class="t-caption usage-fail">@m.Failures failed</span>
-                                    }
-                                    @if (m.TotalTokens is { } modelTotal)
-                                    {
-                                        <span class="t-caption usage-dim">@Compact(modelTotal) total</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="t-caption usage-dim">@TokenValue(m.InputTokens) in / @TokenValue(m.OutputTokens) out</span>
-                                    }
-                                </div>
-                            }
-                        </div>
+                        <p class="usage-empty t-body">
+                            @_copilotQuota.Remaining of @_copilotQuota.Entitlement premium interactions remaining
+                        </p>
+                        @if (_copilotQuota.ResetDate is not null)
+                        {
+                            <p class="usage-empty t-caption">Quota resets @_copilotQuota.ResetDate</p>
+                        }
                     }
-
-                    @* Stated plainly rather than buried. A number shown without its provenance
-                       invites being trusted for billing, which this is not. *@
-                    <p class="usage-note t-caption">
-                        Counts are HTTP response wire attempts; transport exceptions have no response
-                        and are not observed here. Unknown model identity and unavailable token splits
-                        are shown explicitly. Token figures are estimates derived from available
-                        provider rate-limit counters. Not a billing source.
-                    </p>
-                </section>
-            }
+                    <p class="usage-empty t-caption">Usage not reported by Copilot; remaining quota is not a local usage estimate.</p>
+                }
+            </section>
         </div>
     </div>
 }
@@ -156,6 +195,8 @@
     private string? _selectedProvider;
     private int _windowMinutes = 60;
     private bool _isTruncated;
+    private CopilotQuotaResponse? _copilotQuota;
+    private string? _copilotQuotaStatus;
     private List<ProviderUsage> _providers = [];
     private ProviderUsage? _current;
     private Timer? _poll;
@@ -177,10 +218,14 @@
         _show = true;
         _activateFocus = true;
         StateHasChanged();
+        _copilotQuota = null;
+        _copilotQuotaStatus = null;
+        var quotaFetch = FetchCopilotQuotaAsync(request.Generation, request.CancellationToken);
         await RefreshAsync(request.Generation, _windowMinutes, request.CancellationToken);
         if (!Owns(request.Generation, request.CancellationToken)) return;
 
         StartPolling(request.Generation, request.CancellationToken);
+        await quotaFetch;
     }
 
     private async Task Close()
@@ -226,6 +271,39 @@
     private async Task HandleKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
     {
         if (e.Key == "Escape") await Close();
+    }
+
+    private async Task FetchCopilotQuotaAsync(long generation, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await Http.GetAsync("api/copilot/quota", cancellationToken);
+            if (!Owns(generation, cancellationToken)) return;
+            if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+            {
+                _copilotQuota = null;
+                _copilotQuotaStatus = "No premium-interaction quota data is available.";
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            var quota = await response.Content.ReadFromJsonAsync<CopilotQuotaResponse>(cancellationToken: cancellationToken);
+            if (!Owns(generation, cancellationToken)) return;
+            if (!IsValidQuota(quota))
+            {
+                _copilotQuota = null;
+                _copilotQuotaStatus = "Copilot account quota response was invalid.";
+                return;
+            }
+
+            _copilotQuota = quota;
+            _copilotQuotaStatus = null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch
+        {
+            if (Owns(generation, cancellationToken)) _copilotQuotaStatus = "Copilot account quota is currently unavailable.";
+        }
     }
 
     private async Task RefreshAsync(long generation, int windowMinutes, CancellationToken cancellationToken)
@@ -369,6 +447,26 @@
         if (d.TotalMinutes >= 1) return $"seen {(int)d.TotalMinutes}m ago";
         return $"seen {Math.Max(0, (int)d.TotalSeconds)}s ago";
     }
+
+    private static string QuotaObserved(DateTimeOffset at) => at == default ? "" : Ago(at);
+
+    private static bool QuotaIsStale(DateTimeOffset observedAt) =>
+        observedAt == default || DateTimeOffset.UtcNow - observedAt > TimeSpan.FromMinutes(10);
+
+    private static bool IsValidQuota(CopilotQuotaResponse? quota) =>
+        quota is not null &&
+        string.Equals(quota.QuotaId, "premium_interactions", StringComparison.Ordinal) &&
+        quota.ObservedAtUtc != default &&
+        (quota.IsUnlimited || (quota.Entitlement >= 0 && quota.Remaining >= 0 && quota.Remaining <= quota.Entitlement));
+
+    private sealed record CopilotQuotaResponse(
+        string? QuotaId,
+        int Entitlement,
+        int Remaining,
+        double PercentRemaining,
+        bool IsUnlimited,
+        string? ResetDate,
+        DateTimeOffset ObservedAtUtc);
 
     private sealed record UsageResponse(int WindowMinutes, bool IsTruncated, List<ProviderUsage> Providers);
 

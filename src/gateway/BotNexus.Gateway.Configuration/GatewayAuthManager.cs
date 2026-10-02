@@ -162,6 +162,23 @@ public sealed class GatewayAuthManager
         return null;
     }
 
+    /// <summary>
+    /// Returns the GitHub OAuth refresh credential for the Copilot account without refreshing it
+    /// or exposing the short-lived Copilot session access token. This is for read-only account
+    /// discovery endpoints that require the original OAuth credential.
+    /// </summary>
+    public Task<string?> GetCopilotOAuthTokenAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        LoadAuthEntries();
+        return Task.FromResult(
+            TryGetAuthEntry("copilot", out var entry) &&
+            string.Equals(entry.Type, "oauth", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(entry.Refresh)
+                ? entry.Refresh
+                : null);
+    }
+
     // #1797: the individual/fallback GitHub Copilot MCP host. Distinct from the chat BaseUrl host
     // (api.individual.githubcopilot.com) - the MCP surface lives on api.githubcopilot.com.
     private const string CopilotMcpFallbackEndpoint = "https://api.githubcopilot.com/mcp";
