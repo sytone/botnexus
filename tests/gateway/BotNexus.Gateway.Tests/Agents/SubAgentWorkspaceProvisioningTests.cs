@@ -219,9 +219,24 @@ public sealed class SubAgentWorkspaceProvisioningTests
 
     [Theory]
     [InlineData(false, false)]
+    [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task Kill_ThrowingChildCallback_DisposesAndCleansExactlyOnce(bool raceCompletion, bool workspaceAlreadyAbsent)
+    public Task Kill_ThrowingChildCallback_DisposesAndCleansExactlyOnce(bool raceCompletion, bool workspaceAlreadyAbsent)
+        => AssertThrowingCallbackCleanupAsync(raceCompletion, workspaceAlreadyAbsent);
+
+    [Fact]
+    public async Task Kill_ThrowingChildCallback_RepeatedMatrixRemainsDeterministic()
+    {
+        for (var iteration = 0; iteration < 12; iteration++)
+        {
+            await AssertThrowingCallbackCleanupAsync(
+                raceCompletion: (iteration & 1) != 0,
+                workspaceAlreadyAbsent: (iteration & 2) != 0);
+        }
+    }
+
+    private static async Task AssertThrowingCallbackCleanupAsync(bool raceCompletion, bool workspaceAlreadyAbsent)
     {
         await using var fixture = new SpawnFixture(throwOnCancellation: true, raceCompletion: raceCompletion);
         var spawned = await fixture.SpawnAsync();
@@ -233,7 +248,7 @@ public sealed class SubAgentWorkspaceProvisioningTests
             Directory.Delete(Path.GetDirectoryName(workspace).ShouldNotBeNull(), recursive: true);
 
         (await fixture.Manager.KillAsync(spawned.SubAgentId, SpawnFixture.ParentSession)).ShouldBeTrue();
-        await fixture.WaitForCleanupAsync();
+        await fixture.WaitForCleanupAsync(spawned.SubAgentId);
         if (fixture.CompletionRace is { } race)
             await race;
         await fixture.Manager.OnCompletedAsync(spawned.SubAgentId, "late completion");
@@ -279,6 +294,7 @@ public sealed class SubAgentWorkspaceProvisioningTests
         internal Task<SubAgentInfo?>? CancellationSnapshot { get; private set; }
 
         internal CancellationToken ChildToken { get; private set; }
+        private readonly TaskCompletionSource _childRunExited = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal int ThrowingCallbackCount;
         internal int StopCount;
         internal Task? CompletionRace { get; private set; }
@@ -405,8 +421,15 @@ public sealed class SubAgentWorkspaceProvisioningTests
                         }
                     });
                     Entered.TrySetResult();
-                    await waitForRelease;
-                    return new AgentResponse { Content = "done" };
+                    try
+                    {
+                        await waitForRelease;
+                        return new AgentResponse { Content = "done" };
+                    }
+                    finally
+                    {
+                        _childRunExited.TrySetResult();
+                    }
                 });
             var supervisor = new Mock<IAgentSupervisor>();
             supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
@@ -515,6 +538,13 @@ public sealed class SubAgentWorkspaceProvisioningTests
         }
 
         internal Task WaitForCleanupAsync() => _terminal.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        internal async Task WaitForCleanupAsync(string subAgentId)
+        {
+            await _childRunExited.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await _unregistered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Manager.IsRetiredForTest(subAgentId).ShouldBeTrue();
+        }
 
         public async ValueTask DisposeAsync()
         {

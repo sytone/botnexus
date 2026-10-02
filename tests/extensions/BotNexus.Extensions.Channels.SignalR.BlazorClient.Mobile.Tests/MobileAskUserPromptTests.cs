@@ -36,7 +36,7 @@ public sealed class MobileAskUserPromptTests : IDisposable
         _ctx.Services.AddSingleton(_store);
         var displayedConversation = Substitute.For<IDisplayedConversation>();
         displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
-            .Returns(call => call.Arg<string?>() is { } agentId ? _store.GetAgent(agentId)?.ActiveConversationId : null);
+            .Returns(call => call.Arg<string?>() is { } agentId ? (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agentId) : null);
         _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
@@ -52,7 +52,6 @@ public sealed class MobileAskUserPromptTests : IDisposable
         {
             AgentId = agentId,
             DisplayName = "Alpha",
-            ActiveConversationId = convId,
             IsConnected = true
         };
         agent.Conversations[convId] = new ConversationState { ConversationId = convId, Title = "C" };
@@ -79,7 +78,7 @@ public sealed class MobileAskUserPromptTests : IDisposable
         ArrangeActiveConversation();
         _store.GetPendingAskUser("conv-1").Returns(FreeFormPrompt());
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // The shared AskUserPrompt component renders with its data-testid + the prompt text.
         Assert.Contains("ask-user-prompt", cut.Markup);
@@ -92,7 +91,7 @@ public sealed class MobileAskUserPromptTests : IDisposable
         ArrangeActiveConversation();
         _store.GetPendingAskUser("conv-1").Returns((AskUserPromptState?)null);
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         Assert.DoesNotContain("ask-user-prompt", cut.Markup);
         // The normal message input remains available.
@@ -117,7 +116,7 @@ public sealed class MobileAskUserPromptTests : IDisposable
         };
         _store.GetPendingAskUser("conv-1").Returns(prompt);
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         Assert.Contains("Pick one", cut.Markup);
         Assert.Contains("Option A", cut.Markup);
@@ -144,7 +143,7 @@ public sealed class MobileAskUserPromptTests : IDisposable
         };
         _store.GetPendingAskUser("conv-1").Returns(prompt);
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         Assert.Contains("Pick some", cut.Markup);
         Assert.Contains("type=\"checkbox\"", cut.Markup);
@@ -161,7 +160,7 @@ public sealed class MobileAskUserPromptTests : IDisposable
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string[]?>(), Arg.Any<bool>())
             .Returns(Task.CompletedTask);
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find("textarea.ask-user-free-form").Input("Farnsworth");
         cut.Find("[data-testid=\"ask-user-submit\"]").Click();
@@ -180,7 +179,7 @@ public sealed class MobileAskUserPromptTests : IDisposable
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string[]?>(), Arg.Any<bool>())
             .Returns(Task.CompletedTask);
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find("[data-testid=\"ask-user-cancel\"]").Click();
 

@@ -87,6 +87,27 @@ public sealed class HomeRootSingleResolutionArchitectureTests : ArchitectureTest
             "commit - that is the ratchet working as intended.");
 
     /// <summary>
+    /// The gateway composition root must derive the world identity once and hand that value to every
+    /// guard. Re-deriving it for the home would let two identically wrong answers agree (#2834).
+    /// </summary>
+    [Fact]
+    public void GatewayComposition_ResolvesWorldIdentityExactlyOnce()
+    {
+        var path = Path.Combine(
+            Repository.SourceRoot,
+            "gateway",
+            "BotNexus.Gateway",
+            "Extensions",
+            "GatewayServiceCollectionExtensions.cs");
+        var source = File.ReadAllText(path);
+        var calls = Regex.Matches(source, @"\bWorldIdResolver\.Resolve\s*\(").Count;
+
+        calls.ShouldBe(1,
+            "GatewayServiceCollectionExtensions must resolve one WorldId and inject that same value " +
+            "into the home and store guards; a second derivation defeats mismatch detection (#3411).");
+    }
+
+    /// <summary>
     /// Non-vacuity: the fence must actually be reading source. A rule that scans zero files passes
     /// forever and reads as a clean result - the #2700 shape.
     /// </summary>

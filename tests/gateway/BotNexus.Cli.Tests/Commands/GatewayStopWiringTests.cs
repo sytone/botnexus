@@ -1,6 +1,7 @@
 using System.CommandLine;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Services;
+using BotNexus.Gateway.Configuration;
 using NSubstitute;
 
 namespace BotNexus.Cli.Tests.Commands;
@@ -11,7 +12,7 @@ public sealed class GatewayStopWiringTests
     public async Task Stop_PassesResolvedGatewayBinaryPath_ToProcessManager()
     {
         var processManager = Substitute.For<IGatewayProcessManager>();
-        processManager.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        processManager.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(true, "Gateway stopped (PID 42)", GatewayStopOutcome.Stopped));
         var command = BuildCommand(processManager);
         var source = Path.Combine(Path.GetTempPath(), $"bn-4126-source-{Guid.NewGuid():N}");
@@ -23,14 +24,15 @@ public sealed class GatewayStopWiringTests
         await processManager.Received(1).StopAsync(
             target,
             GatewayCommand.ResolveGatewayBinaryPath(source),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            GatewayDefaults.LoopbackListenUrl);
     }
 
     [Fact]
     public async Task Restart_PassesResolvedGatewayBinaryPath_ToProcessManager()
     {
         var processManager = Substitute.For<IGatewayProcessManager>();
-        processManager.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        processManager.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(false, "still running", GatewayStopOutcome.Failed));
         var command = BuildCommand(processManager);
         var source = Path.Combine(Path.GetTempPath(), $"bn-4126-source-{Guid.NewGuid():N}");
@@ -42,7 +44,8 @@ public sealed class GatewayStopWiringTests
         await processManager.Received(1).StopAsync(
             target,
             GatewayCommand.ResolveGatewayBinaryPath(source),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            GatewayDefaults.LoopbackListenUrl);
         await processManager.DidNotReceive().StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>());
     }
 
@@ -50,7 +53,7 @@ public sealed class GatewayStopWiringTests
     public async Task Stop_ReturnsFailure_WhenNoGatewayCanBeIdentified()
     {
         var processManager = Substitute.For<IGatewayProcessManager>();
-        processManager.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        processManager.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(true, "Gateway is not running (no PID file)", GatewayStopOutcome.NotRunning));
         var command = BuildCommand(processManager);
 

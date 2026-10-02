@@ -65,7 +65,7 @@ public sealed class UpdateGatewayLivenessTests
         string? stopMessage = null)
     {
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(true, stopMessage, stopOutcome));
         pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStartResult(true, 4242, null));
@@ -187,7 +187,7 @@ public sealed class UpdateGatewayLivenessTests
     {
         var root = CreateRootWithGatewayBinary();
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(false, "did not exit", GatewayStopOutcome.Failed));
         pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStartResult(true, 4242, null));

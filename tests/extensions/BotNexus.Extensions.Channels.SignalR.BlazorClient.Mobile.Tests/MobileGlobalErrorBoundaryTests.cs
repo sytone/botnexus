@@ -15,7 +15,7 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 public sealed class MobileGlobalErrorBoundaryTests : IDisposable
 {
     private readonly BunitContext _ctx = new();
-    private readonly IClientStateStore _store = Substitute.For<IClientStateStore>();
+    private readonly IClientStateStore _store = Substitute.For<IClientStateStore, IDisplayedConversation>();
     private readonly IChannelErrorReporter _errorReporter = Substitute.For<IChannelErrorReporter>();
 
     public MobileGlobalErrorBoundaryTests()
@@ -23,6 +23,8 @@ public sealed class MobileGlobalErrorBoundaryTests : IDisposable
         _errorReporter.ReportAsync(Arg.Any<ChannelErrorReportDto>(), Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
         _ctx.Services.AddSingleton(_store);
+        ((IDisplayedConversation)_store).DisplayedConversationIdFor("agent-1")
+            .Returns("conv-1");
         _ctx.Services.AddSingleton(_errorReporter);
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
@@ -37,7 +39,6 @@ public sealed class MobileGlobalErrorBoundaryTests : IDisposable
             AgentId = "agent-1",
             DisplayName = "Alpha",
             SessionId = "agent-session",
-            ActiveConversationId = "conv-1"
         };
         agent.Conversations["conv-1"] = new ConversationState
         {

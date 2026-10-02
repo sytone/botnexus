@@ -46,7 +46,7 @@ public sealed class SubAgentSessionWriteTests : IDisposable
         await store.SaveSubAgentSessionAsync(info);
 
         var (status, endedAt) = await ReadRow("sa-1");
-        status.ShouldBe("Active");
+        status.ShouldBe("Running");
         endedAt.ShouldBeNull("ended_at should be NULL when sub-agent is spawned");
     }
 
@@ -60,12 +60,48 @@ public sealed class SubAgentSessionWriteTests : IDisposable
         await store.SaveSubAgentSessionAsync(info);
 
         var endedAt = new DateTimeOffset(2026, 6, 6, 12, 0, 0, TimeSpan.Zero);
-        await store.UpdateSubAgentSessionAsync("sa-2", endedAt, "Completed");
+        await store.UpdateSubAgentSessionAsync(info with { Status = SubAgentStatus.Completed, CompletedAt = endedAt });
 
         var (status, endedAtValue) = await ReadRow("sa-2");
         status.ShouldBe("Completed");
         endedAtValue.ShouldNotBeNull("ended_at should be set after update");
         endedAtValue.ShouldContain("2026-06-06");
+    }
+
+    [Fact]
+    public async Task TerminalDetail_RoundTripsThroughColdHistoryProjection()
+    {
+        var store = CreateSessionStore();
+        await store.GetAsync(SessionId.From("init"));
+        var started = new DateTimeOffset(2026, 6, 6, 11, 58, 0, TimeSpan.Zero);
+        var completed = started.AddMinutes(2);
+        var info = BuildInfo("sa-detail", "parent-detail", "child-detail", SubAgentStatus.Running) with
+        {
+            ParentConversationId = ConversationId.From("parent-conversation"),
+            ChildConversationId = ConversationId.From("child-conversation"),
+            Name = "coder", Model = "gpt-5", Task = "bounded task", StartedAt = started,
+            EffectiveMaxTurns = 12, EffectiveTimeoutSeconds = 300, TurnsUsed = 5
+        };
+        await store.SaveSubAgentSessionAsync(info);
+        await store.UpdateSubAgentSessionAsync(info with
+        {
+            Status = SubAgentStatus.Completed, CompletedAt = completed,
+            ResultSummary = "done", CompletionDelivery = SubAgentCompletionDelivery.Delivered
+        });
+
+        var reloaded = CreateSessionStore();
+        var detail = (await reloaded.ListSubAgentSessionsAsync(SessionId.From("parent-detail"))).Single();
+
+        detail.Status.ShouldBe(SubAgentStatus.Completed);
+        detail.ParentConversationId.ShouldBe("parent-conversation");
+        detail.ChildSessionId.ShouldBe("child-detail");
+        detail.EffectiveMaxTurns.ShouldBe(12);
+        detail.EffectiveTimeoutSeconds.ShouldBe(300);
+        detail.TurnsUsed.ShouldBe(5);
+        detail.ResultSummary.ShouldBe("done");
+        detail.CompletionDelivery.ShouldBe(SubAgentCompletionDelivery.Delivered);
+        detail.RemainingTurns.ShouldBeNull();
+        detail.RemainingTimeSeconds.ShouldBeNull();
     }
 
     [Fact]
@@ -89,7 +125,7 @@ public sealed class SubAgentSessionWriteTests : IDisposable
 
         // Updating a non-existent row should be a silent no-op.
         var act = async () => await store.UpdateSubAgentSessionAsync(
-            "nonexistent-sa", DateTimeOffset.UtcNow, "Completed");
+            BuildInfo("nonexistent-sa", "parent", "child", SubAgentStatus.Completed) with { CompletedAt = DateTimeOffset.UtcNow });
         await act.ShouldNotThrowAsync();
     }
 

@@ -16,6 +16,41 @@ public enum ProviderRecoveryState
     HalfOpen,
 }
 
+/// <summary>Identifies a bounded provider-recovery lifecycle transition.</summary>
+public enum ProviderRecoveryStage
+{
+    /// <summary>A transient provider failure will be retried after a bounded delay.</summary>
+    RetryScheduled,
+    /// <summary>The shared provider circuit opened after the configured independent-failure threshold.</summary>
+    CircuitOpened,
+    /// <summary>A provider call entered the bounded admission queue.</summary>
+    AdmissionQueued,
+    /// <summary>The single current-generation half-open recovery probe was admitted.</summary>
+    ProbeAdmitted,
+    /// <summary>A retry or half-open probe restored provider availability.</summary>
+    Recovered,
+    /// <summary>The bounded per-turn retry budget was exhausted.</summary>
+    Exhausted,
+}
+
+/// <summary>
+/// Bounded provider-recovery telemetry. Credential identity, incident identity, prompts, sessions,
+/// and raw provider error text are deliberately excluded.
+/// </summary>
+public sealed record ProviderRecoveryObservation(
+    ProviderRecoveryStage Stage,
+    string Provider,
+    ProviderRecoveryState State,
+    long Generation,
+    int InFlightCalls,
+    int QueueLength,
+    DateTimeOffset? NextProbeAt,
+    int? Attempt = null,
+    int? MaxAttempts = null,
+    TimeSpan? Delay = null,
+    string? AuthProfile = null,
+    string? ProviderError = null);
+
 /// <summary>Sets bounded process-wide provider recovery policy.</summary>
 /// <param name="FailureThreshold">Distinct run failures required within the window to open the circuit.</param>
 /// <param name="FailureWindow">Rolling interval in which distinct failures contribute to the threshold.</param>
@@ -71,7 +106,8 @@ public interface IProviderRecoveryCoordinator
         ProviderRecoveryScope scope,
         Guid incidentId,
         TimeSpan maxWait,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        Action<ProviderRecoveryObservation>? observe = null);
 
     /// <summary>Returns bounded current state without exposing provider error bodies or run identifiers.</summary>
     ProviderRecoverySnapshot GetSnapshot(ProviderRecoveryScope scope);
@@ -128,18 +164,21 @@ public sealed class ProviderRecoveryLease
         ProviderRecoveryScope scope,
         Guid incidentId,
         long generation,
-        bool isProbe)
+        bool isProbe,
+        Action<ProviderRecoveryObservation>? observe)
     {
         _owner = owner;
         Scope = scope;
         IncidentId = incidentId;
         Generation = generation;
         IsProbe = isProbe;
+        Observe = observe;
     }
 
     internal ProviderRecoveryScope Scope { get; }
     internal Guid IncidentId { get; }
     internal long Generation { get; }
+    internal Action<ProviderRecoveryObservation>? Observe { get; }
 
     /// <summary>True only for the single call admitted while the circuit is half-open.</summary>
     public bool IsProbe { get; }
@@ -175,12 +214,13 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
     private readonly ProviderRecoveryOptions _options;
     private readonly Func<DateTimeOffset> _clock;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly Action<ProviderRecoveryObservation>? _observe;
     private readonly object _sync = new();
     private readonly Dictionary<ProviderRecoveryScope, ScopeState> _scopes = new(ScopeComparer.Instance);
 
     /// <summary>Creates a coordinator using system time and cancellable wall-clock delays.</summary>
     public ProviderRecoveryCoordinator(ProviderRecoveryOptions? options = null)
-        : this(options ?? new ProviderRecoveryOptions(), () => DateTimeOffset.UtcNow, Task.Delay)
+        : this(options ?? new ProviderRecoveryOptions(), () => DateTimeOffset.UtcNow, Task.Delay, null)
     {
     }
 
@@ -191,11 +231,13 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
     public ProviderRecoveryCoordinator(
         ProviderRecoveryOptions options,
         Func<DateTimeOffset> clock,
-        Func<TimeSpan, CancellationToken, Task> delay)
+        Func<TimeSpan, CancellationToken, Task> delay,
+        Action<ProviderRecoveryObservation>? observe = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _delay = delay ?? throw new ArgumentNullException(nameof(delay));
+        _observe = observe;
         if (_options.FailureThreshold <= 0 || _options.MaxQueueLength < 0 || _options.MaxConcurrentCalls <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Provider recovery bounds must be positive (queue may be zero).");
@@ -207,7 +249,8 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
         ProviderRecoveryScope scope,
         Guid incidentId,
         TimeSpan maxWait,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<ProviderRecoveryObservation>? observe = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (maxWait <= TimeSpan.Zero)
@@ -221,7 +264,7 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
         {
             var state = GetOrCreate(scope);
             PruneFailures(state, _clock());
-            var immediate = TryAdmit(scope, state, incidentId, _clock());
+            var immediate = TryAdmit(scope, state, incidentId, _clock(), observe);
             if (immediate is not null)
             {
                 return ValueTask.FromResult(immediate);
@@ -233,8 +276,9 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
                     new ProviderRecoveryQueueFullException(scope.Provider));
             }
 
-            waiter = new Waiter(scope, incidentId, _clock());
+            waiter = new Waiter(scope, incidentId, _clock(), observe);
             state.Waiters.Enqueue(waiter);
+            Notify(scope, state, ProviderRecoveryStage.AdmissionQueued, observe);
         }
 
         _ = CompleteWaitAsync(waiter, maxWait, cancellationToken);
@@ -279,7 +323,7 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
             {
                 if (lease.IsProbe && lease.Generation == state.Generation && state.State == ProviderRecoveryState.HalfOpen)
                 {
-                    Open(state, now, retryAfter);
+                    Open(lease.Scope, state, now, retryAfter, lease.Observe);
                 }
                 else if (state.State == ProviderRecoveryState.Closed)
                 {
@@ -290,7 +334,7 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
 
                     if (state.Failures.Count >= _options.FailureThreshold)
                     {
-                        Open(state, now, retryAfter);
+                        Open(lease.Scope, state, now, retryAfter, lease.Observe);
                     }
                 }
             }
@@ -303,6 +347,7 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
                 state.Generation++;
                 state.Failures.Clear();
                 state.ReopenCount = 0;
+                Notify(lease.Scope, state, ProviderRecoveryStage.Recovered, lease.Observe);
             }
 
             releases = DrainWaiters(lease.Scope, state, now);
@@ -391,7 +436,8 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
         ProviderRecoveryScope scope,
         ScopeState state,
         Guid incidentId,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        Action<ProviderRecoveryObservation>? observe)
     {
         if (state.State == ProviderRecoveryState.Open && now >= state.NextProbeAt)
         {
@@ -401,13 +447,14 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
             // fence: after this admission the circuit is HalfOpen, so no second probe can enter.
             state.State = ProviderRecoveryState.HalfOpen;
             state.InFlight++;
-            return new ProviderRecoveryLease(this, scope, incidentId, state.Generation, isProbe: true);
+            Notify(scope, state, ProviderRecoveryStage.ProbeAdmitted, observe);
+            return new ProviderRecoveryLease(this, scope, incidentId, state.Generation, isProbe: true, observe);
         }
 
         if (state.State == ProviderRecoveryState.Closed && state.InFlight < _options.MaxConcurrentCalls)
         {
             state.InFlight++;
-            return new ProviderRecoveryLease(this, scope, incidentId, state.Generation, isProbe: false);
+            return new ProviderRecoveryLease(this, scope, incidentId, state.Generation, isProbe: false, observe);
         }
 
         return null;
@@ -428,7 +475,7 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
                 continue;
             }
 
-            var lease = TryAdmit(scope, state, waiter.IncidentId, now);
+            var lease = TryAdmit(scope, state, waiter.IncidentId, now, waiter.Observe);
             if (lease is null)
             {
                 break;
@@ -453,7 +500,12 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
         }
     }
 
-    private void Open(ScopeState state, DateTimeOffset now, TimeSpan? retryAfter)
+    private void Open(
+        ProviderRecoveryScope scope,
+        ScopeState state,
+        DateTimeOffset now,
+        TimeSpan? retryAfter,
+        Action<ProviderRecoveryObservation>? observe)
     {
         state.State = ProviderRecoveryState.Open;
         state.Generation++;
@@ -463,6 +515,33 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
         var floor = retryAfter is { } guidance && guidance > local ? guidance : local;
         var bounded = floor > _options.EffectiveMaxOpenDuration ? _options.EffectiveMaxOpenDuration : floor;
         state.NextProbeAt = now + bounded;
+        Notify(scope, state, ProviderRecoveryStage.CircuitOpened, observe);
+    }
+
+    private void Notify(
+        ProviderRecoveryScope scope,
+        ScopeState state,
+        ProviderRecoveryStage stage,
+        Action<ProviderRecoveryObservation>? requestObserver)
+    {
+        if (_observe is null && requestObserver is null)
+        {
+            return;
+        }
+
+        var observation = new ProviderRecoveryObservation(
+            stage,
+            scope.Provider,
+            state.State,
+            state.Generation,
+            state.InFlight,
+            state.Waiters.Count(static waiter => !waiter.IsCompleted),
+            state.State == ProviderRecoveryState.Open ? state.NextProbeAt : null);
+        _observe?.Invoke(observation);
+        if (!ReferenceEquals(_observe, requestObserver))
+        {
+            requestObserver?.Invoke(observation);
+        }
     }
 
     private void PruneFailures(ScopeState state, DateTimeOffset now)
@@ -495,16 +574,22 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
     {
         private int _completed;
 
-        public Waiter(ProviderRecoveryScope scope, Guid incidentId, DateTimeOffset enqueuedAt)
+        public Waiter(
+            ProviderRecoveryScope scope,
+            Guid incidentId,
+            DateTimeOffset enqueuedAt,
+            Action<ProviderRecoveryObservation>? observe)
         {
             Scope = scope;
             IncidentId = incidentId;
             EnqueuedAt = enqueuedAt;
+            Observe = observe;
         }
 
         public ProviderRecoveryScope Scope { get; }
         public Guid IncidentId { get; }
         public DateTimeOffset EnqueuedAt { get; }
+        public Action<ProviderRecoveryObservation>? Observe { get; }
         public TaskCompletionSource<ProviderRecoveryLease> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool IsCompleted => Volatile.Read(ref _completed) != 0;

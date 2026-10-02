@@ -359,7 +359,13 @@ public sealed class TelegramChannelAdapter(
                     break;
 
                 case AgentStreamEventType.ContentDelta when streamEvent.ContentDelta is not null:
-                    // Buffer raw markdown; conversion to MarkdownV2 happens at flush time.
+                    // Keep the first assistant delta separate from the preceding thinking line;
+                    // later deltas continue the same reply without inserting extra newlines.
+                    if (state.PreviousWasThinking)
+                    {
+                        AppendLineIfNeeded(state.Buffer);
+                        state.PreviousWasThinking = false;
+                    }
                     state.Buffer.Append(streamEvent.ContentDelta);
                     state.PendingCharacterCount += streamEvent.ContentDelta.Length;
                     break;
@@ -369,6 +375,7 @@ public sealed class TelegramChannelAdapter(
                     state.Buffer.Append("Thinking: ");
                     state.Buffer.Append(streamEvent.ThinkingContent);
                     state.PendingCharacterCount += streamEvent.ThinkingContent.Length;
+                    state.PreviousWasThinking = true;
                     break;
 
                 case AgentStreamEventType.ToolStart:
@@ -1650,6 +1657,7 @@ public sealed class TelegramChannelAdapter(
         public int PendingCharacterCount { get; set; }
         public DateTimeOffset LastFlushUtc { get; set; } = DateTimeOffset.UtcNow;
         public StringBuilder Buffer { get; } = new();
+        public bool PreviousWasThinking { get; set; }
         public SemaphoreSlim Lock { get; } = new(1, 1);
 
         /// <summary>
@@ -1679,6 +1687,7 @@ public sealed class TelegramChannelAdapter(
             PendingCharacterCount = 0;
             LastFlushUtc = DateTimeOffset.UtcNow;
             Buffer.Clear();
+            PreviousWasThinking = false;
             RichDraftId = null;
             HasRichDraft = false;
             RichDraftDisabled = false;

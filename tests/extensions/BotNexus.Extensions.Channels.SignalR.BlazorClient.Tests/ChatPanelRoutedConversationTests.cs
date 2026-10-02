@@ -49,8 +49,8 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
         // names conv-routed. IAgentInteractionService is a substitute so Home's route-application
         // path cannot converge active onto routed - exactly the state a stale deep link produces.
         _store.SelectView("agent-1", string.Empty, SelectionSource.UserClick);
-        _store.SetActiveConversation("agent-1", "conv-active");
-        _store.SetActiveConversation("agent-2", "conv-other");
+        _store.SelectView("agent-1", "conv-active", SelectionSource.RouteNavigation);
+        _store.SelectView("agent-2", "conv-other", SelectionSource.RouteNavigation);
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         // #3064: Home injects the per-agent conversation MRU at the route seam.
@@ -109,6 +109,7 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
 
         _ctx.Services.GetRequiredService<NavigationManager>()
             .NavigateTo("/agent/agent-1/conversation/conv-routed");
+        _store.SelectView("agent-1", "conv-routed", SelectionSource.RouteNavigation);
         cut.Render(parameters => parameters
             .Add(component => component.AgentId, "agent-1")
             .Add(component => component.ConversationId, "conv-routed"));
@@ -127,8 +128,10 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
 
         _store.GetConversation("conv-active")!.IsPinned = false;
         _store.GetConversation("conv-routed")!.IsPinned = true;
-        _store.SetActiveConversation("agent-1", "conv-active");
-        cut.Render();
+        _store.NotifyChanged();
+        cut.Render(parameters => parameters
+            .Add(component => component.AgentId, "agent-1")
+            .Add(component => component.ConversationId, "conv-routed"));
 
         PinActionLabel(cut, "conv-routed").ShouldBe("Unpin");
     }
@@ -153,12 +156,12 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
     /// active conversation.
     /// </summary>
     [Fact]
-    public void Routed_conversation_does_not_leak_into_a_different_agents_chat_pane()
+    public void Non_routed_agent_chat_pane_has_no_ambient_conversation_fallback()
     {
         var cut = RenderAt("/agent/agent-1/conversation/conv-routed", "agent-1", "conv-routed");
 
         var chat = ChatPaneMarkupFor(cut, "agent-2");
-        Assert.Contains(OtherAgentTitle, chat);
+        Assert.DoesNotContain(OtherAgentTitle, chat);
         Assert.DoesNotContain(RoutedTitle, chat);
     }
 
@@ -167,12 +170,12 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
     /// null, resolution falls back to <c>ActiveConversationId</c>, and the pre-#3062 behaviour holds.
     /// </summary>
     [Fact]
-    public void Chat_pane_falls_back_to_active_conversation_when_route_has_no_conversation()
+    public void Chat_pane_has_no_ambient_fallback_when_route_has_no_conversation()
     {
         var cut = RenderAt("/agent/agent-1", "agent-1", conversationId: null);
 
         var chat = ChatPaneMarkupFor(cut, "agent-1");
-        Assert.Contains(ActiveTitle, chat);
+        Assert.DoesNotContain(ActiveTitle, chat);
         Assert.DoesNotContain(RoutedTitle, chat);
     }
 
