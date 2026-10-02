@@ -20,9 +20,6 @@
 src/domain/BotNexus.Domain.Wire/AskUserPromptNormalizer.cs|1
 src/domain/BotNexus.Domain/Gateway/Models/InboundMessageRoutingHints.cs|2
 src/extensions/BotNexus.Extensions.DebugTool/DebugTool.cs|3
-src/extensions/BotNexus.Extensions.Mcp/McpServerWarmupCache.cs|2
-src/extensions/BotNexus.Extensions.Qmd/MemoryQmdBackend.cs|1
-src/extensions/BotNexus.Extensions.Qmd/QmdToolContributor.cs|1
 src/extensions/BotNexus.Extensions.Skills/SkillsCommandContributor.cs|1
 src/gateway/BotNexus.Cron/Actions/MemoryDreamingCronAction.cs|1
 src/gateway/BotNexus.Cron/CronAlertTarget.cs|2

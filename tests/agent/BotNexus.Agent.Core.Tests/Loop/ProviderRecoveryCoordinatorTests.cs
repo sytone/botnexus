@@ -7,6 +7,36 @@ public sealed class ProviderRecoveryCoordinatorTests
     private static readonly ProviderRecoveryScope Scope = new("github-copilot", "profile-a");
 
     [Fact]
+    public async Task QueuedCircuitAdmission_ReportsBoundedLifecycleWithoutCredentialIdentity()
+    {
+        var clock = new ManualClock();
+        var observed = new List<ProviderRecoveryObservation>();
+        var coordinator = CreateCoordinator(clock, threshold: 1, maxQueue: 1, observe: observed.Add);
+        var opener = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(5), CancellationToken.None);
+        opener.ReportTransientFailure(null);
+
+        var queued = coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(5), CancellationToken.None).AsTask();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var probe = await queued;
+        probe.ReportSuccess();
+
+        observed.ShouldContain(observation =>
+            observation.Stage == ProviderRecoveryStage.CircuitOpened
+            && observation.Provider == "github-copilot"
+            && observation.State == ProviderRecoveryState.Open);
+        observed.ShouldContain(observation =>
+            observation.Stage == ProviderRecoveryStage.AdmissionQueued
+            && observation.QueueLength == 1);
+        observed.ShouldContain(observation =>
+            observation.Stage == ProviderRecoveryStage.ProbeAdmitted
+            && observation.State == ProviderRecoveryState.HalfOpen);
+        observed.ShouldContain(observation =>
+            observation.Stage == ProviderRecoveryStage.Recovered
+            && observation.State == ProviderRecoveryState.Closed);
+        observed.All(observation => observation.AuthProfile == null && observation.ProviderError == null).ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task ThreeIndependentFailures_OpenCircuitAndAdmitOnlyOneProbe()
     {
         var clock = new ManualClock();
@@ -142,7 +172,8 @@ public sealed class ProviderRecoveryCoordinatorTests
         ManualClock clock,
         int threshold,
         int maxQueue = 8,
-        TimeSpan? maxOpen = null)
+        TimeSpan? maxOpen = null,
+        Action<ProviderRecoveryObservation>? observe = null)
         => new(
             new ProviderRecoveryOptions(
                 FailureThreshold: threshold,
@@ -152,7 +183,8 @@ public sealed class ProviderRecoveryCoordinatorTests
                 MaxQueueLength: maxQueue,
                 MaxConcurrentCalls: 8),
             clock.GetUtcNow,
-            clock.DelayAsync);
+            clock.DelayAsync,
+            observe);
 
     private sealed class ManualClock
     {

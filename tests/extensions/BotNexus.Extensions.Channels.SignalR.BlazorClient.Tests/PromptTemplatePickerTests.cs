@@ -29,7 +29,7 @@ public sealed class PromptTemplatePickerTests : IDisposable
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
         _store.UpsertAgent(new AgentState { AgentId = "agent-1", DisplayName = "Agent", IsConnected = true });
         _store.SeedConversations("agent-1", [Conversation("conv-1"), Conversation("conv-2")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
     }
 
     public void Dispose() => _ctx.Dispose();

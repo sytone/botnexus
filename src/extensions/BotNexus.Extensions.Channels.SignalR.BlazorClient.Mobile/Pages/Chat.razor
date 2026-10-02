@@ -247,12 +247,21 @@ else
                     </div>
                 }
                 @if (_composerError is not null) { <div class="mobile-composer-error" role="alert">@_composerError</div> }
-                <div class="bottom-bar">
+                <div class="bottom-bar @(streamState?.IsTurnActive == true ? "composer-active" : null)"
+                     data-testid="mobile-composer"
+                     aria-busy="@(streamState?.IsTurnActive == true ? "true" : "false")">
+                    @if (streamState?.IsTurnActive == true)
+                    {
+                        <span class="composer-active-status" data-testid="mobile-composer-status" role="status">
+                            <span class="composer-active-status-dot" aria-hidden="true"></span>
+                            Agent is working
+                        </span>
+                    }
                     <label class="mobile-attach-btn" data-testid="mobile-attach" aria-label="Attach files">&#x1F4CE;<InputFile class="mobile-attachment-input" data-testid="mobile-attachment-input" OnChange="HandleFilesSelected" multiple disabled="@_isSending" /></label>
                     <label class="mobile-attach-btn" data-testid="mobile-camera" aria-label="Take photo">&#x1F4F7;<InputFile class="mobile-attachment-input" data-testid="mobile-camera-input" OnChange="HandleFilesSelected" accept="image/*" capture="environment" disabled="@_isSending" /></label>
                     <textarea
                         class="input-textarea"
-                        placeholder="/ for commands"
+                        placeholder="@(streamState?.IsTurnActive == true ? "Type to steer the response…" : "/ for commands")"
                         rows="1"
                         @bind="_inputText"
                         @bind:event="oninput"
@@ -1100,6 +1109,7 @@ else
             return;
 
         await Interaction.ArchiveConversationAsync(agentId, conversation.ConversationId);
+        Nav.NavigateTo($"agent/{Uri.EscapeDataString(agentId)}");
     }
 
     private async Task DoArchive()
@@ -1108,6 +1118,7 @@ else
         _archiveTarget = null;
         if (target is null || DisplayedAgentId is not { } agentId) return;
         await Interaction.ArchiveConversationAsync(agentId, target.ConversationId);
+        Nav.NavigateTo($"agent/{Uri.EscapeDataString(agentId)}");
     }
 
     private void CancelArchive()

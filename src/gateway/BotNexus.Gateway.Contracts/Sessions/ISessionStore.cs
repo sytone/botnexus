@@ -464,9 +464,7 @@ public interface ISessionStore
     /// <param name="status">The final status string (Completed, Failed, TimedOut, Killed).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task UpdateSubAgentSessionAsync(
-        string subAgentId,
-        DateTimeOffset endedAt,
-        string status,
+        SubAgentInfo info,
         CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
@@ -477,10 +475,10 @@ public interface ISessionStore
     /// </summary>
     /// <param name="sessionId">The parent session whose sub-agent history to retrieve.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<IReadOnlyList<SubAgentSessionSummary>> ListSubAgentSessionsAsync(
+    Task<IReadOnlyList<SubAgentRunDetail>> ListSubAgentSessionsAsync(
         SessionId sessionId,
         CancellationToken cancellationToken = default)
-        => Task.FromResult<IReadOnlyList<SubAgentSessionSummary>>(Array.Empty<SubAgentSessionSummary>());
+        => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(Array.Empty<SubAgentRunDetail>());
 
     /// <summary>
     /// Returns persisted sub-agent session rows across <em>all</em> parent sessions, ordered by
@@ -492,11 +490,17 @@ public interface ISessionStore
     /// <param name="status">Optional case-insensitive status filter (e.g. Completed, Failed, Killed, TimedOut, Active). When null or whitespace, all statuses are returned.</param>
     /// <param name="limit">Maximum number of rows to return.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<IReadOnlyList<SubAgentSessionSummary>> ListAllSubAgentSessionsAsync(
+    /// <param name="parentSessionId">Optional parent session ID filter.</param>
+    /// <param name="childAgentId">Optional child agent ID filter.</param>
+    /// <param name="offset">Number of matching rows to skip before returning results.</param>
+    Task<IReadOnlyList<SubAgentRunDetail>> ListAllSubAgentSessionsAsync(
         string? status = null,
         int limit = 200,
-        CancellationToken cancellationToken = default)
-        => Task.FromResult<IReadOnlyList<SubAgentSessionSummary>>(Array.Empty<SubAgentSessionSummary>());
+        CancellationToken cancellationToken = default,
+        string? parentSessionId = null,
+        string? childAgentId = null,
+        int offset = 0)
+        => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(Array.Empty<SubAgentRunDetail>());
 
     /// <summary>
     /// Gets aggregate session statistics. Default implementation returns null (not supported).

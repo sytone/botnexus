@@ -405,9 +405,7 @@ public abstract class SessionStoreBase : ISessionStore
 
     /// <inheritdoc />
     public virtual Task UpdateSubAgentSessionAsync(
-        string subAgentId,
-        DateTimeOffset endedAt,
-        string status,
+        SubAgentInfo info,
         CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
@@ -418,11 +416,14 @@ public abstract class SessionStoreBase : ISessionStore
     /// (e.g. the observability controller) dispatch to a derived override rather than the empty DIM
     /// default. Stores without sub-agent persistence keep the empty-list behaviour.
     /// </remarks>
-    public virtual Task<IReadOnlyList<SubAgentSessionSummary>> ListAllSubAgentSessionsAsync(
+    public virtual Task<IReadOnlyList<SubAgentRunDetail>> ListAllSubAgentSessionsAsync(
         string? status = null,
         int limit = 200,
-        CancellationToken cancellationToken = default)
-        => Task.FromResult<IReadOnlyList<SubAgentSessionSummary>>(Array.Empty<SubAgentSessionSummary>());
+        CancellationToken cancellationToken = default,
+        string? parentSessionId = null,
+        string? childAgentId = null,
+        int offset = 0)
+        => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(Array.Empty<SubAgentRunDetail>());
 
     private static IEnumerable<GatewaySession> ApplyAgentFilter(IEnumerable<GatewaySession> sessions, AgentId? agentId)
         => agentId is null ? sessions : sessions.Where(session => session.AgentId == agentId);

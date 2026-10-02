@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.Text;
 using BotNexus.Domain.World;
@@ -376,7 +377,15 @@ public sealed class ConversationsController : ControllerBase
             await AuditAsync(conversationId, "purpose_set", "api", "rest-api", conversation.Purpose, updated.Purpose, cancellationToken);
         if (request.Instructions is not null)
             await AuditAsync(conversationId, "instructions_set", "api", "rest-api", conversation.Instructions, updated.Instructions, cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", updated.AgentId.Value, updated.ConversationId.Value, cancellationToken);
+
+        var changedFields = ImmutableArray.CreateBuilder<string>(3);
+        if (request.Title is not null && !string.Equals(conversation.Title, updated.Title, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.Title));
+        if (request.Purpose is not null && !string.Equals(conversation.Purpose, updated.Purpose, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.Purpose));
+        if (request.Instructions is not null && !string.Equals(conversation.Instructions, updated.Instructions, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.Instructions));
+        await PublishConversationUpdatedBestEffortAsync(updated, changedFields.ToImmutable(), cancellationToken);
         return Ok(ToResponse(updated));
     }
 
@@ -806,7 +815,11 @@ public sealed class ConversationsController : ControllerBase
         }
 
         await _conversations.ArchiveAsync(conversation.ConversationId, "rest-api", HttpContext?.TraceIdentifier ?? System.Diagnostics.Activity.Current?.Id, "api", cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("archived", conversation.AgentId.Value, conversation.ConversationId.Value, cancellationToken);
+        // The archive store operation does not return its stamped aggregate. Read it back after
+        // commit so the event carries the durable timestamp and immutable binding snapshot.
+        var archived = await _conversations.GetAsync(conversation.ConversationId, cancellationToken);
+        if (archived is not null && archived.Status == ConversationStatus.Archived)
+            await PublishConversationArchivedBestEffortAsync(archived, cancellationToken);
         return NoContent();
     }
 
@@ -882,6 +895,69 @@ public sealed class ConversationsController : ControllerBase
                 ex,
                 "Failed to publish creation event for conversation {ConversationId}; clients must reconcile from durable conversation state.",
                 created.ConversationId);
+        }
+    }
+
+    private async Task PublishConversationUpdatedBestEffortAsync(
+        Conversation updated,
+        ImmutableArray<string> changedFields,
+        CancellationToken cancellationToken)
+    {
+        if (_conversationEventPublisher is null || changedFields.IsEmpty)
+            return;
+
+        try
+        {
+            // Publication follows the committed narrow patch. The store-returned aggregate is the
+            // durable authority, and clients reconcile from it if this best-effort hand-off is missed.
+            var accepted = await _conversationEventPublisher.PublishAsync(new ConversationUpdatedEvent
+            {
+                AgentId = updated.AgentId,
+                ConversationId = updated.ConversationId,
+                ChangedFields = changedFields,
+                Bindings = ConversationBindingSnapshot.FromMany(updated.ChannelBindings),
+                OccurredAt = updated.UpdatedAt
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (!accepted)
+            {
+                _logger.LogWarning(
+                    "Conversation event publisher rejected metadata update for conversation {ConversationId}; clients must reconcile from durable conversation state.",
+                    updated.ConversationId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to publish metadata update for conversation {ConversationId}; clients must reconcile from durable conversation state.",
+                updated.ConversationId);
+        }
+    }
+
+    private async Task PublishConversationArchivedBestEffortAsync(Conversation archived, CancellationToken cancellationToken)
+    {
+        if (_conversationEventPublisher is null)
+            return;
+
+        try
+        {
+            // Publication follows the committed archive. A rejected or failed live hand-off
+            // cannot roll back the mutation; clients reconcile from durable conversation state.
+            var accepted = await _conversationEventPublisher.PublishAsync(new ConversationArchivedEvent
+            {
+                AgentId = archived.AgentId,
+                ConversationId = archived.ConversationId,
+                Bindings = ConversationBindingSnapshot.FromMany(archived.ChannelBindings),
+                OccurredAt = archived.UpdatedAt
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (!accepted)
+                _logger.LogWarning("Conversation event publisher rejected archive event for conversation {ConversationId}; clients must reconcile from durable conversation state.", archived.ConversationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to publish archive event for conversation {ConversationId}; clients must reconcile from durable conversation state.", archived.ConversationId);
         }
     }
 

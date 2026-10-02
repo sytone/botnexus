@@ -50,7 +50,6 @@ public sealed class MobileArchiveConversationTests : IDisposable
             DisplayName = "Agent 1",
             Emoji = null,
             SessionId = "session-1",
-            ActiveConversationId = "conv-1"
         };
         _agentState.Conversations["conv-1"] = convState;
 
@@ -65,7 +64,7 @@ public sealed class MobileArchiveConversationTests : IDisposable
         _ctx.Services.AddSingleton(_store);
         var displayedConversation = Substitute.For<IDisplayedConversation>();
         displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
-            .Returns(call => call.Arg<string?>() is { } agentId ? _store.GetAgent(agentId)?.ActiveConversationId : null);
+            .Returns(call => call.Arg<string?>() is { } agentId ? (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agentId) : null);
         _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
@@ -80,7 +79,7 @@ public sealed class MobileArchiveConversationTests : IDisposable
     [Fact]
     public void Archive_action_visible_in_menu_when_conversation_selected()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".overflow-btn").Click();
 
@@ -91,10 +90,10 @@ public sealed class MobileArchiveConversationTests : IDisposable
     [Fact]
     public void Archive_action_hidden_when_no_conversation_selected()
     {
-        _agentState.ActiveConversationId = null;
+        _store.SelectView(_agentState.AgentId, null ?? string.Empty, SelectionSource.RouteNavigation);
         _store.GetMessages(Arg.Any<string>()).Returns(new List<ChatMessage>().AsReadOnly());
 
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
 
         cut.Find(".overflow-btn").Click();
 
@@ -104,7 +103,7 @@ public sealed class MobileArchiveConversationTests : IDisposable
     [Fact]
     public void Archive_action_shows_confirm_overlay()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".overflow-btn").Click();
         cut.Find("[data-testid='archive-conversation-btn']").Click();
@@ -118,7 +117,7 @@ public sealed class MobileArchiveConversationTests : IDisposable
     public async Task Archive_action_skips_overlay_when_confirmation_is_disabled()
     {
         _preferences.Current.Returns(new PortalPreferences { ArchiveConfirmEnabled = false });
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".overflow-btn").Click();
         cut.Find("[data-testid='archive-conversation-btn']").Click();
@@ -152,7 +151,7 @@ public sealed class MobileArchiveConversationTests : IDisposable
     [Fact]
     public async Task Archive_confirm_calls_ArchiveConversationAsync()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".overflow-btn").Click();
         cut.Find("[data-testid='archive-conversation-btn']").Click();
@@ -164,7 +163,7 @@ public sealed class MobileArchiveConversationTests : IDisposable
     [Fact]
     public async Task Archive_cancel_does_not_call_ArchiveConversationAsync()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".overflow-btn").Click();
         cut.Find("[data-testid='archive-conversation-btn']").Click();
@@ -177,7 +176,7 @@ public sealed class MobileArchiveConversationTests : IDisposable
     [Fact]
     public void Archive_overlay_backdrop_click_cancels()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".overflow-btn").Click();
         cut.Find("[data-testid='archive-conversation-btn']").Click();
@@ -206,7 +205,7 @@ public sealed class MobileArchiveConversationTests : IDisposable
             UpdatedAt = DateTimeOffset.UtcNow
         };
 
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".overflow-btn").Click();
 

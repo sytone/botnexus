@@ -108,6 +108,89 @@ public sealed class SqliteSecretProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureStoreAsync_RecordsBothVersionSlots_AndPreservesExistingSecrets()
+    {
+        await StoreAsync("existing", "secret-value");
+        await SecretCommand.EnsureStoreAsync(StorePath, CancellationToken.None);
+
+        await using var connection = SqliteConnectionFactory.Create(
+            new SqliteConnectionStringBuilder { DataSource = StorePath }.ToString());
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT value FROM store_meta WHERE key = 'schema_version';";
+        (await command.ExecuteScalarAsync()).ShouldBe(SqliteSecretProvider.CurrentSchemaVersion.ToString());
+        command.CommandText = "PRAGMA user_version;";
+        Convert.ToInt32(await command.ExecuteScalarAsync()).ShouldBe(SqliteSecretProvider.CurrentSchemaVersion);
+        (await new SqliteSecretProvider(StorePath).ResolveAsync(SecretRef.Parse("sqlite:existing")))
+            .Reveal().ShouldBe("secret-value");
+    }
+
+    [Fact]
+    public async Task EnsureStoreAsync_UnversionedExistingStore_AdoptsWithoutDroppingSecret()
+    {
+        await using (var connection = SqliteConnectionFactory.Create(
+            new SqliteConnectionStringBuilder { DataSource = StorePath }.ToString()))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TABLE secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_utc TEXT NOT NULL); " +
+                                  "INSERT INTO secrets VALUES ('legacy', 'kept', 'yesterday');";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await SecretCommand.EnsureStoreAsync(StorePath, CancellationToken.None);
+
+        (await new SqliteSecretProvider(StorePath).ResolveAsync(SecretRef.Parse("sqlite:legacy")))
+            .Reveal().ShouldBe("kept");
+        await using var reopened = SqliteConnectionFactory.Create(
+            new SqliteConnectionStringBuilder { DataSource = StorePath }.ToString());
+        await reopened.OpenAsync();
+        await using var version = reopened.CreateCommand();
+        version.CommandText = "SELECT value FROM store_meta WHERE key = 'schema_version';";
+        (await version.ExecuteScalarAsync()).ShouldBe(SqliteSecretProvider.CurrentSchemaVersion.ToString());
+        version.CommandText = "PRAGMA user_version;";
+        Convert.ToInt32(await version.ExecuteScalarAsync()).ShouldBe(SqliteSecretProvider.CurrentSchemaVersion);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_FutureSchema_RefusesBeforeReadingASecret()
+    {
+        await StoreAsync("existing", "secret-value");
+        await using (var connection = SqliteConnectionFactory.Create(
+            new SqliteConnectionStringBuilder { DataSource = StorePath }.ToString()))
+        {
+            await connection.OpenAsync();
+            await using var stamp = connection.CreateCommand();
+            stamp.CommandText = "UPDATE store_meta SET value = '99' WHERE key = 'schema_version'; PRAGMA user_version = 99;";
+            await stamp.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Should.ThrowAsync<SqliteSchemaVersionMismatchException>(
+            () => new SqliteSecretProvider(StorePath).ResolveAsync(SecretRef.Parse("sqlite:existing")));
+        ex.StoreVersion.ShouldBe(99);
+        ex.CodeVersion.ShouldBe(SqliteSecretProvider.CurrentSchemaVersion);
+        ex.StorePath.ShouldBe(StorePath);
+        ex.Message.ShouldNotContain("secret-value");
+    }
+
+    [Fact]
+    public async Task EnsureStoreAsync_FutureSchema_RefusesBeforeWritingAnySecret()
+    {
+        await StoreAsync("existing", "secret-value");
+        await using (var connection = SqliteConnectionFactory.Create(
+            new SqliteConnectionStringBuilder { DataSource = StorePath }.ToString()))
+        {
+            await connection.OpenAsync();
+            await using var stamp = connection.CreateCommand();
+            stamp.CommandText = "UPDATE store_meta SET value = '99' WHERE key = 'schema_version'; PRAGMA user_version = 99;";
+            await stamp.ExecuteNonQueryAsync();
+        }
+
+        await Should.ThrowAsync<SqliteSchemaVersionMismatchException>(
+            () => SecretCommand.EnsureStoreAsync(StorePath, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task RemoveAsync_DeletesTheSecret()
     {
         await StoreAsync("temporary", "value");

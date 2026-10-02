@@ -33,6 +33,30 @@ public sealed class AgentConfigurationHostedServiceTests
     }
 
     [Fact]
+    public async Task StartAsync_WhenSourceChangesDuringInitialLoad_AppliesTheObservedRevision()
+    {
+        var source = new Mock<IAgentConfigurationSource>();
+        Action<IReadOnlyList<AgentDescriptor>>? callback = null;
+        source.Setup(s => s.Watch(It.IsAny<Action<IReadOnlyList<AgentDescriptor>>>()))
+            .Callback<Action<IReadOnlyList<AgentDescriptor>>>(cb => callback = cb)
+            .Returns(Mock.Of<IDisposable>());
+        source.Setup(s => s.LoadAsync(It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                callback.ShouldNotBeNull("the source must be watched before its startup snapshot is loaded");
+                callback!([CreateDescriptor("agent-new")]);
+                return Task.FromResult<IReadOnlyList<AgentDescriptor>>([CreateDescriptor("agent-old")]);
+            });
+        var registry = new RecordingAgentRegistry();
+        var service = CreateService([source.Object], registry);
+
+        await service.StartAsync(CancellationToken.None);
+
+        registry.Contains(AgentId.From("agent-new")).ShouldBeTrue();
+        registry.Contains(AgentId.From("agent-old")).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task StartAsync_WithCodeBasedDescriptor_SkipsShadowedConfigAgent()
     {
         var source = new Mock<IAgentConfigurationSource>();

@@ -1776,6 +1776,10 @@ X-Api-Key: your-api-key
 - `format` (string, path) — `markdown` or `html`
 - `firstEntryId` (string, query, optional) — Entry id of the first included entry (partial-range export)
 - `lastEntryId` (string, query, optional) — Entry id of the last included entry
+- `includeTools` (boolean, query, optional; default `true`) — Include tool calls and results
+- `includeThinking` (boolean, query, optional; default `false`) — Include assistant reasoning
+- `includeSystemMessages` (boolean, query, optional; default `true`) — Include system messages and conversation instructions
+- `redactSecrets` (boolean, query, optional; default `true`) — Redact recognised secrets before rendering
 
 **Response:** 200 OK — `text/markdown` or `text/html` file attachment named `<slug>-<yyyy-MM-dd>.<ext>`.
 
@@ -1878,23 +1882,36 @@ X-Api-Key: your-api-key
     "subAgentId": "sub-abc123",
     "parentSessionId": "session-abc123",
     "childSessionId": "session-sub-abc123",
-    "name": "docs-audit",
+    "parentConversationId": "conv-parent",
+    "childConversationId": "conv-9f2",
     "parentAgentId": "farnsworth",
     "childAgentId": "farnsworth",
-    "childConversationId": "conv-9f2",
+    "name": "docs-audit",
     "task": "Audit the API reference for missing endpoints",
-    "model": "claude-opus-5",
     "archetype": "Researcher",
+    "model": "claude-opus-5",
     "status": "Running",
     "startedAt": "2026-07-26T10:30:00Z",
     "completedAt": null,
+    "elapsedSeconds": 45.2,
+    "effectiveMaxTurns": 20,
+    "effectiveTimeoutSeconds": 900,
+    "remainingTurns": 16,
+    "remainingTimeSeconds": 854.8,
     "turnsUsed": 4,
-    "resultSummary": null
+    "resultSummary": null,
+    "result": null,
+    "completionDelivery": "Pending",
+    "completionDeliveryError": null,
+    "deliveryWarning": null,
+    "worktreeSnapshot": null
   }
 ]
 ```
 
-A sub-agent run owns its own conversation (`childConversationId`), linked back to the supervisor by `Conversation.ParentConversationId` rather than by sharing the parent's identity. `status` is one of `Running`, `Completed`, `Failed`, `Killed`, `TimedOut`, `BudgetExhausted`.
+All live and historical endpoints in this section return this bounded `SubAgentRunDetail` contract. A run owns its own conversation (`childConversationId`), linked to `parentConversationId`; the session and agent identifiers provide the corresponding navigation lineage. `status` is one of `Running`, `Completed`, `Failed`, `Killed`, `TimedOut`, `BudgetExhausted`, or `HandedOff`.
+
+`remainingTurns` and `remainingTimeSeconds` are available only for a non-terminal run with a measured effective budget. `result` contains a bounded structured partial outcome when one exists: `completion`, `stopReason`, `summary`, `turnsUsed`, measured `usage`, `verifiedTools`, and `unresolvedWork`. `completionDelivery` independently records whether the terminal completion announcement is `Pending`, `Delivered`, or `Failed`; a failed delivery also supplies bounded error and warning text. `worktreeSnapshot` exposes only safe relative recovery references and bounded changed-file names, never a private absolute path.
 
 **Error Responses:**
 - `404 Not Found` — Session does not exist
@@ -1916,7 +1933,7 @@ GET /api/sessions/session-abc123/subagents/history
 X-Api-Key: your-api-key
 ```
 
-**Response:** 200 OK — an array of the same `SubAgentSessionSummary` shape returned by [List Sub-Agent Runs](#list-sub-agent-runs), scoped to this parent session.
+**Response:** 200 OK — an array of the same bounded `SubAgentRunDetail` shape returned by [List Live Sub-Agents for a Session](#list-live-sub-agents-for-a-session), scoped to this parent session. Historical rows retain the terminal timing, result, completion-delivery verdict, and safe recovery references recorded for the run. Legacy rows written before detailed projection was introduced still return the same contract, with fields that were not recorded represented as `null` or empty collections.
 
 **Error Responses:**
 - `404 Not Found` — Session does not exist
@@ -2108,38 +2125,27 @@ X-Api-Key: your-api-key
 
 **Endpoint:** `GET /api/subagents`
 
-**Description:** Read-only, platform-wide sub-agent observability feed. Lists persisted sub-agent runs across **all** parent sessions, newest-started first, so an operator can review what sub-agents did after the fact — including whether a run genuinely completed or bailed. This surface is strictly read-only: it never spawns, kills, or mutates sub-agent state. It reads the same persisted `sub_agent_sessions` rows that the parent-scoped session history exposes, but aggregated across every parent session.
+**Description:** Read-only, platform-wide sub-agent observability feed. Lists persisted sub-agent runs across **all** parent sessions, newest-started first, so an operator can review what sub-agents did after the fact — including whether a run genuinely completed or bailed. This surface is strictly read-only: it never spawns, kills, or mutates sub-agent state. It reads the same persisted `sub_agent_sessions` rows that the parent-scoped session history exposes, but aggregated across every parent session. Filters apply before pagination, including to legacy rows without stored detail. Equal start times are ordered by run ID descending to keep page boundaries stable while the rows remain unchanged.
 
 **Query Parameters:**
 - `status` (string, optional) - Case-insensitive status filter (e.g. `Active`, `Completed`, `Failed`, `Killed`, `TimedOut`, `BudgetExhausted`). When omitted, runs of every status are returned.
+- `parentSessionId` (string, optional) — Match one parent session ID.
+- `childAgentId` (string, optional) — Match one child agent ID.
 - `limit` (int, optional, default `200`) — Maximum number of rows to return. Bounded to `1`–`500`; values above `500` are clamped.
+- `offset` (int, optional, default `0`) — Number of matching rows to skip; must not be negative. Offset pagination can shift if runs are added or changed between requests.
 
 **Request:**
 ```http
-GET /api/subagents?status=Completed&limit=50
+GET /api/subagents?status=Completed&parentSessionId=s-parent-1&childAgentId=agent-b&limit=50&offset=0
 X-Api-Key: your-api-key
 ```
 
-**Response:** 200 OK
-```json
-[
-  {
-    "subAgentId": "sub-abc123",
-    "parentSessionId": "session-xyz789",
-    "parentAgentId": "farnsworth",
-    "childAgentId": "farnsworth",
-    "archetype": "coder",
-    "startedAt": "2026-07-15T10:30:00Z",
-    "endedAt": "2026-07-15T10:42:00Z",
-    "status": "Completed"
-  }
-]
-```
+**Response:** 200 OK — an array of the same bounded `SubAgentRunDetail` contract documented under [List Live Sub-Agents for a Session](#list-live-sub-agents-for-a-session), ordered by start time and run ID, both descending. This platform view and the parent-scoped history endpoint read the same persisted projection, so status, navigation identities, terminal result, usage, completion-delivery verdict, and safe recovery references do not vary by endpoint.
 
-Each summary carries the run's task lineage (`parentAgentId` / `childAgentId`), behavioral `archetype` (or `null` if unset), lifecycle `status`, and start/end timestamps (`endedAt` is `null` while a run is still active).
+Legacy rows remain readable. Information that was not persisted for a legacy row is returned as `null` or an empty collection rather than inferred; `completedAt` is the terminal timestamp field (there is no separate `endedAt` field).
 
 **Error Responses:**
-- `400 Bad Request` — `limit` is not greater than zero
+- `400 Bad Request` — `limit` is not greater than zero, or `offset` is negative
 
 ---
 

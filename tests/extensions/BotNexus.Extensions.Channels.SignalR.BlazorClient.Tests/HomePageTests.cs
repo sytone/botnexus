@@ -198,7 +198,6 @@ public sealed class HomePageTests : IDisposable
         {
             AgentId = "agent-2",
             DisplayName = "Beta",
-            ActiveConversationId = "c-1"
         };
         targetAgent.Conversations["c-1"] = new ConversationState { ConversationId = "c-1", Title = "One" };
         targetAgent.Conversations["c-2"] = new ConversationState { ConversationId = "c-2", Title = "Two" };
@@ -263,7 +262,6 @@ public sealed class HomePageTests : IDisposable
         {
             AgentId = decodedAgentId,
             DisplayName = "Encoded Agent",
-            ActiveConversationId = "fallback"
         };
         targetAgent.Conversations[decodedConversationId] = new ConversationState
         {
@@ -298,7 +296,6 @@ public sealed class HomePageTests : IDisposable
         {
             AgentId = "agent-1",
             DisplayName = "Alpha",
-            ActiveConversationId = "known-conversation"
         };
         knownAgent.Conversations["known-conversation"] = new ConversationState
         {
@@ -337,7 +334,6 @@ public sealed class HomePageTests : IDisposable
         {
             AgentId = "agent-1",
             DisplayName = "Alpha",
-            ActiveConversationId = "known-conversation"
         };
         fallbackAgent.Conversations["known-conversation"] = new ConversationState
         {
@@ -382,7 +378,6 @@ public sealed class HomePageTests : IDisposable
         {
             AgentId = "farnsworth",
             DisplayName = "Farnsworth",
-            ActiveConversationId = "c-1"
         };
         targetAgent.Conversations["c-1"] = new ConversationState { ConversationId = "c-1", Title = "One" };
         targetAgent.Conversations["c-99"] = new ConversationState { ConversationId = "c-99", Title = "Deep" };

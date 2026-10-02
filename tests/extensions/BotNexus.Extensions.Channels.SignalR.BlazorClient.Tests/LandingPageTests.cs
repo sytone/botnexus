@@ -119,6 +119,50 @@ public sealed class LandingPageTests : IDisposable
             .Returns(Task.FromResult(StartConversationResult.Started(agentId, conversationId, null)));
     }
 
+    private static string ReadAppCss()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName,
+                "src", "extensions",
+                "BotNexus.Extensions.Channels.SignalR.BlazorClient",
+                "wwwroot", "css", "app.css");
+            if (File.Exists(candidate))
+                return File.ReadAllText(candidate);
+
+            dir = dir.Parent;
+        }
+
+        throw new FileNotFoundException("Could not locate app.css from test output directory.");
+    }
+
+    private static void AssertRuleHasDeclaration(string css, string selector, string declaration)
+    {
+        var searchFrom = 0;
+        while (true)
+        {
+            var start = css.IndexOf(selector, searchFrom, StringComparison.Ordinal);
+            if (start < 0)
+                break;
+
+            var cursor = start + selector.Length;
+            while (cursor < css.Length && char.IsWhiteSpace(css[cursor]))
+                cursor++;
+
+            if (cursor < css.Length && css[cursor] == '{')
+            {
+                var end = css.IndexOf('}', cursor + 1);
+                if (end > cursor && css.AsSpan(cursor + 1, end - cursor - 1).Contains(declaration, StringComparison.Ordinal))
+                    return;
+            }
+
+            searchFrom = start + selector.Length;
+        }
+
+        Assert.Fail($"Expected CSS selector '{selector}' to declare '{declaration}'.");
+    }
+
     // -- Loading / summary ----------------------------------------------------------
 
     [Fact]
@@ -165,6 +209,31 @@ public sealed class LandingPageTests : IDisposable
         cut.Find("[data-testid='home-agent-select']");
         cut.Find("[data-testid='home-model-select']");
         cut.Find("[data-testid='home-send']");
+    }
+
+    [Fact]
+    public void Renders_textarea_and_controls_as_one_composer_surface()
+    {
+        var cut = RenderPage();
+
+        var surface = cut.Find("[data-testid='home-composer-surface']");
+        surface.QuerySelector("textarea[data-testid='home-message-input']").ShouldNotBeNull();
+        surface.QuerySelector("[data-testid='home-starter-controls']").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void Home_composer_css_pins_the_visual_contract()
+    {
+        var css = ReadAppCss();
+
+        AssertRuleHasDeclaration(css, ".home-composer-surface", "border-radius: var(--radius-lg)");
+        AssertRuleHasDeclaration(css, ".home-composer-surface", "box-shadow: var(--shadow-raised)");
+        AssertRuleHasDeclaration(css, ".home-composer-surface:focus-within", "border-color: var(--border-focus)");
+        AssertRuleHasDeclaration(css, ".home-starter-controls select", "border-radius: var(--radius-sm)");
+        AssertRuleHasDeclaration(css, ".home-send-btn", "background: var(--accent)");
+        AssertRuleHasDeclaration(css, ".home-send-btn:hover:not(:disabled)", "background: var(--accent-hover)");
+        AssertRuleHasDeclaration(css, ".home-send-btn:active:not(:disabled)", "transform: translateY(1px)");
+        AssertRuleHasDeclaration(css, ".home-send-btn:disabled", "opacity: 0.45");
     }
 
     [Fact]

@@ -31,7 +31,7 @@ public sealed class CanvasSubmitToAgentTests
         _store.UpsertAgent(new AgentState { AgentId = "agent-2", DisplayName = "Agent 2", IsConnected = true });
 
         var agent1 = _store.GetAgent("agent-1")!;
-        agent1.ActiveConversationId = OwnedConversation;
+        _store.SelectView(agent1.AgentId, OwnedConversation ?? string.Empty, SelectionSource.RouteNavigation);
         agent1.Conversations[OwnedConversation] = new ConversationState
         {
             ConversationId = OwnedConversation,
@@ -43,7 +43,7 @@ public sealed class CanvasSubmitToAgentTests
         // A conversation that belongs to a DIFFERENT agent. A canvas rendered by agent-1 must never
         // be able to reach it.
         var agent2 = _store.GetAgent("agent-2")!;
-        agent2.ActiveConversationId = ForeignConversation;
+        _store.SelectView(agent2.AgentId, ForeignConversation ?? string.Empty, SelectionSource.RouteNavigation);
         agent2.Conversations[ForeignConversation] = new ConversationState
         {
             ConversationId = ForeignConversation,

@@ -71,7 +71,8 @@ public sealed class SatelliteStaleDetectionService : BackgroundService
                 satellite.Id,
                 satellite.LastSeen,
                 satellite.StaleTimeoutSeconds);
-            _registry.MarkOffline(satellite.Id);
+            if (satellite.ConnectionId is not null)
+                _registry.MarkOffline(satellite.Id, satellite.ConnectionId);
         }
     }
 }

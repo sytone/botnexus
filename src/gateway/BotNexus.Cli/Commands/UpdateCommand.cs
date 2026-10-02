@@ -297,6 +297,9 @@ internal class UpdateCommand
 
         // Step 2: Stop gateway BEFORE building — releases file locks on Windows
         var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(
+            fallbackPort: port,
+            homePath: home);
         GatewayStopResult stopResult;
         if (interactive)
         {
@@ -306,14 +309,14 @@ internal class UpdateCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedStop = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
+                    capturedStop = await _processManager.StopAsync(home, gatewayBinary, cancellationToken, gatewayUrl);
                 });
             stopResult = capturedStop;
         }
         else
         {
             AnsiConsole.MarkupLine("[blue][[update]][/] Stopping gateway...");
-            stopResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
+            stopResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken, gatewayUrl);
         }
 
         stopResult ??= new GatewayStopResult(false, "no result", GatewayStopOutcome.Failed);
@@ -558,7 +561,7 @@ internal class UpdateCommand
 
         // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
         // argument below, so probe where it will actually listen rather than where we asked.
-        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromConfig(port);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(port, home);
         var options = new GatewayStartOptions(
             ExecutablePath: gatewayDll,
             Arguments: $"--urls \"{gatewayUrl}\" --environment Development",

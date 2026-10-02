@@ -5,6 +5,7 @@ param(
     [ValidateRange(320,7680)][int]$ViewportWidth = 1440,
     [ValidateRange(320,4320)][int]$ViewportHeight = 1000,
     [ValidatePattern('^[A-Z0-9_/-]+$')][string]$PromptKey = 'SLOW_STREAM',
+    [ValidatePattern('^/[A-Za-z0-9_./-]*$')][string]$PagePath = '/chat/evidence-agent',
     [string[]]$Selectors = @('[data-testid="streaming-badge"]','[data-testid="chat-abort-btn"]'),
     [string[]]$AccessibleNames = @(),
     [ValidateSet('docker','podman')][string]$ContainerRuntime,
@@ -56,6 +57,7 @@ $volume = "botnexus-ui-evidence-output-$runId"
 $scenario = [ordered]@{
     name = 'active-stream'
     promptKey = $PromptKey
+    pagePath = $PagePath
     viewport = [ordered]@{ width = $ViewportWidth; height = $ViewportHeight }
     selectors = $Selectors
     accessibleNames = $AccessibleNames
