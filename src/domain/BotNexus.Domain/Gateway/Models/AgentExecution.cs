@@ -207,6 +207,8 @@ public sealed record AgentStreamEvent
     /// post-turn claim auditor flagged unbacked artifact claims in the agent's final message (#1600).
     /// </summary>
     public ClaimAuditSignal? ClaimAudit { get; init; }
+    /// <summary>Bounded provider retry/recovery lifecycle payload. Contains no credential or raw error text.</summary>
+    public ProviderRecoverySignal? ProviderRecovery { get; init; }
     /// <summary>Authoritative run completion disposition carried by <see cref="AgentStreamEventType.RunEnded"/>.</summary>
     public RunCompletionSignal? Completion { get; init; }
 }
@@ -266,8 +268,22 @@ public enum AgentStreamEventType
     /// final message that have no backing tool call (anti-fabrication control, #1600). Carries a
     /// <see cref="AgentStreamEvent.ClaimAudit"/> payload describing the unbacked claims.
     /// </summary>
-    ClaimAudit
+    ClaimAudit,
+    /// <summary>Bounded model-call retry and shared provider-recovery lifecycle signal.</summary>
+    ProviderRecovery
 }
+
+/// <summary>Bounded provider recovery signal projected from the agent core.</summary>
+public sealed record ProviderRecoverySignal(
+    string Stage,
+    string Provider,
+    string State,
+    int? Attempt,
+    int? MaxAttempts,
+    double? DelayMilliseconds,
+    int InFlightCalls,
+    int QueueLength,
+    DateTimeOffset? NextProbeAt);
 
 /// <summary>
 /// Channel-neutral run completion disposition. Values originate in the core loop's finalization gate.

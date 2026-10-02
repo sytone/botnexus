@@ -7,16 +7,17 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 public sealed class ReleaseHistoryClient(HttpClient http)
 {
-    public const string ArtifactUrl = "https://sytone.github.io/botnexus/releases/release-history.json";
+    public const string ArtifactUrl = "api/release-history";
     private const string SchemaVersion = "1.0.0";
     private static readonly Regex CommitPattern = new("^[0-9a-fA-F]{40}$", RegexOptions.CultureInvariant);
 
-    public async Task<ReleaseHistoryManifest> GetAsync(CancellationToken cancellationToken = default)
+    public async Task<ReleaseHistoryResponse> GetAsync(bool refreshRemote = false, CancellationToken cancellationToken = default)
     {
-        var manifest = await http.GetFromJsonAsync<ReleaseHistoryManifest>(ArtifactUrl, cancellationToken)
+        var url = refreshRemote ? ArtifactUrl + "?refresh=true" : ArtifactUrl;
+        var response = await http.GetFromJsonAsync<ReleaseHistoryResponse>(url, cancellationToken)
             ?? throw new InvalidDataException("The release history response was empty.");
-        Validate(manifest);
-        return manifest;
+        Validate(response.Manifest);
+        return response;
     }
 
     internal static void Validate(ReleaseHistoryManifest manifest)
@@ -137,3 +138,31 @@ public sealed record ReleaseChangeCategory(
 public sealed record ReleaseChange(
     [property: JsonPropertyName("summary")] string Summary,
     [property: JsonPropertyName("documentationUrls")] IReadOnlyList<string> DocumentationUrls);
+
+public sealed record ReleaseHistoryResponse(
+    [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+    [property: JsonPropertyName("releases")] IReadOnlyList<ReleaseHistoryEntry> Releases,
+    [property: JsonPropertyName("sourceStatus")] SourceVersionStatus SourceStatus)
+{
+    public ReleaseHistoryManifest Manifest => new(SchemaVersion, Releases);
+}
+
+public sealed record SourceVersionStatus(
+    [property: JsonPropertyName("runningCommit")] string RunningCommit,
+    [property: JsonPropertyName("runningCommitShort")] string RunningCommitShort,
+    [property: JsonPropertyName("checkoutHead")] string CheckoutHead,
+    [property: JsonPropertyName("checkoutHeadShort")] string CheckoutHeadShort,
+    [property: JsonPropertyName("latestReleaseVersion")] string? LatestReleaseVersion,
+    [property: JsonPropertyName("latestReleaseCommit")] string? LatestReleaseCommit,
+    [property: JsonPropertyName("releaseDistance")] GitDistance? ReleaseDistance,
+    [property: JsonPropertyName("remoteName")] string RemoteName,
+    [property: JsonPropertyName("remoteBranch")] string RemoteBranch,
+    [property: JsonPropertyName("remoteHead")] string? RemoteHead,
+    [property: JsonPropertyName("remoteDistance")] GitDistance? RemoteDistance,
+    [property: JsonPropertyName("remoteRefreshError")] string? RemoteRefreshError);
+
+public sealed record GitDistance(
+    [property: JsonPropertyName("targetCommit")] string TargetCommit,
+    [property: JsonPropertyName("targetCommitShort")] string TargetCommitShort,
+    [property: JsonPropertyName("ahead")] int Ahead,
+    [property: JsonPropertyName("behind")] int Behind);

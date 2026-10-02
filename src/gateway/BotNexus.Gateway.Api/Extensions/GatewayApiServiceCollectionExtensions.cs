@@ -3,6 +3,7 @@ using BotNexus.Gateway.Abstractions.Triggers;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Api.Filters;
 using BotNexus.Gateway.Api.Logging;
+using BotNexus.Gateway.Api.ReleaseHistory;
 using BotNexus.Gateway.Api.Triggers;
 using BotNexus.Gateway.Api.Workspace;
 using BotNexus.Gateway.Configuration;
@@ -29,6 +30,7 @@ public static class GatewayApiServiceCollectionExtensions
         // a DI ILoggerProvider: UseSerilog replaces the host ILoggerFactory, so a provider
         // registered here would never be attached and the buffer stayed empty (issue #2390).
         services.AddGatewayRecentLogStore();
+        services.TryAddSingleton<LocalReleaseHistoryService>();
 
         // #3528: the file-per-secret store behind SecretsController. Distinct from the
         // ISecretProvider set the gateway registers - those RESOLVE a declared credential reference
