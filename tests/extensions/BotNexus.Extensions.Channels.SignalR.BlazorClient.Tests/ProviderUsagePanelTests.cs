@@ -199,6 +199,47 @@ public sealed class ProviderUsagePanelTests : IDisposable
         });
     }
 
+    [Fact]
+    public async Task Unknown_identity_unavailable_split_and_combined_total_are_rendered_without_collision_or_duplication()
+    {
+        _handler.Enqueue(60, UsageJson(
+            60,
+            requests: 2,
+            modelsJson: """
+                [
+                  { "model": null, "modelKnown": false, "modelDisplayName": "Unknown model", "requests": 1, "failures": 0, "inputTokens": null, "outputTokens": null, "totalTokens": null },
+                  { "model": "unknown", "modelKnown": true, "modelDisplayName": "unknown", "requests": 1, "failures": 0, "inputTokens": null, "outputTokens": null, "totalTokens": 15 }
+                ]
+                """,
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: 15));
+        var cut = _ctx.Render<ProviderUsagePanel>();
+
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync());
+
+        var totals = cut.Find(".usage-totals").TextContent;
+        Assert.Contains("15 total tokens", totals, StringComparison.Ordinal);
+        Assert.DoesNotContain(" in", totals, StringComparison.Ordinal);
+        Assert.DoesNotContain(" out", totals, StringComparison.Ordinal);
+        var names = cut.FindAll(".usage-model-name").Select(element => element.TextContent).ToList();
+        Assert.Equal(["Unknown model", "unknown"], names);
+        Assert.Contains("unavailable in / unavailable out", cut.Markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Truncated_window_displays_explicit_incomplete_message()
+    {
+        _handler.Enqueue(60, UsageJson(60, requests: 20_000, isTruncated: true));
+        var cut = _ctx.Render<ProviderUsagePanel>();
+
+        await cut.InvokeAsync(() => cut.Instance.OpenAsync());
+
+        var warning = cut.Find("[data-testid='usage-truncated']").TextContent;
+        Assert.Contains("incomplete", warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("global retention", warning, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static Task ChangeWindowAsync(IRenderedComponent<ProviderUsagePanel> cut, int minutes)
     {
         var method = typeof(ProviderUsagePanel).GetMethod("SelectWindow", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -213,25 +254,43 @@ public sealed class ProviderUsagePanelTests : IDisposable
         return (Timer?)field.GetValue(component);
     }
 
-    private static string UsageJson(int windowMinutes, int requests) => $$"""
-        {
-          "windowMinutes": {{windowMinutes}},
-          "providers": [
+    private static string UsageJson(
+        int windowMinutes,
+        int requests,
+        bool isTruncated = false,
+        string? modelsJson = null,
+        long? inputTokens = 10,
+        long? outputTokens = 5,
+        long? totalTokens = null)
+    {
+        modelsJson ??= $$"""
+            [{ "model": "example-model", "modelKnown": true, "modelDisplayName": "example-model", "requests": {{requests}}, "failures": 0, "inputTokens": 10, "outputTokens": 5, "totalTokens": null }]
+            """;
+        return $$"""
             {
-              "provider": "example",
-              "observedAtUtc": "2026-09-15T00:00:00Z",
-              "limits": [],
-              "burn": {
-                "requests": {{requests}},
-                "failures": 0,
-                "inputTokens": 10,
-                "outputTokens": 5,
-                "models": [{ "model": "example-model", "requests": {{requests}}, "failures": 0, "inputTokens": 10, "outputTokens": 5 }]
-              }
+              "windowMinutes": {{windowMinutes}},
+              "isTruncated": {{isTruncated.ToString().ToLowerInvariant()}},
+              "providers": [
+                {
+                  "provider": "example",
+                  "observedAtUtc": "2026-09-15T00:00:00Z",
+                  "limits": [],
+                  "burn": {
+                    "requests": {{requests}},
+                    "failures": 0,
+                    "inputTokens": {{JsonNumber(inputTokens)}},
+                    "outputTokens": {{JsonNumber(outputTokens)}},
+                    "totalTokens": {{JsonNumber(totalTokens)}},
+                    "models": {{modelsJson}}
+                  }
+                }
+              ]
             }
-          ]
-        }
-        """;
+            """;
+    }
+
+    private static string JsonNumber(long? value) =>
+        value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "null";
 
     private sealed class ControlledUsageHandler : HttpMessageHandler
     {

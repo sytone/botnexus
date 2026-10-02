@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using BotNexus.Cli.Commands;
+using BotNexus.Gateway.Sessions;
 using Microsoft.Data.Sqlite;
 
 namespace BotNexus.Cli.Tests;

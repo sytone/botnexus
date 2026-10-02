@@ -757,6 +757,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // strategy without the full service graph keep working (null simply records nothing;
             // the one-attempt fail-fast still applies).
             SuspensionRegistry: _serviceProvider.GetService<BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry>(),
+            RecoveryCoordinator: _serviceProvider.GetService<BotNexus.Agent.Core.Loop.IProviderRecoveryCoordinator>(),
             AuthProfile: authProfileId,
             // #3162: the central tool-output backstop. Reads gateway:toolOutputBudget and defaults
             // ON (256 KiB) when the section is absent; disabled (0) only when Enabled=false or
@@ -1420,6 +1421,34 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             // A crash mid-run is the other half of AC3: the run unwinds through here, and an
             // in-flight tool has to leave the same auditable incomplete record it would on a
             // cancellation.
+            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<AgentResponse> PromptWithoutToolsAsync(string message, CancellationToken cancellationToken = default)
+    {
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.finalize", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", AgentId);
+        activity?.SetTag("botnexus.session.id", SessionId);
+        _activityTracker?.RecordActivity();
+        try
+        {
+            var messages = await _agent.PromptWithoutToolsAsync(message, cancellationToken);
+            var response = BuildResponse(messages, _agent.State.LastCompletion);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return response;
+        }
+        catch (OperationCanceledException oce)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
+            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
+            throw BuildInterruptedException(oce);
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
             throw;
         }

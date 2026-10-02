@@ -1244,7 +1244,7 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
-    public void InterruptSteerButton_HasAbbreviatedLabel_WhenStreaming()
+    public void InterruptSteerButton_HasIconAndAccessibleLabel_WhenStreaming()
     {
         CreateAndSeedAgent("agent-1", isStreaming: true);
         _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
@@ -1254,8 +1254,9 @@ public sealed class ChatPanelTests : IDisposable
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
         var btn = cut.Find(".interrupt-steer-btn");
-        Assert.Contains("Redirect", btn.TextContent);
-        Assert.DoesNotContain("Interrupt + Redirect", btn.TextContent);
+        Assert.Equal("Redirect immediately", btn.GetAttribute("aria-label"));
+        Assert.Equal(string.Empty, btn.TextContent.Trim());
+        Assert.Single(btn.QuerySelectorAll("svg"));
     }
 
     [Fact]

@@ -1,6 +1,11 @@
+using System.Collections.Immutable;
+using BotNexus.Domain.Gateway.Models;
+using BotNexus.Domain.Primitives;
 using BotNexus.Extensions.Channels.Tui;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -128,4 +133,135 @@ public sealed class TuiChannelAdapterTests
         var regularMessage = dispatchedMessages.Single(m => m.Content == "hello world");
         regularMessage.RoutingHints.ShouldBeNull();
     }
+
+    [Fact]
+    public async Task ConversationPublisher_ApplicableBinding_RendersContentOnce()
+    {
+        var adapter = new TuiChannelAdapter(NullLogger<TuiChannelAdapter>.Instance);
+        await using var publisher = new ConversationEventPublisher([adapter]);
+        var originalOut = Console.Out;
+        var output = new StringWriter();
+
+        try
+        {
+            Console.SetOut(output);
+            var conversationId = ConversationId.Create();
+            var sessionId = SessionId.Create();
+
+            (await publisher.PublishAsync(AgentEvent(
+                conversationId,
+                sessionId,
+                AgentStreamEventType.ContentDelta,
+                contentDelta: "hello",
+                bindings: [Binding("tui", "console", BindingMode.Interactive)]))).ShouldBeTrue();
+
+            await publisher.WaitForDrainAsync(TestTimeout());
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        output.ToString().ShouldBe("hello");
+    }
+
+    [Fact]
+    public async Task ConversationPublisher_UnrelatedAndMutedBindings_RenderNothing()
+    {
+        var adapter = new TuiChannelAdapter(NullLogger<TuiChannelAdapter>.Instance);
+        await using var publisher = new ConversationEventPublisher([adapter]);
+        var originalOut = Console.Out;
+        var output = new StringWriter();
+
+        try
+        {
+            Console.SetOut(output);
+            var conversationId = ConversationId.Create();
+            var sessionId = SessionId.Create();
+
+            (await publisher.PublishAsync(AgentEvent(
+                conversationId,
+                sessionId,
+                AgentStreamEventType.ContentDelta,
+                contentDelta: "unrelated",
+                bindings: [Binding("telegram", "chat-1", BindingMode.Interactive)]))).ShouldBeTrue();
+            (await publisher.PublishAsync(AgentEvent(
+                conversationId,
+                sessionId,
+                AgentStreamEventType.ContentDelta,
+                contentDelta: "muted",
+                bindings: [Binding("tui", "console", BindingMode.Muted)]))).ShouldBeTrue();
+
+            await publisher.WaitForDrainAsync(TestTimeout());
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        output.ToString().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ConversationPublisher_UnsupportedLifecycleEvent_RendersNothing()
+    {
+        var adapter = new TuiChannelAdapter(NullLogger<TuiChannelAdapter>.Instance);
+        await using var publisher = new ConversationEventPublisher([adapter]);
+        var originalOut = Console.Out;
+        var output = new StringWriter();
+
+        try
+        {
+            Console.SetOut(output);
+            (await publisher.PublishAsync(new ConversationCreatedEvent
+            {
+                AgentId = AgentId.From("farnsworth"),
+                ConversationId = ConversationId.Create(),
+                Bindings = [Binding("tui", "console", BindingMode.Interactive)],
+                Title = "new conversation",
+            })).ShouldBeTrue();
+
+            await publisher.WaitForDrainAsync(TestTimeout());
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        output.ToString().ShouldBeEmpty();
+    }
+
+    private static ConversationBindingSnapshot Binding(string channel, string address, BindingMode mode)
+        => new(
+            BindingId.Create(),
+            ChannelKey.From(channel),
+            AdapterId: null,
+            ChannelAddress.From(address),
+            mode,
+            ThreadingMode.Single);
+
+    private static ConversationAgentEvent AgentEvent(
+        ConversationId conversationId,
+        SessionId sessionId,
+        AgentStreamEventType type,
+        string? contentDelta,
+        ImmutableArray<ConversationBindingSnapshot> bindings)
+        => new()
+        {
+            AgentId = AgentId.From("farnsworth"),
+            ConversationId = conversationId,
+            SessionId = sessionId,
+            Bindings = bindings,
+            StreamEvent = new AgentStreamEvent
+            {
+                Type = type,
+                ContentDelta = contentDelta,
+                AgentId = AgentId.From("farnsworth"),
+                ConversationId = conversationId,
+                SessionId = sessionId,
+            },
+        };
+
+    private static CancellationToken TestTimeout()
+        => new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token;
 }

@@ -1,4 +1,5 @@
 using BotNexus.Domain.Text;
+using BotNexus.Gateway.Sessions;
 using System.CommandLine;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;

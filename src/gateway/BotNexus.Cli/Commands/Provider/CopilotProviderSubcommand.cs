@@ -33,7 +33,7 @@ internal static class CopilotProviderSubcommand
     /// authoritative in <see cref="ProviderCommand.ExecuteSetupAsync(string,string,bool,string?,CancellationToken)"/>
     /// — this subcommand contributes diagnostics, not new auth code paths.
     /// </summary>
-    public static Command Build(Option<bool> verboseOption, Option<string?> targetOption, Func<string, string, bool, CancellationToken, Task<int>> setupAlias)
+    public static Command Build(Option<bool> verboseOption, Option<string?> targetOption, Func<string, string, bool, string, CancellationToken, Task<int>> setupAlias)
     {
         var copilot = new Command("copilot", "GitHub Copilot diagnostics and auth helpers.");
 
@@ -49,73 +49,88 @@ internal static class CopilotProviderSubcommand
     private static Command BuildLogin(
         Option<bool> verboseOption,
         Option<string?> targetOption,
-        Func<string, string, bool, CancellationToken, Task<int>> setupAlias)
+        Func<string, string, bool, string, CancellationToken, Task<int>> setupAlias)
     {
-        var cmd = new Command("login", "Authenticate to GitHub Copilot via device code flow (alias for `provider setup --provider github-copilot`).");
+        var instanceOption = CreateInstanceOption();
+        var cmd = new Command("login", "Authenticate a GitHub Copilot provider instance via device code flow.");
+        cmd.AddOption(instanceOption);
         cmd.SetHandler(async context =>
         {
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var target = context.ParseResult.GetValueForOption(targetOption);
+            var instance = ResolveInstance(context.ParseResult.GetValueForOption(instanceOption));
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
-            context.ExitCode = await setupAlias(configPath, home, verbose, CancellationToken.None);
+            context.ExitCode = await setupAlias(configPath, home, verbose, instance, CancellationToken.None);
         });
         return cmd;
     }
 
     private static Command BuildWhoami(Option<string?> targetOption)
     {
+        var instanceOption = CreateInstanceOption();
         var cmd = new Command("whoami", "Show the authenticated Copilot user, plan, endpoint, and token expiry.");
+        cmd.AddOption(instanceOption);
         cmd.SetHandler(async context =>
         {
             var target = context.ParseResult.GetValueForOption(targetOption);
-            context.ExitCode = await ExecuteWhoamiAsync(CliPaths.ResolveTarget(target), CancellationToken.None);
+            var instance = ResolveInstance(context.ParseResult.GetValueForOption(instanceOption));
+            context.ExitCode = await ExecuteWhoamiAsync(CliPaths.ResolveTarget(target), instance, CancellationToken.None);
         });
         return cmd;
     }
 
     private static Command BuildModels(Option<string?> targetOption)
     {
+        var instanceOption = CreateInstanceOption();
         var cmd = new Command("models", "List the GitHub Copilot models the authenticated user is entitled to invoke.");
+        cmd.AddOption(instanceOption);
         cmd.SetHandler(async context =>
         {
             var target = context.ParseResult.GetValueForOption(targetOption);
-            context.ExitCode = await ExecuteModelsAsync(CliPaths.ResolveTarget(target), CancellationToken.None);
+            var instance = ResolveInstance(context.ParseResult.GetValueForOption(instanceOption));
+            context.ExitCode = await ExecuteModelsAsync(CliPaths.ResolveTarget(target), instance, CancellationToken.None);
         });
         return cmd;
     }
 
     private static Command BuildQuota(Option<string?> targetOption)
     {
+        var instanceOption = CreateInstanceOption();
         var cmd = new Command("quota", "Show the current Copilot quota snapshots (chat, completions, premium interactions).");
+        cmd.AddOption(instanceOption);
         cmd.SetHandler(async context =>
         {
             var target = context.ParseResult.GetValueForOption(targetOption);
-            context.ExitCode = await ExecuteQuotaAsync(CliPaths.ResolveTarget(target), CancellationToken.None);
+            var instance = ResolveInstance(context.ParseResult.GetValueForOption(instanceOption));
+            context.ExitCode = await ExecuteQuotaAsync(CliPaths.ResolveTarget(target), instance, CancellationToken.None);
         });
         return cmd;
     }
 
     private static Command BuildTest(Option<string?> targetOption)
     {
+        var instanceOption = CreateInstanceOption();
         var modelOption = new Option<string>("--model", () => DefaultTestModel, $"Copilot model id to round-trip (default: {DefaultTestModel}).");
         var promptOption = new Option<string>("--prompt", () => "Respond with the single word: ok.", "Prompt to send.");
         var cmd = new Command("test", "Round-trip a single request through the carved-out Copilot provider to confirm end-to-end connectivity.");
+        cmd.AddOption(instanceOption);
         cmd.AddOption(modelOption);
         cmd.AddOption(promptOption);
         cmd.SetHandler(async context =>
         {
             var target = context.ParseResult.GetValueForOption(targetOption);
+            var instance = ResolveInstance(context.ParseResult.GetValueForOption(instanceOption));
             var modelId = context.ParseResult.GetValueForOption(modelOption) ?? DefaultTestModel;
             var prompt = context.ParseResult.GetValueForOption(promptOption) ?? "Respond with the single word: ok.";
-            context.ExitCode = await ExecuteTestAsync(CliPaths.ResolveTarget(target), modelId, prompt, CancellationToken.None);
+            context.ExitCode = await ExecuteTestAsync(CliPaths.ResolveTarget(target), instance, modelId, prompt, CancellationToken.None);
         });
         return cmd;
     }
 
-    private static async Task<int> ExecuteWhoamiAsync(string home, CancellationToken ct)
+    private static async Task<int> ExecuteWhoamiAsync(string home, string instance, CancellationToken ct)
     {
-        var auth = await CopilotAuthLoader.LoadAsync(home, ct);
+        var auth = await CopilotAuthLoader.LoadAsync(home, instance, ct);
         if (auth is null)
         {
             AnsiConsole.MarkupLine("[red]Not logged in.[/] Run [green]botnexus provider copilot login[/].");
@@ -136,6 +151,7 @@ internal static class CopilotProviderSubcommand
         }
 
         var table = new Table().Border(TableBorder.Rounded).AddColumn("Field").AddColumn("Value");
+        table.AddRow("Provider instance", CliText.SafeDisplay(instance));
         table.AddRow("Login", CliText.SafeDisplay(info.Login ?? "—"));
         table.AddRow("Plan", CliText.SafeDisplay(info.CopilotPlan ?? "—"));
         table.AddRow("SKU", CliText.SafeDisplay(info.AccessTypeSku ?? "—"));
@@ -155,9 +171,9 @@ internal static class CopilotProviderSubcommand
         return 0;
     }
 
-    private static async Task<int> ExecuteModelsAsync(string home, CancellationToken ct)
+    private static async Task<int> ExecuteModelsAsync(string home, string instance, CancellationToken ct)
     {
-        var auth = await CopilotAuthLoader.LoadAsync(home, ct);
+        var auth = await CopilotAuthLoader.LoadAsync(home, instance, ct);
         if (auth is null)
         {
             AnsiConsole.MarkupLine("[red]Not logged in.[/] Run [green]botnexus provider copilot login[/].");
@@ -219,13 +235,13 @@ internal static class CopilotProviderSubcommand
         }
 
         AnsiConsole.Write(table);
-        AnsiConsole.MarkupLine($"[dim]{effectiveModels.Count} models from {CliText.SafeDisplay(auth.ApiEndpoint)}[/]");
+        AnsiConsole.MarkupLine($"[dim]{effectiveModels.Count} models for {CliText.SafeDisplay(instance)} from {CliText.SafeDisplay(auth.ApiEndpoint)}[/]");
         return 0;
     }
 
-    private static async Task<int> ExecuteQuotaAsync(string home, CancellationToken ct)
+    private static async Task<int> ExecuteQuotaAsync(string home, string instance, CancellationToken ct)
     {
-        var auth = await CopilotAuthLoader.LoadAsync(home, ct);
+        var auth = await CopilotAuthLoader.LoadAsync(home, instance, ct);
         if (auth is null)
         {
             AnsiConsole.MarkupLine("[red]Not logged in.[/] Run [green]botnexus provider copilot login[/].");
@@ -279,13 +295,13 @@ internal static class CopilotProviderSubcommand
         }
 
         AnsiConsole.Write(table);
-        AnsiConsole.MarkupLine($"[dim]Quota resets: {CliText.SafeDisplay(info.QuotaResetDate ?? "—")}[/]");
+        AnsiConsole.MarkupLine($"[dim]Provider instance: {CliText.SafeDisplay(instance)} | quota resets: {CliText.SafeDisplay(info.QuotaResetDate ?? "—")}[/]");
         return 0;
     }
 
-    private static async Task<int> ExecuteTestAsync(string home, string modelId, string prompt, CancellationToken ct)
+    private static async Task<int> ExecuteTestAsync(string home, string instance, string modelId, string prompt, CancellationToken ct)
     {
-        var auth = await CopilotAuthLoader.LoadAsync(home, ct);
+        var auth = await CopilotAuthLoader.LoadAsync(home, instance, ct);
         if (auth is null)
         {
             AnsiConsole.MarkupLine("[red]Not logged in.[/] Run [green]botnexus provider copilot login[/].");
@@ -311,7 +327,7 @@ internal static class CopilotProviderSubcommand
             return 2;
         }
 
-        var model = ResolveEffectiveModel(discovered, auth.ApiEndpoint, modelId);
+        var model = ResolveEffectiveModel(discovered, auth.ApiEndpoint, modelId, instance);
         if (model is null)
         {
             var discoveredEntry = discovered.Data?.FirstOrDefault(entry =>
@@ -361,7 +377,7 @@ internal static class CopilotProviderSubcommand
                 return 1;
         }
 
-        AnsiConsole.MarkupLine($"[dim]→ {CliText.SafeDisplay(model.Api)} | {CliText.SafeDisplay(model.Id)} | {CliText.SafeDisplay(model.BaseUrl)}[/]");
+        AnsiConsole.MarkupLine($"[dim]→ {CliText.SafeDisplay(instance)} | {CliText.SafeDisplay(model.Api)} | {CliText.SafeDisplay(model.Id)} | {CliText.SafeDisplay(model.BaseUrl)}[/]");
 
         var sw = Stopwatch.StartNew();
         long? firstTokenMs = null;
@@ -404,18 +420,19 @@ internal static class CopilotProviderSubcommand
     internal static LlmModel? ResolveEffectiveModel(
         CopilotModelsResponse discovered,
         string apiEndpoint,
-        string modelId)
+        string modelId,
+        string providerInstance = "github-copilot")
     {
         var registry = new ModelRegistry();
-        new BuiltInModels().RegisterAll(registry, providerKey =>
-            providerKey == "github-copilot" && !string.IsNullOrWhiteSpace(apiEndpoint)
+        new BuiltInModels().RegisterCopilotInstance(registry, providerInstance, providerKey =>
+            string.Equals(providerKey, providerInstance, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(apiEndpoint)
                 ? apiEndpoint
                 : null);
 
         foreach (var discoveredModel in CopilotModelDiscoveryProvider.ProjectModels(discovered, apiEndpoint))
-            registry.Register("github-copilot", discoveredModel);
+            registry.Register(providerInstance, discoveredModel);
 
-        return registry.GetModel("github-copilot", modelId);
+        return registry.GetModel(providerInstance, modelId);
     }
 
     internal static string FormatPremium(bool? value) => value switch
@@ -428,6 +445,12 @@ internal static class CopilotProviderSubcommand
     internal static string FormatMultiplier(double? value) => value is null
         ? "[dim]unknown[/]"
         : $"{value.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}×";
+
+    private static Option<string> CreateInstanceOption()
+        => new("--instance", () => "github-copilot", "Configured GitHub Copilot provider-instance name.");
+
+    private static string ResolveInstance(string? instance)
+        => CopilotAuthLoader.NormalizeProviderInstance(instance ?? "github-copilot");
 
     internal static string FormatInvocation(CopilotModelInfo model)
     {

@@ -48,10 +48,19 @@ public class SignalREndpointContributor : IEndpointContributor
         {
             var path = context.Request.Path.Value ?? "";
 
-            // Only handle requests under this prefix
+            // Only handle requests under this prefix. Canonicalize the exact mobile root before
+            // serving its document: the PWA base, scope, start URL and relative asset tree all end
+            // in '/', and iOS Home Screen shortcuts can retain the originally visited /mobile URL.
             if (!string.IsNullOrEmpty(prefix))
             {
-                if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                if (path.Equals(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    context.Response.StatusCode = StatusCodes.Status308PermanentRedirect;
+                    context.Response.Headers.Location = string.Concat(prefix, "/", context.Request.QueryString);
+                    return;
+                }
+
+                if (!path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
                 {
                     await next();
                     return;

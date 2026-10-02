@@ -546,63 +546,86 @@
                           placeholder="@InputPlaceholder"
                           disabled="@(!IsConnected)" />
 
-                <button class="expand-composer-btn" type="button"
-                        data-testid="chat-expand"
-                        @ref="_expandComposerButton"
-                        @onclick="OpenExpandedComposer"
-                        title="Expand composer"
-                        aria-label="Expand composer">
-                    <span aria-hidden="true">↗</span>
-                </button>
+                <div class="composer-toolbar"
+                     data-testid="chat-composer-toolbar"
+                     role="toolbar"
+                     aria-label="Conversation actions">
+                    <button class="composer-action-btn expand-composer-btn" type="button"
+                            data-testid="chat-expand"
+                            @ref="_expandComposerButton"
+                            @onclick="OpenExpandedComposer"
+                            title="Expand composer"
+                            aria-label="Expand composer">
+                        <span aria-hidden="true">↗</span>
+                    </button>
 
-                <button type="button" class="prompt-template-open-btn" data-testid="prompt-template-open"
-                        aria-haspopup="dialog" @ref="_promptTemplateOpenButton" @onclick="OpenPromptTemplatePicker" title="Insert a prompt template">
-                    Templates
-                </button>
+                    <button type="button" class="composer-action-btn prompt-template-open-btn"
+                            data-testid="prompt-template-open"
+                            aria-haspopup="dialog"
+                            aria-label="Insert prompt template"
+                            @ref="_promptTemplateOpenButton"
+                            @onclick="OpenPromptTemplatePicker"
+                            title="Insert a prompt template">
+                        <Icon Name="file" Size="18" Class="bn-icon-inherit" />
+                    </button>
 
-                <div class="attachment-composer">
-                    <label class="attach-btn" data-testid="chat-attach" title="Attach files" aria-label="Attach files">&#x1F4CE;<InputFile class="attachment-input" OnChange="HandleFilesSelected" multiple /></label>
-                    @foreach (var attachment in _attachments)
+                    <div class="attachment-composer">
+                        <label class="composer-action-btn attach-btn" data-testid="chat-attach" title="Attach files" aria-label="Attach files"><span class="attach-paperclip" aria-hidden="true">📎</span><InputFile class="attachment-input" OnChange="HandleFilesSelected" multiple /></label>
+                    </div>
+
+                    @if (IsStreaming)
                     {
-                        <span class="attachment-chip" data-testid="attachment-chip"><span class="attachment-name">@attachment.FileName</span><span class="attachment-size">@FormatBytes(attachment.Size)</span><button type="button" data-testid="attachment-remove" aria-label="@($"Remove {attachment.FileName}")" @onclick="() => RemoveAttachment(attachment)"><Icon Name="close" Size="12" Class="bn-icon-inherit" /></button></span>
+                        <span class="composer-toolbar-divider" aria-hidden="true"></span>
+                        <button class="composer-action-btn steer-btn" data-testid="chat-steer-btn"
+                                @onclick="SteerAgent"
+                                disabled="@(string.IsNullOrWhiteSpace(_inputText))"
+                                aria-label="Steer at next turn boundary"
+                                title="Steer at next turn boundary (Enter)">
+                            <Icon Name="move" Size="18" Class="bn-icon-inherit" />
+                        </button>
+                        <button class="composer-action-btn interrupt-steer-btn" data-testid="chat-redirect-btn"
+                                @onclick="InterruptAndSteer"
+                                disabled="@(string.IsNullOrWhiteSpace(_inputText))"
+                                aria-label="Redirect immediately"
+                                title="Redirect immediately: stop the current step and use this message">
+                            <Icon Name="refresh" Size="18" Class="bn-icon-inherit" />
+                        </button>
+                        <button class="composer-action-btn followup-btn" data-testid="chat-followup-btn"
+                                @onclick="FollowUpAgent"
+                                disabled="@(string.IsNullOrWhiteSpace(_inputText))"
+                                aria-label="Queue follow-up after completion"
+                                title="Queue follow-up after the agent completes the whole loop">
+                            <Icon Name="add" Size="18" Class="bn-icon-inherit" />
+                        </button>
+                        <button class="composer-action-btn abort-btn" data-testid="chat-abort-btn"
+                                @onclick="AbortAgent"
+                                aria-label="Stop agent"
+                                title="Stop the agent (Escape)">
+                            <Icon Name="stop" Size="18" Class="bn-icon-inherit" />
+                        </button>
                     }
-                    @if (_attachmentError is not null) { <div class="attachment-error" role="alert">@_attachmentError</div> }
+                    else
+                    {
+                        <button class="composer-action-btn send-btn"
+                                data-testid="chat-send"
+                                @onclick="SendMessage"
+                                aria-label="Send message"
+                                title="Send message"
+                                disabled="@(!IsConnected || (string.IsNullOrWhiteSpace(_inputText) && _attachments.Count == 0))">
+                            <Icon Name="send" Size="18" Class="bn-icon-inherit" />
+                        </button>
+                    }
                 </div>
 
-                @if (IsStreaming)
+                @if (_attachments.Count > 0 || _attachmentError is not null)
                 {
-                    <button class="steer-btn" data-testid="chat-steer-btn"
-                            @onclick="SteerAgent"
-                            disabled="@(string.IsNullOrWhiteSpace(_inputText))"
-                            title="Steer: inject this guidance at the next turn boundary (Enter)">
-                        🔀 Steer
-                    </button>
-                    <button class="interrupt-steer-btn" data-testid="chat-redirect-btn"
-                            @onclick="InterruptAndSteer"
-                            disabled="@(string.IsNullOrWhiteSpace(_inputText))"
-                            title="Redirect: stop the current step and steer with this message right away">
-                        Redirect
-                    </button>
-                    <button class="followup-btn" data-testid="chat-followup-btn"
-                            @onclick="FollowUpAgent"
-                            disabled="@(string.IsNullOrWhiteSpace(_inputText))"
-                            title="Follow Up: queue this message to run after the agent finishes the whole loop">
-                        <Icon Name="add" Size="14" /> Follow Up
-                    </button>
-                    <button class="abort-btn" data-testid="chat-abort-btn"
-                            @onclick="AbortAgent"
-                            title="Stop the agent (Escape)">
-                        ⏹ Stop
-                    </button>
-                }
-                else
-                {
-                    <button class="send-btn"
-                            data-testid="chat-send"
-                            @onclick="SendMessage"
-                            disabled="@(!IsConnected || (string.IsNullOrWhiteSpace(_inputText) && _attachments.Count == 0))">
-                        Send
-                    </button>
+                    <div class="composer-attachments">
+                        @foreach (var attachment in _attachments)
+                        {
+                            <span class="attachment-chip" data-testid="attachment-chip"><span class="attachment-name">@attachment.FileName</span><span class="attachment-size">@FormatBytes(attachment.Size)</span><button type="button" data-testid="attachment-remove" aria-label="@($"Remove {attachment.FileName}")" @onclick="() => RemoveAttachment(attachment)"><Icon Name="close" Size="12" Class="bn-icon-inherit" /></button></span>
+                        }
+                        @if (_attachmentError is not null) { <div class="attachment-error" role="alert">@_attachmentError</div> }
+                    </div>
                 }
             }
         </div>
