@@ -71,6 +71,62 @@ public sealed class TestChannelMultiChannelScenarioTests
         signalR.Item.ShouldBe(persisted);
     }
 
+    [Fact]
+    public async Task PublishAsync_InterleavedConversations_KeepEventsAndOriginCorrelationOnTheirOwnBindings()
+    {
+        await using var scenario = new TestChannelConversationScenario(
+            TestChannelConversationScenario.Channel("telegram"),
+            TestChannelConversationScenario.Channel("signalr"));
+
+        var otherConversation = ConversationId.Create();
+        var firstTelegram = scenario.Bind("telegram", "chat-first");
+        scenario.Bind("signalr", "portal-first");
+        var secondSignalR = scenario.Bind("signalr", "portal-second", conversationId: otherConversation);
+        scenario.Bind("telegram", "chat-second", conversationId: otherConversation);
+
+        await scenario.PublishAsync(firstTelegram, "request-first", new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.ContentDelta,
+            ContentDelta = "first-1",
+        });
+        await scenario.PublishAsync(secondSignalR, "request-second", new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.ContentDelta,
+            ContentDelta = "second-1",
+        }, otherConversation);
+        await scenario.PublishAsync(firstTelegram, "request-first", new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.ContentDelta,
+            ContentDelta = "first-2",
+        });
+
+        AssertConversationProjection(scenario.Events("telegram", "chat-first"), scenario.ConversationId,
+            firstTelegram, "request-first", "first-1", "first-2");
+        AssertConversationProjection(scenario.Events("signalr", "portal-first"), scenario.ConversationId,
+            null, null, "first-1", "first-2");
+        AssertConversationProjection(scenario.Events("signalr", "portal-second"), otherConversation,
+            secondSignalR, "request-second", "second-1");
+        AssertConversationProjection(scenario.Events("telegram", "chat-second"), otherConversation,
+            null, null, "second-1");
+    }
+
+    private static void AssertConversationProjection(
+        IReadOnlyList<TestChannelConversationEventRecord> events,
+        ConversationId conversationId,
+        BindingId? originBindingId,
+        string? correlationId,
+        params string[] expectedContents)
+    {
+        events.Count.ShouldBe(expectedContents.Length);
+        events.Select(item => item.StreamEvent.ContentDelta).ShouldBe(expectedContents);
+        events.ShouldAllBe(item => item.ConversationId == conversationId);
+        events.ShouldAllBe(item => item.StreamEvent.ConversationId == conversationId);
+        events.ShouldAllBe(item => item.ChannelRequestId == correlationId);
+        if (originBindingId is not null)
+            events.ShouldAllBe(item => item.BindingId == originBindingId);
+        events.Select(item => item.Sequence).ShouldBeInOrder(SortDirection.Ascending);
+    }
+
     private static void AssertOrderedLifecycleProjection(
         IReadOnlyList<TestChannelLifecycleEventRecord> events)
     {
