@@ -43,17 +43,23 @@ public sealed class CliInstallAndInitWorkflowTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Cli_Install_ClonesCurrentRepoIntoSandbox()
+    public async Task Cli_Install_LatestClonesCurrentRepoWithoutReleaseTagsIntoSandbox()
     {
         _fixture.InstallSucceeded.ShouldBeTrue(
             "CLI install fixture did not complete successfully — see CliInstallationTests for the install failure.");
 
-        var repoRoot = RepoLocator.FindRepoRoot();
         var sourceDir = Path.Combine(_sandbox, "source");
+        var repoRoot = RepoLocator.FindRepoRoot();
+
+        // CI checks out a detached commit: neither release tags nor refs/heads/main are
+        // guaranteed. The fixture owns a tag-free remote whose main is this exact commit.
+        var localRepo = await TagFreeLocalSourceRepository.CreateAsync(_sandbox, repoRoot, CommandTimeout);
+        var currentCommit = await ProcessRunner.RunAsync("git", $"-C \"{repoRoot}\" rev-parse HEAD", timeout: CommandTimeout);
+        currentCommit.ExitCode.ShouldBe(0, currentCommit.Combined);
 
         var result = await ProcessRunner.RunAsync(
             _fixture.CliExecutablePath,
-            $"install --source \"{sourceDir}\" --repo \"{repoRoot}\"",
+            $"install --latest --source \"{sourceDir}\" --repo \"{localRepo}\"",
             timeout: CommandTimeout);
 
         result.ExitCode.ShouldBe(
@@ -66,6 +72,10 @@ public sealed class CliInstallAndInitWorkflowTests : IAsyncLifetime
             "Cloned source should contain a .git directory.");
         File.Exists(Path.Combine(sourceDir, "dirs.proj")).ShouldBeTrue(
             "Cloned source should contain the root traversal project (proves the clone is of the current repo).");
+        var installedCommit = await ProcessRunner.RunAsync("git", $"-C \"{sourceDir}\" rev-parse HEAD", timeout: CommandTimeout);
+        installedCommit.ExitCode.ShouldBe(0, installedCommit.Combined);
+        installedCommit.StdOut.Trim().ShouldBe(currentCommit.StdOut.Trim(),
+            "The tag-free fixture must install the exact current checkout, not an ambient branch tip.");
     }
 
     [Fact]
