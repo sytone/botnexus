@@ -348,6 +348,13 @@ The `maxTurns` and `timeoutSeconds` parameters on `spawn_subagent` override `def
 
 Both are bounded by hard ceilings: a spawn-supplied `maxTurns` is clamped to at most `maxTurnsCeiling` (default `30`) and `timeoutSeconds` to at most `maxTimeoutSeconds` (default `1800`). This prevents a single `spawn_subagent` call from requesting a runaway turn budget or an effectively unbounded wall-clock timeout. Set a ceiling to `0` to disable it.
 
+Keep delegated tasks narrow and staged instead of raising these ceilings. When exploratory work reaches
+the reserved boundary, the last turn within `maxTurns` is used once for tool-free synthesis; it is not an
+extra turn. Exploration also stops before the absolute timeout, reserving 10% of the configured duration
+(bounded to 100 ms through 30 seconds) for that attempt. Finalization retains the original deadline, and
+late text is discarded. Separate investigation, implementation, and validation spawns are easier to bound and usually
+produce more reliable handoffs than one large task with a larger turn or timeout budget.
+
 #### Clamp disclosure on the tool result
 
 When a ceiling actually reduces the request, the `spawn_subagent` result carries a `budgetClamp` object so the
