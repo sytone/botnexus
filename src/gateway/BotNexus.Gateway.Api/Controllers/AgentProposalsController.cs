@@ -8,9 +8,10 @@ using Microsoft.AspNetCore.Mvc;
 namespace BotNexus.Gateway.Api.Controllers;
 
 /// <summary>
-/// Authenticated administrator boundary for listing and reviewing governed agent proposals.
-/// Gateway authentication runs before this controller; every action additionally fails closed
-/// unless the stamped caller identity is administrative.
+/// Operator-facing boundary for listing and reviewing governed agent proposals.
+/// Gateway authentication applies the deployment's normal optional access policy before this
+/// controller. Each action additionally requires unrestricted operator request provenance, which
+/// excludes agent-scoped and satellite credentials without inventing human roles or RBAC.
 /// </summary>
 [ApiController]
 [Route("api/agent-proposals")]
@@ -26,7 +27,7 @@ public sealed class AgentProposalsController(
         [FromQuery] AgentProposalStatus? status,
         CancellationToken cancellationToken)
     {
-        if (AdminIdentity is null)
+        if (OperatorIdentity is null)
             return Forbidden();
         return Ok(await proposals.ListAsync(status, cancellationToken).ConfigureAwait(false));
     }
@@ -35,14 +36,14 @@ public sealed class AgentProposalsController(
     [HttpGet("{proposalId:guid}")]
     public async Task<ActionResult<AgentProposal>> Get(Guid proposalId, CancellationToken cancellationToken)
     {
-        if (AdminIdentity is null)
+        if (OperatorIdentity is null)
             return Forbidden();
         var proposal = await proposals.GetAsync(proposalId, cancellationToken).ConfigureAwait(false);
         return proposal is null ? NotFound() : Ok(proposal);
     }
 
     /// <summary>
-    /// Records a human decision. Reviewer identity is always derived from the authenticated
+    /// Records an operator decision. Reviewer identity is derived from the server-stamped
     /// <see cref="GatewayCallerIdentity"/> and is intentionally absent from the request contract.
     /// </summary>
     [HttpPost("{proposalId:guid}/review")]
@@ -51,7 +52,7 @@ public sealed class AgentProposalsController(
         [FromBody] AgentProposalReviewRequest request,
         CancellationToken cancellationToken)
     {
-        var identity = AdminIdentity;
+        var identity = OperatorIdentity;
         if (identity is null)
             return Forbidden();
         if (request.Decision is AgentProposalStatus.Pending)
@@ -66,7 +67,7 @@ public sealed class AgentProposalsController(
         {
             return StatusCode(
                 StatusCodes.Status403Forbidden,
-                new { error = "Authenticated administrator identity is not a valid human reviewer." });
+                new { error = "Operator request provenance cannot be represented as a reviewer identity." });
         }
 
         var result = await reviewService.ReviewAsync(
@@ -96,7 +97,7 @@ public sealed class AgentProposalsController(
         [FromBody] AgentProposalReconciliationRequest request,
         CancellationToken cancellationToken)
     {
-        var identity = AdminIdentity;
+        var identity = OperatorIdentity;
         if (identity is null)
             return Forbidden();
         if (!Enum.IsDefined(request.Decision))
@@ -109,7 +110,7 @@ public sealed class AgentProposalsController(
         catch (Vogen.ValueObjectValidationException)
         {
             return StatusCode(StatusCodes.Status403Forbidden,
-                new { error = "Authenticated administrator identity is not a valid human reconciler." });
+                new { error = "Operator request provenance cannot be represented as a reconciler identity." });
         }
 
         var result = await proposals.ReconcileApplicationAsync(
@@ -123,19 +124,20 @@ public sealed class AgentProposalsController(
         };
     }
 
-    private GatewayCallerIdentity? AdminIdentity
+    private GatewayCallerIdentity? OperatorIdentity
         => HttpContext.Items.TryGetValue(CallerIdentityItemKey, out var value)
-            && value is GatewayCallerIdentity { IsAdmin: true } identity
+            && value is GatewayCallerIdentity { AllowedAgents.Count: 0 } identity
+            && !identity.CallerId.StartsWith("satellite:", StringComparison.OrdinalIgnoreCase)
                 ? identity
                 : null;
 
     private ObjectResult Forbidden()
-        => StatusCode(StatusCodes.Status403Forbidden, new { error = "Caller is not authorized to review agent proposals." });
+        => StatusCode(StatusCodes.Status403Forbidden, new { error = "Agent-scoped callers cannot review agent proposals." });
 }
 
-/// <summary>Decision payload for a proposal review; reviewer identity comes from authentication.</summary>
+/// <summary>Decision payload for a proposal review; reviewer identity comes from request provenance.</summary>
 /// <param name="Decision">Approved or Rejected.</param>
-/// <param name="Reason">Optional human rationale retained in audit history.</param>
+/// <param name="Reason">Optional operator rationale retained in audit history.</param>
 public sealed record AgentProposalReviewRequest(AgentProposalStatus Decision, string? Reason);
 
 /// <summary>Evidence-based resolution of an ambiguous application attempt.</summary>

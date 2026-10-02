@@ -16,22 +16,24 @@ namespace BotNexus.Gateway.Tests.Agents;
 public sealed class AgentProposalsControllerTests
 {
     [Fact]
-    public async Task List_NonAdminCaller_IsForbiddenAndStoreIsNotRead()
+    public async Task List_UnrestrictedOperatorCaller_DoesNotRequireAdminRole()
     {
         var store = new Mock<IAgentProposalStore>();
-        var controller = CreateController(store.Object, isAdmin: false, callerId: "agent-key");
+        store.Setup(s => s.ListAsync(null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var controller = CreateController(store.Object, callerId: "gateway-dev");
 
         var result = await controller.List(null, CancellationToken.None);
 
-        result.Result.ShouldBeOfType<ObjectResult>().StatusCode.ShouldBe(StatusCodes.Status403Forbidden);
-        store.Verify(s => s.ListAsync(It.IsAny<AgentProposalStatus?>(), It.IsAny<CancellationToken>()), Times.Never);
+        result.Result.ShouldBeOfType<OkObjectResult>();
+        store.VerifyAll();
     }
 
     [Fact]
     public async Task Get_MissingIdentity_IsForbidden()
     {
         var store = new Mock<IAgentProposalStore>();
-        var controller = CreateController(store.Object, isAdmin: null, callerId: "missing");
+        var controller = CreateController(store.Object, callerId: null);
 
         var result = await controller.Get(Guid.NewGuid(), CancellationToken.None);
 
@@ -45,7 +47,12 @@ public sealed class AgentProposalsControllerTests
         var store = new Mock<IAgentProposalStore>(MockBehavior.Strict);
         var writer = new Mock<IAgentConfigurationWriter>(MockBehavior.Strict);
         var registry = new Mock<IAgentRegistry>(MockBehavior.Strict);
-        var controller = CreateController(store.Object, isAdmin: false, callerId: "agent-farnsworth", registry.Object, writer.Object);
+        var controller = CreateController(
+            store.Object,
+            callerId: "agent-farnsworth",
+            allowedAgents: ["farnsworth"],
+            registry.Object,
+            writer.Object);
 
         var result = await controller.Review(
             proposalId,
@@ -62,7 +69,7 @@ public sealed class AgentProposalsControllerTests
     public async Task Reconcile_InvalidNumericDecision_IsBadRequestAndStoreIsNotCalled()
     {
         var store = new Mock<IAgentProposalStore>(MockBehavior.Strict);
-        var controller = CreateController(store.Object, isAdmin: true, callerId: "admin");
+        var controller = CreateController(store.Object, callerId: "gateway-dev");
 
         var result = await controller.Reconcile(
             Guid.NewGuid(),
@@ -74,7 +81,7 @@ public sealed class AgentProposalsControllerTests
     }
 
     [Fact]
-    public async Task Review_DerivesReviewerFromAuthenticatedAdminNotRequestBody()
+    public async Task Review_DerivesReviewerFromOperatorProvenanceNotRequestBody()
     {
         var proposalId = Guid.NewGuid();
         var proposal = Pending(proposalId);
@@ -82,14 +89,14 @@ public sealed class AgentProposalsControllerTests
         store.Setup(s => s.ReviewAsync(
                 proposalId,
                 AgentProposalStatus.Rejected,
-                CitizenId.Of(UserId.From("authenticated-admin")),
+                CitizenId.Of(UserId.From("gateway-dev")),
                 "policy mismatch",
                 It.IsAny<DateTimeOffset>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentProposalReviewResult(
                 AgentProposalReviewOutcome.Applied,
                 proposal with { Status = AgentProposalStatus.Rejected }));
-        var controller = CreateController(store.Object, isAdmin: true, callerId: "authenticated-admin");
+        var controller = CreateController(store.Object, callerId: "gateway-dev");
 
         var result = await controller.Review(
             proposalId,
@@ -105,8 +112,8 @@ public sealed class AgentProposalsControllerTests
 
     private static AgentProposalsController CreateController(
         IAgentProposalStore store,
-        bool? isAdmin,
-        string callerId,
+        string? callerId,
+        IReadOnlyList<string>? allowedAgents = null,
         IAgentRegistry? registryOverride = null,
         IAgentConfigurationWriter? writerOverride = null)
     {
@@ -128,12 +135,13 @@ public sealed class AgentProposalsControllerTests
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
-        if (isAdmin is not null)
+        if (callerId is not null)
         {
             controller.HttpContext.Items["BotNexus.Gateway.CallerIdentity"] = new GatewayCallerIdentity
             {
                 CallerId = callerId,
-                IsAdmin = isAdmin.Value,
+                AllowedAgents = allowedAgents ?? [],
+                IsAdmin = false,
             };
         }
         return controller;

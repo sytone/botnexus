@@ -29,7 +29,7 @@ public sealed class AgentProposalReviewAuthorizationTests
     }
 
     [Fact]
-    public async Task ReviewWithAgentScopedIdentity_ReachesEndpointAsNonAdmin()
+    public async Task ReviewWithAgentScopedIdentity_ReachesEndpointWithScopedProvenance()
     {
         var nextCalled = false;
         var middleware = CreateMiddleware(
@@ -45,8 +45,10 @@ public sealed class AgentProposalReviewAuthorizationTests
         await middleware.InvokeAsync(context);
 
         nextCalled.ShouldBeTrue();
-        context.Items["BotNexus.Gateway.CallerIdentity"]
-            .ShouldBeOfType<GatewayCallerIdentity>().IsAdmin.ShouldBeFalse();
+        var identity = context.Items["BotNexus.Gateway.CallerIdentity"]
+            .ShouldBeOfType<GatewayCallerIdentity>();
+        identity.IsAdmin.ShouldBeFalse();
+        identity.AllowedAgents.ShouldBe(["farnsworth"]);
     }
 
     private static DefaultHttpContext CreateContext()
