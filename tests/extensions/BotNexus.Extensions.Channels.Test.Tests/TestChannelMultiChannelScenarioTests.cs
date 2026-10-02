@@ -110,6 +110,75 @@ public sealed class TestChannelMultiChannelScenarioTests
             null, null, "second-1");
     }
 
+    [Fact]
+    public async Task PublishLifecycleAsync_InterleavedConversations_ProjectsOnlyMatchingBindingsInOrder()
+    {
+        await using var scenario = new TestChannelConversationScenario(
+            TestChannelConversationScenario.Channel("telegram"),
+            TestChannelConversationScenario.Channel("signalr"));
+
+        var otherConversation = ConversationId.Create();
+        scenario.Bind("telegram", "chat-first");
+        scenario.Bind("signalr", "portal-first");
+        scenario.Bind("telegram", "chat-second", conversationId: otherConversation);
+        scenario.Bind("signalr", "portal-second", conversationId: otherConversation);
+        scenario.Bind("telegram", "muted-first", BindingMode.Muted);
+
+        var firstSession = SessionId.Create();
+        var secondSession = SessionId.Create();
+        await scenario.PublishLifecycleAsync(new ConversationActiveSessionChangedEvent
+        {
+            AgentId = AgentId.From("probe"),
+            ConversationId = scenario.ConversationId,
+            SessionId = firstSession,
+            ActiveSessionId = firstSession,
+        });
+        await scenario.PublishLifecycleAsync(new ConversationActiveSessionChangedEvent
+        {
+            AgentId = AgentId.From("probe"),
+            ConversationId = otherConversation,
+            SessionId = secondSession,
+            ActiveSessionId = secondSession,
+        });
+        await scenario.PublishLifecycleAsync(new ConversationActiveSessionChangedEvent
+        {
+            AgentId = AgentId.From("probe"),
+            ConversationId = scenario.ConversationId,
+            SessionId = firstSession,
+            PreviousSessionId = firstSession,
+            ActiveSessionId = null,
+        });
+
+        AssertLifecycleIsolation(scenario.LifecycleEvents("telegram", "chat-first"), scenario.ConversationId, firstSession);
+        AssertLifecycleIsolation(scenario.LifecycleEvents("signalr", "portal-first"), scenario.ConversationId, firstSession);
+        AssertLifecycleIsolation(scenario.LifecycleEvents("telegram", "chat-second"), otherConversation, secondSession, reset: false);
+        AssertLifecycleIsolation(scenario.LifecycleEvents("signalr", "portal-second"), otherConversation, secondSession, reset: false);
+        scenario.LifecycleEvents("telegram", "muted-first").ShouldBeEmpty();
+    }
+
+    private static void AssertLifecycleIsolation(
+        IReadOnlyList<TestChannelLifecycleEventRecord> events,
+        ConversationId conversationId,
+        SessionId sessionId,
+        bool reset = true)
+    {
+        events.Count.ShouldBe(reset ? 2 : 1);
+        events.ShouldAllBe(item => item.ConversationEvent.ConversationId == conversationId);
+        events.ShouldAllBe(item => item.BindingId != null);
+        var activated = events[0].ConversationEvent.ShouldBeOfType<ConversationActiveSessionChangedEvent>();
+        activated.SessionId.ShouldBe(sessionId);
+        activated.PreviousSessionId.ShouldBeNull();
+        activated.ActiveSessionId.ShouldBe(sessionId);
+        if (reset)
+        {
+            var cleared = events[1].ConversationEvent.ShouldBeOfType<ConversationActiveSessionChangedEvent>();
+            cleared.SessionId.ShouldBe(sessionId);
+            cleared.PreviousSessionId.ShouldBe(sessionId);
+            cleared.ActiveSessionId.ShouldBeNull();
+        }
+        events.Select(item => item.Sequence).ShouldBeInOrder(SortDirection.Ascending);
+    }
+
     private static void AssertConversationProjection(
         IReadOnlyList<TestChannelConversationEventRecord> events,
         ConversationId conversationId,
