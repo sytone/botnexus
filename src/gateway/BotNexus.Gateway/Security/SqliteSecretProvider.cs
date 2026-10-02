@@ -27,6 +27,12 @@ public sealed class SqliteSecretProvider : ISecretProvider
     /// <summary>Canonical file name of the secret store inside the BotNexus home.</summary>
     public const string StoreFileName = "secrets" + SqliteStorePathPolicy.CanonicalExtension;
 
+    /// <summary>The baseline schema version for the shared CLI/gateway secrets database.</summary>
+    public const int CurrentSchemaVersion = 1;
+
+    /// <summary>Forward migrations; unversioned databases adopt version one without replay.</summary>
+    public static readonly IReadOnlyList<SqliteSchemaMigration> Migrations = [];
+
     private readonly Func<string> _resolveStorePath;
 
     /// <summary>Creates a provider reading the store in the resolved BotNexus home.</summary>
@@ -66,6 +72,7 @@ public sealed class SqliteSecretProvider : ISecretProvider
             await using var connection = SqliteConnectionFactory.Create(
                 new SqliteConnectionStringBuilder { DataSource = storePath, Mode = SqliteOpenMode.ReadOnly }.ToString());
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            SqliteSchemaMigrator.ValidateReadOnly(connection, CurrentSchemaVersion);
 
             await using var command = connection.CreateCommand();
             command.CommandText = "SELECT value FROM secrets WHERE name = $name LIMIT 1;";
