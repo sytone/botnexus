@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.Text;
 using BotNexus.Domain.World;
@@ -376,7 +377,15 @@ public sealed class ConversationsController : ControllerBase
             await AuditAsync(conversationId, "purpose_set", "api", "rest-api", conversation.Purpose, updated.Purpose, cancellationToken);
         if (request.Instructions is not null)
             await AuditAsync(conversationId, "instructions_set", "api", "rest-api", conversation.Instructions, updated.Instructions, cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", updated.AgentId.Value, updated.ConversationId.Value, cancellationToken);
+
+        var changedFields = ImmutableArray.CreateBuilder<string>(3);
+        if (request.Title is not null && !string.Equals(conversation.Title, updated.Title, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.Title));
+        if (request.Purpose is not null && !string.Equals(conversation.Purpose, updated.Purpose, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.Purpose));
+        if (request.Instructions is not null && !string.Equals(conversation.Instructions, updated.Instructions, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.Instructions));
+        await PublishConversationUpdatedBestEffortAsync(updated, changedFields.ToImmutable(), cancellationToken);
         return Ok(ToResponse(updated));
     }
 
@@ -882,6 +891,43 @@ public sealed class ConversationsController : ControllerBase
                 ex,
                 "Failed to publish creation event for conversation {ConversationId}; clients must reconcile from durable conversation state.",
                 created.ConversationId);
+        }
+    }
+
+    private async Task PublishConversationUpdatedBestEffortAsync(
+        Conversation updated,
+        ImmutableArray<string> changedFields,
+        CancellationToken cancellationToken)
+    {
+        if (_conversationEventPublisher is null || changedFields.IsEmpty)
+            return;
+
+        try
+        {
+            // Publication follows the committed narrow patch. The store-returned aggregate is the
+            // durable authority, and clients reconcile from it if this best-effort hand-off is missed.
+            var accepted = await _conversationEventPublisher.PublishAsync(new ConversationUpdatedEvent
+            {
+                AgentId = updated.AgentId,
+                ConversationId = updated.ConversationId,
+                ChangedFields = changedFields,
+                Bindings = ConversationBindingSnapshot.FromMany(updated.ChannelBindings),
+                OccurredAt = updated.UpdatedAt
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (!accepted)
+            {
+                _logger.LogWarning(
+                    "Conversation event publisher rejected metadata update for conversation {ConversationId}; clients must reconcile from durable conversation state.",
+                    updated.ConversationId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to publish metadata update for conversation {ConversationId}; clients must reconcile from durable conversation state.",
+                updated.ConversationId);
         }
     }
 
