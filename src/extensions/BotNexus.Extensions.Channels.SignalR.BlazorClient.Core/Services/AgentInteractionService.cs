@@ -214,7 +214,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// </summary>
     /// <remarks>
     /// #3211 replaced the former <c>TryResolveActiveConversationTarget</c>, which re-derived the
-    /// conversation from ambient <see cref="AgentState.ActiveConversationId"/>. Ambient derivation
+    /// conversation from ambient <see cref="ambient conversation state"/>. Ambient derivation
     /// meant a deep link to a non-most-recent conversation could steer or abort a different
     /// conversation entirely. The conversation is now an argument, and only the SESSION is resolved
     /// here - from that conversation's own <see cref="ConversationState.ActiveSessionId"/> with no
@@ -395,7 +395,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             };
 
             if (select)
-                _store.SetActiveConversation(agentId, dto.ConversationId);
+                _store.SelectView(agentId, dto.ConversationId, SelectionSource.UserClick);
             else
                 _store.NotifyChanged();
 
@@ -414,7 +414,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         if (agent is null) return;
         if (!agent.Conversations.ContainsKey(conversationId)) return;
 
-        _store.SetActiveConversation(agentId, conversationId);
+        _store.SelectView(agentId, conversationId, SelectionSource.UserClick);
 
         var conv = agent.Conversations.GetValueOrDefault(conversationId);
 
@@ -678,24 +678,15 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
             agent.Conversations.Remove(conversationId);
 
-            // If this was the active conversation, switch to the next available or clear
-            if (agent.ActiveConversationId == conversationId)
+            // The route owner chooses any replacement. Mark the displayed selection invalid rather
+            // than silently selecting another conversation behind an unchanged URL.
+            if (_store is IDisplayedConversation displayed
+                && displayed.IsConversationDisplayed(agentId, conversationId))
             {
-                var next = agent.Conversations.Keys.FirstOrDefault();
-                if (next is not null)
-                {
-                    _store.SetActiveConversation(agentId, next);
-                }
-                else
-                {
-                    agent.ActiveConversationId = null;
-                    _store.NotifyChanged();
-                }
+                _store.MarkSelectionInvalid();
             }
-            else
-            {
-                _store.NotifyChanged();
-            }
+
+            _store.NotifyChanged();
         }
         catch (Exception ex)
         {
@@ -821,10 +812,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         // Load history if needed
         var agent = _store.GetAgent(subAgentId)!;
-        var convId = agent.ActiveConversationId;
-        if (convId is null || (agent.Conversations.GetValueOrDefault(convId) is { } conv && !conv.HistoryLoaded))
+        var observerConversationId = $"subagent-session:{subAgentId}";
+        if (!agent.Conversations.TryGetValue(observerConversationId, out var observerConversation)
+            || !observerConversation.HistoryLoaded)
         {
-            // Sub-agent sessions are loaded by session ID
+            // Sub-agent sessions are loaded by session ID.
             await LoadSubAgentHistoryAsync(subAgentId);
         }
     }
@@ -864,16 +856,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
     public async Task<bool> ExecuteGatewayCommandAsync(string agentId, string conversationId, string commandText)
     {
         if (string.IsNullOrWhiteSpace(commandText))
-        {
-            AppendError(agentId, "Cannot execute an empty command.");
             return false;
-        }
 
         var agent = _store.GetAgent(agentId);
         if (string.IsNullOrEmpty(conversationId) ||
             agent?.Conversations.GetValueOrDefault(conversationId) is not { } conv)
         {
-            AppendError(agentId, $"Cannot run {commandText}: no active conversation.");
             return false;
         }
 
@@ -1031,9 +1019,13 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         conv.HistoryLoaded = true;
 
-        // Sync session ID
-        if (agent.ActiveConversationId == conversationId && conv.ActiveSessionId is not null)
+        // Sync the agent-level fallback only for the route-displayed conversation.
+        if (_store is IDisplayedConversation displayed
+            && displayed.IsConversationDisplayed(agent.AgentId, conversationId)
+            && conv.ActiveSessionId is not null)
+        {
             agent.SessionId = conv.ActiveSessionId;
+        }
     }
 
     /// <summary>
@@ -1091,23 +1083,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
     {
         _logger.LogWarning(ex, "History 404 for conversation {ConversationId}", Sanitise(conversationId));
         agent.Conversations.Remove(conversationId);
-        if (agent.ActiveConversationId == conversationId)
+        if (_store is IDisplayedConversation displayed
+            && displayed.IsConversationDisplayed(agentId, conversationId))
         {
-            var nextConversationId = agent.Conversations.Values
-                .OrderByDescending(c => c.IsDefault)
-                .ThenByDescending(c => c.UpdatedAt)
-                .Select(c => c.ConversationId)
-                .FirstOrDefault();
-            if (nextConversationId is not null)
-            {
-                _store.SetActiveConversation(agentId, nextConversationId);
-            }
-            else
-            {
-                agent.ActiveConversationId = null;
-                _store.MarkSelectionInvalid();
-                _store.NotifyChanged();
-            }
+            _store.MarkSelectionInvalid();
+            _store.NotifyChanged();
         }
     }
 
@@ -1141,7 +1121,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         // Keep ActiveSessionId in sync with the actual child session ID
         conv.ActiveSessionId = agent.SessionId ?? subAgentId;
-        agent.ActiveConversationId = convId;
+        _store.SelectView(subAgentId, convId, SelectionSource.SubAgentView);
         if (conv.HistoryLoaded || conv.IsLoadingHistory) return;
 
         conv.IsLoadingHistory = true;
@@ -1193,23 +1173,6 @@ public sealed class AgentInteractionService : IAgentInteractionService
             var list = await _restClient.GetConversationsAsync(agentId);
             _store.SeedConversations(agentId, list);
 
-            // Fetch canvas for the auto-selected conversation on initial load (#383)
-            var agent = _store.GetAgent(agentId);
-            var activeConvId = agent?.ActiveConversationId;
-            if (activeConvId is not null && agent!.Conversations.TryGetValue(activeConvId, out var activeConv))
-            {
-                try
-                {
-                    var canvasHtml = await _restClient.GetConversationCanvasAsync(agentId, activeConvId);
-                    if (canvasHtml is not null)
-                    {
-                        activeConv.CanvasHtml = canvasHtml;
-                        activeConv.CanvasUpdatedAt = DateTimeOffset.UtcNow;
-                    }
-                }
-                catch (Exception ex) { _logger.LogDebug(ex, "Best-effort canvas hydration failed for {ConversationId}", Sanitise(activeConvId)); }
-            }
-
             _store.NotifyChanged();
         }
         catch (Exception ex)
@@ -1218,20 +1181,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
-    private void AppendUserMessage(string agentId, string content)
-    {
-        var agent = _store.GetAgent(agentId);
-        var convId = agent?.ActiveConversationId;
-        if (convId is null || agent!.Conversations.GetValueOrDefault(convId) is not { } conv) return;
-
-        conv.AppendMessage(new ChatMessage("User", content, DateTimeOffset.UtcNow));
-        _store.NotifyChanged();
-    }
-
     /// <summary>
     /// Appends a locally-rendered row to an EXPLICITLY named conversation (#3063). The ambient
     /// <see cref="AppendUserMessage"/>/<see cref="AppendError"/> pair resolve their target through
-    /// <c>ActiveConversationId</c>; the send path knows its conversation and must not consult
+    /// <c>ambient conversation state</c>; the send path knows its conversation and must not consult
     /// ambient state to echo into it. #3211 moved every ACTION path (steer, follow-up, abort,
     /// redirect, reset, compact, gateway command) onto this helper too, so a local echo can no
     /// longer appear in a conversation other than the one the action targeted.
@@ -1262,18 +1215,6 @@ public sealed class AgentInteractionService : IAgentInteractionService
             attachment.MimeType,
             attachment.Size,
             attachment.Base64Data)).ToArray() ?? [];
-
-    private void AppendError(string agentId, string message)
-    {
-        var agent = _store.GetAgent(agentId);
-        var convId = agent?.ActiveConversationId;
-        if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
-        {
-            conv.AppendMessage(new ChatMessage("Error", message, DateTimeOffset.UtcNow));
-        }
-
-        _store.NotifyChanged();
-    }
 
     // #3456: role normalisation is owned by MessageRole. Do not reintroduce a local switch here.
     private static string MapRole(string role) => MessageRole.Normalize(role);

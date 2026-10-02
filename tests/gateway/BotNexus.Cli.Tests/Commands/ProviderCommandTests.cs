@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Wizard;
@@ -7,9 +8,10 @@ using Spectre.Console;
 namespace BotNexus.Cli.Tests.Commands;
 
 [Collection("AnsiConsole")]
-public class ProviderCommandTests : IDisposable
+public partial class ProviderCommandTests : IDisposable
 {
     private readonly IAnsiConsole _originalConsole;
+    private readonly StringWriter _output = new();
 
     public ProviderCommandTests()
     {
@@ -19,9 +21,11 @@ public class ProviderCommandTests : IDisposable
         _originalConsole = AnsiConsole.Console;
         AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
         {
-            Out = new AnsiConsoleOutput(new StringWriter()),
+            Out = new AnsiConsoleOutput(_output),
+            Ansi = AnsiSupport.No,
             Interactive = InteractionSupport.No
         });
+        AnsiConsole.Console.Profile.Width = 300;
     }
 
     public void Dispose()
@@ -160,6 +164,55 @@ public class ProviderCommandTests : IDisposable
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
         }
+    }
+
+    [Fact]
+    public async Task ExecuteTestAsync_HealthyLiveProvider_UsesGatewayRegistryAndCredentialHealthPath()
+    {
+        using var server = new MockHttpServer();
+        server.SetResponse("/api/providers/new-instance/health", System.Net.HttpStatusCode.OK,
+            """{"providerId":"new-instance","status":"healthy","latencyMs":3,"checkedAt":"2026-10-01T00:00:00Z","models":1,"hasCredentials":true,"error":null}""");
+
+        var exit = await ProviderCommand.ExecuteTestAsync(
+            server.BaseUrl, "new-instance", CancellationToken.None);
+
+        exit.ShouldBe(0);
+        var output = NormalizeOutput(_output.ToString());
+        output.ShouldContain("Provider new-instance is active and validated by the running gateway");
+        output.ShouldContain("Models: 1");
+        output.ShouldContain("Credentials: resolved");
+    }
+
+    [Fact]
+    public async Task ExecuteTestAsync_UnknownLiveProvider_ReturnsPreciseRegistryRemediation()
+    {
+        using var server = new MockHttpServer();
+        server.SetResponse("/api/providers/new-instance/health", System.Net.HttpStatusCode.NotFound,
+            "\"Provider 'new-instance' not found.\"");
+
+        var exit = await ProviderCommand.ExecuteTestAsync(
+            server.BaseUrl, "new-instance", CancellationToken.None);
+
+        exit.ShouldBe(1);
+        var output = NormalizeOutput(_output.ToString());
+        output.ShouldContain("Provider new-instance is not ready in the running gateway");
+        output.ShouldContain("absent from the live model registry");
+    }
+
+    [Fact]
+    public async Task ExecuteTestAsync_UnhealthyLiveProvider_ReturnsFailureWithGatewayRemediation()
+    {
+        using var server = new MockHttpServer();
+        server.SetResponse("/api/providers/new-instance/health", System.Net.HttpStatusCode.ServiceUnavailable,
+            """{"providerId":"new-instance","status":"unhealthy","latencyMs":2,"checkedAt":"2026-10-01T00:00:00Z","models":0,"hasCredentials":false,"error":"No models registered for this provider."}""");
+
+        var exit = await ProviderCommand.ExecuteTestAsync(
+            server.BaseUrl, "new-instance", CancellationToken.None);
+
+        exit.ShouldBe(1);
+        var output = NormalizeOutput(_output.ToString());
+        output.ShouldContain("Provider new-instance is not ready in the running gateway");
+        output.ShouldContain("No models registered for this provider");
     }
 
     [Fact]
@@ -363,6 +416,12 @@ public class ProviderCommandTests : IDisposable
         result.Outcome.ShouldBe(StepOutcome.GoTo);
         result.GoToStep.ShouldBe("pick-model");
     }
+
+    private static string NormalizeOutput(string value)
+        => AnsiEscapeSequence().Replace(value, string.Empty);
+
+    [GeneratedRegex("\\x1B\\[[0-?]*[ -/]*[@-~]")]
+    private static partial Regex AnsiEscapeSequence();
 
     [Fact]
     public async Task OAuthFlowStep_on_failure_aborts()

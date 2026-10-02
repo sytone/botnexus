@@ -21,7 +21,6 @@ public sealed class AskUserSerializationTests
             DisplayName = "Agent 1",
             IsConnected = true,
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         });
 
         var agent = store.GetAgent("agent-1")!;
@@ -81,7 +80,6 @@ public sealed class AskUserSerializationTests
             DisplayName = "Agent 1",
             IsConnected = true,
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         });
 
         var agent = store.GetAgent("agent-1")!;

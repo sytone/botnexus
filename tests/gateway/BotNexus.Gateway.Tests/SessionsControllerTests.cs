@@ -187,9 +187,10 @@ public sealed class SessionsControllerTests
         var controller = new SessionsController(store, subAgentManager.Object);
         var result = await controller.ListSubAgents("s1", CancellationToken.None);
 
-        var payload = (result.Result as OkObjectResult)?.Value as IReadOnlyList<SubAgentInfo>;
+        var payload = (result.Result as OkObjectResult)?.Value as IReadOnlyList<SubAgentRunDetail>;
         payload.ShouldNotBeNull();
         payload.Where(item => item.SubAgentId == "sub-1").ShouldHaveSingleItem();
+        payload.Single().Status.ShouldBe(SubAgentStatus.Running);
     }
 
     [Fact]

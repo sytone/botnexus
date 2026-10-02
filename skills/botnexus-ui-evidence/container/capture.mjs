@@ -40,10 +40,10 @@ try {
   await page.reload({ waitUntil: 'load' });
   await page.locator('[data-testid="agent-panel"]').first().waitFor({ state: 'attached', timeout: 60000 });
   await page.locator('#evidence-agent-conversation-panel [data-testid="streaming-badge"]').waitFor({ state: 'visible', timeout: 10000 });
-  for (const selector of scenario.selectors) {
+  for (const selector of ['[data-testid="streaming-badge"]', '[data-testid="chat-abort-btn"]']) {
     const locator = page.locator(`#evidence-agent-conversation-panel ${selector}`);
     await locator.waitFor({ state: 'visible', timeout: 10000 });
-    check('selector', selector, await locator.isVisible());
+    check('activeRunSelector', selector, await locator.isVisible());
   }
   for (const name of scenario.accessibleNames) {
     const element = page.locator('#evidence-agent-conversation-panel').getByLabel(name, { exact: true });
@@ -59,6 +59,16 @@ try {
     check('accessibility', testId, activeRunControls[testId].length > 0, `accessible name: ${activeRunControls[testId]}`);
   }
   check('activeRun', '[data-testid="chat-abort-btn"]', await page.locator('#evidence-agent-conversation-panel [data-testid="chat-abort-btn"]').isVisible());
+  const pagePath = scenario.pagePath || '/chat/evidence-agent';
+  if (pagePath !== '/chat/evidence-agent') {
+    await page.goto(`http://127.0.0.1:5000${pagePath}`, { waitUntil: 'load' });
+    await page.locator('main').first().waitFor({ state: 'visible', timeout: 60000 });
+  }
+  for (const selector of scenario.selectors) {
+    const locator = page.locator(selector).first();
+    await locator.waitFor({ state: 'visible', timeout: 10000 });
+    check('targetSelector', selector, await locator.isVisible());
+  }
   check('browserErrors', 'pageerror/console.error', browserErrors.length === 0, browserErrors.join('; '));
   const screenshotPath = '/evidence-output/portal.png';
   await page.screenshot({ path: screenshotPath, fullPage: false });
@@ -68,7 +78,7 @@ try {
   const manifest = {
     schemaVersion: '1.0',
     source: { commit: fs.readFileSync('/app/source-commit','utf8').trim(), tree: fs.readFileSync('/app/source-tree','utf8').trim() },
-    scenario: { name: scenario.name, promptKey: scenario.promptKey },
+    scenario: { name: scenario.name, promptKey: scenario.promptKey, pagePath },
     viewport: scenario.viewport,
     screenshot: { path: 'portal.png', sha256: crypto.createHash('sha256').update(bytes).digest('hex') },
     assertions,

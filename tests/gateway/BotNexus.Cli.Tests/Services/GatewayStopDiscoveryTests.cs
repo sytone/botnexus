@@ -79,6 +79,15 @@ public sealed class GatewayStopDiscoveryTests : IDisposable
             NullLogger<GatewayProcessManager>.Instance,
             processEnumerator: () => processes);
 
+    private GatewayProcessManager NewManager(
+        Func<string?, string, CancellationToken, Task<bool>> plannedShutdownRequester,
+        params IGatewayProcessHandle[] processes)
+        => new(
+            _healthChecker,
+            NullLogger<GatewayProcessManager>.Instance,
+            processEnumerator: () => processes,
+            plannedShutdownRequester: plannedShutdownRequester);
+
     /// <summary>The managed DLL path this deployment would launch. Never created on disk - discovery
     /// is a path-identity comparison, not a file probe.</summary>
     private string GatewayDll => Path.Combine(_home, "bin", "BotNexus.Gateway.Api.dll");
@@ -162,6 +171,48 @@ public sealed class GatewayStopDiscoveryTests : IDisposable
     // -------------------------------------------------------------------------------------
     // AC3 (SECURITY, #2369): an unidentified process is NEVER signalled.
     // -------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task PlannedStop_RequestsHostShutdownBeforeNativeSignals()
+    {
+        var gateway = new GracefulProcessHandle(900, GatewayDll, true);
+        var requestedUrl = string.Empty;
+        var manager = NewManager(
+            (_, url, _) =>
+            {
+                requestedUrl = url;
+                return Task.FromResult(true);
+            },
+            gateway);
+
+        var result = await manager.StopAsync(
+            _home,
+            GatewayDll,
+            CancellationToken.None,
+            "http://localhost:6123");
+
+        requestedUrl.ShouldBe("http://localhost:6123");
+        gateway.GracefulStopCount.ShouldBe(0);
+        gateway.KillCount.ShouldBe(0);
+        result.Message.ShouldNotBeNull().ShouldContain("gracefully");
+    }
+
+    [Fact]
+    public async Task PlannedStop_WhenHostRequestIsUnavailable_FallsBackToNativeGracefulSignal()
+    {
+        var gateway = new GracefulProcessHandle(9001, GatewayDll, true);
+        var manager = NewManager((_, _, _) => Task.FromResult(false), gateway);
+
+        var result = await manager.StopAsync(
+            _home,
+            GatewayDll,
+            CancellationToken.None,
+            "http://localhost:6123");
+
+        gateway.GracefulStopCount.ShouldBe(1);
+        gateway.KillCount.ShouldBe(0);
+        result.Outcome.ShouldBe(GatewayStopOutcome.Stopped);
+    }
 
     [Fact]
     public async Task AC5_StopAsync_RequestsGracefulStop_AndDoesNotKillWhenProcessExits()

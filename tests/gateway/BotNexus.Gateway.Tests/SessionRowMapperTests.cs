@@ -287,8 +287,8 @@ public sealed class SessionRowMapperTests
         summary.ChildAgentId.ShouldBe("child-agent");
         summary.Archetype.ShouldBe("coder");
         summary.StartedAt.ShouldBe(DateTimeOffset.Parse("2026-01-02T03:04:05.0000000+00:00"));
-        summary.EndedAt.ShouldBe(DateTimeOffset.Parse("2026-02-03T04:05:06.0000000+00:00"));
-        summary.Status.ShouldBe("completed");
+        summary.CompletedAt.ShouldBe(DateTimeOffset.Parse("2026-02-03T04:05:06.0000000+00:00"));
+        summary.Status.ShouldBe(SubAgentStatus.Completed);
     }
 
     [Fact]
@@ -306,7 +306,7 @@ public sealed class SessionRowMapperTests
         var summary = SessionRowMapper.MapSubAgentSession(reader);
 
         summary.Archetype.ShouldBeNull();
-        summary.EndedAt.ShouldBeNull();
-        summary.Status.ShouldBe("running");
+        summary.CompletedAt.ShouldBeNull();
+        summary.Status.ShouldBe(SubAgentStatus.Running);
     }
 }

@@ -62,6 +62,24 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         _rest.GetAllConversationsAsync(Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyList<ConversationSummaryDto>>(conversations));
 
+    private void SetupSessions(params (string Id, string Status)[] sessions) =>
+        _rest.GetSessionsAsync(
+                Arg.Any<string?>(),
+                Arg.Any<int?>(),
+                Arg.Any<int>(),
+                Arg.Any<string?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new SessionPageDto(
+                sessions.Select(session => new SessionSummary(
+                    session.Id,
+                    "alpha",
+                    "signalr",
+                    "interactive",
+                    session.Status,
+                    0)).ToList(),
+                sessions.Length,
+                false));
+
     // ── Structure ──────────────────────────────────────────────────────────
 
     [Fact]
@@ -899,7 +917,83 @@ public sealed class ActivityDashboardComponentTests : IDisposable
             .Single(r => r.GetAttribute("data-conversation-id") == "c1");
         Assert.Empty(userFacingRow.QuerySelectorAll("[data-testid='activity-readonly-badge']"));
     }
-    // ---- #1888: live (running-session) surface ----------------------------
+    // ---- #1888/#3713: live (running-session) surface ----------------------
+
+    [Fact]
+    public void Session_roster_controls_badges_count_and_live_idle_filters()
+    {
+        SetupConversations(
+            Conv("active", activeSessionId: "s-active"),
+            Conv("sealed", activeSessionId: "s-sealed"),
+            Conv("expired", activeSessionId: "s-expired"),
+            Conv("absent", activeSessionId: "s-absent"));
+        SetupSessions(
+            ("s-active", "Active"),
+            ("s-sealed", "Sealed"),
+            ("s-expired", "Expired"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 4);
+
+        Assert.Equal("1", cut.Find("[data-testid='activity-summary-live'] .activity-summary-value").TextContent.Trim());
+        var badge = Assert.Single(cut.FindAll("[data-testid='activity-live-badge']"));
+        Assert.Equal("s-active", badge.Closest("[data-testid='activity-row']")?.GetAttribute("data-session-id"));
+
+        cut.Find("[data-testid='activity-filter-live']").Change(nameof(ActivityLiveFilter.Live));
+        cut.WaitForState(() => RowIds(cut).SequenceEqual(new[] { "active" }));
+
+        cut.Find("[data-testid='activity-filter-live']").Change(nameof(ActivityLiveFilter.Idle));
+        cut.WaitForState(() => RowIds(cut).OrderBy(id => id, StringComparer.Ordinal)
+            .SequenceEqual(new[] { "absent", "expired", "sealed" }));
+    }
+
+    [Fact]
+    public void Empty_successful_roster_treats_an_unknown_pointer_as_idle()
+    {
+        SetupConversations(Conv("absent", activeSessionId: "s-absent"));
+        SetupSessions();
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+
+        Assert.Empty(cut.FindAll("[data-testid='activity-live-badge']"));
+        Assert.Equal("0", cut.Find("[data-testid='activity-summary-live'] .activity-summary-value").TextContent.Trim());
+    }
+
+    [Fact]
+    public void Stopped_session_pointer_remains_inspectable_without_a_live_badge()
+    {
+        SetupConversations(Conv("sealed", activeSessionId: "s-sealed"));
+        SetupSessions(("s-sealed", "Sealed"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+
+        var row = cut.Find("[data-testid='activity-row']");
+        Assert.Empty(row.QuerySelectorAll("[data-testid='activity-live-badge']"));
+        Assert.Equal("s-sealed", row.GetAttribute("data-session-id"));
+        Assert.Contains("s-sealed", row.GetAttribute("title"));
+    }
+
+    [Fact]
+    public void Failed_session_roster_preserves_compatibility_liveness()
+    {
+        SetupConversations(Conv("running", activeSessionId: "s-unknown"));
+        _rest.GetSessionsAsync(
+                Arg.Any<string?>(),
+                Arg.Any<int?>(),
+                Arg.Any<int>(),
+                Arg.Any<string?>(),
+                Arg.Any<CancellationToken>())
+            .Returns<Task<SessionPageDto>>(_ => throw new HttpRequestException("session roster unavailable"));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+
+        Assert.Single(cut.FindAll("[data-testid='activity-live-badge']"));
+        Assert.Equal("1", cut.Find("[data-testid='activity-summary-live'] .activity-summary-value").TextContent.Trim());
+        Assert.Empty(cut.FindAll("[data-testid='activity-error']"));
+    }
 
     /// <summary>
     /// A conversation with a running session renders the live badge; an idle one does not, so the
