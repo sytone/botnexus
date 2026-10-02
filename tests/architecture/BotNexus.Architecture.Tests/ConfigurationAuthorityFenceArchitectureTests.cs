@@ -10,8 +10,8 @@ namespace BotNexus.Architecture.Tests;
 public sealed class ConfigurationAuthorityFenceArchitectureTests : ArchitectureTest
 {
     private const string BaselineFileName = "ConfigurationAuthorityBaseline.baseline";
-    private const int ExpectedBaselineEntryCount = 90;
-    private const int ExpectedBaselineOccurrenceCount = 221;
+    private const int ExpectedBaselineEntryCount = 89;
+    private const int ExpectedBaselineOccurrenceCount = 219;
 
     private static readonly Rule[] Rules =
     [

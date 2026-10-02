@@ -375,7 +375,7 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
         if (conv is null)
             return;
 
-        conv.StreamState.IsStreaming = streaming;
+        conv.StreamState.SetStreaming(streaming, "ClientStateStore.SetStreaming");
 
         // Only update agent-level IsStreaming if this is the active conversation
         // — prevents streaming state from bleeding into inactive conversations
@@ -431,7 +431,7 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
             });
         }
 
-        conv.StreamState.Reset();
+        conv.StreamState.Reset("ClientStateStore.ResetStreaming");
 
         // Keep agent-level state in sync
         foreach (var agent in _agents.Values)

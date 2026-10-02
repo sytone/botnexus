@@ -55,7 +55,7 @@ public static class PlatformConfigurationSources
     /// order.
     /// </summary>
     /// <param name="builder">The configuration builder.</param>
-    /// <param name="configPath">Absolute path to <c>config.json</c>.</param>
+    /// <param name="configPath">Absolute path to the generated configuration projection.</param>
     /// <param name="onLoadFailure">
     /// Invoked with a human-readable reason when a source rejects a load and retains its previously
     /// loaded values. Null discards the diagnostic, which is appropriate for short-lived processes
