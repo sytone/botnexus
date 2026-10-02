@@ -55,12 +55,8 @@ public sealed class RouteDerivedVisibilityTests
         // THE route. Exactly one (agent, conversation) pair is displayed.
         _store.SelectView("agent-1", "conv-shown", SelectionSource.RouteNavigation);
 
-        // #3061's premise: every agent independently carries a last-selected marker, and BOTH of
-        // these were previously treated as "active". Setting them here is what makes the three
-        // assertions below meaningful rather than vacuous -- under the old ambient logic
-        // conv-hidden and conv-other would BOTH have been treated as read.
-        a1.ActiveConversationId = "conv-hidden";
-        a2.ActiveConversationId = "conv-other";
+        // No per-agent ambient selections exist. The one explicit route above is the complete
+        // visibility state; hidden and other-agent conversations remain non-displayed.
     }
 
     private static AgentStreamEvent Reply(string sessionId, string conversationId) => new()
@@ -150,7 +146,7 @@ public sealed class RouteDerivedVisibilityTests
     {
         // #3065 (closed) guarantees conversation-scoped inbound events carry a conversation id.
         // An event that still names none, on a session bound to no conversation, previously fell
-        // back to agent.ActiveConversationId -- appending another conversation's reply into
+        // back to (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agent.AgentId) -- appending another conversation's reply into
         // whichever pane the agent had last selected. That fallback is deleted: the event is
         // DROPPED. Registering an unbound session is what removes the session->conversation
         // route, leaving the deleted fallback as the ONLY thing that could have attributed it.
@@ -239,8 +235,8 @@ public sealed class RouteDerivedVisibilityTests
                 .Where(l => !l.StartsWith("//", StringComparison.Ordinal)));
 
         Assert.DoesNotContain("?? agent!.ActiveConversationId", code, StringComparison.Ordinal);
-        Assert.DoesNotContain("?? agent.ActiveConversationId", code, StringComparison.Ordinal);
-        Assert.DoesNotContain("??= agent.ActiveConversationId", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("?? (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agent.AgentId)", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("??= (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agent.AgentId)", code, StringComparison.Ordinal);
     }
 
     /// <summary>

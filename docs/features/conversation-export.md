@@ -2,7 +2,13 @@
 
 The portal can download the active conversation as a Markdown or HTML file. Open a conversation, choose **Export**, review the content controls, and choose **Download**. The browser uses the filename supplied by the gateway.
 
-This first portal slice exports the whole conversation. Current-session and selected-message scopes are not yet available in the dialog.
+Choose the export scope in the dialog:
+
+- **Whole conversation** downloads every persisted entry in the conversation.
+- **Current active session** downloads the session currently attached to the conversation. This option is unavailable when the conversation has no active session.
+- **Selected messages** lets you choose the first and last visible persisted messages. The preview shows the size of the resulting contiguous range, including messages between the two endpoints. Live messages that do not yet have a server entry ID and folded or hidden tool messages are not offered as range endpoints.
+
+Cancelling the dialog clears any message range selection. The next export starts with no selected endpoints.
 
 ## Content and privacy controls
 

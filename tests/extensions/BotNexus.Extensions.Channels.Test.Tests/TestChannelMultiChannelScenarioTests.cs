@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 
@@ -6,6 +7,44 @@ namespace BotNexus.Extensions.Channels.Test.Tests;
 
 public sealed class TestChannelMultiChannelScenarioTests
 {
+    [Fact]
+    public async Task ResetActiveSessionAsync_TwoEligibleChannels_ProjectsStableConversationAndClearedSessionOncePerSurface()
+    {
+        await using var scenario = new TestChannelConversationScenario(
+            TestChannelConversationScenario.Channel("telegram"),
+            TestChannelConversationScenario.Channel("signalr"));
+
+        scenario.Bind("telegram", "chat-reset");
+        scenario.Bind("signalr", "portal-reset");
+
+        var result = await scenario.ResetActiveSessionAsync();
+
+        result.Reset.Outcome.ShouldBe(ConversationResetOutcome.Reset);
+        result.Conversation.ConversationId.ShouldBe(scenario.ConversationId);
+        result.Conversation.ActiveSessionId.ShouldBeNull();
+        result.Session.Status.ShouldBe(SessionStatus.Sealed);
+
+        AssertResetProjection(scenario.LifecycleEvents("telegram", "chat-reset"), scenario.ConversationId, result);
+        AssertResetProjection(scenario.LifecycleEvents("signalr", "portal-reset"), scenario.ConversationId, result);
+    }
+
+    [Fact]
+    public async Task CompactionThenReset_TwoEligibleChannels_ProjectsStrictlyOrderedLifecycleEventsOncePerSurface()
+    {
+        await using var scenario = new TestChannelConversationScenario(
+            TestChannelConversationScenario.Channel("telegram"),
+            TestChannelConversationScenario.Channel("signalr"));
+
+        scenario.Bind("telegram", "chat-ordered");
+        scenario.Bind("signalr", "portal-ordered");
+
+        await scenario.PublishCompactionAsync();
+        await scenario.ResetActiveSessionAsync();
+
+        AssertOrderedLifecycleProjection(scenario.LifecycleEvents("telegram", "chat-ordered"));
+        AssertOrderedLifecycleProjection(scenario.LifecycleEvents("signalr", "portal-ordered"));
+    }
+
     [Fact]
     public async Task PublishCompactionAsync_TwoEligibleChannels_ProjectsPersistedLifecycleEventOncePerSurface()
     {
@@ -30,6 +69,30 @@ public sealed class TestChannelMultiChannelScenarioTests
             .ShouldHaveSingleItem()
             .ConversationEvent.ShouldBeOfType<ConversationSessionItemPersistedEvent>();
         signalR.Item.ShouldBe(persisted);
+    }
+
+    private static void AssertOrderedLifecycleProjection(
+        IReadOnlyList<TestChannelLifecycleEventRecord> events)
+    {
+        events.Count.ShouldBe(2);
+        events[0].ConversationEvent.ShouldBeOfType<ConversationSessionItemPersistedEvent>();
+        events[1].ConversationEvent.ShouldBeOfType<ConversationActiveSessionChangedEvent>();
+        events.Select(projected => projected.Sequence).ShouldBeInOrder(SortDirection.Ascending);
+        events[1].Sequence.ShouldBe(events[0].Sequence + 1);
+        events[1].TimestampUtc.ShouldBeGreaterThanOrEqualTo(events[0].TimestampUtc);
+    }
+
+    private static void AssertResetProjection(
+        IReadOnlyList<TestChannelLifecycleEventRecord> events,
+        ConversationId conversationId,
+        TestChannelConversationScenario.ResetScenarioResult result)
+    {
+        var projected = events.ShouldHaveSingleItem()
+            .ConversationEvent.ShouldBeOfType<ConversationActiveSessionChangedEvent>();
+        projected.ConversationId.ShouldBe(conversationId);
+        projected.PreviousSessionId.ShouldBe(result.Reset.SealedSessionId);
+        projected.ActiveSessionId.ShouldBeNull();
+        projected.SessionId.ShouldBe(result.Reset.SealedSessionId);
     }
 
     [Fact]

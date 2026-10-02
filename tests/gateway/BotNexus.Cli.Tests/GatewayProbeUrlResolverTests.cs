@@ -1,4 +1,7 @@
+using System.IO.Abstractions;
+using System.Text.Json.Nodes;
 using BotNexus.Cli.Services;
+using BotNexus.Gateway.Configuration;
 using Shouldly;
 
 namespace BotNexus.Cli.Tests;
@@ -9,8 +12,13 @@ namespace BotNexus.Cli.Tests;
 /// readiness probe could therefore never succeed, and <c>gateway start</c> reported failure - after
 /// waiting out its full timeout - for a gateway that had started and was serving requests.
 /// </summary>
-public sealed class GatewayProbeUrlResolverTests
+public sealed class GatewayProbeUrlResolverTests : IDisposable
 {
+    private readonly string _home = Path.Combine(Path.GetTempPath(), $"botnexus-probe-{Guid.NewGuid():N}");
+    private readonly IFileSystem _fileSystem = new FileSystem();
+
+    public GatewayProbeUrlResolverTests() => Directory.CreateDirectory(_home);
+
     [Fact]
     public void Resolve_NoConfiguredListenUrl_UsesLoopbackOnTheRequestedPort()
         => GatewayProbeUrlResolver.Resolve(null, 5005).ShouldBe("http://localhost:5005");
@@ -80,4 +88,85 @@ public sealed class GatewayProbeUrlResolverTests
     [Fact]
     public void Resolve_IsCallableAsAStringExtension()
         => "http://192.0.2.10:7000".Resolve(5005).ShouldBe("http://192.0.2.10:7000");
+
+    [Fact]
+    public async Task ResolveFromHome_SqliteOnly_UsesStoredListenUrl()
+    {
+        await SeedStoreAsync("http://192.0.2.20:7100");
+
+        GatewayProbeUrlResolver.ResolveFromHome(5005, _home)
+            .ShouldBe("http://192.0.2.20:7100");
+    }
+
+    [Fact]
+    public async Task ResolveFromHome_ConflictingProjection_UsesStoredListenUrl()
+    {
+        File.WriteAllText(Path.Combine(_home, "config.json"),
+            """{ "gateway": { "listenUrl": "http://192.0.2.30:7200" } }""");
+        await SeedStoreAsync("http://192.0.2.20:7100");
+
+        GatewayProbeUrlResolver.ResolveFromHome(5005, _home)
+            .ShouldBe("http://192.0.2.20:7100");
+    }
+
+    [Fact]
+    public async Task ResolveFromHome_CorruptProjection_UsesStoredListenUrl()
+    {
+        File.WriteAllText(Path.Combine(_home, "config.json"), "{ invalid");
+        await SeedStoreAsync("http://192.0.2.20:7100");
+
+        GatewayProbeUrlResolver.ResolveFromHome(5005, _home)
+            .ShouldBe("http://192.0.2.20:7100");
+    }
+
+    [Fact]
+    public void PlannedLifecycleCommands_DoNotNameTheGeneratedProjection()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        foreach (var relativePath in new[]
+                 {
+                     "src/gateway/BotNexus.Cli/Commands/GatewayCommand.cs",
+                     "src/gateway/BotNexus.Cli/Commands/UpdateCommand.cs",
+                 })
+        {
+            File.ReadAllText(Path.Combine(repositoryRoot, relativePath))
+                .ShouldNotContain("configPath: Path.Combine(home, \"config.json\")", Case.Sensitive,
+                    $"{relativePath} must pass BotNexus home to planned lifecycle reads");
+        }
+
+        File.ReadAllText(Path.Combine(
+                repositoryRoot,
+                "src/gateway/BotNexus.Cli/Services/GatewayProbeUrlResolver.cs"))
+            .ShouldNotContain("config.json", Case.Sensitive,
+                "the resolver must expose home/context identity rather than the generated projection");
+    }
+
+    private async Task SeedStoreAsync(string listenUrl)
+    {
+        var configPath = Path.Combine(_home, "config.json");
+        var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, _fileSystem);
+        var document = JsonNode.Parse(
+            $$"""{ "gateway": { "listenUrl": "{{listenUrl}}" } }""")!.AsObject();
+        await ConfigStoreBootstrap.PopulateAsync(storePath, document);
+        ConfigStoreBootstrap.ReleaseConnections(storePath);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null
+               && !Directory.Exists(Path.Combine(directory.FullName, "src", "gateway", "BotNexus.Cli")))
+            directory = directory.Parent;
+
+        return directory?.FullName ?? throw new DirectoryNotFoundException("Repository root not found.");
+    }
+
+    public void Dispose()
+    {
+        var storePath = ConfigStoreBootstrap.ResolveStorePath(
+            Path.Combine(_home, "config.json"), _fileSystem);
+        ConfigStoreBootstrap.ReleaseConnections(storePath);
+        try { Directory.Delete(_home, recursive: true); }
+        catch (IOException) { /* best effort after pooled SQLite handles */ }
+    }
 }

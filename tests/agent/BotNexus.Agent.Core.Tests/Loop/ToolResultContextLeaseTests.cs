@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Types;
 
@@ -60,6 +61,52 @@ public sealed class ToolResultContextLeaseTests
         var following = lease.Project(messages);
         Text(following.Messages, 0).ShouldContain(firstReceipt.ResultId.Value);
         Text(following.Messages, 1).ShouldContain(secondReceipt.ResultId.Value);
+    }
+
+    [Fact]
+    public void Project_ReportsLeaseReceiptAndSavedPromptBytesWithoutPayloadTags()
+    {
+        var measurements = new List<(string Name, long Value, KeyValuePair<string, object?>[] Tags)>();
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, meterListener) =>
+            {
+                if (instrument.Meter.Name == ToolResultContextTelemetry.MeterName)
+                {
+                    meterListener.EnableMeasurementEvents(instrument);
+                }
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
+            measurements.Add((instrument.Name, value, tags.ToArray())));
+        listener.Start();
+
+        var receipt = CreateReceipt("call-telemetry");
+        var detail = new string('x', 32_000);
+        var result = ToolResult("call-telemetry", detail, receipt);
+        using var lease = new ToolResultContextLease();
+
+        var consuming = lease.Project([result]);
+        lease.Complete(consuming, ToolResultConsumptionOutcome.Success);
+        var following = lease.Project([result]);
+        var receiptBytes = System.Text.Encoding.UTF8.GetByteCount(Text(following.Messages));
+
+        measurements.ShouldContain(measurement =>
+            measurement.Name == ToolResultContextTelemetry.ActiveLeasedBytesInstrumentName
+            && measurement.Value == detail.Length);
+        measurements.ShouldContain(measurement =>
+            measurement.Name == ToolResultContextTelemetry.ActiveLeasedBytesInstrumentName
+            && measurement.Value == -detail.Length);
+        measurements.ShouldContain(measurement =>
+            measurement.Name == ToolResultContextTelemetry.ReceiptBytesInstrumentName
+            && measurement.Value == receiptBytes);
+        measurements.ShouldContain(measurement =>
+            measurement.Name == ToolResultContextTelemetry.SavedPromptBytesInstrumentName
+            && measurement.Value == detail.Length - receiptBytes);
+        measurements.SelectMany(measurement => measurement.Tags)
+            .ShouldAllBe(tag => tag.Key == "tool.result.kind");
+        measurements.SelectMany(measurement => measurement.Tags)
+            .ShouldNotContain(tag => Equals(tag.Value, receipt.ResultId.Value) || Equals(tag.Value, detail));
     }
 
     [Fact]

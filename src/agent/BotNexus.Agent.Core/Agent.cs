@@ -213,6 +213,37 @@ public sealed class Agent
     }
 
     /// <summary>
+    /// Runs exactly one model turn with no tools or completion continuations.
+    /// </summary>
+    /// <param name="text">The finalization instruction.</param>
+    /// <param name="cancellationToken">The run deadline token.</param>
+    /// <returns>The messages produced by the single text-only turn.</returns>
+    public async Task<IReadOnlyList<AgentMessage>> PromptWithoutToolsAsync(
+        string text,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+        var result = await RunAsync(
+                (context, config, emit, ct) => AgentLoopRunner.RunSingleProviderTurnAsync(
+                    new UserMessage(text),
+                    context with { Tools = [] },
+                    config,
+                    emit,
+                    ct),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (result.OfType<AssistantAgentMessage>().Any())
+            return result;
+
+        lock (_stateLock)
+        {
+            var assistant = _state.Messages.OfType<AssistantAgentMessage>().LastOrDefault();
+            return assistant is null ? result : [assistant];
+        }
+    }
+
+    /// <summary>
     /// Start a new agent run with a single message.
     /// </summary>
     /// <param name="message">The message to append to the timeline.</param>

@@ -108,6 +108,16 @@ public sealed record Session
     }
 
     /// <summary>
+    /// Latest authoritative run-completion disposition. Stored in <see cref="Metadata"/> so every
+    /// session backend preserves the same completion/parked/incomplete evidence across restart.
+    /// </summary>
+    public RunCompletionSignal? RunCompletion
+    {
+        get => RunCompletionSignal.FromMetadata(Metadata);
+        set => RunCompletionSignal.WriteTo(Metadata, value);
+    }
+
+    /// <summary>
     /// Gets or sets the history.
     /// </summary>
     public List<SessionEntry> History { get; set; } = [];

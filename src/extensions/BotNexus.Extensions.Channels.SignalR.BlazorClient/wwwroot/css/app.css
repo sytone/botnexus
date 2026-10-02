@@ -7,6 +7,18 @@
     padding: 24px;
 }
 
+.release-source-status {
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    padding: 16px 24px;
+}
+
+.release-source-status h3,
+.release-source-status p {
+    margin: 0 0 8px;
+}
+
 .release-history-entry {
     border: 1px solid var(--color-hairline);
     border-radius: var(--radius-lg);
@@ -2099,6 +2111,8 @@ html, body, #app {
 /* ── Input area ─────────────────────────────────────────────────────── */
 
 .chat-input-area {
+    position: relative;
+    isolation: isolate;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: end;
@@ -2106,6 +2120,80 @@ html, body, #app {
     padding: 0.75rem 1rem;
     border-top: 1px solid var(--border);
     background: var(--bg-secondary);
+}
+
+.chat-input-area.composer-active::before {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    top: 0.3rem;
+    left: 0.55rem;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0.45rem var(--color-accent-ring);
+    offset-path: inset(0.3rem 0.55rem round calc(var(--radius) + 5px));
+    offset-anchor: center;
+    pointer-events: none;
+    animation: composer-perimeter-travel 3.2s linear infinite;
+}
+
+@keyframes composer-perimeter-travel {
+    to { offset-distance: 100%; }
+}
+
+.composer-active-status {
+    position: absolute;
+    z-index: 3;
+    top: 0.08rem;
+    left: 1.15rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0 0.3rem;
+    border-radius: var(--radius-pill);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: var(--text-caption);
+    line-height: 1.2;
+    pointer-events: none;
+}
+
+.composer-active-status-dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .chat-input-area.composer-active::before {
+        inset: 0.3rem 0.55rem;
+        width: auto;
+        height: auto;
+        border: 2px solid var(--accent);
+        border-radius: calc(var(--radius) + 5px);
+        background: none;
+        box-shadow: none;
+        offset-path: none;
+        animation: none;
+    }
+}
+
+@media (forced-colors: active) {
+    .chat-input-area.composer-active::before {
+        animation: none;
+        border: 0;
+        background: none;
+        mask: none;
+        outline: 2px solid Highlight;
+        outline-offset: -2px;
+    }
+
+    .composer-active-status-dot {
+        background: Highlight;
+    }
 }
 
 .composer-toolbar {
@@ -7088,12 +7176,33 @@ h3.conversation-title.editable:hover {
     font-size: var(--text-title);
 }
 
+.home-composer-surface {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-raised);
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.home-composer-surface:focus-within {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px var(--color-accent-ring), var(--shadow-raised);
+}
+
 .home-message-input {
     width: 100%;
     box-sizing: border-box;
     resize: vertical;
     min-height: 6rem;
-    padding: 0.75rem;
+    padding: 0.35rem;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text-primary);
     font: inherit;
 }
 
@@ -7117,16 +7226,51 @@ h3.conversation-title.editable:hover {
     opacity: 0.7;
 }
 
+.home-starter-controls select {
+    min-height: 2.4rem;
+    padding: 0.45rem 2rem 0.45rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font: inherit;
+}
+
+.home-starter-controls select:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
+}
+
 .home-send-btn {
     margin-left: auto;
+    min-height: 2.4rem;
     padding: 0.5rem 1.25rem;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--color-on-accent);
     font: inherit;
+    font-weight: 600;
     cursor: pointer;
+    transition: background 0.15s, transform 0.1s, opacity 0.15s;
+}
+
+.home-send-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+}
+
+.home-send-btn:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.home-send-btn:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
 }
 
 .home-send-btn:disabled {
     cursor: not-allowed;
-    opacity: 0.55;
+    opacity: 0.45;
 }
 
 .home-error {
@@ -7976,3 +8120,56 @@ h3.conversation-title.editable:hover {
 .binding-button.primary { border-color: var(--accent); background: var(--accent); color: var(--color-on-accent); }
 .binding-button.danger { color: var(--error); }
 .binding-button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Conversation export scope and contiguous-range picker. */
+.export-dialog {
+    max-width: 560px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.export-dialog > label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 0.65rem 0;
+}
+
+.export-message-list {
+    display: grid;
+    gap: 0.4rem;
+    max-height: 220px;
+    overflow-y: auto;
+    margin: 0.75rem 0;
+    padding: 0.25rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.export-message-selector {
+    display: grid;
+    grid-template-columns: minmax(5rem, auto) 1fr;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+}
+
+.export-message-selector span {
+    overflow: hidden;
+    color: var(--text-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.export-message-selector:hover,
+.export-message-selector.selected {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+}

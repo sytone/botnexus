@@ -17,7 +17,6 @@ public sealed class GatewayEventHandlerTests
             DisplayName = "Agent 1",
             IsConnected = true,
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         });
 
         var agent = _store.GetAgent("agent-1")!;
@@ -344,6 +343,116 @@ public sealed class GatewayEventHandlerTests
     }
 
     [Fact]
+    public async Task MissedRunEnded_after_quiescent_terminal_edge_reconciles_authoritative_idle()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        _handler.RunStateReconciliationDelay = (_, _) => Task.CompletedTask;
+        _handler.RunActivitySnapshotProvider = _ => Task.FromResult(
+            new SubscribeAllResult([], []));
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleContentDelta(new AgentStreamEvent { SessionId = "sess-1", ContentDelta = "done" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.NotNull(_handler.LastRunStateReconciliation);
+        await _handler.LastRunStateReconciliation!;
+
+        Assert.False(conv.StreamState.IsRunActive);
+        Assert.False(conv.StreamState.IsTurnActive);
+        Assert.False(agent.IsStreaming);
+    }
+
+    [Fact]
+    public async Task Quiescent_reconciliation_preserves_a_genuinely_active_run()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        _handler.RunStateReconciliationDelay = (_, _) => Task.CompletedTask;
+        _handler.RunActivitySnapshotProvider = _ => Task.FromResult(
+            new SubscribeAllResult([], [new RunActivitySnapshot("sess-1", "agent-1", "conv-1")]));
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.NotNull(_handler.LastRunStateReconciliation);
+        await _handler.LastRunStateReconciliation!;
+
+        Assert.True(conv.StreamState.IsRunActive);
+        Assert.True(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public async Task Stale_reconciliation_cannot_clear_a_newer_active_run()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        _handler.RunStateReconciliationDelay = (_, _) => Task.CompletedTask;
+        var snapshotStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSnapshot = new TaskCompletionSource<SubscribeAllResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _handler.RunActivitySnapshotProvider = _ =>
+        {
+            snapshotStarted.SetResult();
+            return releaseSnapshot.Task;
+        };
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+        await snapshotStarted.Task;
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        releaseSnapshot.SetResult(new SubscribeAllResult([], []));
+        await _handler.LastRunStateReconciliation!;
+
+        Assert.True(conv.StreamState.IsRunActive);
+        Assert.True(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public async Task Tool_only_turn_with_missed_RunEnded_reconciles_after_TurnEnd()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        _handler.RunStateReconciliationDelay = (_, _) => Task.CompletedTask;
+        _handler.RunActivitySnapshotProvider = _ => Task.FromResult(new SubscribeAllResult([], []));
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleToolStart(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "tool-1", ToolName = "read" });
+        _handler.HandleToolEnd(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "tool-1", ToolName = "read", ToolResult = "done" });
+        _handler.HandleTurnEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.NotNull(_handler.LastRunStateReconciliation);
+        await _handler.LastRunStateReconciliation!;
+        Assert.False(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public async Task Run_state_reconciliation_waits_for_the_grace_period()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        var delayStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDelay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _handler.RunStateReconciliationDelay = async (_, _) =>
+        {
+            delayStarted.SetResult();
+            await releaseDelay.Task;
+        };
+        _handler.RunActivitySnapshotProvider = _ => Task.FromResult(new SubscribeAllResult([], []));
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+        await delayStarted.Task;
+
+        Assert.True(conv.StreamState.IsTurnActive);
+
+        releaseDelay.SetResult();
+        await _handler.LastRunStateReconciliation!;
+        Assert.False(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
     public void HandleRunStarted_marks_run_active_and_streaming()
     {
         var agent = _store.GetAgent("agent-1")!;
@@ -636,7 +745,7 @@ public sealed class GatewayEventHandlerTests
         };
         _store.RegisterSession("agent-1", "sess-2");
 
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
             SubAgentId: "sub-1",
@@ -653,7 +762,7 @@ public sealed class GatewayEventHandlerTests
             ChildSessionId: null,
             ConversationId: "conv-1"));
 
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _handler.HandleSubAgentCompleted(new SubAgentEventPayload(
             SessionId: "sess-1",
@@ -689,7 +798,7 @@ public sealed class GatewayEventHandlerTests
         };
         _store.RegisterSession("agent-1", "sess-2");
 
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
             SubAgentId: "sub-2",
@@ -706,7 +815,7 @@ public sealed class GatewayEventHandlerTests
             ChildSessionId: null,
             ConversationId: "conv-1"));
 
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _handler.HandleSubAgentFailed(new SubAgentEventPayload(
             SessionId: "sess-1",
@@ -742,7 +851,7 @@ public sealed class GatewayEventHandlerTests
         };
         _store.RegisterSession("agent-1", "sess-2");
 
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
             SubAgentId: "sub-3",
@@ -759,7 +868,7 @@ public sealed class GatewayEventHandlerTests
             ChildSessionId: null,
             ConversationId: "conv-1"));
 
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _handler.HandleSubAgentKilled(new SubAgentEventPayload(
             SessionId: "sess-1",
@@ -868,7 +977,7 @@ public sealed class GatewayEventHandlerTests
             Title = "New Conversation",
             ActiveSessionId = null   // not yet set before REST refresh
         };
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
         // Simulate RegisterSession being called after SendMessageAsync returns sess-2
         _store.RegisterSession("agent-1", "sess-2");
 
@@ -895,7 +1004,7 @@ public sealed class GatewayEventHandlerTests
             Title = "New Conversation",
             ActiveSessionId = null
         };
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _store.RegisterSession("agent-1", "sess-2");
 

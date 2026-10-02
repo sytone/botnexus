@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+using System.Text;
 using BotNexus.Agent.Core.Types;
 
 namespace BotNexus.Agent.Core.Loop;
@@ -27,9 +29,11 @@ public sealed record ToolResultContextLeaseKey(ToolResultId ResultId, long Revis
 /// authoritative agent timeline untouched. Untyped and failed tool results retain their existing
 /// behavior until generic stored-result envelope adoption supplies a safe recall contract.
 /// </summary>
-public sealed class ToolResultContextLease
+public sealed class ToolResultContextLease : IDisposable
 {
     private readonly HashSet<ToolResultContextLeaseKey> _consumed = [];
+    private readonly Dictionary<ToolResultContextLeaseKey, ActiveLease> _active = [];
+    private bool _disposed;
 
     /// <summary>Builds the model-visible projection for one provider attempt.</summary>
     public ToolResultContextProjection Project(IReadOnlyList<AgentMessage> messages)
@@ -53,11 +57,24 @@ public sealed class ToolResultContextLease
             if (_consumed.Contains(key))
             {
                 projected ??= messages.ToList();
-                projected[index] = ToReceiptMessage(toolResult, receipt);
+                var receiptMessage = ToReceiptMessage(toolResult, receipt);
+                projected[index] = receiptMessage;
+                ToolResultContextTelemetry.RecordReceiptProjection(
+                    receipt.Kind,
+                    MeasureContentBytes(toolResult.Result.Content),
+                    MeasureContentBytes(receiptMessage.Result.Content));
             }
             else
             {
                 offered.Add(key);
+                if (!_active.ContainsKey(key))
+                {
+                    var active = new ActiveLease(
+                        receipt.Kind,
+                        MeasureContentBytes(toolResult.Result.Content));
+                    _active.Add(key, active);
+                    ToolResultContextTelemetry.ChangeActiveLeasedBytes(active.Kind, active.Bytes);
+                }
             }
         }
 
@@ -79,8 +96,32 @@ public sealed class ToolResultContextLease
         foreach (var key in projection.OfferedResults)
         {
             _consumed.Add(key);
+            if (_active.Remove(key, out var active))
+            {
+                ToolResultContextTelemetry.ChangeActiveLeasedBytes(active.Kind, -active.Bytes);
+            }
         }
     }
+
+    /// <summary>Releases measurements for detail that was still leased when the run ended.</summary>
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        foreach (var active in _active.Values)
+        {
+            ToolResultContextTelemetry.ChangeActiveLeasedBytes(active.Kind, -active.Bytes);
+        }
+
+        _active.Clear();
+        _disposed = true;
+    }
+
+    private static long MeasureContentBytes(IReadOnlyList<AgentToolContent> content) =>
+        content.Sum(item => (long)Encoding.UTF8.GetByteCount(item.Value));
 
     private static ToolResultAgentMessage ToReceiptMessage(
         ToolResultAgentMessage message,
@@ -96,4 +137,42 @@ public sealed class ToolResultContextLease
                 receipt),
         };
     }
+
+    private sealed record ActiveLease(ToolResultKind Kind, long Bytes);
+}
+
+/// <summary>Payload-free measurements for live tool-result context leasing.</summary>
+public static class ToolResultContextTelemetry
+{
+    public const string MeterName = "BotNexus.Agent.ToolResultContext";
+    public const string ActiveLeasedBytesInstrumentName = "botnexus.agent.tool_result.active_leased_bytes";
+    public const string ReceiptBytesInstrumentName = "botnexus.agent.tool_result.receipt_bytes";
+    public const string SavedPromptBytesInstrumentName = "botnexus.agent.tool_result.saved_prompt_bytes";
+
+    private static readonly Meter Meter = new(MeterName);
+    private static readonly UpDownCounter<long> ActiveLeasedBytes = Meter.CreateUpDownCounter<long>(
+        ActiveLeasedBytesInstrumentName,
+        "By",
+        "Current detailed tool-result bytes leased into live model context.");
+    private static readonly Counter<long> ReceiptBytes = Meter.CreateCounter<long>(
+        ReceiptBytesInstrumentName,
+        "By",
+        "Compact receipt bytes projected into provider context.");
+    private static readonly Counter<long> SavedPromptBytes = Meter.CreateCounter<long>(
+        SavedPromptBytesInstrumentName,
+        "By",
+        "Detailed tool-result bytes omitted from provider context after consumption.");
+
+    internal static void ChangeActiveLeasedBytes(ToolResultKind kind, long bytes) =>
+        ActiveLeasedBytes.Add(bytes, KindTag(kind));
+
+    internal static void RecordReceiptProjection(ToolResultKind kind, long detailedBytes, long receiptBytes)
+    {
+        var tags = KindTag(kind);
+        ReceiptBytes.Add(receiptBytes, tags);
+        SavedPromptBytes.Add(Math.Max(0, detailedBytes - receiptBytes), tags);
+    }
+
+    private static KeyValuePair<string, object?> KindTag(ToolResultKind kind) =>
+        new("tool.result.kind", kind.ToString().ToLowerInvariant());
 }

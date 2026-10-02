@@ -105,7 +105,7 @@ internal sealed class ServeCommand
 
         // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
         // argument below, so probe where it will actually listen rather than where we asked.
-        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromConfig(port);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(port, home);
         var lastExitCode = 0;
 
         while (true)
@@ -169,7 +169,9 @@ internal sealed class ServeCommand
 
         // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
         // argument below, so probe where it will actually listen rather than where we asked.
-        var probeUrl = GatewayProbeUrlResolver.ResolveFromConfig(port);
+        var probeUrl = GatewayProbeUrlResolver.ResolveFromHome(
+            port,
+            CliPaths.ResolveTarget(explicitTarget: null));
 
         AnsiConsole.WriteLine();
         AnsiConsole.Write(new Rule("[bold blue]BotNexus Probe[/]") { Justification = Justify.Left });

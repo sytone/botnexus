@@ -73,6 +73,24 @@ internal sealed class DebugSessionsCommand
             return Task.CompletedTask;
         });
 
+        // ── read payload audit ──
+        var fromOption = new Option<DateTimeOffset>("--from", "Inclusive UTC start of the audit window.") { IsRequired = true };
+        var toOption = new Option<DateTimeOffset>("--to", "Exclusive UTC end of the audit window.") { IsRequired = true };
+        var readPayloadAuditCommand = new Command("read-payload-audit", "Measure repeated full read payloads in a complete audit window.")
+        {
+            fromOption, toOption
+        };
+        readPayloadAuditCommand.SetHandler(context =>
+        {
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var format = context.ParseResult.GetValueForOption(formatOption) ?? "table";
+            var windowStart = context.ParseResult.GetValueForOption(fromOption);
+            var windowEnd = context.ParseResult.GetValueForOption(toOption);
+            var dbPath = ResolveSessionsDb(target);
+            context.ExitCode = ExecuteReadPayloadAudit(dbPath, windowStart, windowEnd, format);
+            return Task.CompletedTask;
+        });
+
         // ── retention preview ──
         var olderThanDaysOption = new Option<int>("--older-than-days", () => 30, "Minimum age of successful historical tool invocations.");
         var retentionCommand = new Command("retention-preview", "Report tool payload retention candidates without modifying the store.")
@@ -121,6 +139,7 @@ internal sealed class DebugSessionsCommand
         command.AddCommand(listCommand);
         command.AddCommand(getCommand);
         command.AddCommand(compactionCommand);
+        command.AddCommand(readPayloadAuditCommand);
         command.AddCommand(retentionCommand);
         command.AddCommand(backfillCommand);
         command.AddCommand(statsCommand);
@@ -368,6 +387,52 @@ internal sealed class DebugSessionsCommand
             AnsiConsole.WriteLine();
         }
 
+        return 0;
+    }
+
+    internal static int ExecuteReadPayloadAudit(
+        string dbPath,
+        DateTimeOffset windowStart,
+        DateTimeOffset windowEnd,
+        string format)
+    {
+        if (!File.Exists(dbPath))
+        {
+            ReportMissingStore(dbPath);
+            return 1;
+        }
+
+        ReadPayloadAuditReport report;
+        try
+        {
+            report = ReadPayloadAudit.CreateReport(dbPath, windowStart, windowEnd);
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{CliText.SafeDisplay(ex.Message)}[/]");
+            return 1;
+        }
+
+        if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
+        {
+            AnsiConsole.Write(new Text(JsonSerializer.Serialize(report, JsonOpts)));
+            AnsiConsole.WriteLine();
+            return 0;
+        }
+
+        AnsiConsole.MarkupLine("[bold]Read Payload Audit[/]");
+        AnsiConsole.MarkupLine($"  Window:                       [bold]{report.WindowStart:O}[/] to [bold]{report.WindowEnd:O}[/] (end exclusive)");
+        AnsiConsole.MarkupLine($"  Successful read results:      [bold]{report.SuccessfulReadResults:N0}[/]");
+        AnsiConsole.MarkupLine($"  Repeated full payloads:       [bold]{report.RepeatedFullPayloads:N0}[/]");
+        AnsiConsole.MarkupLine($"  Repeated payload bytes:       [bold]{report.RepeatedFullPayloadBytes:N0}[/]");
+        AnsiConsole.MarkupLine($"  Repeated payloads per 1,000:  [bold]{report.RepeatedPayloadsPerThousand:N2}[/]");
+        AnsiConsole.MarkupLine($"  Threshold per 1,000:          [bold]{report.MaximumRepeatedPayloadsPerThousand:N2}[/] ({(report.MeetsThreshold ? "meets" : "exceeds")})");
+        AnsiConsole.MarkupLine($"  Unchanged markers:            [bold]{report.UnchangedMarkers:N0}[/]");
+        AnsiConsole.MarkupLine($"  Changed same-slice results:   [bold]{report.ChangedSameSliceResults:N0}[/]");
+        AnsiConsole.MarkupLine($"  Different-slice results:      [bold]{report.DifferentSliceResults:N0}[/]");
+        AnsiConsole.MarkupLine($"  Unclassifiable results:       [bold]{report.UnclassifiableResults:N0}[/]");
+        AnsiConsole.MarkupLine($"  Excluded error results:       [bold]{report.ExcludedErrorResults:N0}[/]");
+        AnsiConsole.MarkupLine("[dim]Numerator: repeated complete response body for the same normalized path/offset/limit in one session. Denominator: all successful read result rows in the half-open window. Unchanged markers never enter the numerator.[/]");
         return 0;
     }
 

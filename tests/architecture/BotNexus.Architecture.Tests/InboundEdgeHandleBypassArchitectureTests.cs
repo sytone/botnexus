@@ -21,11 +21,12 @@ public sealed class InboundEdgeHandleBypassArchitectureTests
         var edgeTypes = new[]
         {
             typeof(BotNexus.Gateway.Api.Controllers.ChatController),
-            typeof(BotNexus.Extensions.Channels.SignalR.GatewayHub)
+            typeof(BotNexus.Extensions.Channels.SignalR.GatewayHub),
+            typeof(BotNexus.Extensions.Channels.Tui.TuiChannelAdapter)
         };
 
         var violations = edgeTypes
-            .SelectMany(type => FindViolations(type.Assembly.Location, type.FullName!))
+            .SelectMany(type => FindHandleViolations(type.Assembly.Location, type.FullName!))
             .OrderBy(value => value, StringComparer.Ordinal)
             .ToArray();
 
@@ -34,7 +35,7 @@ public sealed class InboundEdgeHandleBypassArchitectureTests
             "only the dispatch layer may call IAgentHandle steer/interrupt methods.");
     }
 
-    private static IEnumerable<string> FindViolations(string assemblyPath, string fullTypeName)
+    private static IEnumerable<string> FindHandleViolations(string assemblyPath, string fullTypeName)
     {
         using var assembly = AssemblyDefinition.ReadAssembly(assemblyPath);
         var type = assembly.MainModule.GetType(fullTypeName);

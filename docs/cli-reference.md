@@ -78,6 +78,7 @@ You should see the root command help listing all available subcommands.
 26. [provider setup](#provider-setup) — Interactive provider setup wizard
 27. [provider list](#provider-list) — List configured providers
 28. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+    - [provider test](#provider-test) — Validate a provider through the running gateway
 29. [provider remove](#provider-remove) — Remove a provider non-interactively
 30. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
 31. [provider ollama](#provider-ollama) — Ollama local model diagnostics
@@ -1699,7 +1700,7 @@ When a provider with the given `--name` already exists, only the flags you pass 
 
 A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated provider models then become available for agent assignment without restarting the process. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact.
 
-The command is an offline configuration writer, so its receipt distinguishes persistence from runtime activation: persistence succeeded, activation was not validated by the command, and no restart is required when the running gateway receives the reload. Verify activation with `botnexus debug gateway providers` before assigning an agent. If an out-of-process configuration change has not reached the running gateway yet, the saved provider can still be absent from that live catalogue; persistence alone is not a readiness result.
+The command is an offline configuration writer, so its receipt distinguishes persistence from runtime activation: persistence succeeded, activation was not validated by the command, and no restart is required when the running gateway receives the reload. Verify activation and credential resolution with `botnexus provider test --name <NAME>` before assigning an agent. The test calls the running gateway's provider-health route, which reads the same live model registry and credential resolver used by agent setup. If an out-of-process configuration change has not reached the running gateway yet, the saved provider can still be absent from that live catalogue; persistence alone is not a readiness result.
 
 ### Usage
 
@@ -1745,6 +1746,20 @@ botnexus provider add --name local-vllm `
     --model llama-3-8b --model llama-3-70b `
     --default-model llama-3-8b
 ```
+
+---
+
+## provider test
+
+Validate a provider instance against the running gateway rather than the offline configuration file. The command succeeds only when the instance is present in the live model registry, has at least one registered model, and its configured credential resolves. It does not send a billable model request.
+
+### Usage
+
+```powershell
+botnexus provider test --name <NAME> [--url <GATEWAY_URL>] [--token <CREDENTIAL>]
+```
+
+Local gateway credentials follow the shared CLI credential policy. A non-local `--url` requires an explicit `--token`.
 
 ---
 
@@ -2690,6 +2705,8 @@ botnexus debug sessions <COMMAND> [OPTIONS]
 | `list` | List all sessions with summary info |
 | `get <session-id>` | Show details for a specific session |
 | `compaction <session-id>` | Show compaction history for a session |
+| `read-payload-audit` | Measure repeated full `read` response bodies in a bounded window |
+| `retention-preview` | Preview historical tool payload retention candidates |
 | `stats` | Database-wide statistics |
 
 ### Options
@@ -2714,12 +2731,26 @@ botnexus debug sessions get "session-abc123"
 # Show compaction history
 botnexus debug sessions compaction "session-abc123"
 
+# Measure repeated full read payloads for a complete half-open window
+botnexus debug sessions --format json read-payload-audit --from 2026-08-01T00:00:00Z --to 2026-09-01T00:00:00Z
+
 # Database statistics
 botnexus debug sessions stats
 
 # JSON output for scripting
 botnexus debug sessions --format json list
 ```
+
+### Read payload metric
+
+`read-payload-audit` defines the repeated-payload rate as follows:
+
+- **Numerator:** a successful `read` tool-result whose complete response body is byte-equivalent to the immediately preceding complete body for the same normalized `(session, path, offset, limit)` slice. A result containing the persisted truncation marker is not treated as a complete body.
+- **Denominator:** every successful `read` tool-result in the half-open `[--from, --to)` window.
+- **Excluded from the numerator:** short unchanged markers, errors, changed-file responses, and responses for different slices. These are reported separately so a cheap marker or a legitimate paged read cannot masquerade as repeated payload delivery.
+- **Threshold:** at most **5 repeated full payloads per 1,000 successful read results**. The first complete calendar-month baseline (August 2026) measured 2.88 per 1,000 (54 of 18,748), so 5 retains measured headroom without copying the legacy path-only target of 100 per 1,000 calls.
+
+The command is read-only and emits both the repeated-response count and repeated UTF-8 bytes. JSON output is intended for storing a dated baseline alongside the exact window boundaries. The August 2026 baseline also recorded 168,765 repeated UTF-8 bytes, 106 unchanged markers, 146 changed same-slice responses, 15,970 additional distinct slices, 2 unclassifiable successful rows, and 659 excluded error results.
 
 ---
 

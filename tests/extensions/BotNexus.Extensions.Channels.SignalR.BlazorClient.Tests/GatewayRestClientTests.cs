@@ -115,6 +115,38 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
+    public async Task ExportConversationAsync_adds_selected_range_to_query()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/conversations/conv1/export/markdown", "export");
+
+        await client.ExportConversationAsync(
+            "conv1",
+            new ConversationExportRequest("markdown", FirstEntryId: "session 1#1", LastEntryId: "session 1#3"));
+
+        var requestUri = new Uri(handler.LastRequestUrl);
+        requestUri.AbsolutePath.ShouldBe("/api/conversations/conv1/export/markdown");
+        var query = System.Web.HttpUtility.ParseQueryString(requestUri.Query);
+        query["firstEntryId"].ShouldBe("session 1#1");
+        query["lastEntryId"].ShouldBe("session 1#3");
+    }
+
+    [Fact]
+    public async Task ExportSessionAsync_calls_session_export_route()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/sessions/session-1/export/md", "export");
+
+        await client.ExportSessionAsync("session-1", new ConversationExportRequest("markdown"));
+
+        handler.LastRequestUrl.ShouldContain("/api/sessions/session-1/export/md?");
+        handler.LastRequestUrl.ShouldContain("includeTools=true");
+        handler.LastRequestUrl.ShouldContain("includeThinking=false");
+        handler.LastRequestUrl.ShouldContain("includeSystemMessages=false");
+        handler.LastRequestUrl.ShouldContain("redactSecrets=true");
+    }
+
+    [Fact]
     public async Task GetConversationAsync_calls_correct_url()
     {
         var (client, handler) = CreateClient();

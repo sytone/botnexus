@@ -320,6 +320,7 @@ body {
 /* ── Bottom bar ───────────────────────────────────────────────────────────── */
 .bottom-bar {
     position: sticky;
+    isolation: isolate;
     bottom: 0;
     background: #111d2e;
     border-top: 1px solid rgba(100, 160, 220, 0.15);
@@ -328,6 +329,80 @@ body {
     gap: 8px;
     align-items: flex-end;
     min-height: 60px;
+}
+
+.bottom-bar.composer-active::before {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    top: 4px;
+    left: 7px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #64a0dc;
+    box-shadow: 0 0 7px rgba(100, 160, 220, 0.65);
+    offset-path: inset(4px 7px round 11px);
+    offset-anchor: center;
+    pointer-events: none;
+    animation: mobile-composer-perimeter-travel 3.2s linear infinite;
+}
+
+@keyframes mobile-composer-perimeter-travel {
+    to { offset-distance: 100%; }
+}
+
+.bottom-bar .composer-active-status {
+    position: absolute;
+    z-index: 3;
+    top: 1px;
+    left: 18px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: #111d2e;
+    color: #a9c4e0;
+    font-size: 11px;
+    line-height: 1.2;
+    pointer-events: none;
+}
+
+.bottom-bar .composer-active-status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #64a0dc;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bottom-bar.composer-active::before {
+        inset: 4px 7px;
+        width: auto;
+        height: auto;
+        border: 2px solid #64a0dc;
+        border-radius: 11px;
+        background: none;
+        box-shadow: none;
+        offset-path: none;
+        animation: none;
+    }
+}
+
+@media (forced-colors: active) {
+    .bottom-bar.composer-active::before {
+        animation: none;
+        border: 0;
+        background: none;
+        mask: none;
+        outline: 2px solid Highlight;
+        outline-offset: -2px;
+    }
+
+    .bottom-bar .composer-active-status-dot {
+        background: Highlight;
+    }
 }
 
 .input-textarea {

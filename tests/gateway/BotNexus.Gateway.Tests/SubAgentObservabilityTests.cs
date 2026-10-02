@@ -89,7 +89,7 @@ public sealed class SubAgentObservabilityTests : IDisposable
 
         result.Count.ShouldBe(1);
         result[0].SubAgentId.ShouldBe("sub-f");
-        result[0].Status.ShouldBe("Failed");
+        result[0].Status.ShouldBe(SubAgentStatus.Failed);
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public sealed class SubAgentObservabilityTests : IDisposable
         var actionResult = await controller.List(status: null, limit: 200, CancellationToken.None);
 
         var ok = actionResult.Result.ShouldBeOfType<OkObjectResult>();
-        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentSessionSummary>>();
+        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentRunDetail>>();
         summaries!.ShouldBeEmpty();
     }
 
@@ -134,7 +134,7 @@ public sealed class SubAgentObservabilityTests : IDisposable
         var actionResult = await controller.List(status: null, limit: 200, CancellationToken.None);
 
         var ok = actionResult.Result.ShouldBeOfType<OkObjectResult>();
-        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentSessionSummary>>();
+        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentRunDetail>>();
         summaries!.Count.ShouldBe(1);
         summaries[0].SubAgentId.ShouldBe("sub-1");
     }
@@ -152,7 +152,7 @@ public sealed class SubAgentObservabilityTests : IDisposable
         var actionResult = await controller.List(status: "Killed", limit: 200, CancellationToken.None);
 
         var ok = actionResult.Result.ShouldBeOfType<OkObjectResult>();
-        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentSessionSummary>>();
+        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentRunDetail>>();
         summaries!.Count.ShouldBe(1);
         summaries[0].SubAgentId.ShouldBe("sub-k");
     }

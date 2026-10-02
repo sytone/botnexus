@@ -1,4 +1,4 @@
-﻿using System.Net.Http.Json;
+using System.Net.Http.Json;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
@@ -137,21 +137,54 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
         CancellationToken cancellationToken = default)
     {
         EnsureConfigured();
-        var query = string.Join("&",
+        return await ExportAsync("conversations", conversationId, request, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<ExportDownload?> ExportSessionAsync(
+        string sessionId,
+        ConversationExportRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        return await ExportAsync("sessions", sessionId, request, cancellationToken);
+    }
+
+    private async Task<ExportDownload?> ExportAsync(
+        string resource,
+        string resourceId,
+        ConversationExportRequest request,
+        CancellationToken cancellationToken)
+    {
+        var query = new List<string>
+        {
             $"includeTools={request.IncludeTools.ToString().ToLowerInvariant()}",
             $"includeThinking={request.IncludeThinking.ToString().ToLowerInvariant()}",
             $"includeSystemMessages={request.IncludeSystemMessages.ToString().ToLowerInvariant()}",
-            $"redactSecrets={request.RedactSecrets.ToString().ToLowerInvariant()}");
+            $"redactSecrets={request.RedactSecrets.ToString().ToLowerInvariant()}"
+        };
+        if (!string.IsNullOrWhiteSpace(request.FirstEntryId))
+            query.Add($"firstEntryId={Uri.EscapeDataString(request.FirstEntryId)}");
+        if (!string.IsNullOrWhiteSpace(request.LastEntryId))
+            query.Add($"lastEntryId={Uri.EscapeDataString(request.LastEntryId)}");
+
         try
         {
+            // The literal legacy /sessions/{id}/export/markdown route intentionally retains its
+            // historical contract and ignores the new content/range query. Use the accepted "md"
+            // alias so portal session exports reach the format-parameterised route instead.
+            var routeFormat = resource == "sessions" && request.Format == "markdown"
+                ? "md"
+                : request.Format;
             using var response = await _http.GetAsync(
-                $"{_apiBaseUrl}conversations/{Uri.EscapeDataString(conversationId)}/export/{Uri.EscapeDataString(request.Format)}?{query}",
+                $"{_apiBaseUrl}{resource}/{Uri.EscapeDataString(resourceId)}/export/{Uri.EscapeDataString(routeFormat)}?{string.Join("&", query)}",
                 cancellationToken);
             if (!response.IsSuccessStatusCode)
                 return null;
 
             var disposition = response.Content.Headers.ContentDisposition;
-            var fileName = disposition?.FileNameStar ?? disposition?.FileName?.Trim('"') ?? $"conversation.{request.Format}";
+            var fallbackName = resource == "conversations" ? "conversation" : "session";
+            var fileName = disposition?.FileNameStar ?? disposition?.FileName?.Trim('"') ?? $"{fallbackName}.{request.Format}";
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
             var content = await response.Content.ReadAsByteArrayAsync(cancellationToken);
             return new ExportDownload(fileName, contentType, content);

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Memory;
@@ -39,13 +40,13 @@ public sealed class QmdToolContributor(
         var logger = loggerFactory?.CreateLogger<QmdCliBackend>();
         var cliBackend = new QmdCliBackend(config.QmdPath, TimeSpan.FromSeconds(30), logger);
 
-        IQmdBackend backend = BuildBackend(cliBackend, config, context.Descriptor.AgentId.Value);
+        IQmdBackend backend = BuildBackend(cliBackend, config, context.Descriptor.AgentId);
         IReadOnlyList<IAgentTool> tools = [new KnowledgeSearchTool(backend, config), new KnowledgeStoresTool(backend, config), new KnowledgeGetTool(backend, config)];
 
         return Task.FromResult(new AgentToolContribution(tools, [backend]));
     }
 
-    private IQmdBackend BuildBackend(QmdCliBackend cliBackend, QmdConfig config, string agentId)
+    private IQmdBackend BuildBackend(QmdCliBackend cliBackend, QmdConfig config, AgentId agentId)
     {
         if (!config.IncludeMemoryStores || memoryStoreRegistry is null)
             return cliBackend;
