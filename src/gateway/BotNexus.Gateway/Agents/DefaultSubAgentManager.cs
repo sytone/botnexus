@@ -515,6 +515,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 ParentSessionId = request.ParentSessionId,
                 ChildSessionId = childSessionId,
                 ChildConversationId = childConversationId.Value,
+                ParentConversationId = request.InheritedConversationId,
                 Name = name,
                 ParentAgentId = request.ParentAgentId.Value,
                 ChildAgentId = childAgentId.Value,
@@ -525,6 +526,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 Status = SubAgentStatus.Running,
                 StartedAt = DateTimeOffset.UtcNow,
                 TurnsUsed = 0,
+                EffectiveMaxTurns = maxTurns,
+                EffectiveTimeoutSeconds = timeoutSeconds,
                 // #2789: null unless a ceiling actually reduced the request.
                 BudgetClamp = budgetClamp,
                 // #3341: null unless an effective budget is above an enabled advisory threshold.
@@ -1167,9 +1170,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             try
             {
                 await _sessionStore.UpdateSubAgentSessionAsync(
-                    subAgentId,
-                    updatedInfo.CompletedAt.Value,
-                    SubAgentStatus.Killed.ToString(),
+                    updatedInfo,
                     ct).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -1272,9 +1273,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             try
             {
                 await _sessionStore.UpdateSubAgentSessionAsync(
-                    subAgentId,
-                    updated.CompletedAt.Value,
-                    updated.Status.ToString(),
+                    updated,
                     ct).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -1315,6 +1314,21 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             // DispatchCompletionFollowUpAsync just latched onto it.
             if (_records.TryGetValue(subAgentId, out var afterDispatch))
                 updated = afterDispatch.Info;
+
+            // The delivery verdict is established only after the first terminal write above.
+            // Persist the final projection again so cold reload cannot report Pending after the
+            // live record reported Delivered or Failed.
+            if (_sessionStore is not null && updated.CompletedAt.HasValue)
+            {
+                try
+                {
+                    await _sessionStore.UpdateSubAgentSessionAsync(updated, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to persist sub-agent delivery verdict for '{SubAgentId}'.", subAgentId);
+                }
+            }
         }
 
         await PublishTerminalLifecycleActivityAsync(subAgentId, updated, parentAgentId.Value);

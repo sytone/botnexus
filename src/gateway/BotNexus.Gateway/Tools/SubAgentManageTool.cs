@@ -80,24 +80,7 @@ public sealed class SubAgentManageTool(
         if (info.ParentSessionId != sessionId)
             throw new UnauthorizedAccessException("Sub-agent does not belong to the current session.");
 
-        var result = JsonSerializer.Serialize(new
-        {
-            info.SubAgentId,
-            info.Status,
-            info.ResultSummary,
-            info.StartedAt,
-            info.CompletedAt,
-            // #3703: without these a delivery-failed record is reported as a clean completion and
-            // the caller goes on waiting for an announcement that was already dropped.
-            // Emitted as text, not the raw enum: JsonOptions has no enum converter, so an
-            // unprojected enum would reach the calling model as a bare integer.
-            CompletionDelivery = info.CompletionDelivery.ToString(),
-            info.CompletionDeliveryError,
-            DeliveryWarning = info.CompletionDelivery == SubAgentCompletionDelivery.Failed
-                ? "This sub-agent finished but its completion announcement never reached this session. "
-                  + "Treat the resultSummary here as the only copy of its result; no wake-up is coming."
-                : null
-        }, JsonOptions);
+        var result = JsonSerializer.Serialize(SubAgentRunDetail.FromLive(info), JsonOptions);
 
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, result)]);
     }

@@ -214,16 +214,16 @@ public sealed class SessionsController : ControllerBase
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The list sub agents result.</returns>
     [HttpGet("{sessionId}/subagents")]
-    [ProducesResponseType(typeof(IReadOnlyList<SubAgentInfo>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(IReadOnlyList<SubAgentRunDetail>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<IReadOnlyList<SubAgentInfo>>> ListSubAgents(string sessionId, CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyList<SubAgentRunDetail>>> ListSubAgents(string sessionId, CancellationToken cancellationToken)
     {
         var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
         if (session is null)
             return NotFound();
 
         var subAgents = await _subAgentManager.ListAsync(SessionId.From(sessionId), cancellationToken);
-        return Ok(subAgents);
+        return Ok(subAgents.Select(info => SubAgentRunDetail.FromLive(info)).ToArray());
     }
 
     /// <summary>
@@ -236,9 +236,9 @@ public sealed class SessionsController : ControllerBase
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>List of sub-agent session summaries.</returns>
     [HttpGet("{sessionId}/subagents/history")]
-    [ProducesResponseType(typeof(IReadOnlyList<SubAgentSessionSummary>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(IReadOnlyList<SubAgentRunDetail>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<IReadOnlyList<SubAgentSessionSummary>>> GetSubAgentHistory(
+    public async Task<ActionResult<IReadOnlyList<SubAgentRunDetail>>> GetSubAgentHistory(
         string sessionId,
         CancellationToken cancellationToken)
     {
