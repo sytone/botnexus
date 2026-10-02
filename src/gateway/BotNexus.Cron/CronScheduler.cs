@@ -1596,6 +1596,7 @@ public sealed class CronScheduler(
     private static bool IsAlertableFailureStatus(string status)
         => string.Equals(status, CronRunStatus.Error, StringComparison.OrdinalIgnoreCase)
             || string.Equals(status, CronRunStatus.NoToolCalls, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, CronRunStatus.Incomplete, StringComparison.OrdinalIgnoreCase)
             // #3161: a delivery failure is a non-success outcome of exactly the same standing. Left
             // out, the streak would restart at 1 on every undelivered run, so the power-of-two
             // backoff would alert on EVERY run of a job whose destination is permanently gone -
@@ -1654,6 +1655,32 @@ public sealed class CronScheduler(
     {
         if (!string.IsNullOrWhiteSpace(context.DeliveryError))
             return (CronRunStatus.DeliveryFailed, $"{DeliveryFailureReasonPrefix}{context.DeliveryError}");
+
+        if (context.RunCompletion is { } completion)
+        {
+            var openItems = completion.OpenItemIds.Count == 0
+                ? "identities unavailable"
+                : string.Join(", ", completion.OpenItemIds);
+            switch (completion.Status)
+            {
+                case "IncompleteWithoutStopReason":
+                    return (CronRunStatus.Incomplete,
+                        $"Agent run ended incomplete after bounded continuation; open checklist items: {openItems}.");
+                case "Parked":
+                    return (CronRunStatus.Parked,
+                        $"Agent run is legitimately parked; open checklist items: {openItems}.");
+                case "Failed":
+                    return (CronRunStatus.Error,
+                        string.IsNullOrWhiteSpace(completion.Detail)
+                            ? "Agent run reported a terminal failure."
+                            : completion.Detail);
+                case "Cancelled":
+                    return (CronRunStatus.Aborted,
+                        string.IsNullOrWhiteSpace(completion.Detail)
+                            ? "Agent run was cancelled."
+                            : completion.Detail);
+            }
+        }
 
         var zeroToolCallOutcome = DetectZeroToolCallOutcome(job, context);
         return zeroToolCallOutcome is null
