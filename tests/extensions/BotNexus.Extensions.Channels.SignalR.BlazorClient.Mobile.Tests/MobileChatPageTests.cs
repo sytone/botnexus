@@ -394,7 +394,7 @@ public sealed class MobileChatPageTests : IDisposable
         ConfigureReadyConversation();
         _store.GetStreamState("conv-1").Returns(new ConversationStreamState { IsRunActive = true });
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         var composer = cut.Find("[data-testid='mobile-composer']");
         composer.ClassList.ShouldContain("composer-active");
@@ -410,7 +410,7 @@ public sealed class MobileChatPageTests : IDisposable
         ConfigureReadyConversation();
         var streamState = new ConversationStreamState { IsRunActive = true };
         _store.GetStreamState("conv-1").Returns(streamState);
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         streamState.IsRunActive = false;
         _store.OnChanged += Raise.Event<Action>();

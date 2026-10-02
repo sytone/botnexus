@@ -84,6 +84,18 @@ public sealed record ConversationBindingDto(
     [property: JsonPropertyName("displayPrefix")] string? DisplayPrefix,
     [property: JsonPropertyName("boundAt")] DateTimeOffset BoundAt);
 
+public sealed record AddConversationBindingRequestDto(
+    [property: JsonPropertyName("channelType")] string ChannelType,
+    [property: JsonPropertyName("channelAddress")] string ChannelAddress,
+    [property: JsonPropertyName("mode")] string Mode = "Interactive",
+    [property: JsonPropertyName("threadingMode")] string ThreadingMode = "Single",
+    [property: JsonPropertyName("displayPrefix")] string? DisplayPrefix = null);
+
+public sealed record MoveConversationBindingRequestDto(
+    [property: JsonPropertyName("targetConversationId")] string TargetConversationId);
+
+public sealed record ConversationBindingTargetDto(string ConversationId, string Title);
+
 public sealed record ConversationHistoryResponseDto(
     [property: JsonPropertyName("conversationId")] string ConversationId,
     [property: JsonPropertyName("totalCount")] int TotalCount,
