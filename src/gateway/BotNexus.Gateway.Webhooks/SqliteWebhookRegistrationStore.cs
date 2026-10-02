@@ -24,6 +24,9 @@ public sealed class SqliteWebhookRegistrationStore(
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _initialized;
 
+    /// <summary>The schema version of the shared webhook database understood by this store.</summary>
+    public const int CurrentSchemaVersion = WebhookSqliteSchema.CurrentVersion;
+
     public async Task InitializeAsync(CancellationToken ct = default)
     {
         if (_initialized) return;
@@ -59,6 +62,8 @@ public sealed class SqliteWebhookRegistrationStore(
                 ON webhook_registrations(agent_id);
                 """;
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, WebhookSqliteSchema.Migrations);
 
             _initialized = true;
         }

@@ -145,7 +145,8 @@ public static class GatewayServiceCollectionExtensions
 
         services.TryAddSingleton<SearchAggregator>();
 
-        // Core services
+        // Core services. AddPlatformConfiguration replaces this inert default with a verified home
+        // rooted at the already-resolved configuration directory (#3411).
         services.TryAddSingleton<IFileSystem, FileSystem>();
         services.TryAddSingleton<BotNexusHome>();
 
@@ -646,6 +647,16 @@ public static class GatewayServiceCollectionExtensions
         var worldId = WorldIdResolver.Resolve(resolvedConfigPath, fileSystem, out var worldIdGenerated);
         services.Replace(ServiceDescriptor.Singleton(worldId));
         services.Replace(ServiceDescriptor.Singleton(new WorldIdOrigin(worldIdGenerated)));
+        // #3411: bind both the identity and home path to this one composition resolution. Passing the
+        // configuration directory explicitly avoids a second process-global home lookup and hands
+        // every file-backed guard the same WorldId used by the SQLite identity seam below.
+        services.Replace(ServiceDescriptor.Singleton<BotNexusHome>(serviceProvider =>
+            new BotNexusHome(
+                serviceProvider.GetRequiredService<IFileSystem>(),
+                homePath: configDirectory,
+                dataPath: BotNexusHome.ResolveDataPath(),
+                worldId: worldId.Value,
+                logger: serviceProvider.GetService<ILogger<BotNexusHome>>())));
         services.AddHostedService<WorldIdPersistenceService>();
 
         // #2833: hand that SAME resolved value to the SQLite connection seam, so every store this
@@ -879,14 +890,14 @@ public static class GatewayServiceCollectionExtensions
             services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
             {
                 var fs = serviceProvider.GetRequiredService<IFileSystem>();
-                fs.Directory.CreateDirectory(sessionsPath);
                 return AttachArchiveDrain(
                     new FileSessionStore(
                         sessionsPath,
                         serviceProvider.GetRequiredService<ILogger<FileSessionStore>>(),
                         fs,
                         conversationStore: serviceProvider.GetRequiredService<IConversationStore>(),
-                        redactor: serviceProvider.GetService<ISecretRedactor>()),
+                        redactor: serviceProvider.GetService<ISecretRedactor>(),
+                        home: serviceProvider.GetRequiredService<BotNexusHome>()),
                     serviceProvider);
             }));
             return;
