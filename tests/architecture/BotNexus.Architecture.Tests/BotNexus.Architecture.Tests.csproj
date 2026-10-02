@@ -45,6 +45,7 @@
     -->
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Plugins\BotNexus.Extensions.Plugins.csproj" />
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.SignalR\BotNexus.Extensions.Channels.SignalR.csproj" />
+    <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.Tui\BotNexus.Extensions.Channels.Tui.csproj" />
     <ProjectReference Include="..\..\scenarios\BotNexus.Scenarios.Harness\BotNexus.Scenarios.Harness.csproj" />
     <ProjectReference Include="..\..\scenarios\BotNexus.Scenarios.Tests\BotNexus.Scenarios.Tests.csproj" />
   </ItemGroup>
