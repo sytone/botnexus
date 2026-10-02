@@ -123,6 +123,22 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
             (await sessions.GetAsync(_sessionId)).ShouldNotBeNull());
     }
 
+    public async Task PublishLifecycleAsync(ConversationEvent conversationEvent)
+    {
+        var accepted = await _publisher.PublishAsync(conversationEvent with
+        {
+            Bindings = _bindings
+                .Where(binding => binding.ConversationId == conversationEvent.ConversationId)
+                .Select(binding => binding.Snapshot)
+                .ToImmutableArray(),
+        });
+
+        if (!accepted)
+            throw new InvalidOperationException("The production conversation-event publisher refused the lifecycle event.");
+
+        await _publisher.WaitForDrainAsync(CancellationToken.None);
+    }
+
     public async Task PublishAsync(
         BindingId originBindingId,
         string? correlationId,
