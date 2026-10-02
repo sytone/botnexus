@@ -48,7 +48,7 @@ public sealed class McpToolContributor(ILoggerFactory loggerFactory) : IAgentToo
             };
 
             var entry = McpServerWarmupCache.EnsureStarted(
-                context.Descriptor.AgentId.Value,
+                context.Descriptor.AgentId,
                 warmupConfig,
                 loggerFactory.CreateLogger<McpServerManager>());
 

@@ -19,7 +19,7 @@ public sealed class McpServerWarmupHostedService(
             if (config is not { Servers.Count: > 0 })
                 continue;
 
-            McpServerWarmupCache.EnsureStarted(descriptor.AgentId.Value, config, logger);
+            McpServerWarmupCache.EnsureStarted(descriptor.AgentId, config, logger);
         }
 
         return Task.CompletedTask;

@@ -24,14 +24,14 @@ namespace BotNexus.Gateway.Configuration;
 /// list index (<c>gateway.cors.origins[0]</c>).
 /// </para>
 /// </remarks>
-internal static class RawConfigPath
+internal static class JsonObjectExtensions
 {
     /// <summary>
     /// Returns true when a node - including an explicit JSON null - is present at
     /// <paramref name="dottedPath"/>. Distinct from <see cref="Get"/>, which cannot tell an
     /// explicit null apart from an absent key.
     /// </summary>
-    public static bool Exists(JsonObject root, string dottedPath)
+    public static bool Exists(this JsonObject root, string dottedPath)
     {
         ArgumentNullException.ThrowIfNull(root);
 
@@ -70,7 +70,7 @@ internal static class RawConfigPath
     /// <paramref name="error"/> when the path is malformed or collides with an incompatible
     /// existing node (e.g. indexing a scalar).
     /// </summary>
-    public static bool TrySet(JsonObject root, string dottedPath, JsonNode? value, out string error)
+    public static bool TrySet(this JsonObject root, string dottedPath, JsonNode? value, out string error)
     {
         ArgumentNullException.ThrowIfNull(root);
 
@@ -136,7 +136,7 @@ internal static class RawConfigPath
     /// Removes the node at <paramref name="dottedPath"/>. A path that does not exist is a no-op
     /// (returns <see langword="true"/>) so callers can express "ensure absent" idempotently.
     /// </summary>
-    public static bool TryRemove(JsonObject root, string dottedPath, out string error)
+    public static bool TryRemove(this JsonObject root, string dottedPath, out string error)
     {
         ArgumentNullException.ThrowIfNull(root);
 
@@ -188,7 +188,7 @@ internal static class RawConfigPath
     /// segment is absent. Used by patch-style mutations that must read the on-disk shape before
     /// overlaying only the fields the caller actually supplied.
     /// </summary>
-    public static JsonNode? Get(JsonObject root, string dottedPath)
+    public static JsonNode? Get(this JsonObject root, string dottedPath)
     {
         ArgumentNullException.ThrowIfNull(root);
 
@@ -226,7 +226,7 @@ internal static class RawConfigPath
     /// behaviour provider and location updates require so capability fields the CLI does not
     /// model (reasoning, context window, and any future addition) are never erased.
     /// </summary>
-    public static bool TryPatchObject(JsonObject root, string dottedPath, JsonObject patch, out string error)
+    public static bool TryPatchObject(this JsonObject root, string dottedPath, JsonObject patch, out string error)
     {
         ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(patch);
@@ -252,7 +252,7 @@ internal static class RawConfigPath
     /// user-supplied names containing <c>.</c> or <c>[</c> (a location name, for example) address
     /// the intended single entry instead of being re-parsed into further path segments.
     /// </remarks>
-    public static JsonNode? GetEntry(JsonObject root, string sectionPath, string key)
+    public static JsonNode? GetEntry(this JsonObject root, string sectionPath, string key)
     {
         ArgumentNullException.ThrowIfNull(root);
 
@@ -268,7 +268,7 @@ internal static class RawConfigPath
     /// not exist or has no such entry. Callers use this to report the canonical casing back to the
     /// user and to address the entry they actually found.
     /// </summary>
-    public static string? FindEntryKey(JsonObject root, string sectionPath, string key)
+    public static string? FindEntryKey(this JsonObject root, string sectionPath, string key)
     {
         ArgumentNullException.ThrowIfNull(root);
 
@@ -283,7 +283,7 @@ internal static class RawConfigPath
     /// Replaces (or creates) the entry <paramref name="key"/> of the object at
     /// <paramref name="sectionPath"/>, creating the section when absent.
     /// </summary>
-    public static bool TrySetEntry(JsonObject root, string sectionPath, string key, JsonNode? value, out string error)
+    public static bool TrySetEntry(this JsonObject root, string sectionPath, string key, JsonNode? value, out string error)
     {
         ArgumentNullException.ThrowIfNull(root);
 
@@ -299,7 +299,7 @@ internal static class RawConfigPath
     /// <paramref name="sectionPath"/>. Entry properties absent from the patch survive, so an
     /// update that supplies two fields cannot erase the rest of the entry.
     /// </summary>
-    public static bool TryPatchEntry(JsonObject root, string sectionPath, string key, JsonObject patch, out string error)
+    public static bool TryPatchEntry(this JsonObject root, string sectionPath, string key, JsonObject patch, out string error)
     {
         ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(patch);
@@ -323,7 +323,7 @@ internal static class RawConfigPath
     /// Removes the entry <paramref name="key"/> from the object at <paramref name="sectionPath"/>.
     /// A missing section or entry is a no-op.
     /// </summary>
-    public static bool TryRemoveEntry(JsonObject root, string sectionPath, string key, out string error)
+    public static bool TryRemoveEntry(this JsonObject root, string sectionPath, string key, out string error)
     {
         ArgumentNullException.ThrowIfNull(root);
         error = string.Empty;
@@ -364,7 +364,7 @@ internal static class RawConfigPath
     /// <paramref name="name"/> verbatim when the object has no such key yet. Keeps CLI mutations
     /// from creating a differently-cased duplicate of a key that already exists.
     /// </summary>
-    public static string ResolveKey(JsonObject container, string name)
+    public static string ResolveKey(this JsonObject container, string name)
     {
         ArgumentNullException.ThrowIfNull(container);
 

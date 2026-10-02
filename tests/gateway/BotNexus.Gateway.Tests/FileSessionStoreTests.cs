@@ -44,6 +44,24 @@ public sealed class FileSessionStoreTests
     }
 
     [Fact]
+    public async Task SaveAsync_PreservesRunCompletion_AcrossReload()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var completion = new RunCompletionSignal(
+            "Parked", ["decision"], "UserInput", "Waiting for input.",
+            "ask_user persisted", "user", "user responds", 1);
+        var session = await store.GetOrCreateAsync(SessionId.From("s-run-completion"), AgentId.From("agent-a"));
+        session.RunCompletion = completion;
+
+        await store.SaveAsync(session);
+
+        var reloaded = await fixture.CreateStore().GetAsync(session.SessionId);
+        reloaded.ShouldNotBeNull();
+        AssertCompletion(reloaded!.RunCompletion, completion);
+    }
+
+    [Fact]
     public async Task SaveAsync_UnsetConversationId_BackfillsLegacyOnRoundTrip()
     {
         // Phase 9 / P9-B-2 (#627): Session.ConversationId is non-nullable. The historical
@@ -697,6 +715,19 @@ public sealed class FileSessionStoreTests
             });
 
         sessions.Select(session => session.SessionId.Value).ShouldHaveSingleItem().ShouldBe("participant");
+    }
+
+    private static void AssertCompletion(RunCompletionSignal? actual, RunCompletionSignal expected)
+    {
+        actual.ShouldNotBeNull();
+        actual!.Status.ShouldBe(expected.Status);
+        actual.OpenItemIds.ShouldBe(expected.OpenItemIds);
+        actual.StopReason.ShouldBe(expected.StopReason);
+        actual.Detail.ShouldBe(expected.Detail);
+        actual.Evidence.ShouldBe(expected.Evidence);
+        actual.ContinuationOwner.ShouldBe(expected.ContinuationOwner);
+        actual.WakeCondition.ShouldBe(expected.WakeCondition);
+        actual.ContinuationAttempts.ShouldBe(expected.ContinuationAttempts);
     }
 
     private static async Task CreateAndSaveAsync(FileSessionStore store, string sessionId, AgentId agentId)

@@ -7176,12 +7176,33 @@ h3.conversation-title.editable:hover {
     font-size: var(--text-title);
 }
 
+.home-composer-surface {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-raised);
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.home-composer-surface:focus-within {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px var(--color-accent-ring), var(--shadow-raised);
+}
+
 .home-message-input {
     width: 100%;
     box-sizing: border-box;
     resize: vertical;
     min-height: 6rem;
-    padding: 0.75rem;
+    padding: 0.35rem;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text-primary);
     font: inherit;
 }
 
@@ -7205,16 +7226,51 @@ h3.conversation-title.editable:hover {
     opacity: 0.7;
 }
 
+.home-starter-controls select {
+    min-height: 2.4rem;
+    padding: 0.45rem 2rem 0.45rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font: inherit;
+}
+
+.home-starter-controls select:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
+}
+
 .home-send-btn {
     margin-left: auto;
+    min-height: 2.4rem;
     padding: 0.5rem 1.25rem;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--color-on-accent);
     font: inherit;
+    font-weight: 600;
     cursor: pointer;
+    transition: background 0.15s, transform 0.1s, opacity 0.15s;
+}
+
+.home-send-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+}
+
+.home-send-btn:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.home-send-btn:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
 }
 
 .home-send-btn:disabled {
     cursor: not-allowed;
-    opacity: 0.55;
+    opacity: 0.45;
 }
 
 .home-error {
@@ -8047,6 +8103,23 @@ h3.conversation-title.editable:hover {
 .conversation-action-menu-item.destructive { color: var(--danger, #d9534f); }
 .chat-header > .conversation-action-context-target,
 .chat-header > .conversation-action-context-target > .conversation-actions-trigger { position: static; transform: none; flex: 0 0 auto; }
+/* Conversation binding management in the agent configuration dialog. */
+.conversation-bindings { border-top: 1px solid var(--border); padding-top: .75rem; }
+.binding-heading, .binding-card, .binding-confirm { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.binding-heading h4, .binding-heading p { margin: 0; }
+.binding-heading p, .binding-status, .binding-description span { color: var(--text-muted); font-size: var(--text-caption); }
+.binding-list, .binding-editor { display: grid; gap: .5rem; margin-top: .6rem; }
+.binding-card, .binding-editor, .binding-confirm, .binding-error { padding: .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-surface); }
+.binding-description { display: grid; gap: .15rem; min-width: 0; }
+.binding-description code { overflow-wrap: anywhere; }
+.binding-actions, .binding-error { display: flex; align-items: center; gap: .4rem; }
+.binding-error { justify-content: space-between; color: var(--error); }
+.binding-editor label { display: grid; gap: .2rem; color: var(--text-muted); font-size: var(--text-caption); }
+.binding-editor input, .binding-editor select { padding: .4rem .5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); color: var(--text-primary); }
+.binding-button { padding: .3rem .55rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-primary); cursor: pointer; }
+.binding-button.primary { border-color: var(--accent); background: var(--accent); color: var(--color-on-accent); }
+.binding-button.danger { color: var(--error); }
+.binding-button:disabled { opacity: .5; cursor: not-allowed; }
 
 /* Conversation export scope and contiguous-range picker. */
 .export-dialog {

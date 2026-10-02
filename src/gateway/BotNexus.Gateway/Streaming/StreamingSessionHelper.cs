@@ -424,6 +424,12 @@ public static class StreamingSessionHelper
             }
         }
 
+        // Persist the authoritative finalization signal alongside the session before the same
+        // final save that commits the transcript. This keeps history/debug callers truthful after a
+        // restart instead of forcing them to infer completion from inactivity (#4165). Assign even
+        // when null so a later legacy/no-signal run cannot leave an earlier parked outcome behind.
+        session.RunCompletion = runCompletion;
+
         // A failed terminal completion is recoverable work, not a clean lease release. Keep the
         // sentinel through the authoritative save so the live recovery subscriber (or startup scan
         // after a crash) has the same durable marker to accept-before-consume (#4406).
