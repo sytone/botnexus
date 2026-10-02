@@ -1027,6 +1027,13 @@ Configuration reloads apply to subsequent spawns; running sub-agents retain the 
 selected when they started. Clamp warning logs include `ParentAgentId` and `PolicyTier` (`global`
 or `parent-override`) so operators can audit which authorization tier applied.
 
+Prefer narrower staged tasks over increasing `defaultMaxTurns`, `maxTurnsCeiling`, or timeout values.
+The runtime reserves the final turn inside `maxTurns` for one tool-free synthesis attempt when earlier
+turns consume the exploratory budget. It also stops exploration before the absolute timeout, reserving
+10% of the configured duration (bounded to 100 ms through 30 seconds) for that same attempt; finalization
+still uses the original deadline and any response arriving after it is discarded. Larger ceilings add cost and delay without guaranteeing a better
+result; split investigation, implementation, and validation into separate sub-agent stages instead.
+
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `subAgents.defaultTimeoutSeconds` | int | 600 | Timeout used when a spawn omits or supplies a non-positive timeout. |
