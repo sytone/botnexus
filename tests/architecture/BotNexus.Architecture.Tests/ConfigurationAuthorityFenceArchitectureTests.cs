@@ -26,7 +26,8 @@ public sealed class ConfigurationAuthorityFenceArchitectureTests : ArchitectureT
         var actual = ScanProductionSource();
         var baseline = ReadBaseline();
 
-        actual.Count.ShouldBeGreaterThan(100, "the authority fence must find the known migration debt");
+        actual.Count.ShouldBe(ExpectedBaselineEntryCount,
+            "the authority fence must find every reviewed file/rule debt entry; lower the explicit ceiling when debt shrinks");
         actual.Values.Sum().ShouldBe(ExpectedBaselineOccurrenceCount,
             "the checked-in occurrence ceiling is explicit; lower it when migration removes debt");
         baseline.Count.ShouldBe(ExpectedBaselineEntryCount,
