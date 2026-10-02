@@ -219,21 +219,22 @@ public sealed class TuiChannelAdapter
                     continue;
                 }
 
-                await _output.WriteLineAsync($"↪ [{DisplayName}:console] Steering queued.");
+                await _output.WriteLineAsync($"↪ [{DisplayName}:console] Steering submitted.");
                 await DispatchInboundAsync(new InboundMessage
                 {
                     ChannelType = ChannelType,
                     SenderId = Environment.UserName,
                     Sender = CitizenId.Of(UserId.From(Environment.UserName)),
                     ChannelAddress = ChannelAddress.From("console"),
-                    // PR2 of W-5 (#691): no RoutingHints — the conversation router
-                    // resolves the (tui, console) binding to the active conversation
-                    // and reuses or opens a session through the normal P9 path.
+                    // The conversation router resolves the (tui, console) binding to the active
+                    // conversation and session. TUI declares delivery intent without selecting a
+                    // second GatewayHost control path or fabricating a routing identity.
                     Content = steerContent,
-                    Metadata = new Dictionary<string, object?>
-                    {
-                        ["control"] = "steer"
-                    }
+                    RoutingHints = InboundMessageRoutingHints.LiftFromStrings(
+                        targetAgentId: null,
+                        sessionId: null,
+                        conversationId: null,
+                        deliveryMode: InboundDeliveryMode.Steer)
                 }, cancellationToken);
                 continue;
             }

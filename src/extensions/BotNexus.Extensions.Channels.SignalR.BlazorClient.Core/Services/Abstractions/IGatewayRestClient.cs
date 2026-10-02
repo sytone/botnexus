@@ -48,6 +48,12 @@ public interface IGatewayRestClient
         ConversationExportRequest request,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Downloads a single-session transcript.</summary>
+    Task<ExportDownload?> ExportSessionAsync(
+        string sessionId,
+        ConversationExportRequest request,
+        CancellationToken cancellationToken = default);
+
     /// <summary>GET /api/conversations/{conversationId}</summary>
     Task<ConversationResponseDto?> GetConversationAsync(
         string conversationId,

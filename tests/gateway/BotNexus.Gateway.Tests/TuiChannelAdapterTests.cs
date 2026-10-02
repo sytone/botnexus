@@ -22,7 +22,7 @@ public sealed class TuiChannelAdapterTests
     }
 
     [Fact]
-    public async Task StartAsync_WithSteerCommand_DispatchesSteerControlMessage()
+    public async Task StartAsync_WithSteerCommand_DispatchesExplicitSteerIntent()
     {
         var output = new StringWriter();
         var adapter = CreateAdapter(
@@ -47,26 +47,17 @@ public sealed class TuiChannelAdapterTests
             .OfType<InboundMessage>()
             .ToList();
 
-        var steerDispatchCount = dispatchedMessages.Count(m =>
-        {
-            if (m.Content != "adjust please")
-                return false;
-
-            if (!m.Metadata.TryGetValue("control", out var value))
-                return false;
-
-            return string.Equals(value?.ToString(), "steer", StringComparison.OrdinalIgnoreCase);
-        });
-
-        steerDispatchCount.ShouldBe(1);
-        output.ToString().ShouldContain("Steering queued");
+        var steerMessage = dispatchedMessages.Single(m => m.Content == "adjust please");
+        steerMessage.Metadata.ShouldNotContainKey("control");
+        steerMessage.RoutingHints.ShouldNotBeNull();
+        steerMessage.RoutingHints.DeliveryMode.ShouldBe(InboundDeliveryMode.Steer);
+        output.ToString().ShouldContain("Steering submitted");
 
         // PR2 of W-5 (#691): TUI must NOT fabricate a session id; the binding system
         // resolves (channelType=tui, channelAddress=console) to the correct conversation
-        // and session naturally. A hardcoded RequestedSessionId here would shadow the
-        // P9 binding resolution path and bypass the natural session lifecycle.
-        var steerMessage = dispatchedMessages.Single(m => m.Content == "adjust please");
-        steerMessage.RoutingHints.ShouldBeNull();
+        // and session naturally. Explicit intent belongs in RoutingHints without shadowing
+        // the P9 binding resolution path with a made-up RequestedSessionId.
+        steerMessage.RoutingHints.RequestedSessionId.ShouldBeNull();
     }
 
     [Fact]

@@ -2690,6 +2690,8 @@ botnexus debug sessions <COMMAND> [OPTIONS]
 | `list` | List all sessions with summary info |
 | `get <session-id>` | Show details for a specific session |
 | `compaction <session-id>` | Show compaction history for a session |
+| `read-payload-audit` | Measure repeated full `read` response bodies in a bounded window |
+| `retention-preview` | Preview historical tool payload retention candidates |
 | `stats` | Database-wide statistics |
 
 ### Options
@@ -2714,12 +2716,26 @@ botnexus debug sessions get "session-abc123"
 # Show compaction history
 botnexus debug sessions compaction "session-abc123"
 
+# Measure repeated full read payloads for a complete half-open window
+botnexus debug sessions --format json read-payload-audit --from 2026-08-01T00:00:00Z --to 2026-09-01T00:00:00Z
+
 # Database statistics
 botnexus debug sessions stats
 
 # JSON output for scripting
 botnexus debug sessions --format json list
 ```
+
+### Read payload metric
+
+`read-payload-audit` defines the repeated-payload rate as follows:
+
+- **Numerator:** a successful `read` tool-result whose complete response body is byte-equivalent to the immediately preceding complete body for the same normalized `(session, path, offset, limit)` slice. A result containing the persisted truncation marker is not treated as a complete body.
+- **Denominator:** every successful `read` tool-result in the half-open `[--from, --to)` window.
+- **Excluded from the numerator:** short unchanged markers, errors, changed-file responses, and responses for different slices. These are reported separately so a cheap marker or a legitimate paged read cannot masquerade as repeated payload delivery.
+- **Threshold:** at most **5 repeated full payloads per 1,000 successful read results**. The first complete calendar-month baseline (August 2026) measured 2.88 per 1,000 (54 of 18,748), so 5 retains measured headroom without copying the legacy path-only target of 100 per 1,000 calls.
+
+The command is read-only and emits both the repeated-response count and repeated UTF-8 bytes. JSON output is intended for storing a dated baseline alongside the exact window boundaries. The August 2026 baseline also recorded 168,765 repeated UTF-8 bytes, 106 unchanged markers, 146 changed same-slice responses, 15,970 additional distinct slices, 2 unclassifiable successful rows, and 659 excluded error results.
 
 ---
 
