@@ -62,7 +62,7 @@ botnexus provider copilot whoami
 botnexus provider copilot models
 ```
 
-`whoami`, `models`, `quota`, and `test` read only the canonical `github-copilot` auth entry in the selected BotNexus home. `whoami` validates account identity, plan and endpoint; `models` validates the discovered catalog for that account; `quota` reads its reported quota snapshots; and `test` sends one request through the selected built-in model transport. `botnexus provider list` is different: it reports saved provider configuration and does not validate credentials or connectivity.
+`whoami`, `models`, `quota`, and `test` read only the canonical `github-copilot` auth entry in the selected BotNexus home. `whoami` validates account identity, plan and endpoint; `models` projects the discovered catalog into the effective BotNexus model descriptors; `quota` reads its reported quota snapshots; and `test` resolves from that same discovered projection before sending a request. A newly entitled model therefore does not require a BotNexus release before the diagnostic can invoke it. `botnexus provider list` is different: it reports saved provider configuration and does not validate credentials or connectivity.
 
 See the [CLI Reference](../cli-reference.md#provider-copilot) for the full `provider copilot` diagnostic subcommand group (`login`, `whoami`, `models`, `quota`, `test`).
 
@@ -79,6 +79,9 @@ The following examples are a subset of BotNexus's built-in Copilot registrations
 | `gpt-4o` | Completions | 128,000 | 4,096 |
 | `gpt-4.1` | Completions | 128,000 | 16,384 |
 | `gpt-5.6` | Responses | 922,000 | 128,000 |
+| `gpt-6-astra` | Responses | 922,000 | 128,000 |
+| `gpt-6-luna` | Responses | 922,000 | 128,000 |
+| `gpt-6-sol` | Responses | 922,000 | 128,000 |
 
 Run `botnexus provider copilot models` to inspect the catalog returned for your account. An ID absent from this built-in catalog requires a discovered or custom registration before use; absence from the built-ins does not establish upstream unavailability.
 
@@ -92,7 +95,7 @@ At gateway startup, BotNexus queries Copilot's catalog and overlays discovered m
 
 - **Messages API** — Claude models are accessed via the Messages-compatible path.
 - **Completions API** — built-in `gpt-4o`, `gpt-4.1`, Gemini and Grok entries use the Completions path.
-- **Responses API** — built-in GPT-5-family entries use the Responses path for native tool call flow.
+- **Responses API** — built-in GPT-5- and GPT-6-family entries use the Responses path for native tool call flow.
 
 The selected model registration determines the API; model family alone is not sufficient.
 

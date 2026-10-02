@@ -1,40 +1,25 @@
+using BotNexus.Gateway.Abstractions;
 using Microsoft.AspNetCore.SignalR;
 
 namespace BotNexus.Extensions.Channels.SignalR;
 
 /// <summary>
-/// Resolves the stable user identity from authenticated claims for SignalR connections.
-/// Reads the <c>oid</c> claim (Entra ID / Azure AD object ID) first, falling back to the
-/// standard <c>sub</c> claim for generic OIDC providers. This ensures
-/// <see cref="HubCallerContext.UserIdentifier"/> carries a stable, authentication-derived
-/// identity rather than the ephemeral <see cref="HubCallerContext.ConnectionId"/>.
+/// Resolves the server-owned conversation reader identity for SignalR connections. Authenticated
+/// readers use stable <c>oid</c>/<c>sub</c> claims; unauthenticated single-user hosts use the shared
+/// local-owner identity rather than the ephemeral <see cref="HubCallerContext.ConnectionId"/>.
 /// </summary>
 public sealed class ClaimsUserIdProvider : IUserIdProvider
 {
     /// <summary>The Entra ID object identifier claim type.</summary>
-    public const string OidClaimType = "http://schemas.microsoft.com/identity/claims/objectidentifier";
+    public const string OidClaimType = ConversationReaderIdentity.OidClaimType;
 
     /// <summary>The short-form <c>oid</c> claim emitted by some token configurations.</summary>
-    public const string OidShortClaimType = "oid";
+    public const string OidShortClaimType = ConversationReaderIdentity.OidShortClaimType;
 
     /// <summary>The standard OIDC subject claim type.</summary>
-    public const string SubClaimType = "sub";
+    public const string SubClaimType = ConversationReaderIdentity.SubClaimType;
 
     /// <inheritdoc/>
     public string? GetUserId(HubConnectionContext connection)
-    {
-        var user = connection.User;
-        if (user?.Identity?.IsAuthenticated != true)
-            return null;
-
-        // Prefer Entra `oid` (object ID) — stable across token refreshes and app registrations.
-        var oid = user.FindFirst(OidClaimType)?.Value
-                ?? user.FindFirst(OidShortClaimType)?.Value;
-        if (!string.IsNullOrWhiteSpace(oid))
-            return oid;
-
-        // Fall back to standard OIDC `sub` claim.
-        var sub = user.FindFirst(SubClaimType)?.Value;
-        return string.IsNullOrWhiteSpace(sub) ? null : sub;
-    }
+        => ConversationReaderIdentity.Resolve(connection.User)?.Value;
 }

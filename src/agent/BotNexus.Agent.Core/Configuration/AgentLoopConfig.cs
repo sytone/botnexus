@@ -94,6 +94,10 @@ namespace BotNexus.Agent.Core.Configuration;
 /// Maximum automatic turns added when <paramref name="EvaluateRunCompletion"/> reports actionable
 /// work. Exhausting the bound records an incomplete outcome rather than successful completion.
 /// </param>
+/// <param name="InvalidateProviderCredentials">
+/// Optional host-owned credential invalidation seam. When set, one authentication rejection
+/// invalidates credentials, re-resolves provider execution options, and retries exactly once.
+/// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
 /// It is immutable and passed through the loop to ensure consistent configuration.
@@ -127,7 +131,10 @@ public record AgentLoopConfig(
     Func<string, string>? SanitizeToolResultText = null,
     BotNexus.Agent.Core.Tools.SatelliteToolExecutionOptions? SatelliteToolExecution = null,
     EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
-    int MaxCompletionContinuations = 2)
+    int MaxCompletionContinuations = 2,
+    InvalidateProviderCredentialsDelegate? InvalidateProviderCredentials = null,
+    IProviderRecoveryCoordinator? RecoveryCoordinator = null,
+    TimeSpan? RecoveryAdmissionTimeout = null)
 {
     /// <summary>
     /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).

@@ -1474,88 +1474,206 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     }
 
     private async Task RunSubAgentAsync(
-        string subAgentId,
-        IAgentHandle handle,
-        string task,
-        int timeoutSeconds,
-        int maxTurns)
+        string subAgentId, IAgentHandle handle, string task, int timeoutSeconds, int maxTurns)
     {
         if (!_records.TryGetValue(subAgentId, out var record) || record.TimeoutCts is not { } timeoutCts)
             return;
 
-        // The single turn counter (#2656). Both the reported SubAgentInfo.TurnsUsed and the
-        // enforced budget read record.TurnsUsed, so the figure the parent sees and the bound that
-        // actually stopped the run can never drift apart. Incremented in exactly one place: the
-        // per-turn callback below.
-        using var turnSubscription = handle.ObserveTurns(() =>
+        var exploratoryTurns = Math.Max(0, maxTurns - 1);
+        using var explorationCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token);
+        using var reserveCts = exploratoryTurns > 0
+            ? new CancellationTokenSource(ResolveExplorationDuration(timeoutSeconds), _timeProvider)
+            : null;
+        using var reserveRegistration = reserveCts?.Token.Register(() =>
         {
-            var used = record.IncrementTurnsUsed();
-            TryUpdateSubAgent(subAgentId, current => current with { TurnsUsed = used });
-
-            // Budget enforcement is the same mechanism the timeout uses: cancel the run's token.
-            // BudgetExhausted is latched first so the terminal disposition is "ran out of turns"
-            // rather than the timeout the cancellation would otherwise look like.
-            if (used >= maxTurns && record.TryLatchBudgetExhausted())
-                record.CancelTimeoutForBudget();
+            if (record.TryRequestFinalization())
+                explorationCts.Cancel();
         });
+
+        AgentResponse? exploration = null;
+        IDisposable? turnSubscription = null;
+        if (exploratoryTurns > 0)
+        {
+            turnSubscription = handle.ObserveTurns(() =>
+            {
+                if (!record.TryIncrementTurns(exploratoryTurns, out var used))
+                    return;
+
+                TryUpdateSubAgent(subAgentId, current => current with { TurnsUsed = used });
+                if (used >= exploratoryTurns)
+                {
+                    record.LatchTurnLimitReached();
+                    if (record.TryRequestFinalization())
+                        explorationCts.Cancel();
+                }
+            });
+        }
+        else
+        {
+            record.TryRequestFinalization();
+        }
 
         try
         {
-            var response = await handle.PromptAsync(task, timeoutCts.Token);
+            if (exploratoryTurns > 0)
+            {
+                try
+                {
+                    exploration = await handle.PromptAsync(task, explorationCts.Token).ConfigureAwait(false);
+                    await PersistToolAuditAsync(exploration, record).ConfigureAwait(false);
+                    if (!record.FinalizationRequested)
+                    {
+                        await CompleteOrdinaryResponseAsync(
+                            subAgentId, record, exploration, timeoutCts, timeoutSeconds).ConfigureAwait(false);
+                        return;
+                    }
+                }
+                catch (AgentPromptInterruptedException interrupted) when (record.FinalizationRequested)
+                {
+                    exploration = interrupted.PartialResponse;
+                    await PersistToolAuditAsync(exploration, record).ConfigureAwait(false);
+                }
+                catch (Exception) when (record.FinalizationRequested && !timeoutCts.IsCancellationRequested)
+                {
+                    // Some handles cannot project interruption evidence. The conversation history is
+                    // still available to the one-shot finalizer, but no outcome is invented here.
+                }
+            }
 
-            // #2614 AC4: a sub-agent run is a blocking PromptAsync boundary and is the path with
-            // the LEAST oversight - the parent sees only the returned summary, which the child
-            // itself authored. Persisting the sink-produced tool timeline on the child session is
-            // what makes "what did the sub-agent actually do" answerable from the store instead of
-            // from the child's own self-report. Written before any terminal classification below so
-            // a run that timed out or exhausted its budget still records the tools it ran.
-            await PersistToolAuditAsync(response, record).ConfigureAwait(false);
-            if (record.BudgetExhausted)
+            turnSubscription?.Dispose();
+            turnSubscription = null;
+            if (timeoutCts.IsCancellationRequested)
             {
-                await CompleteBudgetExhaustedAsync(subAgentId, maxTurns);
+                await CompleteTimeoutAsync(subAgentId, record, exploration, timeoutSeconds).ConfigureAwait(false);
+                return;
             }
-            else if (timeoutCts.IsCancellationRequested)
+
+            if (!record.TryIncrementTurns(maxTurns, out var finalTurn))
             {
-                await CompleteTimedOutAsync(subAgentId, timeoutSeconds);
+                await CompleteTurnLimitAsync(subAgentId, record, exploration, maxTurns).ConfigureAwait(false);
+                return;
             }
-            else if (string.IsNullOrWhiteSpace(response.Content))
+
+            TryUpdateSubAgent(subAgentId, current => current with { TurnsUsed = finalTurn });
+            AgentResponse? final = null;
+            try
             {
-                // #2725: silence alone is not a failure. A run that ACCEPTED a spawn and then
-                // emitted nothing delegated and correctly stayed silent; a run that accepted no
-                // spawn genuinely produced nothing. Discriminate before reaching for the
-                // empty-response diagnostic.
-                await CompleteSilentRunAsync(subAgentId, record, timeoutCts.Token);
+                final = await handle.PromptWithoutToolsAsync(FinalizationPrompt, timeoutCts.Token)
+                    .ConfigureAwait(false);
             }
-            else
+            catch (Exception) when (record.FinalizationRequested && !timeoutCts.IsCancellationRequested)
             {
-                await OnCompletedAsync(subAgentId, response.Content, SubAgentRunOutcome.From(response));
+                // Best effort. The original exploration evidence and stop reason are rendered below.
             }
+
+            // The absolute deadline is authoritative even when a provider ignores cancellation and
+            // returns usable-looking text after its token fired. Never accept or persist that text.
+            if (timeoutCts.IsCancellationRequested)
+            {
+                await CompleteTimeoutAsync(subAgentId, record, exploration, timeoutSeconds).ConfigureAwait(false);
+                return;
+            }
+
+            if (final is not null)
+                await PersistToolAuditAsync(final, record).ConfigureAwait(false);
+
+            if (final is not null && !string.IsNullOrWhiteSpace(final.Content))
+            {
+                var measured = MergeFinalizationOutcome(exploration, final);
+                await OnCompletedAsync(subAgentId, final.Content, SubAgentRunOutcome.From(measured))
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            if (record.TurnLimitReached)
+            {
+                await CompleteTurnLimitAsync(subAgentId, record, exploration, maxTurns).ConfigureAwait(false);
+                return;
+            }
+
+            // The reserve is a scheduling boundary, not a terminal reason. If its best-effort
+            // synthesis produced no answer, keep the run alive until the authoritative absolute
+            // deadline fires; only an observed turn cutoff may report BudgetExhausted.
+            await Task.Delay(Timeout.InfiniteTimeSpan, timeoutCts.Token).ConfigureAwait(false);
         }
-        catch (Exception) when (record.BudgetExhausted)
+        catch (AgentPromptInterruptedException interrupted) when (timeoutCts.IsCancellationRequested)
         {
-            // The budget latch wins over any cancellation-shaped exception: the run was stopped
-            // because it ran out of turns, not because the deadline elapsed.
-            await CompleteBudgetExhaustedAsync(subAgentId, maxTurns);
-        }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
-        {
-            await CompleteTimedOutAsync(subAgentId, timeoutSeconds);
+            await CompleteInterruptedAsync(subAgentId, record, interrupted.PartialResponse,
+                SubAgentStatus.TimedOut, SubAgentStopReason.Timeout, TimeoutDiagnostic(timeoutSeconds))
+                .ConfigureAwait(false);
         }
         catch (Exception) when (timeoutCts.IsCancellationRequested)
         {
-            // Some providers translate cancellation into a different exception. Once the
-            // deadline has fired, timeout remains the authoritative terminal reason.
-            await CompleteTimedOutAsync(subAgentId, timeoutSeconds);
+            await CompleteTimeoutAsync(subAgentId, record, exploration, timeoutSeconds).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            await CompleteFailedAsync(subAgentId, $"Sub-agent failed: {ex.Message}");
+            await CompleteFailedAsync(subAgentId, $"Sub-agent failed: {ex.Message}").ConfigureAwait(false);
         }
         finally
         {
+            turnSubscription?.Dispose();
             record.DisposeTimeout();
         }
     }
+
+    private static TimeSpan ResolveExplorationDuration(int timeoutSeconds)
+    {
+        var timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        var reserve = TimeSpan.FromTicks(Math.Clamp(
+            timeout.Ticks / 10,
+            TimeSpan.FromMilliseconds(100).Ticks,
+            TimeSpan.FromSeconds(30).Ticks));
+        if (reserve >= timeout)
+            reserve = TimeSpan.FromTicks(Math.Max(1, timeout.Ticks / 2));
+        return timeout - reserve;
+    }
+
+    private static AgentResponse MergeFinalizationOutcome(AgentResponse? exploration, AgentResponse final)
+    {
+        if (exploration is null)
+            return final;
+
+        return final with
+        {
+            ToolCalls = [.. exploration.ToolCalls, .. final.ToolCalls],
+            TerminalError = exploration.TerminalError ?? final.TerminalError,
+            RunUsage = exploration.RunUsage ?? final.RunUsage
+        };
+    }
+
+    private Task CompleteTimeoutAsync(
+        string subAgentId, SubAgentRecord record, AgentResponse? exploration, int timeoutSeconds)
+        => exploration is null
+            ? CompleteTimedOutAsync(subAgentId, timeoutSeconds)
+            : CompleteInterruptedAsync(subAgentId, record, exploration, SubAgentStatus.TimedOut,
+                SubAgentStopReason.Timeout, TimeoutDiagnostic(timeoutSeconds));
+
+    private Task CompleteTurnLimitAsync(
+        string subAgentId, SubAgentRecord record, AgentResponse? exploration, int maxTurns)
+        => exploration is null
+            ? CompleteBudgetExhaustedAsync(subAgentId, maxTurns)
+            : CompleteInterruptedAsync(subAgentId, record, exploration, SubAgentStatus.BudgetExhausted,
+                SubAgentStopReason.TurnLimit, TurnLimitDiagnostic(maxTurns));
+
+    private async Task CompleteOrdinaryResponseAsync(string subAgentId, SubAgentRecord record,
+        AgentResponse response, CancellationTokenSource timeoutCts, int timeoutSeconds)
+    {
+        if (timeoutCts.IsCancellationRequested) await CompleteTimedOutAsync(subAgentId, timeoutSeconds);
+        else if (string.IsNullOrWhiteSpace(response.Content))
+            await CompleteSilentRunAsync(subAgentId, record, timeoutCts.Token);
+        else await OnCompletedAsync(subAgentId, response.Content, SubAgentRunOutcome.From(response));
+    }
+
+    private static string TurnLimitDiagnostic(int maxTurns)
+        => $"Sub-agent exhausted its turn budget after {maxTurns} {(maxTurns == 1 ? "turn" : "turns")}.";
+
+    private static string TimeoutDiagnostic(int timeoutSeconds)
+        => $"Sub-agent timed out after {timeoutSeconds} {(timeoutSeconds == 1 ? "second" : "seconds")}.";
+
+    private const string FinalizationPrompt =
+        "Stop using tools. Synthesize the final answer now from the work and evidence already in this conversation. " +
+        "State the result, validation performed, and any remaining risks concisely. Do not start new work.";
 
     /// <summary>
     /// Terminal classification for a run that produced no synthesized text of its own.
@@ -1680,6 +1798,92 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     /// </summary>
     private static readonly TimeSpan DescendantPollInterval = TimeSpan.FromMilliseconds(25);
 
+    private async Task CompleteInterruptedAsync(
+        string subAgentId,
+        SubAgentRecord record,
+        AgentResponse response,
+        SubAgentStatus status,
+        SubAgentStopReason stopReason,
+        string diagnostic)
+    {
+        await PersistToolAuditAsync(response, record).ConfigureAwait(false);
+
+        var summary = SubAgentSummaryNormalizer.Normalize(response.Content);
+        var partial = new SubAgentPartialResult
+        {
+            Completion = SubAgentCompletion.Partial,
+            StopReason = stopReason,
+            Summary = summary,
+            SummaryIsVerified = false,
+            VerifiedEvidence =
+            [
+                .. response.ToolCalls
+                    .Where(call => !call.IsError && !call.IsIncomplete)
+                    .Select(call => new SubAgentVerifiedEvidence(
+                        call.ToolCallId,
+                        call.ToolName,
+                        call.ResultContent))
+            ],
+            UnresolvedWork = response.ToolCalls
+                .Where(call => call.IsError || call.IsIncomplete)
+                .Select(call => $"{call.ToolName} ({call.ToolCallId}) did not complete successfully.")
+                .ToArray(),
+            ActionsTaken =
+            [
+                .. response.ToolCalls.Select(call => new SubAgentPartialAction(
+                    call.ToolCallId,
+                    call.ToolName,
+                    Completed: !call.IsIncomplete,
+                    Succeeded: !call.IsError && !call.IsIncomplete))
+            ],
+            TurnsUsed = response.TurnCount ?? record.Info.TurnsUsed,
+            Usage = response.RunUsage,
+            CheckpointSessionId = record.Info.ChildSessionId,
+            CheckpointConversationId = record.Info.ChildConversationId
+        };
+
+        var rendered = RenderPartialResult(diagnostic, partial);
+        await CompleteTerminalAsync(subAgentId, status, rendered, partial).ConfigureAwait(false);
+    }
+
+    internal static string RenderPartialResult(string diagnostic, SubAgentPartialResult partial)
+    {
+        var stopReason = partial.StopReason switch
+        {
+            SubAgentStopReason.TurnLimit => "turn_limit",
+            SubAgentStopReason.Timeout => "timeout",
+            SubAgentStopReason.TokenLimit => "token_limit",
+            SubAgentStopReason.NoProgress => "no_progress",
+            SubAgentStopReason.CallerCancelled => "caller_cancelled",
+            _ => throw new ArgumentOutOfRangeException(nameof(partial), partial.StopReason, null)
+        };
+
+        var text = $"[partial:{stopReason}] {diagnostic}";
+        if (!string.IsNullOrWhiteSpace(partial.Summary))
+        {
+            text += Environment.NewLine
+                + Environment.NewLine
+                + "Unverified child summary:"
+                + Environment.NewLine
+                + partial.Summary;
+        }
+
+        if (partial.VerifiedEvidence.Count > 0)
+        {
+            text += Environment.NewLine
+                + Environment.NewLine
+                + "Verified tool evidence:"
+                + Environment.NewLine
+                + string.Join(
+                    Environment.NewLine,
+                    partial.VerifiedEvidence.Select(evidence =>
+                        $"- {evidence.ToolName} ({evidence.ToolCallId})"
+                        + (string.IsNullOrWhiteSpace(evidence.Result) ? string.Empty : $": {evidence.Result}")));
+        }
+
+        return text;
+    }
+
     private Task CompleteBudgetExhaustedAsync(string subAgentId, int maxTurns)
         => CompleteTerminalAsync(
             subAgentId,
@@ -1698,7 +1902,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private async Task CompleteTerminalAsync(
         string subAgentId,
         SubAgentStatus status,
-        string diagnostic)
+        string diagnostic,
+        SubAgentPartialResult? partialResult = null)
     {
         if (!_records.TryGetValue(subAgentId, out var record))
             return;
@@ -1727,7 +1932,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // Publish the terminal disposition and its recovery evidence in one compare-and-swap. A
         // concurrent kill therefore sees Running until capture finishes and can win cleanly; no
         // observer can see timeout/budget status without the corresponding snapshot result.
-        if (!record.TryPublishTerminal(status, diagnostic, snapshot, out _))
+        if (!record.TryPublishTerminal(status, diagnostic, snapshot, partialResult, out _))
         {
             if (snapshot?.ArtifactPath is { } orphanedArtifact && _worktreeSnapshotService is not null)
                 await _worktreeSnapshotService.DeleteArtifactAsync(orphanedArtifact, CancellationToken.None).ConfigureAwait(false);
@@ -2172,6 +2377,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             SubAgentStatus status,
             string diagnostic,
             SubAgentWorktreeSnapshot? snapshot,
+            SubAgentPartialResult? partialResult,
             out SubAgentInfo updatedInfo)
         {
             while (true)
@@ -2188,6 +2394,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                     Status = status,
                     CompletedAt = DateTimeOffset.UtcNow,
                     ResultSummary = diagnostic,
+                    PartialResult = partialResult,
                     WorktreeSnapshot = snapshot
                 };
                 if (ReferenceEquals(Interlocked.CompareExchange(ref _info, terminal, current), current))
@@ -2258,34 +2465,43 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         /// </summary>
         public int TurnsUsed => Volatile.Read(ref _turnsUsed);
 
-        /// <summary>Increments and returns the single turn counter.</summary>
-        public int IncrementTurnsUsed() => Interlocked.Increment(ref _turnsUsed);
-
         /// <summary>
-        /// True once the turn budget has been exhausted, latching the terminal disposition as
-        /// <see cref="SubAgentStatus.BudgetExhausted"/> rather than
-        /// <see cref="SubAgentStatus.TimedOut"/>.
+        /// Increments the single counter only while doing so remains inside the configured ceiling.
+        /// Late observer callbacks after cancellation therefore cannot over-report the run budget.
         /// </summary>
-        public bool BudgetExhausted => Volatile.Read(ref _budgetExhausted) == 1;
-
-        /// <summary>Returns true exactly once — the first caller latches budget exhaustion.</summary>
-        public bool TryLatchBudgetExhausted()
-            => Interlocked.CompareExchange(ref _budgetExhausted, 1, 0) == 0;
-
-        /// <summary>
-        /// Cancels the run's token to stop a sub-agent that has spent its turn budget, without
-        /// disposing it: the run loop still needs to read the token's state to distinguish the
-        /// budget stop from a deadline stop. Reuses the same cancellation mechanism the timeout
-        /// uses so budget exhaustion is a sibling disposition, not a second stop path.
-        /// </summary>
-        public void CancelTimeoutForBudget()
+        public bool TryIncrementTurns(int ceiling, out int turnsUsed)
         {
-            try { Volatile.Read(ref _timeoutCts)?.Cancel(); }
-            catch (ObjectDisposedException) { /* run already settled */ }
+            while (true)
+            {
+                var current = Volatile.Read(ref _turnsUsed);
+                if (current >= ceiling)
+                {
+                    turnsUsed = current;
+                    return false;
+                }
+
+                turnsUsed = current + 1;
+                if (Interlocked.CompareExchange(ref _turnsUsed, turnsUsed, current) == current)
+                    return true;
+            }
         }
 
+        /// <summary>True after the observed exploratory-turn ceiling requested finalization.</summary>
+        public bool TurnLimitReached => Volatile.Read(ref _turnLimitReached) == 1;
+
+        /// <summary>Latches the turn cutoff independently from the pre-deadline reserve.</summary>
+        public void LatchTurnLimitReached() => Interlocked.Exchange(ref _turnLimitReached, 1);
+
+        /// <summary>True after exploration claims the single reserved finalization turn.</summary>
+        public bool FinalizationRequested => Volatile.Read(ref _finalizationRequested) == 1;
+
+        /// <summary>Claims finalization exactly once, preventing recursive or duplicate entry.</summary>
+        public bool TryRequestFinalization()
+            => Interlocked.CompareExchange(ref _finalizationRequested, 1, 0) == 0;
+
         private int _turnsUsed;
-        private int _budgetExhausted;
+        private int _turnLimitReached;
+        private int _finalizationRequested;
 
         // Backing field for TimeoutCts so set / read / Cancel / Dispose all touch one field and
         // Cancel/Dispose can clear it atomically, avoiding a double-dispose race between an

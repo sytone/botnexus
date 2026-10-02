@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -90,7 +90,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             InboundDeliveryMode.Interrupt => "[redirect] " + content,
             _ => content
         };
-        AppendTo(conv, "User", localEcho);
+        AppendTo(conv, "User", localEcho, attachments.Select(ToChatAttachment).ToArray());
 
         if (deliveryMode == InboundDeliveryMode.Steer)
         {
@@ -140,12 +140,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// cannot spoof, reusing the #2300 provenance vocabulary at message level rather than a literal
     /// stamped into the text. Content is still control-character stripped so it cannot fabricate
     /// extra transcript lines.</description></item>
-    /// <item><description><b>Mid-turn (degraded, pending #2438).</b> When the bound conversation
-    /// already has an active turn the submission is REJECTED here with an explicit "agent is busy"
-    /// reason, before it reaches the transport. It is not queued and not silently dropped: an
-    /// inbound message arriving mid-run is currently lost server-side (#2388) and the follow-up
-    /// queue that would defer it (#2438) does not exist yet. When #2438 lands this path should
-    /// enqueue instead of refusing.</description></item>
+    /// <item><description><b>Authoritative run state.</b> Client stream state is a projection and may
+    /// be stale. It never rejects a submission locally. The dedicated hub verb submits with the
+    /// existing automatic delivery intent so the server-side inbound orchestrator decides whether
+    /// the turn can start, queue, steer, or reject against authoritative state.</description></item>
     /// <item><description><b>Bounds.</b> Prompt and instruction length are capped by an arbitrary
     /// guardrail (see <see cref="CanvasSubmitGuards.MaxPromptLength"/>). There is deliberately no
     /// rate limiting, in-flight tracking or content inspection.</description></item>
@@ -179,9 +177,6 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 return CanvasSubmitResult.Rejected(
                     $"Instructions must be at most {CanvasSubmitGuards.MaxInstructionsLength} characters.");
         }
-
-        if (conv.StreamState.IsTurnActive)
-            return CanvasSubmitResult.Rejected("Agent is already running; try again when the current turn finishes.");
 
         var now = DateTimeOffset.UtcNow;
         var content = CanvasSubmitGuards.ComposeContent(safePrompt, safeInstructions);
@@ -255,7 +250,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             return;
         var convId = conversationId;
 
-        AppendTo(conv, "User", content);
+        AppendTo(conv, "User", content, attachments.Select(ToChatAttachment).ToArray());
 
         // Add entry to steering queue panel with FollowUp kind
         var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.FollowUp, SteeringEntryStatus.Pending);
@@ -1241,11 +1236,32 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// redirect, reset, compact, gateway command) onto this helper too, so a local echo can no
     /// longer appear in a conversation other than the one the action targeted.
     /// </summary>
-    private void AppendTo(ConversationState conversation, string role, string content)
+    private void AppendTo(
+        ConversationState conversation,
+        string role,
+        string content,
+        IReadOnlyList<ChatAttachment>? attachments = null)
     {
-        conversation.AppendMessage(new ChatMessage(role, content, DateTimeOffset.UtcNow));
+        conversation.AppendMessage(new ChatMessage(role, content, DateTimeOffset.UtcNow)
+        {
+            Attachments = attachments ?? []
+        });
         _store.NotifyChanged();
     }
+
+    private static ChatAttachment ToChatAttachment(DraftAttachment attachment) =>
+        new(
+            attachment.FileName,
+            attachment.MimeType,
+            attachment.Size,
+            attachment.Base64Data);
+
+    private static IReadOnlyList<ChatAttachment> ToChatAttachments(IReadOnlyList<HistoryAttachmentDto>? attachments) =>
+        attachments?.Select(attachment => new ChatAttachment(
+            attachment.FileName,
+            attachment.MimeType,
+            attachment.Size,
+            attachment.Base64Data)).ToArray() ?? [];
 
     private void AppendError(string agentId, string message)
     {
@@ -1296,7 +1312,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
             entry.ToolCallId,
             entry.ToolArgs,
             entry.ToolIsError,
-            entry.ThinkingContent);
+            entry.ThinkingContent,
+            ToChatAttachments(entry.Attachments));
 
     // Shared projection logic for both transcript-entry DTO shapes. An entry is treated
     // as a tool call when it carries a tool name; only then is its content surfaced as the
@@ -1310,7 +1327,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
         string? toolCallId,
         string? toolArgs,
         bool toolIsError,
-        string? thinkingContent)
+        string? thinkingContent,
+        IReadOnlyList<ChatAttachment>? attachments = null)
     {
         var isToolCall = toolName is not null;
         return new ChatMessage(MapRole(role ?? "system"), content ?? string.Empty, timestamp)
@@ -1320,6 +1338,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             ToolArgs = toolArgs,
             ToolIsError = toolIsError,
             ThinkingContent = thinkingContent,
+            Attachments = attachments ?? [],
             IsToolCall = isToolCall,
             ToolResult = isToolCall ? AnsiStripper.Strip(content) : null
         };

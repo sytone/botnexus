@@ -1,10 +1,20 @@
 using System.Collections.Immutable;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Services;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Channels;
+using BotNexus.Gateway.Conversations;
+using BotNexus.Gateway.Extensions;
+using BotNexus.Gateway.Sessions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using NSubstitute;
 
 namespace BotNexus.Extensions.Channels.Test.Tests;
 
@@ -62,6 +72,57 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
         return bindingId;
     }
 
+    public async Task<SessionEntry> PublishCompactionAsync()
+    {
+        var (conversations, sessions, session) = await CreatePersistedConversationAsync();
+
+        var coordinator = new SessionCompactionCoordinator(
+            Substitute.For<ISessionCompactor>(),
+            sessions,
+            Substitute.For<IAgentSupervisor>(),
+            _publisher,
+            conversations,
+            new OptionsMonitor<CompactionOptions>(new CompactionOptions()),
+            NullLogger<SessionCompactionCoordinator>.Instance);
+
+        var accepted = await coordinator.TryPublishNotificationAsync(
+            new SessionCompactionOutcome(true, true, HistoryReplaceOutcome.Applied, 4, 2, 600, 200, null),
+            _agentId,
+            session,
+            CancellationToken.None);
+        if (!accepted)
+            throw new InvalidOperationException("The production conversation-event publisher refused the compaction event.");
+
+        await _publisher.WaitForDrainAsync(CancellationToken.None);
+        return session.History.ShouldHaveSingleItem();
+    }
+
+    public async Task<ResetScenarioResult> ResetActiveSessionAsync()
+    {
+        var (conversations, sessions, session) = await CreatePersistedConversationAsync();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBotNexusGateway();
+        services.Replace(ServiceDescriptor.Singleton<IConversationStore>(conversations));
+        services.Replace(ServiceDescriptor.Singleton<ISessionStore>(sessions));
+        services.Replace(ServiceDescriptor.Singleton(Substitute.For<IAgentSupervisor>()));
+        services.Replace(ServiceDescriptor.Singleton<IConversationEventPublisher>(_publisher));
+        services.Replace(ServiceDescriptor.Singleton<IOptionsMonitor<CompactionOptions>>(
+            new OptionsMonitor<CompactionOptions>(new CompactionOptions())));
+        services.Replace(ServiceDescriptor.Singleton(Substitute.For<ISessionEndMemoryFlusher>()));
+        services.Replace(ServiceDescriptor.Singleton(Substitute.For<IAskUserResponseRegistry>()));
+        await using var provider = services.BuildServiceProvider();
+        var service = provider.GetRequiredService<IConversationResetService>();
+
+        var reset = await service.ResetActiveSessionAsync(ConversationId, _sessionId);
+        await _publisher.WaitForDrainAsync(CancellationToken.None);
+
+        return new ResetScenarioResult(
+            reset,
+            (await conversations.GetAsync(ConversationId)).ShouldNotBeNull(),
+            (await sessions.GetAsync(_sessionId)).ShouldNotBeNull());
+    }
+
     public async Task PublishAsync(
         BindingId originBindingId,
         string? correlationId,
@@ -96,11 +157,57 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
     public IReadOnlyList<TestChannelConversationEventRecord> Events(string channelId, string address)
         => _adapters[channelId].GetConversationEvents(address);
 
+    public IReadOnlyList<TestChannelLifecycleEventRecord> LifecycleEvents(string channelId, string address)
+        => _adapters[channelId].GetLifecycleEvents(address);
+
     public ValueTask DisposeAsync() => _publisher.DisposeAsync();
+
+    private async Task<(InMemoryConversationStore Conversations, InMemorySessionStore Sessions, GatewaySession Session)>
+        CreatePersistedConversationAsync()
+    {
+        var conversations = new InMemoryConversationStore();
+        await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId,
+            AgentId = _agentId,
+            ActiveSessionId = _sessionId,
+            ChannelBindings = [.. _bindings.Select(binding => new ChannelBinding
+            {
+                BindingId = binding.Snapshot.BindingId,
+                ChannelType = binding.Snapshot.ChannelType,
+                AdapterId = binding.Snapshot.AdapterId,
+                ChannelAddress = binding.Snapshot.ChannelAddress,
+                Mode = binding.Snapshot.Mode,
+                ThreadingMode = binding.Snapshot.ThreadingMode,
+            })],
+        });
+
+        var sessions = new InMemorySessionStore(redactor: null, conversations);
+        var session = new GatewaySession
+        {
+            SessionId = _sessionId,
+            AgentId = _agentId,
+            ConversationId = ConversationId,
+        };
+        await sessions.SaveAsync(session);
+        return (conversations, sessions, session);
+    }
+
+    internal sealed record ResetScenarioResult(
+        ConversationResetResult Reset,
+        Conversation Conversation,
+        GatewaySession Session);
 
     internal sealed record ChannelDefinition(string ChannelId);
 
     private sealed record ScenarioBinding(
         ConversationId ConversationId,
         ConversationBindingSnapshot Snapshot);
+
+    private sealed class OptionsMonitor<T>(T value) : IOptionsMonitor<T>
+    {
+        public T CurrentValue { get; } = value;
+        public T Get(string? name) => CurrentValue;
+        public IDisposable? OnChange(Action<T, string?> listener) => null;
+    }
 }

@@ -1,6 +1,7 @@
 using System.CommandLine;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Services;
+using BotNexus.Gateway.Configuration;
 using NSubstitute;
 using Spectre.Console;
 

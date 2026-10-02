@@ -154,6 +154,41 @@ public sealed class ExtensionDeploymentReconcilerTests : IDisposable
         Directory.GetDirectories(liveRoot).ShouldBeEmpty();
     }
 
+
+    [Fact]
+    public void Reconcile_LaterActivationFailureIsolatedAndRestoresThatSourcesPriorLiveTree()
+    {
+        var liveRoot = Directory.CreateDirectory(Path.Combine(_root, "live")).FullName;
+        var first = CreateOutput("first-tools", "first.dll", "first-old");
+        var second = CreateOutput("second-tools", "second.dll", "second-old");
+        var sources = new[]
+        {
+            new ExtensionDeploymentSource("repository:community:first", first, true, true),
+            new ExtensionDeploymentSource("repository:community:second", second, true, true)
+        };
+        ExtensionDeploymentReconciler.Reconcile(liveRoot, sources).Failures.ShouldBeEmpty();
+        File.WriteAllText(Path.Combine(first, "first.dll"), "first-new");
+        File.WriteAllText(Path.Combine(second, "second.dll"), "second-new");
+
+        var result = ExtensionDeploymentReconciler.Reconcile(
+            liveRoot,
+            sources,
+            new ExtensionDeploymentHooks
+            {
+                BeforeOperation = (operation, _, destination) =>
+                {
+                    if (operation == ExtensionDeploymentOperation.Activate
+                        && destination!.EndsWith("second-tools", StringComparison.Ordinal))
+                        throw new IOException("later activation failed");
+                },
+                IsWindows = () => false
+            });
+
+        result.Failures.ShouldHaveSingleItem().Message.ShouldContain("later activation failed");
+        File.ReadAllText(Path.Combine(liveRoot, "first-tools", "first.dll")).ShouldBe("first-new");
+        File.ReadAllText(Path.Combine(liveRoot, "second-tools", "second.dll")).ShouldBe("second-old");
+    }
+
     [Fact]
     public void Reconcile_TransientActivationLockRetriesAndPublishesOneCompleteNestedCandidate()
     {

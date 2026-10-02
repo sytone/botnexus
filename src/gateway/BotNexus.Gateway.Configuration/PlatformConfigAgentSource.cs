@@ -189,8 +189,6 @@ public sealed class PlatformConfigAgentSource(
                     Summary = effectiveConfig.Summary,
                     ModelId = effectiveConfig.Model ?? string.Empty,
                     ApiProvider = effectiveConfig.Provider ?? string.Empty,
-                    SystemPromptFile = effectiveConfig.SystemPromptFile,
-                    SystemPromptFiles = ResolveSystemPromptFiles(effectiveConfig),
                     ToolIds = effectiveConfig.ToolIds?.ToArray() ?? [],
                     AllowedModelIds = effectiveConfig.AllowedModels?.ToArray() ?? [],
                     SubAgentIds = effectiveConfig.SubAgents?.ToArray() ?? [],
@@ -271,17 +269,6 @@ public sealed class PlatformConfigAgentSource(
         }
 
         return null;
-    }
-
-    private static IReadOnlyList<string> ResolveSystemPromptFiles(AgentDefinitionConfig agentConfig)
-    {
-        if (agentConfig.SystemPromptFiles is { Count: > 0 })
-            return agentConfig.SystemPromptFiles.ToArray();
-
-        if (!string.IsNullOrWhiteSpace(agentConfig.SystemPromptFile))
-            return [agentConfig.SystemPromptFile];
-
-        return [];
     }
 
     private static MemoryAgentConfig? CloneMemoryConfig(MemoryAgentConfig? memoryConfig)

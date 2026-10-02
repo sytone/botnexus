@@ -1,4 +1,5 @@
 using BotNexus.Domain.Text;
+using BotNexus.Gateway.Sessions;
 using System.CommandLine;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
@@ -88,6 +89,24 @@ internal sealed class DebugSessionsCommand
             return Task.CompletedTask;
         });
 
+        // ── legacy tool invocation backfill ──
+        var batchSizeOption = new Option<int>("--batch-size", () => 1000, "Maximum unlinked legacy tool rows to scan.");
+        var commitOption = new Option<bool>("--commit", "Apply the backfill. Without this flag the command is read-only.");
+        var backfillCommand = new Command("backfill-tool-invocations", "Preview or apply one bounded legacy tool invocation backfill batch.")
+        {
+            batchSizeOption, commitOption
+        };
+        backfillCommand.SetHandler(context =>
+        {
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var format = context.ParseResult.GetValueForOption(formatOption) ?? "table";
+            var batchSize = context.ParseResult.GetValueForOption(batchSizeOption);
+            var commit = context.ParseResult.GetValueForOption(commitOption);
+            var dbPath = ResolveSessionsDb(target);
+            context.ExitCode = ExecuteToolInvocationBackfill(dbPath, batchSize, commit, format);
+            return Task.CompletedTask;
+        });
+
         // ── stats ──
         var statsCommand = new Command("stats", "Show aggregate session statistics.");
         statsCommand.SetHandler(context =>
@@ -103,6 +122,7 @@ internal sealed class DebugSessionsCommand
         command.AddCommand(getCommand);
         command.AddCommand(compactionCommand);
         command.AddCommand(retentionCommand);
+        command.AddCommand(backfillCommand);
         command.AddCommand(statsCommand);
         return command;
     }
@@ -386,6 +406,43 @@ internal sealed class DebugSessionsCommand
         AnsiConsole.MarkupLine($"  Unique argument bytes:  [bold]{report.CandidateArgumentBytes:N0}[/]");
         AnsiConsole.MarkupLine($"  Estimated reclaimable:  [bold]{report.EstimatedReclaimableBytes:N0}[/]");
         AnsiConsole.MarkupLine("[dim]Read-only preview. Physical SQLite reclamation is a separate operator-controlled operation.[/]");
+        return 0;
+    }
+
+    internal static int ExecuteToolInvocationBackfill(string dbPath, int batchSize, bool commit, string format)
+    {
+        if (!File.Exists(dbPath))
+        {
+            ReportMissingStore(dbPath);
+            return 1;
+        }
+
+        LegacyToolInvocationBackfillReport report;
+        try
+        {
+            report = LegacyToolInvocationBackfill.Run(dbPath, batchSize, commit);
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{CliText.SafeDisplay(ex.Message)}[/]");
+            return 1;
+        }
+
+        if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
+        {
+            AnsiConsole.Write(new Text(JsonSerializer.Serialize(report, JsonOpts)));
+            AnsiConsole.WriteLine();
+            return 0;
+        }
+
+        AnsiConsole.MarkupLine("[bold]Legacy Tool Invocation Backfill[/]");
+        AnsiConsole.MarkupLine($"  Mode:         [bold]{(report.Committed ? "commit" : "preview")}[/]");
+        AnsiConsole.MarkupLine($"  Scanned rows: [bold]{report.ScannedRows:N0}[/]");
+        AnsiConsole.MarkupLine($"  Linked rows:  [bold]{report.LinkedRows:N0}[/]");
+        AnsiConsole.MarkupLine($"  Invocations:  [bold]{report.InvocationCount:N0}[/]");
+        AnsiConsole.MarkupLine($"  More remain:  [bold]{(report.HasMore ? "yes" : "no")}[/]");
+        if (!report.Committed)
+            AnsiConsole.MarkupLine("[dim]Read-only preview. Pass --commit to apply this batch.[/]");
         return 0;
     }
 

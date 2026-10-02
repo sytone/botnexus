@@ -150,8 +150,11 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         foreach (var agent in _store.Agents.Values)
         {
+            // The snapshot is authoritative for the entire run, not only the RunStarted bracket.
+            // A missed/misrouted terminal event can leave IsStreaming or a tool entry asserted;
+            // clearing only IsRunActive would still keep IsTurnActive true after reconnect.
             foreach (var conversation in agent.Conversations.Values)
-                conversation.StreamState.IsRunActive = false;
+                conversation.StreamState.EndRun();
 
             agent.IsStreaming = false;
             agent.ProcessingStage = null;

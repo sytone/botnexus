@@ -15,7 +15,7 @@ public sealed class ExtensionRepositoryCommandTests
 
         var extensions = root.Subcommands.Single(command => command.Name == "extensions");
         extensions.Subcommands.Select(command => command.Name).OrderBy(name => name, StringComparer.Ordinal)
-            .ShouldBe(["add", "disable", "enable", "list", "reconcile", "remove", "update"]);
+            .ShouldBe(["add", "disable", "enable", "list", "remove", "sync", "update"]);
     }
 
     [Theory]
@@ -25,6 +25,7 @@ public sealed class ExtensionRepositoryCommandTests
     [InlineData("extensions enable --id community-tools --target instance")]
     [InlineData("extensions disable --id community-tools --target instance")]
     [InlineData("extensions remove --id community-tools --target instance")]
+    [InlineData("extensions sync --target instance")]
     [InlineData("extensions reconcile --target instance")]
     public void ExtensionsCommand_AcceptsDocumentedArgumentsAndGlobalTarget(string commandLine)
     {

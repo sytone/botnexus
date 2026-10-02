@@ -49,6 +49,10 @@ public sealed class MobileCanvasPanelTests : IDisposable
         _store.GetMessages(Arg.Any<string>()).Returns(new List<ChatMessage>().AsReadOnly());
 
         _ctx.Services.AddSingleton(_store);
+        var displayedConversation = Substitute.For<IDisplayedConversation>();
+        displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
+            .Returns(call => call.Arg<string?>() is { } agentId ? _store.GetAgent(agentId)?.ActiveConversationId : null);
+        _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.Services.AddSingleton(_interaction);
@@ -173,6 +177,36 @@ public sealed class MobileCanvasPanelTests : IDisposable
     }
 
     [Fact]
+    public void Mobile_bridge_sdk_matches_submit_feedback_and_duplicate_protection_contract()
+    {
+        var componentPath = Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "extensions",
+            "BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile",
+            "Components",
+            "MobileCanvasPanel.razor");
+
+        var component = File.ReadAllText(componentPath);
+        component.ShouldContain("document.activeElement");
+        component.ShouldContain("window.event");
+        component.ShouldContain("aria-busy");
+        component.ShouldContain("aria-describedby");
+        component.ShouldContain("aria-live");
+        component.ShouldContain("canvas-submit-status");
+        component.ShouldContain("canvasSubmitState");
+        component.ShouldContain("Submitting...");
+        component.ShouldContain("Submitted");
+        component.ShouldContain("Submission failed:");
+        component.ShouldContain("_submitInFlight");
+        component.ShouldContain("Canvas submission already in progress");
+        component.ShouldContain("trigger.disabled = true");
+        component.ShouldContain("trigger.disabled = wasDisabled");
+        component.ShouldContain("_submitInFlight = null");
+        component.ShouldContain("return submission;");
+    }
+
+    [Fact]
     public void Canvas_backdrop_click_closes_sheet()
     {
         var agent = _store.GetAgent("test-agent")!;
@@ -191,5 +225,19 @@ public sealed class MobileCanvasPanelTests : IDisposable
         // Due to the async Task.Delay in the close, the backdrop triggers OnClose which sets _canvasOpen=false
         // The parent Chat.razor should then re-render without the sheet
         cut.WaitForState(() => cut.FindAll("[data-testid='canvas-sheet']").Count == 0, TimeSpan.FromSeconds(1));
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "Directory.Packages.props")))
+                return current.FullName;
+
+            current = current.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Unable to locate Directory.Packages.props from test base directory.");
     }
 }

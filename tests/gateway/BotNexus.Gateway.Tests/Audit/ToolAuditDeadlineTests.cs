@@ -6,6 +6,8 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Audit;
 using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Security;
+using BotNexus.Gateway.Sessions;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -88,6 +90,86 @@ public sealed class ToolAuditDeadlineTests
         error.Message.ShouldContain("audit unavailable", Case.Insensitive);
         error.Message.ShouldContain("lock", Case.Insensitive);
         error.Message.ShouldContain(toolName);
+    }
+
+    [Theory]
+    [InlineData("exec")]
+    [InlineData("shell")]
+    [InlineData("process")]
+    public async Task PersistStartAsync_LockedSqlite_SideEffectingToolFailsWithinDeadlineWithoutLateAuditRow(
+        string toolName)
+    {
+        var directory = Path.Combine(AppContext.BaseDirectory, nameof(ToolAuditDeadlineTests), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var databasePath = Path.Combine(directory, "sessions.db");
+            var connectionString = $"Data Source={databasePath};Pooling=False";
+            var conversations = new InMemoryConversationStore();
+            await conversations.CreateAsync(new Conversation
+            {
+                ConversationId = ConversationId.From("conv"),
+                AgentId = AgentId.From("agent-a")
+            });
+            var store = new SqliteSessionStore(connectionString, NullLogger<SqliteSessionStore>.Instance, conversations);
+            var session = await store.GetOrCreateAsync(SessionId.From("session-a"), AgentId.From("agent-a"));
+            session.ConversationId = ConversationId.From("conv");
+            await store.SaveAsync(session);
+
+            await using var lockConnection = new SqliteConnection(connectionString);
+            await lockConnection.OpenAsync();
+            await using var lockCommand = lockConnection.CreateCommand();
+            lockCommand.CommandText = "BEGIN EXCLUSIVE;";
+            await lockCommand.ExecuteNonQueryAsync();
+
+            var stopwatch = Stopwatch.StartNew();
+            var error = await Should.ThrowAsync<InvalidOperationException>(() =>
+                Create(store).PersistStartAsync(
+                    $"call-{toolName}", toolName, Args("command", "danger"), CancellationToken.None));
+            stopwatch.Stop();
+
+            stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+            error.Message.ShouldContain("audit unavailable", Case.Insensitive);
+            error.Message.ShouldContain("lock", Case.Insensitive);
+
+            lockCommand.CommandText = "ROLLBACK;";
+            await lockCommand.ExecuteNonQueryAsync();
+
+            var reloaded = await new SqliteSessionStore(
+                    connectionString, NullLogger<SqliteSessionStore>.Instance, conversations)
+                .GetAsync(SessionId.From("session-a"));
+            reloaded.ShouldNotBeNull().GetHistorySnapshot()
+                .ShouldNotContain(entry => entry.ToolCallId == $"call-{toolName}");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task PersistStartAsync_BoundedStore_ReadOnlyToolUsesDefinitiveDeadlineAndRemainsBestEffort()
+    {
+        var store = new Mock<ISessionStore>();
+        var bounded = store.As<IBoundedSessionAppendStore>();
+        bounded.Setup(s => s.AppendEntriesWithinAsync(
+                It.IsAny<SessionId>(), It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<TimeSpan>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new BoundedSessionAppendException(
+                BoundedSessionAppendFailureReason.Deadline,
+                "bounded append expired"));
+
+        await Should.NotThrowAsync(() => Create(store.Object).PersistStartAsync(
+            "call-read-bounded", "read", Args("path", "file.txt"), CancellationToken.None));
+
+        bounded.Verify(s => s.AppendEntriesWithinAsync(
+            SessionId.From("session-a"),
+            It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1),
+            Deadline,
+            It.IsAny<CancellationToken>()), Times.Once);
+        store.Verify(s => s.AppendEntriesAsync(
+            It.IsAny<SessionId>(), It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]

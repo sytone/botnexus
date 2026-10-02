@@ -65,4 +65,11 @@
     </None>
   </ItemGroup>
 
+  <Target Name="CopyAttachmentListCssForTests" AfterTargets="Build">
+    <MakeDir Directories="$(OutDir)wwwroot/css" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)/../../../src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/Components/AttachmentList.razor.css"
+          DestinationFiles="$(OutDir)wwwroot/css/AttachmentList.razor.css"
+          SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

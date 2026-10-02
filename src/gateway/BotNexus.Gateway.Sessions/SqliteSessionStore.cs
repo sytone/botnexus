@@ -31,7 +31,7 @@ namespace BotNexus.Gateway.Sessions;
 /// The global initialisation lock (<c>_initLock</c>) is only held during the one-time
 /// schema creation; all subsequent operations use per-session granularity.
 /// </summary>
-public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostReader
+public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostReader, IBoundedSessionAppendStore
 {
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
 
@@ -175,6 +175,10 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         _cache = new BoundedLruCache<SessionId, GatewaySession>(cacheCapacity);
         _agentIdCache = new BoundedLruCache<ConversationId, AgentId>(cacheCapacity);
     }
+
+    /// <summary>Commits one bounded legacy tool-invocation normalization batch.</summary>
+    public LegacyToolInvocationBackfillReport BackfillLegacyToolInvocations(int batchSize) =>
+        LegacyToolInvocationBackfill.RunConnectionString(_connectionString, batchSize, commit: true);
 
     /// <inheritdoc />
     public override async Task<GatewaySession?> GetAsync(SessionId sessionId, CancellationToken cancellationToken = default)
@@ -491,6 +495,114 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             _cache.Remove(sessionId);
             return new SessionAppendMutationResult(SessionMutationOutcome.Applied, redacted.Count);
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<SessionAppendMutationResult> AppendEntriesWithinAsync(
+        SessionId sessionId,
+        IReadOnlyList<SessionEntry> entries,
+        TimeSpan deadline,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        if (deadline <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(deadline), deadline, "The append deadline must be positive.");
+
+        var started = Stopwatch.GetTimestamp();
+        using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadlineCts.CancelAfter(deadline);
+        var operationToken = deadlineCts.Token;
+
+        try
+        {
+            await EnsureCreatedAsync(operationToken).ConfigureAwait(false);
+            using var sessionLock = await AcquireSessionLockAsync(sessionId, operationToken).ConfigureAwait(false);
+
+            var redacted = RedactForAppend(entries);
+            foreach (var entry in redacted)
+                entry.PersistenceKey ??= Guid.NewGuid().ToString("N");
+
+            var remaining = deadline - Stopwatch.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero)
+                throw new OperationCanceledException(operationToken);
+
+            // busy_timeout is the native SQLite writer-lock bound. No retry wrapper is used here:
+            // once this one transaction ends, disposal/rollback has completed and no work survives
+            // the method return. Clamp to at least 1ms so a positive caller deadline is honoured.
+            var busyTimeoutMs = Math.Max(1, (int)Math.Min(int.MaxValue, Math.Ceiling(remaining.TotalMilliseconds)));
+            await using var connection = SqliteConnectionFactory.Create(_connectionString, busyTimeoutMs);
+            await connection.OpenAsync(operationToken).ConfigureAwait(false);
+
+            // Microsoft.Data.Sqlite transaction acquisition uses the connection's whole-second
+            // DefaultTimeout and otherwise restores its 30-second default over busy_timeout. Its
+            // public API cannot express a sub-second command timeout, so one second is the documented
+            // maximum acquisition tolerance for a shorter requested deadline. Statement work inside
+            // an acquired transaction still uses the remaining millisecond busy_timeout above.
+            connection.DefaultTimeout = Math.Max(1, (int)Math.Min(int.MaxValue, Math.Ceiling(remaining.TotalSeconds)));
+            await using var transaction = connection.BeginTransaction(deferred: false);
+
+            var status = await ReadStatusAsync(connection, transaction, sessionId, operationToken).ConfigureAwait(false);
+            if (status is null)
+                return new SessionAppendMutationResult(SessionMutationOutcome.NotFound, 0);
+            if (SessionMutationPolicy.IsTerminal(status.Value))
+                return new SessionAppendMutationResult(SessionMutationOutcome.Conflict, 0);
+
+            if (redacted.Count > 0)
+            {
+                await WriteHistoryRowsAsync(connection, transaction, sessionId, redacted, operationToken).ConfigureAwait(false);
+                await TouchUpdatedAtAsync(connection, transaction, sessionId, DateTimeOffset.UtcNow, operationToken).ConfigureAwait(false);
+            }
+
+            operationToken.ThrowIfCancellationRequested();
+            // Commit synchronously after the final deadline check. SQLite's native busy_timeout
+            // bounds lock waiting, and Commit returning is the definitive durability boundary.
+            transaction.Commit();
+            _cache.Remove(sessionId);
+            return new SessionAppendMutationResult(SessionMutationOutcome.Applied, redacted.Count);
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode is 5 or 6)
+        {
+            throw new BoundedSessionAppendException(
+                BoundedSessionAppendFailureReason.Locked,
+                $"SQLite remained locked through the {deadline.TotalMilliseconds:0}ms append deadline.",
+                ex);
+        }
+        catch (OperationCanceledException ex) when (deadlineCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new BoundedSessionAppendException(
+                BoundedSessionAppendFailureReason.Deadline,
+                $"The bounded session append exceeded its {deadline.TotalMilliseconds:0}ms deadline.",
+                ex);
+        }
+    }
+
+    private static async Task<SessionStatus?> ReadStatusAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        SessionId sessionId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT status FROM sessions WHERE id = $sessionId";
+        command.Parameters.AddWithValue("$sessionId", sessionId.Value);
+        var raw = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return raw is null ? null : ParseStatus(raw as string);
+    }
+
+    private static async Task TouchUpdatedAtAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        SessionId sessionId,
+        DateTimeOffset updatedAt,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "UPDATE sessions SET updated_at = $updatedAt WHERE id = $sessionId";
+        command.Parameters.AddWithValue("$updatedAt", updatedAt.ToString("O"));
+        command.Parameters.AddWithValue("$sessionId", sessionId.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

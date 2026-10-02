@@ -1244,7 +1244,7 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
-    public void InterruptSteerButton_HasAbbreviatedLabel_WhenStreaming()
+    public void InterruptSteerButton_HasIconAndAccessibleLabel_WhenStreaming()
     {
         CreateAndSeedAgent("agent-1", isStreaming: true);
         _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
@@ -1254,8 +1254,9 @@ public sealed class ChatPanelTests : IDisposable
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
 
         var btn = cut.Find(".interrupt-steer-btn");
-        Assert.Contains("Redirect", btn.TextContent);
-        Assert.DoesNotContain("Interrupt + Redirect", btn.TextContent);
+        Assert.Equal("Redirect immediately", btn.GetAttribute("aria-label"));
+        Assert.Equal(string.Empty, btn.TextContent.Trim());
+        Assert.Single(btn.QuerySelectorAll("svg"));
     }
 
     [Fact]
@@ -2111,5 +2112,45 @@ public sealed class ChatPanelTests : IDisposable
 
         Assert.True(seenAnyBlock, $"CSS rule for selector '{selector}' was not found.");
         Assert.True(found, $"No '{selector}' rule declares '{declaration}'.");
+    }
+}
+
+public sealed class ChatPanelAttachmentTests : IDisposable
+{
+    private readonly BunitContext _context = new();
+    private readonly ClientStateStore _store = new();
+
+    public ChatPanelAttachmentTests()
+    {
+        _context.Services.AddSingleton<IClientStateStore>(_store);
+        var interaction = Substitute.For<IAgentInteractionService>();
+        _context.Services.AddSingleton(interaction);
+        _context.Services.AddSingleton<ISlashCommandDispatcher>(new SlashCommandDispatcher(interaction));
+        _context.Services.AddSingleton(Substitute.For<IGatewayRestClient>());
+        _context.Services.AddSingleton(new HttpClient());
+        var preferences = Substitute.For<IPortalPreferencesService>();
+        preferences.Current.Returns(new PortalPreferences());
+        _context.Services.AddSingleton(preferences);
+        _context.JSInterop.Mode = JSRuntimeMode.Loose;
+    }
+
+    public void Dispose() => _context.Dispose();
+
+    [Fact]
+    public void User_and_assistant_rows_use_the_same_attachment_component_path()
+    {
+        _store.UpsertAgent(new AgentState { AgentId = "agent", DisplayName = "Agent", IsConnected = true });
+        _store.SeedConversations("agent", [new ConversationSummaryDto("conversation", "agent", "Conversation", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)]);
+        _store.SetActiveConversation("agent", "conversation");
+        var conversation = _store.GetAgent("agent")?.Conversations["conversation"];
+        conversation.ShouldNotBeNull();
+        var attachment = new ChatAttachment("file.txt", "text/plain", 4, "dGVzdA==");
+        conversation.AppendMessage(new ChatMessage("User", "user", DateTimeOffset.UtcNow) { Attachments = [attachment] });
+        conversation.AppendMessage(new ChatMessage("Assistant", "assistant", DateTimeOffset.UtcNow) { Attachments = [attachment] });
+
+        var cut = _context.Render<ChatPanel>(parameters => parameters.Add(component => component.AgentId, "agent"));
+
+        cut.FindAll("[data-testid='attachment-list']").Count.ShouldBe(2);
+        cut.FindAll("[data-testid='message-attachment']").Count.ShouldBe(2);
     }
 }

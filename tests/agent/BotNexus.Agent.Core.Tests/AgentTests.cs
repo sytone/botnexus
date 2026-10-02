@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tests.TestUtils;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
@@ -84,6 +85,78 @@ public class AgentTests
 
         capturedOptions.ShouldNotBeNull();
         capturedOptions.ApiKey.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public async Task PromptWithoutToolsAsync_ToolShapedOutput_ExecutesExactlyOneProviderTurnWithoutLoopServices()
+    {
+        var providerCalls = 0;
+        var steeringPolls = 0;
+        var followUpPolls = 0;
+        var compactions = 0;
+        var completionEvaluations = 0;
+        using var provider = TestHelpers.RegisterProvider(
+            new TestApiProvider(
+                "single-turn-api",
+                simpleStreamFactory: (_, context, _) =>
+                {
+                    Interlocked.Increment(ref providerCalls);
+                    context.Tools.ShouldBeEmpty();
+                    return TestStreamFactory.CreateToolCallResponse(
+                        ("call-1", "calculate", new Dictionary<string, object?> { ["expression"] = "1+1" }));
+                }));
+        var initial = new AgentInitialState(
+            SystemPrompt: "Be concise",
+            Model: TestHelpers.CreateTestModel("single-turn-api"),
+            Tools: [new CalculateTool()],
+            Messages: []);
+        var options = TestHelpers.CreateTestOptions(initial, initial.Model) with
+        {
+            GetSteeringMessages = _ =>
+            {
+                Interlocked.Increment(ref steeringPolls);
+                return Task.FromResult<IReadOnlyList<AgentMessage>>([new UserMessage("steer")]);
+            },
+            GetFollowUpMessages = _ =>
+            {
+                Interlocked.Increment(ref followUpPolls);
+                return Task.FromResult<IReadOnlyList<AgentMessage>>([new UserMessage("follow up")]);
+            },
+            MaybeCompactAsync = _ =>
+            {
+                Interlocked.Increment(ref compactions);
+                return Task.FromResult<AgentContext?>(null);
+            },
+            EvaluateRunCompletion = _ =>
+            {
+                Interlocked.Increment(ref completionEvaluations);
+                return Task.FromResult(RunCompletionDecision.Continue([], "continue"));
+            }
+        };
+        var agent = new BotNexus.Agent.Core.Agent(options);
+        agent.Steer(new UserMessage("queued steering"));
+        agent.FollowUp(new UserMessage("queued follow-up"));
+        var toolStarts = 0;
+        using var subscription = agent.Subscribe((@event, _) =>
+        {
+            if (@event is ToolExecutionStartEvent)
+                Interlocked.Increment(ref toolStarts);
+            return Task.CompletedTask;
+        });
+
+        var result = await agent.PromptWithoutToolsAsync("finalize");
+
+        providerCalls.ShouldBe(1);
+        steeringPolls.ShouldBe(0);
+        followUpPolls.ShouldBe(0);
+        compactions.ShouldBe(0);
+        completionEvaluations.ShouldBe(0);
+        toolStarts.ShouldBe(0);
+        // The provider emitted a tool-shaped response, but the strict finalization path must not
+        // dispatch it or enter a second model turn. The handle-level response projection is covered
+        // separately; this core test owns the one-call/no-loop/no-tool contract.
+        result.OfType<ToolResultAgentMessage>().ShouldBeEmpty();
+        agent.HasQueuedMessages.ShouldBeTrue();
     }
 
     [Fact]

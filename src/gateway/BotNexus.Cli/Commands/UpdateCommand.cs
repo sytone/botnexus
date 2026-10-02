@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Xml.Linq;
 using BotNexus.Cli.Services;
+using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Contracts.Updates;
 using Spectre.Console;
 
@@ -280,7 +281,8 @@ internal class UpdateCommand
         // Anything else - any doubt at all - falls through to the full stop/build/deploy/restart
         // path. A slow update is recoverable; a stale binary after a "successful" update is the
         // silent-failure class this repo has been fighting.
-        if (await CanSkipRebuildAsync(repoRoot, cancellationToken))
+        if (await CanSkipRebuildAsync(repoRoot, cancellationToken)
+            && !await HasEnabledExtensionRepositoriesAsync(home, cancellationToken))
         {
             // #2772: the old code asserted "gateway left running" from control flow alone. Ask.
             if (IsGatewayRunning(home, repoRoot))
@@ -525,35 +527,11 @@ internal class UpdateCommand
         }
         AnsiConsole.MarkupLine("[green]✓[/] Build succeeded");
 
-        // Deploy extensions
-        ExtensionDeploymentResult deploymentResult;
-        if (interactive)
-        {
-            ExtensionDeploymentResult? capturedDeployment = null;
-            await AnsiConsole.Status()
-                .Spinner(Spinner.Known.Dots)
-                .SpinnerStyle(Style.Parse("blue"))
-                .StartAsync("Deploying extensions...", async ctx =>
-                {
-                    capturedDeployment = ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose);
-                    await Task.CompletedTask;
-                });
-            deploymentResult = capturedDeployment
-                ?? throw new InvalidOperationException("Extension deployment did not produce a result.");
-        }
-        else
-        {
-            AnsiConsole.MarkupLine("[blue][[update]][/] Deploying extensions...");
-            deploymentResult = ServeCommand.DeployExtensionsSilent(repoRoot, home, verbose);
-        }
-        foreach (var failure in deploymentResult.Failures)
-        {
-            AnsiConsole.MarkupLine(
-                $"[yellow][[update]] Extension deployment failed for {CliText.SafeDisplay(failure.Source)}:[/] {CliText.SafeDisplay(failure.Message)}");
-        }
-        AnsiConsole.MarkupLine($"[green]✓[/] {deploymentResult.DeployedCount} extension(s) deployed");
-
-        return DeploymentExitCode(deploymentResult);
+        // Reconcile registered repositories and deployment through the shared failure-isolated pipeline.
+        // Repository failures are reported but remain non-fatal so the gateway can restart with
+        // the last-known-good deployment.
+        await ServeCommand.ReconcileLifecycleAsync(repoRoot, home, verbose, cancellationToken, "update");
+        return 0;
     }
 
     internal static int DeploymentExitCode(ExtensionDeploymentResult result)
@@ -1248,6 +1226,14 @@ internal class UpdateCommand
     /// (issue #1536) and all CLI call sites share one implementation.
     /// </summary>
     internal static bool IsPortAvailable(int port) => ServeCommand.IsPortAvailable(port);
+
+    private static async Task<bool> HasEnabledExtensionRepositoriesAsync(string home, CancellationToken cancellationToken)
+    {
+        var registry = new ExtensionRepositoryRegistryService(
+            Path.Combine(home, "config.json"),
+            new System.IO.Abstractions.FileSystem());
+        return (await registry.ListAsync(cancellationToken)).Any(item => item.Enabled);
+    }
 
     /// <summary>
     /// Whether the update can return without stopping, rebuilding, deploying and restarting the

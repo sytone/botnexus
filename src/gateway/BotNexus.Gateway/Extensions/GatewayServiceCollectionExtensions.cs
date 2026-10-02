@@ -499,13 +499,15 @@ public static class GatewayServiceCollectionExtensions
             sp.GetRequiredService<ILogger<InterruptedTurnNotificationService>>(),
             sp.GetService<IInboundMessageOrchestrator>(),
             sp.GetService<IOptions<GatewayOptions>>(),
-            sp.GetService<IConversationStore>()));
+            sp.GetService<IConversationStore>(),
+            sp.GetService<SessionLifecycleEvents>()));
         services.AddHostedService<SessionCleanupService>();
         // Session/conversation consistency monitor + safe auto-heal path (#2046).
         services.TryAddSingleton<Sessions.SessionConsistencyChecker>();
         services.AddHostedService<SessionConsistencyHostedService>();
         services.TryAddSingleton<IConversationChangeNotifier, NullConversationChangeNotifier>();
         services.AddHostedService<ConversationRetentionHostedService>();
+        services.AddHostedService<LegacyToolInvocationBackfillHostedService>();
         services.AddHostedService<SubAgentWorkspaceSweepHostedService>();
         services.AddHostedService<MemoryIndexer>();
 
@@ -594,6 +596,8 @@ public static class GatewayServiceCollectionExtensions
         // restore the four-round-trips-per-turn tax the split exists to remove.
         services.TryAddSingleton<BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry>(
             _ => new BotNexus.Agent.Core.Loop.ProviderSuspensionRegistry());
+        services.TryAddSingleton<BotNexus.Agent.Core.Loop.IProviderRecoveryCoordinator>(
+            _ => new BotNexus.Agent.Core.Loop.ProviderRecoveryCoordinator());
 
         services.TryAddSingleton<ILocationResolver>(serviceProvider =>
             new DefaultLocationResolver(

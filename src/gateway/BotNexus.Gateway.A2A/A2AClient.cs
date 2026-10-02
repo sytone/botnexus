@@ -145,28 +145,44 @@ public sealed class A2AClient : IDisposable
             if (rpc?.Error is not null)
                 return Failure(A2ATerminalOutcome.Failed, RemoteFailure);
 
-            var task = rpc?.Result?.Task
-                ?? throw new A2AProtocolException("The A2A response omitted its task result.");
-            if (task.Status is null)
-                throw new A2AProtocolException("The A2A response omitted its task status.");
-
             var provenance = new A2AProvenance(
                 discovery.AgentName, discovery.AgentCardUri, discovery.Endpoint, discovery.ProtocolVersion);
-            var outcome = MapState(task.Status.State);
-            return new A2ATaskResult(
-                outcome,
-                task.ContextId,
-                task.Id,
-                ExtractSummary(task.Status.Message, task.Artifacts, options.MaxSummaryCharacters),
-                ExtractArtifacts(task.Artifacts, options),
-                provenance,
-                ExtractUsage(task.Metadata),
-                outcome switch
-                {
-                    A2ATerminalOutcome.Failed => "The remote A2A task failed.",
-                    A2ATerminalOutcome.PolicyBlocked => "The remote A2A task was blocked by policy.",
-                    _ => null
-                });
+            if (rpc?.Result?.Task is { } task)
+            {
+                if (task.Status is null)
+                    throw new A2AProtocolException("The A2A response omitted its task status.");
+
+                var outcome = MapState(task.Status.State);
+                return new A2ATaskResult(
+                    outcome,
+                    task.ContextId,
+                    task.Id,
+                    ExtractSummary(task.Status.Message, task.Artifacts, options.MaxSummaryCharacters),
+                    ExtractArtifacts(task.Artifacts, options),
+                    provenance,
+                    ExtractUsage(task.Metadata),
+                    outcome switch
+                    {
+                        A2ATerminalOutcome.Failed => "The remote A2A task failed.",
+                        A2ATerminalOutcome.PolicyBlocked => "The remote A2A task was blocked by policy.",
+                        _ => null
+                    });
+            }
+
+            if (rpc?.Result?.Message is { } messageResult)
+            {
+                return new A2ATaskResult(
+                    A2ATerminalOutcome.Completed,
+                    messageResult.ContextId,
+                    messageResult.TaskId,
+                    ExtractSummary(messageResult, null, options.MaxSummaryCharacters),
+                    [],
+                    provenance,
+                    ExtractUsage(messageResult.Metadata),
+                    null);
+            }
+
+            throw new A2AProtocolException("The A2A response omitted its message or task result.");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -361,7 +377,11 @@ public sealed class A2AClient : IDisposable
     private sealed record RpcErrorWire(int Code, string Message);
     private sealed record TaskWire(string? Id, string? ContextId, TaskStatusWire? Status, IReadOnlyList<ArtifactWire>? Artifacts, JsonElement? Metadata);
     private sealed record TaskStatusWire(string? State, MessageResultWire? Message);
-    private sealed record MessageResultWire(IReadOnlyList<ResultPartWire>? Parts);
+    private sealed record MessageResultWire(
+        IReadOnlyList<ResultPartWire>? Parts,
+        string? ContextId = null,
+        string? TaskId = null,
+        JsonElement? Metadata = null);
     private sealed record ResultPartWire(string? Text);
     private sealed record ArtifactWire(string? ArtifactId, string? Name, IReadOnlyList<ArtifactPartWire>? Parts);
     private sealed record ArtifactPartWire(string? Url, string? MediaType, string? Text);
