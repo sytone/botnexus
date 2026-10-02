@@ -172,7 +172,7 @@ public sealed class HomeConversationMruRedirectTests : IDisposable
         // case where consulting either ambient source would produce a DIFFERENT conversation from
         // the one the URL names, so it is the only fixture that can distinguish the two.
         var agent = SeedAgent("agent-1", "c-1", "c-2");
-        agent.ActiveConversationId = "c-2";
+        _store.SelectView(agent.AgentId, "c-2" ?? string.Empty, SelectionSource.RouteNavigation);
         _mru.Record("agent-1", "c-2");
 
         _ctx.Render<Home>(p => p
@@ -189,7 +189,7 @@ public sealed class HomeConversationMruRedirectTests : IDisposable
     {
         // ActiveConversationId is the ambient value #3064 exists to stop consulting on this path.
         var agent = SeedAgent("agent-1", "c-1", "c-active");
-        agent.ActiveConversationId = "c-active";
+        _store.SelectView(agent.AgentId, "c-active" ?? string.Empty, SelectionSource.RouteNavigation);
 
         _ctx.Render<Home>(p => p
             .Add(c => c.AgentId, "agent-1")
@@ -414,7 +414,7 @@ public sealed class HomeConversationMruRedirectTests : IDisposable
         // conversation they were on; the LIST is what converges, on the next navigation.
         var displayed = SeedConversation("agent-1", "c-open", At(5));
         SeedConversation("agent-1", "c-other", At(9));
-        _agents["agent-1"].ActiveConversationId = "c-open";
+        _store.SelectView("agent-1", "c-open", SelectionSource.RouteNavigation);
 
         _ctx.Render<Home>(p => p
             .Add(c => c.AgentId, "agent-1")

@@ -27,6 +27,62 @@ public sealed class DelegateA2ATaskToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_AuthorizesAndProjectsBoundedDelegationAssignment()
+    {
+        var profile = new StubProfile("ready");
+        var factory = new StubClientFactory(new A2ATaskResult(A2ATerminalOutcome.Completed, null, null, "ok", [], null, null, null));
+        using var tool = new DelegateA2ATaskTool(new[] { profile }, factory);
+        var prepared = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["profileId"] = "ready",
+            ["objective"] = "Compare the two plans",
+            ["supportingContext"] = "Plan A is safer. Plan B is faster.",
+            ["acceptanceCriteria"] = "Return one recommendation with two reasons.",
+            ["requestedOutputShape"] = "JSON with recommendation and reasons.",
+            ["allowedActions"] = new[] { "read supplied context", "summarize" },
+            ["approvalBoundary"] = "Do not contact people or modify external state.",
+            ["deadlineSeconds"] = 30
+        });
+
+        await tool.ExecuteAsync("call-1", prepared);
+
+        var authorizationRequest = profile.AuthorizationRequests.ShouldHaveSingleItem();
+        authorizationRequest.Objective.ShouldBe("Compare the two plans");
+        authorizationRequest.AllowedActions.ShouldBe(["read supplied context", "summarize"]);
+        authorizationRequest.ApprovalBoundary.ShouldBe("Do not contact people or modify external state.");
+        var message = factory.Messages.ShouldHaveSingleItem();
+        message.Text.ShouldContain("Objective:\nCompare the two plans");
+        message.Text.ShouldContain("Supporting context:\nPlan A is safer. Plan B is faster.");
+        message.Text.ShouldContain("Acceptance criteria:\nReturn one recommendation with two reasons.");
+        message.Text.ShouldContain("Requested output shape:\nJSON with recommendation and reasons.");
+        message.Text.ShouldContain("Allowed actions:\n- read supplied context\n- summarize");
+        message.Text.ShouldContain("Approval boundary:\nDo not contact people or modify external state.");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProfileDenialStopsBeforeConnectionOrSubmission()
+    {
+        var profile = new StubProfile("ready") { Authorization = A2ADelegationAuthorization.Deny("Action is outside profile policy.") };
+        var factory = new StubClientFactory(new A2ATaskResult(A2ATerminalOutcome.Completed, null, null, "ok", [], null, null, null));
+        using var tool = new DelegateA2ATaskTool(new[] { profile }, factory);
+        var prepared = await tool.PrepareArgumentsAsync(new Dictionary<string, object?>
+        {
+            ["profileId"] = "ready",
+            ["objective"] = "Modify external state",
+            ["allowedActions"] = new[] { "write" },
+            ["approvalBoundary"] = "No approval granted"
+        });
+
+        var result = await tool.ExecuteAsync("call-1", prepared);
+
+        profile.ConnectionRequestCount.ShouldBe(0);
+        factory.CallCount.ShouldBe(0);
+        using var json = JsonDocument.Parse(result.Content.ShouldHaveSingleItem().Value);
+        json.RootElement.GetProperty("outcome").GetString().ShouldBe("policyBlocked");
+        json.RootElement.GetProperty("error").GetString().ShouldBe("Action is outside profile policy.");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ReturnsOneCompactTypedTerminalJsonResult()
     {
         var expected = new A2ATaskResult(
@@ -77,14 +133,28 @@ public sealed class DelegateA2ATaskToolTests
         public string Id => id;
         public string DisplayName => id;
         public bool IsReady => true;
+        public A2ADelegationAuthorization Authorization { get; init; } = A2ADelegationAuthorization.Allow();
+        public List<A2ADelegationAuthorizationRequest> AuthorizationRequests { get; } = [];
+        public int ConnectionRequestCount { get; private set; }
+        public ValueTask<A2ADelegationAuthorization> AuthorizeAsync(
+            A2ADelegationAuthorizationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            AuthorizationRequests.Add(request);
+            return ValueTask.FromResult(Authorization);
+        }
         public ValueTask<A2AServiceConnection> GetConnectionAsync(CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new A2AServiceConnection(new Uri("https://agents.example.test/")));
+        {
+            ConnectionRequestCount++;
+            return ValueTask.FromResult(new A2AServiceConnection(new Uri("https://agents.example.test/")));
+        }
     }
 
     private sealed class StubClientFactory(A2ATaskResult result) : IA2AClientFactory
     {
         public int CallCount { get; private set; }
         public int DisposeCount { get; private set; }
+        public List<A2AMessage> Messages { get; } = [];
         public IA2AClient Create() => new Client(this, result);
 
         private sealed class Client(StubClientFactory owner, A2ATaskResult result) : IA2AClient
@@ -92,6 +162,7 @@ public sealed class DelegateA2ATaskToolTests
             public Task<A2ATaskResult> SendMessageAsync(A2AClientOptions options, A2AMessage message, DateTimeOffset deadline, CancellationToken cancellationToken = default)
             {
                 owner.CallCount++;
+                owner.Messages.Add(message);
                 return Task.FromResult(result);
             }
             public void Dispose() => owner.DisposeCount++;

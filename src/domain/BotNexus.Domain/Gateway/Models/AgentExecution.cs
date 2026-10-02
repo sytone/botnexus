@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using BotNexus.Domain.Primitives;
 namespace BotNexus.Gateway.Abstractions.Models;
@@ -207,6 +208,8 @@ public sealed record AgentStreamEvent
     /// post-turn claim auditor flagged unbacked artifact claims in the agent's final message (#1600).
     /// </summary>
     public ClaimAuditSignal? ClaimAudit { get; init; }
+    /// <summary>Bounded provider retry/recovery lifecycle payload. Contains no credential or raw error text.</summary>
+    public ProviderRecoverySignal? ProviderRecovery { get; init; }
     /// <summary>Authoritative run completion disposition carried by <see cref="AgentStreamEventType.RunEnded"/>.</summary>
     public RunCompletionSignal? Completion { get; init; }
 }
@@ -266,8 +269,22 @@ public enum AgentStreamEventType
     /// final message that have no backing tool call (anti-fabrication control, #1600). Carries a
     /// <see cref="AgentStreamEvent.ClaimAudit"/> payload describing the unbacked claims.
     /// </summary>
-    ClaimAudit
+    ClaimAudit,
+    /// <summary>Bounded model-call retry and shared provider-recovery lifecycle signal.</summary>
+    ProviderRecovery
 }
+
+/// <summary>Bounded provider recovery signal projected from the agent core.</summary>
+public sealed record ProviderRecoverySignal(
+    string Stage,
+    string Provider,
+    string State,
+    int? Attempt,
+    int? MaxAttempts,
+    double? DelayMilliseconds,
+    int InFlightCalls,
+    int QueueLength,
+    DateTimeOffset? NextProbeAt);
 
 /// <summary>
 /// Channel-neutral run completion disposition. Values originate in the core loop's finalization gate.
@@ -280,7 +297,52 @@ public sealed record RunCompletionSignal(
     string? Evidence,
     string? ContinuationOwner,
     string? WakeCondition,
-    int ContinuationAttempts);
+    int ContinuationAttempts)
+{
+    /// <summary>Canonical session-metadata key for the latest authoritative run completion.</summary>
+    public const string MetadataKey = "runCompletion";
+
+    /// <summary>
+    /// Reads the latest completion from session metadata. Session stores deserialize metadata values
+    /// as <see cref="System.Text.Json.JsonElement"/>, so this accepts both the live typed value and
+    /// its persisted JSON representation. Malformed legacy metadata is ignored rather than making
+    /// the session unreadable.
+    /// </summary>
+    public static RunCompletionSignal? FromMetadata(IReadOnlyDictionary<string, object?> metadata)
+    {
+        if (!metadata.TryGetValue(MetadataKey, out var raw) || raw is null)
+            return null;
+
+        if (raw is RunCompletionSignal completion)
+            return completion;
+
+        if (raw is not System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Object } element)
+            return null;
+
+        try
+        {
+            return element.Deserialize<RunCompletionSignal>(MetadataJsonOptions);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Writes or clears the latest authoritative completion in session metadata.</summary>
+    public static void WriteTo(IDictionary<string, object?> metadata, RunCompletionSignal? completion)
+    {
+        if (completion is null)
+            metadata.Remove(MetadataKey);
+        else
+            metadata[MetadataKey] = completion;
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions MetadataJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+}
 
 /// <summary>
 /// A structured, client-visible summary of a post-turn claim-audit finding (#1600). Surfaced on an

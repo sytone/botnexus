@@ -78,6 +78,7 @@ You should see the root command help listing all available subcommands.
 26. [provider setup](#provider-setup) — Interactive provider setup wizard
 27. [provider list](#provider-list) — List configured providers
 28. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+    - [provider test](#provider-test) — Validate a provider through the running gateway
 29. [provider remove](#provider-remove) — Remove a provider non-interactively
 30. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
 31. [provider ollama](#provider-ollama) — Ollama local model diagnostics
@@ -1699,7 +1700,7 @@ When a provider with the given `--name` already exists, only the flags you pass 
 
 A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated provider models then become available for agent assignment without restarting the process. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact.
 
-The command is an offline configuration writer, so its receipt distinguishes persistence from runtime activation: persistence succeeded, activation was not validated by the command, and no restart is required when the running gateway receives the reload. Verify activation with `botnexus debug gateway providers` before assigning an agent. If an out-of-process configuration change has not reached the running gateway yet, the saved provider can still be absent from that live catalogue; persistence alone is not a readiness result.
+The command is an offline configuration writer, so its receipt distinguishes persistence from runtime activation: persistence succeeded, activation was not validated by the command, and no restart is required when the running gateway receives the reload. Verify activation and credential resolution with `botnexus provider test --name <NAME>` before assigning an agent. The test calls the running gateway's provider-health route, which reads the same live model registry and credential resolver used by agent setup. If an out-of-process configuration change has not reached the running gateway yet, the saved provider can still be absent from that live catalogue; persistence alone is not a readiness result.
 
 ### Usage
 
@@ -1745,6 +1746,20 @@ botnexus provider add --name local-vllm `
     --model llama-3-8b --model llama-3-70b `
     --default-model llama-3-8b
 ```
+
+---
+
+## provider test
+
+Validate a provider instance against the running gateway rather than the offline configuration file. The command succeeds only when the instance is present in the live model registry, has at least one registered model, and its configured credential resolves. It does not send a billable model request.
+
+### Usage
+
+```powershell
+botnexus provider test --name <NAME> [--url <GATEWAY_URL>] [--token <CREDENTIAL>]
+```
+
+Local gateway credentials follow the shared CLI credential policy. A non-local `--url` requires an explicit `--token`.
 
 ---
 

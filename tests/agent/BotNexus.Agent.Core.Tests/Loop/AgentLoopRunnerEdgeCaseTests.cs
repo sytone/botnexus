@@ -54,6 +54,15 @@ public class AgentLoopRunnerEdgeCaseTests
 
         attempts.ShouldBeGreaterThan(1, $"transient error '{errorMessage}' should trigger retry");
         result.OfType<AssistantAgentMessage>().ShouldContain(m => m.Content == "recovered");
+        var recoveryEvents = events.OfType<ProviderRecoveryEvent>().ToList();
+        recoveryEvents.Count(recovery => recovery.Stage == ProviderRecoveryStage.RetryScheduled).ShouldBe(2);
+        recoveryEvents.ShouldContain(recovery =>
+            recovery.Stage == ProviderRecoveryStage.Recovered
+            && recovery.Attempt == 3
+            && recovery.Provider == "test-provider");
+        recoveryEvents.All(recovery =>
+            recovery.ProviderError == null
+            && recovery.AuthProfile == null).ShouldBeTrue();
     }
 
     [Theory]
@@ -96,16 +105,25 @@ public class AgentLoopRunnerEdgeCaseTests
 
         var config = CreateConfig("max-retry-test");
         var context = new AgentContext(null, [], []);
+        var events = new List<AgentEvent>();
 
         var act = () => AgentLoopRunner.RunAsync(
             [new AgentUserMessage("test")],
             context,
             config,
-            _ => Task.CompletedTask,
+            evt => { events.Add(evt); return Task.CompletedTask; },
             CancellationToken.None);
 
         await act.ShouldThrowAsync<InvalidOperationException>();
         attempts.ShouldBe(4, "should exhaust all 4 retry attempts");
+        var exhausted = events.OfType<ProviderRecoveryEvent>()
+            .Where(recovery => recovery.Stage == ProviderRecoveryStage.Exhausted)
+            .ShouldHaveSingleItem();
+        exhausted.Attempt.ShouldBe(4);
+        exhausted.MaxAttempts.ShouldBe(4);
+        exhausted.Provider.ShouldBe("test-provider");
+        exhausted.ProviderError.ShouldBeNull();
+        exhausted.AuthProfile.ShouldBeNull();
     }
 
     // --- Context overflow compaction tests ---
