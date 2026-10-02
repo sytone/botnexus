@@ -114,11 +114,11 @@ public interface IMemoryStore : IAsyncDisposable
     /// <summary>Leases the oldest pending rows for bounded worker processing.</summary>
     Task<IReadOnlyList<ReembeddingItem>> ClaimReembeddingBatchAsync(string jobId, int batchSize, CancellationToken ct = default)
         => Task.FromException<IReadOnlyList<ReembeddingItem>>(new NotSupportedException("This memory store does not support re-embedding."));
-    /// <summary>Stores a generated vector when the row is still claimed by the running target job.</summary>
-    Task CompleteReembeddingItemAsync(string jobId, string memoryId, int claimedRevision, byte[] embedding, CancellationToken ct = default)
+    /// <summary>Stores a generated vector only while the revision and opaque claim generation still own the row.</summary>
+    Task CompleteReembeddingItemAsync(string jobId, string memoryId, int claimedRevision, string claimToken, byte[] embedding, CancellationToken ct = default)
         => Task.FromException(new NotSupportedException("This memory store does not support re-embedding."));
-    /// <summary>Records a bounded error and makes a claimed row retryable.</summary>
-    Task FailReembeddingItemAsync(string jobId, string memoryId, string error, CancellationToken ct = default)
+    /// <summary>Records a bounded failure only while the revision and opaque claim generation still own the row.</summary>
+    Task FailReembeddingItemAsync(string jobId, string memoryId, int claimedRevision, string claimToken, string error, CancellationToken ct = default)
         => Task.FromException(new NotSupportedException("This memory store does not support re-embedding."));
     /// <summary>Persists a request to stop new claims while retaining progress.</summary>
     Task PauseReembeddingJobAsync(string jobId, CancellationToken ct = default)

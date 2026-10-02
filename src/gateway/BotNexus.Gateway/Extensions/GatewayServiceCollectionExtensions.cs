@@ -48,6 +48,7 @@ using BotNexus.Gateway.Evaluations;
 using BotNexus.Gateway.Abstractions.Evaluations;
 using BotNexus.Agent.Providers.Core.Embeddings;
 using BotNexus.Memory;
+using BotNexus.Memory.Embeddings;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -96,6 +97,11 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<LivenessWatchdogOptions>();
         services.AddOptions<SessionConsistencyOptions>();
         services.AddOptions<SearchAggregationOptions>();
+        services.AddOptions<MemoryReembeddingOptions>()
+            .Validate(options => options.AgentBatchSize is > 0 and <= MemoryReembeddingOptions.MaxAgentBatchSize, $"AgentBatchSize must be between 1 and {MemoryReembeddingOptions.MaxAgentBatchSize}.")
+            .Validate(options => options.ItemBatchSize is > 0 and <= MemoryReembeddingOptions.MaxItemBatchSize, $"ItemBatchSize must be between 1 and {MemoryReembeddingOptions.MaxItemBatchSize}.")
+            .Validate(options => options.PassDelay > TimeSpan.Zero, "PassDelay must be positive.")
+            .Validate(options => options.ItemYieldDelay > TimeSpan.Zero, "ItemYieldDelay must be positive.");
         if (configure is not null)
             services.Configure(configure);
         if (config is not null)
@@ -167,17 +173,15 @@ public static class GatewayServiceCollectionExtensions
         // empty - composition populates it only for providers that opted in, and an empty
         // registry resolves every key to absent, which is the lexical-only default.
         services.TryAddSingleton<EmbeddingProviderRegistry>();
+        services.TryAddSingleton<IMemoryEmbeddingService>(serviceProvider =>
+            MemoryEmbeddingComposition.Build(
+                serviceProvider.GetService<IOptions<MemoryEmbeddingsConfig>>()?.Value,
+                serviceProvider.GetService<EmbeddingProviderRegistry>(),
+                serviceProvider.GetService<ILoggerFactory>()));
         services.TryAddSingleton<IMemoryStoreFactory>(serviceProvider =>
         {
             var workspaceManager = serviceProvider.GetRequiredService<IAgentWorkspaceManager>();
             var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
-            // #2855: built here rather than inside BotNexus.Memory so that project keeps its
-            // zero dependency on the provider stack. An absent or disabled section yields
-            // MemoryEmbeddingService.Disabled and the store behaves exactly as it does today.
-            var embeddings = MemoryEmbeddingComposition.Build(
-                serviceProvider.GetService<IOptions<MemoryEmbeddingsConfig>>()?.Value,
-                serviceProvider.GetService<EmbeddingProviderRegistry>(),
-                serviceProvider.GetService<ILoggerFactory>());
             return new EmbeddingAwareMemoryStoreFactory(agentId =>
             {
                 var agentDirectory = workspaceManager is FileAgentWorkspaceManager fileWorkspaces
@@ -186,7 +190,7 @@ public static class GatewayServiceCollectionExtensions
                         ?? throw new InvalidOperationException($"Agent '{agentId}' workspace has no parent directory.");
                 return fileSystem.Path.Combine(agentDirectory, "data", "memory.sqlite");
             },
-            embeddings,
+            serviceProvider.GetRequiredService<IMemoryEmbeddingService>(),
             fileSystem,
             serviceProvider.GetService<ILoggerFactory>(),
             serviceProvider.GetRequiredService<IAgentRegistry>());
@@ -511,6 +515,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddHostedService<LegacyToolInvocationBackfillHostedService>();
         services.AddHostedService<SubAgentWorkspaceSweepHostedService>();
         services.AddHostedService<MemoryIndexer>();
+        services.AddHostedService<MemoryReembeddingWorker>();
 
         // #2956: converge memory rows left behind by sessions deleted while the gateway was down
         // (or before the delete path existed). Fails closed on a session-corpus scan error.
