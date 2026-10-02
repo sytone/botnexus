@@ -118,29 +118,8 @@ public sealed class PortalLoadService : IPortalLoadService
             // #2532: one shared walk, terminating on the server's hasMore flag.
             await ReloadSessionRosterAsync(cancellationToken);
 
-            var selectedAgentId = agents.OrderBy(a => a.DisplayName).FirstOrDefault()?.AgentId;
-            if (selectedAgentId is not null)
-            {
-                _store.SelectView(selectedAgentId, string.Empty, SelectionSource.Bootstrap);
-
-                var selectedAgent = _store.GetAgent(selectedAgentId);
-                while (selectedAgent is not null)
-                {
-                    var selectedConversation = selectedAgent.Conversations.Values
-                        .OrderByDescending(c => c.IsDefault)
-                        .ThenByDescending(c => c.UpdatedAt)
-                        .FirstOrDefault();
-
-                    if (selectedConversation is null)
-                        break;
-
-                    _store.SetActiveConversation(selectedAgentId, selectedConversation.ConversationId);
-                    await LoadInitialHistoryAsync(selectedAgent!, selectedConversation, cancellationToken);
-
-                    if (selectedAgent.Conversations.ContainsKey(selectedConversation.ConversationId))
-                        break;
-                }
-            }
+            // Bootstrap loads data only. The page route owns visible agent/conversation identity;
+            // agent-only routes are canonicalized through the MRU/cold-start resolver in Home.
 
             // Wire conversation-refresh delegate so ConversationChanged SignalR events
             // trigger a REST re-fetch of the conversation list for the affected agent.
@@ -312,7 +291,9 @@ public sealed class PortalLoadService : IPortalLoadService
 
     /// <inheritdoc />
     public Task RefreshAsync(CancellationToken cancellationToken = default) =>
-        RefreshCoreAsync(_store.ActiveConversationId, cancellationToken);
+        RefreshCoreAsync(
+            (_store as IDisplayedConversation)?.DisplayedConversationIdFor(_store.ActiveAgentId),
+            cancellationToken);
 
     /// <inheritdoc />
     public Task RefreshAsync(

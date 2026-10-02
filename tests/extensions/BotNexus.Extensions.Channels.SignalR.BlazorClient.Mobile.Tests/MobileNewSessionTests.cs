@@ -42,7 +42,6 @@ public sealed class MobileNewSessionTests : IDisposable
             DisplayName = "Agent 1",
             Emoji = null,
             SessionId = "session-1",
-            ActiveConversationId = "conv-1"
         };
         agentState.Conversations["conv-1"] = convState;
 
@@ -57,7 +56,7 @@ public sealed class MobileNewSessionTests : IDisposable
         _ctx.Services.AddSingleton(_store);
         var displayedConversation = Substitute.For<IDisplayedConversation>();
         displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
-            .Returns(call => call.Arg<string?>() is { } agentId ? _store.GetAgent(agentId)?.ActiveConversationId : null);
+            .Returns(call => call.Arg<string?>() is { } agentId ? (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agentId) : null);
         _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
@@ -70,7 +69,7 @@ public sealed class MobileNewSessionTests : IDisposable
     [Fact]
     public void NewSession_button_shows_confirm_dialog()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // Open the overflow menu
         cut.Find(".overflow-btn").Click();
@@ -88,7 +87,7 @@ public sealed class MobileNewSessionTests : IDisposable
     [Fact]
     public async Task NewSession_confirm_calls_ResetSessionAsync()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // Open menu and click "New session"
         cut.Find(".overflow-btn").Click();
@@ -104,7 +103,7 @@ public sealed class MobileNewSessionTests : IDisposable
     [Fact]
     public void NewSession_cancel_hides_dialog()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // Open menu and click "New session"
         cut.Find(".overflow-btn").Click();
@@ -123,7 +122,7 @@ public sealed class MobileNewSessionTests : IDisposable
     [Fact]
     public void NewSession_overlay_backdrop_click_cancels()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // Open menu and click "New session"
         cut.Find(".overflow-btn").Click();
@@ -142,7 +141,7 @@ public sealed class MobileNewSessionTests : IDisposable
     [Fact]
     public void NewSession_scrolls_to_bottom_after_reset()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // Open menu and click "New session"
         cut.Find(".overflow-btn").Click();

@@ -45,7 +45,7 @@ try {
     { type: 'text_end' }, { type: 'done', stopReason: 'stop' }
   ] } }, null, 2));
   fs.writeFileSync(`${home}/config.json`, JSON.stringify({
-    gateway: { listenUrl: 'http://127.0.0.1:5000', defaultAgentId: 'evidence-agent', extensionLoader: { enabled: true } },
+    gateway: { listenUrl: 'http://127.0.0.1:5000', defaultAgentId: 'evidence-agent', extensionLoader: { enabled: true }, autoUpdate: { sourcePath: '/app/source', branch: 'main' } },
     providers: { 'integration-mock': { api: 'integration-mock', baseUrl: catalog, defaultModel: 'integration-mock-echo', enabled: true } },
     agents: { 'evidence-agent': { displayName: 'Evidence Agent', provider: 'integration-mock', model: 'integration-mock-echo', enabled: true } }
   }, null, 2));

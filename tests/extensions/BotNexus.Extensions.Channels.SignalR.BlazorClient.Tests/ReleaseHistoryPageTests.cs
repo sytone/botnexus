@@ -42,10 +42,7 @@ public sealed class ReleaseHistoryPageTests : IDisposable
             attempts++;
             return Task.FromResult(attempts == 1
                 ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
-                : new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent("{\"schemaVersion\":\"1.0.0\",\"releases\":[]}", Encoding.UTF8, "application/json")
-                });
+                : JsonResponse("""{"schemaVersion":"1.0.0","releases":[]}"""));
         }));
 
         var cut = _ctx.Render<ReleaseHistory>();
@@ -186,6 +183,42 @@ public sealed class ReleaseHistoryPageTests : IDisposable
     }
 
     [Fact]
+    public void Renders_running_release_and_remote_distance()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            schemaVersion = "1.0.0",
+            releases = System.Text.Json.JsonDocument.Parse(SingleReleaseJson("2.0.0", "2222222222222222222222222222222222222222")).RootElement.GetProperty("releases"),
+            sourceStatus = SourceStatus(remoteBehind: 14, releaseAhead: 3)
+        });
+        RegisterJson(json);
+
+        var cut = _ctx.Render<ReleaseHistory>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var status = cut.Find("[data-testid='release-source-status']").TextContent;
+            Assert.Contains("3 commits ahead of release 2.0.0", status, StringComparison.Ordinal);
+            Assert.Contains("14 commits behind origin/main", status, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
+    public void Uses_same_origin_gateway_endpoint()
+    {
+        Uri? requestedUri = null;
+        RegisterClient(new DelegateHandler((request, _) =>
+        {
+            requestedUri = request.RequestUri;
+            return Task.FromResult(JsonResponse("""{"schemaVersion":"1.0.0","releases":[]}"""));
+        }));
+
+        var cut = _ctx.Render<ReleaseHistory>();
+
+        cut.WaitForAssertion(() => Assert.Equal("http://localhost/api/release-history", requestedUri?.ToString()));
+    }
+
+    [Fact]
     public void Normalizes_canonical_markdown_summary_to_plain_text()
     {
         RegisterJson(SingleReleaseJson("2.0.0", "2222222222222222222222222222222222222222", "**portal:** Add [fictional guide](https://sytone.github.io/botnexus/user-guide/fictional)"));
@@ -205,13 +238,54 @@ public sealed class ReleaseHistoryPageTests : IDisposable
         ]}
         """;
 
-    private static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)
+    private static HttpResponseMessage JsonResponse(string json)
     {
-        Content = new StringContent(json, Encoding.UTF8, "application/json")
-    };
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var response = root.TryGetProperty("sourceStatus", out _)
+            ? json
+            : System.Text.Json.JsonSerializer.Serialize(new
+            {
+                schemaVersion = root.GetProperty("schemaVersion").GetString(),
+                releases = root.GetProperty("releases"),
+                sourceStatus = SourceStatus()
+            });
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(response, Encoding.UTF8, "application/json")
+        };
+    }
 
     private void RegisterJson(string json) =>
         RegisterClient(new DelegateHandler((_, _) => Task.FromResult(JsonResponse(json))));
+
+    private static object SourceStatus(int remoteBehind = 0, int releaseAhead = 0) => new
+    {
+        runningCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        runningCommitShort = "aaaaaaa",
+        checkoutHead = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        checkoutHeadShort = "aaaaaaa",
+        latestReleaseVersion = "2.0.0",
+        latestReleaseCommit = "2222222222222222222222222222222222222222",
+        releaseDistance = new
+        {
+            targetCommit = "2222222222222222222222222222222222222222",
+            targetCommitShort = "2222222",
+            ahead = releaseAhead,
+            behind = 0
+        },
+        remoteName = "origin",
+        remoteBranch = "main",
+        remoteHead = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        remoteDistance = new
+        {
+            targetCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            targetCommitShort = "bbbbbbb",
+            ahead = 0,
+            behind = remoteBehind
+        },
+        remoteRefreshError = (string?)null
+    };
 
     private void RegisterClient(HttpMessageHandler handler)
     {

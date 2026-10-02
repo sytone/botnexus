@@ -7,6 +7,12 @@ WORKDIR /src
 ARG SOURCE_COMMIT
 RUN test "$(printf '%s' "$SOURCE_COMMIT" | grep -E '^[0-9a-f]{40}$')" = "$SOURCE_COMMIT"
 COPY . .
+RUN git init -b main \
+ && git config user.name 'BotNexus Evidence' \
+ && git config user.email 'evidence@botnexus.invalid' \
+ && git add --force . \
+ && git commit -m 'chore: materialize evidence source' \
+ && git update-ref refs/remotes/origin/main HEAD
 RUN dotnet restore src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj -p:NuGetAudit=false \
  && dotnet publish src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj -c Release -o /app/publish --no-restore -p:NuGetAudit=false \
  && extension=BotNexus.Extensions.Channels.SignalR \
@@ -27,6 +33,7 @@ WORKDIR /app
 COPY --from=build /app/publish /app/publish
 COPY --from=build /app/extensions /app/extensions
 COPY --from=build /app/playwright /app/playwright
+COPY --from=build /src /app/source
 COPY --from=build /app/source-commit /app/source-commit
 COPY --from=build /app/source-tree /app/source-tree
 COPY --from=build /app/playwright/node /usr/local/bin/node

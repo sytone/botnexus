@@ -17,7 +17,6 @@ public sealed class GatewayEventHandlerTests
             DisplayName = "Agent 1",
             IsConnected = true,
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         });
 
         var agent = _store.GetAgent("agent-1")!;
@@ -746,7 +745,7 @@ public sealed class GatewayEventHandlerTests
         };
         _store.RegisterSession("agent-1", "sess-2");
 
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
             SubAgentId: "sub-1",
@@ -763,7 +762,7 @@ public sealed class GatewayEventHandlerTests
             ChildSessionId: null,
             ConversationId: "conv-1"));
 
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _handler.HandleSubAgentCompleted(new SubAgentEventPayload(
             SessionId: "sess-1",
@@ -799,7 +798,7 @@ public sealed class GatewayEventHandlerTests
         };
         _store.RegisterSession("agent-1", "sess-2");
 
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
             SubAgentId: "sub-2",
@@ -816,7 +815,7 @@ public sealed class GatewayEventHandlerTests
             ChildSessionId: null,
             ConversationId: "conv-1"));
 
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _handler.HandleSubAgentFailed(new SubAgentEventPayload(
             SessionId: "sess-1",
@@ -852,7 +851,7 @@ public sealed class GatewayEventHandlerTests
         };
         _store.RegisterSession("agent-1", "sess-2");
 
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
             SubAgentId: "sub-3",
@@ -869,7 +868,7 @@ public sealed class GatewayEventHandlerTests
             ChildSessionId: null,
             ConversationId: "conv-1"));
 
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _handler.HandleSubAgentKilled(new SubAgentEventPayload(
             SessionId: "sess-1",
@@ -978,7 +977,7 @@ public sealed class GatewayEventHandlerTests
             Title = "New Conversation",
             ActiveSessionId = null   // not yet set before REST refresh
         };
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
         // Simulate RegisterSession being called after SendMessageAsync returns sess-2
         _store.RegisterSession("agent-1", "sess-2");
 
@@ -1005,7 +1004,7 @@ public sealed class GatewayEventHandlerTests
             Title = "New Conversation",
             ActiveSessionId = null
         };
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _store.RegisterSession("agent-1", "sess-2");
 

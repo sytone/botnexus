@@ -15,7 +15,8 @@ Docker or Podman must be installed and able to build Linux containers. The norma
 pwsh -NoProfile -File skills/botnexus-ui-evidence/Invoke-BotNexusUiEvidence.ps1 `
   -RepositoryPath <worktree> -OutputDirectory <empty-output-directory> `
   -ViewportWidth 1440 -ViewportHeight 1000 -PromptKey SLOW_STREAM `
-  -Selectors '[data-testid="streaming-badge"]','[data-testid="chat-abort-btn"]' `
+  -PagePath '/release-history' `
+  -Selectors '[data-testid="release-source-status"]','[data-testid="release-history-entry"]' `
   -AccessibleNames 'Stop agent','Expand composer'
 ```
 
@@ -23,7 +24,7 @@ The image is built from the current worktree, including tracked and untracked so
 
 ## Outputs and failure behavior
 
-The output directory receives only `portal.png` and `evidence.json`. `evidence.json` follows `evidence.schema.json` and records source commit/tree, scenario, viewport, screenshot SHA-256, selector/accessibility/active-run assertions, the rendered accessible-name census for all four active-run controls, UTC timestamps, and cleanup state. Any missing selector or exact accessible name, inactive run, browser error, corrupt/empty artifact, or hash mismatch fails closed. The portable active-run defaults require the streaming badge and stop control; add transient content selectors such as `streaming-message` only when the candidate scenario guarantees their visibility at capture time.
+The workflow first proves a real active integration-mock run, then navigates to `PagePath` and validates the requested selectors before capture. The output directory receives only `portal.png` and `evidence.json`. `evidence.json` follows `evidence.schema.json` and records source commit/tree, scenario, viewport, screenshot SHA-256, selector/accessibility/active-run assertions, the rendered accessible-name census for all four active-run controls, UTC timestamps, and cleanup state. Any missing selector or exact accessible name, inactive run, browser error, corrupt/empty artifact, or hash mismatch fails closed. The portable active-run defaults require the streaming badge and stop control; add transient content selectors such as `streaming-message` only when the candidate scenario guarantees their visibility at capture time.
 
 The container, named volume, temporary image, gateway, browser, home, and data are removed on success or failure. The manifest is marked `containerRemoved: true` only after host cleanup. If image build or container startup is unavailable, stop and report that infrastructure failure rather than attempting a host fallback.
 

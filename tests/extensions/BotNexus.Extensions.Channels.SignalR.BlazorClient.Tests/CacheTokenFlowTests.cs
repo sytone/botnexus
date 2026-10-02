@@ -17,7 +17,6 @@ public sealed class CacheTokenFlowTests
             DisplayName = "Agent",
             IsConnected = true,
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         });
         var agent = store.GetAgent("agent-1")!;
         agent.Conversations["conv-1"] = new ConversationState

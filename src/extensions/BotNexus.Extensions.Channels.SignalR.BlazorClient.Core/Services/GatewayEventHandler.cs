@@ -23,7 +23,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     // #3212: the ONLY visibility source this handler has. Every "is the user looking at this pane"
     // decision -- unread counts, badge suppression, recovery-path bracket clearing -- goes through
     // this route-derived predicate. The handler deliberately holds no ambient fallback of its own:
-    // AgentState.ActiveConversationId is a per-agent last-selected marker, not an answer about what
+    // the deleted per-agent conversation marker is a per-agent last-selected marker, not an answer about what
     // is rendered, and consulting it made N agents simultaneously "active" while the browser showed
     // exactly one. Do not reintroduce a read of it here.
     private readonly IDisplayedConversation _displayed;
@@ -804,9 +804,10 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (agent is null)
         {
             // Fallback: find agent owning this session
-            agent = _store.Agents.Values.FirstOrDefault(a =>
-                a.ActiveConversationSessionId == payload.SessionId ||
-                a.SessionId == payload.SessionId);
+            agent = _store.Agents.Values.FirstOrDefault(candidate =>
+                candidate.Conversations.Values.Any(conversation =>
+                    string.Equals(conversation.ActiveSessionId, payload.SessionId, StringComparison.Ordinal))
+                || candidate.SessionId == payload.SessionId);
         }
 
         if (agent is null) return;
@@ -1016,7 +1017,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     /// itself carries: the stamped conversation id, or the session-to-conversation binding.
     /// </summary>
     /// <remarks>
-    /// #3212 deleted the trailing <c>?? agent.ActiveConversationId</c> attribution fallback that used
+    /// #3212 deleted the trailing <c>?? agent.ambient conversation state</c> attribution fallback that used
     /// to close this method. That fallback attributed an event which named no conversation to
     /// whichever conversation the agent happened to have selected last -- an arbitrary target that
     /// could append another conversation's messages, tool cards and errors into the one on screen.
