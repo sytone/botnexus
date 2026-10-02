@@ -30,8 +30,10 @@ internal sealed class AgentConfigurationHostedService(
     private readonly Lock _sync = new();
     private readonly List<IDisposable> _watchers = [];
     private readonly Dictionary<IAgentConfigurationSource, IReadOnlyList<AgentDescriptor>> _latestSourceDescriptors = [];
+    private readonly Dictionary<IAgentConfigurationSource, long> _sourceRevisions = [];
     private readonly Dictionary<string, AgentDescriptor> _appliedConfigDescriptors = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> _codeBasedAgentIds = new(StringComparer.OrdinalIgnoreCase);
+    private bool _starting;
 
     private CancellationTokenSource? _debounceCts;
     private Task _debounceTask = Task.CompletedTask;
@@ -45,8 +47,22 @@ internal sealed class AgentConfigurationHostedService(
             .Select(descriptor => descriptor.AgentId.Value)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        lock (_sync)
+            _starting = true;
+
         foreach (var source in _sources)
         {
+            var watcher = source.Watch(descriptors => OnSourceChanged(source, descriptors));
+            if (watcher is not null)
+                _watchers.Add(watcher);
+        }
+
+        foreach (var source in _sources)
+        {
+            long revisionBeforeLoad;
+            lock (_sync)
+                revisionBeforeLoad = GetSourceRevision(source);
+
             IReadOnlyList<AgentDescriptor> descriptors;
             try
             {
@@ -60,16 +76,15 @@ internal sealed class AgentConfigurationHostedService(
 
             lock (_sync)
             {
-                _latestSourceDescriptors[source] = descriptors;
-                ApplyMergedDescriptors();
+                if (GetSourceRevision(source) == revisionBeforeLoad)
+                    _latestSourceDescriptors[source] = descriptors;
             }
         }
 
-        foreach (var source in _sources)
+        lock (_sync)
         {
-            var watcher = source.Watch(descriptors => OnSourceChanged(source, descriptors));
-            if (watcher is not null)
-                _watchers.Add(watcher);
+            _starting = false;
+            ApplyMergedDescriptors();
         }
     }
 
@@ -91,9 +106,14 @@ internal sealed class AgentConfigurationHostedService(
         lock (_sync)
         {
             _latestSourceDescriptors[source] = descriptors;
-            ScheduleDebouncedApply();
+            _sourceRevisions[source] = GetSourceRevision(source) + 1;
+            if (!_starting)
+                ScheduleDebouncedApply();
         }
     }
+
+    private long GetSourceRevision(IAgentConfigurationSource source)
+        => _sourceRevisions.GetValueOrDefault(source);
 
     /// <summary>
     /// Resets the debounce timer. When the timer fires after the configured quiet period,

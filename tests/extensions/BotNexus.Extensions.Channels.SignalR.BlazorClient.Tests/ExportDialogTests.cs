@@ -32,7 +32,7 @@ public sealed class ExportDialogTests : IDisposable
             new ConversationSummaryDto("c-1", "agent-1", "Review", false, "Active", "s-1", 0,
                 DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.SetActiveConversation("agent-1", "c-1");
+        _store.SelectView("agent-1", "c-1", SelectionSource.RouteNavigation);
     }
 
     public void Dispose() => _ctx.Dispose();
@@ -168,5 +168,5 @@ public sealed class ExportDialogTests : IDisposable
     }
 
     private IRenderedComponent<ChatPanel> Render() =>
-        _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "c-1"));
 }

@@ -1100,6 +1100,7 @@ else
             return;
 
         await Interaction.ArchiveConversationAsync(agentId, conversation.ConversationId);
+        Nav.NavigateTo($"agent/{Uri.EscapeDataString(agentId)}");
     }
 
     private async Task DoArchive()
@@ -1108,6 +1109,7 @@ else
         _archiveTarget = null;
         if (target is null || DisplayedAgentId is not { } agentId) return;
         await Interaction.ArchiveConversationAsync(agentId, target.ConversationId);
+        Nav.NavigateTo($"agent/{Uri.EscapeDataString(agentId)}");
     }
 
     private void CancelArchive()
