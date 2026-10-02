@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Cron;
 
@@ -57,6 +58,19 @@ public sealed record CronExecutionContext
     /// </para>
     /// </summary>
     public string? DeliveryError { get; private set; }
+
+    /// <summary>
+    /// Authoritative completion disposition reported by an agent-backed action, or <c>null</c>
+    /// when the action has no agent-run completion concept.
+    /// </summary>
+    public RunCompletionSignal? RunCompletion { get; private set; }
+
+    /// <summary>Records the agent run's authoritative completion disposition.</summary>
+    public void RecordRunCompletion(RunCompletionSignal completion)
+    {
+        ArgumentNullException.ThrowIfNull(completion);
+        RunCompletion ??= completion;
+    }
 
     public void RecordSessionId(SessionId sessionId)
     {

@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -65,6 +66,7 @@ internal sealed class ProviderCommand
         command.AddCommand(listCommand);
         command.AddCommand(BuildAddCommand(verboseOption, targetOption));
         command.AddCommand(BuildRemoveCommand(verboseOption, targetOption));
+        command.AddCommand(BuildTestCommand());
         command.AddCommand(CopilotProviderSubcommand.Build(
             verboseOption, targetOption,
             (configPath, home, verbose, instance, ct) => ExecuteCopilotSetupAsync(configPath, home, verbose, instance, ct)));
@@ -127,6 +129,27 @@ internal sealed class ProviderCommand
 
             context.ExitCode = await new ProviderCommand().ExecuteAddAsync(
                 configPath, name, api, apiKey, baseUrl, defaultModel, models, enabled: !disabled, verbose, CancellationToken.None);
+        });
+
+        return cmd;
+    }
+
+    private static Command BuildTestCommand()
+    {
+        var cmd = new Command("test", "Validate a provider through the running gateway's live registry and credential path.");
+        var nameOpt = new Option<string>("--name", "Provider instance name to validate.") { IsRequired = true };
+        var urlOpt = new Option<string>("--url", () => GatewayClientFactory.DefaultUrl, "Gateway base URL.");
+        var tokenOpt = new Option<string?>("--token", "Gateway API credential. Required when --url is not the local gateway.");
+
+        cmd.AddOption(nameOpt);
+        cmd.AddOption(urlOpt);
+        cmd.AddOption(tokenOpt);
+        cmd.SetHandler(async context =>
+        {
+            var name = context.ParseResult.GetValueForOption(nameOpt)!;
+            var url = context.ParseResult.GetValueForOption(urlOpt) ?? GatewayClientFactory.DefaultUrl;
+            var token = context.ParseResult.GetValueForOption(tokenOpt);
+            context.ExitCode = await ExecuteTestAsync(url, name, context.GetCancellationToken(), token);
         });
 
         return cmd;
@@ -223,6 +246,90 @@ internal sealed class ProviderCommand
             "  Restart required: [green]no[/] when the running gateway receives the configuration reload; " +
             "verify the provider appears in its live model catalogue before assigning an agent.");
     }
+
+    internal static async Task<int> ExecuteTestAsync(
+        string baseUrl,
+        string name,
+        CancellationToken cancellationToken,
+        string? token = null)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            AnsiConsole.MarkupLine("[red]--name is required.[/]");
+            return 1;
+        }
+
+        var resolution = GatewayClientFactory.Resolve(
+            baseUrl,
+            TimeSpan.FromSeconds(15),
+            token,
+            GatewayClientFactory.DefaultCredentialSource());
+        if (resolution.Client is null)
+        {
+            AnsiConsole.MarkupLine("[red]{0}[/]", CliText.SafeDisplay(resolution.RefusalMessage!));
+            return 1;
+        }
+
+        using var client = resolution.Client;
+        try
+        {
+            using var response = await client.GetAsync(
+                $"/api/providers/{Uri.EscapeDataString(name)}/health",
+                cancellationToken).ConfigureAwait(false);
+            ProviderHealthReceipt? health = null;
+            try
+            {
+                health = await response.Content.ReadFromJsonAsync<ProviderHealthReceipt>(
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            catch (JsonException) when (!response.IsSuccessStatusCode)
+            {
+                // Error responses may use the gateway's ordinary string/problem-details shape.
+                // Status is still authoritative; never mistake that body mismatch for readiness.
+            }
+
+            if (response.IsSuccessStatusCode && health is { Status: "healthy" })
+            {
+                AnsiConsole.MarkupLine(
+                    "[green]✓[/] Provider [green]{0}[/] is active and validated by the running gateway.",
+                    CliText.SafeDisplay(name));
+                AnsiConsole.MarkupLine("  Models: {0}", health.Models);
+                AnsiConsole.MarkupLine("  Credentials: [green]resolved[/]");
+                return 0;
+            }
+
+            AnsiConsole.MarkupLine(
+                "[red]Provider {0} is not ready in the running gateway.[/]",
+                CliText.SafeDisplay(name));
+            if (!string.IsNullOrWhiteSpace(health?.Error))
+                AnsiConsole.MarkupLine("  {0}", CliText.SafeDisplay(health.Error));
+            else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                AnsiConsole.MarkupLine("  The provider is absent from the live model registry; wait for configuration reload or inspect the running gateway configuration.");
+            else
+                AnsiConsole.MarkupLine("  Gateway health check returned HTTP {0}.", (int)response.StatusCode);
+            return 1;
+        }
+        catch (HttpRequestException ex)
+        {
+            AnsiConsole.MarkupLine(
+                "[red]Cannot reach gateway at {0}:[/] {1}",
+                CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)),
+                CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
+            return 1;
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            AnsiConsole.MarkupLine("[red]Provider validation timed out.[/]");
+            return 1;
+        }
+        catch (JsonException)
+        {
+            AnsiConsole.MarkupLine("[red]The running gateway returned an invalid provider health response.[/]");
+            return 1;
+        }
+    }
+
+    private sealed record ProviderHealthReceipt(string Status, int Models, bool HasCredentials, string? Error);
 
     /// <summary>Raw-document paths used by provider dependency checks and mutations.</summary>
     private const string ProvidersPath = "providers";

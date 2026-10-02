@@ -97,12 +97,6 @@ public interface IClientStateStore
     /// <summary>Get a conversation state by conversation ID (searches all agents).</summary>
     ConversationState? GetConversation(string conversationId);
 
-    /// <summary>Set active conversation for an agent, updating both agent and global selection.</summary>
-    void SetActiveConversation(string agentId, string conversationId);
-
-    /// <summary>The active conversation ID for the active agent.</summary>
-    string? ActiveConversationId { get; }
-
     // ── Message operations ───────────────────────────────────────────────────
 
     /// <summary>Get messages for the given conversation.</summary>
@@ -233,16 +227,6 @@ public sealed class AgentState
     /// <summary>Active session ID (last established).</summary>
     public string? SessionId { get; set; }
 
-    /// <summary>
-    /// The session ID for the currently active conversation.
-    /// Prefers the active conversation's ActiveSessionId over the agent-level SessionId.
-    /// Use this for actions that target the current conversation (Steer, Abort, Reset, Compact).
-    /// </summary>
-    public string? ActiveConversationSessionId =>
-        ActiveConversationId is not null && Conversations.TryGetValue(ActiveConversationId, out var conv)
-            ? conv.ActiveSessionId ?? SessionId
-            : SessionId;
-
     /// <summary>Channel type for this session.</summary>
     public string? ChannelType { get; set; }
 
@@ -285,9 +269,6 @@ public sealed class AgentState
 
     /// <summary>Whether thinking blocks are visible in the chat panel.</summary>
     public bool ShowThinking { get; set; } = true;
-
-    /// <summary>The currently selected conversation ID for this agent.</summary>
-    public string? ActiveConversationId { get; set; }
 
     /// <summary>Whether the conversation list has been loaded from REST.</summary>
     public bool ConversationsLoaded { get; set; }

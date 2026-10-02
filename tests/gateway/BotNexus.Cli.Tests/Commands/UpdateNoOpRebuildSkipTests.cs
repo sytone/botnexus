@@ -71,7 +71,7 @@ public sealed class UpdateNoOpRebuildSkipTests
     private static IGatewayProcessManager NewProcessManager(bool gatewayRunning = true)
     {
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(true, null));
         pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStartResult(true, 4242, null));
@@ -339,7 +339,7 @@ public sealed class UpdateNoOpRebuildSkipTests
             await cmd.ExecuteAsync(root, root, port: FreePort(), verbose: false, CancellationToken.None);
 
             cmd.BuildAndDeployCalls.ShouldBe(1);
-            await pm.Received(1).StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+            await pm.Received(1).StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>());
         }
         finally
         {
@@ -402,7 +402,7 @@ public sealed class UpdateNoOpRebuildSkipTests
 
             exitCode.ShouldBe(0);
             cmd.BuildAndDeployCalls.ShouldBe(0);
-            await pm.DidNotReceive().StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+            await pm.DidNotReceive().StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>());
             await pm.DidNotReceive().StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>());
         }
         finally

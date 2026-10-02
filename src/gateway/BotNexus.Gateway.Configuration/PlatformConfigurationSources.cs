@@ -32,6 +32,24 @@ namespace BotNexus.Gateway.Configuration;
 /// </remarks>
 public static class PlatformConfigurationSources
 {
+    private const string GeneratedProjectionFileName = "config.json";
+
+    /// <summary>
+    /// Builds the effective configuration rooted at a BotNexus home.
+    /// </summary>
+    /// <remarks>
+    /// This is the ordinary runtime composition boundary. Backend names are resolved here rather
+    /// than accepted from callers, so generated projections cannot become configuration identity.
+    /// </remarks>
+    public static IOptionsMonitor<PlatformConfig> BuildMonitorForHome(
+        string homePath,
+        Action<string, Exception?>? onLoadFailure = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(homePath);
+
+        return BuildMonitor(Path.Combine(homePath, GeneratedProjectionFileName), onLoadFailure);
+    }
+
     /// <summary>
     /// Adds the platform configuration sources for <paramref name="configPath"/>, in precedence
     /// order.

@@ -46,6 +46,9 @@ public sealed record SubAgentInfo
     /// </summary>
     public ConversationId? ChildConversationId { get; init; }
 
+    /// <summary>Gets the supervisor conversation that owns this run.</summary>
+    public ConversationId? ParentConversationId { get; init; }
+
     /// <summary>
     /// Gets the delegated task assigned to the sub-agent.
     /// </summary>
@@ -80,6 +83,12 @@ public sealed record SubAgentInfo
     /// Gets the number of turns consumed by the sub-agent.
     /// </summary>
     public int TurnsUsed { get; init; }
+
+    /// <summary>Gets the effective turn ceiling enforced for this run, or null when unknown.</summary>
+    public int? EffectiveMaxTurns { get; init; }
+
+    /// <summary>Gets the effective wall-clock budget in seconds, or null when unknown.</summary>
+    public int? EffectiveTimeoutSeconds { get; init; }
 
     /// <summary>
     /// Gets an optional completion summary produced by the sub-agent.

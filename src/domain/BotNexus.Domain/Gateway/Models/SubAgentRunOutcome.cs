@@ -33,11 +33,10 @@ public sealed record SubAgentRecoveredToolFailure(
 /// </para>
 /// </remarks>
 /// <param name="FailedToolCount">
-/// Number of tool invocations in the run that ended in error. Zero for a clean run.
+/// Number of tool invocations in the run that ended in error or remained incomplete. Zero for a clean run.
 /// </param>
 /// <param name="LastToolError">
-/// The error text of the LAST failing tool invocation, or <c>null</c> when none failed or the
-/// failing tool produced no textual result. Last rather than first, matching the upstream
+/// The error text of the LAST failing or incomplete tool invocation, or <c>null</c> when none failed. Last rather than first, matching the upstream
 /// <c>findLast</c> analogue: the terminal failure is the one that explains why the run ended where
 /// it did.
 /// </param>
@@ -99,7 +98,7 @@ public sealed record SubAgentRunOutcome(
         for (var index = 0; index < response.ToolCalls.Count; index++)
         {
             var call = response.ToolCalls[index];
-            if (!call.IsError)
+            if (!call.IsError && !call.IsIncomplete)
                 continue;
 
             failedCount++;
@@ -109,7 +108,9 @@ public sealed record SubAgentRunOutcome(
             // string with null. Otherwise the diagnostic handed to the parent degrades to "a tool
             // failed" precisely when the run failed most.
             var error = string.IsNullOrWhiteSpace(call.ResultContent)
-                ? $"tool '{call.ToolName}' failed without producing an error message"
+                ? call.IsIncomplete
+                    ? $"tool '{call.ToolName}' did not complete"
+                    : $"tool '{call.ToolName}' failed without producing an error message"
                 : call.ResultContent;
 
             lastToolError = error;

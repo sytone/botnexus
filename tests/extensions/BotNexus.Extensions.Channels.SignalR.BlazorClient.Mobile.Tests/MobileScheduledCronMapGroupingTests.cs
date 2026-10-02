@@ -206,7 +206,6 @@ public sealed class MobileScheduledCronMapGroupingTests : IDisposable
         AgentId = "keel",
         DisplayName = "Keel",
         IsConnected = true,
-        ActiveConversationId = "plain"
     };
 
     private static void Add(AgentState agent, ConversationState conv)

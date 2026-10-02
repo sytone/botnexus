@@ -136,6 +136,38 @@ public sealed class ExportControllerRouteTests
     }
 
     [Fact]
+    public async Task SessionExport_ContentOptions_FilterSensitiveEntries()
+    {
+        var (conversations, sessions, _) = await SeedAsync();
+        var session = await sessions.GetAsync(SessionId.From("s-1"))
+            ?? throw new InvalidOperationException("Expected seeded session.");
+        session.AddEntry(new SessionEntry { Role = MessageRole.System, Content = "private instructions", Timestamp = Ts(2) });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool,
+            Content = "tool result",
+            ToolName = "read",
+            ToolArgs = "{\"path\":\"private\"}",
+            Timestamp = Ts(3)
+        });
+        await sessions.SaveAsync(session);
+        var controller = new SessionsController(sessions, conversations: conversations);
+
+        var result = await controller.ExportTranscript(
+            "s-1",
+            "html",
+            includeTools: false,
+            includeThinking: false,
+            includeSystemMessages: false,
+            redactSecrets: true);
+
+        var html = System.Text.Encoding.UTF8.GetString(result.ShouldBeOfType<FileContentResult>().FileContents);
+        html.ShouldNotContain("private instructions");
+        html.ShouldNotContain("tool result");
+        html.ShouldNotContain("private");
+    }
+
+    [Fact]
     public async Task SessionExport_UnknownFormat_ReturnsBadRequest()
     {
         var (conversations, sessions, _) = await SeedAsync();

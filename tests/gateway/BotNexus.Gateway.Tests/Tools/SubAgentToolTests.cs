@@ -425,7 +425,7 @@ public sealed class SubAgentToolTests
         using var document = JsonDocument.Parse(ReadText(result));
 
         document.RootElement.GetProperty("subAgentId").GetString().ShouldBe("sub-123");
-        document.RootElement.GetProperty("status").GetInt32().ShouldBe((int)SubAgentStatus.Completed);
+        document.RootElement.GetProperty("status").GetString().ShouldBe(nameof(SubAgentStatus.Completed));
         document.RootElement.GetProperty("resultSummary").GetString().ShouldBe("Done");
     }
 

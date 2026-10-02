@@ -69,28 +69,26 @@ public static class GatewayProbeUrlResolver
     }
 
     /// <summary>
-    /// Reads the configured listen URL from the default config location and resolves against it.
+    /// Reads the configured listen URL from a BotNexus home and resolves against it.
     /// </summary>
     /// <remarks>
-    /// Read through <see cref="IPlatformConfigAccessor"/> rather than by loading the file: the
-    /// effective listen URL can come from the SQLite store beside <c>config.json</c>, and a direct
-    /// load would miss it and probe the wrong address for exactly the operators this fixes.
-    /// Every failure falls back to loopback - this runs on the path that starts the gateway, and a
-    /// config problem should surface as the gateway's own startup error, not as the CLI refusing
-    /// to look for it.
+    /// Read through <see cref="IPlatformConfigAccessor"/> rather than naming or loading a backend:
+    /// SQLite authority and any generated compatibility projection remain private to the central
+    /// configuration composition. Every failure falls back to loopback - this runs on the path that
+    /// starts the gateway, and a configuration problem should surface as the gateway's own startup
+    /// error, not as the CLI refusing to look for it.
     /// </remarks>
     /// <param name="fallbackPort">The port the CLI was asked to use.</param>
-    /// <param name="accessor">Config source; defaults to the shared accessor.</param>
-    /// <param name="configPath">Config file to read; defaults to the standard location.</param>
-    public static string ResolveFromConfig(
+    /// <param name="homePath">BotNexus home that owns the effective configuration.</param>
+    /// <param name="accessor">Configuration source; defaults to the shared accessor.</param>
+    public static string ResolveFromHome(
         int fallbackPort,
-        IPlatformConfigAccessor? accessor = null,
-        string? configPath = null)
+        string homePath,
+        IPlatformConfigAccessor? accessor = null)
     {
         try
         {
-            var config = (accessor ?? PlatformConfigAccessor.Shared)
-                .Get(configPath ?? PlatformConfigLoader.DefaultConfigPath);
+            var config = (accessor ?? PlatformConfigAccessor.Shared).GetFromHome(homePath);
             return Resolve(config.Gateway?.ListenUrl, fallbackPort);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)

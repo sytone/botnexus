@@ -163,7 +163,7 @@ internal sealed class GatewayCommand
 
         // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
         // argument below, so probe where it will actually listen rather than where we asked.
-        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromConfig(port);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(port, home);
         var options = new GatewayStartOptions(
             ExecutablePath: gatewayDll,
             Arguments: $"--urls \"{gatewayUrl}\" --environment Development",
@@ -269,7 +269,7 @@ internal sealed class GatewayCommand
 
         // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
         // argument below, so probe where it will actually listen rather than where we asked.
-        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromConfig(port);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(port, home);
         var lastExitCode = 0;
 
         while (true)
@@ -318,6 +318,9 @@ internal sealed class GatewayCommand
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
         var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(
+            fallbackPort: 5005,
+            homePath: home);
         GatewayStopResult result;
 
         if (interactive)
@@ -328,13 +331,13 @@ internal sealed class GatewayCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
+                    capturedResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken, gatewayUrl);
                 });
             result = capturedResult;
         }
         else
         {
-            result = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
+            result = await _processManager.StopAsync(home, gatewayBinary, cancellationToken, gatewayUrl);
         }
 
         if (result.Outcome == GatewayStopOutcome.Stopped)
@@ -355,9 +358,9 @@ internal sealed class GatewayCommand
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
         var repoRoot = CliPaths.ResolveSource(explicitSource: null);
         var gatewayBinaryPath = ResolveGatewayBinaryPath(repoRoot);
-        var healthUrl = GatewayProbeUrlResolver.ResolveFromConfig(
+        var healthUrl = GatewayProbeUrlResolver.ResolveFromHome(
             fallbackPort: 5005,
-            configPath: Path.Combine(home, "config.json")) + "/health";
+            homePath: home) + "/health";
         GatewayStatus status;
 
         if (interactive)
@@ -462,6 +465,9 @@ internal sealed class GatewayCommand
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
         var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(
+            fallbackPort: port,
+            homePath: home);
 
         // Stop
         GatewayStopResult stopResult;
@@ -473,14 +479,14 @@ internal sealed class GatewayCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedStop = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
+                    capturedStop = await _processManager.StopAsync(home, gatewayBinary, cancellationToken, gatewayUrl);
                 });
             stopResult = capturedStop;
         }
         else
         {
             AnsiConsole.MarkupLine("[blue][[gateway]][/] Stopping gateway...");
-            stopResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
+            stopResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken, gatewayUrl);
         }
 
         if (stopResult.Outcome == GatewayStopOutcome.Stopped)

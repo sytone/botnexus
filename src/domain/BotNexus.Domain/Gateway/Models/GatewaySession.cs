@@ -199,6 +199,13 @@ public sealed class GatewaySession
         set => Session.ExchangeCompletion = value;
     }
 
+    /// <summary>Latest authoritative run-completion disposition for history and diagnostics.</summary>
+    public RunCompletionSignal? RunCompletion
+    {
+        get => Session.RunCompletion;
+        set => Session.RunCompletion = value;
+    }
+
     /// <summary>
     /// Dedicated outbound-stream reconnect-replay peer for this session. The 8
     /// stream-replay members previously hosted on the facade (#575) collapsed

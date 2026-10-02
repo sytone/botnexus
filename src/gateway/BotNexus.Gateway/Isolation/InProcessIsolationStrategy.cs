@@ -1427,6 +1427,34 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
+    public async Task<AgentResponse> PromptWithoutToolsAsync(string message, CancellationToken cancellationToken = default)
+    {
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.finalize", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", AgentId);
+        activity?.SetTag("botnexus.session.id", SessionId);
+        _activityTracker?.RecordActivity();
+        try
+        {
+            var messages = await _agent.PromptWithoutToolsAsync(message, cancellationToken);
+            var response = BuildResponse(messages, _agent.State.LastCompletion);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return response;
+        }
+        catch (OperationCanceledException oce)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
+            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
+            throw BuildInterruptedException(oce);
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<AgentResponse> PromptAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
     {
         using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);
@@ -1915,6 +1943,22 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 },
             TurnEndEvent
                 => new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = messageId },
+            ProviderRecoveryEvent recovery
+                => new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.ProviderRecovery,
+                    MessageId = messageId,
+                    ProviderRecovery = new ProviderRecoverySignal(
+                        recovery.Stage.ToString(),
+                        recovery.Provider,
+                        recovery.State.ToString(),
+                        recovery.Attempt,
+                        recovery.MaxAttempts,
+                        recovery.Delay?.TotalMilliseconds,
+                        recovery.Observation.InFlightCalls,
+                        recovery.Observation.QueueLength,
+                        recovery.Observation.NextProbeAt)
+                },
             ClaimAuditEvent claimAudit
                 => new AgentStreamEvent
                 {

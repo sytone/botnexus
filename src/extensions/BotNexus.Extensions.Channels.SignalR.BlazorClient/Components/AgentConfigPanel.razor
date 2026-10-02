@@ -119,7 +119,7 @@
                     @* Per-session tool overlay (#3271). Sits alongside the model/thinking/context
                        overrides because it is the same kind of per-conversation execution override,
                        and it is only meaningful once a conversation is selected. *@
-                    @if (Agent?.ActiveConversationId is { } overlayConversationId)
+                    @if (ConversationId is { } overlayConversationId)
                     {
                         <ConversationToolOverlayPanel ConversationId="@overlayConversationId"
                                                       AgentTools="@(_descriptor?.ToolIds ?? [])"
@@ -128,6 +128,11 @@
                                                       InitialThinking="@_conversation?.ThinkingOverride"
                                                       InitialContextWindow="@_conversation?.ContextWindowOverride"
                                                       OnOverlayChanged="HandleOverlayChanged" />
+                    }
+
+                    @if (ConversationId is { } bindingConversationId)
+                    {
+                        <ConversationBindingsPanel ConversationId="@bindingConversationId" MoveTargets="@BindingMoveTargets" />
                     }
                 </div>
 
@@ -178,7 +183,18 @@
     [Parameter, EditorRequired]
     public string AgentId { get; set; } = default!;
 
+    [Parameter]
+    public string? ConversationId { get; set; }
+
     private AgentState? Agent => Store.GetAgent(AgentId);
+    private IReadOnlyList<ConversationBindingTargetDto> BindingMoveTargets => Agent?.Conversations.Values
+        .Where(conversation => !string.Equals(conversation.ConversationId, ConversationId, StringComparison.Ordinal))
+        .OrderBy(conversation => conversation.Title, StringComparer.OrdinalIgnoreCase)
+        .Select(conversation => new ConversationBindingTargetDto(conversation.ConversationId, conversation.Title))
+        .ToList() ?? [];
+    private string? ConversationSessionId => ConversationId is { } conversationId
+        ? Agent?.Conversations.GetValueOrDefault(conversationId)?.ActiveSessionId
+        : null;
     private bool _showPanel;
     private bool _loading;
     private bool _saving;
@@ -276,7 +292,7 @@
             // render current state without the operator running /tools.
             try
             {
-                _conversation = Agent.ActiveConversationId is { } cid
+                _conversation = ConversationId is { } cid
                     ? await RestClient.GetConversationAsync(cid)
                     : null;
                 _toolOverrideJson = _conversation?.ToolOverrideJson;
@@ -289,7 +305,7 @@
 
             ContextInfoDto? context = null;
             string? contextUnavailable = null;
-            var sessionId = Agent.ActiveConversationSessionId;
+            var sessionId = ConversationSessionId;
             if (sessionId is not null)
             {
                 try
@@ -332,8 +348,8 @@
         _snapshot = AgentConfigSnapshotBuilder.Build(
             AgentId,
             Agent?.DisplayName,
-            Agent?.ActiveConversationId,
-            Agent?.ActiveConversationSessionId,
+            ConversationId,
+            ConversationSessionId,
             Agent?.ChannelType,
             _descriptor,
             context,

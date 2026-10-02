@@ -49,7 +49,6 @@ public sealed class ViewSelectionSeamTests
             DisplayName = "Agent 1",
             IsConnected = true,
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         });
         var agent = _store.GetAgent("agent-1")!;
         agent.Conversations["conv-1"] = new ConversationState
@@ -65,7 +64,7 @@ public sealed class ViewSelectionSeamTests
     }
 
     private (string? Agent, string? Conversation, SelectionSource Source) Snapshot() =>
-        (_store.ActiveAgentId, _store.ActiveConversationId, _store.ActiveSelectionSource);
+        (_store.ActiveAgentId, (_store as IDisplayedConversation)?.DisplayedConversationIdFor(_store.ActiveAgentId), _store.ActiveSelectionSource);
 
     private static SubAgentEventPayload SubAgentPayload(string status) => new(
         SessionId: "sess-1",
