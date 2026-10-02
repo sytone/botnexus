@@ -83,7 +83,8 @@ public sealed class ConfigurationAuthorityFenceArchitectureTests : ArchitectureT
         var lines = File.ReadAllLines(path)
             .Where(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith('#'))
             .ToArray();
-        lines.ShouldBe(lines.OrderBy(line => line, StringComparer.Ordinal).ToArray(), "baseline lines must be ordinally sorted");
+        lines.ShouldBe(lines.OrderBy(line => line, StringComparer.OrdinalIgnoreCase).ToArray(),
+            "baseline lines must be sorted case-insensitively for stable cross-platform review");
 
         var productionFiles = ProductionSourceFiles().ToHashSet(StringComparer.Ordinal);
         foreach (var key in ReadBaseline().Keys)
