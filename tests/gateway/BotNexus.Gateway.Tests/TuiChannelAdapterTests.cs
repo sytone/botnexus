@@ -24,36 +24,22 @@ public sealed class TuiChannelAdapterTests
     [Fact]
     public async Task StartAsync_WithSteerCommand_DispatchesExplicitSteerIntent()
     {
-        var adapter = new TuiChannelAdapter(NullLogger<TuiChannelAdapter>.Instance);
-        var dispatchedTcs = new TaskCompletionSource<InboundMessage>();
+        var output = new StringWriter();
+        var adapter = CreateAdapter(
+            "/steer adjust please" + Environment.NewLine + "/quit" + Environment.NewLine,
+            output);
+        var dispatchedTcs = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var dispatcher = new Mock<IChannelDispatcher>();
         dispatcher
             .Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .Callback<InboundMessage, CancellationToken>((msg, _) => dispatchedTcs.TrySetResult(msg))
             .Returns(Task.CompletedTask);
 
-        var originalIn = Console.In;
-        var originalOut = Console.Out;
-        var output = new StringWriter();
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
 
-        try
-        {
-            Console.SetIn(new StringReader("/steer adjust please" + Environment.NewLine + "/quit" + Environment.NewLine));
-            Console.SetOut(output);
-
-            await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-
-            // Wait for the dispatch to occur (up to 5 seconds), then stop.
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await dispatchedTcs.Task.WaitAsync(cts.Token);
-
-            await adapter.StopAsync(CancellationToken.None);
-        }
-        finally
-        {
-            Console.SetIn(originalIn);
-            Console.SetOut(originalOut);
-        }
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await dispatchedTcs.Task.WaitAsync(cts.Token);
+        await adapter.StopAsync(CancellationToken.None);
 
         var dispatchedMessages = dispatcher.Invocations
             .Where(i => i.Method.Name == nameof(IChannelDispatcher.DispatchAsync))
@@ -77,36 +63,22 @@ public sealed class TuiChannelAdapterTests
     [Fact]
     public async Task StartAsync_WithRegularMessage_DispatchesWithoutSteerMetadata()
     {
-        var adapter = new TuiChannelAdapter(NullLogger<TuiChannelAdapter>.Instance);
-        var dispatchedTcs = new TaskCompletionSource<InboundMessage>();
+        var output = new StringWriter();
+        var adapter = CreateAdapter(
+            "hello world" + Environment.NewLine + "/quit" + Environment.NewLine,
+            output);
+        var dispatchedTcs = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var dispatcher = new Mock<IChannelDispatcher>();
         dispatcher
             .Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
             .Callback<InboundMessage, CancellationToken>((msg, _) => dispatchedTcs.TrySetResult(msg))
             .Returns(Task.CompletedTask);
 
-        var originalIn = Console.In;
-        var originalOut = Console.Out;
-        var output = new StringWriter();
+        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
 
-        try
-        {
-            Console.SetIn(new StringReader("hello world" + Environment.NewLine + "/quit" + Environment.NewLine));
-            Console.SetOut(output);
-
-            await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-
-            // Wait for the dispatch to occur (up to 5 seconds), then stop.
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await dispatchedTcs.Task.WaitAsync(cts.Token);
-
-            await adapter.StopAsync(CancellationToken.None);
-        }
-        finally
-        {
-            Console.SetIn(originalIn);
-            Console.SetOut(originalOut);
-        }
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await dispatchedTcs.Task.WaitAsync(cts.Token);
+        await adapter.StopAsync(CancellationToken.None);
 
         var dispatchedMessages = dispatcher.Invocations
             .Where(i => i.Method.Name == nameof(IChannelDispatcher.DispatchAsync))
@@ -128,30 +100,20 @@ public sealed class TuiChannelAdapterTests
     [Fact]
     public async Task ConversationPublisher_ApplicableBinding_RendersContentOnce()
     {
-        var adapter = new TuiChannelAdapter(NullLogger<TuiChannelAdapter>.Instance);
-        await using var publisher = new ConversationEventPublisher([adapter]);
-        var originalOut = Console.Out;
         var output = new StringWriter();
+        var adapter = CreateAdapter(string.Empty, output);
+        await using var publisher = new ConversationEventPublisher([adapter]);
+        var conversationId = ConversationId.Create();
+        var sessionId = SessionId.Create();
 
-        try
-        {
-            Console.SetOut(output);
-            var conversationId = ConversationId.Create();
-            var sessionId = SessionId.Create();
+        (await publisher.PublishAsync(AgentEvent(
+            conversationId,
+            sessionId,
+            AgentStreamEventType.ContentDelta,
+            contentDelta: "hello",
+            bindings: [Binding("tui", "console", BindingMode.Interactive)]))).ShouldBeTrue();
 
-            (await publisher.PublishAsync(AgentEvent(
-                conversationId,
-                sessionId,
-                AgentStreamEventType.ContentDelta,
-                contentDelta: "hello",
-                bindings: [Binding("tui", "console", BindingMode.Interactive)]))).ShouldBeTrue();
-
-            await publisher.WaitForDrainAsync(TestTimeout());
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
+        await publisher.WaitForDrainAsync(TestTimeout());
 
         output.ToString().ShouldBe("hello");
     }
@@ -159,36 +121,26 @@ public sealed class TuiChannelAdapterTests
     [Fact]
     public async Task ConversationPublisher_UnrelatedAndMutedBindings_RenderNothing()
     {
-        var adapter = new TuiChannelAdapter(NullLogger<TuiChannelAdapter>.Instance);
-        await using var publisher = new ConversationEventPublisher([adapter]);
-        var originalOut = Console.Out;
         var output = new StringWriter();
+        var adapter = CreateAdapter(string.Empty, output);
+        await using var publisher = new ConversationEventPublisher([adapter]);
+        var conversationId = ConversationId.Create();
+        var sessionId = SessionId.Create();
 
-        try
-        {
-            Console.SetOut(output);
-            var conversationId = ConversationId.Create();
-            var sessionId = SessionId.Create();
+        (await publisher.PublishAsync(AgentEvent(
+            conversationId,
+            sessionId,
+            AgentStreamEventType.ContentDelta,
+            contentDelta: "unrelated",
+            bindings: [Binding("telegram", "chat-1", BindingMode.Interactive)]))).ShouldBeTrue();
+        (await publisher.PublishAsync(AgentEvent(
+            conversationId,
+            sessionId,
+            AgentStreamEventType.ContentDelta,
+            contentDelta: "muted",
+            bindings: [Binding("tui", "console", BindingMode.Muted)]))).ShouldBeTrue();
 
-            (await publisher.PublishAsync(AgentEvent(
-                conversationId,
-                sessionId,
-                AgentStreamEventType.ContentDelta,
-                contentDelta: "unrelated",
-                bindings: [Binding("telegram", "chat-1", BindingMode.Interactive)]))).ShouldBeTrue();
-            (await publisher.PublishAsync(AgentEvent(
-                conversationId,
-                sessionId,
-                AgentStreamEventType.ContentDelta,
-                contentDelta: "muted",
-                bindings: [Binding("tui", "console", BindingMode.Muted)]))).ShouldBeTrue();
-
-            await publisher.WaitForDrainAsync(TestTimeout());
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
+        await publisher.WaitForDrainAsync(TestTimeout());
 
         output.ToString().ShouldBeEmpty();
     }
@@ -196,31 +148,46 @@ public sealed class TuiChannelAdapterTests
     [Fact]
     public async Task ConversationPublisher_UnsupportedLifecycleEvent_RendersNothing()
     {
-        var adapter = new TuiChannelAdapter(NullLogger<TuiChannelAdapter>.Instance);
-        await using var publisher = new ConversationEventPublisher([adapter]);
-        var originalOut = Console.Out;
         var output = new StringWriter();
+        var adapter = CreateAdapter(string.Empty, output);
+        await using var publisher = new ConversationEventPublisher([adapter]);
 
-        try
-        {
-            Console.SetOut(output);
-            (await publisher.PublishAsync(new ConversationCreatedEvent
-            {
-                AgentId = AgentId.From("farnsworth"),
-                ConversationId = ConversationId.Create(),
-                Bindings = [Binding("tui", "console", BindingMode.Interactive)],
-                Title = "new conversation",
-            })).ShouldBeTrue();
+        (await publisher.PublishAsync(CreatedEvent())).ShouldBeTrue();
 
-            await publisher.WaitForDrainAsync(TestTimeout());
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
+        await publisher.WaitForDrainAsync(TestTimeout());
 
         output.ToString().ShouldBeEmpty();
     }
+
+    [Fact]
+    public async Task ConversationPublisher_ProcessConsoleNoise_DoesNotContaminateAdapterOutput()
+    {
+        var output = new StringWriter();
+        var adapter = CreateAdapter(string.Empty, output);
+        await using var publisher = new ConversationEventPublisher([adapter]);
+
+        Console.Out.WriteLine("concurrent gateway startup");
+        (await publisher.PublishAsync(CreatedEvent())).ShouldBeTrue();
+
+        await publisher.WaitForDrainAsync(TestTimeout());
+
+        output.ToString().ShouldBeEmpty();
+    }
+
+    private static TuiChannelAdapter CreateAdapter(string input, TextWriter output)
+        => new(
+            NullLogger<TuiChannelAdapter>.Instance,
+            new StringReader(input),
+            output);
+
+    private static ConversationCreatedEvent CreatedEvent()
+        => new()
+        {
+            AgentId = AgentId.From("farnsworth"),
+            ConversationId = ConversationId.Create(),
+            Bindings = [Binding("tui", "console", BindingMode.Interactive)],
+            Title = "new conversation",
+        };
 
     private static ConversationBindingSnapshot Binding(string channel, string address, BindingMode mode)
         => new(
