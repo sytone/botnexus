@@ -136,7 +136,29 @@
             <div class="reset-confirm-dialog export-dialog" role="dialog" aria-modal="true" aria-label="Export conversation"
                  data-testid="export-dialog" @onclick:stopPropagation="true">
                 <h3>Export conversation</h3>
-                <p><strong>Scope:</strong> Whole conversation</p>
+                <label>Scope
+                    <select value="@_exportScope" @onchange="ChangeExportScope" data-testid="export-scope">
+                        <option value="conversation">Whole conversation</option>
+                        <option value="session">Current active session</option>
+                        <option value="selected">Selected messages</option>
+                    </select>
+                </label>
+                @if (_exportScope == "selected")
+                {
+                    <div class="export-message-list" aria-label="Messages available for export">
+                        @foreach (var item in SelectableExportMessages)
+                        {
+                            <button type="button"
+                                    class="export-message-selector @(IsExportMessageSelected(item.Index) ? "selected" : null)"
+                                    data-testid="export-message-selector"
+                                    aria-pressed="@(IsExportMessageSelected(item.Index) ? "true" : "false")"
+                                    @onclick="() => SelectExportMessage(item.Index)">
+                                <strong>@AuthorLabel(item.Message.Role)</strong>
+                                <span>@ExportMessageSummary(item.Message)</span>
+                            </button>
+                        }
+                    </div>
+                }
                 <label>Format
                     <select @bind="_exportFormat" data-testid="export-format">
                         <option value="markdown">Markdown</option>
@@ -147,14 +169,14 @@
                 <label><input type="checkbox" @bind="_exportIncludeThinking" data-testid="export-include-thinking" /> Include thinking</label>
                 <label><input type="checkbox" @bind="_exportIncludeSystem" data-testid="export-include-system" /> Include system messages and conversation instructions</label>
                 <label><input type="checkbox" @bind="_exportRedactSecrets" data-testid="export-redact-secrets" /> Redact recognised secrets (privacy control)</label>
-                <p class="text-muted">Whole conversation in @_exportFormat format. Sensitive instructions, tools, and reasoning are included only when selected.</p>
+                <p class="text-muted" data-testid="export-preview">@ExportPreview</p>
                 @if (_exportError is not null)
                 {
                     <p role="alert" data-testid="export-error">@_exportError</p>
                 }
                 <div class="reset-confirm-actions">
-                    <button class="cancel-btn" @onclick="CloseExportDialog">Cancel</button>
-                    <button class="confirm-btn" data-testid="export-download-btn" @onclick="DownloadExportAsync" disabled="@_exportBusy">
+                    <button class="cancel-btn" data-testid="export-cancel-btn" @onclick="CloseExportDialog">Cancel</button>
+                    <button class="confirm-btn" data-testid="export-download-btn" @onclick="DownloadExportAsync" disabled="@(_exportBusy || !CanDownloadExport)">
                         @(_exportBusy ? "Exporting…" : "Download")
                     </button>
                 </div>
@@ -1267,6 +1289,9 @@ private bool IsStreaming =>
     private bool _exportIncludeSystem;
     private bool _exportRedactSecrets = true;
     private string _exportFormat = "markdown";
+    private string _exportScope = "conversation";
+    private int? _exportFirstIndex;
+    private int? _exportLastIndex;
     private string? _exportError;
     private string? _copiedMessageId;
     private string? _copiedSectionId;
@@ -1274,6 +1299,72 @@ private bool IsStreaming =>
     private static readonly TimeSpan s_copyFeedbackDuration = TimeSpan.FromSeconds(2);
     private const string CopySectionArgs = "args";
     private const string CopySectionResult = "result";
+
+    private IReadOnlyList<(int Index, ChatMessage Message)> SelectableExportMessages => Messages
+        .Select((message, index) => (Index: index, Message: message))
+        .Where(item => !string.IsNullOrWhiteSpace(item.Message.ServerEntryId))
+        .Where(item => !item.Message.IsFolded || _showFoldedHistory)
+        .Where(item => !item.Message.IsToolCall || ShowTools)
+        .ToArray();
+
+    private bool CanDownloadExport => _exportScope switch
+    {
+        "session" => !string.IsNullOrWhiteSpace(ActiveConversation?.ActiveSessionId),
+        "selected" => _exportFirstIndex is not null && _exportLastIndex is not null,
+        _ => true
+    };
+
+    private string ExportPreview => _exportScope switch
+    {
+        "session" when ActiveConversation?.ActiveSessionId is null => "This conversation has no active session to export.",
+        "session" => $"Current active session in {_exportFormat} format.",
+        "selected" when _exportFirstIndex is null => "Choose the first message in the visible range.",
+        "selected" when _exportLastIndex is null => "Choose the last message in the visible range.",
+        "selected" => $"{SelectedExportMessageCount} visible messages in {_exportFormat} format.",
+        _ => $"Whole conversation in {_exportFormat} format."
+    } + " Sensitive instructions, tools, and reasoning are included only when selected.";
+
+    private int SelectedExportMessageCount => _exportFirstIndex is { } first && _exportLastIndex is { } last
+        ? SelectableExportMessages.Count(item => item.Index >= Math.Min(first, last) && item.Index <= Math.Max(first, last))
+        : 0;
+
+    private bool IsExportMessageSelected(int index) =>
+        _exportFirstIndex is { } first && _exportLastIndex is { } last
+            ? index >= Math.Min(first, last) && index <= Math.Max(first, last)
+            : _exportFirstIndex == index;
+
+    private static string ExportMessageSummary(ChatMessage message)
+    {
+        var content = message.Content.ReplaceLineEndings(" ").Trim();
+        if (content.Length == 0)
+            content = message.ToolName ?? message.BoundaryLabel ?? "Message";
+        return content.Length <= 80 ? content : $"{content[..77]}...";
+    }
+
+    private void ChangeExportScope(ChangeEventArgs args)
+    {
+        _exportScope = args.Value?.ToString() ?? "conversation";
+        ClearExportSelection();
+        _exportError = null;
+    }
+
+    private void SelectExportMessage(int index)
+    {
+        if (_exportFirstIndex is null || _exportLastIndex is not null)
+        {
+            _exportFirstIndex = index;
+            _exportLastIndex = null;
+            return;
+        }
+
+        _exportLastIndex = index;
+    }
+
+    private void ClearExportSelection()
+    {
+        _exportFirstIndex = null;
+        _exportLastIndex = null;
+    }
 
     private void OpenExportDialog()
     {
@@ -1287,6 +1378,7 @@ private bool IsStreaming =>
             return;
         _showExportDialog = false;
         _exportError = null;
+        ClearExportSelection();
     }
 
     private async Task DownloadExportAsync()
@@ -1298,13 +1390,23 @@ private bool IsStreaming =>
         _exportError = null;
         try
         {
+            var selected = _exportScope == "selected"
+                ? SelectableExportMessages
+                    .Where(item => IsExportMessageSelected(item.Index))
+                    .Select(item => item.Message)
+                    .ToArray()
+                : [];
             var request = new ConversationExportRequest(
                 _exportFormat,
                 _exportIncludeTools,
                 _exportIncludeThinking,
                 _exportIncludeSystem,
-                _exportRedactSecrets);
-            var download = await Rest.ExportConversationAsync(conversationId, request);
+                _exportRedactSecrets,
+                selected.FirstOrDefault()?.ServerEntryId,
+                selected.LastOrDefault()?.ServerEntryId);
+            var download = _exportScope == "session" && ActiveConversation?.ActiveSessionId is { } sessionId
+                ? await Rest.ExportSessionAsync(sessionId, request)
+                : await Rest.ExportConversationAsync(conversationId, request);
             if (download is null)
             {
                 _exportError = "The export could not be downloaded. Try again.";
@@ -1317,6 +1419,7 @@ private bool IsStreaming =>
                 download.ContentType,
                 Convert.ToBase64String(download.Content));
             _showExportDialog = false;
+            ClearExportSelection();
         }
         finally
         {

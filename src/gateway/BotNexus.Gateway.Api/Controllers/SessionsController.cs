@@ -372,6 +372,10 @@ public sealed class SessionsController : ControllerBase
     /// with <paramref name="lastEntryId"/>; supplying one without the other is a 400.
     /// </param>
     /// <param name="lastEntryId">Optional partial-range end: the entry id of the last included entry.</param>
+    /// <param name="includeTools">Whether tool calls and results are included.</param>
+    /// <param name="includeThinking">Whether assistant reasoning is included.</param>
+    /// <param name="includeSystemMessages">Whether system messages and conversation instructions are included.</param>
+    /// <param name="redactSecrets">Whether recognised secrets are redacted before rendering.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The rendered transcript as a UTF-8 file download, 400 for an unknown format or an invalid range, or 404.</returns>
     [HttpGet("{sessionId}/export/{format}")]
@@ -383,6 +387,10 @@ public sealed class SessionsController : ControllerBase
         string format,
         [FromQuery] string? firstEntryId = null,
         [FromQuery] string? lastEntryId = null,
+        [FromQuery] bool includeTools = true,
+        [FromQuery] bool includeThinking = false,
+        [FromQuery] bool includeSystemMessages = true,
+        [FromQuery] bool redactSecrets = true,
         CancellationToken cancellationToken = default)
     {
         if (!ExportFormat.TryParse(format, out var exportFormat))
@@ -399,7 +407,17 @@ public sealed class SessionsController : ControllerBase
         var result = await assembler.AssembleSessionRangeAsync(
             SessionId.From(sessionId), range, cancellationToken);
 
-        return ExportRangeBinding.ToActionResult(result, exportFormat, this);
+        if (!result.IsSuccess || result.Document is null)
+            return ExportRangeBinding.ToActionResult(result, exportFormat, this);
+
+        var options = new ExportContentOptions(
+            includeTools,
+            includeThinking,
+            includeSystemMessages,
+            redactSecrets);
+        var filtered = ExportContentFilter.Apply(result.Document, options);
+
+        return ExportResponse.File(filtered, exportFormat, this, options.RedactSecrets);
     }
 
     /// <summary>

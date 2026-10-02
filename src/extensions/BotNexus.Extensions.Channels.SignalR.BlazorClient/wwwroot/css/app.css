@@ -7959,3 +7959,56 @@ h3.conversation-title.editable:hover {
 .conversation-action-menu-item.destructive { color: var(--danger, #d9534f); }
 .chat-header > .conversation-action-context-target,
 .chat-header > .conversation-action-context-target > .conversation-actions-trigger { position: static; transform: none; flex: 0 0 auto; }
+
+/* Conversation export scope and contiguous-range picker. */
+.export-dialog {
+    max-width: 560px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.export-dialog > label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 0.65rem 0;
+}
+
+.export-message-list {
+    display: grid;
+    gap: 0.4rem;
+    max-height: 220px;
+    overflow-y: auto;
+    margin: 0.75rem 0;
+    padding: 0.25rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.export-message-selector {
+    display: grid;
+    grid-template-columns: minmax(5rem, auto) 1fr;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+}
+
+.export-message-selector span {
+    overflow: hidden;
+    color: var(--text-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.export-message-selector:hover,
+.export-message-selector.selected {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+}

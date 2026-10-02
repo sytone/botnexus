@@ -1776,6 +1776,10 @@ X-Api-Key: your-api-key
 - `format` (string, path) — `markdown` or `html`
 - `firstEntryId` (string, query, optional) — Entry id of the first included entry (partial-range export)
 - `lastEntryId` (string, query, optional) — Entry id of the last included entry
+- `includeTools` (boolean, query, optional; default `true`) — Include tool calls and results
+- `includeThinking` (boolean, query, optional; default `false`) — Include assistant reasoning
+- `includeSystemMessages` (boolean, query, optional; default `true`) — Include system messages and conversation instructions
+- `redactSecrets` (boolean, query, optional; default `true`) — Redact recognised secrets before rendering
 
 **Response:** 200 OK — `text/markdown` or `text/html` file attachment named `<slug>-<yyyy-MM-dd>.<ext>`.
 
