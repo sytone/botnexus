@@ -76,6 +76,10 @@ public sealed class A2AToolContributorTests
         public string Id => id;
         public string DisplayName => id;
         public bool IsReady => ready;
+        public ValueTask<A2ADelegationAuthorization> AuthorizeAsync(
+            A2ADelegationAuthorizationRequest request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(A2ADelegationAuthorization.Allow());
         public ValueTask<A2AServiceConnection> GetConnectionAsync(CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new A2AServiceConnection(new Uri("https://agents.example.test/")));
     }
