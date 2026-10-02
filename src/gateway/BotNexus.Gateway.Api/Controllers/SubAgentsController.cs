@@ -45,9 +45,9 @@ public sealed class SubAgentsController : ControllerBase
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A read-only list of sub-agent session summaries.</returns>
     [HttpGet]
-    [ProducesResponseType(typeof(IReadOnlyList<SubAgentSessionSummary>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(IReadOnlyList<SubAgentRunDetail>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<IReadOnlyList<SubAgentSessionSummary>>> List(
+    public async Task<ActionResult<IReadOnlyList<SubAgentRunDetail>>> List(
         [FromQuery] string? status = null,
         [FromQuery] int limit = 200,
         CancellationToken cancellationToken = default)

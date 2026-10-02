@@ -1,4 +1,6 @@
+using System.Diagnostics.Metrics;
 using BotNexus.Gateway.Sessions;
+using BotNexus.Gateway.Telemetry;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Gateway.Tests.Sessions;
@@ -128,6 +130,58 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ReportsPayloadFreeProgressAndFailures()
+    {
+        using var meter = new Meter("legacy-backfill-test");
+        var measurements = new List<(string Name, long Value, string? Outcome, bool? HasMore)>();
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, activeListener) =>
+            {
+                if (instrument.Meter == meter)
+                    activeListener.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
+        {
+            string? outcome = null;
+            bool? hasMore = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "outcome") outcome = tag.Value?.ToString();
+                if (tag.Key == "has_more" && tag.Value is bool current) hasMore = current;
+            }
+            measurements.Add((instrument.Name, value, outcome, hasMore));
+        });
+        listener.Start();
+
+        var calls = 0;
+        var completed = NewSignal();
+        var service = CreateSqliteService(
+            (_, _) =>
+            {
+                calls++;
+                if (calls == 1) throw new InvalidOperationException("payload must not escape");
+                completed.TrySetResult();
+                return new(7, 5, 3, false, true);
+            },
+            (_, _) => new(0, 0, 0, 0, 0, false),
+            (_, _) => Task.CompletedTask,
+            new BotNexusMetrics(meter));
+
+        await service.StartAsync(CancellationToken.None);
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await service.StopAsync(CancellationToken.None);
+
+        measurements.ShouldContain((LegacyToolInvocationBackfillMetrics.BatchesInstrumentName, 1, "failed", null));
+        measurements.ShouldContain((LegacyToolInvocationBackfillMetrics.BatchesInstrumentName, 1, "committed", false));
+        measurements.ShouldContain((LegacyToolInvocationBackfillMetrics.ScannedRowsInstrumentName, 7, null, null));
+        measurements.ShouldContain((LegacyToolInvocationBackfillMetrics.LinkedRowsInstrumentName, 5, null, null));
+        measurements.ShouldContain((LegacyToolInvocationBackfillMetrics.InvocationsInstrumentName, 3, null, null));
+        measurements.SelectMany(item => new[] { item.Name, item.Outcome }).ShouldNotContain("payload must not escape");
+    }
+
+    [Fact]
     public async Task StartAsync_NonSqliteStore_DoesNothing()
     {
         var calls = 0;
@@ -137,6 +191,7 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
             (_, _) => { calls++; return new(0, 0, 0, false, true); },
             (_, _) => new(0, 0, 0, 0, 0, false),
             (_, _) => { delays++; return Task.CompletedTask; },
+            new BotNexusMetrics(),
             NullLogger<LegacyToolInvocationBackfillHostedService>.Instance);
 
         await service.StartAsync(CancellationToken.None);
@@ -149,13 +204,20 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
     private static LegacyToolInvocationBackfillHostedService CreateSqliteService(
         Func<SqliteSessionStore, int, LegacyToolInvocationBackfillReport> runBatch,
         Func<SqliteSessionStore, int, LegacyToolPayloadCleanupReport> runCleanupBatch,
-        Func<TimeSpan, CancellationToken, Task> delay)
+        Func<TimeSpan, CancellationToken, Task> delay,
+        IMetrics? metrics = null)
     {
         var store = new SqliteSessionStore(
             "Data Source=:memory:",
             NullLogger<SqliteSessionStore>.Instance,
             new InMemoryConversationStore());
-        return new(store, runBatch, runCleanupBatch, delay, NullLogger<LegacyToolInvocationBackfillHostedService>.Instance);
+        return new(
+            store,
+            runBatch,
+            runCleanupBatch,
+            delay,
+            metrics ?? new BotNexusMetrics(),
+            NullLogger<LegacyToolInvocationBackfillHostedService>.Instance);
     }
 
     private static TaskCompletionSource NewSignal() =>

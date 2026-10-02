@@ -1305,7 +1305,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                     archetype TEXT,
                     started_at TEXT NOT NULL,
                     ended_at TEXT,
-                    status TEXT NOT NULL DEFAULT 'Active'
+                    status TEXT NOT NULL DEFAULT 'Running',
+                    detail_json TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_sub_agent_sessions_parent ON sub_agent_sessions(parent_session_id);
@@ -1317,6 +1318,11 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
             // Migrate: add tool columns to existing databases
             await MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
+            await using (var subAgentDetailMigration = connection.CreateCommand())
+            {
+                subAgentDetailMigration.CommandText = "ALTER TABLE sub_agent_sessions ADD COLUMN detail_json TEXT";
+                await SqliteAdditiveMigration.ExecuteAsync(subAgentDetailMigration, cancellationToken).ConfigureAwait(false);
+            }
             await EnsureToolInvocationSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
 
             // P9-I (#674): the legacy idx_sessions_conversation_agent index referenced
@@ -2749,115 +2755,69 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
-
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT OR IGNORE INTO sub_agent_sessions
-                (id, parent_session_id, parent_agent_id, child_agent_id, archetype, started_at, ended_at, status)
+                (id, parent_session_id, parent_agent_id, child_agent_id, archetype, started_at, ended_at, status, detail_json)
             VALUES
-                (@id, @parentSessionId, @parentAgentId, @childAgentId, @archetype, @startedAt, NULL, 'Active')
+                (@id, @parentSessionId, @parentAgentId, @childAgentId, @archetype, @startedAt, NULL, @status, @detail)
             """;
-        cmd.Parameters.AddWithValue("@id", info.SubAgentId);
-        cmd.Parameters.AddWithValue("@parentSessionId", info.ParentSessionId.Value);
-        cmd.Parameters.AddWithValue("@parentAgentId", info.ParentAgentId ?? string.Empty);
-        cmd.Parameters.AddWithValue("@childAgentId", info.ChildAgentId ?? string.Empty);
-        cmd.Parameters.AddWithValue("@archetype", info.Archetype.ToString());
-        cmd.Parameters.AddWithValue("@startedAt", info.StartedAt.ToString("O"));
+        BindSubAgent(cmd, info);
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
-    public override async Task UpdateSubAgentSessionAsync(
-        string subAgentId,
-        DateTimeOffset endedAt,
-        string status,
-        CancellationToken cancellationToken = default)
+    public override async Task UpdateSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
     {
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
-
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE sub_agent_sessions
-            SET ended_at = @endedAt, status = @status
-            WHERE id = @id
-            """;
-        cmd.Parameters.AddWithValue("@id", subAgentId);
-        cmd.Parameters.AddWithValue("@endedAt", endedAt.ToString("O"));
-        cmd.Parameters.AddWithValue("@status", status);
+        cmd.CommandText = "UPDATE sub_agent_sessions SET ended_at=@endedAt, status=@status, detail_json=@detail WHERE id=@id";
+        cmd.Parameters.AddWithValue("@id", info.SubAgentId);
+        cmd.Parameters.AddWithValue("@endedAt", info.CompletedAt.HasValue ? info.CompletedAt.Value.ToString("O") : DBNull.Value);
+        cmd.Parameters.AddWithValue("@status", info.Status.ToString());
+        cmd.Parameters.AddWithValue("@detail", JsonSerializer.Serialize(SubAgentRunDetail.FromLive(info), JsonOptions));
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    private static void BindSubAgent(SqliteCommand cmd, SubAgentInfo info)
+    {
+        cmd.Parameters.AddWithValue("@id", info.SubAgentId);
+        cmd.Parameters.AddWithValue("@parentSessionId", info.ParentSessionId.Value);
+        cmd.Parameters.AddWithValue("@parentAgentId", (object?)info.ParentAgentId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@childAgentId", (object?)info.ChildAgentId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@archetype", info.Archetype.ToString());
+        cmd.Parameters.AddWithValue("@startedAt", info.StartedAt.ToString("O"));
+        cmd.Parameters.AddWithValue("@status", info.Status.ToString());
+        cmd.Parameters.AddWithValue("@detail", JsonSerializer.Serialize(SubAgentRunDetail.FromLive(info), JsonOptions));
+    }
+
     /// <inheritdoc />
-    public async Task<IReadOnlyList<SubAgentSessionSummary>> ListSubAgentSessionsAsync(
-        SessionId sessionId,
-        CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<SubAgentRunDetail>> ListSubAgentSessionsAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
-        command.CommandText =
-            """
-            SELECT id, parent_session_id, parent_agent_id, child_agent_id,
-                   archetype, started_at, ended_at, status
-            FROM sub_agent_sessions
-            WHERE parent_session_id = $parentSessionId
-            ORDER BY started_at ASC
-            """;
+        command.CommandText = "SELECT id,parent_session_id,parent_agent_id,child_agent_id,archetype,started_at,ended_at,status,detail_json FROM sub_agent_sessions WHERE parent_session_id=$parentSessionId ORDER BY started_at ASC";
         command.Parameters.AddWithValue("$parentSessionId", sessionId.Value);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        var results = new List<SubAgentSessionSummary>();
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            // #1627: the sub_agent_sessions ordinals live in SessionRowMapper.MapSubAgentSession.
-            results.Add(SessionRowMapper.MapSubAgentSession(reader));
-
-        }
+        var results = new List<SubAgentRunDetail>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) results.Add(SessionRowMapper.MapSubAgentSession(reader));
         return results;
     }
 
     /// <inheritdoc />
-    /// <remarks>
-    /// #1941: platform-wide observability read. Opens the existing <c>sub_agent_sessions</c> table
-    /// read-only (no schema change, no write path) and returns rows across all parent sessions,
-    /// newest-started first, with an optional case-insensitive status filter and a bounded row cap.
-    /// The <c>started_at</c> ordinals map through <see cref="SessionRowMapper.MapSubAgentSession"/>,
-    /// the same projection used by the parent-scoped <see cref="ListSubAgentSessionsAsync"/>.
-    /// </remarks>
-    public override async Task<IReadOnlyList<SubAgentSessionSummary>> ListAllSubAgentSessionsAsync(
-        string? status = null,
-        int limit = 200,
-        CancellationToken cancellationToken = default)
+    public override async Task<IReadOnlyList<SubAgentRunDetail>> ListAllSubAgentSessionsAsync(string? status = null, int limit = 200, CancellationToken cancellationToken = default)
     {
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
-        await using var connection = CreateConnection();
-        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var command = connection.CreateCommand();
-
-        var hasStatus = !string.IsNullOrWhiteSpace(status);
-        command.CommandText =
-            $"""
-            SELECT id, parent_session_id, parent_agent_id, child_agent_id,
-                   archetype, started_at, ended_at, status
-            FROM sub_agent_sessions
-            {(hasStatus ? "WHERE lower(status) = lower($status)" : string.Empty)}
-            ORDER BY started_at DESC
-            LIMIT $limit
-            """;
-        if (hasStatus)
-            command.Parameters.AddWithValue("$status", status!);
-        command.Parameters.AddWithValue("$limit", limit);
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        var results = new List<SubAgentSessionSummary>();
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            // #1627: the sub_agent_sessions ordinals live in SessionRowMapper.MapSubAgentSession.
-            results.Add(SessionRowMapper.MapSubAgentSession(reader));
-        }
-        return results;
+        await using var connection = CreateConnection(); await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand(); var hasStatus = !string.IsNullOrWhiteSpace(status);
+        command.CommandText = $"SELECT id,parent_session_id,parent_agent_id,child_agent_id,archetype,started_at,ended_at,status,detail_json FROM sub_agent_sessions {(hasStatus ? "WHERE lower(status)=lower($status)" : string.Empty)} ORDER BY started_at DESC LIMIT $limit";
+        if (hasStatus) command.Parameters.AddWithValue("$status", status!); command.Parameters.AddWithValue("$limit", limit);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false); var results = new List<SubAgentRunDetail>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) results.Add(SessionRowMapper.MapSubAgentSession(reader)); return results;
     }
 
     /// <inheritdoc/>

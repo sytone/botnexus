@@ -21,9 +21,14 @@ public sealed class SqliteMemoryStore(
     Func<MemoryTemporalDecayPolicy>? temporalDecayPolicy = null) : IMemoryStore
 {
     private const int MaxReembeddingErrorLength = 2048;
+    private const int ReembeddingReconciliationBatchSize = 128;
+    private const int MaxReembeddingClaimBatchSize = 128;
+    private const int MaxReembeddingAttempts = 3;
     private const string LiveMemoryPredicate =
         "m.is_archived = 0 AND (m.expires_at IS NULL OR julianday(m.expires_at) > julianday('now'))";
     private static readonly TimeSpan ReembeddingClaimLease = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan ReembeddingRetryBaseDelay = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ReembeddingRetryMaxDelay = TimeSpan.FromMinutes(5);
     private readonly string _dbPath = dbPath;
     private readonly SqliteWalMaintenance _walMaintenance = new(fileSystem);
     private readonly string _connectionString = $"Data Source={dbPath};Mode=ReadWriteCreate";
@@ -134,6 +139,8 @@ public sealed class SqliteMemoryStore(
                     last_error TEXT NULL,
                     next_attempt_at TEXT NULL,
                     claim_revision INTEGER NULL,
+                    claim_token TEXT NULL,
+                    terminal_failed INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (job_id, memory_id),
                     FOREIGN KEY (job_id) REFERENCES memory_reembedding_job(job_id) ON DELETE CASCADE
                 );
@@ -188,16 +195,27 @@ public sealed class SqliteMemoryStore(
     private static async Task EnsureReembeddingItemColumnsAsync(
         SqliteConnection connection, SqliteTransaction transaction, CancellationToken ct)
     {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "ALTER TABLE memory_reembedding_items ADD COLUMN claim_revision INTEGER NULL";
-        try
+        (string Table, string Name, string Definition)[] columns =
+        [
+            ("memory_reembedding_items", "claim_revision", "INTEGER NULL"),
+            ("memory_reembedding_items", "claim_token", "TEXT NULL"),
+            ("memory_reembedding_items", "terminal_failed", "INTEGER NOT NULL DEFAULT 0"),
+            ("memory_reembedding_job", "reconciliation_cursor", "INTEGER NULL")
+        ];
+
+        foreach (var (table, name, definition) in columns)
         {
-            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }
-        catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
-        {
-            // A concurrent opener or a current schema already supplied the additive claim column.
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = $"ALTER TABLE {table} ADD COLUMN {name} {definition}";
+            try
+            {
+                await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+            catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
+            {
+                // A concurrent opener or a current schema already supplied the additive column.
+            }
         }
     }
 
@@ -864,7 +882,7 @@ public sealed class SqliteMemoryStore(
                 existing = new ReembeddingJob(jobId, targetIdentity, ReembeddingJobState.Running, 0, 0, 0, 0, null);
             }
 
-            var result = await BuildReembeddingJobAsync(connection, transaction, existing, ct).ConfigureAwait(false);
+            var result = await ReconcileReembeddingBatchAsync(connection, transaction, existing, ct).ConfigureAwait(false);
             await transaction.CommitAsync(ct).ConfigureAwait(false);
             return result;
         }
@@ -907,6 +925,7 @@ public sealed class SqliteMemoryStore(
         ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         if (batchSize <= 0)
             return [];
+        var claimLimit = Math.Min(batchSize, MaxReembeddingClaimBatchSize);
 
         await InitializeAsync(ct).ConfigureAwait(false);
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
@@ -919,7 +938,6 @@ public sealed class SqliteMemoryStore(
             if (row is null || row.JobId != jobId || row.State != ReembeddingJobState.Running)
                 return [];
 
-            _ = await BuildReembeddingJobAsync(connection, transaction, row, ct).ConfigureAwait(false);
             var now = DateTimeOffset.UtcNow;
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
@@ -929,26 +947,29 @@ public sealed class SqliteMemoryStore(
                 INNER JOIN memories m ON m.id = i.memory_id
                 WHERE i.job_id = $jobId
                   AND m.is_archived = 0
+                  AND i.terminal_failed = 0
                   AND (i.next_attempt_at IS NULL OR i.next_attempt_at <= $now)
                 ORDER BY m.created_at, m.id
                 LIMIT $limit
                 """;
             command.Parameters.AddWithValue("$jobId", jobId);
             command.Parameters.AddWithValue("$now", now.ToString("O"));
-            command.Parameters.AddWithValue("$limit", batchSize);
+            command.Parameters.AddWithValue("$limit", claimLimit);
             List<ReembeddingItem> claimed = [];
             await using (var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
             {
                 while (await reader.ReadAsync(ct).ConfigureAwait(false))
-                    claimed.Add(new ReembeddingItem(reader.GetString(0), reader.GetString(1), reader.GetInt32(2), reader.GetInt32(3)));
+                    claimed.Add(new ReembeddingItem(
+                        reader.GetString(0), reader.GetString(1), reader.GetInt32(2), reader.GetInt32(3),
+                        Guid.NewGuid().ToString("N")));
             }
 
             foreach (var item in claimed)
             {
                 await ExecuteReembeddingCommandAsync(connection, transaction,
-                    "UPDATE memory_reembedding_items SET next_attempt_at = $leaseUntil, claim_revision = $claimRevision WHERE job_id = $jobId AND memory_id = $memoryId",
+                    "UPDATE memory_reembedding_items SET next_attempt_at = $leaseUntil, claim_revision = $claimRevision, claim_token = $claimToken WHERE job_id = $jobId AND memory_id = $memoryId AND terminal_failed = 0",
                     [("$leaseUntil", now.Add(ReembeddingClaimLease).ToString("O")), ("$claimRevision", item.Revision),
-                     ("$jobId", jobId), ("$memoryId", item.MemoryId)], ct).ConfigureAwait(false);
+                     ("$claimToken", item.ClaimToken), ("$jobId", jobId), ("$memoryId", item.MemoryId)], ct).ConfigureAwait(false);
             }
 
             await transaction.CommitAsync(ct).ConfigureAwait(false);
@@ -965,11 +986,13 @@ public sealed class SqliteMemoryStore(
         string jobId,
         string memoryId,
         int claimedRevision,
+        string claimToken,
         byte[] embedding,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         ArgumentException.ThrowIfNullOrWhiteSpace(memoryId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
         ArgumentNullException.ThrowIfNull(embedding);
         await InitializeAsync(ct).ConfigureAwait(false);
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
@@ -991,10 +1014,11 @@ public sealed class SqliteMemoryStore(
                   AND EXISTS (
                       SELECT 1 FROM memory_reembedding_items
                       WHERE job_id = $jobId AND memory_id = $memoryId
-                        AND next_attempt_at IS NOT NULL AND claim_revision = $claimedRevision)
+                        AND next_attempt_at IS NOT NULL AND claim_revision = $claimedRevision
+                        AND claim_token = $claimToken AND terminal_failed = 0)
                 """,
                 [("$embedding", embedding), ("$memoryId", memoryId), ("$jobId", jobId),
-                 ("$claimedRevision", claimedRevision)], ct).ConfigureAwait(false);
+                 ("$claimedRevision", claimedRevision), ("$claimToken", claimToken)], ct).ConfigureAwait(false);
             if (changed == 1)
             {
                 await ExecuteReembeddingCommandAsync(connection, transaction,
@@ -1014,13 +1038,15 @@ public sealed class SqliteMemoryStore(
     public async Task FailReembeddingItemAsync(
         string jobId,
         string memoryId,
+        int claimedRevision,
+        string claimToken,
         string error,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         ArgumentException.ThrowIfNullOrWhiteSpace(memoryId);
-        var normalizedError = error ?? string.Empty;
-        var boundedError = normalizedError.SafeTruncate(MaxReembeddingErrorLength) ?? string.Empty;
+        ArgumentException.ThrowIfNullOrWhiteSpace(claimToken);
+        var boundedError = (error ?? string.Empty).SafeTruncate(MaxReembeddingErrorLength) ?? string.Empty;
         await InitializeAsync(ct).ConfigureAwait(false);
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -1032,20 +1058,36 @@ public sealed class SqliteMemoryStore(
             if (job is null || job.JobId != jobId || job.State != ReembeddingJobState.Running)
                 return;
 
+            var now = DateTimeOffset.UtcNow;
+            var nextFailureCount = await ReadClaimFailureCountAsync(
+                connection, transaction, jobId, memoryId, claimedRevision, claimToken, ct).ConfigureAwait(false) + 1;
+            if (nextFailureCount <= 0)
+                return;
+
+            var terminal = nextFailureCount >= MaxReembeddingAttempts;
+            var exponent = Math.Min(nextFailureCount - 1, 10);
+            var delaySeconds = Math.Min(
+                ReembeddingRetryBaseDelay.TotalSeconds * Math.Pow(2, exponent),
+                ReembeddingRetryMaxDelay.TotalSeconds);
+            var nextAttempt = terminal ? (object)DBNull.Value : now.AddSeconds(delaySeconds).ToString("O");
             var changed = await ExecuteReembeddingCommandAsync(connection, transaction,
                 """
                 UPDATE memory_reembedding_items
-                SET failure_count = failure_count + 1, last_error = $error, next_attempt_at = NULL, claim_revision = NULL
+                SET failure_count = $failureCount, last_error = $error,
+                    next_attempt_at = $nextAttempt, claim_revision = NULL, claim_token = NULL,
+                    terminal_failed = $terminal
                 WHERE job_id = $jobId AND memory_id = $memoryId
-                  AND next_attempt_at IS NOT NULL
+                  AND claim_revision = $claimedRevision AND claim_token = $claimToken
+                  AND terminal_failed = 0
                 """,
-                [("$error", boundedError), ("$jobId", jobId), ("$memoryId", memoryId)], ct).ConfigureAwait(false);
+                [("$failureCount", nextFailureCount), ("$error", boundedError), ("$nextAttempt", nextAttempt),
+                 ("$terminal", terminal ? 1 : 0), ("$jobId", jobId), ("$memoryId", memoryId),
+                 ("$claimedRevision", claimedRevision), ("$claimToken", claimToken)], ct).ConfigureAwait(false);
             if (changed == 1)
             {
                 await ExecuteReembeddingCommandAsync(connection, transaction,
                     "UPDATE memory_reembedding_job SET last_error = $error, updated_at = $now WHERE job_id = $jobId",
-                    [("$error", boundedError), ("$now", DateTimeOffset.UtcNow.ToString("O")), ("$jobId", jobId)],
-                    ct).ConfigureAwait(false);
+                    [("$error", boundedError), ("$now", now.ToString("O")), ("$jobId", jobId)], ct).ConfigureAwait(false);
             }
 
             await transaction.CommitAsync(ct).ConfigureAwait(false);
@@ -1054,6 +1096,33 @@ public sealed class SqliteMemoryStore(
         {
             _writeLock.Release();
         }
+    }
+
+    private static async Task<int> ReadClaimFailureCountAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string jobId,
+        string memoryId,
+        int claimedRevision,
+        string claimToken,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT failure_count
+            FROM memory_reembedding_items
+            WHERE job_id = $jobId AND memory_id = $memoryId
+              AND claim_revision = $claimedRevision AND claim_token = $claimToken
+              AND terminal_failed = 0
+              AND EXISTS (SELECT 1 FROM memories WHERE id = $memoryId AND revision = $claimedRevision)
+            """;
+        command.Parameters.AddWithValue("$jobId", jobId);
+        command.Parameters.AddWithValue("$memoryId", memoryId);
+        command.Parameters.AddWithValue("$claimedRevision", claimedRevision);
+        command.Parameters.AddWithValue("$claimToken", claimToken);
+        var value = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        return value is null or DBNull ? -1 : Convert.ToInt32(value, CultureInfo.InvariantCulture);
     }
 
     /// <inheritdoc />
@@ -1139,15 +1208,106 @@ public sealed class SqliteMemoryStore(
             state, 0, 0, 0, 0, reader.IsDBNull(5) ? null : reader.GetString(5));
     }
 
+    private static async Task<ReembeddingJob> ReconcileReembeddingBatchAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ReembeddingJob row,
+        CancellationToken ct)
+    {
+        long? cursor = null;
+        await using (var cursorCommand = connection.CreateCommand())
+        {
+            cursorCommand.Transaction = transaction;
+            cursorCommand.CommandText = "SELECT reconciliation_cursor FROM memory_reembedding_job WHERE job_id = $jobId";
+            cursorCommand.Parameters.AddWithValue("$jobId", row.JobId);
+            var value = await cursorCommand.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            if (value is not null and not DBNull)
+                cursor = Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        }
+
+        List<(long RowId, string MemoryId, bool Covered)> batch = [];
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT rowid, id, embedding
+                FROM memories
+                WHERE is_archived = 0 AND rowid > $cursor
+                ORDER BY rowid
+                LIMIT $limit
+                """;
+            command.Parameters.AddWithValue("$cursor", cursor ?? 0L);
+            command.Parameters.AddWithValue("$limit", ReembeddingReconciliationBatchSize);
+            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                var blob = reader.IsDBNull(2) ? null : (byte[])reader[2];
+                var covered = EmbeddingBlob.TryDecode(blob, out var identity, out _) && row.TargetIdentity.Matches(identity);
+                batch.Add((reader.GetInt64(0), reader.GetString(1), covered));
+            }
+        }
+
+        foreach (var item in batch)
+        {
+            if (item.Covered)
+            {
+                await ExecuteReembeddingCommandAsync(connection, transaction,
+                    "DELETE FROM memory_reembedding_items WHERE job_id = $jobId AND memory_id = $memoryId",
+                    [("$jobId", row.JobId), ("$memoryId", item.MemoryId)], ct).ConfigureAwait(false);
+            }
+            else
+            {
+                await ExecuteReembeddingCommandAsync(connection, transaction,
+                    """
+                    INSERT INTO memory_reembedding_items (job_id, memory_id)
+                    VALUES ($jobId, $memoryId)
+                    ON CONFLICT(job_id, memory_id) DO NOTHING
+                    """,
+                    [("$jobId", row.JobId), ("$memoryId", item.MemoryId)], ct).ConfigureAwait(false);
+            }
+        }
+
+        long? nextCursor;
+        if (batch.Count == ReembeddingReconciliationBatchSize)
+        {
+            nextCursor = batch[^1].RowId;
+        }
+        else if (cursor is not null)
+        {
+            // Finish the cycle at its high-water mark. Newly inserted lower rowids were already
+            // reconciled in earlier pages; keeping the cursor null here starts the next cycle.
+            nextCursor = null;
+        }
+        else
+        {
+            await using var maxRowId = connection.CreateCommand();
+            maxRowId.Transaction = transaction;
+            maxRowId.CommandText = "SELECT MAX(rowid) FROM memories WHERE is_archived = 0";
+            var value = await maxRowId.ExecuteScalarAsync(ct).ConfigureAwait(false);
+            nextCursor = value is null or DBNull ? null : Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        }
+
+        await ExecuteReembeddingCommandAsync(connection, transaction,
+            "UPDATE memory_reembedding_job SET reconciliation_cursor = $cursor WHERE job_id = $jobId",
+            [("$cursor", (object?)nextCursor ?? DBNull.Value), ("$jobId", row.JobId)], ct).ConfigureAwait(false);
+        await ExecuteReembeddingCommandAsync(connection, transaction,
+            "DELETE FROM memory_reembedding_items WHERE job_id = $jobId AND memory_id NOT IN (SELECT id FROM memories WHERE is_archived = 0)",
+            [("$jobId", row.JobId)], ct).ConfigureAwait(false);
+
+        return await ReadQueuedReembeddingProgressAsync(connection, transaction, row, ct).ConfigureAwait(false);
+    }
+
     private static async Task<ReembeddingJob> BuildReembeddingJobAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         ReembeddingJob row,
         CancellationToken ct)
     {
-        List<string> pending = [];
         var total = 0;
         var covered = 0;
+        var pending = 0;
+        var failed = 0;
+        List<(string MemoryId, bool Covered)> current = [];
         await using (var command = connection.CreateCommand())
         {
             command.Transaction = transaction;
@@ -1157,59 +1317,80 @@ public sealed class SqliteMemoryStore(
             {
                 total++;
                 var blob = reader.IsDBNull(1) ? null : (byte[])reader[1];
-                if (EmbeddingBlob.TryDecode(blob, out var identity, out _) && row.TargetIdentity.Matches(identity))
+                var isCovered = EmbeddingBlob.TryDecode(blob, out var identity, out _) && row.TargetIdentity.Matches(identity);
+                if (isCovered)
                     covered++;
-                else
-                    pending.Add(reader.GetString(0));
+                current.Add((reader.GetString(0), isCovered));
             }
         }
 
-        await ExecuteReembeddingCommandAsync(connection, transaction,
-            "DELETE FROM memory_reembedding_items WHERE job_id = $jobId AND memory_id NOT IN (SELECT id FROM memories WHERE is_archived = 0)",
-            [("$jobId", row.JobId)], ct).ConfigureAwait(false);
-        foreach (var memoryId in pending)
+        foreach (var item in current)
         {
-            await ExecuteReembeddingCommandAsync(connection, transaction,
-                """
-                INSERT INTO memory_reembedding_items (job_id, memory_id)
-                VALUES ($jobId, $memoryId)
-                ON CONFLICT(job_id, memory_id) DO NOTHING
-                """,
-                [("$jobId", row.JobId), ("$memoryId", memoryId)], ct).ConfigureAwait(false);
-        }
-
-        // Rows repaired by another process or ordinary write no longer belong in this target's queue.
-        await using (var deleteCovered = connection.CreateCommand())
-        {
-            deleteCovered.Transaction = transaction;
-            deleteCovered.CommandText = "SELECT memory_id FROM memory_reembedding_items WHERE job_id = $jobId";
-            deleteCovered.Parameters.AddWithValue("$jobId", row.JobId);
-            List<string> stale = [];
-            await using (var reader = await deleteCovered.ExecuteReaderAsync(ct).ConfigureAwait(false))
-            {
-                var pendingSet = pending.ToHashSet(StringComparer.Ordinal);
-                while (await reader.ReadAsync(ct).ConfigureAwait(false))
-                {
-                    var id = reader.GetString(0);
-                    if (!pendingSet.Contains(id))
-                        stale.Add(id);
-                }
-            }
-            foreach (var memoryId in stale)
+            if (item.Covered)
             {
                 await ExecuteReembeddingCommandAsync(connection, transaction,
                     "DELETE FROM memory_reembedding_items WHERE job_id = $jobId AND memory_id = $memoryId",
-                    [("$jobId", row.JobId), ("$memoryId", memoryId)], ct).ConfigureAwait(false);
+                    [("$jobId", row.JobId), ("$memoryId", item.MemoryId)], ct).ConfigureAwait(false);
+            }
+            else
+            {
+                await ExecuteReembeddingCommandAsync(connection, transaction,
+                    """
+                    INSERT INTO memory_reembedding_items (job_id, memory_id)
+                    VALUES ($jobId, $memoryId)
+                    ON CONFLICT(job_id, memory_id) DO NOTHING
+                    """,
+                    [("$jobId", row.JobId), ("$memoryId", item.MemoryId)], ct).ConfigureAwait(false);
             }
         }
+        await ExecuteReembeddingCommandAsync(connection, transaction,
+            "DELETE FROM memory_reembedding_items WHERE job_id = $jobId AND memory_id NOT IN (SELECT id FROM memories WHERE is_archived = 0)",
+            [("$jobId", row.JobId)], ct).ConfigureAwait(false);
 
-        await using var failureCommand = connection.CreateCommand();
-        failureCommand.Transaction = transaction;
-        failureCommand.CommandText = "SELECT COUNT(*) FROM memory_reembedding_items WHERE job_id = $jobId AND failure_count > 0";
-        failureCommand.Parameters.AddWithValue("$jobId", row.JobId);
-        var failureScalar = await failureCommand.ExecuteScalarAsync(ct).ConfigureAwait(false);
-        var failed = Convert.ToInt32(failureScalar, CultureInfo.InvariantCulture);
-        return row with { TotalCount = total, CoveredCount = covered, PendingCount = pending.Count, FailedCount = failed };
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT
+                    SUM(CASE WHEN terminal_failed = 0 THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN terminal_failed = 1 THEN 1 ELSE 0 END)
+                FROM memory_reembedding_items
+                WHERE job_id = $jobId
+                """;
+            command.Parameters.AddWithValue("$jobId", row.JobId);
+            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            if (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                pending = reader.IsDBNull(0) ? 0 : reader.GetInt32(0);
+                failed = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+            }
+        }
+        return row with { TotalCount = total, CoveredCount = covered, PendingCount = pending, FailedCount = failed };
+    }
+
+    private static async Task<ReembeddingJob> ReadQueuedReembeddingProgressAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ReembeddingJob row,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT
+                (SELECT COUNT(*) FROM memories WHERE is_archived = 0),
+                SUM(CASE WHEN terminal_failed = 0 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN terminal_failed = 1 THEN 1 ELSE 0 END)
+            FROM memory_reembedding_items
+            WHERE job_id = $jobId
+            """;
+        command.Parameters.AddWithValue("$jobId", row.JobId);
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        await reader.ReadAsync(ct).ConfigureAwait(false);
+        var total = reader.GetInt32(0);
+        var pending = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+        var failed = reader.IsDBNull(2) ? 0 : reader.GetInt32(2);
+        return row with { TotalCount = total, CoveredCount = Math.Max(0, total - pending - failed), PendingCount = pending, FailedCount = failed };
     }
 
     private static async Task<int> ExecuteReembeddingCommandAsync(

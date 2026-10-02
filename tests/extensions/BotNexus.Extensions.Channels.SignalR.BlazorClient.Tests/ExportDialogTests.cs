@@ -72,6 +72,88 @@ public sealed class ExportDialogTests : IDisposable
     }
 
     [Fact]
+    public async Task ChangedOptions_AreSentToTheExportRoute()
+    {
+        _rest.ExportConversationAsync("c-1", Arg.Any<ConversationExportRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new ExportDownload("review.html", "text/html", [1]));
+        var cut = Render();
+        cut.Find("[data-testid='chat-export-btn']").Click();
+
+        cut.Find("[data-testid='export-format']").Change("html");
+        cut.Find("[data-testid='export-include-tools']").Change(false);
+        cut.Find("[data-testid='export-include-thinking']").Change(true);
+        cut.Find("[data-testid='export-include-system']").Change(true);
+        cut.Find("[data-testid='export-redact-secrets']").Change(false);
+        await cut.Find("[data-testid='export-download-btn']").ClickAsync(new());
+
+        await _rest.Received(1).ExportConversationAsync(
+            "c-1",
+            Arg.Is<ConversationExportRequest>(r => r.Format == "html" && !r.IncludeTools && r.IncludeThinking && r.IncludeSystemMessages && !r.RedactSecrets),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SelectedMessages_UsesContiguousVisibleRange()
+    {
+        var conversation = _store.GetConversation("c-1") ?? throw new InvalidOperationException("Expected seeded conversation.");
+        conversation.AppendMessage(new ChatMessage("User", "first", DateTimeOffset.UtcNow) { ServerEntryId = "s-1#1" });
+        conversation.AppendMessage(new ChatMessage("Assistant", "middle", DateTimeOffset.UtcNow) { ServerEntryId = "s-1#2" });
+        conversation.AppendMessage(new ChatMessage("User", "last", DateTimeOffset.UtcNow) { ServerEntryId = "s-1#3" });
+        _rest.ExportConversationAsync("c-1", Arg.Any<ConversationExportRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new ExportDownload("excerpt.md", "text/markdown", [1]));
+        var cut = Render();
+        cut.Find("[data-testid='chat-export-btn']").Click();
+
+        cut.Find("[data-testid='export-scope']").Change("selected");
+        var selectors = cut.FindAll("[data-testid='export-message-selector']");
+        selectors.Count.ShouldBe(3);
+        selectors[0].Click();
+        cut.FindAll("[data-testid='export-message-selector']")[2].Click();
+
+        cut.Find("[data-testid='export-preview']").TextContent.ShouldContain("3 visible messages");
+        await cut.Find("[data-testid='export-download-btn']").ClickAsync(new());
+        await _rest.Received(1).ExportConversationAsync(
+            "c-1",
+            Arg.Is<ConversationExportRequest>(r => r.FirstEntryId == "s-1#1" && r.LastEntryId == "s-1#3"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task CurrentSession_UsesSessionExportRoute()
+    {
+        _rest.ExportSessionAsync("s-1", Arg.Any<ConversationExportRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new ExportDownload("session.md", "text/markdown", [1]));
+        var cut = Render();
+        cut.Find("[data-testid='chat-export-btn']").Click();
+        cut.Find("[data-testid='export-scope']").Change("session");
+
+        await cut.Find("[data-testid='export-download-btn']").ClickAsync(new());
+
+        await _rest.Received(1).ExportSessionAsync("s-1", Arg.Any<ConversationExportRequest>(), Arg.Any<CancellationToken>());
+        await _rest.DidNotReceive().ExportConversationAsync(
+            Arg.Any<string>(), Arg.Any<ConversationExportRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Cancel_ClearsSelectionAndPerformsNoRequest()
+    {
+        var conversation = _store.GetConversation("c-1") ?? throw new InvalidOperationException("Expected seeded conversation.");
+        conversation.AppendMessage(new ChatMessage("User", "first", DateTimeOffset.UtcNow) { ServerEntryId = "s-1#1" });
+        var cut = Render();
+        cut.Find("[data-testid='chat-export-btn']").Click();
+        cut.Find("[data-testid='export-scope']").Change("selected");
+        cut.Find("[data-testid='export-message-selector']").Click();
+
+        cut.Find("[data-testid='export-cancel-btn']").Click();
+        cut.Find("[data-testid='chat-export-btn']").Click();
+        cut.Find("[data-testid='export-scope']").Change("selected");
+
+        cut.Find("[data-testid='export-preview']").TextContent.ShouldContain("Choose the first message");
+        await _rest.DidNotReceiveWithAnyArgs().ExportConversationAsync(default!, default!, default);
+        await _rest.DidNotReceiveWithAnyArgs().ExportSessionAsync(default!, default!, default);
+    }
+
+    [Fact]
     public async Task Failure_IsVisibleAndBusyStateClears()
     {
         _rest.ExportConversationAsync("c-1", Arg.Any<ConversationExportRequest>(), Arg.Any<CancellationToken>())

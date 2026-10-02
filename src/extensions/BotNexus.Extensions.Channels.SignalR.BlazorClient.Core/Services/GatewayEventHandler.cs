@@ -42,6 +42,13 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     // When a snapshot-then-act pattern is needed the snapshot is taken under the lock and the async
     // work runs outside it -- the lock is never held across an await.
     private readonly object _stateGate = new();
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private long _runStateRevision;
+    private static readonly TimeSpan s_runStateReconciliationGrace = TimeSpan.FromSeconds(2);
+
+    internal Func<TimeSpan, CancellationToken, Task> RunStateReconciliationDelay { get; set; } = Task.Delay;
+    internal Func<CancellationToken, Task<SubscribeAllResult>>? RunActivitySnapshotProvider { get; set; }
+    internal Task? LastRunStateReconciliation { get; private set; }
 
     public GatewayEventHandler(
         IClientStateStore store,
@@ -53,6 +60,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _hub = hub;
         _logger = logger;
         _displayed = displayed;
+        RunActivitySnapshotProvider = _hub.SubscribeAllAsync;
 
         _hub.OnConnected += HandleConnected;
         _hub.OnRunStarted += HandleRunStarted;
@@ -147,6 +155,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void ApplyRunActivitySnapshot(IReadOnlyList<RunActivitySnapshot> activeRuns)
     {
         ArgumentNullException.ThrowIfNull(activeRuns);
+        Interlocked.Increment(ref _runStateRevision);
 
         foreach (var agent in _store.Agents.Values)
         {
@@ -182,12 +191,52 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _store.NotifyChanged();
     }
 
-    private static void MarkRunActive(ConversationState conversation, AgentState agent)
+    private void MarkRunActive(ConversationState conversation, AgentState agent)
     {
+        Interlocked.Increment(ref _runStateRevision);
         conversation.StreamState.IsRunActive = true;
         agent.IsStreaming = true;
         if (string.IsNullOrEmpty(agent.ProcessingStage))
             agent.ProcessingStage = "\U0001F916 Agent is working\u2026";
+    }
+
+    private void ScheduleRunStateReconciliation()
+    {
+        var expectedRevision = Volatile.Read(ref _runStateRevision);
+        LastRunStateReconciliation = ReconcileRunStateAfterGraceAsync(expectedRevision, _lifetimeCancellation.Token);
+    }
+
+    private async Task ReconcileRunStateAfterGraceAsync(long expectedRevision, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await RunStateReconciliationDelay(s_runStateReconciliationGrace, cancellationToken);
+            if (RunActivitySnapshotProvider is { } snapshotProvider)
+            {
+                var snapshot = await snapshotProvider(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Volatile.Read(ref _runStateRevision) == expectedRevision)
+                    ApplyRunActivitySnapshot(snapshot.ActiveRuns);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The handler was disposed before the bounded reconciliation completed.
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Run-state reconciliation failed; retaining the live event projection");
+        }
+    }
+
+    private void ScheduleRunStateReconciliationIfQuiescent(ConversationState conversation)
+    {
+        if (conversation.StreamState.IsRunActive
+            && !conversation.StreamState.IsStreaming
+            && conversation.StreamState.ActiveToolCalls.Count == 0)
+        {
+            ScheduleRunStateReconciliation();
+        }
     }
 
     /// <summary>
@@ -199,6 +248,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
     public void HandleRunEnded(AgentStreamEvent evt)
     {
         if (!ResolveAgent(evt.SessionId, out var agentId, out var agent, evt.ConversationId)) return;
+        Interlocked.Increment(ref _runStateRevision);
 
         // #2195: RunEnded is the authoritative idle signal that clears the turn-active bracket
         // (Steer/Redirect/Follow Up/Stop). If it is missed or misrouted the input stays stuck on
@@ -374,6 +424,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
                 agent.ProcessingStage = agent.IsStreaming ? "🤖 Agent is responding…" : null;
                 _store.NotifyChanged();
+                ScheduleRunStateReconciliationIfQuiescent(conv);
                 return;
             }
         }
@@ -397,6 +448,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         agent.ProcessingStage = agent.IsStreaming ? "🤖 Agent is responding…" : null;
         _store.NotifyChanged();
+
+        ScheduleRunStateReconciliationIfQuiescent(conv);
     }
 
     // Agents use this exact string to indicate they have nothing to say in a turn.
@@ -464,6 +517,12 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
         _store.ClearPendingAskUser(convId);
         _store.NotifyChanged();
+
+        // A missing RunEnded leaves the whole-run bracket asserted. Once this per-message terminal
+        // edge reaches a quiescent state, give the normal next-step/RunEnded events a short grace
+        // period and then reconcile against the server-owned live-run snapshot. A genuinely active
+        // run remains active in that snapshot, preserving the no-false-idle contract.
+        ScheduleRunStateReconciliationIfQuiescent(conv);
 
         // Drain any conversation-list refreshes that were deferred during the stream
         // (e.g., conversation(action=new) called mid-turn -- issue #456).
@@ -541,16 +600,20 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (!agent.IsStreaming) return;
 
         var convId = ResolveConversationId(agentId!, evt.SessionId, evt.ConversationId);
+        ConversationState? conversation = null;
         if (convId is not null && agent.Conversations.GetValueOrDefault(convId) is { } conv)
         {
             // A tool-only turn may have buffered content (e.g. a partial NO_REPLY).
             // Clear it without adding a message -- the turn produced no user-visible output.
             conv.StreamState.Reset();
+            conversation = conv;
         }
 
         agent.IsStreaming = false;
         agent.ProcessingStage = null;
         _store.NotifyChanged();
+        if (conversation is not null)
+            ScheduleRunStateReconciliationIfQuiescent(conversation);
 
         // Drain any deferred conversation refreshes (same as MessageEnd path).
         DrainPendingConversationRefreshes(agentId!);
@@ -1077,6 +1140,8 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
 
     public void Dispose()
     {
+        _lifetimeCancellation.Cancel();
+        _lifetimeCancellation.Dispose();
         _hub.OnConnected -= HandleConnected;
         _hub.OnRunStarted -= HandleRunStarted;
         _hub.OnMessageStart -= HandleMessageStart;

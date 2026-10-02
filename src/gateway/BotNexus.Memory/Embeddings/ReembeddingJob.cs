@@ -6,8 +6,8 @@ namespace BotNexus.Memory.Embeddings;
 /// <param name="State">Persisted operator-controlled lifecycle state.</param>
 /// <param name="TotalCount">Current number of live rows in the memory store.</param>
 /// <param name="CoveredCount">Current live rows carrying a decodable matching embedding.</param>
-/// <param name="PendingCount">Current live rows requiring a replacement embedding.</param>
-/// <param name="FailedCount">Pending rows that have failed at least once for this job.</param>
+/// <param name="PendingCount">Current live rows eligible for work, including delayed retries.</param>
+/// <param name="FailedCount">Current live rows terminalized after exhausting bounded retries.</param>
 /// <param name="LastError">Most recently recorded bounded provider error, when any.</param>
 public sealed record ReembeddingJob(string JobId, EmbeddingIdentity TargetIdentity, ReembeddingJobState State,
     int TotalCount, int CoveredCount, int PendingCount, int FailedCount, string? LastError);
