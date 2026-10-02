@@ -146,6 +146,20 @@ public sealed class SubAgentTurnBudgetTests
         result.TurnsUsed.ShouldBe(5);
     }
 
+    /// <summary>Late callbacks from a cancellation-ignoring handle cannot over-report the hard ceiling.</summary>
+    [Fact]
+    public async Task RunSubAgent_LateObserverCallbacks_TurnsUsedNeverExceedsMaxTurns()
+    {
+        var handle = new TurnDrivingHandle(turnsToAttempt: 50, ignoreCancellation: true);
+        ISubAgentManager manager = CreateManager(handle, out _);
+
+        var result = await SpawnAndAwaitTerminalAsync(manager, maxTurns: 3);
+
+        result.TurnsUsed.ShouldBe(3);
+        result.TurnsUsed.ShouldBeLessThanOrEqualTo(3);
+        handle.ObservedTurns.ShouldBeGreaterThan(3);
+    }
+
     /// <summary>AC5: the #1344 clamp is intact — an above-ceiling request is clamped and warns.</summary>
     [Fact]
     public async Task SpawnAsync_MaxTurnsAboveCeiling_StillClampedAndWarns()
@@ -244,14 +258,15 @@ public sealed class SubAgentTurnBudgetTests
     }
 
     /// <summary>
-    /// A handle that drives a deterministic number of turns through the <c>ObserveTurns</c> seam.
-    /// It fires turn notifications in a tight loop with no timing dependency and stops as soon as
-    /// its prompt token is cancelled, which is exactly what the budget enforcement does.
+    /// A handle that drives deterministic exploratory turns through the <c>ObserveTurns</c> seam,
+    /// then counts the manager's reserved text-only finalization call as the last model turn. It has
+    /// no timing dependency and stops exploration as soon as its budget token is cancelled.
     /// </summary>
     private sealed class TurnDrivingHandle(
         int turnsToAttempt,
         bool hangUntilCancelled = false,
-        AgentResponse? interruptedResponse = null) : IAgentHandle
+        AgentResponse? interruptedResponse = null,
+        bool ignoreCancellation = false) : IAgentHandle
     {
         private readonly List<Action> _observers = [];
         private int _observedTurns;
@@ -285,7 +300,7 @@ public sealed class SubAgentTurnBudgetTests
 
             for (var i = 0; i < turnsToAttempt; i++)
             {
-                if (cancellationToken.IsCancellationRequested)
+                if (cancellationToken.IsCancellationRequested && !ignoreCancellation)
                     break;
 
                 Interlocked.Increment(ref _observedTurns);
@@ -307,7 +322,8 @@ public sealed class SubAgentTurnBudgetTests
             if (cancellationToken.IsCancellationRequested && interruptedResponse is not null)
                 throw new AgentPromptInterruptedException(interruptedResponse, cancellationToken);
 
-            cancellationToken.ThrowIfCancellationRequested();
+            if (!ignoreCancellation)
+                cancellationToken.ThrowIfCancellationRequested();
             return new AgentResponse { Content = "Completed the work." };
         }
 
@@ -315,6 +331,15 @@ public sealed class SubAgentTurnBudgetTests
             BotNexus.Gateway.Abstractions.Models.AgentUserMessage message,
             CancellationToken cancellationToken = default)
             => PromptAsync(message.Content, cancellationToken);
+
+        public Task<AgentResponse> PromptWithoutToolsAsync(
+            string message,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _observedTurns);
+            return Task.FromResult(new AgentResponse { Content = string.Empty });
+        }
 
         public IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
