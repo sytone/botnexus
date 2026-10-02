@@ -1029,19 +1029,12 @@
         {
             await Interaction.RefreshConversationsAsync(agentId);
             Store.SelectView(agentId, string.Empty, SelectionSource.UserClick);
-            if (Store.GetAgent(agentId) is { } agent)
-            {
-                if (agent.UnreadCount > 0)
-                    agent.UnreadCount = 0;
+            if (Store.GetAgent(agentId) is { } agent && agent.UnreadCount > 0)
+                agent.UnreadCount = 0;
 
-                // SeedConversations auto-selects a default conversation, but its
-                // history is only loaded for the very first agent during portal init.
-                // Trigger history loading now so the user sees messages immediately.
-                if (agent.ActiveConversationId is not null)
-                    await Interaction.SelectConversationAsync(agentId, agent.ActiveConversationId);
-            }
-
-            NavigateToChat(agentId, Store.GetAgent(agentId)?.ActiveConversationId);
+            // Agent-only navigation is intentional: Home owns MRU/cold-start resolution and
+            // canonicalizes the URL to one explicit conversation route.
+            NavigateToChat(agentId, null);
             Store.NotifyChanged();
         }
     }
@@ -1190,7 +1183,7 @@
     {
         <div class="conversation-list-item" data-testid="conversation-list-item" data-conversation-id="@conversation.ConversationId">
             <ConversationActionMenu Actions="@BuildConversationActions(agent, conversation)">
-                <a class="conversation-list-item-btn @(conversation.ConversationId == agent.ActiveConversationId ? "active" : "")"
+                <a class="conversation-list-item-btn @(Store is IDisplayedConversation displayed && displayed.IsConversationDisplayed(agent.AgentId, conversation.ConversationId) ? "active" : "")"
                    href="agent/@Uri.EscapeDataString(agent.AgentId)/conversation/@Uri.EscapeDataString(conversation.ConversationId)"
                    @onclick="() => SelectConversationAsync(agent.AgentId, conversation.ConversationId)"
                    @onclick:preventDefault="true">
@@ -1363,7 +1356,10 @@
     {
         if (Store.ActiveAgentId is not { Length: > 0 } agentId)
             return null;
-        return Store.GetAgent(agentId)?.ActiveConversationSessionId;
+        if (Store is not IDisplayedConversation displayed
+            || displayed.DisplayedConversationIdFor(agentId) is not { } conversationId)
+            return null;
+        return Store.GetAgent(agentId)?.Conversations.GetValueOrDefault(conversationId)?.ActiveSessionId;
     }
 
     private void OpenSettings() => _settingsPanel?.Open();

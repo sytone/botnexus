@@ -33,7 +33,6 @@ public sealed class MobileCanvasPanelTests : IDisposable
             AgentId = "test-agent",
             DisplayName = "Test Agent",
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         };
         agentState.Conversations["conv-1"] = new ConversationState
         {
@@ -51,7 +50,7 @@ public sealed class MobileCanvasPanelTests : IDisposable
         _ctx.Services.AddSingleton(_store);
         var displayedConversation = Substitute.For<IDisplayedConversation>();
         displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
-            .Returns(call => call.Arg<string?>() is { } agentId ? _store.GetAgent(agentId)?.ActiveConversationId : null);
+            .Returns(call => call.Arg<string?>() is { } agentId ? (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agentId) : null);
         _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
@@ -68,7 +67,7 @@ public sealed class MobileCanvasPanelTests : IDisposable
         // had already published canvas HTML, leaving no affordance to open the
         // (empty-state) canvas. The button must now always be present so the panel
         // can be opened at any time, matching the desktop always-visible panel.
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent").Add(c => c.ConversationId, "conv-1"));
 
         // Need to open the overflow menu first.
         cut.Find(".overflow-btn").Click();
@@ -80,7 +79,7 @@ public sealed class MobileCanvasPanelTests : IDisposable
     [Fact]
     public void Canvas_content_dot_absent_when_no_canvas_content()
     {
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".overflow-btn").Click();
 
@@ -95,7 +94,7 @@ public sealed class MobileCanvasPanelTests : IDisposable
         var agent = _store.GetAgent("test-agent")!;
         agent.CanvasHtml = "<h1>Hello Canvas</h1>";
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent").Add(c => c.ConversationId, "conv-1"));
 
         // Need to open overflow menu first
         var overflowBtn = cut.Find(".overflow-btn");
@@ -113,7 +112,7 @@ public sealed class MobileCanvasPanelTests : IDisposable
         var agent = _store.GetAgent("test-agent")!;
         agent.Conversations["conv-1"].CanvasHtml = "<div>Canvas content</div>";
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent").Add(c => c.ConversationId, "conv-1"));
 
         var overflowBtn = cut.Find(".overflow-btn");
         overflowBtn.Click();
@@ -130,7 +129,7 @@ public sealed class MobileCanvasPanelTests : IDisposable
         var agent = _store.GetAgent("test-agent")!;
         agent.CanvasHtml = "<h1>Hello</h1>";
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent").Add(c => c.ConversationId, "conv-1"));
 
         // Open overflow and click canvas
         cut.Find(".overflow-btn").Click();
@@ -147,7 +146,7 @@ public sealed class MobileCanvasPanelTests : IDisposable
         // Set CanvasHtml to non-null so the button shows, then clear it on the conversation
         agent.CanvasHtml = "<p>x</p>";
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".overflow-btn").Click();
         cut.Find("[data-testid='canvas-toggle-btn']").Click();
@@ -165,7 +164,7 @@ public sealed class MobileCanvasPanelTests : IDisposable
         agent.CanvasHtml = "<html><head></head><body><h1>Test</h1></body></html>";
         _store.GetConversation("conv-1").Returns((ConversationState?)null);
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".overflow-btn").Click();
         cut.Find("[data-testid='canvas-toggle-btn']").Click();
@@ -212,7 +211,7 @@ public sealed class MobileCanvasPanelTests : IDisposable
         var agent = _store.GetAgent("test-agent")!;
         agent.CanvasHtml = "<p>canvas</p>";
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "test-agent").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".overflow-btn").Click();
         cut.Find("[data-testid='canvas-toggle-btn']").Click();

@@ -170,7 +170,7 @@ public sealed class PortalLoadServiceTests
     }
 
     [Fact]
-    public async Task InitializeAsync_RefreshesStoreFromApiInsteadOfUsingPreexistingConversationState()
+    public async Task InitializeAsync_RefreshesRosterWithoutImplicitlyLoadingConversationHistory()
     {
         _store.UpsertAgent(new AgentState
         {
@@ -214,7 +214,7 @@ public sealed class PortalLoadServiceTests
         await _service.InitializeAsync("http://localhost:5000/hub/gateway");
 
         await _restClient.Received(1).GetConversationsAsync("agent-1", Arg.Any<CancellationToken>());
-        await _restClient.Received(1).GetHistoryAsync("fresh-conv", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        await _restClient.DidNotReceive().GetHistoryAsync("fresh-conv", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
 
         var agent = _store.GetAgent("agent-1");
         Assert.NotNull(agent);

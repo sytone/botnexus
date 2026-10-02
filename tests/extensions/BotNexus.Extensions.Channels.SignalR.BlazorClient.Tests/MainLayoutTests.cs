@@ -295,8 +295,7 @@ public sealed class MainLayoutTests : IDisposable
         _store.SeedConversations("a-1", [
             new ConversationSummaryDto("c-1", "a-1", "Active Chat", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        _store.SetActiveConversation("a-1", "c-1");
-        _store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
+        _store.SelectView("a-1", "c-1", SelectionSource.RouteNavigation);
 
         var cut = RenderLayout();
 
@@ -598,7 +597,7 @@ public sealed class MainLayoutTests : IDisposable
         cut.Find(".agent-dropdown-select").Change("a-1");
 
         cut.WaitForAssertion(() =>
-            Assert.EndsWith("/agent/a-1/conversation/c-1", nav.Uri));
+            Assert.EndsWith("/agent/a-1", nav.Uri));
     }
 
     [Fact]
@@ -641,7 +640,7 @@ public sealed class MainLayoutTests : IDisposable
         var cut = RenderLayout();
         cut.Find(".agent-dropdown-select").Change(agentId);
 
-        var expectedSuffix = $"/agent/{Uri.EscapeDataString(agentId)}/conversation/{Uri.EscapeDataString(conversationId)}";
+        var expectedSuffix = $"/agent/{Uri.EscapeDataString(agentId)}";
         cut.WaitForAssertion(() =>
             Assert.EndsWith(expectedSuffix, nav.Uri));
     }
@@ -672,11 +671,11 @@ public sealed class MainLayoutTests : IDisposable
         var dropdown = cut.Find(".agent-dropdown-select");
         await cut.InvokeAsync(() => dropdown.Change("a-2"));
 
-        // Assert: SelectConversationAsync was called for Beta's auto-selected conversation.
-        // OnAgentSelected is async -- wrap in WaitForAssertion so bUnit waits for the async
-        // event handler to complete before asserting. Without this, the assertion can race
-        // the async continuation on slow CI runners and report a false negative (#828).
-        cut.WaitForAssertion(() => _interaction.Received(1).SelectConversationAsync("a-2", "c-2"));
+        // Agent selection navigates to an agent-only route. Home, not the layout, resolves and
+        // applies a conversation once that route is rendered.
+        await _interaction.DidNotReceive().SelectConversationAsync("a-2", Arg.Any<string>());
+        var nav = _ctx.Services.GetRequiredService<NavigationManager>();
+        Assert.EndsWith("/agent/a-2", nav.Uri);
     }
 
     [Fact]
@@ -733,7 +732,7 @@ public sealed class MainLayoutTests : IDisposable
 
         var cut = RenderLayout();
         var agentBefore = _store.ActiveAgentId;
-        var convBefore = _store.ActiveConversationId;
+        var convBefore = (_store as IDisplayedConversation)?.DisplayedConversationIdFor(_store.ActiveAgentId);
 
         // Simulate the inbound SubAgentSpawned data churn: poison the user agent's SessionType.
         await cut.InvokeAsync(() =>
@@ -746,7 +745,7 @@ public sealed class MainLayoutTests : IDisposable
         Assert.Contains(options, o => o.GetAttribute("value") == "a-1");
         _store.ActiveAgentId.ShouldBe(agentBefore,
             customMessage: "An inbound sub-agent session event must not revert the active agent (#2248).");
-        _store.ActiveConversationId.ShouldBe(convBefore,
+        (_store as IDisplayedConversation)?.DisplayedConversationIdFor(_store.ActiveAgentId).ShouldBe(convBefore,
             customMessage: "An inbound sub-agent session event must not revert the active conversation (#2248).");
     }
 
