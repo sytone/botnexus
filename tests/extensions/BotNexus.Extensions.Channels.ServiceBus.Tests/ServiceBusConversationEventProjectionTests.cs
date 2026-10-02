@@ -135,6 +135,90 @@ public sealed class ServiceBusConversationEventProjectionTests
         factory.Senders["reply-a"].SentMessages.Count.ShouldBe(3);
     }
 
+    [Fact]
+    public async Task Publisher_UnrelatedMutedAndUnsupportedEvents_DoNotSendOrConsumePendingRequest()
+    {
+        var factory = new FakeServiceBusAdapterClientFactory();
+        var adapter = CreateAdapter(factory);
+        StartAdapter(adapter);
+        await RegisterPendingRequestAsync(adapter, "request-a", "reply-a", "corr-a");
+
+        var conversationId = ConversationId.From("external-conversation");
+        var sessionId = SessionId.From("session-a");
+        var bindingId = BindingId.From("servicebus-origin");
+        var applicable = Binding(bindingId, "servicebus", "external-conversation", BindingMode.Interactive);
+        await using var publisher = new ConversationEventPublisher(
+            [(IConversationEventSink)adapter],
+            logger: NullLogger<ConversationEventPublisher>.Instance);
+
+        // An unrelated binding, a muted origin and a conversation without a Service Bus binding
+        // must not consume the pending request or emit a transport message.
+        foreach (var bindings in new[]
+                 {
+                     ImmutableArray.Create(Binding(BindingId.From("telegram-binding"), "telegram", "chat-1", BindingMode.Interactive)),
+                     ImmutableArray.Create(Binding(bindingId, "servicebus", "external-conversation", BindingMode.Muted)),
+                     ImmutableArray<ConversationBindingSnapshot>.Empty,
+                     ImmutableArray.Create(Binding(bindingId, "servicebus", "other-conversation", BindingMode.Interactive)),
+                 })
+        {
+            (await publisher.PublishAsync(AgentEvent(conversationId, sessionId, bindingId, bindings,
+                AgentStreamEventType.ContentDelta, "not for Service Bus"))).ShouldBeTrue();
+            (await publisher.PublishAsync(AgentEvent(conversationId, sessionId, bindingId, bindings,
+                AgentStreamEventType.RunEnded))).ShouldBeTrue();
+        }
+
+        (await publisher.PublishAsync(new ConversationCreatedEvent
+        {
+            AgentId = AgentId.From("agent-a"),
+            ConversationId = conversationId,
+            Bindings = ImmutableArray.Create(applicable),
+            Title = "lifecycle only",
+        })).ShouldBeTrue();
+
+        await publisher.WaitForDrainAsync(CancellationToken.None);
+        factory.Senders.ShouldNotContainKey("reply-a");
+
+        // A positive event after the no-ops proves the pending context was not silently retired.
+        var bindingsForReply = ImmutableArray.Create(applicable);
+        (await publisher.PublishAsync(AgentEvent(conversationId, sessionId, bindingId, bindingsForReply,
+            AgentStreamEventType.ContentDelta, "delivered"))).ShouldBeTrue();
+        (await publisher.PublishAsync(AgentEvent(conversationId, sessionId, bindingId, bindingsForReply,
+            AgentStreamEventType.RunEnded))).ShouldBeTrue();
+        await publisher.WaitForDrainAsync(CancellationToken.None);
+
+        var projected = factory.Senders["reply-a"].SentMessages
+            .Select(message => JsonSerializer.Deserialize<ServiceBusOutboundEnvelope>(message.Body.ToString())
+                ?? throw new InvalidOperationException("Projection emitted an invalid envelope."))
+            .ToArray();
+        projected.Select(envelope => envelope.Type).ShouldBe(["delta", "done"]);
+        projected.Select(envelope => envelope.Content).ShouldBe(["delivered", "delivered"]);
+        projected.Select(envelope => envelope.CorrelationId).ShouldAllBe(correlation => correlation == "corr-a");
+    }
+
+    private static ConversationAgentEvent AgentEvent(
+        ConversationId conversationId,
+        SessionId sessionId,
+        BindingId originBindingId,
+        ImmutableArray<ConversationBindingSnapshot> bindings,
+        AgentStreamEventType type,
+        string? contentDelta = null)
+        => new()
+        {
+            AgentId = AgentId.From("agent-a"),
+            ConversationId = conversationId,
+            SessionId = sessionId,
+            Origin = new ConversationEventOrigin(originBindingId, CorrelationId: "request-a"),
+            Bindings = bindings,
+            StreamEvent = new AgentStreamEvent
+            {
+                Type = type,
+                ContentDelta = contentDelta,
+                AgentId = AgentId.From("agent-a"),
+                ConversationId = conversationId,
+                SessionId = sessionId,
+            },
+        };
+
     private static ConversationBindingSnapshot Binding(
         BindingId bindingId,
         string channelType,
