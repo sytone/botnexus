@@ -199,7 +199,7 @@ public static class AgentLoopRunner
         bool firstTurn)
     {
         var messages = currentContext.Messages.ToList();
-        var toolResultContextLease = new ToolResultContextLease();
+        using var toolResultContextLease = new ToolResultContextLease();
         IReadOnlyList<AgentMessage> followUpSeed = [];
         var completionContinuationAttempts = 0;
         RunCompletionDecision? lastCompletionDecision = null;
