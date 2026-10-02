@@ -463,7 +463,11 @@ public sealed class ConversationsController : ControllerBase
             return NotFound();
 
         await AuditAsync(conversationId, "binding_added", "api", "rest-api", null, DescribeBinding(binding), cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
+        // The transactional append returns only success. Re-read the committed aggregate rather
+        // than publishing the detached pre-mutation conversation or its mutable binding list.
+        var updated = await _conversations.GetAsync(conversation.ConversationId, cancellationToken);
+        if (updated is not null && updated.ChannelBindings.Any(b => b.BindingId == binding.BindingId))
+            await PublishConversationBindingAddedBestEffortAsync(updated, binding.BindingId, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created, ToBindingResponse(binding));
     }
@@ -958,6 +962,34 @@ public sealed class ConversationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to publish archive event for conversation {ConversationId}; clients must reconcile from durable conversation state.", archived.ConversationId);
+        }
+    }
+
+    private async Task PublishConversationBindingAddedBestEffortAsync(Conversation updated, BindingId bindingId, CancellationToken cancellationToken)
+    {
+        if (_conversationEventPublisher is null)
+            return;
+
+        try
+        {
+            // Snapshot both the affected binding and the complete committed set before handing
+            // the fact to sinks; publication is post-commit and intentionally non-transactional.
+            var persistedBinding = updated.ChannelBindings.First(b => b.BindingId == bindingId);
+            var accepted = await _conversationEventPublisher.PublishAsync(new ConversationBindingAddedEvent
+            {
+                AgentId = updated.AgentId,
+                ConversationId = updated.ConversationId,
+                Binding = ConversationBindingSnapshot.From(persistedBinding),
+                Bindings = ConversationBindingSnapshot.FromMany(updated.ChannelBindings),
+                OccurredAt = updated.UpdatedAt
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (!accepted)
+                _logger.LogWarning("Conversation event publisher rejected binding attachment for conversation {ConversationId}; clients must reconcile from durable conversation state.", updated.ConversationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to publish binding attachment for conversation {ConversationId}; clients must reconcile from durable conversation state.", updated.ConversationId);
         }
     }
 
