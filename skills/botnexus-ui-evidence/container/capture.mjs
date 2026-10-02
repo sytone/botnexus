@@ -88,7 +88,7 @@ try {
   };
   await browser.close(); browser = undefined;
   manifest.cleanup.browserClosed = true;
-  
+
   fs.writeFileSync('/evidence-output/evidence.json', JSON.stringify(manifest, null, 2));
 } finally {
   if (browser) await browser.close();
