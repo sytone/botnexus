@@ -2809,15 +2809,33 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     }
 
     /// <inheritdoc />
-    public override async Task<IReadOnlyList<SubAgentRunDetail>> ListAllSubAgentSessionsAsync(string? status = null, int limit = 200, CancellationToken cancellationToken = default)
+    public override async Task<IReadOnlyList<SubAgentRunDetail>> ListAllSubAgentSessionsAsync(
+        string? status = null,
+        int limit = 200,
+        CancellationToken cancellationToken = default,
+        string? parentSessionId = null,
+        string? childAgentId = null,
+        int offset = 0)
     {
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
-        await using var connection = CreateConnection(); await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var command = connection.CreateCommand(); var hasStatus = !string.IsNullOrWhiteSpace(status);
-        command.CommandText = $"SELECT id,parent_session_id,parent_agent_id,child_agent_id,archetype,started_at,ended_at,status,detail_json FROM sub_agent_sessions {(hasStatus ? "WHERE lower(status)=lower($status)" : string.Empty)} ORDER BY started_at DESC LIMIT $limit";
-        if (hasStatus) command.Parameters.AddWithValue("$status", status!); command.Parameters.AddWithValue("$limit", limit);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false); var results = new List<SubAgentRunDetail>();
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) results.Add(SessionRowMapper.MapSubAgentSession(reader)); return results;
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        var predicates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(status)) predicates.Add("lower(status)=lower($status)");
+        if (!string.IsNullOrWhiteSpace(parentSessionId)) predicates.Add("parent_session_id=$parentSessionId");
+        if (!string.IsNullOrWhiteSpace(childAgentId)) predicates.Add("child_agent_id=$childAgentId");
+        command.CommandText = $"SELECT id,parent_session_id,parent_agent_id,child_agent_id,archetype,started_at,ended_at,status,detail_json FROM sub_agent_sessions {(predicates.Count > 0 ? "WHERE " + string.Join(" AND ", predicates) : string.Empty)} ORDER BY started_at DESC, id DESC LIMIT $limit OFFSET $offset";
+        if (!string.IsNullOrWhiteSpace(status)) command.Parameters.AddWithValue("$status", status);
+        if (!string.IsNullOrWhiteSpace(parentSessionId)) command.Parameters.AddWithValue("$parentSessionId", parentSessionId);
+        if (!string.IsNullOrWhiteSpace(childAgentId)) command.Parameters.AddWithValue("$childAgentId", childAgentId);
+        command.Parameters.AddWithValue("$limit", limit);
+        command.Parameters.AddWithValue("$offset", offset);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var results = new List<SubAgentRunDetail>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            results.Add(SessionRowMapper.MapSubAgentSession(reader));
+        return results;
     }
 
     /// <inheritdoc/>

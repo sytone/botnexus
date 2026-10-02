@@ -42,6 +42,9 @@ public sealed class SubAgentsController : ControllerBase
     /// <c>Killed</c>, <c>TimedOut</c>). When omitted, runs of every status are returned.
     /// </param>
     /// <param name="limit">Maximum number of rows to return (1-500, default 200).</param>
+    /// <param name="offset">Number of matching rows to skip (default 0).</param>
+    /// <param name="parentSessionId">Optional parent session ID filter.</param>
+    /// <param name="childAgentId">Optional child agent ID filter.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A read-only list of sub-agent session summaries.</returns>
     [HttpGet]
@@ -50,13 +53,19 @@ public sealed class SubAgentsController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<SubAgentRunDetail>>> List(
         [FromQuery] string? status = null,
         [FromQuery] int limit = 200,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] int offset = 0,
+        [FromQuery] string? parentSessionId = null,
+        [FromQuery] string? childAgentId = null)
     {
         if (limit <= 0)
             return BadRequest(new { error = "limit must be greater than zero." });
+        if (offset < 0)
+            return BadRequest(new { error = "offset must not be negative." });
 
         var boundedLimit = Math.Min(limit, 500);
-        var results = await _sessions.ListAllSubAgentSessionsAsync(status, boundedLimit, cancellationToken);
+        var results = await _sessions.ListAllSubAgentSessionsAsync(
+            status, boundedLimit, cancellationToken, parentSessionId, childAgentId, offset);
         return Ok(results);
     }
 }
