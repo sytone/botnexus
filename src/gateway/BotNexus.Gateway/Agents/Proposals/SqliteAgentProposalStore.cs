@@ -18,9 +18,24 @@ namespace BotNexus.Gateway.Agents.Proposals;
 public sealed class SqliteAgentProposalStore : IAgentProposalStore, IDisposable, IAsyncDisposable
 {
     /// <summary>The schema version written and understood by this store.</summary>
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
-    private static readonly SqliteSchemaMigration[] Migrations = [];
+    private static readonly SqliteSchemaMigration[] Migrations =
+    [
+        new(2, "add proposal application outcome", connection =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                ALTER TABLE agent_proposal ADD COLUMN application_status TEXT NOT NULL DEFAULT 'not_required'
+                    CHECK (application_status IN ('not_required', 'pending', 'applying', 'applied', 'failed', 'reconciled_applied', 'reconciled_not_applied'));
+                ALTER TABLE agent_proposal ADD COLUMN application_attempts INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE agent_proposal ADD COLUMN application_error TEXT NULL;
+                ALTER TABLE agent_proposal ADD COLUMN application_completed_at TEXT NULL;
+                UPDATE agent_proposal SET application_status = 'pending' WHERE status = 'approved';
+                """;
+            command.ExecuteNonQuery();
+        }),
+    ];
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly string _connectionString;
@@ -68,10 +83,12 @@ public sealed class SqliteAgentProposalStore : IAgentProposalStore, IDisposable,
         command.CommandText = """
             INSERT INTO agent_proposal (
                 proposal_id, kind, target_agent_id, proposed_descriptor_json, justification,
-                proposed_by_json, proposed_at, status, reviewed_by_json, review_reason, reviewed_at)
+                proposed_by_json, proposed_at, status, reviewed_by_json, review_reason, reviewed_at,
+                application_status, application_attempts, application_error, application_completed_at)
             VALUES (
                 $proposalId, $kind, $targetAgentId, $descriptor, $justification,
-                $proposedBy, $proposedAt, $status, NULL, NULL, NULL);
+                $proposedBy, $proposedAt, $status, NULL, NULL, NULL,
+                'not_required', 0, NULL, NULL);
             """;
         command.Parameters.AddWithValue("$proposalId", proposal.ProposalId.ToString("D"));
         command.Parameters.AddWithValue("$kind", proposal.Kind.ToString().ToLowerInvariant());
@@ -154,7 +171,8 @@ public sealed class SqliteAgentProposalStore : IAgentProposalStore, IDisposable,
             SET status = $status,
                 reviewed_by_json = $reviewedBy,
                 review_reason = $reason,
-                reviewed_at = $reviewedAt
+                reviewed_at = $reviewedAt,
+                application_status = CASE WHEN $status = 'approved' THEN 'pending' ELSE 'not_required' END
             WHERE proposal_id = $proposalId AND status = 'pending';
             """;
         update.Parameters.AddWithValue("$status", FormatStatus(decision));
@@ -196,6 +214,104 @@ public sealed class SqliteAgentProposalStore : IAgentProposalStore, IDisposable,
         return new AgentProposalReviewResult(outcome, authoritative);
     }
 
+
+    /// <inheritdoc />
+    public async Task<AgentProposalApplicationClaimResult> TryBeginApplicationAsync(
+        Guid proposalId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProposalId(proposalId);
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE agent_proposal
+            SET application_status = 'applying',
+                application_attempts = application_attempts + 1,
+                application_error = NULL,
+                application_completed_at = NULL
+            WHERE proposal_id = $proposalId
+              AND status = 'approved'
+              AND application_status IN ('pending', 'failed', 'reconciled_not_applied');
+            """;
+        command.Parameters.AddWithValue("$proposalId", proposalId.ToString("D"));
+        var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        var proposal = await LoadAsync(connection, proposalId, transaction: null, cancellationToken).ConfigureAwait(false);
+        return new AgentProposalApplicationClaimResult(
+            changed == 1 ? AgentProposalApplicationClaimOutcome.Claimed : AgentProposalApplicationClaimOutcome.NotClaimed,
+            proposal);
+    }
+
+    /// <inheritdoc />
+    public async Task CompleteApplicationAsync(
+        Guid proposalId,
+        bool succeeded,
+        string? error,
+        DateTimeOffset completedAt,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProposalId(proposalId);
+        if (!succeeded && string.IsNullOrWhiteSpace(error))
+            throw new ArgumentException("A failed application requires recoverable error evidence.", nameof(error));
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE agent_proposal
+            SET application_status = $status,
+                application_error = $error,
+                application_completed_at = $completedAt
+            WHERE proposal_id = $proposalId AND application_status = 'applying';
+            """;
+        command.Parameters.AddWithValue("$status", succeeded ? "applied" : "failed");
+        command.Parameters.AddWithValue("$error", succeeded ? DBNull.Value : error);
+        command.Parameters.AddWithValue("$completedAt", FormatTimestamp(completedAt));
+        command.Parameters.AddWithValue("$proposalId", proposalId.ToString("D"));
+        if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
+            throw new InvalidOperationException("The proposal application attempt is not owned by this caller.");
+    }
+
+    /// <inheritdoc />
+    public async Task<AgentProposalReconciliationResult> ReconcileApplicationAsync(
+        Guid proposalId,
+        AgentProposalReconciliationDecision decision,
+        CitizenId reconciledBy,
+        string evidence,
+        DateTimeOffset reconciledAt,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProposalId(proposalId);
+        if (!reconciledBy.IsValid)
+            throw new ArgumentException("A valid reconciler identity is required.", nameof(reconciledBy));
+        if (string.IsNullOrWhiteSpace(evidence))
+            throw new ArgumentException("Reconciliation requires external evidence.", nameof(evidence));
+        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE agent_proposal
+            SET application_status = $status,
+                application_error = $evidence,
+                application_completed_at = $completedAt
+            WHERE proposal_id = $proposalId AND application_status = 'applying';
+            """;
+        command.Parameters.AddWithValue("$status", decision is AgentProposalReconciliationDecision.Applied
+            ? "reconciled_applied" : "reconciled_not_applied");
+        command.Parameters.AddWithValue("$evidence", $"Reconciled by {reconciledBy}: {evidence.Trim()}");
+        command.Parameters.AddWithValue("$completedAt", FormatTimestamp(reconciledAt));
+        command.Parameters.AddWithValue("$proposalId", proposalId.ToString("D"));
+        var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        var proposal = await LoadAsync(connection, proposalId, transaction: null, cancellationToken).ConfigureAwait(false);
+        return new AgentProposalReconciliationResult(
+            changed == 1 ? AgentProposalReconciliationOutcome.Reconciled
+                : proposal is null ? AgentProposalReconciliationOutcome.NotFound
+                : AgentProposalReconciliationOutcome.NotApplying,
+            proposal);
+    }
+
     private async Task InitializeAsync(CancellationToken cancellationToken)
     {
         if (_initialized)
@@ -232,6 +348,11 @@ public sealed class SqliteAgentProposalStore : IAgentProposalStore, IDisposable,
                     reviewed_by_json TEXT NULL,
                     review_reason TEXT NULL,
                     reviewed_at TEXT NULL,
+                    application_status TEXT NOT NULL DEFAULT 'not_required'
+                        CHECK (application_status IN ('not_required', 'pending', 'applying', 'applied', 'failed', 'reconciled_applied', 'reconciled_not_applied')),
+                    application_attempts INTEGER NOT NULL DEFAULT 0,
+                    application_error TEXT NULL,
+                    application_completed_at TEXT NULL,
                     CHECK (
                         (status = 'pending' AND reviewed_by_json IS NULL AND reviewed_at IS NULL)
                         OR
@@ -284,7 +405,8 @@ public sealed class SqliteAgentProposalStore : IAgentProposalStore, IDisposable,
         command.Transaction = transaction;
         command.CommandText = """
             SELECT kind, target_agent_id, proposed_descriptor_json, justification,
-                   proposed_by_json, proposed_at, status, reviewed_by_json, review_reason, reviewed_at
+                   proposed_by_json, proposed_at, status, reviewed_by_json, review_reason, reviewed_at,
+                   application_status, application_attempts, application_error, application_completed_at
             FROM agent_proposal
             WHERE proposal_id = $proposalId;
             """;
@@ -300,6 +422,10 @@ public sealed class SqliteAgentProposalStore : IAgentProposalStore, IDisposable,
         CitizenId? reviewedBy;
         string? reason;
         DateTimeOffset? reviewedAt;
+        AgentProposalApplicationStatus applicationStatus;
+        int applicationAttempts;
+        string? applicationError;
+        DateTimeOffset? applicationCompletedAt;
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
             if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -317,6 +443,10 @@ public sealed class SqliteAgentProposalStore : IAgentProposalStore, IDisposable,
                 : DeserializeRequired<CitizenId>(reader.GetString(7), "reviewer");
             reason = reader.IsDBNull(8) ? null : reader.GetString(8);
             reviewedAt = reader.IsDBNull(9) ? null : ParseTimestamp(reader.GetString(9));
+            applicationStatus = ParseApplicationStatus(reader.GetString(10));
+            applicationAttempts = reader.GetInt32(11);
+            applicationError = reader.IsDBNull(12) ? null : reader.GetString(12);
+            applicationCompletedAt = reader.IsDBNull(13) ? null : ParseTimestamp(reader.GetString(13));
         }
 
         var history = await LoadHistoryAsync(connection, transaction, proposalId, cancellationToken).ConfigureAwait(false);
@@ -332,7 +462,13 @@ public sealed class SqliteAgentProposalStore : IAgentProposalStore, IDisposable,
             reviewedBy,
             reason,
             reviewedAt,
-            history);
+            history)
+        {
+            ApplicationStatus = applicationStatus,
+            ApplicationAttempts = applicationAttempts,
+            ApplicationError = applicationError,
+            ApplicationCompletedAt = applicationCompletedAt,
+        };
     }
 
     private static async Task<IReadOnlyList<AgentProposalReview>> LoadHistoryAsync(
@@ -414,6 +550,19 @@ public sealed class SqliteAgentProposalStore : IAgentProposalStore, IDisposable,
         "approved" => AgentProposalStatus.Approved,
         "rejected" => AgentProposalStatus.Rejected,
         _ => throw new InvalidDataException($"Unknown agent proposal status '{value}'."),
+    };
+
+
+    private static AgentProposalApplicationStatus ParseApplicationStatus(string value) => value switch
+    {
+        "not_required" => AgentProposalApplicationStatus.NotRequired,
+        "pending" => AgentProposalApplicationStatus.Pending,
+        "applying" => AgentProposalApplicationStatus.Applying,
+        "applied" => AgentProposalApplicationStatus.Applied,
+        "failed" => AgentProposalApplicationStatus.Failed,
+        "reconciled_applied" => AgentProposalApplicationStatus.ReconciledApplied,
+        "reconciled_not_applied" => AgentProposalApplicationStatus.ReconciledNotApplied,
+        _ => throw new InvalidDataException($"Unknown agent proposal application status '{value}'."),
     };
 
     private static AgentProposalKind ParseKind(string value) => value switch
