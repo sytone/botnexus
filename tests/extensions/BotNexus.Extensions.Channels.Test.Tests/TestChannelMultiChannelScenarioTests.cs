@@ -29,6 +29,23 @@ public sealed class TestChannelMultiChannelScenarioTests
     }
 
     [Fact]
+    public async Task CompactionThenReset_TwoEligibleChannels_ProjectsStrictlyOrderedLifecycleEventsOncePerSurface()
+    {
+        await using var scenario = new TestChannelConversationScenario(
+            TestChannelConversationScenario.Channel("telegram"),
+            TestChannelConversationScenario.Channel("signalr"));
+
+        scenario.Bind("telegram", "chat-ordered");
+        scenario.Bind("signalr", "portal-ordered");
+
+        await scenario.PublishCompactionAsync();
+        await scenario.ResetActiveSessionAsync();
+
+        AssertOrderedLifecycleProjection(scenario.LifecycleEvents("telegram", "chat-ordered"));
+        AssertOrderedLifecycleProjection(scenario.LifecycleEvents("signalr", "portal-ordered"));
+    }
+
+    [Fact]
     public async Task PublishCompactionAsync_TwoEligibleChannels_ProjectsPersistedLifecycleEventOncePerSurface()
     {
         await using var scenario = new TestChannelConversationScenario(
@@ -52,6 +69,17 @@ public sealed class TestChannelMultiChannelScenarioTests
             .ShouldHaveSingleItem()
             .ConversationEvent.ShouldBeOfType<ConversationSessionItemPersistedEvent>();
         signalR.Item.ShouldBe(persisted);
+    }
+
+    private static void AssertOrderedLifecycleProjection(
+        IReadOnlyList<TestChannelLifecycleEventRecord> events)
+    {
+        events.Count.ShouldBe(2);
+        events[0].ConversationEvent.ShouldBeOfType<ConversationSessionItemPersistedEvent>();
+        events[1].ConversationEvent.ShouldBeOfType<ConversationActiveSessionChangedEvent>();
+        events.Select(projected => projected.Sequence).ShouldBeInOrder(SortDirection.Ascending);
+        events[1].Sequence.ShouldBe(events[0].Sequence + 1);
+        events[1].TimestampUtc.ShouldBeGreaterThanOrEqualTo(events[0].TimestampUtc);
     }
 
     private static void AssertResetProjection(
