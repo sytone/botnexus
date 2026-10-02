@@ -50,6 +50,21 @@ public static class CronRunStatus
     public const string NoToolCalls = "no_tool_calls";
 
     /// <summary>
+    /// The agent run exhausted its bounded automatic continuation budget while actionable
+    /// execution-checklist items remained and no valid structured stop disposition existed.
+    /// This is a terminal non-success outcome, distinct from an exception and from zero tool use.
+    /// </summary>
+    public const string Incomplete = "incomplete";
+
+    /// <summary>
+    /// The agent run legitimately stopped with actionable checklist work remaining and a validated
+    /// structured stop disposition. This is terminal but not a failure: the durable wake owner and
+    /// condition live on the authoritative run-completion signal rather than being inferred from
+    /// inactivity.
+    /// </summary>
+    public const string Parked = "parked";
+
+    /// <summary>
     /// #3161: the action's turn completed without throwing, but the run's <b>primary delivery</b> -
     /// getting that output to the job's destination conversation - failed. The work happened; nobody
     /// received it.

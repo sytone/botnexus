@@ -1,5 +1,6 @@
 using BotNexus.Cron.Tests.TestInfrastructure;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -119,6 +120,62 @@ public sealed class CronZeroToolCallOutcomeTests
 
         var job = await context.Store.GetAsync(JobId.From("job-working"));
         job!.LastRunStatus.ShouldBe(CronRunStatus.Ok);
+    }
+
+    [Fact]
+    public async Task ExecutionClassRun_WithIncompleteChecklistCompletion_RecordsIncompleteStatus()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(ExecutionClassJob("job-incomplete"));
+        var completion = new RunCompletionSignal(
+            "IncompleteWithoutStopReason",
+            ["publish", "review"],
+            null,
+            "Actionable checklist items remained after bounded continuation.",
+            null,
+            null,
+            null,
+            2);
+        var scheduler = CreateScheduler(context.Store, [new CompletionReportingAction("boom", completion, toolInvocationCount: 3)]);
+
+        var run = await scheduler.RunNowAsync(JobId.From("job-incomplete"));
+
+        run.Status.ShouldBe(CronRunStatus.Incomplete);
+        run.Error.ShouldNotBeNull();
+        run.Error.ShouldContain("publish");
+        run.Error.ShouldContain("review");
+        var entry = (await context.Store.GetRunHistoryAsync(JobId.From("job-incomplete"))).ShouldHaveSingleItem();
+        entry.Status.ShouldBe(CronRunStatus.Incomplete);
+        entry.Error.ShouldBe(run.Error);
+    }
+
+    [Theory]
+    [InlineData("Parked", CronRunStatus.Parked)]
+    [InlineData("Failed", CronRunStatus.Error)]
+    [InlineData("Cancelled", CronRunStatus.Aborted)]
+    public async Task ExecutionClassRun_WithAuthoritativeTerminalCompletion_RecordsDistinctStatus(
+        string completionStatus,
+        string expectedStatus)
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(ExecutionClassJob($"job-{completionStatus.ToLowerInvariant()}"));
+        var completion = new RunCompletionSignal(
+            completionStatus,
+            ["publish"],
+            completionStatus == "Parked" ? "UserInput" : null,
+            $"{completionStatus} detail",
+            completionStatus == "Parked" ? "ask_user is persisted" : null,
+            completionStatus == "Parked" ? "user" : null,
+            completionStatus == "Parked" ? "user responds" : null,
+            0);
+        var scheduler = CreateScheduler(context.Store, [new CompletionReportingAction("boom", completion, toolInvocationCount: 3)]);
+
+        var run = await scheduler.RunNowAsync(JobId.From($"job-{completionStatus.ToLowerInvariant()}"));
+
+        run.Status.ShouldBe(expectedStatus);
+        run.Status.ShouldNotBe(CronRunStatus.Ok);
+        run.Error.ShouldNotBeNull();
+        (await context.Store.GetRunHistoryAsync(run.JobId)).ShouldHaveSingleItem().Status.ShouldBe(expectedStatus);
     }
 
     /// <summary>
@@ -307,6 +364,21 @@ public sealed class CronZeroToolCallOutcomeTests
         public Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
         {
             context.RecordToolInvocationCount(toolInvocationCount);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class CompletionReportingAction(
+        string actionType,
+        RunCompletionSignal completion,
+        int toolInvocationCount) : ICronAction
+    {
+        public string ActionType => actionType;
+
+        public Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
+        {
+            context.RecordToolInvocationCount(toolInvocationCount);
+            context.RecordRunCompletion(completion);
             return Task.CompletedTask;
         }
     }
