@@ -19,6 +19,7 @@ public class SignalREndpointContributor : IEndpointContributor
     public void MapEndpoints(WebApplication app)
     {
         app.MapHub<GatewayHub>("/hub/gateway");
+        app.MapHub<SatelliteHub>("/hub/satellite");
 
         var extensionDir = Path.GetDirectoryName(typeof(SignalREndpointContributor).Assembly.Location)!;
         var blazorPath = Path.Combine(extensionDir, "blazor");
