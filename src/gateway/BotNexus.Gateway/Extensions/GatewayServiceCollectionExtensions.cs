@@ -272,6 +272,13 @@ public static class GatewayServiceCollectionExtensions
             var subAgents = serviceProvider.GetRequiredService<ISubAgentManager>();
             return new LocalManagedTaskExecutor(subAgents, attempts);
         });
+        // Optional runtime integration: inert without a host-supplied managed-task ledger; when present,
+        // startup recovers interrupted continuation claims and dispatches pending owner callbacks.
+        services.TryAddSingleton(serviceProvider => new ManagedTaskWaitCoordinator(
+            serviceProvider.GetRequiredService<SqliteManagedTaskFlowLedger>(),
+            serviceProvider.GetServices<IManagedTaskContinuationOwner>(),
+            serviceProvider.GetRequiredService<ILogger<ManagedTaskWaitCoordinator>>()));
+        services.AddHostedService<ManagedTaskWaitRecoveryService>();
         services.TryAddSingleton<SessionLifecycleEvents>();
         services.TryAddSingleton<ISessionLifecycleEvents>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionLifecycleEvents>());

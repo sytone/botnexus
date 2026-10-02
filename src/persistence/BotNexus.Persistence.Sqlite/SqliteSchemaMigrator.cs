@@ -24,6 +24,32 @@ namespace BotNexus.Persistence.Sqlite;
 public static class SqliteSchemaMigrator
 {
     /// <summary>
+    /// Refuses a newer schema on a read-only connection without attempting to stamp or migrate it.
+    /// Unversioned legacy stores remain readable until their owning writer adopts them.
+    /// </summary>
+    public static void ValidateReadOnly(SqliteConnection connection, int codeVersion)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentOutOfRangeException.ThrowIfLessThan(codeVersion, 1);
+        var path = connection.DataSource;
+        if (string.IsNullOrWhiteSpace(path) || path.Contains(":memory:", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        using var exists = connection.CreateCommand();
+        exists.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $name;";
+        exists.Parameters.AddWithValue("$name", SqliteStoreIdentity.TableName);
+        if (exists.ExecuteScalar() is null)
+            return;
+
+        var storedVersion = ReadStoredVersion(connection);
+        if (storedVersion > codeVersion)
+            throw new SqliteSchemaVersionMismatchException(
+                $"SQLite store '{path}' was written by schema version {storedVersion} but this process understands " +
+                $"only version {codeVersion}. Refusing to read a newer store; run the newer build or restore a backup.",
+                storedVersion, codeVersion, path);
+    }
+
+    /// <summary>
     /// Brings the store behind <paramref name="connection"/> to <paramref name="codeVersion"/>,
     /// refusing to open a store that is ahead of the running code.
     /// </summary>

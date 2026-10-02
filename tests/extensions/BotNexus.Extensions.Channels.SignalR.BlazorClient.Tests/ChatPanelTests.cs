@@ -175,9 +175,7 @@ public sealed class ChatPanelTests : IDisposable
         _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _store.GetStreamState("conv-1").IsRunActive = true;
 
-        var cut = _ctx.Render<ChatPanel>(p => p
-            .Add(c => c.AgentId, "agent-1")
-            .Add(c => c.ConversationId, "conv-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         var composer = cut.Find("[data-testid='chat-composer']");
         composer.ClassList.ShouldContain("composer-active");
@@ -198,9 +196,7 @@ public sealed class ChatPanelTests : IDisposable
         _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         var streamState = _store.GetStreamState("conv-1");
         streamState.IsRunActive = true;
-        var cut = _ctx.Render<ChatPanel>(p => p
-            .Add(c => c.AgentId, "agent-1")
-            .Add(c => c.ConversationId, "conv-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         streamState.IsRunActive = false;
         _store.NotifyChanged();
