@@ -419,7 +419,10 @@ public abstract class SessionStoreBase : ISessionStore
     public virtual Task<IReadOnlyList<SubAgentRunDetail>> ListAllSubAgentSessionsAsync(
         string? status = null,
         int limit = 200,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? parentSessionId = null,
+        string? childAgentId = null,
+        int offset = 0)
         => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(Array.Empty<SubAgentRunDetail>());
 
     private static IEnumerable<GatewaySession> ApplyAgentFilter(IEnumerable<GatewaySession> sessions, AgentId? agentId)

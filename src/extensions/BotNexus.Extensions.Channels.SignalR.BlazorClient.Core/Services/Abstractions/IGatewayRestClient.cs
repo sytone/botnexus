@@ -59,6 +59,25 @@ public interface IGatewayRestClient
         string conversationId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Adds an address binding to a conversation and returns the persisted binding.</summary>
+    Task<ConversationBindingDto?> AddConversationBindingAsync(
+        string conversationId,
+        AddConversationBindingRequestDto request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Removes one binding from a conversation.</summary>
+    Task<bool> RemoveConversationBindingAsync(
+        string conversationId,
+        string bindingId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Moves one binding to another conversation owned by the same agent.</summary>
+    Task<ConversationBindingDto?> MoveConversationBindingAsync(
+        string conversationId,
+        string bindingId,
+        MoveConversationBindingRequestDto request,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// GET /api/conversations/costs - the read-time conversation cost rollup (#2898).
     /// </summary>
