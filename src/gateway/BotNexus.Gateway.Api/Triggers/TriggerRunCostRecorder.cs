@@ -41,6 +41,7 @@ internal static class TriggerRunCostRecorder
         request.ToolInvocationCount = response.ToolCalls.Count;
 
         request.TurnCount = response.TurnCount;
+        request.Completion = response.Completion;
 
         var usage = response.RunUsage;
         if (usage is null)

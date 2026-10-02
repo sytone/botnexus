@@ -70,6 +70,25 @@ public sealed class CronRunRetentionTests
         history.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData(CronRunStatus.Incomplete)]
+    [InlineData(CronRunStatus.Parked)]
+    public async Task PurgeRunsOlderThanAsync_DeletesChecklistTerminalRunsOlderThanCutoff(string status)
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var job = CronStoreTestContext.CreateJob("job-checklist-terminal");
+        await context.Store.CreateAsync(job);
+
+        var run = await context.Store.RecordRunStartAsync(job.Id);
+        await context.Store.RecordRunCompleteAsync(run.Id, status, "terminal checklist outcome");
+        await BackdateRunCompletedAt(context.DbPath, run.Id, DateTimeOffset.UtcNow.AddDays(-45));
+
+        var purged = await context.Store.PurgeRunsOlderThanAsync(DateTimeOffset.UtcNow.AddDays(-30));
+
+        purged.ShouldBe(1);
+        (await context.Store.GetRunHistoryAsync(job.Id)).ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task PurgeRunsOlderThanAsync_PreservesRecentTerminalRuns()
     {

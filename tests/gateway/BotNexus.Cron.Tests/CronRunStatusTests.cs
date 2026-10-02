@@ -24,6 +24,8 @@ public sealed class CronRunStatusTests
     [InlineData("error")]
     [InlineData("timed_out")]
     [InlineData("running")]
+    [InlineData("incomplete")]
+    [InlineData("parked")]
     public void CronRunStatus_ExposesCanonicalValue(string expected)
     {
         var actual = expected switch
@@ -32,6 +34,8 @@ public sealed class CronRunStatusTests
             "error" => CronRunStatus.Error,
             "timed_out" => CronRunStatus.TimedOut,
             "running" => CronRunStatus.Running,
+            "incomplete" => CronRunStatus.Incomplete,
+            "parked" => CronRunStatus.Parked,
             _ => throw new ArgumentOutOfRangeException(nameof(expected), expected, "unmapped status")
         };
 
@@ -41,7 +45,15 @@ public sealed class CronRunStatusTests
     [Fact]
     public void CronRunStatus_ValuesAreDistinct()
     {
-        var all = new[] { CronRunStatus.Ok, CronRunStatus.Error, CronRunStatus.TimedOut, CronRunStatus.Running };
+        var all = new[]
+        {
+            CronRunStatus.Ok,
+            CronRunStatus.Error,
+            CronRunStatus.TimedOut,
+            CronRunStatus.Running,
+            CronRunStatus.Incomplete,
+            CronRunStatus.Parked
+        };
         System.Linq.Enumerable.Distinct(all, StringComparer.Ordinal).Count().ShouldBe(all.Length);
     }
 
