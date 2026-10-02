@@ -212,6 +212,22 @@ Assert-Equal $false $fast.TimedOut '19: a fast process was reported as timed out
 Assert-Equal 0 $fast.ExitCode '19: exit code not passed through.'
 Assert-True ((Get-Content -LiteralPath $log -Raw) -match 'hello-3305') '19: child output was not captured to the log'
 
+# 19a. Each process argument must remain intact, including arguments containing spaces. The
+#      coverage-enabled test run passes its collector name in exactly this form.
+$argumentScript = Join-Path $root 'argument.ps1'
+@'
+param([string]$Value)
+Write-Output "argument=<$Value>"
+if ($Value -cne 'XPlat Code Coverage') { exit 8 }
+'@ | Set-Content -LiteralPath $argumentScript
+$argumentLog = Join-Path $root 'argument.log'
+$argumentRun = Invoke-BoundedProcess -FilePath $pwshPath -ArgumentList @(
+    '-NoProfile', '-File', $argumentScript, 'XPlat Code Coverage'
+) -LogPath $argumentLog -TimeoutSeconds 60 -PollMilliseconds 100
+Assert-Equal 0 $argumentRun.ExitCode '19a: an argument containing spaces was split.'
+Assert-True ((Get-Content -LiteralPath $argumentLog -Raw) -match 'argument=<XPlat Code Coverage>') `
+    '19a: the child did not receive the space-containing argument intact.'
+
 # 20. A NON-ZERO exit is passed through as-is and is not confused with a timeout. A genuine
 #     test failure and a hang must remain distinguishable -- conflating them is the defect.
 $failLog = Join-Path $root 'fail.log'
