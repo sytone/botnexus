@@ -320,7 +320,7 @@ public sealed class SessionsController : ControllerBase
 
         var totalCount = session.History.Count;
         var entries = session.GetHistorySnapshot(offset, boundedLimit);
-        return Ok(new SessionHistoryResponse(offset, boundedLimit, totalCount, entries));
+        return Ok(new SessionHistoryResponse(offset, boundedLimit, totalCount, entries, session.RunCompletion));
     }
 
     /// <summary>
