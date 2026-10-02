@@ -13,7 +13,7 @@ namespace BotNexus.Gateway.Configuration;
 /// <para>
 /// <b>Why this exists.</b> Before it, the gateway built the provider pipeline in <c>Program.cs</c>
 /// while seventeen other call sites - fourteen of them CLI commands - read and bound
-/// <c>config.json</c> by hand through <c>PlatformConfigLoader</c>. Those hand-loads could not see
+/// the JSON projection by hand through <c>PlatformConfigLoader</c>. Those hand-loads could not see
 /// the SQLite store, got no hot reload, and did not benefit from the last-known-good protection in
 /// <see cref="ResilientJsonConfigurationSource"/> (#2358), because all three of those live in the
 /// provider pipeline rather than in the file read.

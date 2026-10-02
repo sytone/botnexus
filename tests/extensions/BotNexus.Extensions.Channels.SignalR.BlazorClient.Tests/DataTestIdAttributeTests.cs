@@ -329,7 +329,12 @@ public sealed class DataTestIdAttributeTests : IDisposable
         var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "stream-agent").Add(c => c.ConversationId, "conv-1"));
 
         // Run controls present, Send absent.
+        var composer = cut.Find("[data-testid='chat-composer']");
+        composer.ClassList.ShouldContain("composer-active");
+        composer.GetAttribute("aria-busy").ShouldBe("true");
+        cut.Find("[data-testid='chat-composer-status']").TextContent.ShouldContain("Agent is working");
         cut.Find("[data-testid='chat-steer-btn']");
+        cut.Find("[data-testid='chat-redirect-btn']");
         cut.Find("[data-testid='chat-followup-btn']");
         cut.Find("[data-testid='chat-abort-btn']");
         Assert.Empty(cut.FindAll("[data-testid='chat-send']"));
