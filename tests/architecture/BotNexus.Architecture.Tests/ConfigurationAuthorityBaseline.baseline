@@ -19,7 +19,7 @@ config-json|src/gateway/BotNexus.Cli/Commands/Doctor/WorldIdCheck.cs|1
 config-json|src/gateway/BotNexus.Cli/Commands/DoctorCommand.cs|3
 config-json|src/gateway/BotNexus.Cli/Commands/DoctorConfigCommand.cs|2
 config-json|src/gateway/BotNexus.Cli/Commands/ExtensionRepositoryCommand.cs|1
-config-json|src/gateway/BotNexus.Cli/Commands/GatewayCommand.cs|4
+config-json|src/gateway/BotNexus.Cli/Commands/GatewayCommand.cs|3
 config-json|src/gateway/BotNexus.Cli/Commands/InitCommand.cs|5
 config-json|src/gateway/BotNexus.Cli/Commands/LocationsCommand.cs|6
 config-json|src/gateway/BotNexus.Cli/Commands/MemoryCommands.cs|1
@@ -36,7 +36,6 @@ config-json|src/gateway/BotNexus.Cli/Commands/UpdateCommand.cs|1
 config-json|src/gateway/BotNexus.Cli/Commands/ValidateCommand.cs|2
 config-json|src/gateway/BotNexus.Cli/ConfigPresence.cs|1
 config-json|src/gateway/BotNexus.Cli/Services/GatewayClientFactory.cs|2
-config-json|src/gateway/BotNexus.Cli/Services/GatewayProbeUrlResolver.cs|1
 config-json|src/gateway/BotNexus.Cli/Services/IGatewayCredentialSource.cs|1
 config-json|src/gateway/BotNexus.Cron/SkillReviewCronProvisioner.cs|1
 config-json|src/gateway/BotNexus.Gateway.Api/Controllers/AgentsController.cs|1
