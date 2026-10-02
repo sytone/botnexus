@@ -922,6 +922,32 @@ public sealed class CronTriggerTests
         lastSavedSession.History.Count.ShouldBe(2);
     }
 
+    [Fact]
+    public async Task CreateSessionAsync_ReportsAuthoritativeRunCompletion()
+    {
+        var completion = new RunCompletionSignal(
+            "IncompleteWithoutStopReason",
+            ["publish"],
+            null,
+            "Work remains actionable.",
+            null,
+            null,
+            null,
+            2);
+        var (sessionStore, conversationStore, supervisor) = BuildMocksWithResponse(
+            new AgentResponse { Content = "progress", Completion = completion });
+        var trigger = new CronTrigger(
+            supervisor.Object,
+            conversationStore.Object,
+            sessionStore.Object,
+            NullLogger<CronTrigger>.Instance);
+        var request = new InternalTriggerRequest { CronJobId = JobId.From("job-completion"), JobName = "Completion" };
+
+        await trigger.CreateSessionAsync(AgentId.From("agent-a"), "continue", request: request);
+
+        request.Completion.ShouldBe(completion);
+    }
+
     /// <summary>
     /// #2985: the trigger reports the turn's tool-invocation count back on the request so the cron
     /// scheduler can apply the execution-class zero-tool rule. A text-only turn reports ZERO -
