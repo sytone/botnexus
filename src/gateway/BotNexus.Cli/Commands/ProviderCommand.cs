@@ -331,8 +331,9 @@ internal sealed class ProviderCommand
 
     private sealed record ProviderHealthReceipt(string Status, int Models, bool HasCredentials, string? Error);
 
-    /// <summary>Raw-document path of the providers section.</summary>
+    /// <summary>Raw-document paths used by provider dependency checks and mutations.</summary>
     private const string ProvidersPath = "providers";
+    private const string AgentsPath = "agents";
 
     internal async Task<int> ExecuteRemoveAsync(string configPath, string name, bool verbose, CancellationToken cancellationToken)
     {
@@ -351,7 +352,31 @@ internal sealed class ProviderCommand
 
         var exitCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            candidate => candidate.TryRemoveEntry(ProvidersPath, name, out var error) ? null : error,
+            candidate =>
+            {
+                var dependentAgents = candidate.GetEntryKeys(AgentsPath)
+                    .Where(agentName =>
+                    {
+                        var agentJson = candidate.DescribeEntry(AgentsPath, agentName);
+                        if (agentJson is null)
+                            return false;
+
+                        using var agent = JsonDocument.Parse(agentJson);
+                        return agent.RootElement.TryGetProperty("provider", out var provider)
+                               && provider.ValueKind == JsonValueKind.String
+                               && string.Equals(provider.GetString(), name, StringComparison.OrdinalIgnoreCase);
+                    })
+                    .OrderBy(agentName => agentName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (dependentAgents.Count > 0)
+                {
+                    var agentList = string.Join(", ", dependentAgents.Select(CliText.SafeDisplay));
+                    return $"Provider '{CliText.SafeDisplay(name)}' is assigned to {dependentAgents.Count} agent(s): {agentList}. Reassign those agents before removing the provider.";
+                }
+
+                return candidate.TryRemoveEntry(ProvidersPath, name, out var error) ? null : error;
+            },
             "before-provider-update",
             verbose,
             cancellationToken,
