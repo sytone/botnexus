@@ -2125,24 +2125,27 @@ X-Api-Key: your-api-key
 
 **Endpoint:** `GET /api/subagents`
 
-**Description:** Read-only, platform-wide sub-agent observability feed. Lists persisted sub-agent runs across **all** parent sessions, newest-started first, so an operator can review what sub-agents did after the fact — including whether a run genuinely completed or bailed. This surface is strictly read-only: it never spawns, kills, or mutates sub-agent state. It reads the same persisted `sub_agent_sessions` rows that the parent-scoped session history exposes, but aggregated across every parent session.
+**Description:** Read-only, platform-wide sub-agent observability feed. Lists persisted sub-agent runs across **all** parent sessions, newest-started first, so an operator can review what sub-agents did after the fact — including whether a run genuinely completed or bailed. This surface is strictly read-only: it never spawns, kills, or mutates sub-agent state. It reads the same persisted `sub_agent_sessions` rows that the parent-scoped session history exposes, but aggregated across every parent session. Filters apply before pagination, including to legacy rows without stored detail. Equal start times are ordered by run ID descending to keep page boundaries stable while the rows remain unchanged.
 
 **Query Parameters:**
 - `status` (string, optional) - Case-insensitive status filter (e.g. `Active`, `Completed`, `Failed`, `Killed`, `TimedOut`, `BudgetExhausted`). When omitted, runs of every status are returned.
+- `parentSessionId` (string, optional) — Match one parent session ID.
+- `childAgentId` (string, optional) — Match one child agent ID.
 - `limit` (int, optional, default `200`) — Maximum number of rows to return. Bounded to `1`–`500`; values above `500` are clamped.
+- `offset` (int, optional, default `0`) — Number of matching rows to skip; must not be negative. Offset pagination can shift if runs are added or changed between requests.
 
 **Request:**
 ```http
-GET /api/subagents?status=Completed&limit=50
+GET /api/subagents?status=Completed&parentSessionId=s-parent-1&childAgentId=agent-b&limit=50&offset=0
 X-Api-Key: your-api-key
 ```
 
-**Response:** 200 OK — an array of the same bounded `SubAgentRunDetail` contract documented under [List Live Sub-Agents for a Session](#list-live-sub-agents-for-a-session), ordered newest-started first. This platform view and the parent-scoped history endpoint read the same persisted projection, so status, navigation identities, terminal result, usage, completion-delivery verdict, and safe recovery references do not vary by endpoint.
+**Response:** 200 OK — an array of the same bounded `SubAgentRunDetail` contract documented under [List Live Sub-Agents for a Session](#list-live-sub-agents-for-a-session), ordered by start time and run ID, both descending. This platform view and the parent-scoped history endpoint read the same persisted projection, so status, navigation identities, terminal result, usage, completion-delivery verdict, and safe recovery references do not vary by endpoint.
 
 Legacy rows remain readable. Information that was not persisted for a legacy row is returned as `null` or an empty collection rather than inferred; `completedAt` is the terminal timestamp field (there is no separate `endedAt` field).
 
 **Error Responses:**
-- `400 Bad Request` — `limit` is not greater than zero
+- `400 Bad Request` — `limit` is not greater than zero, or `offset` is negative
 
 ---
 

@@ -490,10 +490,16 @@ public interface ISessionStore
     /// <param name="status">Optional case-insensitive status filter (e.g. Completed, Failed, Killed, TimedOut, Active). When null or whitespace, all statuses are returned.</param>
     /// <param name="limit">Maximum number of rows to return.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="parentSessionId">Optional parent session ID filter.</param>
+    /// <param name="childAgentId">Optional child agent ID filter.</param>
+    /// <param name="offset">Number of matching rows to skip before returning results.</param>
     Task<IReadOnlyList<SubAgentRunDetail>> ListAllSubAgentSessionsAsync(
         string? status = null,
         int limit = 200,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? parentSessionId = null,
+        string? childAgentId = null,
+        int offset = 0)
         => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(Array.Empty<SubAgentRunDetail>());
 
     /// <summary>
