@@ -125,7 +125,7 @@ public class UpdateCommandTests
     private static UpdateCommand BuildCommand()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(true, null));
         pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStartResult(true, 99999, null));
@@ -147,7 +147,7 @@ public class UpdateCommandTests
     public async Task Update_WhenDeploymentFailsRestartsGatewayAndReturnsNonZero()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(true, "Stopped"));
         pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStartResult(true, 1234, null));
@@ -200,7 +200,7 @@ public class UpdateCommandTests
     public async Task Update_WhenStopFails_ReturnsNonZeroAndDoesNotStartGateway()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(false, "Kill failed"));
         var cmd = new NoOpPreStopUpdateCommand(pm);
 
@@ -235,7 +235,7 @@ public class UpdateCommandTests
         var busyPort = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
 
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(true, "Stopped"));
         var cmd = new NoOpPreStopUpdateCommand(pm);
 
@@ -266,7 +266,7 @@ public class UpdateCommandTests
     public async Task Update_with_non_git_directory_returns_nonzero()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(true, null));
         pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStartResult(false, null, "not expected in this test"));
@@ -313,7 +313,7 @@ public class UpdateCommandTests
                 cancellationToken: cts.Token);
 
             exitCode.ShouldBe(130);
-            await pm.DidNotReceive().StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+            await pm.DidNotReceive().StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>());
             await pm.DidNotReceive().StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>());
         }
         finally

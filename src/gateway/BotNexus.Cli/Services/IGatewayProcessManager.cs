@@ -32,7 +32,8 @@ public interface IGatewayProcessManager
     Task<GatewayStopResult> StopAsync(
         string? homePath = null,
         string? gatewayBinaryPath = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? gatewayUrl = null);
 
     /// <summary>
     /// Queries the current status of the gateway process without mutating lifecycle state.

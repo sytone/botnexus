@@ -130,6 +130,40 @@ public sealed class PortalLoadRefreshTranscriptTests
         _store.GetConversation("conv-1")!.Messages.Select(m => m.Content).ShouldContain("restored");
     }
 
+    [Fact]
+    public async Task RefreshAsync_FailedAgentRosterFetchStillRepairsTheActiveTranscript()
+    {
+        ArrangeRoster("conv-1");
+        await InitializeAsync("conv-1");
+
+        _restClient.GetAgentsAsync(Arg.Any<CancellationToken>())
+            .Returns<Task<IReadOnlyList<AgentSummary>>>(_ => throw new HttpRequestException("agents unavailable"));
+        _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("conv-1", 1, 0, 200, [Entry("restored", 2)]));
+
+        await _service.RefreshAsync();
+
+        await _restClient.Received(1).GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        _store.GetConversation("conv-1")!.Messages.Select(message => message.Content).ShouldContain("restored");
+    }
+
+    [Fact]
+    public async Task RefreshAsync_FailedConversationRosterFetchStillRepairsTheActiveTranscript()
+    {
+        ArrangeRoster("conv-1");
+        await InitializeAsync("conv-1");
+
+        _restClient.GetConversationsAsync("agent-1", Arg.Any<CancellationToken>())
+            .Returns<Task<IReadOnlyList<ConversationSummaryDto>>>(_ => throw new HttpRequestException("conversations unavailable"));
+        _restClient.GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(new ConversationHistoryResponseDto("conv-1", 1, 0, 200, [Entry("restored", 2)]));
+
+        await _service.RefreshAsync();
+
+        await _restClient.Received(1).GetHistoryAsync("conv-1", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+        _store.GetConversation("conv-1")!.Messages.Select(message => message.Content).ShouldContain("restored");
+    }
+
     /// <summary>
     /// Clause 5, the other direction: a THROWING transcript fetch must not abort the roster
     /// refresh. Each half is independently guarded.
