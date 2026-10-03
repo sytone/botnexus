@@ -486,8 +486,10 @@ public sealed class DefaultSubAgentManagerTimeoutTests
     [Fact]
     public async Task KillAsync_ExplicitCallerKill_DoesNotCaptureSnapshot()
     {
+        var promptStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var handle = CreateHandle(async token =>
         {
+            promptStarted.SetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return new AgentResponse { Content = "unreachable" };
         });
@@ -504,6 +506,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             InheritedConversationId = ConversationId.From("inherited-conversation")
         });
 
+        await promptStarted.Task.WaitAsync(HangGuard);
         var killed = await manager.KillAsync(spawned.SubAgentId, SessionId.From("parent-session"));
         var result = await manager.GetAsync(spawned.SubAgentId);
 

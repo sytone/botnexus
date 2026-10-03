@@ -223,7 +223,23 @@ function Invoke-BoundedProcess {
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $stdout = "$LogPath.stdout"
     $stderr = "$LogPath.stderr"
-    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $FilePath
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in $ArgumentList) {
+        [void]$startInfo.ArgumentList.Add($argument)
+    }
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    [void]$process.Start()
+    $stdoutStream = [System.IO.File]::Create($stdout)
+    $stderrStream = [System.IO.File]::Create($stderr)
+    $stdoutCopy = $process.StandardOutput.BaseStream.CopyToAsync($stdoutStream)
+    $stderrCopy = $process.StandardError.BaseStream.CopyToAsync($stderrStream)
 
     $timedOut = $false
     while (-not $process.HasExited) {
@@ -235,6 +251,10 @@ function Invoke-BoundedProcess {
         }
         Start-Sleep -Milliseconds $PollMilliseconds
     }
+    [void]$stdoutCopy.GetAwaiter().GetResult()
+    [void]$stderrCopy.GetAwaiter().GetResult()
+    $stdoutStream.Dispose()
+    $stderrStream.Dispose()
     $stopwatch.Stop()
 
     # Merge the redirected streams into the log the rest of the runner expects. Done after the
@@ -299,4 +319,3 @@ function New-RunnerTimeoutRecord {
         attribution = $attribution
     }
 }
-

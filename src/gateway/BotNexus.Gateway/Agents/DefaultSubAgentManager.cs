@@ -1922,6 +1922,9 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (!_records.TryGetValue(subAgentId, out var record))
             return;
 
+        if (record.Info.Status != SubAgentStatus.Running)
+            return;
+
         SubAgentWorktreeSnapshot? snapshot = null;
         if (status is SubAgentStatus.TimedOut or SubAgentStatus.BudgetExhausted
             && _worktreeSnapshotService is not null)
