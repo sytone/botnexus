@@ -11,6 +11,8 @@ public enum PromptGuidanceRung
     Claude,
     /// <summary>Shared guidance plus the GPT overlay.</summary>
     Gpt,
+    /// <summary>Shared guidance plus the Gemini overlay.</summary>
+    Gemini,
 }
 
 /// <summary>Historical prompt instructions that can be injected independently for regression experiments.</summary>
@@ -46,6 +48,7 @@ public static class PromptBehaviorPrompt
         {
             PromptGuidanceRung.Claude => ("claude-sonnet-4-5", "anthropic"),
             PromptGuidanceRung.Gpt => ("gpt-5", "openai"),
+            PromptGuidanceRung.Gemini => ("gemini-2.5-pro", "google"),
             _ => ("behavior-eval-unknown", "behavior-eval-unknown"),
         };
         var context = new PromptContext

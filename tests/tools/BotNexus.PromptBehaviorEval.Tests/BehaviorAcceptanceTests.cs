@@ -36,7 +36,7 @@ public sealed class BehaviorAcceptanceTests
         acceptance.Passed.ShouldBeTrue();
         acceptance.FailedChecks.ShouldBeEmpty();
         acceptance.ExpectedOperationOrder.ShouldBe(ExpectedOrder);
-        acceptance.Checks.ShouldContain(check => check.Name == "gptNarrationSpacing" && check.Passed);
+        acceptance.Checks.ShouldContain(check => check.Name == "narrationSpacing" && check.Passed);
     }
 
     [Fact]
@@ -51,7 +51,7 @@ public sealed class BehaviorAcceptanceTests
         acceptance.FailedChecks.ShouldContain("discoveredItemAddedAfterInspection");
         acceptance.FailedChecks.ShouldContain("atLeastTwoDistinctDoneItems");
         acceptance.FailedChecks.ShouldContain("noRejectedTodoTransitions");
-        acceptance.FailedChecks.ShouldContain("gptNarrationSpacing");
+        acceptance.FailedChecks.ShouldContain("narrationSpacing");
         acceptance.FailedChecks.ShouldContain("operationSequenceExceedsNarrationThreshold");
         acceptance.FailedChecks.ShouldContain("noRejectedOperations");
     }
@@ -59,12 +59,27 @@ public sealed class BehaviorAcceptanceTests
     [Theory]
     [InlineData(PromptGuidanceRung.Default)]
     [InlineData(PromptGuidanceRung.Claude)]
-    public void Evaluate_NonGptRung_ReportsSpacingWithoutApplyingGptCriterion(PromptGuidanceRung rung)
+    [InlineData(PromptGuidanceRung.Gemini)]
+    public void Evaluate_SharedNarrationBoundary_FailsLongSilentRun(PromptGuidanceRung rung)
     {
-        var acceptance = BehaviorAcceptance.Evaluate(rung, ExpectedOrder, ExpectedOrder, true, 2, 99, 0, 0);
+        var acceptance = BehaviorAcceptance.Evaluate(rung, ExpectedOrder, ExpectedOrder, true, 2, 20, 0, 0);
+
+        acceptance.Passed.ShouldBeFalse();
+        acceptance.FailedChecks.ShouldContain("narrationSpacing");
+        acceptance.Checks.ShouldContain(check => check.Name == "narrationSpacing" && check.Evidence == "20");
+    }
+
+    [Theory]
+    [InlineData(PromptGuidanceRung.Default)]
+    [InlineData(PromptGuidanceRung.Claude)]
+    [InlineData(PromptGuidanceRung.Gpt)]
+    [InlineData(PromptGuidanceRung.Gemini)]
+    public void Evaluate_ExactlyTenCallsBetweenMessages_PassesSharedNarrationBoundary(PromptGuidanceRung rung)
+    {
+        var acceptance = BehaviorAcceptance.Evaluate(rung, ExpectedOrder, ExpectedOrder, true, 2, 10, 0, 0);
 
         acceptance.Passed.ShouldBeTrue();
-        acceptance.Checks.ShouldNotContain(check => check.Name == "gptNarrationSpacing");
+        acceptance.Checks.ShouldContain(check => check.Name == "narrationSpacing" && check.Passed);
     }
 
     [Fact]
@@ -75,7 +90,7 @@ public sealed class BehaviorAcceptanceTests
         var acceptance = BehaviorAcceptance.Evaluate(PromptGuidanceRung.Gpt, ExpectedOrder, ExpectedOrder, true, 3, ExpectedOrder.Length, 0, 0);
 
         acceptance.Passed.ShouldBeFalse();
-        acceptance.FailedChecks.ShouldContain("gptNarrationSpacing");
+        acceptance.FailedChecks.ShouldContain("narrationSpacing");
         acceptance.Checks.ShouldContain(check => check.Name == "operationSequenceExceedsNarrationThreshold" && check.Passed);
     }
 
@@ -89,5 +104,6 @@ public sealed class BehaviorAcceptanceTests
         acceptance.Passed.ShouldBeFalse();
         acceptance.FailedChecks.ShouldContain("requiredOperationOrder");
         acceptance.FailedChecks.ShouldContain("noRejectedOperations");
+        acceptance.FailedChecks.ShouldContain("narrationSpacing");
     }
 }
