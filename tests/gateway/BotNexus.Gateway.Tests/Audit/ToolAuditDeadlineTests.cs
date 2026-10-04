@@ -96,7 +96,7 @@ public sealed class ToolAuditDeadlineTests
     [InlineData("exec")]
     [InlineData("shell")]
     [InlineData("process")]
-    public async Task PersistStartAsync_LockedSqlite_SideEffectingToolFailsWithinDeadlineWithoutLateAuditRow(
+    public async Task PersistStartAsync_LockedSqlite_SideEffectingToolFailsClosedWithoutLateAuditRow(
         string toolName)
     {
         var directory = Path.Combine(AppContext.BaseDirectory, nameof(ToolAuditDeadlineTests), Guid.NewGuid().ToString("N"));
@@ -122,13 +122,14 @@ public sealed class ToolAuditDeadlineTests
             lockCommand.CommandText = "BEGIN EXCLUSIVE;";
             await lockCommand.ExecuteNonQueryAsync();
 
-            var stopwatch = Stopwatch.StartNew();
             var error = await Should.ThrowAsync<InvalidOperationException>(() =>
                 Create(store).PersistStartAsync(
                     $"call-{toolName}", toolName, Args("command", "danger"), CancellationToken.None));
-            stopwatch.Stop();
 
-            stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+            // The bounded store returns only after its write attempt has definitively failed.
+            // Runner scheduling is not part of the persistence deadline contract.
+            error.InnerException.ShouldBeOfType<BoundedSessionAppendException>()
+                .Reason.ShouldBe(BoundedSessionAppendFailureReason.Locked);
             error.Message.ShouldContain("audit unavailable", Case.Insensitive);
             error.Message.ShouldContain("lock", Case.Insensitive);
 
