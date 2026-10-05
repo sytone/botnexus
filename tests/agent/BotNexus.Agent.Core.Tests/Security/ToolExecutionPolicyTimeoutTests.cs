@@ -370,6 +370,38 @@ public sealed class ToolExecutionPolicyTimeoutTests
         AgentLoopConfig.DefaultToolExecutionPolicyTimeout.ShouldBe(TimeSpan.FromSeconds(15));
     }
 
+    [Fact]
+    public async Task HangingPolicy_ThrowingDiagnosticSubscriber_PreservesBlockAndLaterDiagnosticDelivery()
+    {
+        var diagnostics = new List<string>();
+        var toolInvoked = false;
+        var tool = CreateTool("dangerous", _ =>
+        {
+            toolInvoked = true;
+            return Task.FromResult(Ok("executed"));
+        });
+        Action<string> observer = _ => throw new OperationCanceledException("diagnostic sink cancelled");
+        observer += diagnostics.Add;
+        var config = TestHelpers.CreateTestConfig(
+            beforeToolCall: async (_, ct) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false);
+                return null;
+            },
+            beforeToolCallTimeout: ShortBudget,
+            onDiagnostic: observer);
+
+        var results = await ExecuteAsync(config, tool, "dangerous", CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        toolInvoked.ShouldBeFalse();
+        var result = results.ShouldHaveSingleItem();
+        result.IsError.ShouldBeTrue();
+        var message = diagnostics.ShouldHaveSingleItem();
+        message.ShouldContain("BeforeToolCall hook timed out");
+        result.Result.Content[0].Value.ShouldBe(message);
+    }
+
     private static Task<IReadOnlyList<ToolResultAgentMessage>> ExecuteAsync(
         AgentLoopConfig config,
         IAgentTool tool,

@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
 using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Tools;
@@ -903,14 +904,7 @@ internal static class ToolExecutor
             "hook's running time stayed within budget. This is not a hook timeout and the tool " +
             "call was not blocked.";
 
-        try
-        {
-            config.DiagnosticObserver?.Invoke(message);
-        }
-        catch
-        {
-            // A misbehaving diagnostic sink must never change the outcome.
-        }
+        DiagnosticNotification.Report(config.DiagnosticObserver, message);
     }
 
     private static AgentToolResult BuildErrorResult(string message)
@@ -935,14 +929,7 @@ internal static class ToolExecutor
             $"(budget {budget.TotalSeconds:F1}s) for tool '{toolCall.Name}' (call {toolCall.Id}). " +
             "Tool call blocked because no policy decision was reached.";
 
-        try
-        {
-            config.DiagnosticObserver?.Invoke(message);
-        }
-        catch
-        {
-            // A misbehaving diagnostic sink must never mask the fail-closed outcome.
-        }
+        DiagnosticNotification.Report(config.DiagnosticObserver, message);
 
         return new ToolPreparation(null, BuildErrorResult(message), true);
     }

@@ -54,6 +54,12 @@ These rules are mandatory for changes to `BotNexus.Agent.Core`:
 	during a layout refactor; do not add raw callbacks for named domain responsibilities.
 - The loop owns execution, control-flow decisions, and mutable agent state.
 	Policies return decisions, transformers return data, and observers report facts.
+	Informational diagnostic callbacks must use the shared diagnostic dispatcher:
+	isolate each multicast subscriber's exceptions (including subscriber cancellation)
+	without recursively reporting through the failing sink. Do not swallow operation
+	cancellation or apply diagnostic isolation to authoritative callbacks. The current
+	`ToolExecutionDecisionObserver` also supports host write-ahead accounting; its
+	exception behavior must remain unchanged until that responsibility is separated.
 	Reuse an existing policy point when its question and contracts fit. Before adding
 	contributors, follow the family-specific ordering, aggregation, failure, and
 	evidence rules in [Extension-point composition](../../docs/development/agent-core-extension-points.md#define-composition-per-policy-family).

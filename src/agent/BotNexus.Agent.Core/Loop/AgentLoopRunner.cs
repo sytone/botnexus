@@ -255,7 +255,7 @@ public static class AgentLoopRunner
                     NotifyContextReplaced(refreshedContext.Tools);
                     currentContext = refreshedContext;
                     messages = refreshedContext.Messages.ToList();
-                    config.DiagnosticObserver?.Invoke(
+                    DiagnosticNotification.Report(config.DiagnosticObserver,
                         "Proactive durable compaction applied before the next provider turn; live context resynchronized.");
                 }
 
@@ -668,8 +668,9 @@ public static class AgentLoopRunner
             // Hosts that have not declared compaction required retain the historical best-effort
             // behavior. A host that crossed its threshold uses ProactiveCompactionException instead,
             // which is deliberately not swallowed above (#4379).
-            config.DiagnosticObserver?.Invoke(
-                $"Proactive durable compaction failed before a provider turn; continuing with the existing bounded overflow recovery. {ex.Message}");
+            if (config.DiagnosticObserver is { } observer)
+                DiagnosticNotification.Report(observer,
+                    $"Proactive durable compaction failed before a provider turn; continuing with the existing bounded overflow recovery. {ex.Message}");
             return null;
         }
     }
@@ -817,7 +818,7 @@ public static class AgentLoopRunner
                     recoveryLease?.ReportNonTransientFailure();
                     RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                     overflowRecovered = true;
-                    config.DiagnosticObserver?.Invoke(
+                    DiagnosticNotification.Report(config.DiagnosticObserver,
                         "Reactive lossy context-overflow truncation applied after terminal provider overflow; this is not durable compaction.");
                     var compacted = CompactForOverflow(messages);
                     messages.Clear();
@@ -847,7 +848,7 @@ public static class AgentLoopRunner
                 recoveryLease?.ReportNonTransientFailure();
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 overflowRecovered = true;
-                config.DiagnosticObserver?.Invoke(
+                DiagnosticNotification.Report(config.DiagnosticObserver,
                     "Reactive lossy context-overflow truncation applied after provider rejection; this is not durable compaction.");
                 var compacted = CompactForOverflow(messages);
                 messages.Clear();
@@ -882,9 +883,10 @@ public static class AgentLoopRunner
                     config.AuthProfile ?? string.Empty,
                     ProviderSuspensionRegistry.DefaultDuration,
                     ex.Message);
-                config.DiagnosticObserver?.Invoke(
-                    $"Provider '{config.Model.Provider}' reported non-transient exhaustion; " +
-                    $"failing after one attempt and suspending this auth profile. {ex.Message}");
+                if (config.DiagnosticObserver is { } observer)
+                    DiagnosticNotification.Report(observer,
+                        $"Provider '{config.Model.Provider}' reported non-transient exhaustion; " +
+                        $"failing after one attempt and suspending this auth profile. {ex.Message}");
                 throw;
             }
             catch (Exception ex) when (ClassifyFailure(ex) == ProviderFailureClass.Transient && attempt < maxAttempts - 1)

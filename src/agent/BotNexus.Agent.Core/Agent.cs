@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Agent.Core.ExtensionPoints.Messages;
 using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Core.Loop;
@@ -625,7 +626,8 @@ public sealed class Agent
             }
             catch (Exception listenerEx)
             {
-                _options.DiagnosticObserver?.Invoke($"Listener error during agent_end: {listenerEx.Message}");
+                if (_options.DiagnosticObserver is { } observer)
+                    DiagnosticNotification.Report(observer, $"Listener error during agent_end: {listenerEx.Message}");
             }
 
             return [abortedMessage];
@@ -662,7 +664,8 @@ public sealed class Agent
             }
             catch (Exception listenerEx)
             {
-                _options.DiagnosticObserver?.Invoke($"Listener error during agent_end: {listenerEx.Message}");
+                if (_options.DiagnosticObserver is { } observer)
+                    DiagnosticNotification.Report(observer, $"Listener error during agent_end: {listenerEx.Message}");
             }
 
             return [failureMessage];
@@ -837,7 +840,8 @@ public sealed class Agent
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _options.DiagnosticObserver?.Invoke($"Listener threw: {ex.Message}");
+                if (_options.DiagnosticObserver is { } observer)
+                    DiagnosticNotification.Report(observer, $"Listener threw: {ex.Message}");
             }
         }
     }

@@ -152,11 +152,19 @@ public sealed class ToolExecutionPolicySuspendTests
     /// AC3: the suspend-attributed case is distinguishable in TEXT from a genuine budget breach, so
     /// an operator is not sent to investigate a policy provider that never ran slowly.
     /// </summary>
-    [Fact]
-    public async Task SuspendAttributedMeasurement_EmitsADistinctDiagnostic()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SuspendAttributedMeasurement_EmitsADistinctDiagnostic(bool throwingFirstSubscriber)
     {
         var diagnostics = new ConcurrentQueue<string>();
         var tool = CreateTool("write", _ => Task.FromResult(Ok("executed")));
+        Action<string> observer = diagnostics.Enqueue;
+        if (throwingFirstSubscriber)
+        {
+            observer = _ => throw new OperationCanceledException("diagnostic subscriber cancelled");
+            observer += diagnostics.Enqueue;
+        }
 
         var attempts = 0;
         var config = TestHelpers.CreateTestConfig(
@@ -178,11 +186,15 @@ public sealed class ToolExecutionPolicySuspendTests
                 return null;
             },
             beforeToolCallTimeout: ShortBudget,
-            onDiagnostic: diagnostics.Enqueue,
+            onDiagnostic: observer,
             suspendDetector: new AlwaysSuspendedDetector());
 
-        await ExecuteAsync(config, tool, "write", CancellationToken.None)
+        var results = await ExecuteAsync(config, tool, "write", CancellationToken.None)
             .WaitAsync(TimeSpan.FromSeconds(30));
+
+        var result = results.ShouldHaveSingleItem();
+        result.IsError.ShouldBeFalse();
+        result.Result.Content[0].Value.ShouldBe("executed");
 
         var suspendMessage = diagnostics.ShouldHaveSingleItem();
         suspendMessage.ShouldContain("measurement discarded");
