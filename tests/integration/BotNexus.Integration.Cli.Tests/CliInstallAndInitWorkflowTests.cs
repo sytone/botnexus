@@ -1,15 +1,8 @@
 namespace BotNexus.Integration.Cli.Tests;
 
 /// <summary>
-/// Test 3: drive the installed CLI through the <c>install</c> and <c>init</c> flow.
-///
-/// Uses a fresh temp directory as a self-contained sandbox:
-///   - <c>&lt;tmp&gt;/source</c>     → target for <c>botnexus install --source</c> (git clones the current repo here)
-///   - <c>&lt;tmp&gt;/.botnexus</c>  → target for <c>botnexus init --target</c>     (config home)
-///
-/// The <c>--repo</c> argument points at the current repository on disk so the test
-/// does not require external network for the git clone step (the CLI itself was
-/// installed from nuget.org by the fixture).
+/// Drives the CLI installed from nuget.org through the published-package init flow.
+/// Install coverage remains in <see cref="CliInstallationTests"/>.
 /// </summary>
 [Collection(CliCollection.Name)]
 public sealed class CliInstallAndInitWorkflowTests : IAsyncLifetime
@@ -40,42 +33,6 @@ public sealed class CliInstallAndInitWorkflowTests : IAsyncLifetime
             // Cloned .git directories can have read-only files on Windows; best-effort cleanup.
         }
         return Task.CompletedTask;
-    }
-
-    [Fact]
-    public async Task Cli_Install_LatestClonesCurrentRepoWithoutReleaseTagsIntoSandbox()
-    {
-        _fixture.InstallSucceeded.ShouldBeTrue(
-            "CLI install fixture did not complete successfully — see CliInstallationTests for the install failure.");
-
-        var sourceDir = Path.Combine(_sandbox, "source");
-        var repoRoot = RepoLocator.FindRepoRoot();
-
-        // CI checks out a detached commit: neither release tags nor refs/heads/main are
-        // guaranteed. The fixture owns a tag-free remote whose main is this exact commit.
-        var localRepo = await TagFreeLocalSourceRepository.CreateAsync(_sandbox, repoRoot, CommandTimeout);
-        var currentCommit = await ProcessRunner.RunAsync("git", $"-C \"{repoRoot}\" rev-parse HEAD", timeout: CommandTimeout);
-        currentCommit.ExitCode.ShouldBe(0, currentCommit.Combined);
-
-        var result = await ProcessRunner.RunAsync(
-            _fixture.CliExecutablePath,
-            $"install --latest --source \"{sourceDir}\" --repo \"{localRepo}\"",
-            timeout: CommandTimeout);
-
-        result.ExitCode.ShouldBe(
-            0,
-            $"botnexus install failed.\nStdOut:\n{result.StdOut}\nStdErr:\n{result.StdErr}");
-
-        Directory.Exists(sourceDir).ShouldBeTrue(
-            $"Expected source directory at {sourceDir} after install.");
-        Directory.Exists(Path.Combine(sourceDir, ".git")).ShouldBeTrue(
-            "Cloned source should contain a .git directory.");
-        File.Exists(Path.Combine(sourceDir, "dirs.proj")).ShouldBeTrue(
-            "Cloned source should contain the root traversal project (proves the clone is of the current repo).");
-        var installedCommit = await ProcessRunner.RunAsync("git", $"-C \"{sourceDir}\" rev-parse HEAD", timeout: CommandTimeout);
-        installedCommit.ExitCode.ShouldBe(0, installedCommit.Combined);
-        installedCommit.StdOut.Trim().ShouldBe(currentCommit.StdOut.Trim(),
-            "The tag-free fixture must install the exact current checkout, not an ambient branch tip.");
     }
 
     [Fact]
