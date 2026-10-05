@@ -57,7 +57,7 @@ public sealed class LocalCliLatestInstallTests : IAsyncLifetime
             "git", $"-C \"{repoRoot}\" rev-parse HEAD", timeout: CommandTimeout);
         currentCommit.ExitCode.ShouldBe(0, currentCommit.Combined);
         var expectedCommit = currentCommit.StdOut.Trim();
-        expectedCommit.ShouldNotBeNullOrWhiteSpace("The current checkout must resolve to a commit.");
+        expectedCommit.ShouldNotBeNullOrWhiteSpace("HEAD must not be empty.");
 
         var result = await ProcessRunner.RunAsync(
             _fixture.CliExecutablePath,
