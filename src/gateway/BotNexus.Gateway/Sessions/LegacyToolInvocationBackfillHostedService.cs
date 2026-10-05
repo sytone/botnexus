@@ -21,6 +21,7 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
     private readonly Func<SqliteSessionStore, int, LegacyToolPayloadCleanupReport> _runCleanupBatch;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly LegacyToolInvocationBackfillMetrics _metrics;
+    private readonly LegacyToolPayloadCleanupMetrics _cleanupMetrics;
     private readonly ILogger<LegacyToolInvocationBackfillHostedService> _logger;
 
     /// <summary>
@@ -53,6 +54,7 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
         _runCleanupBatch = runCleanupBatch;
         _delay = delay;
         _metrics = new LegacyToolInvocationBackfillMetrics(metrics);
+        _cleanupMetrics = new LegacyToolPayloadCleanupMetrics(metrics);
         _logger = logger;
     }
 
@@ -76,7 +78,16 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
             TimeSpan? nextDelay = null;
             try
             {
-                var report = _runBatch(_store, BatchSize);
+                LegacyToolInvocationBackfillReport report;
+                try
+                {
+                    report = _runBatch(_store, BatchSize);
+                }
+                catch
+                {
+                    _metrics.RecordFailure();
+                    throw;
+                }
                 _metrics.RecordCommitted(report);
                 if (report.HasMore)
                 {
@@ -84,7 +95,17 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
                 }
                 else
                 {
-                    var cleanup = _runCleanupBatch(_store, BatchSize);
+                    LegacyToolPayloadCleanupReport cleanup;
+                    try
+                    {
+                        cleanup = _runCleanupBatch(_store, BatchSize);
+                    }
+                    catch
+                    {
+                        _cleanupMetrics.RecordFailure();
+                        throw;
+                    }
+                    _cleanupMetrics.RecordCommitted(cleanup);
                     _logger.LogInformation(
                         "Legacy tool payload cleanup batch cleaned {CleanedInvocations} invocation(s) and {CleanedRows} row(s), cleared {ClearedBytes} byte(s), protected {ProtectedInvocations} invocation(s), remaining {RemainingInvocations}; more eligible work: {HasMore}.",
                         cleanup.CleanedInvocations,
@@ -100,7 +121,6 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
             }
             catch (Exception ex)
             {
-                _metrics.RecordFailure();
                 _logger.LogWarning(ex, "Legacy tool invocation backfill or payload cleanup batch failed; retrying later.");
                 nextDelay = RetryDelay;
             }
