@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -73,14 +74,14 @@ var llmClient = new LlmClient(providers, new ModelRegistry());
 var loopConfiguration = new AgentLoopConfig(
     Model: model,
     LlmClient: llmClient,
-    ConvertToLlm: DefaultMessageConverter.Create(),
-    TransformContext: null,
-    GetProviderExecutionOptions: (_, _) => Task.FromResult<ProviderExecutionOptions?>(new() { ApiKey = apiKey }),
-    GetSteeringMessages: null,
-    GetFollowUpMessages: null,
+    ProviderMessageTransformer: DefaultProviderMessageTransformer.Create(),
+    AgentContextTransformer: null,
+    ProviderExecutionOptionsProvider: (_, _) => Task.FromResult<ProviderExecutionOptions?>(new() { ApiKey = apiKey }),
+    SteeringMessageProvider: null,
+    FollowUpMessageProvider: null,
     ToolExecutionMode: ToolExecutionMode.Sequential,
-    BeforeToolCall: null,
-    AfterToolCall: null,
+    ToolExecutionPolicy: null,
+    ToolResultTransformer: null,
     GenerationSettings: new SimpleStreamOptions { MaxTokens = configuration.MaxTokens });
 
 var startedAt = DateTimeOffset.UtcNow;
