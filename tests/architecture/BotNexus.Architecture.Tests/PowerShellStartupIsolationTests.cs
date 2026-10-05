@@ -10,11 +10,14 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
     [Fact]
     public async Task RunLintAt_StderrBeyondPipeCapacity_RetainsBothOutputs()
     {
-        const int pipeSaturatingBytes = 131072;
+        const int pipeSaturatingBytes = 2 * 1024 * 1024;
         await ExerciseLintBoundaryAsync(
             $"[Console]::Error.Write(('E' * {pipeSaturatingBytes})); [Console]::Out.Write('stdout-complete'); exit 0",
             cancelAfterStart: false,
-            expectedStdErrBytes: pipeSaturatingBytes);
+            expectedStdErrBytes: pipeSaturatingBytes,
+            waitForChildReadiness: true,
+            timeout: TimeSpan.FromSeconds(60),
+            outerGuardTimeout: TimeSpan.FromSeconds(90));
     }
 
     [Fact]
@@ -84,29 +87,51 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
     private static async Task ExerciseLintBoundaryAsync(
         string body,
         bool cancelAfterStart,
-        int expectedStdErrBytes = 0)
+        int expectedStdErrBytes = 0,
+        bool waitForChildReadiness = false,
+        TimeSpan? timeout = null,
+        TimeSpan? outerGuardTimeout = null)
     {
         var fixture = Directory.CreateTempSubdirectory("lint-boundary-").FullName;
+        var readyFile = Path.Combine(fixture, "child-ready");
+        using var readyWatcher = waitForChildReadiness
+            ? new FileSystemWatcher(fixture, Path.GetFileName(readyFile)) { EnableRaisingEvents = true }
+            : null;
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (readyWatcher is not null)
+        {
+            readyWatcher.Created += (_, _) => ready.TrySetResult();
+        }
         using var unrelated = new DocsLintScriptTests.PowerShellStartupState();
         var sentinel = Path.Combine(unrelated.Root, "untouched");
         File.WriteAllText(sentinel, "preserve");
         var script = Path.Combine(fixture, "child.ps1");
-        File.WriteAllText(script, "param($RepoRoot, $Rule)\n" + body);
+        var readiness = waitForChildReadiness
+            ? $"[IO.File]::WriteAllText('{readyFile.Replace("'", "''")}', 'ready'); "
+            : string.Empty;
+        File.WriteAllText(script, "param($RepoRoot, $Rule)\n" + readiness + body);
         using var cancellation = new CancellationTokenSource();
-        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var guard = new CancellationTokenSource(outerGuardTimeout ?? TimeSpan.FromSeconds(30));
         Process? observed = null;
         string? cache = null;
         Task<DocsLintScriptTests.LintRun>? run = null;
         try
         {
             run = DocsLintScriptTests.RunLintAtAsync(fixture, script, "literal-drift", false,
-                cancellation.Token, (child, root, _) =>
+                cancellation.Token, async (child, root, token) =>
                 {
                     observed = Process.GetProcessById(child.Id);
                     cache = root;
                     Directory.Exists(root).ShouldBeTrue("cache must remain owned while the child is live");
-                    return Task.CompletedTask;
-                }, timeout: TimeSpan.FromSeconds(10));
+                    if (readyWatcher is not null)
+                    {
+                        if (File.Exists(readyFile))
+                        {
+                            ready.TrySetResult();
+                        }
+                        await ready.Task.WaitAsync(token);
+                    }
+                }, timeout: timeout ?? TimeSpan.FromSeconds(10));
             if (cancelAfterStart)
             {
                 var failure = await Should.ThrowAsync<TimeoutException>(async () =>
