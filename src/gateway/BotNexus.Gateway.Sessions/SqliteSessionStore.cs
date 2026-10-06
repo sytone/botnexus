@@ -94,7 +94,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     public const int DefaultSessionCacheCapacity = 500;
 
     private readonly string _connectionString;
-    private readonly SqliteWalMaintenance _walMaintenance = new();
+    private readonly SqliteWalMaintenance _walMaintenance;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     // Striped write locks: a fixed pool hashed by session id. This bounds the number
     // of sync primitives (no per-session SemaphoreSlim leak across the process
@@ -163,10 +163,12 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         IConversationStore conversationStore,
         ISecretRedactor? redactor = null,
         int cacheCapacity = DefaultSessionCacheCapacity,
-        StoreMetrics? storeMetrics = null)
+        StoreMetrics? storeMetrics = null,
+        SqliteWalMaintenance? journalModeMaintenance = null)
         : base(conversationStore)
     {
         _connectionString = connectionString;
+        _walMaintenance = journalModeMaintenance ?? new SqliteWalMaintenance();
         _logger = logger;
         _conversationStore = conversationStore ?? throw new ArgumentNullException(nameof(conversationStore));
         _legacyResolver = new LegacyConversationResolver(conversationStore, logger: null);

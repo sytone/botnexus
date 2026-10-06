@@ -28,6 +28,7 @@ public sealed class SqliteConversationStore : IConversationStore
     };
 
     private readonly string _connectionString;
+    private readonly SqliteWalMaintenance _journalModeMaintenance;
     private readonly ILogger<SqliteConversationStore> _logger;
     private readonly IWorldContext? _worldContext;
     private readonly StoreMetrics? _storeMetrics;
@@ -133,9 +134,11 @@ public sealed class SqliteConversationStore : IConversationStore
         ILogger<SqliteConversationStore> logger,
         IWorldContext? worldContext,
         int cacheCapacity = DefaultConversationCacheCapacity,
-        StoreMetrics? storeMetrics = null)
+        StoreMetrics? storeMetrics = null,
+        SqliteWalMaintenance? journalModeMaintenance = null)
     {
         _connectionString = connectionString;
+        _journalModeMaintenance = journalModeMaintenance ?? new SqliteWalMaintenance();
         _logger = logger;
         _worldContext = worldContext;
         _storeMetrics = storeMetrics;
@@ -1180,9 +1183,13 @@ public sealed class SqliteConversationStore : IConversationStore
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
 
-            await using var walCommand = connection.CreateCommand();
-            walCommand.CommandText = "PRAGMA journal_mode=WAL;";
-            await walCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            // The conversation and session stores share this database in production. Both must
+            // apply the same filesystem-aware authority so initialization order cannot re-enable
+            // WAL on a network-mounted database.
+            await _journalModeMaintenance.ApplyJournalModeAsync(
+                connection,
+                connection.DataSource,
+                cancellationToken: ct).ConfigureAwait(false);
 
             await using var command = connection.CreateCommand();
             command.CommandText = """

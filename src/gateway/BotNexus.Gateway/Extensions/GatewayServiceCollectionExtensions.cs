@@ -154,6 +154,8 @@ public static class GatewayServiceCollectionExtensions
         // Core services. AddPlatformConfiguration replaces this inert default with a verified home
         // rooted at the already-resolved configuration directory (#3411).
         services.TryAddSingleton<IFileSystem, FileSystem>();
+        services.TryAddSingleton(serviceProvider =>
+            new SqliteWalMaintenance(serviceProvider.GetRequiredService<IFileSystem>()));
         services.TryAddSingleton<BotNexusHome>();
 
         // Credential resolution. Providers are registered per scheme with TryAddEnumerable so a
@@ -932,7 +934,8 @@ public static class GatewayServiceCollectionExtensions
                         connectionString,
                         serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>(),
                         serviceProvider.GetRequiredService<IConversationStore>(),
-                        storeMetrics: serviceProvider.GetService<StoreMetrics>()),
+                        storeMetrics: serviceProvider.GetService<StoreMetrics>(),
+                        journalModeMaintenance: serviceProvider.GetRequiredService<SqliteWalMaintenance>()),
                     serviceProvider);
             }));
             return;
@@ -1020,7 +1023,8 @@ public static class GatewayServiceCollectionExtensions
                     connectionString,
                     serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>(),
                     serviceProvider.GetService<IWorldContext>(),
-                    storeMetrics: serviceProvider.GetService<StoreMetrics>());
+                    storeMetrics: serviceProvider.GetService<StoreMetrics>(),
+                    journalModeMaintenance: serviceProvider.GetRequiredService<SqliteWalMaintenance>());
             }));
 
             services.AddSingleton<IConversationAuditLog>(
