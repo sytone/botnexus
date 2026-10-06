@@ -53,6 +53,11 @@ public sealed class LocalCliLatestInstallTests : IAsyncLifetime
         // guaranteed. The fixture-owned bare remote exposes this exact checkout as main,
         // which is the development tip selected by --latest.
         var localRepo = await TagFreeLocalSourceRepository.CreateAsync(_sandbox, repoRoot, CommandTimeout);
+        var remoteRefs = await ProcessRunner.RunAsync(
+            "git", $"ls-remote \"{localRepo}\" refs/tags/* refs/heads/main", timeout: CommandTimeout);
+        remoteRefs.ExitCode.ShouldBe(0, $"Could not inspect the fixture remote.\n{remoteRefs.Combined}");
+        remoteRefs.StdOut.Contains("refs/heads/main", StringComparison.Ordinal).ShouldBeTrue(
+            "The fixture remote must expose main to the in-tree CLI.");
         var currentCommit = await ProcessRunner.RunAsync(
             "git", $"-C \"{repoRoot}\" rev-parse HEAD", timeout: CommandTimeout);
         currentCommit.ExitCode.ShouldBe(0, currentCommit.Combined);
@@ -66,7 +71,7 @@ public sealed class LocalCliLatestInstallTests : IAsyncLifetime
 
         result.ExitCode.ShouldBe(
             0,
-            $"botnexus install failed.\nStdOut:\n{result.StdOut}\nStdErr:\n{result.StdErr}");
+            $"botnexus install failed. Fixture refs:\n{remoteRefs.StdOut}\nStdOut:\n{result.StdOut}\nStdErr:\n{result.StdErr}");
 
         Directory.Exists(sourceDir).ShouldBeTrue(
             $"Expected source directory at {sourceDir} after install.");
