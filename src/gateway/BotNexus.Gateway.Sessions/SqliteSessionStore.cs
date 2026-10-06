@@ -842,7 +842,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
     /// <inheritdoc />
     public override async Task<SessionCleanupPlanPage> ListCleanupPlanAsync(
-        int limit, string? cursor = null, CancellationToken cancellationToken = default)
+        int limit, bool includeBytes, string? cursor = null, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
@@ -851,21 +851,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             await using var connection = CreateConnection();
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
             await using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT s.id, s.conversation_id, s.status, s.updated_at,
-                       COUNT(h.id) AS message_count,
-                       length(CAST(COALESCE(s.metadata, '') AS BLOB))
-                         + COALESCE(SUM(64
-                           + length(CAST(COALESCE(h.content, '') AS BLOB))
-                           + length(CAST(COALESCE(h.tool_name, '') AS BLOB))
-                           + length(CAST(COALESCE(h.tool_call_id, '') AS BLOB))), 0) AS bytes
-                FROM sessions s
-                LEFT JOIN session_history h ON h.session_id = s.id
-                WHERE ($cursor IS NULL OR s.id > $cursor)
-                GROUP BY s.id
-                ORDER BY s.id
-                LIMIT $limit
-                """;
+            command.CommandText = BuildCleanupPlanSql(includeBytes);
             command.Parameters.AddWithValue("$cursor", (object?)cursor ?? DBNull.Value);
             command.Parameters.AddWithValue("$limit", limit + 1);
             var raw = new List<(SessionId Id, ConversationId ConversationId, SessionStatus Status, DateTimeOffset UpdatedAt, int Count, long Bytes)>();
@@ -891,6 +877,37 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             return new SessionCleanupPlanPage(rows, hasMore && raw.Count > 0 ? raw[^1].Id.Value : null);
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
+
+    internal static string BuildCleanupPlanSql(bool includeBytes) => includeBytes
+        ? """
+            WITH candidates AS (
+                SELECT id, conversation_id, status, updated_at, metadata
+                FROM sessions
+                WHERE ($cursor IS NULL OR id > $cursor)
+                ORDER BY id
+                LIMIT $limit
+            )
+            SELECT c.id, c.conversation_id, c.status, c.updated_at,
+                   COUNT(h.id) AS message_count,
+                   length(CAST(COALESCE(c.metadata, '') AS BLOB))
+                     + COALESCE(SUM(CASE WHEN h.id IS NULL THEN 0 ELSE 64
+                       + length(CAST(COALESCE(h.content, '') AS BLOB))
+                       + length(CAST(COALESCE(h.tool_name, '') AS BLOB))
+                       + length(CAST(COALESCE(h.tool_call_id, '') AS BLOB)) END), 0) AS bytes
+            FROM candidates c
+            LEFT JOIN session_history h ON h.session_id = c.id
+            GROUP BY c.id, c.conversation_id, c.status, c.updated_at, c.metadata
+            ORDER BY c.id
+            """
+        : """
+            SELECT s.id, s.conversation_id, s.status, s.updated_at,
+                   (SELECT COUNT(*) FROM session_history h WHERE h.session_id = s.id) AS message_count,
+                   0 AS bytes
+            FROM sessions s
+            WHERE ($cursor IS NULL OR s.id > $cursor)
+            ORDER BY s.id
+            LIMIT $limit
+            """;
 
     /// <inheritdoc />
     public override async Task<SessionMutationOutcome> ExpireIfMatchesAsync(

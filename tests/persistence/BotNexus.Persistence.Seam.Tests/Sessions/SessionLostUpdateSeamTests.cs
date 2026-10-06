@@ -393,7 +393,7 @@ public sealed class SessionLostUpdateSeamTests
         using var fixture = new SessionSeamStoreFixture();
         var seeded = await fixture.SeedAsync("s-cleanup-cas");
         var cleanupStore = fixture.CreateStore();
-        var row = (await cleanupStore.ListCleanupPlanAsync(10)).Rows.ShouldHaveSingleItem();
+        var row = (await cleanupStore.ListCleanupPlanAsync(10, includeBytes: true)).Rows.ShouldHaveSingleItem();
         var staleFence = SessionCleanupFence.Capture(row);
 
         var concurrent = await fixture.CreateStore().GetAsync(seeded.Session.SessionId);

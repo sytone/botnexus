@@ -52,20 +52,38 @@ public class SessionCleanupServiceTests
             SessionId.From("projection-only"), AgentId.From("agent-1"), ConversationId.From("conv-1"),
             SessionStatus.Active, DateTimeOffset.UtcNow, 0, 0);
         store.Setup(sessionStore => sessionStore.ListCleanupPlanAsync(
-                512, null, It.IsAny<CancellationToken>()))
+                512, includeBytes: false, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SessionCleanupPlanPage([row], "projection-only"));
         store.Setup(sessionStore => sessionStore.ListCleanupPlanAsync(
-                512, "projection-only", It.IsAny<CancellationToken>()))
+                512, includeBytes: false, "projection-only", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SessionCleanupPlanPage([], null));
 
         await CreateService(store.Object, new SessionCleanupOptions()).RunCleanupOnceAsync();
 
         store.Verify(sessionStore => sessionStore.ListCleanupPlanAsync(
-            512, null, It.IsAny<CancellationToken>()), Times.Once);
+            512, includeBytes: false, null, It.IsAny<CancellationToken>()), Times.Once);
         store.Verify(sessionStore => sessionStore.ListCleanupPlanAsync(
-            512, "projection-only", It.IsAny<CancellationToken>()), Times.Once);
+            512, includeBytes: false, "projection-only", It.IsAny<CancellationToken>()), Times.Once);
         store.Verify(sessionStore => sessionStore.ListAsync(
             It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()), Times.Never);
+        store.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_WhenDiskBudgetEnabled_RequestsByteAccounting()
+    {
+        var store = new Mock<ISessionStore>(MockBehavior.Strict);
+        store.Setup(sessionStore => sessionStore.ListCleanupPlanAsync(
+                512, includeBytes: true, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionCleanupPlanPage([], null));
+
+        await CreateService(store.Object, new SessionCleanupOptions
+        {
+            MaxDiskBytes = 1
+        }).RunCleanupOnceAsync();
+
+        store.Verify(sessionStore => sessionStore.ListCleanupPlanAsync(
+            512, includeBytes: true, null, It.IsAny<CancellationToken>()), Times.Once);
         store.VerifyNoOtherCalls();
     }
 
@@ -77,7 +95,7 @@ public class SessionCleanupServiceTests
             SessionId.From("stale-expiry"), AgentId.From("agent-1"), ConversationId.From("conv-1"),
             SessionStatus.Active, DateTimeOffset.UtcNow.AddDays(-2), 0, 0);
         store.Setup(sessionStore => sessionStore.ListCleanupPlanAsync(
-                512, null, It.IsAny<CancellationToken>()))
+                512, includeBytes: false, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SessionCleanupPlanPage([row], null));
         store.Setup(sessionStore => sessionStore.ExpireIfMatchesAsync(
                 SessionCleanupFence.Capture(row), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
@@ -103,14 +121,14 @@ public class SessionCleanupServiceTests
     }
 
     [Fact]
-    public async Task RunCleanupOnce_WhenDeleteFenceConflicts_KeepsRowForDiskPlanningAndPublishesNothing()
+    public async Task RunCleanupOnce_WhenDeleteFenceConflicts_PublishesNothing()
     {
         var store = new Mock<ISessionStore>();
         var row = new SessionCleanupPlanRow(
             SessionId.From("stale-delete"), AgentId.From("agent-1"), ConversationId.From("conv-1"),
             SessionStatus.Sealed, DateTimeOffset.UtcNow.AddDays(-10), 0, 100);
         store.Setup(sessionStore => sessionStore.ListCleanupPlanAsync(
-                512, null, It.IsAny<CancellationToken>()))
+                512, includeBytes: false, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SessionCleanupPlanPage([row], null));
         store.Setup(sessionStore => sessionStore.DeleteIfMatchesAsync(
                 SessionCleanupFence.Capture(row), It.IsAny<CancellationToken>()))
