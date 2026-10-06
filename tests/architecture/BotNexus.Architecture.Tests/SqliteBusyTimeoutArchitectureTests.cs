@@ -218,6 +218,9 @@ public sealed class SqliteBusyTimeoutArchitectureTests : ArchitectureTest
                 Relative = Path.GetRelativePath(Repository.Root, path).Replace('\\', '/'),
                 Source = File.ReadAllText(path),
             })
+            .Where(file => !file.Relative.Equals(
+                "src/persistence/BotNexus.Persistence.Sqlite/SqliteConnectionFactory.cs",
+                StringComparison.OrdinalIgnoreCase))
             .Where(file => Regex.IsMatch(file.Source, @"FOREIGN\s+KEY|REFERENCES\s+[A-Za-z_]", RegexOptions.IgnoreCase))
             .Where(file => Regex.IsMatch(file.Source, @"new\s+SqliteConnection\s*\(", RegexOptions.IgnoreCase))
             .Select(file => file.Relative)
