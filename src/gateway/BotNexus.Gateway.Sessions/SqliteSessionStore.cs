@@ -181,9 +181,9 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         LegacyToolInvocationBackfill.RunConnectionString(_connectionString, batchSize, commit: true);
 
     /// <summary>Commits one bounded cleanup batch after legacy rows have been normalized.</summary>
-    public LegacyToolPayloadCleanupReport CleanupLegacyToolPayloads(int batchSize)
+    public LegacyToolPayloadCleanupReport CleanupLegacyToolPayloads(int batchSize, long afterInvocationId = 0)
     {
-        var report = LegacyToolPayloadCleanup.RunConnectionString(_connectionString, batchSize);
+        var report = LegacyToolPayloadCleanup.RunConnectionString(_connectionString, batchSize, afterInvocationId);
         if (report.CleanedInvocations > 0)
             _cache.Clear();
         return report;
@@ -787,16 +787,26 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
         await using var deleteHistory = connection.CreateCommand();
+        deleteHistory.Transaction = (SqliteTransaction)transaction;
         deleteHistory.CommandText = "DELETE FROM session_history WHERE session_id = $sessionId";
         deleteHistory.Parameters.AddWithValue("$sessionId", sessionId.Value);
         await deleteHistory.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
+        await using var deleteInvocations = connection.CreateCommand();
+        deleteInvocations.Transaction = (SqliteTransaction)transaction;
+        deleteInvocations.CommandText = "DELETE FROM tool_invocations WHERE session_id = $sessionId";
+        deleteInvocations.Parameters.AddWithValue("$sessionId", sessionId.Value);
+        await deleteInvocations.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
         await using var deleteSession = connection.CreateCommand();
+        deleteSession.Transaction = (SqliteTransaction)transaction;
         deleteSession.CommandText = "DELETE FROM sessions WHERE id = $sessionId";
         deleteSession.Parameters.AddWithValue("$sessionId", sessionId.Value);
         await deleteSession.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         // No per-session lock entry to remove: the striped lock pool is fixed-size.
     }
 
@@ -1781,6 +1791,12 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             deleteHistory.CommandText = "DELETE FROM session_history WHERE session_id = $id";
             deleteHistory.Parameters.AddWithValue("$id", sessionId);
             await deleteHistory.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            await using var deleteInvocations = connection.CreateCommand();
+            deleteInvocations.Transaction = transaction;
+            deleteInvocations.CommandText = "DELETE FROM tool_invocations WHERE session_id = $id";
+            deleteInvocations.Parameters.AddWithValue("$id", sessionId);
+            await deleteInvocations.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
             await using var deleteSession = connection.CreateCommand();
             deleteSession.Transaction = transaction;
