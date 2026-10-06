@@ -96,8 +96,8 @@ public sealed class SqliteSessionMaintenanceProjectionTests : IDisposable
         await SaveSessionAsync(store, "b", "agent-b", crashSentinel: false,
             new SessionEntry { Role = MessageRole.Assistant, Content = "second" });
 
-        var pageOne = await store.ListCleanupPlanAsync(1);
-        var pageTwo = await store.ListCleanupPlanAsync(1, pageOne.NextCursor);
+        var pageOne = await store.ListCleanupPlanAsync(1, includeBytes: true);
+        var pageTwo = await store.ListCleanupPlanAsync(1, includeBytes: true, pageOne.NextCursor);
 
         var row = pageOne.Rows.ShouldHaveSingleItem();
         row.SessionId.Value.ShouldBe("a");
@@ -111,6 +111,37 @@ public sealed class SqliteSessionMaintenanceProjectionTests : IDisposable
     }
 
     [Fact]
+    public async Task ListCleanupPlanAsync_WithoutBytes_PreservesMessageCountAndOmitsPayloadAccounting()
+    {
+        var store = CreateStore();
+        await SaveSessionAsync(store, "without-bytes", "agent-a", crashSentinel: false,
+            new SessionEntry { Role = MessageRole.User, Content = "payload must not be measured" });
+
+        var row = (await store.ListCleanupPlanAsync(10, includeBytes: false)).Rows.ShouldHaveSingleItem();
+        var sql = SqliteSessionStore.BuildCleanupPlanSql(includeBytes: false);
+
+        row.MessageCount.ShouldBe(1);
+        row.Bytes.ShouldBe(0);
+        sql.ShouldNotContain("length(", Case.Insensitive,
+            "disabled disk budgeting must not evaluate payload lengths");
+        sql.ShouldNotContain("content", Case.Insensitive,
+            "disabled disk budgeting must not read transcript payload columns");
+    }
+
+    [Fact]
+    public async Task ListCleanupPlanAsync_WithBytes_DoesNotChargeHistoryOverheadForEmptySession()
+    {
+        var store = CreateStore();
+        await SaveSessionAsync(store, "empty", "agent-a", crashSentinel: false);
+
+        var row = (await store.ListCleanupPlanAsync(10, includeBytes: true)).Rows.ShouldHaveSingleItem();
+
+        row.MessageCount.ShouldBe(0);
+        row.Bytes.ShouldBe(2,
+            "the persisted empty metadata object is two bytes and a missing history row adds no 64-byte entry overhead");
+    }
+
+    [Fact]
     public async Task ExpireIfMatchesAsync_PersistsExpiryAndPreservesEarlierExpiry()
     {
         var store = CreateStore();
@@ -118,7 +149,7 @@ public sealed class SqliteSessionMaintenanceProjectionTests : IDisposable
         var existingExpiry = DateTimeOffset.Parse("2026-06-02T12:00:00Z");
         session.ExpiresAt = existingExpiry;
         await store.SaveAsync(session);
-        var row = (await store.ListCleanupPlanAsync(10)).Rows.ShouldHaveSingleItem();
+        var row = (await store.ListCleanupPlanAsync(10, includeBytes: true)).Rows.ShouldHaveSingleItem();
         var mutationTime = DateTimeOffset.Parse("2026-06-03T12:00:00Z");
 
         var outcome = await store.ExpireIfMatchesAsync(SessionCleanupFence.Capture(row), mutationTime);
@@ -137,7 +168,7 @@ public sealed class SqliteSessionMaintenanceProjectionTests : IDisposable
         var store = CreateStore();
         var session = await SaveSessionAsync(store, "fenced", "agent-a", crashSentinel: false,
             new SessionEntry { Role = MessageRole.User, Content = "keep" });
-        var stale = SessionCleanupFence.Capture((await store.ListCleanupPlanAsync(10)).Rows.ShouldHaveSingleItem());
+        var stale = SessionCleanupFence.Capture((await store.ListCleanupPlanAsync(10, includeBytes: true)).Rows.ShouldHaveSingleItem());
         session.UpdatedAt = session.UpdatedAt.AddMinutes(1);
         await store.SaveAsync(session);
 
@@ -166,7 +197,7 @@ public sealed class SqliteSessionMaintenanceProjectionTests : IDisposable
 
         var store = CreateStore();
         await SaveSessionAsync(store, "legacy", "agent-a", crashSentinel: false);
-        var row = (await store.ListCleanupPlanAsync(10)).Rows.ShouldHaveSingleItem();
+        var row = (await store.ListCleanupPlanAsync(10, includeBytes: true)).Rows.ShouldHaveSingleItem();
         var expiry = DateTimeOffset.Parse("2026-06-04T12:00:00Z");
         (await store.ExpireIfMatchesAsync(SessionCleanupFence.Capture(row), expiry))
             .ShouldBe(SessionMutationOutcome.Applied);

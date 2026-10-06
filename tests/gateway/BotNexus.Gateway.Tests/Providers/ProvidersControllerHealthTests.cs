@@ -40,7 +40,10 @@ public sealed class ProvidersControllerHealthTests
             new ModelRegistry(),
             NullLogger<ConfigDefinedModelRegistryReconciler>.Instance);
         await reconciler.StartAsync(CancellationToken.None);
-        var sut = new ProvidersController(_modelFilter, _healthCheck, reconciler);
+        var sut = new ProvidersController(
+            _modelFilter,
+            _healthCheck,
+            configModelReconciler: reconciler);
 
         var result = await sut.CheckHealth("rejected", CancellationToken.None);
 

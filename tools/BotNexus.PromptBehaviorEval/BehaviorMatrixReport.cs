@@ -40,7 +40,7 @@ public sealed record BehaviorMatrixReport(
         }
 
         var cells = new List<BehaviorMatrixCell>();
-        foreach (var rung in new[] { PromptGuidanceRung.Default, PromptGuidanceRung.Claude, PromptGuidanceRung.Gpt })
+        foreach (var rung in new[] { PromptGuidanceRung.Default, PromptGuidanceRung.Claude, PromptGuidanceRung.Gpt, PromptGuidanceRung.Gemini })
         foreach (var mutation in new[]
         {
             PromptMutation.None,

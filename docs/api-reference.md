@@ -2825,17 +2825,19 @@ The timeout is a configuration setting, not a field in this response.
 **Endpoint:** `GET /api/providers`
 
 Returns `200 OK` with an array from the model filter's available-provider list.
-This is a discovery call, not a credential or reachability test. Each row contains
-three strings with the same provider identifier:
+This is a discovery call, not a credential or reachability test. Each row identifies
+the selectable provider instance and its non-secret built-in provider type:
 
 | Field | Meaning |
 |-------|---------|
-| `name` | The provider identifier, not a separate friendly display name. |
-| `providerId` | The provider identifier. |
+| `name` | The provider-instance identifier, not a separate friendly display name. |
+| `providerId` | The provider-instance identifier used for model selection. |
 | `id` | An alias of `providerId`. |
+| `type` | The built-in provider type backing the instance. Canonical instances use their own identifier; the `copilot` alias reports `github-copilot`. |
 
-For example, a returned row may be
-`{ "name": "anthropic", "providerId": "anthropic", "id": "anthropic" }`.
+For example, a named instance backed by GitHub Copilot may be returned as
+`{ "name": "copilot-work", "providerId": "copilot-work", "id": "copilot-work", "type": "github-copilot" }`.
+The response does not include provider credentials.
 The endpoint uses normal [gateway authentication](#authentication). As an MVC
 `OkObjectResult`, it supports [sparse fieldsets](#sparse-fieldsets-fields), unlike
 `/api/version`, `/api/uptime`, and `/api/world`.

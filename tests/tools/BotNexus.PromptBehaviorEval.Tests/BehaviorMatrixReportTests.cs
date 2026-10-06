@@ -10,7 +10,7 @@ public sealed class BehaviorMatrixReportTests
         var report = BehaviorMatrixReport.Summarize([Sample(PromptGuidanceRung.Gpt, PromptMutation.None, true, 10)]);
 
         report.Complete.ShouldBeFalse();
-        report.Cells.Count.ShouldBe(12);
+        report.Cells.Count.ShouldBe(16);
         report.Cells.Single(cell => cell.Rung == PromptGuidanceRung.Gpt && cell.Mutation == PromptMutation.None).Verdict.ShouldBe("insufficient-samples");
         report.Cells.Single(cell => cell.Rung == PromptGuidanceRung.Claude && cell.Mutation == PromptMutation.FormerResultWaitInstruction).Verdict.ShouldBe("missing");
         report.FailedRequirements.ShouldContain("missing-or-insufficient-cells");
@@ -47,7 +47,7 @@ public sealed class BehaviorMatrixReportTests
     private static BehaviorEvalResult[] Samples()
     {
         var observations = new List<BehaviorEvalResult>();
-        foreach (var rung in new[] { PromptGuidanceRung.Default, PromptGuidanceRung.Claude, PromptGuidanceRung.Gpt })
+        foreach (var rung in new[] { PromptGuidanceRung.Default, PromptGuidanceRung.Claude, PromptGuidanceRung.Gpt, PromptGuidanceRung.Gemini })
         foreach (var mutation in new[] { PromptMutation.None, PromptMutation.FormerTodoInstruction, PromptMutation.FormerResultWaitInstruction, PromptMutation.FormerTodoInstruction | PromptMutation.FormerResultWaitInstruction })
         for (var repeat = 0; repeat < 2; repeat++)
         {

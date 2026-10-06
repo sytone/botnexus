@@ -120,7 +120,8 @@ public static class ModelGuidanceSection
         new(Rules.VerifyWithTools, "Never answer from memory when a tool can verify the answer — always check the source."),
         new(Rules.ReadBeforeAnswering, "When asked about file contents, always read the file rather than guessing from context."),
         new(Rules.StateUncertainty, "Be explicit about uncertainty — say when you are unsure rather than confabulating."),
-        new(Rules.VerifyToolOutput, "Verify tool output carefully before proceeding — do not assume success without checking.")
+        new(Rules.VerifyToolOutput, "Verify tool output carefully before proceeding — do not assume success without checking."),
+        new(Rules.NarrationThreshold, "Post a short progress message to the user at least once every ten tool calls, and at every phase boundary (investigation done, implementation done, validation done). Individually routine calls still accumulate into a long silent run — the trigger is the count, not your judgement of whether any single call was interesting.")
     ];
 
     /// <summary>
@@ -136,7 +137,7 @@ public static class ModelGuidanceSection
     ];
 
     /// <summary>
-    /// GPT overlays the default with three rules derived from a controlled A/B evaluation of a GPT
+    /// GPT overlays the default with two family-specific rules derived from a controlled A/B evaluation of a GPT
     /// model against a Claude model on an identical task with an identical system prompt (#3375).
     /// </summary>
     /// <remarks>
@@ -149,12 +150,11 @@ public static class ModelGuidanceSection
     /// requirement was named explicitly and proximately.
     /// </para>
     /// <para>
-    /// Wording therefore favours checkable conditions over subjective language. Each rule closes a
-    /// specific observed loophole: the retry rule names the "but it looked different" escape (a
-    /// changed match count) because the generic "change approach after two failures" guidance
-    /// demonstrably failed to fire against it, and the narration rule carries a count because
-    /// "narrate when it helps" evaluates to false for every individually-routine call in a run of
-    /// 163 of them.
+    /// Wording therefore favours checkable conditions over subjective language. The retry rule
+    /// names the "but it looked different" escape (a changed match count) because the generic
+    /// "change approach after two failures" guidance demonstrably failed to fire against it.
+    /// The observed narration gap also affects non-GPT assemblies (#4579), so its countable
+    /// threshold now belongs in the shared default rather than this family overlay.
     /// </para>
     /// </remarks>
     /// <returns>The GPT overlay rules.</returns>
@@ -162,8 +162,7 @@ public static class ModelGuidanceSection
     internal static IReadOnlyList<PromptRule> Gpt() =>
     [
         new(Rules.ToolSchemaFidelity, "Build every tool call using only the properties declared in that tool's own schema — never carry a parameter across from a similar tool, and never invent one. If the argument you want does not exist on the tool you selected, the tool selection is wrong, not the schema."),
-        new(Rules.RetryCircuitBreaker, "After two failed attempts at the same operation on the same target, stop and change approach — a different match count, different whitespace, or a different anchor is the SAME strategy retried, not a new one. Re-read the current state of the target before attempting again."),
-        new(Rules.NarrationThreshold, "Post a short progress message to the user at least once every ten tool calls, and at every phase boundary (investigation done, implementation done, validation done). Individually routine calls still accumulate into a long silent run — the trigger is the count, not your judgement of whether any single call was interesting.")
+        new(Rules.RetryCircuitBreaker, "After two failed attempts at the same operation on the same target, stop and change approach — a different match count, different whitespace, or a different anchor is the SAME strategy retried, not a new one. Re-read the current state of the target before attempting again.")
     ];
 
     /// <summary>

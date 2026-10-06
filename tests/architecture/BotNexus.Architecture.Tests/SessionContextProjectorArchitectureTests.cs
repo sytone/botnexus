@@ -61,7 +61,7 @@ public sealed class SessionContextProjectorArchitectureTests : ArchitectureTest
             // MapHistoryEntry round-trips both flags as independent column reads - it does
             // not combine them into a projection predicate, so it shares SqliteSessionStore's
             // allowlist rationale. The projection still lives in SessionContextProjector.
-            "SessionRowMapper.cs",
+            "SqliteDataReaderExtensions.cs",
             // Documentation comment only; the actual projection is delegated to the
             // projector via SessionCompaction.ApplyLegacyHistoryProjection.
             "FileSessionStore.cs",

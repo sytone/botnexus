@@ -8,6 +8,7 @@ public sealed class PromptBehaviorPromptTests
     [InlineData(PromptGuidanceRung.Default, "unknown-model", "custom-provider")]
     [InlineData(PromptGuidanceRung.Claude, "claude-sonnet-4-5", "anthropic")]
     [InlineData(PromptGuidanceRung.Gpt, "gpt-5", "openai")]
+    [InlineData(PromptGuidanceRung.Gemini, "gemini-2.5-pro", "google")]
     public void Build_RequestedRung_IncludesSharedGuidance(PromptGuidanceRung rung, string modelId, string providerId)
     {
         var prompt = PromptBehaviorPrompt.Build(rung, PromptMutation.None, modelId, providerId);
@@ -17,15 +18,17 @@ public sealed class PromptBehaviorPromptTests
         prompt.ShouldNotContain(PromptBehaviorPrompt.FormerResultWaitInstruction);
     }
 
-    [Fact]
-    public void Build_GptRung_AloneIncludesNarrationThreshold()
+    [Theory]
+    [InlineData(PromptGuidanceRung.Default, "unknown-model", "custom-provider")]
+    [InlineData(PromptGuidanceRung.Claude, "claude-sonnet-4-5", "anthropic")]
+    [InlineData(PromptGuidanceRung.Gpt, "gpt-5", "openai")]
+    [InlineData(PromptGuidanceRung.Gemini, "gemini-2.5-pro", "google")]
+    public void Build_EveryRung_InheritsOneNarrationThreshold(PromptGuidanceRung rung, string modelId, string providerId)
     {
-        var defaultPrompt = PromptBehaviorPrompt.Build(PromptGuidanceRung.Default, PromptMutation.None, "unknown-model", "custom-provider");
-        var claudePrompt = PromptBehaviorPrompt.Build(PromptGuidanceRung.Claude, PromptMutation.None, "claude-sonnet-4-5", "anthropic");
-        var gptPrompt = PromptBehaviorPrompt.Build(PromptGuidanceRung.Gpt, PromptMutation.None, "gpt-5", "openai");
-        defaultPrompt.ShouldNotContain("at least once every ten tool calls");
-        claudePrompt.ShouldNotContain("at least once every ten tool calls");
-        gptPrompt.ShouldContain("at least once every ten tool calls");
+        var prompt = PromptBehaviorPrompt.Build(rung, PromptMutation.None, modelId, providerId);
+        prompt.Split("at least once every ten tool calls", StringSplitOptions.None).Length.ShouldBe(2);
+        if (rung == PromptGuidanceRung.Gemini)
+            prompt.ShouldContain("Always use absolute paths in file operations");
     }
 
     [Fact]

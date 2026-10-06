@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using Microsoft.Data.Sqlite;
 
 namespace BotNexus.Persistence.Sqlite;
@@ -12,16 +14,21 @@ namespace BotNexus.Persistence.Sqlite;
 /// <remarks>
 /// <c>busy_timeout</c> and <c>foreign_keys</c> are <b>per-connection</b> settings, so they must
 /// be applied on every fresh connection rather than once at database init (unlike
-/// the database-level <c>journal_mode</c>, which <see cref="SqliteWalMaintenance"/> owns). The
-/// factory attaches a <see cref="System.Data.Common.DbConnection.StateChange"/> handler that
-/// re-applies the pragma whenever the connection transitions to
-/// <see cref="System.Data.ConnectionState.Open"/>, which also covers connections that are
-/// closed and reopened. Journal-mode / WAL policy remains the concern of
+/// the database-level <c>journal_mode</c>, which <see cref="SqliteWalMaintenance"/> owns).
+/// Existing-row integrity validation is database-level work: the factory coordinates it under an
+/// adjacent lock file and records each successful SQLite schema generation in an adjacent receipt
+/// so ordinary opens do not rescan or mutate the store. The factory attaches a
+/// <see cref="System.Data.Common.DbConnection.StateChange"/> handler that re-applies connection
+/// pragmas whenever the connection transitions to <see cref="System.Data.ConnectionState.Open"/>,
+/// including close/reopen cycles. Journal-mode / WAL policy remains the concern of
 /// <see cref="SqliteWalMaintenance"/>; a store applies that once against an open connection after
 /// obtaining it from this factory.
 /// </remarks>
 public static class SqliteConnectionFactory
 {
+    private static readonly ActivitySource ActivitySource = new("BotNexus.Persistence.Sqlite");
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> IntegrityLocks = new(StringComparer.Ordinal);
+
     /// <summary>
     /// Default <c>busy_timeout</c> in milliseconds applied to every BotNexus SQLite connection.
     /// Lets a concurrent cross-process writer wait briefly for a held lock instead of failing
@@ -137,13 +144,21 @@ public static class SqliteConnectionFactory
 
             try
             {
+                using var openActivity = ActivitySource.StartActivity("sqlite.connection_open_policy");
+                openActivity?.SetTag("db.system", "sqlite");
+
                 using var pragma = opened.CreateCommand();
                 pragma.CommandText = $"PRAGMA busy_timeout={busyTimeoutMs};";
                 pragma.ExecuteNonQuery();
 
-                EnsureForeignKeyIntegrity(opened);
                 pragma.CommandText = "PRAGMA foreign_keys=ON;";
                 pragma.ExecuteNonQuery();
+
+                // Verify world ownership before the validation boundary creates or updates its
+                // durable stamp. Opening the wrong world's database must remain read-only failure.
+                StoreKinds.TryGetValue(opened, out var declaredKind);
+                SqliteStoreIdentityGuard.Verify(opened, declaredKind);
+                EnsureForeignKeyIntegrity(opened);
             }
             catch (ObjectDisposedException)
             {
@@ -154,20 +169,47 @@ public static class SqliteConnectionFactory
                 return;
             }
 
-            // #2833: world-identity verification runs HERE, on the single connection seam, rather
-            // than in each store. That is what makes clause 5 true - a store type added tomorrow
-            // with no identity code of its own is still verified, because it cannot open a
-            // connection without going through this handler. A mismatch deliberately throws out of
-            // the StateChange callback and onto the caller's Open stack: failing the open is the
-            // whole point, and is strictly better than the alternative of silently reading and
-            // writing another world's production data (#2819).
-            StoreKinds.TryGetValue(opened, out var declaredKind);
-            SqliteStoreIdentityGuard.Verify(opened, declaredKind);
         }
     }
 
     private static void EnsureForeignKeyIntegrity(SqliteConnection connection)
     {
+        if (connection.DataSource is not { Length: > 0 } dataSource || dataSource == ":memory:")
+        {
+            ValidateForeignKeys(connection, ReadSchemaGeneration(connection));
+            return;
+        }
+
+        var databasePath = Path.GetFullPath(dataSource);
+        var receiptPath = databasePath + ".botnexus-fk-validation";
+        var lockPath = receiptPath + ".lock";
+        var processLock = IntegrityLocks.GetOrAdd(databasePath, static _ => new SemaphoreSlim(1, 1));
+        processLock.Wait();
+        try
+        {
+            using var fileLock = AcquireIntegrityLock(lockPath);
+            var schemaGeneration = ReadSchemaGeneration(connection);
+            if (ReadValidatedGeneration(receiptPath) == schemaGeneration)
+            {
+                return;
+            }
+
+            ValidateForeignKeys(connection, schemaGeneration);
+            WriteValidationReceipt(receiptPath, schemaGeneration);
+        }
+        finally
+        {
+            processLock.Release();
+        }
+    }
+
+    private static void ValidateForeignKeys(SqliteConnection connection, long schemaGeneration)
+    {
+        using var validationActivity = ActivitySource.StartActivity("sqlite.foreign_key_validation");
+        validationActivity?.SetTag("db.system", "sqlite");
+        validationActivity?.SetTag("db.namespace", connection.DataSource);
+        validationActivity?.SetTag("sqlite.schema_generation", schemaGeneration);
+
         using var check = connection.CreateCommand();
         check.CommandText = "PRAGMA foreign_key_check;";
         using var reader = check.ExecuteReader();
@@ -177,11 +219,75 @@ public static class SqliteConnectionFactory
         }
 
         var table = reader.GetString(0);
-        var rowId = reader.IsDBNull(1) ? "unknown" : reader.GetInt64(1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var rowId = reader.IsDBNull(1)
+            ? "unknown"
+            : reader.GetInt64(1).ToString(System.Globalization.CultureInfo.InvariantCulture);
         var parent = reader.GetString(2);
+        validationActivity?.SetStatus(ActivityStatusCode.Error, "foreign key violation");
         throw new InvalidOperationException(
             $"SQLite store '{connection.DataSource}' contains a foreign key violation in table " +
             $"'{table}' at row {rowId} referencing '{parent}'. Remediate the orphaned row before " +
             "foreign-key enforcement can be enabled safely.");
+    }
+
+    private static long ReadSchemaGeneration(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA schema_version;";
+        return Convert.ToInt64(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static FileStream AcquireIntegrityLock(string lockPath)
+    {
+        var deadline = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (deadline.ElapsedMilliseconds < DefaultBusyTimeoutMs)
+            {
+                Thread.Sleep(25);
+            }
+        }
+    }
+
+    private static long? ReadValidatedGeneration(string receiptPath)
+    {
+        try
+        {
+            return long.TryParse(
+                File.ReadAllText(receiptPath),
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var generation)
+                ? generation
+                : null;
+        }
+        catch (FileNotFoundException)
+        {
+            return null;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    private static void WriteValidationReceipt(string receiptPath, long schemaGeneration)
+    {
+        var temporaryPath = receiptPath + "." + Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ".tmp";
+        try
+        {
+            File.WriteAllText(
+                temporaryPath,
+                schemaGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            File.Move(temporaryPath, receiptPath, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(temporaryPath);
+        }
     }
 }

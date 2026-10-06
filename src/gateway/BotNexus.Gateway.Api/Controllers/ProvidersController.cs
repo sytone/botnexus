@@ -2,6 +2,7 @@ using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// REST API for available LLM providers and their health status.
@@ -12,16 +13,19 @@ public sealed class ProvidersController : ControllerBase
 {
     private readonly IModelFilter _modelFilter;
     private readonly IProviderHealthCheck? _healthCheck;
+    private readonly IOptionsMonitor<PlatformConfig>? _platformConfig;
     private readonly ConfigDefinedModelRegistryReconciler? _configModelReconciler;
 
     /// <inheritdoc cref="ProvidersController"/>
     public ProvidersController(
         IModelFilter modelFilter,
         IProviderHealthCheck? healthCheck = null,
+        IOptionsMonitor<PlatformConfig>? platformConfig = null,
         ConfigDefinedModelRegistryReconciler? configModelReconciler = null)
     {
         _modelFilter = modelFilter ?? throw new ArgumentNullException(nameof(modelFilter));
         _healthCheck = healthCheck;
+        _platformConfig = platformConfig;
         _configModelReconciler = configModelReconciler;
     }
 
@@ -31,13 +35,31 @@ public sealed class ProvidersController : ControllerBase
     [HttpGet]
     public ActionResult<IEnumerable<ProviderInfo>> GetProviders()
     {
+        var configuredProviders = _platformConfig?.CurrentValue.Providers;
         var providers = _modelFilter.GetProviders()
             .Select(provider => new ProviderInfo(
                 Name: provider,
                 ProviderId: provider,
-                Id: provider))
+                Id: provider,
+                Type: ResolveProviderType(provider, configuredProviders)))
             .ToList();
         return Ok(providers);
+    }
+
+    private static string ResolveProviderType(
+        string providerInstance,
+        IReadOnlyDictionary<string, ProviderConfig>? configuredProviders)
+    {
+        if (configuredProviders is not null &&
+            configuredProviders.TryGetValue(providerInstance, out var providerConfig) &&
+            !string.IsNullOrWhiteSpace(providerConfig.Type))
+        {
+            return providerConfig.Type;
+        }
+
+        return string.Equals(providerInstance, "copilot", StringComparison.OrdinalIgnoreCase)
+            ? "github-copilot"
+            : providerInstance;
     }
 
     /// <summary>
@@ -123,11 +145,13 @@ public sealed class ProvidersController : ControllerBase
 /// </summary>
 /// <param name="Name">Display name of the provider.</param>
 /// <param name="ProviderId">Provider identifier.</param>
-/// <param name="Id">Provider identifier (alias for providerId).</param>
+/// <param name="Id">Provider-instance identifier (alias for providerId).</param>
+/// <param name="Type">Built-in provider type implemented by the instance.</param>
 public sealed record ProviderInfo(
     string Name,
     string ProviderId,
-    string Id
+    string Id,
+    string Type
 );
 
 /// <summary>

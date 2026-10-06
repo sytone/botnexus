@@ -15,6 +15,7 @@ This guide explains the setup route in the current source. A saved setting or a 
 | Anthropic | An API key and access to the model you want | [Anthropic guide](../providers/anthropic.md) |
 | Ollama | A running Ollama server with a model installed | [Ollama guide](../providers/ollama.md) |
 | GitHub Models | The credentials and model access described by its own guide; this is not Copilot | [GitHub Models guide](../providers/github-models.md) |
+| Microsoft Foundry | A Foundry inference endpoint, deployment name, and either Azure identity access or an API key | [Microsoft Foundry configuration](#configure-microsoft-foundry) |
 | An OpenAI-compatible server | The server address, credentials if required, and exact model ID | [Compatible-server guide](../providers/openai-compatible.md) |
 
 Check the service's account terms, price and data-handling rules before sending information. Do not assume a model is free because a local catalog has no price recorded. A local model also does not make every agent action offline: tools can still contact other services.
@@ -50,7 +51,36 @@ botnexus provider setup --provider anthropic
 
 For Ollama, read its [provider guide](../providers/ollama.md) first. The model must be installed on the server separately. The wizard and advanced nested configuration are different setup paths; do not assume rerunning the wizard replaces every advanced setting.
 
-GitHub Models and other compatible endpoints are not choices accepted by this setup wizard. Follow their linked guide rather than substituting their name into `provider setup`.
+GitHub Models, Microsoft Foundry and other compatible endpoints are not choices accepted by this setup wizard. Follow their linked guide rather than substituting their name into `provider setup`.
+
+## Configure Microsoft Foundry
+
+Microsoft Foundry model inference uses the resource inference endpoint, not the project endpoint. Configure the base URL as `https://<resource>.services.ai.azure.com/openai/v1`, and use the deployment name—not the underlying catalog model name—as the model ID. BotNexus supplies the fixed Entra audience `https://ai.azure.com/.default`; it is not configurable by an agent.
+
+This example uses the standard Azure credential chain. It can use a developer login on a workstation, but managed identity is preferable for a hosted gateway:
+
+```json
+{
+  "providers": {
+    "azure-foundry-example": {
+      "type": "microsoft-foundry",
+      "baseUrl": "https://example.services.ai.azure.com/openai/v1",
+      "authentication": { "type": "entra-default" },
+      "chat": {
+        "api": "microsoft-foundry-responses",
+        "models": ["example-deployment"],
+        "defaultModel": "example-deployment"
+      }
+    }
+  }
+}
+```
+
+Use `managed-identity` for the host's system-assigned identity. Use `user-assigned-managed-identity` with `authentication.clientId` for a user-assigned identity. To use the separate key path, choose `api-key` and store the key in the provider's secret `apiKey` field. BotNexus does not fall back between these modes.
+
+Grant the identity the least-privilege inference role applicable to the resource type—for example, **Cognitive Services User** for Foundry Models or **Cognitive Services OpenAI User** for Azure OpenAI—and allow several minutes for role propagation. Azure subscription Owner or Contributor does not by itself imply model data-plane access.
+
+The endpoint must use HTTPS on the default port and end in `/openai/v1`. BotNexus sends Responses requests to `/openai/v1/responses` and refuses redirects so a bearer token is not forwarded to another origin.
 
 ## Configure two provider types for different agents
 

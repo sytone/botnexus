@@ -112,7 +112,7 @@ public abstract class SessionStoreBase : ISessionStore
 
     /// <inheritdoc />
     public virtual async Task<SessionCleanupPlanPage> ListCleanupPlanAsync(
-        int limit, string? cursor = null, CancellationToken cancellationToken = default)
+        int limit, bool includeBytes, string? cursor = null, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         var rows = (await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false))
@@ -121,7 +121,7 @@ public abstract class SessionStoreBase : ISessionStore
             .Take(limit + 1)
             .Select(session => new SessionCleanupPlanRow(
                 session.SessionId, session.AgentId, session.ConversationId, session.Status, session.UpdatedAt,
-                session.MessageCount, SessionDiskAccounting.Measure(session)))
+                session.MessageCount, includeBytes ? SessionDiskAccounting.Measure(session) : 0))
             .ToList();
         var hasMore = rows.Count > limit;
         if (hasMore) rows.RemoveAt(rows.Count - 1);

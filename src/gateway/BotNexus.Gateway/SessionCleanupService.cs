@@ -52,71 +52,74 @@ public sealed class SessionCleanupService(
         var options = Options;
         var ttl = options.SessionTtl <= TimeSpan.Zero ? TimeSpan.FromHours(24) : options.SessionTtl;
         var now = DateTimeOffset.UtcNow;
-        var rows = new List<SessionCleanupPlanRow>();
+        var includeBytes = options.ResolveMaxDiskBytes() is not null;
+        var diskPlanRows = includeBytes ? new List<SessionCleanupPlanRow>() : null;
         string? cursor = null;
+        var scannedRows = 0;
         var started = Stopwatch.StartNew();
         var allocatedBefore = GC.GetTotalAllocatedBytes();
 
         do
         {
-            var page = await _sessionStore.ListCleanupPlanAsync(pageSize, cursor, cancellationToken).ConfigureAwait(false);
-            rows.AddRange(page.Rows);
+            var page = await _sessionStore.ListCleanupPlanAsync(
+                pageSize, includeBytes, cursor, cancellationToken).ConfigureAwait(false);
+            scannedRows += page.Rows.Count;
+            foreach (var row in page.Rows)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (HasInFlightRun(row.SessionId))
+                {
+                    _logger.LogDebug("Skipping session cleanup for {SessionId}: an agent run is in flight.", row.SessionId.Value);
+                    diskPlanRows?.Add(row);
+                    continue;
+                }
+
+                var fence = SessionCleanupFence.Capture(row);
+                if (row.Status == SessionStatus.Active && now - row.UpdatedAt > ttl)
+                {
+                    var outcome = await _sessionStore.ExpireIfMatchesAsync(fence, now, cancellationToken).ConfigureAwait(false);
+                    if (outcome == SessionMutationOutcome.Applied)
+                    {
+                        diskPlanRows?.Add(row with { Status = SessionStatus.Expired, UpdatedAt = now });
+                        if (_lifecycleEvents is not null)
+                            await PublishLifecycleAsync(row, SessionLifecycleEventType.Expired, cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        diskPlanRows?.Add(row);
+                    }
+                    continue;
+                }
+
+                var deleteForClosedRetention = options.ClosedSessionRetention is { } closedRetention
+                    && closedRetention > TimeSpan.Zero && row.Status == SessionStatus.Sealed
+                    && now - row.UpdatedAt > closedRetention;
+                var deleteForCronRetention = options.CronNoopRetention is { } cronRetention
+                    && cronRetention > TimeSpan.Zero && row.SessionId.IsCron && row.MessageCount <= 2
+                    && now - row.UpdatedAt > cronRetention;
+                if (deleteForClosedRetention || deleteForCronRetention)
+                {
+                    var outcome = await _sessionStore.DeleteIfMatchesAsync(fence, cancellationToken).ConfigureAwait(false);
+                    if (outcome == SessionMutationOutcome.Applied)
+                    {
+                        if (_lifecycleEvents is not null)
+                            await PublishLifecycleAsync(row, SessionLifecycleEventType.Deleted, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+                }
+
+                diskPlanRows?.Add(row);
+            }
+
             cursor = page.NextCursor;
         } while (cursor is not null);
 
         _logger.LogInformation(
             "Session cleanup projection scan complete: {ScannedRows} row(s), {ElapsedMilliseconds} ms, {AllocatedBytes} allocated bytes",
-            rows.Count, started.ElapsedMilliseconds, GC.GetTotalAllocatedBytes() - allocatedBefore);
+            scannedRows, started.ElapsedMilliseconds, GC.GetTotalAllocatedBytes() - allocatedBefore);
 
-        var diskPlanRows = new List<SessionCleanupPlanRow>(rows.Count);
-        foreach (var row in rows)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (HasInFlightRun(row.SessionId))
-            {
-                _logger.LogDebug("Skipping session cleanup for {SessionId}: an agent run is in flight.", row.SessionId.Value);
-                diskPlanRows.Add(row);
-                continue;
-            }
-
-            var fence = SessionCleanupFence.Capture(row);
-            if (row.Status == SessionStatus.Active && now - row.UpdatedAt > ttl)
-            {
-                var outcome = await _sessionStore.ExpireIfMatchesAsync(fence, now, cancellationToken).ConfigureAwait(false);
-                if (outcome == SessionMutationOutcome.Applied)
-                {
-                    diskPlanRows.Add(row with { Status = SessionStatus.Expired, UpdatedAt = now });
-                    if (_lifecycleEvents is not null)
-                        await PublishLifecycleAsync(row, SessionLifecycleEventType.Expired, cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    diskPlanRows.Add(row);
-                }
-                continue;
-            }
-
-            var deleteForClosedRetention = options.ClosedSessionRetention is { } closedRetention
-                && closedRetention > TimeSpan.Zero && row.Status == SessionStatus.Sealed
-                && now - row.UpdatedAt > closedRetention;
-            var deleteForCronRetention = options.CronNoopRetention is { } cronRetention
-                && cronRetention > TimeSpan.Zero && row.SessionId.IsCron && row.MessageCount <= 2
-                && now - row.UpdatedAt > cronRetention;
-            if (deleteForClosedRetention || deleteForCronRetention)
-            {
-                var outcome = await _sessionStore.DeleteIfMatchesAsync(fence, cancellationToken).ConfigureAwait(false);
-                if (outcome == SessionMutationOutcome.Applied)
-                {
-                    if (_lifecycleEvents is not null)
-                        await PublishLifecycleAsync(row, SessionLifecycleEventType.Deleted, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-            }
-
-            diskPlanRows.Add(row);
-        }
-
-        await ApplyDiskBudgetAsync(diskPlanRows, options, cancellationToken).ConfigureAwait(false);
+        if (diskPlanRows is not null)
+            await ApplyDiskBudgetAsync(diskPlanRows, options, cancellationToken).ConfigureAwait(false);
     }
 
     private bool HasInFlightRun(SessionId sessionId) =>

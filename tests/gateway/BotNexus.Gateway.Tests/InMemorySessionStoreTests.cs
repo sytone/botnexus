@@ -54,7 +54,7 @@ public sealed class InMemorySessionStoreTests
             UpdatedAt = DateTimeOffset.Parse("2026-06-01T12:00:00Z")
         };
         await store.SaveAsync(session);
-        var row = (await store.ListCleanupPlanAsync(10)).Rows.ShouldHaveSingleItem();
+        var row = (await store.ListCleanupPlanAsync(10, includeBytes: true)).Rows.ShouldHaveSingleItem();
         var expiry = DateTimeOffset.Parse("2026-06-02T12:00:00Z");
 
         var outcome = await store.ExpireIfMatchesAsync(SessionCleanupFence.Capture(row), expiry);
@@ -80,7 +80,7 @@ public sealed class InMemorySessionStoreTests
         };
         await store.SaveAsync(session);
         var fence = SessionCleanupFence.Capture(
-            (await store.ListCleanupPlanAsync(10)).Rows.ShouldHaveSingleItem());
+            (await store.ListCleanupPlanAsync(10, includeBytes: true)).Rows.ShouldHaveSingleItem());
         session.UpdatedAt = session.UpdatedAt.AddMinutes(1);
 
         var outcome = await store.DeleteIfMatchesAsync(fence);
@@ -95,7 +95,7 @@ public sealed class InMemorySessionStoreTests
         var store = new InMemorySessionStore();
         var session = await store.GetOrCreateAsync(SessionId.From("legacy-delete"), AgentId.From("agent-a"));
         var fence = SessionCleanupFence.Capture(
-            (await store.ListCleanupPlanAsync(10)).Rows.ShouldHaveSingleItem());
+            (await store.ListCleanupPlanAsync(10, includeBytes: true)).Rows.ShouldHaveSingleItem());
 
         var outcome = await store.DeleteIfMatchesAsync(fence);
 

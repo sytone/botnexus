@@ -304,6 +304,20 @@ public sealed record ExtensionRepositoryRegistrationInfo(
     DateTimeOffset? LastSuccessUtc,
     string? LatestFailure);
 
+/// <summary>Provider-owned authentication settings.</summary>
+public sealed class ProviderAuthenticationConfig
+{
+    /// <summary>Required authentication mode discriminator.</summary>
+    [Display(Name = "Type", Description = "Authentication mode discriminator.", GroupName = "Provider authentication", Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "provider-authentication", Order = 0)]
+    public string? Type { get; set; }
+
+    /// <summary>User-assigned managed identity client ID when that mode is selected.</summary>
+    [Display(Name = "Client ID", Description = "Client ID of the user-assigned managed identity.", GroupName = "Provider authentication", Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider-authentication", Order = 1)]
+    public string? ClientId { get; set; }
+}
+
 /// <summary>Provider-specific configuration.</summary>
 public sealed class ProviderConfig
 {
@@ -337,6 +351,15 @@ public sealed class ProviderConfig
         Order = 1)]
     [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "provider", Order = 1, Secret = true)]
     public string? ApiKey { get; set; }
+
+    /// <summary>Explicit authentication mode for providers that support more than API keys.</summary>
+    [Display(
+        Name = "Authentication",
+        Description = "Explicit provider authentication mode. Microsoft Foundry supports entra-default, managed-identity, user-assigned-managed-identity, and api-key.",
+        GroupName = "Provider",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "provider", Order = 2)]
+    public ProviderAuthenticationConfig? Authentication { get; set; }
 
     /// <summary>Base URL override.</summary>
     [Display(

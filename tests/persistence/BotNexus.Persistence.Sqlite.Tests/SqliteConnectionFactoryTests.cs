@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Data.Sqlite;
 
 namespace BotNexus.Persistence.Sqlite.Tests;
@@ -85,6 +86,68 @@ public sealed class SqliteConnectionFactoryTests : IDisposable
         await connection.OpenAsync();
 
         (await ReadForeignKeysAsync(connection)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Create_validates_foreign_keys_once_per_schema_generation()
+    {
+        var validationCount = 0;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "BotNexus.Persistence.Sqlite",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName == "sqlite.foreign_key_validation")
+                {
+                    Interlocked.Increment(ref validationCount);
+                }
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        await using (var first = SqliteConnectionFactory.Create($"Data Source={DbPath}"))
+        {
+            await first.OpenAsync();
+            await first.CloseAsync();
+            await first.OpenAsync();
+        }
+
+        await using (var second = SqliteConnectionFactory.Create($"Data Source={DbPath}"))
+        {
+            await second.OpenAsync();
+            await using var schemaChange = second.CreateCommand();
+            schemaChange.CommandText = "CREATE TABLE schema_generation_two (id INTEGER PRIMARY KEY);";
+            await schemaChange.ExecuteNonQueryAsync();
+        }
+
+        await using (var third = SqliteConnectionFactory.Create($"Data Source={DbPath}"))
+        {
+            await third.OpenAsync();
+            await third.CloseAsync();
+            await third.OpenAsync();
+        }
+
+        validationCount.ShouldBe(2);
+        File.ReadAllText(DbPath + ".botnexus-fk-validation").ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task Create_does_not_mutate_a_read_only_store_after_validation()
+    {
+        await using (var seed = SqliteConnectionFactory.Create($"Data Source={DbPath}"))
+        {
+            await seed.OpenAsync();
+            await using var schema = seed.CreateCommand();
+            schema.CommandText = "CREATE TABLE item (id INTEGER PRIMARY KEY);";
+            await schema.ExecuteNonQueryAsync();
+        }
+
+        var lastWriteUtc = File.GetLastWriteTimeUtc(DbPath);
+        await using var readOnly = SqliteConnectionFactory.Create($"Data Source={DbPath};Mode=ReadOnly");
+        await readOnly.OpenAsync();
+
+        File.GetLastWriteTimeUtc(DbPath).ShouldBe(lastWriteUtc);
     }
 
     [Fact]

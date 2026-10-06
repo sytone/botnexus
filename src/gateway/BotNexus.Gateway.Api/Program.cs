@@ -437,6 +437,14 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     apiProviders.Register(new OpenAICompatProvider(httpClient));
     apiProviders.Register(new IntegrationMockProvider());
 
+    var platformConfig = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
+    MicrosoftFoundryProviderComposition.Register(
+        platformConfig,
+        apiProviders,
+        models,
+        loggerFactory,
+        providerSecretRedactor);
+
     // #2855: register the OPTIONAL embeddings capability for the configured backend. This is a
     // separate registry from apiProviders on purpose - embeddings and chat are different
     // endpoints, and every provider above serves only the latter. When the section is absent or
@@ -465,7 +473,6 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     new IntegrationMockModels().RegisterAll(models);
     GitHubModelsProvider.RegisterModels(models);
 
-    var platformConfig = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
     var copilotInstances = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "github-copilot" };
     if (platformConfig.Providers is not null)
     {
