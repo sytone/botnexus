@@ -30,6 +30,7 @@ This is the **first vertical slice** of the Matrix adapter. The following are im
 - Room, user, and sender-domain federation policies
 - Bounded inbound unencrypted `m.image` and `m.file` attachments
 - Authenticated Matrix media upload and download client operations
+- Read receipts after successful inbound dispatch
 
 The following are **deliberately deferred** and are not implemented here:
 
@@ -37,7 +38,7 @@ The following are **deliberately deferred** and are not implemented here:
   (libolm/vodozemac)
 - **Federation identity verification** - cryptographic or remote-homeserver verification beyond
   the configured sender-domain admission policy
-- **Read receipts** and Matrix **Spaces** mapping
+- Matrix **Spaces** mapping
 
 Media support is deliberately bounded. The adapter downloads only validated `mxc://` references
 from unencrypted `m.image` and `m.file` events; it never follows arbitrary HTTP(S) URLs. The client
@@ -139,7 +140,10 @@ logs.
   is not a new user turn. Unencrypted image/file events preserve their caption/body and add a
   `BinaryContentPart`; a missing or invalid MIME type becomes `application/octet-stream`. An
   advertised oversize attachment is rejected before any download, and timeout/download failures
-  drop only the attachment so the text still reaches the agent.
+  drop only the attachment so the text still reaches the agent. After dispatch succeeds, the
+  adapter sends an `m.read` receipt for that exact room and event. Rejected, failed, or cancelled
+  dispatches are not acknowledged. Receipt delivery is best effort: its failure is logged but does
+  not fail or replay the already handled message.
 - **Outbound.** `SendAsync` decodes the room from the channel address and sends an `m.room.message`
   with a plain `body` plus an HTML `formatted_body` when the Markdown actually produced markup.
 - **Streaming.** The first delta sends a message; subsequent deltas edit that event in place via an
@@ -177,7 +181,7 @@ failure is logged and the caption/body is still dispatched.
 ## Sync continuity across restarts
 
 Each account's `next_batch` token is persisted durably, keyed by agent id and account name, in a
-SQLite database under the verified BotNexus home (`<data-root>/data/matrix-sync-cursor.db`). On
+SQLite database under the verified BotNexus home (`<data-root>/data/matrix-sync-cursor.sqlite`). On
 start, an account with a stored token resumes `/sync` from it; an account with no stored token
 performs a normal initial sync.
 

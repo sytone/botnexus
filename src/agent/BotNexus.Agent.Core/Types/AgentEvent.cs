@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Diagnostics;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Providers.Core.Models;
 
@@ -181,6 +182,33 @@ public sealed record ToolExecutionEndEvent(
     AgentToolResult Result,
     bool IsError,
     DateTimeOffset Timestamp) : AgentEvent(AgentEventType.ToolExecutionEnd, Timestamp);
+
+/// <summary>
+/// Raised for a bounded provider retry or shared recovery-circuit lifecycle transition.
+/// The payload deliberately excludes credential identity, incident identity, prompts, sessions,
+/// and raw provider errors so it is safe for operational projection.
+/// </summary>
+public sealed record ProviderRecoveryEvent(
+    ProviderRecoveryObservation Observation,
+    DateTimeOffset Timestamp) : AgentEvent(AgentEventType.ProviderRecovery, Timestamp)
+{
+    /// <summary>Lifecycle transition.</summary>
+    public ProviderRecoveryStage Stage => Observation.Stage;
+    /// <summary>Bounded provider implementation identifier.</summary>
+    public string Provider => Observation.Provider;
+    /// <summary>Current circuit state.</summary>
+    public ProviderRecoveryState State => Observation.State;
+    /// <summary>One-based model-call attempt when applicable.</summary>
+    public int? Attempt => Observation.Attempt;
+    /// <summary>Bounded retry budget when applicable.</summary>
+    public int? MaxAttempts => Observation.MaxAttempts;
+    /// <summary>Scheduled retry delay when applicable.</summary>
+    public TimeSpan? Delay => Observation.Delay;
+    /// <summary>Always null: credential profile identity is excluded from the event contract.</summary>
+    public string? AuthProfile => Observation.AuthProfile;
+    /// <summary>Always null: raw provider error text is excluded from the event contract.</summary>
+    public string? ProviderError => Observation.ProviderError;
+}
 
 /// <summary>
 /// Raised when the post-turn claim auditor detects one or more artifact-shaped claims in a

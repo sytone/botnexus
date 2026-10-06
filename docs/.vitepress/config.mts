@@ -6,6 +6,11 @@ export default defineConfig({
   description: 'A modular AI agent execution platform',
   base: '/botnexus/',
 
+  markdown: {
+    // Documentation uses pwsh for cross-platform PowerShell examples.
+    languageAlias: { pwsh: 'powershell' },
+  },
+
   // Ignore dead links to source files and localhost URLs (expected in docs)
   ignoreDeadLinks: [
     // Source code links (referenced in dev docs but not part of docs build)
@@ -72,6 +77,7 @@ export default defineConfig({
               { text: "Getting Started", link: "/user-guide/getting-started" },
               { text: "Agents", link: "/user-guide/agents" },
               { text: "Conversations", link: "/user-guide/conversations" },
+              { text: "Release history", link: "/user-guide/release-history" },
               { text: "Automation", link: "/user-guide/automation" },
               { text: "Configuration", link: "/user-guide/configuration" },
               { text: "Servers, Credentials and Agents", link: "/user-guide/secrets-and-locations" },
@@ -301,6 +307,7 @@ export default defineConfig({
             collapsed: true,
             items: [
               { text: "Agent Execution", link: "/development/agent-execution" },
+              { text: "Agent Core Extension Points", link: "/development/agent-core-extension-points" },
               { text: "Message Flow", link: "/development/message-flow" },
               { text: "Inbound Delivery Modes", link: "/development/inbound-delivery-modes" },
               { text: "LLM Request Lifecycle", link: "/development/llm-request-lifecycle" },

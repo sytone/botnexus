@@ -89,14 +89,43 @@ public sealed class InMemoryConversationStore : IConversationStore
     /// <inheritdoc />
     public Task ArchiveAsync(ConversationId conversationId, CancellationToken ct = default)
     {
-        if (_conversations.TryGetValue(conversationId.Value, out var existing))
-            _conversations[conversationId.Value] = existing with
+        _ = TryArchiveCore(conversationId);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task<bool> TryArchiveAsync(
+        ConversationId conversationId,
+        string source,
+        string? correlationId,
+        string actor,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(TryArchiveCore(conversationId));
+    }
+
+    private bool TryArchiveCore(ConversationId conversationId)
+    {
+        while (_conversations.TryGetValue(conversationId.Value, out var existing))
+        {
+            if (existing.Status != ConversationStatus.Active)
+                return false;
+
+            var archived = existing with
             {
                 Status = ConversationStatus.Archived,
                 ActiveSessionId = null,
-                UpdatedAt = DateTimeOffset.UtcNow
+                UpdatedAt = DateTimeOffset.UtcNow,
+                Version = existing.Version + 1
             };
-        return Task.CompletedTask;
+            if (_conversations.TryUpdate(conversationId.Value, archived, existing))
+                return true;
+        }
+
+        return false;
     }
 
     /// <inheritdoc />
@@ -325,6 +354,25 @@ public sealed class InMemoryConversationStore : IConversationStore
             .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
             .Select(ToSummary)];
         return Task.FromResult(summaries);
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<ConversationRetentionCandidate>> GetRetentionCandidatesAsync(
+        ConversationSource? source = null,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        IReadOnlyList<ConversationRetentionCandidate> candidates = [.. _conversations.Values
+            .Where(c => c.Status == ConversationStatus.Active && (!source.HasValue || c.Source == source.Value))
+            .OrderBy(c => c.UpdatedAt)
+            .Select(c => new ConversationRetentionCandidate(
+                c.ConversationId,
+                c.AgentId,
+                c.UpdatedAt,
+                c.IsPinned,
+                c.Source,
+                c.SourceId))];
+        return Task.FromResult(candidates);
     }
 
     /// <inheritdoc />

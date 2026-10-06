@@ -312,7 +312,7 @@ public sealed record BeforeToolCallEvent(
 /// </summary>
 /// <remarks>
 /// This is the <b>gateway-level</b> hook result used by extensions and hook handlers.
-/// It is translated to the agent-level <c>Agent.Core.Hooks.BeforeToolCallResult</c>
+/// It is translated to the agent-level <c>Agent.Core.ExtensionPoints.ToolExecution.ToolExecutionDecision</c>
 /// by <c>InProcessIsolationStrategy</c> at the boundary. The gateway version adds
 /// argument modification capability that the agent-level type does not have.
 /// </remarks>
@@ -371,7 +371,7 @@ public sealed record AfterToolCallEvent(
 /// <summary>
 /// Result returned by a gateway hook handler after inspecting <see cref="AfterToolCallEvent"/>.
 /// Currently a marker type — the gateway hook system does not support post-execution
-/// result transformation. Use <c>Agent.Core.Hooks.AfterToolCallResult</c> at the
+/// result transformation. Use <c>Agent.Core.ExtensionPoints.ToolResults.ToolResultTransformResult</c> at the
 /// agent level for result overrides (content replacement, error flag changes).
 /// </summary>
 public sealed record AfterToolCallResult;

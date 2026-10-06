@@ -10,4 +10,10 @@ namespace BotNexus.Agent.Core.Types;
 /// Content is converted to provider ToolResultMessage and sent back to the LLM.
 /// Details is preserved for logging, hooks, and application-specific use.
 /// </remarks>
-public record AgentToolResult(IReadOnlyList<AgentToolContent> Content, object? Details = null);
+public record AgentToolResult(IReadOnlyList<AgentToolContent> Content, object? Details = null)
+{
+    /// <summary>
+    /// Optional execution-transport metadata kept separate from tool-specific <see cref="Details"/>.
+    /// </summary>
+    public object? DeliveryDetails { get; init; }
+}

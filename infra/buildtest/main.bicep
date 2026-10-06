@@ -217,8 +217,11 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
       {
         name: 'BuildTestD8'
         workloadProfileType: 'D8'
+        // Keep idle cost at zero, but allow five independent manual job executions to receive
+        // one full D8 node each. Per-execution parallelism remains one below; this scales PR
+        // validation lanes, not duplicate replicas within a single validation.
         minimumCount: 0
-        maximumCount: 1
+        maximumCount: 5
       }
     ]
     zoneRedundant: false

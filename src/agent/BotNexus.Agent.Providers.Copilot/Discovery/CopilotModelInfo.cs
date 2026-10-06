@@ -104,11 +104,19 @@ public sealed class CopilotModelSupports
 
 public sealed class CopilotModelBilling
 {
+    /// <summary>
+    /// Gets whether Copilot explicitly classifies this as a premium model, or
+    /// <see langword="null"/> when discovery did not supply the field.
+    /// </summary>
     [JsonPropertyName("is_premium")]
-    public bool IsPremium { get; set; }
+    public bool? IsPremium { get; set; }
 
+    /// <summary>
+    /// Gets the provider-supplied premium-request multiplier, or
+    /// <see langword="null"/> when discovery did not supply one.
+    /// </summary>
     [JsonPropertyName("multiplier")]
-    public double Multiplier { get; set; }
+    public double? Multiplier { get; set; }
 
     [JsonPropertyName("restricted_to")]
     public List<string>? RestrictedTo { get; set; }

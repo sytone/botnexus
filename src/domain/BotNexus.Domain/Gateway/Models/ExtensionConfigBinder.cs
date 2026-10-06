@@ -55,13 +55,28 @@ public static class ExtensionConfigBinder
     /// </returns>
     public static T? Bind<T>(AgentDescriptor? descriptor, string extensionId)
         where T : class
+        => Bind<T>(descriptor?.ExtensionConfig, extensionId);
+
+    /// <summary>Binds one named agent extension entry without consulting any other scope.</summary>
+    public static T? BindNamedAgent<T>(AgentDescriptor? descriptor, string extensionId)
+        where T : class
+        => Bind<T>(descriptor?.ExtensionConfig, extensionId);
+
+    /// <summary>Binds one agent-default extension entry without consulting the named agent or singular scopes.</summary>
+    public static T? BindAgentDefaults<T>(AgentDescriptor? descriptor, string extensionId)
+        where T : class
+        => Bind<T>(descriptor?.DefaultExtensionConfig, extensionId);
+
+    /// <summary>Binds one extension entry from exactly one raw scope bag; no merging is performed.</summary>
+    public static T? Bind<T>(IReadOnlyDictionary<string, JsonElement>? scope, string extensionId)
+        where T : class
     {
-        if (descriptor?.ExtensionConfig is null)
+        if (scope is null)
         {
             return null;
         }
 
-        if (!descriptor.ExtensionConfig.TryGetValue(extensionId, out var element))
+        if (!scope.TryGetValue(extensionId, out var element))
         {
             return null;
         }

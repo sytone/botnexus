@@ -46,11 +46,8 @@ internal static class MaximalConfig
               "connectionString": "Data Source=REAL-sessions.db"
             },
             "cors": { "allowedOrigins": ["http://localhost:5173"] },
-            "extensions": {
-              "defaults": {
-                "botnexus-skills": { "enabled": true, "root": "skills" }
-              }
-            }
+            "extensionLoader": { "enabled": true, "path": "extensions" },
+            "extensions": { "gateway-observer": { "enabled": true } }
           },
           "providers": {
             "github-copilot": {
@@ -86,7 +83,8 @@ internal static class MaximalConfig
             "defaults": {
               "toolIds": ["read", "write"],
               "memory": { "enabled": true, "promptInjection": "summary" },
-              "heartbeat": { "enabled": false, "intervalMinutes": 30 }
+              "heartbeat": { "enabled": false, "intervalMinutes": 30 },
+              "extensions": { "botnexus-skills": { "enabled": true, "root": "skills" } }
             },
             "assistant": {
               "provider": "github-copilot",

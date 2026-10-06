@@ -6,12 +6,12 @@ namespace BotNexus.Persistence.Sqlite;
 /// Single source of truth for "how a BotNexus SQLite connection is opened" (#1541).
 /// Every SQLite-backed store previously duplicated an identical <c>StateChange</c> Open-handler
 /// that applied <c>PRAGMA busy_timeout=5000</c> on every fresh connection; that boilerplate
-/// (and the magic <c>5000</c>) is consolidated here so the timeout value and connection-level
-/// pragma policy live in exactly one place.
+/// (and the magic <c>5000</c>) is consolidated here so timeout and foreign-key enforcement
+/// policies live in exactly one place.
 /// </summary>
 /// <remarks>
-/// <c>busy_timeout</c> is a <b>per-connection</b> setting that resets to <c>0</c> on every open,
-/// so it must be re-applied on every fresh connection rather than once at database init (unlike
+/// <c>busy_timeout</c> and <c>foreign_keys</c> are <b>per-connection</b> settings, so they must
+/// be applied on every fresh connection rather than once at database init (unlike
 /// the database-level <c>journal_mode</c>, which <see cref="SqliteWalMaintenance"/> owns). The
 /// factory attaches a <see cref="System.Data.Common.DbConnection.StateChange"/> handler that
 /// re-applies the pragma whenever the connection transitions to
@@ -140,6 +140,10 @@ public static class SqliteConnectionFactory
                 using var pragma = opened.CreateCommand();
                 pragma.CommandText = $"PRAGMA busy_timeout={busyTimeoutMs};";
                 pragma.ExecuteNonQuery();
+
+                EnsureForeignKeyIntegrity(opened);
+                pragma.CommandText = "PRAGMA foreign_keys=ON;";
+                pragma.ExecuteNonQuery();
             }
             catch (ObjectDisposedException)
             {
@@ -160,5 +164,24 @@ public static class SqliteConnectionFactory
             StoreKinds.TryGetValue(opened, out var declaredKind);
             SqliteStoreIdentityGuard.Verify(opened, declaredKind);
         }
+    }
+
+    private static void EnsureForeignKeyIntegrity(SqliteConnection connection)
+    {
+        using var check = connection.CreateCommand();
+        check.CommandText = "PRAGMA foreign_key_check;";
+        using var reader = check.ExecuteReader();
+        if (!reader.Read())
+        {
+            return;
+        }
+
+        var table = reader.GetString(0);
+        var rowId = reader.IsDBNull(1) ? "unknown" : reader.GetInt64(1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var parent = reader.GetString(2);
+        throw new InvalidOperationException(
+            $"SQLite store '{connection.DataSource}' contains a foreign key violation in table " +
+            $"'{table}' at row {rowId} referencing '{parent}'. Remediate the orphaned row before " +
+            "foreign-key enforcement can be enabled safely.");
     }
 }

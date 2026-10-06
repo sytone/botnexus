@@ -13,7 +13,7 @@ namespace BotNexus.Gateway.Configuration;
 /// <para>
 /// <b>Why this exists.</b> Before it, the gateway built the provider pipeline in <c>Program.cs</c>
 /// while seventeen other call sites - fourteen of them CLI commands - read and bound
-/// <c>config.json</c> by hand through <c>PlatformConfigLoader</c>. Those hand-loads could not see
+/// the JSON projection by hand through <c>PlatformConfigLoader</c>. Those hand-loads could not see
 /// the SQLite store, got no hot reload, and did not benefit from the last-known-good protection in
 /// <see cref="ResilientJsonConfigurationSource"/> (#2358), because all three of those live in the
 /// provider pipeline rather than in the file read.
@@ -32,12 +32,30 @@ namespace BotNexus.Gateway.Configuration;
 /// </remarks>
 public static class PlatformConfigurationSources
 {
+    private const string GeneratedProjectionFileName = "config.json";
+
+    /// <summary>
+    /// Builds the effective configuration rooted at a BotNexus home.
+    /// </summary>
+    /// <remarks>
+    /// This is the ordinary runtime composition boundary. Backend names are resolved here rather
+    /// than accepted from callers, so generated projections cannot become configuration identity.
+    /// </remarks>
+    public static IOptionsMonitor<PlatformConfig> BuildMonitorForHome(
+        string homePath,
+        Action<string, Exception?>? onLoadFailure = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(homePath);
+
+        return BuildMonitor(Path.Combine(homePath, GeneratedProjectionFileName), onLoadFailure);
+    }
+
     /// <summary>
     /// Adds the platform configuration sources for <paramref name="configPath"/>, in precedence
     /// order.
     /// </summary>
     /// <param name="builder">The configuration builder.</param>
-    /// <param name="configPath">Absolute path to <c>config.json</c>.</param>
+    /// <param name="configPath">Absolute path to the generated configuration projection.</param>
     /// <param name="onLoadFailure">
     /// Invoked with a human-readable reason when a source rejects a load and retains its previously
     /// loaded values. Null discards the diagnostic, which is appropriate for short-lived processes
@@ -75,7 +93,7 @@ public static class PlatformConfigurationSources
         var directory = fs.Path.GetDirectoryName(configPath);
         if (!string.IsNullOrEmpty(directory))
         {
-            var storePath = fs.Path.Combine(directory, ConfigStoreBootstrap.StoreFileName);
+            var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, fs);
             if (fs.File.Exists(storePath))
             {
                 builder.AddSqliteConfigStore(
@@ -152,13 +170,13 @@ public static class PlatformConfigurationSources
             // reads when the builder is built, which happens below - so handing it a stream we then
             // close yields an empty, silently wrong configuration.
             var buffer = new MemoryStream(fileSystem.File.ReadAllBytes(configPath));
-            builder.AddJsonStream(buffer);
+            builder.AddAcceptedRawJsonStream(buffer);
         }
 
         var directory = fileSystem.Path.GetDirectoryName(configPath);
         if (!string.IsNullOrEmpty(directory))
         {
-            var storePath = fileSystem.Path.Combine(directory, ConfigStoreBootstrap.StoreFileName);
+            var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, fileSystem);
             if (fileSystem.File.Exists(storePath))
             {
                 builder.AddSqliteConfigStore(
@@ -167,9 +185,9 @@ public static class PlatformConfigurationSources
             }
         }
 
-        // The raw-JSON post-configure step reads the physical file directly, so it is given no path
-        // here: an injected filesystem's file may not exist on disk at all. It falls back to the
-        // provider scan, finds no physical JSON provider, and leaves the bound values alone.
+        // The stream provider retains the exact parsed document, so post-configuration can perform
+        // raw-shape normalization without rereading a physical file that may not exist (or may be
+        // stale relative to a higher-precedence SQLite provider).
         return BuildMonitor(builder.Build(), configFilePath: null);
     }
 

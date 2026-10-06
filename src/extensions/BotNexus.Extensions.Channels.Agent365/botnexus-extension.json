@@ -4,7 +4,9 @@
   "description": "Microsoft 365 Agents SDK channel adapter - bridges the Activity protocol to the BotNexus routing pipeline (Register tier)",
   "version": "1.0.0",
   "entryAssembly": "BotNexus.Extensions.Channels.Agent365.dll",
-  "extensionTypes": ["channel"],
+  "extensionTypes": [
+    "channel"
+  ],
   "enabled": false,
   "configSchema": [
     {
@@ -50,5 +52,8 @@
       "sensitive": false,
       "description": "HTTP route the Agents SDK message endpoint is hosted on for inbound Activity delivery."
     }
+  ],
+  "configurationScopes": [
+    "gateway"
   ]
 }

@@ -19,12 +19,42 @@ public sealed class CronOptionsPromptTemplateResolver(
     private readonly IFileSystem _fileSystem = fileSystem ?? new FileSystem();
 
     /// <inheritdoc />
-    public IReadOnlyList<string> ListTemplateNames(AgentId agentId)
+    public IReadOnlyList<PromptTemplateDescriptor> ListTemplates(AgentId agentId, int limit)
     {
-        var templates = DiscoverTemplates(agentId);
-        return templates.Keys
-            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+        if (limit <= 0)
+            return [];
+
+        return DiscoverTemplates(agentId).Values
+            .OrderBy(template => template.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(limit)
+            .Select(ToDescriptor)
             .ToList();
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> ListTemplateNames(AgentId agentId)
+        => ListTemplates(agentId, int.MaxValue).Select(template => template.Name).ToList();
+
+    /// <inheritdoc />
+    public PromptTemplateRenderResult Render(
+        AgentId agentId,
+        string templateName,
+        IReadOnlyDictionary<string, string?>? parameters)
+    {
+        if (string.IsNullOrWhiteSpace(templateName))
+            return PromptTemplateRenderResult.Failure("Template name is required.");
+
+        if (TryResolveFileTemplate(agentId, templateName, out var fileTemplate, out var malformed))
+            return RenderResolved(fileTemplate, parameters);
+
+        if (malformed)
+            return PromptTemplateRenderResult.Failure($"Prompt template '{templateName}' is malformed.");
+
+        var templates = LoadOptionTemplates();
+        if (!templates.TryGetValue(templateName, out var template))
+            return PromptTemplateRenderResult.Failure($"Prompt template '{templateName}' was not found.");
+
+        return RenderResolved(template, parameters);
     }
 
     /// <inheritdoc />
@@ -35,45 +65,58 @@ public sealed class CronOptionsPromptTemplateResolver(
         out string renderedPrompt,
         out string? error)
     {
-        if (string.IsNullOrWhiteSpace(templateName))
+        var result = Render(agentId, templateName, parameters);
+        renderedPrompt = result.RenderedPrompt;
+        error = result.Succeeded ? null : result.Error;
+        return result.Succeeded;
+    }
+
+    private static PromptTemplateRenderResult RenderResolved(
+        ResolvedPromptTemplate template,
+        IReadOnlyDictionary<string, string?>? parameters)
+    {
+        if (PromptTemplateRenderer.TryRender(
+            template.Prompt, parameters, template.Defaults, template.RequiredParameters,
+            out var renderedPrompt, out _))
         {
-            renderedPrompt = string.Empty;
-            error = "Template name is required.";
-            return false;
+            return PromptTemplateRenderResult.Success(renderedPrompt);
         }
 
-        if (TryResolveFileTemplate(agentId, templateName, out var fileTemplate, out error))
+        var supplied = new Dictionary<string, string?>(template.Defaults, StringComparer.OrdinalIgnoreCase);
+        if (parameters is not null)
         {
-            return PromptTemplateRenderer.TryRender(
-                fileTemplate.Prompt,
-                parameters,
-                fileTemplate.Defaults,
-                fileTemplate.RequiredParameters,
-                out renderedPrompt,
-                out error);
+            foreach (var (name, value) in parameters)
+                supplied[name] = value;
         }
 
-        if (!string.IsNullOrWhiteSpace(error))
-        {
-            renderedPrompt = string.Empty;
-            return false;
-        }
+        var required = PromptTemplateRenderer.GetRequiredParameters(template.Prompt)
+            .Concat(template.RequiredParameters)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(name => !supplied.TryGetValue(name, out var value) || string.IsNullOrWhiteSpace(value))
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return PromptTemplateRenderResult.MissingRequired(required);
+    }
 
-        var templates = LoadOptionTemplates();
-        if (!templates.TryGetValue(templateName, out var template) || string.IsNullOrWhiteSpace(template.Prompt))
-        {
-            renderedPrompt = string.Empty;
-            error = $"Prompt template '{templateName}' was not found.";
-            return false;
-        }
-
-        return PromptTemplateRenderer.TryRender(
-            template.Prompt,
-            parameters,
-            template.Defaults,
-            template.RequiredParameters,
-            out renderedPrompt,
-            out error);
+    private static PromptTemplateDescriptor ToDescriptor(ResolvedPromptTemplate template)
+    {
+        var names = PromptTemplateRenderer.GetRequiredParameters(template.Prompt)
+            .Concat(template.Defaults.Keys)
+            .Concat(template.RequiredParameters)
+            .Concat(template.ParameterMetadata.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Select(name =>
+            {
+                template.ParameterMetadata.TryGetValue(name, out var metadata);
+                template.Defaults.TryGetValue(name, out var defaultValue);
+                return new PromptTemplateParameterDescriptor(
+                    name, metadata?.Description, defaultValue,
+                    template.RequiredParameters.Contains(name));
+            })
+            .ToList();
+        return new PromptTemplateDescriptor(
+            template.Name, template.Description, template.Source, template.ShadowedSources, names);
     }
 
     private IReadOnlyDictionary<string, ResolvedPromptTemplate> DiscoverTemplates(AgentId agentId)
@@ -89,11 +132,15 @@ public sealed class CronOptionsPromptTemplateResolver(
                 try
                 {
                     var parsed = ParseTemplateFile(templatePath, source);
+                    if (templates.TryGetValue(parsed.Name, out var shadowed))
+                        parsed = parsed with { ShadowedSources = [shadowed.Source, .. shadowed.ShadowedSources] };
                     templates[parsed.Name] = parsed;
                 }
                 catch
                 {
-                    // Ignore malformed files during listing/discovery; render path surfaces deterministic errors.
+                    // A malformed higher-precedence file is a fail-closed tombstone for the same
+                    // effective filename. Listing must not expose a lower template that Render rejects.
+                    templates.Remove(GetTemplateStem(templatePath));
                 }
             }
         }
@@ -135,7 +182,14 @@ public sealed class CronOptionsPromptTemplateResolver(
                 .ToHashSet(StringComparer.OrdinalIgnoreCase)
                 ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            templates[name] = new ResolvedPromptTemplate(name, configuredTemplate.Prompt, defaults, required, TemplateSource.Options);
+            var parameterMetadata = configuredTemplate.Parameters?.ToDictionary(
+                pair => pair.Key,
+                pair => new FrontMatterParameterMetadata(pair.Value.Description, pair.Value.Default, pair.Value.Required),
+                StringComparer.OrdinalIgnoreCase)
+                ?? new Dictionary<string, FrontMatterParameterMetadata>(StringComparer.OrdinalIgnoreCase);
+            templates[name] = new ResolvedPromptTemplate(
+                name, configuredTemplate.Description, configuredTemplate.Prompt, defaults, required,
+                parameterMetadata, PromptTemplateSource.Configured, []);
         }
 
         return templates;
@@ -145,7 +199,7 @@ public sealed class CronOptionsPromptTemplateResolver(
         AgentId agentId,
         string templateName,
         out ResolvedPromptTemplate template,
-        out string? error)
+        out bool malformed)
     {
         foreach (var (directory, source) in ResolveTemplateDirectories(agentId, highestFirst: true))
         {
@@ -155,19 +209,19 @@ public sealed class CronOptionsPromptTemplateResolver(
             try
             {
                 template = ParseTemplateFile(templatePath, source);
-                error = null;
+                malformed = false;
                 return true;
             }
-            catch (Exception ex)
+            catch
             {
                 template = default!;
-                error = ex.Message;
+                malformed = true;
                 return false;
             }
         }
 
         template = default!;
-        error = null;
+        malformed = false;
         return false;
     }
 
@@ -220,19 +274,19 @@ public sealed class CronOptionsPromptTemplateResolver(
         return false;
     }
 
-    private IReadOnlyList<(string Directory, TemplateSource Source)> ResolveTemplateDirectories(AgentId agentId, bool highestFirst)
+    private IReadOnlyList<(string Directory, PromptTemplateSource Source)> ResolveTemplateDirectories(AgentId agentId, bool highestFirst)
     {
         var homePath = ResolveBotNexusHomePath();
-        var ordered = new List<(string Directory, TemplateSource Source)>
+        var ordered = new List<(string Directory, PromptTemplateSource Source)>
         {
-            (_fileSystem.Path.Combine(homePath, "prompts"), TemplateSource.Shared),
-            (_fileSystem.Path.Combine(homePath, "agents", agentId.Value, "prompts"), TemplateSource.Agent)
+            (_fileSystem.Path.Combine(homePath, "prompts"), PromptTemplateSource.Shared),
+            (_fileSystem.Path.Combine(homePath, "agents", agentId.Value, "prompts"), PromptTemplateSource.Agent)
         };
 
         if (_workspaceManager is not null)
         {
             var workspacePath = _workspaceManager.GetWorkspacePath(agentId.Value);
-            ordered.Add((_fileSystem.Path.Combine(workspacePath, "prompts"), TemplateSource.Workspace));
+            ordered.Add((_fileSystem.Path.Combine(workspacePath, "prompts"), PromptTemplateSource.Workspace));
         }
 
         if (highestFirst)
@@ -241,7 +295,7 @@ public sealed class CronOptionsPromptTemplateResolver(
         return ordered;
     }
 
-    private ResolvedPromptTemplate ParseTemplateFile(string templatePath, TemplateSource source)
+    private ResolvedPromptTemplate ParseTemplateFile(string templatePath, PromptTemplateSource source)
     {
         if (templatePath.EndsWith(".prompt.md", StringComparison.OrdinalIgnoreCase))
             return ParseMarkdownTemplateFile(templatePath, source);
@@ -252,7 +306,7 @@ public sealed class CronOptionsPromptTemplateResolver(
         throw new InvalidOperationException($"Template file '{templatePath}' has unsupported extension.");
     }
 
-    private ResolvedPromptTemplate ParseJsonTemplateFile(string templatePath, TemplateSource source)
+    private ResolvedPromptTemplate ParseJsonTemplateFile(string templatePath, PromptTemplateSource source)
     {
         var raw = _fileSystem.File.ReadAllText(templatePath);
         using var document = JsonDocument.Parse(raw);
@@ -266,6 +320,7 @@ public sealed class CronOptionsPromptTemplateResolver(
         if (string.IsNullOrWhiteSpace(name))
             throw new InvalidOperationException($"Template file '{templatePath}' has invalid name.");
 
+        var description = ReadString(root, "description");
         var prompt = ReadString(root, "prompt") ?? ReadString(root, "template");
         if (string.IsNullOrWhiteSpace(prompt))
             throw new InvalidOperationException($"Template file '{templatePath}' has no prompt body.");
@@ -278,6 +333,7 @@ public sealed class CronOptionsPromptTemplateResolver(
         }
 
         var required = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var parameterMetadata = new Dictionary<string, FrontMatterParameterMetadata>(StringComparer.OrdinalIgnoreCase);
         if (root.TryGetProperty("parameters", out var parametersElement) && parametersElement.ValueKind == JsonValueKind.Object)
         {
             foreach (var parameter in parametersElement.EnumerateObject())
@@ -289,15 +345,19 @@ public sealed class CronOptionsPromptTemplateResolver(
                 if (defaultValue is not null)
                     defaults[parameter.Name] = defaultValue;
 
-                if (ReadBool(parameter.Value, "required"))
+                var isRequired = ReadBool(parameter.Value, "required");
+                if (isRequired)
                     required.Add(parameter.Name);
+                parameterMetadata[parameter.Name] = new FrontMatterParameterMetadata(
+                    ReadString(parameter.Value, "description"), defaultValue, isRequired);
             }
         }
 
-        return new ResolvedPromptTemplate(name, prompt, defaults, required, source);
+        return new ResolvedPromptTemplate(
+            name, description, prompt, defaults, required, parameterMetadata, source, []);
     }
 
-    private ResolvedPromptTemplate ParseMarkdownTemplateFile(string templatePath, TemplateSource source)
+    private ResolvedPromptTemplate ParseMarkdownTemplateFile(string templatePath, PromptTemplateSource source)
     {
         var raw = _fileSystem.File.ReadAllText(templatePath);
         if (!TrySplitFrontMatter(raw, out var frontMatterText, out var body, out var splitError))
@@ -325,7 +385,8 @@ public sealed class CronOptionsPromptTemplateResolver(
                 required.Add(parameterName);
         }
 
-        return new ResolvedPromptTemplate(name, body, defaults, required, source);
+        return new ResolvedPromptTemplate(
+            name, metadata.Description, body, defaults, required, metadata.Parameters, source, []);
     }
 
     private IEnumerable<string> EnumerateTemplatePaths(string directory)
@@ -336,6 +397,10 @@ public sealed class CronOptionsPromptTemplateResolver(
         foreach (var markdownTemplate in _fileSystem.Directory.GetFiles(directory, "*.prompt.md", SearchOption.TopDirectoryOnly))
             yield return markdownTemplate;
     }
+
+    private string GetTemplateStem(string templatePath)
+        => _fileSystem.Path.GetFileNameWithoutExtension(
+            _fileSystem.Path.GetFileNameWithoutExtension(templatePath));
 
     private static int GetTemplateExtensionPriority(string templatePath)
     {
@@ -412,6 +477,7 @@ public sealed class CronOptionsPromptTemplateResolver(
     {
         var metadata = new FrontMatterMetadata(
             Name: null,
+            Description: null,
             Parameters: new Dictionary<string, FrontMatterParameterMetadata>(StringComparer.OrdinalIgnoreCase));
 
         var lines = frontMatter.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
@@ -435,6 +501,9 @@ public sealed class CronOptionsPromptTemplateResolver(
                 {
                     case "name":
                         metadata = metadata with { Name = ParseYamlScalar(value) };
+                        break;
+                    case "description":
+                        metadata = metadata with { Description = ParseYamlScalar(value) };
                         break;
                     case "parameters" when !hasValue:
                         inParameters = true;
@@ -550,13 +619,17 @@ public sealed class CronOptionsPromptTemplateResolver(
 
     private sealed record ResolvedPromptTemplate(
         string Name,
+        string? Description,
         string Prompt,
         IReadOnlyDictionary<string, string?> Defaults,
         IReadOnlySet<string> RequiredParameters,
-        TemplateSource Source);
+        IReadOnlyDictionary<string, FrontMatterParameterMetadata> ParameterMetadata,
+        PromptTemplateSource Source,
+        IReadOnlyList<PromptTemplateSource> ShadowedSources);
 
     private sealed record FrontMatterMetadata(
         string? Name,
+        string? Description,
         Dictionary<string, FrontMatterParameterMetadata> Parameters);
 
     private sealed record FrontMatterParameterMetadata(
@@ -564,11 +637,4 @@ public sealed class CronOptionsPromptTemplateResolver(
         string? Default,
         bool Required);
 
-    private enum TemplateSource
-    {
-        Options = 0,
-        Shared = 1,
-        Agent = 2,
-        Workspace = 3
-    }
 }

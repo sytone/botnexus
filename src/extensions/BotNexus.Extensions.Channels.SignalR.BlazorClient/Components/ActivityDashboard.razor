@@ -158,6 +158,8 @@
                     <tr class="activity-row @(row.IsCron ? "activity-row-cron" : "") @(row.IsPinned ? "activity-row-pinned" : "") @(row.IsLive ? "activity-row-live" : "")"
                         data-testid="activity-row"
                         data-conversation-id="@row.ConversationId"
+                        data-session-id="@row.ActiveSessionId"
+                        title="@SessionPointerTooltip(row)"
                         tabindex="0"
                         role="link"
                         @onclick="() => NavigateToConversation(row)"
@@ -314,8 +316,27 @@
                 cronHealth = ActivityDashboardProjection.CronHealthById(null);
             }
 
+            // #3713: session liveness is another separate, non-fatal fetch. A successful roster,
+            // including an empty one, is authoritative. A failed fetch remains null so the
+            // projection deliberately preserves its compatibility fallback.
+            IReadOnlyDictionary<string, string?>? sessionStatus = null;
+            try
+            {
+                var sessions = await SessionRosterLoader.LoadAllAsync(Rest);
+                sessionStatus = ActivityDashboardProjection.SessionStatusById(sessions);
+            }
+            catch
+            {
+                // Conversation data is the page contract; unavailable corroboration must not hide it.
+            }
+
             _projectionNow = DateTimeOffset.UtcNow;
-            _rows = ActivityDashboardProjection.Project(conversations, _filter, _projectionNow, cronHealth);
+            _rows = ActivityDashboardProjection.Project(
+                conversations,
+                _filter,
+                _projectionNow,
+                cronHealth,
+                sessionStatus);
             _summary = ActivityDashboardProjection.Summarize(_rows);
             _loadError = false;
         }
@@ -469,6 +490,15 @@
             : "Session running";
 
     /// <summary>
+    /// Keeps the routing pointer inspectable even when its session is stopped and therefore has no
+    /// Live badge. The row owns this neutral diagnostic metadata; it does not imply liveness.
+    /// </summary>
+    private static string? SessionPointerTooltip(ActivityRow row) =>
+        row.ActiveSessionId is { Length: > 0 } sessionId
+            ? $"Session pointer: {sessionId}"
+            : null;
+
+    /// <summary>
     /// Hover detail behind the pin badge: when the pin was stamped, so the badge stays a one-glance
     /// mark while the underlying server value remains inspectable without lengthening the row.
     /// </summary>
@@ -564,8 +594,11 @@
             "expired" => $" \u00b7 Expired: {health.ExpiresAt:u}",
             _ => string.Empty
         };
+        var errorDetail = ActivityDashboardProjection.CronHealthErrorSummary(row) is { } error
+            ? $" \u00b7 Error: {error}"
+            : string.Empty;
 
-        return $"Cron job: {name} \u00b7 Last run status: {status}{when}{livenessDetail}";
+        return $"Cron job: {name} \u00b7 Job id: {health.JobId} \u00b7 Last run status: {status}{when}{livenessDetail}{errorDetail}";
     }
 
     private static string FormatRelative(DateTimeOffset ts)

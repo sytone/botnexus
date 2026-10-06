@@ -281,6 +281,82 @@ public interface ISessionStore
     }
 
     /// <summary>
+    /// Returns one globally-scoped, bounded page of sessions that still contain crash sentinels.
+    /// Implementations should identify candidates without hydrating unrelated transcripts.
+    /// </summary>
+    async Task<UnresolvedCrashSentinelPage> ListUnresolvedCrashSentinelsAsync(
+        int limit,
+        string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        var sessions = await ListAsync(null, cancellationToken).ConfigureAwait(false);
+        var rows = sessions
+            .Where(session => session.History.Any(static entry => entry.IsCrashSentinel))
+            .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
+            .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
+            .Take(limit + 1)
+            .ToList();
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        return new UnresolvedCrashSentinelPage(rows, hasMore ? rows[^1].SessionId.Value : null);
+    }
+
+    /// <summary>
+    /// Returns one bounded page of transcript-free rows sufficient for age and disk-budget cleanup planning.
+    /// </summary>
+    async Task<SessionCleanupPlanPage> ListCleanupPlanAsync(
+        int limit,
+        string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        var sessions = await ListAsync(null, cancellationToken).ConfigureAwait(false);
+        var rows = sessions
+            .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
+            .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
+            .Take(limit + 1)
+            .Select(session => new SessionCleanupPlanRow(
+                session.SessionId, session.AgentId, session.ConversationId, session.Status, session.UpdatedAt,
+                session.MessageCount, SessionDiskAccounting.Measure(session)))
+            .ToList();
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        return new SessionCleanupPlanPage(rows, hasMore ? rows[^1].SessionId.Value : null);
+    }
+
+    /// <summary>Expires a session only while it still matches the cleanup planning row.</summary>
+    async Task<SessionMutationOutcome> ExpireIfMatchesAsync(
+        SessionCleanupFence fence,
+        DateTimeOffset expiresAt,
+        CancellationToken cancellationToken = default)
+    {
+        var session = await GetAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return SessionMutationOutcome.NotFound;
+        if (session.ConversationId != fence.ConversationId || session.Status != fence.ExpectedStatus
+            || session.UpdatedAt != fence.ExpectedUpdatedAt) return SessionMutationOutcome.Conflict;
+        var writeFence = SessionWriteFence.Capture(session);
+        session.Status = SessionStatus.Expired;
+        session.ExpiresAt ??= expiresAt;
+        session.UpdatedAt = expiresAt;
+        var outcome = await SaveAsync(session, writeFence, cancellationToken).ConfigureAwait(false);
+        return outcome == SessionSaveOutcome.Persisted ? SessionMutationOutcome.Applied : SessionMutationOutcome.Conflict;
+    }
+
+    /// <summary>Deletes a session only while it still matches the cleanup planning row.</summary>
+    async Task<SessionMutationOutcome> DeleteIfMatchesAsync(
+        SessionCleanupFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        var session = await GetAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return SessionMutationOutcome.NotFound;
+        if (session.ConversationId != fence.ConversationId || session.Status != fence.ExpectedStatus
+            || session.UpdatedAt != fence.ExpectedUpdatedAt) return SessionMutationOutcome.Conflict;
+        await DeleteAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        return SessionMutationOutcome.Applied;
+    }
+
+    /// <summary>
     /// Deletes a session and its history.
     /// </summary>
     Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default);
@@ -464,9 +540,7 @@ public interface ISessionStore
     /// <param name="status">The final status string (Completed, Failed, TimedOut, Killed).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task UpdateSubAgentSessionAsync(
-        string subAgentId,
-        DateTimeOffset endedAt,
-        string status,
+        SubAgentInfo info,
         CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
@@ -477,10 +551,10 @@ public interface ISessionStore
     /// </summary>
     /// <param name="sessionId">The parent session whose sub-agent history to retrieve.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<IReadOnlyList<SubAgentSessionSummary>> ListSubAgentSessionsAsync(
+    Task<IReadOnlyList<SubAgentRunDetail>> ListSubAgentSessionsAsync(
         SessionId sessionId,
         CancellationToken cancellationToken = default)
-        => Task.FromResult<IReadOnlyList<SubAgentSessionSummary>>(Array.Empty<SubAgentSessionSummary>());
+        => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(Array.Empty<SubAgentRunDetail>());
 
     /// <summary>
     /// Returns persisted sub-agent session rows across <em>all</em> parent sessions, ordered by
@@ -492,11 +566,17 @@ public interface ISessionStore
     /// <param name="status">Optional case-insensitive status filter (e.g. Completed, Failed, Killed, TimedOut, Active). When null or whitespace, all statuses are returned.</param>
     /// <param name="limit">Maximum number of rows to return.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<IReadOnlyList<SubAgentSessionSummary>> ListAllSubAgentSessionsAsync(
+    /// <param name="parentSessionId">Optional parent session ID filter.</param>
+    /// <param name="childAgentId">Optional child agent ID filter.</param>
+    /// <param name="offset">Number of matching rows to skip before returning results.</param>
+    Task<IReadOnlyList<SubAgentRunDetail>> ListAllSubAgentSessionsAsync(
         string? status = null,
         int limit = 200,
-        CancellationToken cancellationToken = default)
-        => Task.FromResult<IReadOnlyList<SubAgentSessionSummary>>(Array.Empty<SubAgentSessionSummary>());
+        CancellationToken cancellationToken = default,
+        string? parentSessionId = null,
+        string? childAgentId = null,
+        int offset = 0)
+        => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(Array.Empty<SubAgentRunDetail>());
 
     /// <summary>
     /// Gets aggregate session statistics. Default implementation returns null (not supported).

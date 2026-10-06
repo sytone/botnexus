@@ -33,6 +33,79 @@ public sealed class RecentLogStoreHostLoggingTests
     }
 
     [Fact]
+    public void HostPipeline_NeutralisesControlCharactersInStructuredProperties_ForEveryTextSink()
+    {
+        using var harness = new HostLoggingHarness();
+
+        harness.CreateLogger<RecentLogStoreHostLoggingTests>()
+            .LogWarning("hostile property {Value}", "ordinary\r\nFORGED\u0085tail");
+
+        var entry = harness.Store.GetRecent(50)
+            .First(candidate => candidate.Message.Contains("hostile property"));
+        entry.Message.ShouldBe("hostile property \"ordinary\\r\\nFORGED\\u0085tail\"");
+        entry.Properties["Value"].ShouldBe("ordinary\\r\\nFORGED\\u0085tail");
+
+        var fileText = File.ReadAllText(harness.LogFile);
+        fileText.ShouldContain("ordinary\\r\\nFORGED\\u0085tail");
+        fileText.ShouldNotContain("ordinary\r\nFORGED");
+        fileText.ShouldNotContain('\u0085');
+    }
+
+    [Fact]
+    public void HostPipeline_LeavesOrdinaryStructuredValuesByteForByteUnchanged()
+    {
+        using var harness = new HostLoggingHarness();
+
+        harness.CreateLogger<RecentLogStoreHostLoggingTests>()
+            .LogWarning("ordinary property {Value}", "日本語/path?q=a+b");
+
+        var entry = harness.Store.GetRecent(50)
+            .First(candidate => candidate.Message.Contains("ordinary property"));
+        entry.Properties["Value"].ShouldBe("日本語/path?q=a+b");
+    }
+
+    [Fact]
+    public void HostPipeline_NeutralisesEveryExternallyDerivedStructuredPropertyClass()
+    {
+        using var harness = new HostLoggingHarness();
+        var logger = harness.CreateLogger<RecentLogStoreHostLoggingTests>();
+        const string hostile = "ordinary\r\nFORGED\u0085tail";
+
+        logger.LogWarning("conversation sender {SenderId}", hostile);
+        logger.LogWarning("tool {ToolName} {ToolId}", hostile, hostile);
+        logger.LogWarning("navigation {NavKey}", hostile);
+        logger.LogWarning("agent {DisplayName} {AgentId}", hostile, hostile);
+        logger.LogWarning("timezone {TimeZoneId}", hostile);
+        logger.LogWarning("rejected secret {SecretKey}", hostile);
+
+        var entries = harness.Store.GetRecent(50);
+        string[] propertyNames =
+        [
+            "SenderId",
+            "ToolName",
+            "ToolId",
+            "NavKey",
+            "DisplayName",
+            "AgentId",
+            "TimeZoneId",
+            "SecretKey",
+        ];
+
+        foreach (var propertyName in propertyNames)
+        {
+            entries.Any(entry =>
+                    entry.Properties.TryGetValue(propertyName, out var value) &&
+                    Equals(value, "ordinary\\r\\nFORGED\\u0085tail"))
+                .ShouldBeTrue($"Expected sanitized property '{propertyName}'.");
+        }
+
+        var fileText = harness.ReadLogFile();
+        fileText.ShouldNotContain(hostile);
+        fileText.ShouldNotContain("ordinary\r\nFORGED");
+        fileText.ShouldNotContain('\u0085');
+    }
+
+    [Fact]
     public void LogEndpoint_ReturnsEntriesProducedByHostPipeline()
     {
         using var harness = new HostLoggingHarness();
@@ -164,7 +237,16 @@ public sealed class RecentLogStoreHostLoggingTests
 
         public IRecentLogStore Store => _host.Services.GetRequiredService<IRecentLogStore>();
 
+        public string LogFile => Directory.GetFiles(_logDirectory, "botnexus-*.log").ShouldHaveSingleItem();
+
         public ILogger<T> CreateLogger<T>() => _loggerFactory.CreateLogger<T>();
+
+        public string ReadLogFile()
+        {
+            using var stream = new FileStream(LogFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
+        }
 
         public void Dispose()
         {

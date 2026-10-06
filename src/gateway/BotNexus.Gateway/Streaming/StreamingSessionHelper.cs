@@ -150,13 +150,14 @@ public static class StreamingSessionHelper
                         evt.ToolArgs is { Count: > 0 }
                             ? System.Text.Json.JsonSerializer.Serialize(evt.ToolArgs)
                             : null);
+                    // The write-ahead can append directly through ISessionStore, so this aggregate
+                    // may be stale. The stable persistence key on ProjectStart is the authoritative
+                    // idempotency contract; this snapshot check is only a cheap in-memory guard.
                     var alreadyPersisted = evt.ToolCallId is not null
                         && session.GetHistorySnapshot().Any(entry =>
                             entry.ToolCallId == evt.ToolCallId && entry.IsToolStartRow());
                     if (!alreadyPersisted)
-                    {
                         streamedHistory.Add(startEntry);
-                    }
                     allHistoryEntries.Add(startEntry);
                     if (evt.ToolCallId is not null)
                     {
@@ -423,8 +424,21 @@ public static class StreamingSessionHelper
             }
         }
 
-        // Remove crash sentinel on clean completion (#363).
-        session.RemoveCrashSentinels();
+        // Persist the authoritative finalization signal alongside the session before the same
+        // final save that commits the transcript. This keeps history/debug callers truthful after a
+        // restart instead of forcing them to infer completion from inactivity (#4165). Assign even
+        // when null so a later legacy/no-signal run cannot leave an earlier parked outcome behind.
+        session.RunCompletion = runCompletion;
+
+        // A failed terminal completion is recoverable work, not a clean lease release. Keep the
+        // sentinel through the authoritative save so the live recovery subscriber (or startup scan
+        // after a crash) has the same durable marker to accept-before-consume (#4406).
+        var terminalFailure = string.Equals(
+            runCompletion?.Status,
+            "Failed",
+            StringComparison.OrdinalIgnoreCase);
+        if (!terminalFailure)
+            session.RemoveCrashSentinels();
 
         // #1518: the final write is the authoritative post-run finalizer save. When a fence was
         // supplied, honour it so a delete/reset that landed mid-stream cannot be undone here. On
@@ -440,7 +454,9 @@ public static class StreamingSessionHelper
                 new SessionLifecycleEvent(
                     session.SessionId.Value,
                     session.AgentId.Value,
-                    SessionLifecycleEventType.Closed,
+                    terminalFailure
+                        ? SessionLifecycleEventType.TerminalFailure
+                        : SessionLifecycleEventType.Closed,
                     session),
                 cancellationToken);
         }

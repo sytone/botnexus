@@ -48,6 +48,10 @@ public sealed class FanOutConfigurationWriter : IConfigurationWriter
     public string Name => string.Join('+', _writers.Select(w => w.Name));
 
     /// <inheritdoc />
+    public IReadOnlyList<ConfigurationBackendDescriptor> Backends =>
+        _writers.SelectMany(writer => writer.Backends).ToArray();
+
+    /// <inheritdoc />
     public async Task WriteAsync(JsonObject document, string reason, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(document);

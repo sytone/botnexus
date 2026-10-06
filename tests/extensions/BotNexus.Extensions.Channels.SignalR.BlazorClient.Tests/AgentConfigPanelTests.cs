@@ -69,12 +69,17 @@ public sealed class AgentConfigPanelTests : IDisposable
         _store.SeedConversations(AgentId, [new ConversationSummaryDto(
             conversationId, AgentId, "Chat", true, "Active", sessionId, 1,
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)]);
-        _store.SetActiveConversation(AgentId, conversationId);
+        _store.SelectView(AgentId, conversationId, SelectionSource.RouteNavigation);
     }
+
+    private string? StoreConversationId() =>
+        (_store as IDisplayedConversation).DisplayedConversationIdFor(AgentId);
 
     private async Task<IRenderedComponent<AgentConfigPanel>> OpenAsync()
     {
-        var cut = _ctx.Render<AgentConfigPanel>(p => p.Add(c => c.AgentId, AgentId));
+        var cut = _ctx.Render<AgentConfigPanel>(p => p
+            .Add(c => c.AgentId, AgentId)
+            .Add(c => c.ConversationId, (StoreConversationId())));
         await cut.InvokeAsync(() => cut.Instance.Open());
         return cut;
     }
@@ -233,6 +238,22 @@ public sealed class AgentConfigPanelTests : IDisposable
     }
 
     [Fact]
+    public async Task Panel_includes_binding_management_for_the_active_conversation()
+    {
+        _http.Setup("/api/agents/farnsworth", DescriptorJson);
+        SeedAgentWithConversation("conv-abc");
+        _rest.GetConversationAsync("conv-abc", Arg.Any<CancellationToken>())
+            .Returns(new ConversationResponseDto(
+                "conv-abc", AgentId, "Chat", true, "Active", "sess-1", [],
+                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
+
+        var cut = await OpenAsync();
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='binding-add-open']"));
+        await _rest.Received().GetConversationAsync("conv-abc", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Panel_lists_installed_tool_extensions_and_shows_ungranted_state()
     {
         _http.Setup("/api/agents/farnsworth", DescriptorJson);
@@ -247,6 +268,34 @@ public sealed class AgentConfigPanelTests : IDisposable
         cut.Find("[data-extension='botnexus-browser'] input[type='checkbox']")
             .HasAttribute("checked").ShouldBeFalse();
         cut.FindAll("[data-extension-field]").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Panel_hides_gateway_only_tool_extension()
+    {
+        _http.Setup("/api/agents/farnsworth", DescriptorJson);
+        _rest.GetExtensionDetailsAsync(Arg.Any<CancellationToken>()).Returns([
+            BrowserExtension(["gateway"])
+        ]);
+        SeedAgentWithConversation();
+
+        var cut = await OpenAsync();
+
+        cut.FindAll("[data-extension='botnexus-browser']").ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Panel_shows_multi_scope_tool_extension_including_agent()
+    {
+        _http.Setup("/api/agents/farnsworth", DescriptorJson);
+        _rest.GetExtensionDetailsAsync(Arg.Any<CancellationToken>()).Returns([
+            BrowserExtension(["gateway", "agent"])
+        ]);
+        SeedAgentWithConversation();
+
+        var cut = await OpenAsync();
+
+        cut.Find("[data-extension='botnexus-browser']").ShouldNotBeNull();
     }
 
     [Fact]
@@ -302,7 +351,8 @@ public sealed class AgentConfigPanelTests : IDisposable
         _http.LastDeletePath.ShouldBe("/api/agents/farnsworth/extensions/botnexus-browser");
     }
 
-    private static ExtensionDetailDto BrowserExtension() => new(
+    private static ExtensionDetailDto BrowserExtension(
+        IReadOnlyList<string>? configurationScopes = null) => new(
         "botnexus-browser",
         "Browser Tools",
         "1.0.0",
@@ -313,7 +363,8 @@ public sealed class AgentConfigPanelTests : IDisposable
         [
             new ExtensionConfigFieldDto("browser.binaryPath", "string", null, false, false, "Executable path"),
             new ExtensionConfigFieldDto("browser.autoProvision", "boolean", "false", false, false, "Provision automatically"),
-        ]);
+        ],
+        configurationScopes ?? ["agent"]);
 
     /// <summary>Path-suffix keyed stub, matching the pattern used elsewhere in this suite.</summary>
     private sealed class StubHandler : HttpMessageHandler

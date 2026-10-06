@@ -272,6 +272,97 @@ public sealed class ConversationManagementTests
         }
     }
 
+    [SkippableTheory]
+    [InlineData(240, "wide")]
+    [InlineData(180, "minimum")]
+    [Trait("Category", "Playwright")]
+    public async Task ConversationTimestamp_RemainsLeftAlignedAndClearOfRowActions(int sidebarWidth, string label)
+    {
+        Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
+
+        using var playwright = await Playwright.CreateAsync();
+        var (browser, skipReason) = await PortalTestHelpers.TryLaunchBrowserAsync(playwright);
+        Skip.If(browser is null, skipReason);
+
+        await using var _ = browser!;
+        var (page, portal, chat) = await PortalTestHelpers.NewChatPageAsync(
+            browser, _fx.GatewayBaseUrl, _fx.AgentIds[1]);
+        await page.SetViewportSizeAsync(1280, 800);
+
+        await portal.ConversationNewBtn.ClickAsync();
+        await chat.ChatInput.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
+
+        var row = page.Locator(".conversation-list-item:has(.conversation-list-item-btn.active)").First;
+        await row.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
+
+        await page.EvaluateAsync(
+            "width => { const sidebar = document.querySelector('.main-sidebar'); if (sidebar) { sidebar.style.flex = `0 0 ${width}px`; sidebar.style.width = `${width}px`; } }",
+            sidebarWidth);
+        await row.Locator(".conversation-list-item-title").EvaluateAsync(
+            "element => element.textContent = 'A deliberately long conversation title that must ellipsize before the action strip'");
+
+        await AssertTimestampClearAsync(row, $"{label} rest");
+        await row.HoverAsync();
+        await AssertTimestampClearAsync(row, $"{label} hover");
+
+        var pin = row.Locator(".conversation-pin-btn");
+        await pin.ClickAsync();
+        row = page.Locator(".conversation-list-item:has(.conversation-list-item-btn.active)").First;
+        await row.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+        await AssertTimestampClearAsync(row, $"{label} pinned");
+
+        await row.HoverAsync();
+        var sectionButton = row.Locator(".conversation-section-btn");
+        await sectionButton.ClickAsync();
+        Assert.Equal("true", await sectionButton.GetAttributeAsync("aria-expanded"));
+        await AssertTimestampClearAsync(row, $"{label} section menu open");
+
+        var runId = Environment.GetEnvironmentVariable("RUN_ID");
+        var screenshotDirectory = string.IsNullOrWhiteSpace(runId)
+            ? Path.Combine(RepoLocator.FindRepoRoot(), "tmp", "screenshots-4100")
+            : Path.Combine(Path.DirectorySeparatorChar.ToString(), "work", runId, "artifacts", "screenshots-4100");
+        Directory.CreateDirectory(screenshotDirectory);
+        await page.ScreenshotAsync(new PageScreenshotOptions
+        {
+            Path = Path.Combine(screenshotDirectory, $"conversation-timestamp-{label}.png"),
+        });
+    }
+
+    private static async Task AssertTimestampClearAsync(ILocator row, string state)
+    {
+        var linkBox = await row.Locator(".conversation-list-item-btn").BoundingBoxAsync();
+        var titleBox = await row.Locator(".conversation-list-item-main").BoundingBoxAsync();
+        var metadataBox = await row.Locator(".conversation-list-item-meta").BoundingBoxAsync();
+        var timestampBox = await row.Locator(".conversation-updated-at").BoundingBoxAsync();
+        var actionsBox = await row.Locator(".conversation-row-actions").BoundingBoxAsync();
+
+        Assert.NotNull(linkBox);
+        Assert.NotNull(titleBox);
+        Assert.NotNull(metadataBox);
+        Assert.NotNull(timestampBox);
+        Assert.NotNull(actionsBox);
+        Assert.False(string.IsNullOrWhiteSpace(await row.Locator(".conversation-updated-at").TextContentAsync()));
+
+        Assert.InRange(Math.Abs(metadataBox!.X - titleBox!.X), 0, 1);
+        Assert.True(timestampBox!.X >= linkBox!.X && timestampBox.X + timestampBox.Width <= linkBox.X + linkBox.Width,
+            $"{state}: timestamp is clipped outside the conversation link.");
+        Assert.True(timestampBox.Y >= linkBox.Y && timestampBox.Y + timestampBox.Height <= linkBox.Y + linkBox.Height,
+            $"{state}: timestamp is vertically clipped outside the conversation link.");
+        var intersectsActions = timestampBox.X < actionsBox!.X + actionsBox.Width
+            && timestampBox.X + timestampBox.Width > actionsBox.X
+            && timestampBox.Y < actionsBox.Y + actionsBox.Height
+            && timestampBox.Y + timestampBox.Height > actionsBox.Y;
+        Assert.False(intersectsActions, $"{state}: row actions obscure the timestamp.");
+    }
+
     [SkippableFact]
     public async Task ArchiveConversation_RemovesFromList()
     {

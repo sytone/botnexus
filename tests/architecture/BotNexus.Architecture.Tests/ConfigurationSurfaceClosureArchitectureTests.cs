@@ -22,7 +22,7 @@ namespace BotNexus.Architecture.Tests;
 ///
 /// <para>
 /// <b>AC5 is why this file has two independent clauses.</b> Making
-/// <see cref="RawConfigPath"/> <c>internal</c> is necessary but not sufficient: if the CLI call
+/// <see cref="JsonObjectExtensions"/> <c>internal</c> is necessary but not sufficient: if the CLI call
 /// sites still <em>expressed</em> raw traversal and merely compiled against a widened surface, then
 /// reverting one access modifier would silently restore the whole defect class. So the visibility
 /// clause and the call-site clause are asserted separately, against different evidence - reflection
@@ -38,7 +38,7 @@ public sealed class ConfigurationSurfaceClosureArchitectureTests : ArchitectureT
     /// AC1: the raw traversal primitives are not part of the configuration project's public API.
     /// </summary>
     [Theory]
-    [InlineData("BotNexus.Gateway.Configuration.RawConfigPath")]
+    [InlineData("BotNexus.Gateway.Configuration.JsonObjectExtensions")]
     [InlineData("BotNexus.Gateway.Configuration.ConfigPathSyntax")]
     public void RawTraversalPrimitives_AreInternal(string typeName)
     {
@@ -61,7 +61,7 @@ public sealed class ConfigurationSurfaceClosureArchitectureTests : ArchitectureT
     ///
     /// <para>
     /// This is the non-vacuity clause. It reads SOURCE, not the type graph, precisely so that
-    /// widening <see cref="RawConfigPath"/> back to <c>public</c> cannot satisfy it. A call site
+    /// widening <see cref="JsonObjectExtensions"/> back to <c>public</c> cannot satisfy it. A call site
     /// that indexes a config JSON node - <c>root["gateway"]</c>, <c>config["agents"]</c> - fails
     /// here regardless of what any access modifier says.
     /// </para>
@@ -171,8 +171,8 @@ public sealed class ConfigurationSurfaceClosureArchitectureTests : ArchitectureT
             "casting a config document node to a JSON node type"),
 
         // Direct use of the now-internal primitives, in case InternalsVisibleTo is ever widened.
-        new(new Regex(@"\bRawConfigPath\s*\.", RegexOptions.Compiled),
-            "direct RawConfigPath use"),
+        new(new Regex(@"\bJsonObjectExtensions\s*\.", RegexOptions.Compiled),
+            "direct JsonObjectExtensions use"),
 
         new(new Regex(@"\bConfigPathSyntax\s*\.", RegexOptions.Compiled),
             "direct ConfigPathSyntax use"),

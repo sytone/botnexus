@@ -36,7 +36,6 @@ public sealed class GatewayCommandDispatchTests
         var agent = store.GetAgent(AgentId)!;
         if (activeConversationId is not null)
         {
-            agent.ActiveConversationId = activeConversationId;
             agent.Conversations[activeConversationId] = new ConversationState
             {
                 ConversationId = activeConversationId,

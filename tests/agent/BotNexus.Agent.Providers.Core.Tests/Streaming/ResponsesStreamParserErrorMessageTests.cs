@@ -100,4 +100,69 @@ public class ResponsesStreamParserErrorMessageTests
 
         message.ShouldNotBeNullOrWhiteSpace();
     }
+
+    [Theory]
+    [InlineData("response.failed", "{\"response\":{\"error\":{\"code\":\"bad_request\",\"message\":\"rejected synthetic-stream-token-4119\"}}}", "bad_request: rejected [REDACTED]")]
+    [InlineData("response.failed", "{\"message\":\"upstream synthetic-stream-token-4119\"}", "upstream [REDACTED]")]
+    [InlineData("error", "raw peer synthetic-stream-token-4119", "raw peer [REDACTED]")]
+    public async Task ParseEventsAsync_RedactsPeerFailureAndPreservesContext(
+        string eventType, string payload, string expected)
+    {
+        var stream = new LlmStream();
+        string? emitted = null;
+        var sent = false;
+
+        await ResponsesStreamParser.ParseEventsAsync(
+            stream,
+            _ => ValueTask.FromResult(sent ? null : ReturnEvent()),
+            new BotNexus.Agent.Providers.Core.Models.LlmModel("model", "model", "responses", "provider", "https://example.test", false, ["text"], new BotNexus.Agent.Providers.Core.Models.ModelCost(0, 0, 0, 0), 1000, 100),
+            null, "responses", Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+            (_, _, message, _) => emitted = message, null, null, CancellationToken.None,
+            new StubRedactor());
+
+        emitted.ShouldBe(expected);
+        emitted.ShouldNotBeNull();
+        emitted.ShouldNotContain("synthetic-stream-token-4119");
+        return;
+
+        ResponsesEvent ReturnEvent()
+        {
+            sent = true;
+            return new ResponsesEvent(eventType, payload);
+        }
+    }
+
+    [Theory]
+    [InlineData("{\"response\":{\"error\":{\"code\":99,\"message\":[]}}}")]
+    [InlineData("{\"response\":{\"error\":[]},\"message\":{}}")]
+    [InlineData("{\"response\":null,\"message\":42}")]
+    public async Task ParseEventsAsync_MalformedFailureShapes_DegradeSafely(string payload)
+    {
+        var stream = new LlmStream();
+        string? emitted = null;
+        var sent = false;
+
+        await Should.NotThrowAsync(() => ResponsesStreamParser.ParseEventsAsync(
+            stream,
+            _ => ValueTask.FromResult(sent ? null : ReturnEvent()),
+            new BotNexus.Agent.Providers.Core.Models.LlmModel("model", "model", "responses", "provider", "https://example.test", false, ["text"], new BotNexus.Agent.Providers.Core.Models.ModelCost(0, 0, 0, 0), 1000, 100),
+            null, "responses", Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+            (_, _, message, _) => emitted = message, null, null, CancellationToken.None,
+            new StubRedactor()));
+
+        emitted.ShouldNotBeNullOrWhiteSpace();
+        return;
+
+        ResponsesEvent ReturnEvent()
+        {
+            sent = true;
+            return new ResponsesEvent("response.failed", payload);
+        }
+    }
+
+    private sealed class StubRedactor : BotNexus.Gateway.Abstractions.Security.ISecretRedactor
+    {
+        public string Redact(string input) => input.Replace("synthetic-stream-token-4119", "[REDACTED]", StringComparison.Ordinal);
+        public string RedactForExternalDelivery(string input) => Redact(input);
+    }
 }

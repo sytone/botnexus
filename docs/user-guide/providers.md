@@ -1,6 +1,8 @@
 # Choose and connect a provider
 
-A **provider** is the service that supplies an agent's language model. The **model** is the program that reads your request and produces a response. You can use an existing provider without writing code.
+A **provider type** is a service family such as GitHub Copilot, OpenAI, Anthropic or Ollama. A **provider instance** is the named entry under `providers.<name>` that holds one endpoint and credential selection. Its **API contract** is the wire format used to contact the service, such as OpenAI Completions or Anthropic Messages. A **model** is the program selected within that instance. Each agent chooses a provider instance with `agents.<id>.provider` and a model with `agents.<id>.model`.
+
+BotNexus can use several provider types in one gateway. It also supports multiple named OpenAI-compatible instances, for example separate `local-vllm` and `team-proxy` endpoints. Built-in providers have a narrower boundary: current GitHub Copilot authentication, discovery, diagnostics, health and quota handling use one canonical GitHub Copilot account named `github-copilot`. See [GitHub Copilot accounts and aliases](../providers/github-copilot.md#accounts-provider-instances-and-the-copilot-alias).
 
 This guide explains the setup route in the current source. A saved setting or a listed model does not prove that your account can use it. Check the result with a small request before relying on the connection.
 
@@ -13,6 +15,7 @@ This guide explains the setup route in the current source. A saved setting or a 
 | Anthropic | An API key and access to the model you want | [Anthropic guide](../providers/anthropic.md) |
 | Ollama | A running Ollama server with a model installed | [Ollama guide](../providers/ollama.md) |
 | GitHub Models | The credentials and model access described by its own guide; this is not Copilot | [GitHub Models guide](../providers/github-models.md) |
+| Microsoft Foundry | A Foundry inference endpoint, deployment name, and either Azure identity access or an API key | [Microsoft Foundry configuration](#configure-microsoft-foundry) |
 | An OpenAI-compatible server | The server address, credentials if required, and exact model ID | [Compatible-server guide](../providers/openai-compatible.md) |
 
 Check the service's account terms, price and data-handling rules before sending information. Do not assume a model is free because a local catalog has no price recorded. A local model also does not make every agent action offline: tools can still contact other services.
@@ -48,7 +51,74 @@ botnexus provider setup --provider anthropic
 
 For Ollama, read its [provider guide](../providers/ollama.md) first. The model must be installed on the server separately. The wizard and advanced nested configuration are different setup paths; do not assume rerunning the wizard replaces every advanced setting.
 
-GitHub Models and other compatible endpoints are not choices accepted by this setup wizard. Follow their linked guide rather than substituting their name into `provider setup`.
+GitHub Models, Microsoft Foundry and other compatible endpoints are not choices accepted by this setup wizard. Follow their linked guide rather than substituting their name into `provider setup`.
+
+## Configure Microsoft Foundry
+
+Microsoft Foundry model inference uses the resource inference endpoint, not the project endpoint. Configure the base URL as `https://<resource>.services.ai.azure.com/openai/v1`, and use the deployment name—not the underlying catalog model name—as the model ID. BotNexus supplies the fixed Entra audience `https://ai.azure.com/.default`; it is not configurable by an agent.
+
+This example uses the standard Azure credential chain. It can use a developer login on a workstation, but managed identity is preferable for a hosted gateway:
+
+```json
+{
+  "providers": {
+    "azure-foundry-example": {
+      "type": "microsoft-foundry",
+      "baseUrl": "https://example.services.ai.azure.com/openai/v1",
+      "authentication": { "type": "entra-default" },
+      "chat": {
+        "api": "microsoft-foundry-responses",
+        "models": ["example-deployment"],
+        "defaultModel": "example-deployment"
+      }
+    }
+  }
+}
+```
+
+Use `managed-identity` for the host's system-assigned identity. Use `user-assigned-managed-identity` with `authentication.clientId` for a user-assigned identity. To use the separate key path, choose `api-key` and store the key in the provider's secret `apiKey` field. BotNexus does not fall back between these modes.
+
+Grant the identity the least-privilege inference role applicable to the resource type—for example, **Cognitive Services User** for Foundry Models or **Cognitive Services OpenAI User** for Azure OpenAI—and allow several minutes for role propagation. Azure subscription Owner or Contributor does not by itself imply model data-plane access.
+
+The endpoint must use HTTPS on the default port and end in `/openai/v1`. BotNexus sends Responses requests to `/openai/v1/responses` and refuses redirects so a bearer token is not forwarded to another origin.
+
+## Configure two provider types for different agents
+
+This example assigns one agent to Copilot and another to OpenAI. It uses supported setup commands, does not put credentials on the command line, and works from PowerShell or Bash.
+
+1. Configure both credentials. The second command opens a secret prompt for the OpenAI key.
+
+   ```powershell
+   botnexus provider setup --provider github-copilot
+   botnexus provider setup --provider openai
+   ```
+
+2. Create the agents and select an exact model registered for each provider instance.
+
+   ```powershell
+   botnexus agent add copilot-agent --provider github-copilot --model gpt-4.1
+   botnexus agent add openai-agent --provider openai --model gpt-4o
+   ```
+
+   These commands persist `agents.copilot-agent.provider`, `agents.copilot-agent.model`, `agents.openai-agent.provider`, and `agents.openai-agent.model`. If either ID already exists, choose a new ID or update its values with `botnexus config set` instead of overwriting unrelated agent settings.
+
+3. Check the saved provider instances and configuration.
+
+   ```powershell
+   botnexus provider list
+   botnexus agent list
+   botnexus validate
+   ```
+
+4. Open the web interface. Select `copilot-agent`, then send this example request:
+
+   > Reply with only: Copilot connection works. Do not use tools.
+
+5. Start a separate conversation, select `openai-agent`, and send:
+
+   > Reply with only: OpenAI connection works. Do not use tools.
+
+A successful response through each agent checks the selected credential, endpoint, API contract and model together. It can consume paid quota. It does not test every model feature or prove that another agent uses a different account unless that agent selects a genuinely different provider instance.
 
 ## Check the saved connection
 
@@ -58,9 +128,9 @@ Run:
 botnexus provider list
 ```
 
-Check that the intended provider is listed. This checks saved configuration, not whether a request will succeed.
+Check that the intended provider is listed. This checks saved configuration, not whether a request will succeed. A running gateway normally refreshes config-defined provider models when it receives the configuration reload signal, so adding or changing one does not require a process restart. If a store-backed installation has not delivered that signal yet, the saved provider can appear in the CLI before the running gateway catalogue changes. Retry only after checking the gateway's available providers; do not treat persistence alone as a successful connection test.
 
-For Copilot, these additional commands contact the service and may refresh saved sign-in credentials:
+For the canonical Copilot instance, these additional commands contact the service and may refresh the saved `github-copilot` credential:
 
 ```powershell
 botnexus provider copilot whoami
@@ -99,6 +169,7 @@ Start with non-sensitive material. See [Usage ideas](usage-ideas.md) for example
 | Model is unavailable | Check its exact ID and your account/server's available models. A built-in list is not an access guarantee. |
 | Chat works but a task fails | Check the required tool or extension. Changing the model does not install tools or grant access. |
 | A previous advanced setting still applies | Consult the provider reference for nested settings; do not repeatedly overwrite unrelated configuration. |
+| Two agents need different Copilot subscriptions | This is planned but not currently supported in one gateway. Do not duplicate the provider key, use `copilot` as a second instance, or hand-edit auth entries. Use separate BotNexus homes/gateways until first-class named built-in instances are delivered. |
 
 To stop using a provider, select a different configured provider/model for affected agents before removing its configuration. Do not remove a shared connection without checking which agents use it. The [CLI reference](../cli-reference.md) covers provider removal.
 

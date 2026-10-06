@@ -33,7 +33,6 @@ Agents are defined in `config.json` under the `agents` section:
       "description": "Multi-purpose AI helper",
       "provider": "copilot",
       "model": "gpt-4.1",
-      "systemPromptFiles": ["SOUL.md", "IDENTITY.md"],
       "toolIds": ["web_search", "read_file"],
       "enabled": true
     }
@@ -52,7 +51,6 @@ Agents are defined in `config.json` under the `agents` section:
   "description": "Multi-purpose AI helper",
   "modelId": "gpt-4.1",
   "apiProvider": "copilot",
-  "systemPromptFiles": ["SOUL.md", "IDENTITY.md"],
   "toolIds": ["web_search", "read_file"]
 }
 ```
@@ -181,9 +179,9 @@ If `allowedModels` is:
 - **Specified list**: Agent restricted to these models
 - Users can switch models in the WebUI or via API (if in allowed list)
 
-### System Prompts
+### System prompts
 
-**Option 1: Inline System Prompt (Simple)**
+For short configuration-owned instructions, use an inline system prompt:
 
 ```json
 {
@@ -191,25 +189,8 @@ If `allowedModels` is:
 }
 ```
 
-**Option 2: Single File (Legacy)**
-
-```json
-{
-  "systemPromptFile": "prompts/assistant.md"
-}
-```
-
-**Option 3: Multiple Files (Recommended)**
-
-```json
-{
-  "systemPromptFiles": ["SOUL.md", "IDENTITY.md", "TOOLS.md", "custom.md"]
-}
-```
-
-Files are concatenated in the order specified. Paths are relative to `~/.botnexus/agents/<agentId>/`.
-
-**Default Load Order** (if `systemPromptFiles` is empty):
+For per-agent file-based instructions, edit the standard files under
+`~/.botnexus/agents/<agentId>/`. BotNexus loads them in this order when present:
 
 1. `AGENTS.md` — Multi-agent patterns and memory guidance
 2. `SOUL.md` — Personality and values
@@ -219,7 +200,7 @@ Files are concatenated in the order specified. Paths are relative to `~/.botnexu
 6. `USER.md` — User preferences
 7. `MEMORY.md` — Long-term distilled memory
 
-Recent daily memory notes (`memory/{today}.md` and `memory/{yesterday}.md`) are auto-loaded regardless of `systemPromptFiles`, which only chooses which workspace prompt files to load. To suppress daily notes (and `MEMORY.md`), set `memory.promptInjection` to `"none"`.
+Recent daily memory notes (`memory/{today}.md` and `memory/{yesterday}.md`) are loaded automatically. To suppress daily notes and `MEMORY.md`, set `memory.promptInjection` to `"none"`. Use conversation instructions for one conversation and model-specific instruction-file variants when instructions depend on the selected model.
 
 #### World-level instructions
 
@@ -241,8 +222,7 @@ Two things to know:
 - **Placement is the whole trick.** A `WORLD.md` inside an agent's directory is not
   loaded. It is not in the default list above, so nothing reads it and nothing warns
   you - the agent simply never sees the file.
-- **It is not affected by `systemPromptFiles`.** That setting selects workspace prompt
-  files; `WORLD.md` is injected separately and always applies.
+- **It is separate from the per-agent workspace files.** `WORLD.md` is injected independently and always applies.
 
 Like the other instruction files it supports model and provider variants, so
 `WORLD.gpt.md` can carry rules that only apply when a GPT model is serving the turn.
@@ -362,7 +342,7 @@ When enabled, agents get a `memory_save` tool that writes plain Markdown notes:
 - **Specific files**: Call `memory_save(content, file_path="topic.md")` to append to a named file under the memory root
 - **Durable memory** (`MEMORY.md`): Consolidated long-term facts, loaded into every session
 
-The `path` setting overrides the default memory directory (default: `memory/` under the agent workspace). Today's and yesterday's daily notes are automatically included in the system prompt, independently of `systemPromptFiles`. Set `promptInjection` to `"none"` to stop `MEMORY.md` and the daily notes being added automatically. A memory file you name explicitly in `systemPromptFiles` is still loaded, since an explicit list is an explicit request.
+The `path` setting overrides the default memory directory (default: `memory/` under the agent workspace). Today's and yesterday's daily notes are automatically included in the system prompt. Set `promptInjection` to `"none"` to stop `MEMORY.md` and the daily notes being added automatically.
 
 ### Soul Sessions
 
@@ -534,8 +514,7 @@ Create a multi-agent system for code development:
     "provider": "copilot",
     "model": "claude-opus-4-6",
     "toolIds": ["read_file", "write_file", "grep", "glob", "bash"],
-    "subAgents": ["reviewer"],
-    "systemPromptFiles": ["SOUL.md", "IDENTITY.md", "coding-standards.md"]
+    "subAgents": ["reviewer"]
   }
 }
 ```
@@ -548,8 +527,7 @@ Create a multi-agent system for code development:
     "description": "Code review and quality assurance",
     "provider": "anthropic",
     "model": "claude-sonnet-5",
-    "toolIds": ["read_file", "grep"],
-    "systemPromptFiles": ["SOUL.md", "review-checklist.md"]
+    "toolIds": ["read_file", "grep"]
   }
 }
 ```
@@ -647,12 +625,29 @@ The entry the gateway inserts is deliberately minimal. It carries only:
 | `enabled` | `true`, or `false` when no provider/model could be resolved |
 | `definitionVersion` | stamped by the reconciler |
 
-That is the whole entry. In particular the shipped template declares **no `toolIds` and no
+That is the whole configuration entry. In particular the shipped template declares **no `toolIds` and no
 Skills configuration**, so Trailguide inherits whatever `agents.defaults` your installation
-applies, the same as any other agent that omits those keys. A curated workspace, a
-least-privilege tool allowlist and bundled onboarding skills are planned but **have not
-shipped yet**; do not expect them in the entry you see today. If you want Trailguide
-constrained, set `toolIds` on it yourself — it is your entry to edit.
+applies, the same as any other agent that omits those keys. If you want Trailguide
+constrained, set `toolIds` on it yourself - it is your entry to edit.
+
+Trailguide ships with a curated workspace corpus. BotNexus writes Trailguide-specific `SOUL.md`
+and `AGENTS.md` files. Together they define its voice, require answers to be grounded in the
+locally available repository documentation, treat Labs as optional supplemental material, and
+help the user operate BotNexus and discover relevant capabilities. Trailguide does not receive the
+generic `BOOTSTRAP.md` or `IDENTITY.md`; its curated files already define its identity and
+first-turn behavior.
+
+The two canonical files are platform-owned and refreshed from the installed repository whenever
+BotNexus resolves the Trailguide workspace. Trailguide is instructed never to edit them. This lets
+an update correct or improve the default agent for every installation without maintaining a chain
+of historical content hashes.
+
+Put installation-specific or user-requested standing customization in
+`TRAILGUIDE.custom.md` in the Trailguide workspace. The prompt loader includes that file after the
+canonical files when it exists. BotNexus never creates, replaces, or deletes it, and Trailguide is
+instructed to write persistent customization only there. Existing edits made directly to the old
+canonical files before this contract shipped will be replaced on the next update; move any content
+you want to retain into `TRAILGUIDE.custom.md`.
 
 Because the reconciler is insert-only, any key you add is permanent: the gateway will never
 come back and rewrite it.
@@ -704,7 +699,7 @@ it back up unchanged.
 
 ::: warning Review orphan cleanup before approving it
 `botnexus doctor agents` compares workspace directories with every agent declaration in the
-effective configuration. This includes disabled agents. When `config.db` exists, its SQLite
+effective configuration. This includes disabled agents. When `config.sqlite` exists, its SQLite
 values are authoritative; otherwise BotNexus uses `config.json`.
 
 A disabled agent's workspace is reported as `declared` and is not deleted. A workspace is
@@ -743,12 +738,12 @@ Disabled agents:
 - Retain their configuration for later re-enabling
 - **Keep their workspace directory.** `botnexus doctor agents --cleanup-orphans` deletes only
   workspaces whose agent id is absent from the effective configuration. This includes authoritative
-  SQLite declarations in `config.db`, not only entries in `config.json`. A disabled agent is still
+  SQLite declarations in `config.sqlite`, not only entries in `config.json`. A disabled agent is still
   declared and is reported as `declared`, never `orphaned`.
 
 ### Removal
 
-Remove an agent from the effective configuration. If `config.db` exists, update the agent through
+Remove an agent from the effective configuration. If `config.sqlite` exists, update the agent through
 a supported configuration command or disable the store before editing `config.json`; deleting only
 the JSON mirror does not remove an authoritative SQLite declaration. If you also created a separate
 agent JSON file under `~/.botnexus/agents/`, remove that declaration too. Configuration reload then
@@ -917,12 +912,12 @@ curl http://localhost:5005/api/agents
 curl http://localhost:5005/api/agents/my-agent
 ```
 
-### System Prompt Not Loading
+### System prompt not loading
 
 **Check:**
-1. Files exist in `~/.botnexus/agents/<agentId>/`
-2. Paths in `systemPromptFiles` are correct (relative to agent directory)
-3. Files are readable (permissions)
+1. Standard instruction files exist in `~/.botnexus/agents/<agentId>/`.
+2. Files use supported names such as `AGENTS.md`, `SOUL.md`, or a valid model-specific variant.
+3. Files are readable.
 
 **Verify:**
 ```bash

@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -65,9 +66,10 @@ internal sealed class ProviderCommand
         command.AddCommand(listCommand);
         command.AddCommand(BuildAddCommand(verboseOption, targetOption));
         command.AddCommand(BuildRemoveCommand(verboseOption, targetOption));
+        command.AddCommand(BuildTestCommand());
         command.AddCommand(CopilotProviderSubcommand.Build(
             verboseOption, targetOption,
-            (configPath, home, verbose, ct) => ExecuteSetupAsync(configPath, home, verbose, "github-copilot", ct)));
+            (configPath, home, verbose, instance, ct) => ExecuteCopilotSetupAsync(configPath, home, verbose, instance, ct)));
         command.AddCommand(OllamaProviderSubcommand.Build(targetOption));
 
         // Default to setup when no subcommand given
@@ -132,6 +134,27 @@ internal sealed class ProviderCommand
         return cmd;
     }
 
+    private static Command BuildTestCommand()
+    {
+        var cmd = new Command("test", "Validate a provider through the running gateway's live registry and credential path.");
+        var nameOpt = new Option<string>("--name", "Provider instance name to validate.") { IsRequired = true };
+        var urlOpt = new Option<string>("--url", () => GatewayClientFactory.DefaultUrl, "Gateway base URL.");
+        var tokenOpt = new Option<string?>("--token", "Gateway API credential. Required when --url is not the local gateway.");
+
+        cmd.AddOption(nameOpt);
+        cmd.AddOption(urlOpt);
+        cmd.AddOption(tokenOpt);
+        cmd.SetHandler(async context =>
+        {
+            var name = context.ParseResult.GetValueForOption(nameOpt)!;
+            var url = context.ParseResult.GetValueForOption(urlOpt) ?? GatewayClientFactory.DefaultUrl;
+            var token = context.ParseResult.GetValueForOption(tokenOpt);
+            context.ExitCode = await ExecuteTestAsync(url, name, context.GetCancellationToken(), token);
+        });
+
+        return cmd;
+    }
+
     private static Command BuildRemoveCommand(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var cmd = new Command("remove", "Remove a provider non-interactively.");
@@ -189,7 +212,17 @@ internal sealed class ProviderCommand
 
         var exitCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            document => document.TryPatchEntry(ProvidersPath, name, patch, out var error) ? null : error,
+            document =>
+            {
+                if (!enabled)
+                {
+                    var dependentAgents = GetDependentAgents(document, name);
+                    if (dependentAgents.Count > 0)
+                        return FormatAssignedProviderError(name, dependentAgents, "disabling");
+                }
+
+                return document.TryPatchEntry(ProvidersPath, name, patch, out var error) ? null : error;
+            },
             "before-provider-update",
             verbose,
             cancellationToken,
@@ -202,7 +235,8 @@ internal sealed class ProviderCommand
         AnsiConsole.MarkupLine(existed
             ? $"[green]✓[/] Provider [green]{name}[/] updated."
             : $"[green]✓[/] Provider [green]{name}[/] added.");
-        AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
+        exitCode.PrintReceipt();
+        PrintProviderActivationReceipt();
 
         if (verbose)
         {
@@ -214,8 +248,127 @@ internal sealed class ProviderCommand
         return 0;
     }
 
-    /// <summary>Raw-document path of the providers section.</summary>
+    internal static void PrintProviderActivationReceipt()
+    {
+        AnsiConsole.MarkupLine("  Persistence: [green]succeeded[/].");
+        AnsiConsole.MarkupLine("  Runtime activation: [yellow]not validated[/] by this offline command.");
+        AnsiConsole.MarkupLine(
+            "  Restart required: [green]no[/] when the running gateway receives the configuration reload; " +
+            "verify the provider appears in its live model catalogue before assigning an agent.");
+    }
+
+    internal static async Task<int> ExecuteTestAsync(
+        string baseUrl,
+        string name,
+        CancellationToken cancellationToken,
+        string? token = null)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            AnsiConsole.MarkupLine("[red]--name is required.[/]");
+            return 1;
+        }
+
+        var resolution = GatewayClientFactory.Resolve(
+            baseUrl,
+            TimeSpan.FromSeconds(15),
+            token,
+            GatewayClientFactory.DefaultCredentialSource());
+        if (resolution.Client is null)
+        {
+            AnsiConsole.MarkupLine("[red]{0}[/]", CliText.SafeDisplay(resolution.RefusalMessage!));
+            return 1;
+        }
+
+        using var client = resolution.Client;
+        try
+        {
+            using var response = await client.GetAsync(
+                $"/api/providers/{Uri.EscapeDataString(name)}/health",
+                cancellationToken).ConfigureAwait(false);
+            ProviderHealthReceipt? health = null;
+            try
+            {
+                health = await response.Content.ReadFromJsonAsync<ProviderHealthReceipt>(
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            catch (JsonException) when (!response.IsSuccessStatusCode)
+            {
+                // Error responses may use the gateway's ordinary string/problem-details shape.
+                // Status is still authoritative; never mistake that body mismatch for readiness.
+            }
+
+            if (response.IsSuccessStatusCode && health is { Status: "healthy" })
+            {
+                AnsiConsole.MarkupLine(
+                    "[green]✓[/] Provider [green]{0}[/] is active and validated by the running gateway.",
+                    CliText.SafeDisplay(name));
+                AnsiConsole.MarkupLine("  Models: {0}", health.Models);
+                AnsiConsole.MarkupLine("  Credentials: [green]resolved[/]");
+                return 0;
+            }
+
+            AnsiConsole.MarkupLine(
+                "[red]Provider {0} is not ready in the running gateway.[/]",
+                CliText.SafeDisplay(name));
+            if (!string.IsNullOrWhiteSpace(health?.Error))
+                AnsiConsole.MarkupLine("  {0}", CliText.SafeDisplay(health.Error));
+            else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                AnsiConsole.MarkupLine("  The provider is absent from the live model registry; wait for configuration reload or inspect the running gateway configuration.");
+            else
+                AnsiConsole.MarkupLine("  Gateway health check returned HTTP {0}.", (int)response.StatusCode);
+            return 1;
+        }
+        catch (HttpRequestException ex)
+        {
+            AnsiConsole.MarkupLine(
+                "[red]Cannot reach gateway at {0}:[/] {1}",
+                CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectUrl(baseUrl)),
+                CliText.SafeDisplay(GatewayDiagnosticsProjection.ProjectMessage(ex.Message)));
+            return 1;
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            AnsiConsole.MarkupLine("[red]Provider validation timed out.[/]");
+            return 1;
+        }
+        catch (JsonException)
+        {
+            AnsiConsole.MarkupLine("[red]The running gateway returned an invalid provider health response.[/]");
+            return 1;
+        }
+    }
+
+    private sealed record ProviderHealthReceipt(string Status, int Models, bool HasCredentials, string? Error);
+
+    /// <summary>Raw-document paths used by provider dependency checks and mutations.</summary>
     private const string ProvidersPath = "providers";
+    private const string AgentsPath = "agents";
+
+    private static IReadOnlyList<string> GetDependentAgents(ConfigDocument document, string providerName) =>
+        document.GetEntryKeys(AgentsPath)
+            .Where(agentName =>
+            {
+                var agentJson = document.DescribeEntry(AgentsPath, agentName);
+                if (agentJson is null)
+                    return false;
+
+                using var agent = JsonDocument.Parse(agentJson);
+                return agent.RootElement.TryGetProperty("provider", out var provider)
+                       && provider.ValueKind == JsonValueKind.String
+                       && string.Equals(provider.GetString(), providerName, StringComparison.OrdinalIgnoreCase);
+            })
+            .OrderBy(agentName => agentName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private static string FormatAssignedProviderError(
+        string providerName,
+        IReadOnlyCollection<string> dependentAgents,
+        string operation)
+    {
+        var agentList = string.Join(", ", dependentAgents.Select(CliText.SafeDisplay));
+        return $"Provider '{CliText.SafeDisplay(providerName)}' is assigned to {dependentAgents.Count} agent(s): {agentList}. Reassign those agents before {operation} the provider.";
+    }
 
     internal async Task<int> ExecuteRemoveAsync(string configPath, string name, bool verbose, CancellationToken cancellationToken)
     {
@@ -234,7 +387,14 @@ internal sealed class ProviderCommand
 
         var exitCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            candidate => candidate.TryRemoveEntry(ProvidersPath, name, out var error) ? null : error,
+            candidate =>
+            {
+                var dependentAgents = GetDependentAgents(candidate, name);
+                if (dependentAgents.Count > 0)
+                    return FormatAssignedProviderError(name, dependentAgents, "removing");
+
+                return candidate.TryRemoveEntry(ProvidersPath, name, out var error) ? null : error;
+            },
             "before-provider-update",
             verbose,
             cancellationToken,
@@ -245,7 +405,7 @@ internal sealed class ProviderCommand
             return exitCode;
 
         AnsiConsole.MarkupLine($"[green]✓[/] Provider [green]{CliText.SafeDisplay(name)}[/] removed.");
-        AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
+        exitCode.PrintReceipt();
         if (verbose)
         {
             var remaining = (await CliConfigMutation.ReadAsync(configPath, cancellationToken))
@@ -312,16 +472,39 @@ internal sealed class ProviderCommand
     }
 
     internal async Task<int> ExecuteSetupAsync(bool verbose, CancellationToken cancellationToken)
-        => await ExecuteSetupAsync(PlatformConfigLoader.DefaultConfigPath, PlatformConfigLoader.DefaultHomePath, verbose, null, cancellationToken);
+        => await ExecuteSetupAsync(PlatformConfigLoader.DefaultConfigPath, PlatformConfigLoader.DefaultHomePath, verbose, null, null, cancellationToken);
 
     internal async Task<int> ExecuteSetupAsync(string configPath, string home, bool verbose, CancellationToken cancellationToken)
-        => await ExecuteSetupAsync(configPath, home, verbose, null, cancellationToken);
+        => await ExecuteSetupAsync(configPath, home, verbose, null, null, cancellationToken);
 
     internal async Task<int> ExecuteSetupAsync(string configPath, string home, bool verbose, string? preselectedProvider, CancellationToken cancellationToken)
+        => await ExecuteSetupAsync(configPath, home, verbose, preselectedProvider, null, cancellationToken);
+
+    internal async Task<int> ExecuteCopilotSetupAsync(
+        string configPath,
+        string home,
+        bool verbose,
+        string providerInstance,
+        CancellationToken cancellationToken)
+        => await ExecuteSetupAsync(
+            configPath,
+            home,
+            verbose,
+            CopilotAuthLoader.NormalizeProviderInstance(providerInstance),
+            "github-copilot",
+            cancellationToken);
+
+    private async Task<int> ExecuteSetupAsync(
+        string configPath,
+        string home,
+        bool verbose,
+        string? preselectedProvider,
+        string? providerType,
+        CancellationToken cancellationToken)
     {
         if (preselectedProvider is not null)
         {
-            if (!KnownProviders.Contains(preselectedProvider, StringComparer.OrdinalIgnoreCase))
+            if (providerType is null && !KnownProviders.Contains(preselectedProvider, StringComparer.OrdinalIgnoreCase))
             {
                 AnsiConsole.MarkupLine($"[red]Unknown provider '{CliText.SafeDisplay(preselectedProvider)}'. Known providers: {string.Join(", ", KnownProviders)}.[/]");
                 AnsiConsole.MarkupLine("[dim]For other providers (e.g. local OpenAI-compatible servers or 'integration-mock'), use [green]botnexus provider add[/].[/]");
@@ -348,8 +531,12 @@ internal sealed class ProviderCommand
         else
         {
             // Pre-seed the provider key and use a no-op action so the wizard stays linear.
-            var resolved = KnownProviders.First(p => string.Equals(p, preselectedProvider, StringComparison.OrdinalIgnoreCase));
+            var resolved = providerType is null
+                ? KnownProviders.First(p => string.Equals(p, preselectedProvider, StringComparison.OrdinalIgnoreCase))
+                : preselectedProvider;
             ctx.Set("provider", resolved);
+            if (providerType is not null)
+                ctx.Set("providerType", providerType);
             wizardBuilder.Action("pick-provider", (_, _) => Task.CompletedTask);
         }
 
@@ -358,7 +545,8 @@ internal sealed class ProviderCommand
             {
                 var name = c.Get<string>("provider");
                 AnsiConsole.MarkupLine($"\nConfiguring [green]{name}[/]...\n");
-                c.Set("authMode", ProviderAuthModes.GetValueOrDefault(name, "apikey"));
+                var effectiveType = c.TryGet<string>("providerType", out var type) ? type : name;
+                c.Set("authMode", ProviderAuthModes.GetValueOrDefault(effectiveType, "apikey"));
                 return Task.CompletedTask;
             })
             .Check("route-auth", (c, _) =>
@@ -411,6 +599,8 @@ internal sealed class ProviderCommand
                 var wizardPatch = new ConfigValueMap()
                     .Set("enabled", true)
                     .Set("apiKey", apiKeyValue);
+                if (c.TryGet<string>("providerType", out var configuredType))
+                    wizardPatch.Set("type", configuredType);
                 if (c.TryGet<string>("baseUrl", out var baseUrl))
                     wizardPatch.Set("baseUrl", baseUrl);
                 if (c.TryGet<string>("api", out var api))
@@ -429,7 +619,8 @@ internal sealed class ProviderCommand
                     return;
 
                 AnsiConsole.MarkupLine($"[green]✓[/] Provider [green]{providerName}[/] configured successfully.");
-                AnsiConsole.MarkupLine($"  Config saved to: {configPath}");
+                wizardExit.PrintReceipt();
+                PrintProviderActivationReceipt();
 
                 if (c.Get<bool>("verbose"))
                 {
@@ -488,7 +679,16 @@ internal sealed class ProviderCommand
             var providerName = context.Get<string>("provider");
 
             var modelRegistry = new ModelRegistry();
-            new BuiltInModels().RegisterAll(modelRegistry);
+            var builtInModels = new BuiltInModels();
+            if (context.TryGet<string>("providerType", out var providerType) &&
+                string.Equals(providerType, "github-copilot", StringComparison.OrdinalIgnoreCase))
+            {
+                builtInModels.RegisterCopilotInstance(modelRegistry, providerName);
+            }
+            else
+            {
+                builtInModels.RegisterAll(modelRegistry);
+            }
 
             var registryKey = GetModelRegistryKey(providerName);
             var availableModels = modelRegistry.GetModels(registryKey);
@@ -567,7 +767,7 @@ internal sealed class ProviderCommand
         SaveAuthEntry(providerName, credentials, PlatformConfigLoader.DefaultHomePath);
     }
 
-    private static void SaveAuthEntry(string providerName, OAuthCredentials credentials, string homePath)
+    internal static void SaveAuthEntry(string providerName, OAuthCredentials credentials, string homePath)
     {
         var authPath = Path.Combine(homePath, "auth.json");
         var entries = new Dictionary<string, AuthFileEntry>(StringComparer.OrdinalIgnoreCase);

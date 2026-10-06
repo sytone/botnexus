@@ -30,6 +30,8 @@ public sealed class ExecTool : IAgentTool
     private readonly string? _workingDirectory;
     private readonly IFileSystem _fileSystem;
     private readonly string _processOwner;
+    private readonly BackgroundProcessRegistry _processRegistry;
+    private readonly Func<BackgroundProcess, Task>? _beforeBackgroundRegister;
 
     /// <summary>
     /// Creates the tool bound to an agent workspace. <paramref name="workingDirectory"/> deliberately
@@ -45,9 +47,16 @@ public sealed class ExecTool : IAgentTool
     public ExecTool(string? workingDirectory, IFileSystem? fileSystem = null)
         : this(workingDirectory, fileSystem, string.Empty) { }
 
-    internal ExecTool(string? workingDirectory, IFileSystem? fileSystem, string processOwner)
+    internal ExecTool(
+        string? workingDirectory,
+        IFileSystem? fileSystem,
+        string processOwner,
+        BackgroundProcessRegistry? processRegistry = null,
+        Func<BackgroundProcess, Task>? beforeBackgroundRegister = null)
     {
         _processOwner = processOwner;
+        _processRegistry = processRegistry ?? BackgroundProcessRegistry.Instance;
+        _beforeBackgroundRegister = beforeBackgroundRegister;
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? null
             : Path.GetFullPath(workingDirectory);
@@ -84,7 +93,8 @@ public sealed class ExecTool : IAgentTool
         "On Windows PowerShell: foreach/if/switch/while are STATEMENTS and cannot be piped from directly - wrap them in a " +
         "subexpression, '$(foreach ($x in $xs) { ... }) | <cmd>', not 'foreach ($x in $xs) { ... } | <cmd>' which fails with " +
         "'An empty pipe element is not allowed'; wrap a variable followed by ':' as ${var} inside double-quoted strings (or use single quotes); " +
-        "no backtick line-continuations; for multi-line/complex scripts write a tmp/*.ps1 file and run it. Inline Python prints " +
+        "$PID is a read-only automatic variable, so use a name such as $processId for your own value; no backtick line-continuations; " +
+        "for multi-line/complex scripts write a tmp/*.ps1 file and run it. Inline Python prints " +
         "cp1252 by default (UnicodeEncodeError on emoji/em-dash/box glyphs) -- set $env:PYTHONUTF8=1 or write a tmp/*.py file " +
         "and run 'python -X utf8 file.py'. Never pipe a here-string into an interpreter; write a temp file and execute it.",
         JsonDocument.Parse("""
@@ -337,7 +347,9 @@ public sealed class ExecTool : IAgentTool
                 if (input is not null)
                     await managed.WriteInitialInputAsync(input, cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
-                BackgroundProcessRegistry.Instance.Register(_processOwner, managed);
+                if (_beforeBackgroundRegister is not null)
+                    await _beforeBackgroundRegister(managed).ConfigureAwait(false);
+                _processRegistry.Register(_processOwner, managed);
                 transferred = true;
             }
             catch
@@ -345,7 +357,7 @@ public sealed class ExecTool : IAgentTool
                 managed.Kill();
                 if (managed.KillUnconfirmed)
                 {
-                    BackgroundProcessRegistry.Instance.Register(_processOwner, managed);
+                    _processRegistry.Register(_processOwner, managed);
                     transferred = true;
                 }
                 else managed.Dispose();

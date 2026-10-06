@@ -641,9 +641,10 @@ public sealed class ConversationAutoTitleServiceTests
             ConvId, AgentId, "user", "assistant", null, 30, CancellationToken.None);
 
         result.ShouldBe("Some Title");
-        // With no auth manager, titling passes null options through (exactly as before #2025), so
-        // the provider applies its own environment-key fallback. Null options = behaviour-preserving.
-        optionsSeenByProvider.ShouldBeNull();
+        // The split seam maps an empty semantic request to provider-private defaults. A null API
+        // key still preserves the provider's ambient environment-key fallback.
+        optionsSeenByProvider.ShouldNotBeNull();
+        optionsSeenByProvider.ApiKey.ShouldBeNull();
     }
 
     // Builds a real GatewayAuthManager whose auth.json carries a github-copilot OAuth entry, so

@@ -33,6 +33,7 @@ using BotNexus.Cron;
 using BotNexus.Cron.Extensions;
 using BotNexus.Domain.World;
 using Microsoft.AspNetCore.Routing;
+using BotNexus.Persistence.Sqlite;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Trace;
 using BotNexus.Gateway.Telemetry;
@@ -118,7 +119,7 @@ try
     var configStoreDirectory = Path.GetDirectoryName(resolvedConfigPath);
     if (!string.IsNullOrEmpty(configStoreDirectory))
     {
-        var configStorePath = Path.Combine(configStoreDirectory, "config.db");
+        var configStorePath = SqliteStorePathPolicy.ResolveOwnedStorePath(configStoreDirectory, "config");
         if (File.Exists(configStorePath))
         {
             builder.Configuration.AddSqliteConfigStore(
@@ -144,6 +145,7 @@ try
     // place in the gateway where the startup value could differ from the served value.
     startupPlatformConfig = new PlatformConfig();
     builder.Configuration.Bind(startupPlatformConfig);
+    PlatformConfigPostConfigure.ApplyAuthoritativeRawShape(builder.Configuration, startupPlatformConfig);
 }
 catch (Exception ex) when (ex is Microsoft.Extensions.Options.OptionsValidationException or System.Text.Json.JsonException)
 {
@@ -161,8 +163,9 @@ builder.Services.AddBotNexusTelemetry(builder.Configuration);
 // gives extensions the same telemetry seam the platform core uses (no privileged internal-only
 // path): metrics auto-prefixed to botnexus.ext.<id>.*, durable usage isolated to the extension
 // id namespace within one shared SQLite file (so extensions never new up their own database).
-var usageTelemetryPath = System.IO.Path.Combine(
-    BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath(), "data", "usage-telemetry.db");
+var usageTelemetryPath = SqliteStorePathPolicy.ResolveOwnedStorePath(
+    System.IO.Path.Combine(BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath(), "data"),
+    "usage-telemetry");
 builder.Services.AddExtensionTelemetry(usageTelemetryPath);
 
 builder.Services.AddOpenTelemetry()
@@ -206,6 +209,9 @@ builder.Services.AddProviderHealthCheck();
 builder.Services.AddBotNexusCron();
 builder.Services.AddPlatformConfiguration(resolvedConfigPath, builder.Configuration);
 builder.Services.AddSingleton(new ExtensionRepositoryRegistryService(resolvedConfigPath, new System.IO.Abstractions.FileSystem()));
+builder.Services.AddSingleton(sp => ExtensionLifecycleReconciler.CreateDefault(
+    Path.GetDirectoryName(resolvedConfigPath)!,
+    builder.Environment.ContentRootPath));
 builder.Services.Configure<CronOptions>(options =>
 {
     options.PromptTemplates = startupPlatformConfig.PromptTemplates?
@@ -354,6 +360,7 @@ builder.Services.AddTransient<ProviderRateLimitHandler>(sp => new ProviderRateLi
     sp.GetRequiredService<ILogger<ProviderRateLimitHandler>>()));
 
 builder.Services.AddHttpClient();
+builder.Services.AddTransient<ProviderExceptionalDiagnosticsHandler>();
 builder.Services.AddTransient<ProviderLoggingHandler>(sp =>
 {
     // Always wire the gateway's shared SecretRedactor into the handler so that any API key or
@@ -374,10 +381,12 @@ builder.Services.AddHttpClient("BotNexus", client =>
 {
     client.Timeout = TimeSpan.FromMinutes(10);
 })
+.AddHttpMessageHandler<ProviderExceptionalDiagnosticsHandler>()
 .AddHttpMessageHandler(sp =>
-    // Outermost handler: retry transient provider transport failures (notably HTTP 421
-    // Misdirected Request from Copilot endpoints) on a fresh connection before they are
-    // converted into exceptions/empty responses. Benefits every provider that flows through
+    // Retry transient provider transport failures (notably HTTP 421 Misdirected Request from
+    // Copilot endpoints) inside the terminal exceptional-diagnostics handler, so exhausted retries
+    // produce one payload-free event before they are converted into exceptions/empty responses.
+    // Benefits every provider that flows through
     // the shared provider HttpClient, including the session compaction summary call.
     new TransientHttpRetryHandler(
         sp.GetService<ILoggerFactory>()?.CreateLogger<TransientHttpRetryHandler>()))
@@ -390,9 +399,9 @@ builder.Services.AddHttpClient("BotNexus", client =>
     return sp.GetRequiredService<ProviderLoggingHandler>();
 })
 .AddHttpMessageHandler(sp =>
-    // Innermost of the three, deliberately: it must observe the response that was actually
-    // returned to the caller, after the retry handler has finished replaying failures. Sitting
-    // outside it would capture the headroom of an attempt that got discarded.
+    // Innermost of the provider handlers, deliberately: the retry handler invokes this inner
+    // pipeline once per HTTP wire attempt, so usage records every response, including intermediate
+    // retriable failures. Transport exceptions have no response and are therefore not observed.
     sp.GetRequiredService<ProviderRateLimitHandler>());
 builder.Services.AddSingleton<HttpClient>(sp =>
 {
@@ -428,6 +437,14 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     apiProviders.Register(new OpenAICompatProvider(httpClient));
     apiProviders.Register(new IntegrationMockProvider());
 
+    var platformConfig = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
+    MicrosoftFoundryProviderComposition.Register(
+        platformConfig,
+        apiProviders,
+        models,
+        loggerFactory,
+        providerSecretRedactor);
+
     // #2855: register the OPTIONAL embeddings capability for the configured backend. This is a
     // separate registry from apiProviders on purpose - embeddings and chat are different
     // endpoints, and every provider above serves only the latter. When the section is absent or
@@ -451,22 +468,41 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     // with the CORRECT BaseUrl. No downstream consumer patches model.BaseUrl anymore.
     var authManager = serviceProvider.GetRequiredService<GatewayAuthManager>();
 
-    serviceProvider.GetRequiredService<BuiltInModels>().RegisterAll(models, authManager.GetApiEndpoint);
+    var builtInModels = serviceProvider.GetRequiredService<BuiltInModels>();
+    builtInModels.RegisterAll(models, authManager.GetApiEndpoint);
     new IntegrationMockModels().RegisterAll(models);
     GitHubModelsProvider.RegisterModels(models);
 
-    // Dynamic model discovery: overlay live API models onto built-in registry.
-    // Discovery is best-effort — failures fall back to built-in models.
-    var discoveryClient = new CopilotDiscoveryClient(httpClient);
-    var copilotDiscovery = new CopilotModelDiscoveryProvider(
-        discoveryClient,
-        async ct =>
+    var copilotInstances = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "github-copilot" };
+    if (platformConfig.Providers is not null)
+    {
+        foreach (var (providerName, providerConfig) in platformConfig.Providers)
         {
-            var apiKey = await authManager.GetApiKeyAsync("github-copilot", ct);
-            var endpoint = authManager.GetApiEndpoint("github-copilot");
-            return (apiKey, endpoint);
-        },
-        loggerFactory.CreateLogger<CopilotModelDiscoveryProvider>());
+            if (providerConfig.Enabled &&
+                string.Equals(providerConfig.Type, "github-copilot", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(providerName, "github-copilot", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(providerName, "copilot", StringComparison.OrdinalIgnoreCase))
+            {
+                builtInModels.RegisterCopilotInstance(models, providerName, authManager.GetApiEndpoint);
+                copilotInstances.Add(providerName);
+            }
+        }
+    }
+
+    // Dynamic model discovery: overlay live API models independently for every configured Copilot
+    // instance. Discovery is best-effort — failures retain that instance's built-in catalogue.
+    var discoveryClient = new CopilotDiscoveryClient(httpClient);
+    var copilotDiscoveries = copilotInstances.Select(providerInstance =>
+        (IModelDiscoveryProvider)new CopilotModelDiscoveryProvider(
+            discoveryClient,
+            async ct =>
+            {
+                var apiKey = await authManager.GetApiKeyAsync(providerInstance, ct);
+                var endpoint = authManager.GetApiEndpoint(providerInstance);
+                return (apiKey, endpoint);
+            },
+            loggerFactory.CreateLogger<CopilotModelDiscoveryProvider>(),
+            providerInstance));
 
     // The Anthropic-direct list was hardcoded in BuiltInModels, so a retired model id stayed
     // selectable in the portal until someone traced a 404 that surfaced only as an empty run.
@@ -478,103 +514,12 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
 
     var discoveryService = new ModelDiscoveryService(
         models,
-        [copilotDiscovery, anthropicDiscovery],
+        copilotDiscoveries.Append(anthropicDiscovery),
         loggerFactory.CreateLogger<ModelDiscoveryService>());
     discoveryService.DiscoverAndRegisterAsync().GetAwaiter().GetResult();
 
-    // Register models from openai-compat providers in config (e.g. Ollama, LM Studio),
-    // or any provider with an explicit Api override (e.g. integration-mock).
-    var platformConfig = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
-    if (platformConfig.Providers is not null)
-    {
-        foreach (var (providerName, providerConfig) in platformConfig.Providers)
-        {
-            if (!providerConfig.Enabled)
-                continue;
-
-            var apiName = string.IsNullOrWhiteSpace(providerConfig.ResolveChatApi())
-                ? "openai-completions"
-                : providerConfig.ResolveChatApi()!;
-            // For openai-completions a BaseUrl is required (the HTTP endpoint). For other
-            // apis (e.g. integration-mock) BaseUrl is provider-specific (catalog file path,
-            // possibly empty) — skip the BaseUrl gate.
-            if (apiName == "openai-completions" && string.IsNullOrWhiteSpace(providerConfig.BaseUrl))
-                continue;
-
-            if (providerConfig.ResolveChatModels() is { Count: > 0 } chatModels)
-            {
-                foreach (var modelId in chatModels)
-                {
-                    // PBI6 (#1707): a dynamic (config-declared) model carries a valid capability set
-                    // so the agent + conversation pickers offer only valid thinking/context choices.
-                    // Explicit declarations win; anything omitted is inferred from the model family.
-                    // #2854: read through the resolvers so a nested `chat` object wins over the
-                    // deprecated flat twin, per field.
-                    var caps = DynamicModelCapabilities.Infer(
-                        modelId,
-                        declaredReasoning: providerConfig.ResolveChatReasoning(),
-                        declaredExtraHighThinking: providerConfig.ResolveChatSupportsExtraHighThinking(),
-                        declaredExtendedContext: providerConfig.ResolveChatSupportsExtendedContextWindow(),
-                        declaredInput: providerConfig.ResolveChatInput());
-                    models.Register(providerName, new LlmModel(
-                        Id: modelId,
-                        Name: modelId,
-                        Api: apiName,
-                        Provider: providerName,
-                        BaseUrl: providerConfig.BaseUrl ?? string.Empty,
-                        Reasoning: caps.Reasoning,
-                        Input: caps.Input,
-                        Cost: new ModelCost(0, 0, 0, 0),
-                        ContextWindow: providerConfig.ResolveChatContextWindow() ?? 128000,
-                        MaxTokens: 32000,
-                        SupportsExtraHighThinking: caps.SupportsExtraHighThinking,
-                        SupportsExtendedContextWindow: caps.SupportsExtendedContextWindow));
-                }
-            }
-        }
-    }
-
-    // Register the model for any agent using a config-defined provider not in BuiltInModels.
-    if (platformConfig.Agents is not null && platformConfig.Providers is not null)
-    {
-        foreach (KeyValuePair<string, AgentDefinitionConfig> agentEntry in platformConfig.Agents)
-        {
-            var agentConfig = agentEntry.Value;
-            if (string.IsNullOrWhiteSpace(agentConfig.Provider) || string.IsNullOrWhiteSpace(agentConfig.Model))
-                continue;
-            if (!platformConfig.Providers.TryGetValue(agentConfig.Provider, out var agentProvider))
-                continue;
-            var apiName = string.IsNullOrWhiteSpace(agentProvider.Api)
-                ? "openai-completions"
-                : agentProvider.Api!;
-            if (apiName == "openai-completions" && string.IsNullOrWhiteSpace(agentProvider.BaseUrl))
-                continue;
-            if (models.GetModel(agentConfig.Provider, agentConfig.Model) is not null)
-                continue;
-
-            // PBI6 (#1707): same capability inference for an agent-referenced dynamic model, so a
-            // provider that only appears via an agent's model reference still exposes valid pickers.
-            var agentModelCaps = DynamicModelCapabilities.Infer(
-                agentConfig.Model,
-                declaredReasoning: agentProvider.Reasoning,
-                declaredExtraHighThinking: agentProvider.SupportsExtraHighThinking,
-                declaredExtendedContext: agentProvider.SupportsExtendedContextWindow,
-                declaredInput: agentProvider.Input);
-            models.Register(agentConfig.Provider, new LlmModel(
-                Id: agentConfig.Model,
-                Name: agentConfig.Model,
-                Api: apiName,
-                Provider: agentConfig.Provider,
-                BaseUrl: agentProvider.BaseUrl ?? string.Empty,
-                Reasoning: agentModelCaps.Reasoning,
-                Input: agentModelCaps.Input,
-                Cost: new ModelCost(0, 0, 0, 0),
-                ContextWindow: agentProvider.ContextWindow ?? 128000,
-                MaxTokens: 32000,
-                SupportsExtraHighThinking: agentModelCaps.SupportsExtraHighThinking,
-                SupportsExtendedContextWindow: agentModelCaps.SupportsExtendedContextWindow));
-        }
-    }
+    // Config-defined providers are projected by ConfigDefinedModelRegistryReconciler. It owns one
+    // atomic overlay and watches IOptionsMonitor, so startup and later reloads use the same path.
 
     return new LlmClient(apiProviders, models);
 });

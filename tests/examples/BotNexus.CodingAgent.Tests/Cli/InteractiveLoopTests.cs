@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using BotNexus.Agent.Core;
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.CodingAgent.Auth;
@@ -247,15 +248,15 @@ public sealed class InteractiveLoopTests : IDisposable
             InitialState: new AgentInitialState(Model: model),
             Model: model,
             LlmClient: llmClient,
-            ConvertToLlm: (_, _) => Task.FromResult<IReadOnlyList<Message>>([]),
-            TransformContext: (messages, _) => Task.FromResult(messages),
-            GetApiKey: (_, _) => Task.FromResult<string?>(null),
-            GetSteeringMessages: null,
-            GetFollowUpMessages: null,
+            ProviderMessageTransformer: (_, _) => Task.FromResult<IReadOnlyList<Message>>([]),
+            AgentContextTransformer: (messages, _) => Task.FromResult(messages),
+            ProviderExecutionOptionsProvider: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
+            SteeringMessageProvider: null,
+            FollowUpMessageProvider: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
-            BeforeToolCall: null,
-            AfterToolCall: null,
-            GenerationSettings: new SimpleStreamOptions(),
+            ToolExecutionPolicy: null,
+            ToolResultTransformer: null,
+            GenerationSettings: new GenerationOptions(),
             SteeringMode: QueueMode.OneAtATime,
             FollowUpMode: QueueMode.OneAtATime,
             SessionId: null);
@@ -289,15 +290,15 @@ public sealed class InteractiveLoopTests : IDisposable
             InitialState: new AgentInitialState(Model: model, Tools: tools ?? []),
             Model: model,
             LlmClient: llmClient,
-            ConvertToLlm: DefaultMessageConverter.ConvertToLlm,
-            TransformContext: (messages, _) => Task.FromResult(messages),
-            GetApiKey: (_, _) => Task.FromResult<string?>("test-key"),
-            GetSteeringMessages: null,
-            GetFollowUpMessages: null,
+            ProviderMessageTransformer: DefaultProviderMessageTransformer.TransformAsync,
+            AgentContextTransformer: (messages, _) => Task.FromResult(messages),
+            ProviderExecutionOptionsProvider: (_, _) => Task.FromResult<ProviderExecutionOptions?>(new ProviderExecutionOptions { ApiKey = "test-key" }),
+            SteeringMessageProvider: null,
+            FollowUpMessageProvider: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
-            BeforeToolCall: null,
-            AfterToolCall: null,
-            GenerationSettings: new SimpleStreamOptions(),
+            ToolExecutionPolicy: null,
+            ToolResultTransformer: null,
+            GenerationSettings: new GenerationOptions(),
             SteeringMode: QueueMode.OneAtATime,
             FollowUpMode: QueueMode.OneAtATime,
             SessionId: null);

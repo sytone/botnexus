@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using System.IO.Abstractions;
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Memory;
 using BotNexus.Memory.Embeddings;
+using BotNexus.Memory.Models;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Providers;
@@ -31,6 +33,7 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
     private readonly IFileSystem _fileSystem;
     private readonly IMemoryEmbeddingService _embeddingService;
     private readonly ILoggerFactory? _loggerFactory;
+    private readonly IAgentRegistry? _agentRegistry;
     private readonly ConcurrentDictionary<string, IMemoryStore> _stores = new(StringComparer.OrdinalIgnoreCase);
 
     /// <param name="dbPathResolver">Maps an agent id to its store path.</param>
@@ -44,7 +47,8 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
         Func<string, string> dbPathResolver,
         IMemoryEmbeddingService embeddingService,
         IFileSystem? fileSystem = null,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        IAgentRegistry? agentRegistry = null)
     {
         ArgumentNullException.ThrowIfNull(dbPathResolver);
         ArgumentNullException.ThrowIfNull(embeddingService);
@@ -53,6 +57,7 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
         _embeddingService = embeddingService;
         _fileSystem = fileSystem ?? new FileSystem();
         _loggerFactory = loggerFactory;
+        _agentRegistry = agentRegistry;
     }
 
     /// <inheritdoc />
@@ -67,7 +72,16 @@ public sealed class EmbeddingAwareMemoryStoreFactory : IMemoryStoreFactory, IAsy
                 null,
                 _embeddingService,
                 null,
-                _loggerFactory?.CreateLogger<SqliteMemoryStore>()));
+                _loggerFactory?.CreateLogger<SqliteMemoryStore>(),
+                () => ResolveTemporalDecayPolicy(AgentId.From(id))));
+    }
+
+    private MemoryTemporalDecayPolicy ResolveTemporalDecayPolicy(AgentId agentId)
+    {
+        var configured = _agentRegistry?.Get(agentId)?.Memory?.Search?.TemporalDecay;
+        return configured is null
+            ? MemoryTemporalDecayPolicy.Default
+            : new MemoryTemporalDecayPolicy(configured.Enabled, configured.HalfLifeDays);
     }
 
     /// <inheritdoc />

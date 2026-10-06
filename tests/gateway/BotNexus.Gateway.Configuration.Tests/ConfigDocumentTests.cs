@@ -106,7 +106,7 @@ public sealed class ConfigDocumentTests
     [InlineData("FeatureManagement.GatewayDevOriginEnforcement")]
     // Free-form regions: extension settings and agent metadata are deliberately unmodelled, so
     // any key beneath them is legitimate. Refusing these would break real configuration.
-    [InlineData("gateway.extensions.defaults.botnexus-skills.enabled")]
+    [InlineData("agents.defaults.extensions.botnexus-skills.enabled")]
     [InlineData("agents.assistant.extensions.some-ext.someSetting")]
     public void RecognisedPaths_AreAccepted(string path)
     {

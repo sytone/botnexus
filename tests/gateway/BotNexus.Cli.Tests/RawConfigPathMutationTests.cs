@@ -245,15 +245,21 @@ public sealed class RawConfigPathMutationTests : IDisposable
     }
 
     [Fact]
-    public async Task Provider_remove_deletes_only_the_named_provider()
+    public async Task Provider_remove_deletes_only_the_named_unassigned_provider()
     {
+        var seededRoot = ReadRoot();
+        var providers = seededRoot["providers"]!.AsObject();
+        providers["unused"] = providers["copilot"]!.DeepClone();
+        await File.WriteAllTextAsync(_configPath, seededRoot.ToJsonString());
+
         var exitCode = await new ProviderCommand()
-            .ExecuteRemoveAsync(_configPath, "copilot", verbose: false, CancellationToken.None);
+            .ExecuteRemoveAsync(_configPath, "unused", verbose: false, CancellationToken.None);
 
         exitCode.ShouldBe(0);
 
         var root = ReadRoot();
-        root["providers"]!.AsObject().ContainsKey("copilot").ShouldBeFalse();
+        root["providers"]!.AsObject().ContainsKey("unused").ShouldBeFalse();
+        root["providers"]!.AsObject().ContainsKey("copilot").ShouldBeTrue();
         root["unknownRootField"]!.GetValue<string>().ShouldBe("keep-me");
         root["agents"]!["defaults"]!["model"]!.GetValue<string>().ShouldBe("gpt-4.1");
     }

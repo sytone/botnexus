@@ -20,6 +20,11 @@ public sealed record TextContentPart : MessageContentPart
     /// The text value.
     /// </summary>
     public required string Text { get; init; }
+
+    /// <summary>
+    /// Optional filename retained when textual content originated from an attachment.
+    /// </summary>
+    public string? FileName { get; init; }
 }
 
 /// <summary>

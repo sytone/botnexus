@@ -24,6 +24,11 @@ public sealed class SqliteExtensionStateStore(
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _initialized;
 
+    /// <summary>The schema version this build of the extension-state store understands.</summary>
+    public const int CurrentSchemaVersion = 1;
+
+    private static readonly SqliteSchemaMigration[] Migrations = [];
+
     public async Task InitializeAsync(CancellationToken ct = default)
     {
         if (_initialized)
@@ -54,6 +59,8 @@ public sealed class SqliteExtensionStateStore(
                 );
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
 
             _initialized = true;
             _logger.LogDebug("Extension state store initialized at {DbPath}.", _dbPath);

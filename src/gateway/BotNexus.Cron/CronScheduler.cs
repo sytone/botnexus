@@ -861,7 +861,9 @@ public sealed class CronScheduler(
                 RunId = run.Id,
                 TriggeredAt = triggeredAt,
                 TriggerType = triggerType,
-                Services = scope.ServiceProvider
+                Services = scope.ServiceProvider,
+                PersistSessionIdAsync = (sessionId, cancellationToken) =>
+                    _cronStore.RecordRunSessionAsync(run.Id, sessionId, cancellationToken)
             };
             executionContext = context;
 
@@ -1594,6 +1596,7 @@ public sealed class CronScheduler(
     private static bool IsAlertableFailureStatus(string status)
         => string.Equals(status, CronRunStatus.Error, StringComparison.OrdinalIgnoreCase)
             || string.Equals(status, CronRunStatus.NoToolCalls, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, CronRunStatus.Incomplete, StringComparison.OrdinalIgnoreCase)
             // #3161: a delivery failure is a non-success outcome of exactly the same standing. Left
             // out, the streak would restart at 1 on every undelivered run, so the power-of-two
             // backoff would alert on EVERY run of a job whose destination is permanently gone -
@@ -1652,6 +1655,32 @@ public sealed class CronScheduler(
     {
         if (!string.IsNullOrWhiteSpace(context.DeliveryError))
             return (CronRunStatus.DeliveryFailed, $"{DeliveryFailureReasonPrefix}{context.DeliveryError}");
+
+        if (context.RunCompletion is { } completion)
+        {
+            var openItems = completion.OpenItemIds.Count == 0
+                ? "identities unavailable"
+                : string.Join(", ", completion.OpenItemIds);
+            switch (completion.Status)
+            {
+                case "IncompleteWithoutStopReason":
+                    return (CronRunStatus.Incomplete,
+                        $"Agent run ended incomplete after bounded continuation; open checklist items: {openItems}.");
+                case "Parked":
+                    return (CronRunStatus.Parked,
+                        $"Agent run is legitimately parked; open checklist items: {openItems}.");
+                case "Failed":
+                    return (CronRunStatus.Error,
+                        string.IsNullOrWhiteSpace(completion.Detail)
+                            ? "Agent run reported a terminal failure."
+                            : completion.Detail);
+                case "Cancelled":
+                    return (CronRunStatus.Aborted,
+                        string.IsNullOrWhiteSpace(completion.Detail)
+                            ? "Agent run was cancelled."
+                            : completion.Detail);
+            }
+        }
 
         var zeroToolCallOutcome = DetectZeroToolCallOutcome(job, context);
         return zeroToolCallOutcome is null
@@ -1917,18 +1946,32 @@ public sealed class CronScheduler(
             return 0;
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         var reaped = 0;
 
         foreach (var run in running)
         {
-            // Symmetric bound: both a long-stale and a future-dated started_at are orphans.
-            if ((now - run.StartedAt).Duration() <= bound)
+            var hasActiveExecutor = _activeRuns.ContainsKey(run.Id.Value);
+            var ownerState = await GetOwnerSessionStateAsync(run.SessionId, ct).ConfigureAwait(false);
+            var ownerIsTerminal = run.SessionId.HasValue
+                && ownerState is "sealed" or "expired" or "missing";
+
+            // A process-local executor is authoritative while present. Otherwise a terminal or
+            // missing owner session proves the persisted running row has lost its execution owner,
+            // so reconcile it immediately rather than waiting for the generic age threshold.
+            // Rows without a published session retain the bounded age fallback for non-session
+            // actions and the short pre-session creation window.
+            if (hasActiveExecutor
+                || (!ownerIsTerminal && (now - run.StartedAt).Duration() <= bound))
             {
                 continue;
             }
 
-            await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, OrphanedRunReason, ct: ct)
+            var reason = ownerIsTerminal
+                ? $"Cron run orphaned - owner session is {ownerState} and no active executor owns the run."
+                : OrphanedRunReason;
+
+            await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, reason, ct: ct)
                 .ConfigureAwait(false);
 
             // Only clear the job's bookkeeping when it is still advertising this stuck run. A newer
@@ -1940,7 +1983,7 @@ public sealed class CronScheduler(
                     run.JobId,
                     run.StartedAt,
                     CronRunStatus.Error,
-                    OrphanedRunReason,
+                    reason,
                     ct).ConfigureAwait(false);
             }
 
@@ -1951,6 +1994,59 @@ public sealed class CronScheduler(
         }
 
         return reaped;
+    }
+
+    /// <summary>
+    /// Projects liveness evidence for run-history consumers. Running rows expose their age, the
+    /// persisted owner-session lifecycle, and whether this scheduler still owns an executor;
+    /// terminal rows retain null running-only fields.
+    /// </summary>
+    public async Task<IReadOnlyList<CronRun>> GetRunHealthAsync(
+        IReadOnlyList<CronRun> runs,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(runs);
+        var now = _timeProvider.GetUtcNow();
+        var result = new List<CronRun>(runs.Count);
+        foreach (var run in runs)
+        {
+            var isRunning = string.Equals(run.Status, CronRunStatus.Running, StringComparison.Ordinal);
+            result.Add(run with
+            {
+                RunningAge = isRunning ? (now - run.StartedAt).Duration() : null,
+                OwnerSessionState = isRunning
+                    ? await GetOwnerSessionStateAsync(run.SessionId, ct).ConfigureAwait(false)
+                    : null,
+                HasActiveExecutor = isRunning ? _activeRuns.ContainsKey(run.Id.Value) : null
+            });
+        }
+
+        return result;
+    }
+
+    private async Task<string> GetOwnerSessionStateAsync(SessionId? sessionId, CancellationToken ct)
+    {
+        if (!sessionId.HasValue)
+            return "none";
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var sessions = scope.ServiceProvider.GetService<ISessionStore>();
+            if (sessions is null)
+                return "unknown";
+
+            var session = await sessions.GetAsync(sessionId.Value, ct).ConfigureAwait(false);
+            return session?.Status.ToString().ToLowerInvariant() ?? "missing";
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                ex,
+                "Could not read owner session '{SessionId}' while reconciling cron run liveness.",
+                sessionId.Value);
+            return "unknown";
+        }
     }
 
     /// <summary>

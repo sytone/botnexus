@@ -78,7 +78,13 @@ public sealed partial class ExtensionRepositoryRegistryService
                     registration.RepositoryUrl,
                     registration.RequestedRef,
                     registration.Enabled,
-                    registration.UpdatesEnabled);
+                    registration.UpdatesEnabled,
+                    registration.ReconciliationStatus,
+                    registration.ResolvedCommit,
+                    registration.ClonePath,
+                    registration.LastAttemptUtc,
+                    registration.LastSuccessUtc,
+                    registration.LatestFailure);
             })
             .ToArray();
     }
@@ -130,6 +136,50 @@ public sealed partial class ExtensionRepositoryRegistryService
             if (!repositories.Remove(id))
                 throw Missing(id);
         }, "extension-repository-remove", ct, [SectionName]);
+    }
+
+    /// <summary>Records the start of an attempt before any clone is mutated.</summary>
+    public Task RecordReconciliationAttemptAsync(string id, string clonePath, DateTimeOffset attemptedUtc, CancellationToken ct = default)
+    {
+        ValidateId(id);
+        ArgumentException.ThrowIfNullOrWhiteSpace(clonePath);
+        return _writer.MutateAsync(root =>
+        {
+            var registration = GetRequiredRegistration(root, id);
+            registration["reconciliationStatus"] = "reconciling";
+            registration["clonePath"] = clonePath;
+            registration["lastAttemptUtc"] = attemptedUtc;
+            registration["latestFailure"] = null;
+        }, "extension-repository-reconciliation-attempt", ct, [SectionName]);
+    }
+
+    /// <summary>Persists the immutable commit identity selected by a successful attempt.</summary>
+    public Task RecordReconciliationSuccessAsync(string id, string resolvedCommit, DateTimeOffset succeededUtc, CancellationToken ct = default)
+    {
+        ValidateId(id);
+        ArgumentException.ThrowIfNullOrWhiteSpace(resolvedCommit);
+        return _writer.MutateAsync(root =>
+        {
+            var registration = GetRequiredRegistration(root, id);
+            registration["reconciliationStatus"] = "succeeded";
+            registration["resolvedCommit"] = resolvedCommit;
+            registration["lastSuccessUtc"] = succeededUtc;
+            registration["latestFailure"] = null;
+        }, "extension-repository-reconciliation-success", ct, [SectionName]);
+    }
+
+    /// <summary>Persists a stable failure name plus diagnostic without discarding prior success state.</summary>
+    public Task RecordReconciliationFailureAsync(string id, string failureName, string diagnostic, CancellationToken ct = default)
+    {
+        ValidateId(id);
+        ArgumentException.ThrowIfNullOrWhiteSpace(failureName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(diagnostic);
+        return _writer.MutateAsync(root =>
+        {
+            var registration = GetRequiredRegistration(root, id);
+            registration["reconciliationStatus"] = "failed";
+            registration["latestFailure"] = $"{failureName}: {diagnostic}";
+        }, "extension-repository-reconciliation-failure", ct, [SectionName]);
     }
 
     private static JsonObject GetOrCreateSection(JsonObject root)

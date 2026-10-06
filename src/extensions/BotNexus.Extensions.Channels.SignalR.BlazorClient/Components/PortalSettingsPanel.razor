@@ -56,6 +56,21 @@
                     page paints, so it does not flash on reload.
                 </div>
                 <div class="portal-settings-row">
+                    <label class="portal-settings-label" for="portal-shell-select">Portal shell <strong>Experimental</strong></label>
+                    <select id="portal-shell-select"
+                            class="portal-settings-select"
+                            data-testid="shell-select"
+                            value="@PortalShell.Normalize(Prefs.Current.Shell)"
+                            @onchange="ChangeShell">
+                        <option value="classic">Classic</option>
+                        <option value="simplified">Simplified</option>
+                    </select>
+                </div>
+                <div class="portal-settings-hint">
+                    Classic preserves the current portal. Simplified opts into shell and Home layout
+                    experiments as they become available. Applies immediately and is stored in this browser.
+                </div>
+                <div class="portal-settings-row">
                     <label class="portal-settings-label" for="portal-density-select">Interface density</label>
                     <select id="portal-density-select"
                             class="portal-settings-select"
@@ -121,6 +136,11 @@
     private async Task ChangeDensity(ChangeEventArgs e)
     {
         await Prefs.SetDensityAsync(e.Value?.ToString() ?? PortalDensity.Compact);
+    }
+
+    private async Task ChangeShell(ChangeEventArgs e)
+    {
+        await Prefs.SetShellAsync(e.Value?.ToString() ?? PortalShell.Classic);
     }
 
     private async Task ToggleArchiveConfirm(ChangeEventArgs e)

@@ -66,7 +66,7 @@ public sealed class SecretCommand
     }
 
     private static string StorePath(string? target)
-        => Path.Combine(CliPaths.ResolveTarget(target), SqliteSecretProvider.StoreFileName);
+        => SqliteStorePathPolicy.ResolveOwnedStorePath(CliPaths.ResolveTarget(target), "secrets");
 
     internal static async Task<int> SetAsync(string storePath, string name, CancellationToken cancellationToken)
     {
@@ -129,6 +129,7 @@ public sealed class SecretCommand
             await using var connection = SqliteConnectionFactory.Create(
                 new SqliteConnectionStringBuilder { DataSource = storePath, Mode = SqliteOpenMode.ReadOnly }.ToString());
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            SqliteSchemaMigrator.ValidateReadOnly(connection, SqliteSecretProvider.CurrentSchemaVersion);
 
             await using var command = connection.CreateCommand();
             command.CommandText = "SELECT name, updated_utc FROM secrets ORDER BY name;";
@@ -171,6 +172,7 @@ public sealed class SecretCommand
             await using var connection = SqliteConnectionFactory.Create(
                 new SqliteConnectionStringBuilder { DataSource = storePath }.ToString());
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            SqliteSchemaMigrator.Apply(connection, SqliteSecretProvider.CurrentSchemaVersion, SqliteSecretProvider.Migrations);
 
             await using var command = connection.CreateCommand();
             command.CommandText = "DELETE FROM secrets WHERE name = $name;";
@@ -226,6 +228,7 @@ public sealed class SecretCommand
             );
             """;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        SqliteSchemaMigrator.Apply(connection, SqliteSecretProvider.CurrentSchemaVersion, SqliteSecretProvider.Migrations);
 
         // Narrowed as soon as the file exists, before a value is ever written into it.
         if (isNew)

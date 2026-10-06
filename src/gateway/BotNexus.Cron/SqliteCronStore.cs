@@ -821,6 +821,35 @@ public sealed class SqliteCronStore(
         }
     }
 
+    public async Task RecordRunSessionAsync(
+        RunId runId,
+        SessionId sessionId,
+        CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE cron_runs
+                SET session_id = $sessionId
+                WHERE id = $runId AND status = $running
+                """;
+            command.Parameters.AddWithValue("$sessionId", sessionId.Value);
+            command.Parameters.AddWithValue("$runId", runId.Value);
+            command.Parameters.AddWithValue("$running", CronRunStatus.Running);
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
     public async Task RecordRunCompleteAsync(
         RunId runId,
         string status,
@@ -850,7 +879,7 @@ public sealed class SqliteCronStore(
                 SET completed_at = $completedAt,
                     status = $status,
                     error = $error,
-                    session_id = $sessionId,
+                    session_id = COALESCE($sessionId, session_id),
                     turn_count = COALESCE($turnCount, turn_count),
                     tool_call_count = COALESCE($toolCallCount, tool_call_count),
                     duration_ms = COALESCE($durationMs, duration_ms),
@@ -1317,7 +1346,7 @@ public sealed class SqliteCronStore(
             DELETE FROM cron_runs
             WHERE completed_at IS NOT NULL
               AND completed_at < $cutoff
-              AND status IN ($statusOk, $statusError, $statusTimedOut, $statusNoToolCalls, $statusDeliveryFailed, $statusAborted)
+              AND status IN ($statusOk, $statusError, $statusTimedOut, $statusNoToolCalls, $statusIncomplete, $statusParked, $statusDeliveryFailed, $statusAborted)
             """;
         command.Parameters.AddWithValue("$cutoff", cutoff.ToString("O"));
         command.Parameters.AddWithValue("$statusOk", CronRunStatus.Ok);
@@ -1327,6 +1356,8 @@ public sealed class SqliteCronStore(
         // permanently immune to retention - the same unbounded-growth trap #2410 found for
         // orphaned 'running' rows.
         command.Parameters.AddWithValue("$statusNoToolCalls", CronRunStatus.NoToolCalls);
+        command.Parameters.AddWithValue("$statusIncomplete", CronRunStatus.Incomplete);
+        command.Parameters.AddWithValue("$statusParked", CronRunStatus.Parked);
         // #3161: delivery_failed is likewise TERMINAL and must be purgeable for the same reason.
         command.Parameters.AddWithValue("$statusDeliveryFailed", CronRunStatus.DeliveryFailed);
         // #3160: aborted is likewise TERMINAL. Omitting it would make every operator-aborted run

@@ -116,19 +116,6 @@ public sealed record AgentDescriptor : ICitizen
     public string? SystemPrompt { get; init; }
 
     /// <summary>
-    /// Path to a file containing the system prompt (alternative to <see cref="SystemPrompt" />).
-    /// Relative paths are resolved from the agent configuration directory.
-    /// </summary>
-    public string? SystemPromptFile { get; init; }
-
-    /// <summary>
-    /// Ordered list of system prompt file paths to load and concatenate.
-    /// Resolved relative to the agent's workspace directory.
-    /// If empty, uses default load order: AGENTS.md, SOUL.md, TOOLS.md, BOOTSTRAP.md, IDENTITY.md, USER.md.
-    /// </summary>
-    public IReadOnlyList<string> SystemPromptFiles { get; init; } = [];
-
-    /// <summary>
     /// Tool identifiers this agent has access to.
     /// Resolved through the tool registry at agent creation time.
     /// </summary>
@@ -259,6 +246,10 @@ public sealed record AgentDescriptor : ICitizen
     /// Example: <c>ExtensionConfig["botnexus-skills"]</c> for skills config.
     /// </summary>
     public IReadOnlyDictionary<string, System.Text.Json.JsonElement> ExtensionConfig { get; init; } =
+        new Dictionary<string, System.Text.Json.JsonElement>();
+
+    /// <summary>Raw <c>agents.defaults.extensions</c> values, kept separate from named-agent values.</summary>
+    public IReadOnlyDictionary<string, System.Text.Json.JsonElement> DefaultExtensionConfig { get; init; } =
         new Dictionary<string, System.Text.Json.JsonElement>();
 /// <summary>Conversation retention policy override for this agent. Null means world default applies.</summary>
     public AgentConversationRetentionConfig? ConversationRetention { get; init; }

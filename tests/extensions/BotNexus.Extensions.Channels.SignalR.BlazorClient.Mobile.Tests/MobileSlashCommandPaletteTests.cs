@@ -46,7 +46,6 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
             DisplayName = "Agent 1",
             Emoji = null,
             SessionId = "session-1",
-            ActiveConversationId = "conv-1"
         };
         agentState.Conversations["conv-1"] = convState;
 
@@ -60,6 +59,10 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
         _interaction.DeliverMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>()).Returns(Task.CompletedTask);
 
         _ctx.Services.AddSingleton(_store);
+        var displayedConversation = Substitute.For<IDisplayedConversation>();
+        displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
+            .Returns(call => call.Arg<string?>() is { } agentId ? (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agentId) : null);
+        _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.Services.AddSingleton(_interaction);
@@ -79,7 +82,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
     [Fact]
     public void Palette_shows_when_input_starts_with_slash()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         Assert.Empty(cut.FindAll("[data-testid='command-palette']"));
 
@@ -93,7 +96,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
     [Fact]
     public void Palette_hidden_when_input_has_space()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         TypeInput(cut, "/new now");
 
@@ -103,7 +106,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
     [Fact]
     public void Palette_filters_by_prefix()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         TypeInput(cut, "/co");
 
@@ -118,7 +121,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
     [Fact]
     public async Task Palette_executes_gateway_command_through_the_command_pipeline()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         TypeInput(cut, "/help");
         cut.FindAll("[data-testid='command-item']")
@@ -134,7 +137,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
     [Fact]
     public void New_command_routes_through_confirm_overlay()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         TypeInput(cut, "/new");
         cut.FindAll("[data-testid='command-item']")
@@ -148,7 +151,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
     [Fact]
     public async Task New_command_confirm_resets_session()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         TypeInput(cut, "/new");
         cut.FindAll("[data-testid='command-item']")
@@ -163,7 +166,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
     [Fact]
     public void Clear_command_routes_through_confirm_overlay()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         TypeInput(cut, "/clear");
         cut.FindAll("[data-testid='command-item']")
@@ -176,7 +179,7 @@ public sealed class MobileSlashCommandPaletteTests : IDisposable
     [Fact]
     public void Clear_command_confirm_clears_local_messages()
     {
-        var cut = _ctx.Render<Chat>();
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         TypeInput(cut, "/clear");
         cut.FindAll("[data-testid='command-item']")

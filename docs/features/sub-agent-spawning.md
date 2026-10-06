@@ -315,8 +315,10 @@ Sub-agent behavior is configured via `SubAgentOptions`, nested under the `gatewa
 | `maxConcurrentPerSession` | int | `5` | Maximum number of sub-agents a single session can run simultaneously |
 | `defaultMaxTurns` | int | `30` | Default turn limit for sub-agents (overridable per spawn) |
 | `maxTurnsCeiling` | int | `30` | Hard upper bound for a spawn-supplied `maxTurns`. Requests above this are clamped down. `0` disables the ceiling |
+| `advisoryMaxTurns` | int | `30` | Effective turn budget above which staging guidance is returned and logged. `0` disables this advisory |
 | `defaultTimeoutSeconds` | int | `600` | Default timeout in seconds (overridable per spawn) |
 | `maxTimeoutSeconds` | int | `1800` | Hard upper bound for a spawn-supplied `timeoutSeconds`. Requests above this are clamped down. `0` disables the ceiling |
+| `advisoryTimeoutSeconds` | int | `1500` | Effective timeout above which staging guidance is returned and logged. `0` disables this advisory |
 | `maxDepth` | int | `1` | Maximum nesting depth. `1` = sub-agents cannot spawn sub-agents |
 | `defaultModel` | string | `""` | Default model for sub-agents. Empty string means inherit parent's model |
 
@@ -329,8 +331,10 @@ Sub-agent behavior is configured via `SubAgentOptions`, nested under the `gatewa
       "maxConcurrentPerSession": 5,
       "defaultMaxTurns": 30,
       "maxTurnsCeiling": 30,
+      "advisoryMaxTurns": 30,
       "defaultTimeoutSeconds": 600,
       "maxTimeoutSeconds": 1800,
+      "advisoryTimeoutSeconds": 1500,
       "maxDepth": 1,
       "defaultModel": ""
     }
@@ -343,6 +347,13 @@ Sub-agent behavior is configured via `SubAgentOptions`, nested under the `gatewa
 The `maxTurns` and `timeoutSeconds` parameters on `spawn_subagent` override `defaultMaxTurns` and `defaultTimeoutSeconds` respectively. If not specified at spawn time, the configured defaults apply.
 
 Both are bounded by hard ceilings: a spawn-supplied `maxTurns` is clamped to at most `maxTurnsCeiling` (default `30`) and `timeoutSeconds` to at most `maxTimeoutSeconds` (default `1800`). This prevents a single `spawn_subagent` call from requesting a runaway turn budget or an effectively unbounded wall-clock timeout. Set a ceiling to `0` to disable it.
+
+Keep delegated tasks narrow and staged instead of raising these ceilings. When exploratory work reaches
+the reserved boundary, the last turn within `maxTurns` is used once for tool-free synthesis; it is not an
+extra turn. Exploration also stops before the absolute timeout, reserving 10% of the configured duration
+(bounded to 100 ms through 30 seconds) for that attempt. Finalization retains the original deadline, and
+late text is discarded. Separate investigation, implementation, and validation spawns are easier to bound and usually
+produce more reliable handoffs than one large task with a larger turn or timeout budget.
 
 #### Clamp disclosure on the tool result
 
@@ -370,6 +381,12 @@ interpretation.
   }
 }
 ```
+
+When an effective budget is above an enabled advisory threshold, the result also carries a
+`budgetAdvisory` warning that names the threshold and effective value and recommends delegating one
+coherent stage. This is guidance only: it does not prove that a task is well scoped, and it never
+changes, rejects, or exempts the budget from the hard ceiling. A request above a ceiling can therefore
+carry both `budgetClamp` and `budgetAdvisory`, with the advisory always reporting the effective values.
 
 The clamp itself is unchanged by this disclosure - only its visibility. The reduction is still recorded in the
 gateway log as well.

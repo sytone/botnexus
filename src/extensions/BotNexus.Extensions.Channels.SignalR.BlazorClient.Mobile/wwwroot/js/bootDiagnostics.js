@@ -101,7 +101,8 @@
     // the asset the proxy intercepted, so a class-only panel could render as unstyled text on the
     // exact failure this exists to explain.
     var PANEL_STYLE = 'display:flex;flex-direction:column;align-items:center;justify-content:center;'
-        + 'min-height:100vh;gap:1rem;padding:2rem;box-sizing:border-box;text-align:center;'
+        + 'min-height:100vh;gap:1rem;padding:calc(2rem + env(safe-area-inset-top)) 2rem '
+        + 'calc(2rem + env(safe-area-inset-bottom));box-sizing:border-box;text-align:center;'
         + 'font-family:system-ui,-apple-system,sans-serif;background:#0a1628;color:#d0dff0;';
     var TITLE_STYLE = 'margin:0;font-size:1.375rem;font-weight:600;color:#f2f7ff;';
     var GUIDANCE_STYLE = 'margin:0;max-width:44rem;line-height:1.5;';

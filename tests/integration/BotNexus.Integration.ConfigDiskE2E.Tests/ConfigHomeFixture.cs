@@ -26,6 +26,7 @@ public sealed class ConfigHomeFixture : IDisposable
 {
     private readonly string? _previousHome;
     private readonly List<IDisposable> _disposables = [];
+    private readonly List<string> _loadFailures = [];
 
     /// <summary>
     /// Creates the temporary home, writes <paramref name="seedJson"/> as the initial
@@ -69,6 +70,9 @@ public sealed class ConfigHomeFixture : IDisposable
     /// <summary>Production writer under test, bound to <see cref="ConfigPath"/>.</summary>
     public PlatformConfigWriter Writer { get; }
 
+    /// <summary>Diagnostics emitted when the resilient provider rejects a candidate load.</summary>
+    public IReadOnlyList<string> LoadFailures => _loadFailures;
+
     /// <summary>Reads the raw bytes-as-text currently on disk (no parsing, no normalisation).</summary>
     public string ReadRawText() => File.ReadAllText(ConfigPath);
 
@@ -97,7 +101,11 @@ public sealed class ConfigHomeFixture : IDisposable
     public RuntimeConsumer BuildRuntimeConsumer()
     {
         var configuration = new ConfigurationBuilder()
-            .AddJsonFile(ConfigPath, optional: true, reloadOnChange: true)
+            .AddResilientJsonFile(
+                ConfigPath,
+                optional: true,
+                reloadOnChange: true,
+                onLoadFailure: (message, _) => _loadFailures.Add(message))
             .Build();
 
         var services = new ServiceCollection();

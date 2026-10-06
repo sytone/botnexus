@@ -50,7 +50,7 @@ public sealed class DeferWhileBusySteeringTests
         // #1 is the initial idle poll, #2 is the drain after turn 1 while a tool call is pending).
         var options = CreateOptions(provider.Api, tools: [new CalculateTool()]) with
         {
-            GetSteeringMessages = _ =>
+            SteeringMessageProvider = _ =>
             {
                 var count = Interlocked.Increment(ref delegateDrainCount);
                 if (count == 2)

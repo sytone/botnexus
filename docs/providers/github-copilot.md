@@ -25,7 +25,15 @@ Set the provider on your agent in `config.json`:
 }
 ```
 
-`provider` names the model-registry provider instance; `copilot` is also a supported alias for `github-copilot`. `model` is the registered model ID, not an API name. These are platform configuration keys; tool and template contracts can separately use `apiProvider` and `modelId`.
+`provider` names the model-registry provider instance. `model` is the registered model ID, not an API name. These are platform configuration keys; tool and template contracts can separately use `apiProvider` and `modelId`.
+
+### Accounts, provider instances and the `copilot` alias
+
+Current BotNexus supports one canonical GitHub Copilot account per gateway. The canonical provider instance and auth entry are both named `github-copilot`. `copilot` is an alias that resolves to that same model-registry provider; it is not a second provider instance, credential or subscription.
+
+BotNexus does not support two independently authenticated Copilot accounts in one gateway today. Adding `providers.copilot`, adding another name such as `providers.copilot-work`, or pointing a custom entry at `auth:<name>` does not reproduce the complete built-in contract: canonical login and diagnostics, model discovery, all three Copilot API contracts, endpoint refresh, health and quota state remain tied to `github-copilot`.
+
+First-class named built-in instances are planned in [#4191](https://github.com/sytone/botnexus/issues/4191). Until that runtime work is delivered and tested, use separate BotNexus homes and gateway processes when agents must use separate Copilot subscriptions. Do not manually craft `auth.json` entries as a workaround. There is no automatic account fallback or rotation.
 
 ### Authentication
 
@@ -41,7 +49,7 @@ The CLI diagnostics have a different entry point: `CopilotAuthLoader` loads the 
 
 ### CLI Setup
 
-Use BotNexus's device-code login to create the `github-copilot` entry in its `auth.json` store (normally under the BotNexus home directory). `botnexus provider copilot login` is an alias for `botnexus provider setup --provider github-copilot`; follow the displayed authorization URL and code. Treat the auth file as a secret and do not commit it.
+Use BotNexus's device-code login to create the `github-copilot` entry in its `auth.json` store (normally under the BotNexus home directory). `botnexus provider copilot login` is an alias for `botnexus provider setup --provider github-copilot`; follow the displayed authorization URL and code. Rerunning either setup command overwrites the existing `github-copilot` auth entry with the newly authorized account. It does not add another Copilot account. Treat the auth file as a secret and do not commit it.
 
 ```bash
 # Authorize BotNexus and save its OAuth credentials
@@ -53,6 +61,8 @@ botnexus provider copilot whoami
 # List the models your account is entitled to
 botnexus provider copilot models
 ```
+
+`whoami`, `models`, `quota`, and `test` read only the canonical `github-copilot` auth entry in the selected BotNexus home. `whoami` validates account identity, plan and endpoint; `models` projects the discovered catalog into the effective BotNexus model descriptors; `quota` reads its reported quota snapshots; and `test` resolves from that same discovered projection before sending a request. A newly entitled model therefore does not require a BotNexus release before the diagnostic can invoke it. `botnexus provider list` is different: it reports saved provider configuration and does not validate credentials or connectivity.
 
 See the [CLI Reference](../cli-reference.md#provider-copilot) for the full `provider copilot` diagnostic subcommand group (`login`, `whoami`, `models`, `quota`, `test`).
 
@@ -69,6 +79,9 @@ The following examples are a subset of BotNexus's built-in Copilot registrations
 | `gpt-4o` | Completions | 128,000 | 4,096 |
 | `gpt-4.1` | Completions | 128,000 | 16,384 |
 | `gpt-5.6` | Responses | 922,000 | 128,000 |
+| `gpt-6-astra` | Responses | 922,000 | 128,000 |
+| `gpt-6-luna` | Responses | 922,000 | 128,000 |
+| `gpt-6-sol` | Responses | 922,000 | 128,000 |
 
 Run `botnexus provider copilot models` to inspect the catalog returned for your account. An ID absent from this built-in catalog requires a discovered or custom registration before use; absence from the built-ins does not establish upstream unavailability.
 
@@ -82,7 +95,7 @@ At gateway startup, BotNexus queries Copilot's catalog and overlays discovered m
 
 - **Messages API** — Claude models are accessed via the Messages-compatible path.
 - **Completions API** — built-in `gpt-4o`, `gpt-4.1`, Gemini and Grok entries use the Completions path.
-- **Responses API** — built-in GPT-5-family entries use the Responses path for native tool call flow.
+- **Responses API** — built-in GPT-5- and GPT-6-family entries use the Responses path for native tool call flow.
 
 The selected model registration determines the API; model family alone is not sufficient.
 

@@ -10,9 +10,14 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
     [Fact]
     public async Task RunLintAt_StderrBeyondPipeCapacity_RetainsBothOutputs()
     {
+        const int pipeSaturatingBytes = 2 * 1024 * 1024;
         await ExerciseLintBoundaryAsync(
-            "[Console]::Error.Write(('E' * 2097152)); [Console]::Out.Write('stdout-complete'); exit 0",
-            cancelAfterStart: false);
+            $"[Console]::Error.Write(('E' * {pipeSaturatingBytes})); [Console]::Out.Write('stdout-complete'); exit 0",
+            cancelAfterStart: false,
+            expectedStdErrBytes: pipeSaturatingBytes,
+            waitForChildReadiness: true,
+            timeout: TimeSpan.FromSeconds(60),
+            outerGuardTimeout: TimeSpan.FromSeconds(90));
     }
 
     [Fact]
@@ -23,28 +28,110 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
             cancelAfterStart: true);
     }
 
-    private static async Task ExerciseLintBoundaryAsync(string body, bool cancelAfterStart)
+    [Fact]
+    public async Task RunLintAt_DeadlineBeginsAfterReadinessBoundary()
+    {
+        var fixture = Directory.CreateTempSubdirectory("lint-readiness-").FullName;
+        var script = Path.Combine(fixture, "child.ps1");
+        var readyFile = Path.Combine(fixture, "ready");
+        File.WriteAllText(script,
+            $"param($RepoRoot, $Rule)\n[Console]::Out.Write('ready-never-exit'); [Console]::Out.Flush(); [IO.File]::WriteAllText('{readyFile.Replace("'", "''")}', 'ready'); [Threading.Tasks.Task]::Delay(-1).GetAwaiter().GetResult()");
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReadiness = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var watcher = new FileSystemWatcher(fixture, Path.GetFileName(readyFile))
+        {
+            EnableRaisingEvents = true,
+        };
+        watcher.Created += (_, _) => ready.TrySetResult();
+        Process? observed = null;
+        try
+        {
+            var run = DocsLintScriptTests.RunLintAtAsync(fixture, script, "literal-drift", false,
+                onStarted: async (child, _, token) =>
+                {
+                    observed = Process.GetProcessById(child.Id);
+                    if (File.Exists(readyFile))
+                    {
+                        ready.TrySetResult();
+                    }
+                    await ready.Task.WaitAsync(token).WaitAsync(TimeSpan.FromSeconds(10));
+                    await releaseReadiness.Task.WaitAsync(token);
+                }, timeout: TimeSpan.FromMilliseconds(100));
+
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            run.IsCompleted.ShouldBeFalse("the execution deadline must not consume child startup time");
+            releaseReadiness.TrySetResult();
+
+            var failure = await Should.ThrowAsync<TimeoutException>(async () =>
+                await run.WaitAsync(TimeSpan.FromSeconds(10)));
+            failure.Message.ShouldContain("ready-never-exit");
+            observed.ShouldNotBeNull();
+            observed.HasExited.ShouldBeTrue();
+        }
+        finally
+        {
+            releaseReadiness.TrySetResult();
+            if (observed is not null)
+            {
+                if (!observed.HasExited)
+                {
+                    observed.Kill(entireProcessTree: true);
+                }
+                await observed.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                observed.Dispose();
+            }
+            Directory.Delete(fixture, recursive: true);
+        }
+    }
+
+    private static async Task ExerciseLintBoundaryAsync(
+        string body,
+        bool cancelAfterStart,
+        int expectedStdErrBytes = 0,
+        bool waitForChildReadiness = false,
+        TimeSpan? timeout = null,
+        TimeSpan? outerGuardTimeout = null)
     {
         var fixture = Directory.CreateTempSubdirectory("lint-boundary-").FullName;
+        var readyFile = Path.Combine(fixture, "child-ready");
+        using var readyWatcher = waitForChildReadiness
+            ? new FileSystemWatcher(fixture, Path.GetFileName(readyFile)) { EnableRaisingEvents = true }
+            : null;
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (readyWatcher is not null)
+        {
+            readyWatcher.Created += (_, _) => ready.TrySetResult();
+        }
         using var unrelated = new DocsLintScriptTests.PowerShellStartupState();
         var sentinel = Path.Combine(unrelated.Root, "untouched");
         File.WriteAllText(sentinel, "preserve");
         var script = Path.Combine(fixture, "child.ps1");
-        File.WriteAllText(script, "param($RepoRoot, $Rule)\n" + body);
+        var readiness = waitForChildReadiness
+            ? $"[IO.File]::WriteAllText('{readyFile.Replace("'", "''")}', 'ready'); "
+            : string.Empty;
+        File.WriteAllText(script, "param($RepoRoot, $Rule)\n" + readiness + body);
         using var cancellation = new CancellationTokenSource();
-        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var guard = new CancellationTokenSource(outerGuardTimeout ?? TimeSpan.FromSeconds(30));
         Process? observed = null;
         string? cache = null;
         Task<DocsLintScriptTests.LintRun>? run = null;
         try
         {
             run = DocsLintScriptTests.RunLintAtAsync(fixture, script, "literal-drift", false,
-                cancellation.Token, (child, root) =>
+                cancellation.Token, async (child, root, token) =>
                 {
                     observed = Process.GetProcessById(child.Id);
                     cache = root;
                     Directory.Exists(root).ShouldBeTrue("cache must remain owned while the child is live");
-                }, timeout: TimeSpan.FromSeconds(10));
+                    if (readyWatcher is not null)
+                    {
+                        if (File.Exists(readyFile))
+                        {
+                            ready.TrySetResult();
+                        }
+                        await ready.Task.WaitAsync(token);
+                    }
+                }, timeout: timeout ?? TimeSpan.FromSeconds(10));
             if (cancelAfterStart)
             {
                 var failure = await Should.ThrowAsync<TimeoutException>(async () =>
@@ -62,7 +149,7 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
                 result.ShouldNotBeNull();
                 result.ExitCode.ShouldBe(0, result.StartupDiagnostics);
                 result.StdOut.ShouldBe("stdout-complete");
-                result.StdErr.ShouldBe(new string('E', 2097152));
+                result.StdErr.ShouldBe(new string('E', expectedStdErrBytes));
             }
 
             observed.ShouldNotBeNull();
@@ -103,10 +190,12 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
     {
         var parentCache = Environment.GetEnvironmentVariable("XDG_CACHE_HOME");
         var parentModuleCache = Environment.GetEnvironmentVariable("PSModuleAnalysisCachePath");
+        var parentMinimumCpuCount = Environment.GetEnvironmentVariable("DOTNET_MultiCoreJitMinNumCpus");
         using var state = new DocsLintScriptTests.PowerShellStartupState();
         var start = new ProcessStartInfo("pwsh");
         start.Environment["XDG_CACHE_HOME"] = "inherited-cache";
         start.Environment["PSModuleAnalysisCachePath"] = "inherited-module-cache";
+        start.Environment["DOTNET_MultiCoreJitMinNumCpus"] = "2";
         start.Environment["UNRELATED_SENTINEL"] = "preserve";
 
         state.Configure(start);
@@ -114,9 +203,11 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
         start.Environment["XDG_CACHE_HOME"].ShouldBe(
             OperatingSystem.IsWindows() ? "inherited-cache" : state.Root);
         start.Environment["PSModuleAnalysisCachePath"].ShouldBe(Path.Combine(state.Root, "ModuleAnalysisCache"));
+        start.Environment["DOTNET_MultiCoreJitMinNumCpus"].ShouldBe(int.MaxValue.ToString());
         start.Environment["UNRELATED_SENTINEL"].ShouldBe("preserve");
         Environment.GetEnvironmentVariable("XDG_CACHE_HOME").ShouldBe(parentCache);
         Environment.GetEnvironmentVariable("PSModuleAnalysisCachePath").ShouldBe(parentModuleCache);
+        Environment.GetEnvironmentVariable("DOTNET_MultiCoreJitMinNumCpus").ShouldBe(parentMinimumCpuCount);
     }
 
     [Fact]
@@ -136,6 +227,8 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
         a.Environment.ShouldContainKey("PSModuleAnalysisCachePath");
         b.Environment.ShouldContainKey("PSModuleAnalysisCachePath");
         a.Environment["PSModuleAnalysisCachePath"].ShouldNotBe(b.Environment["PSModuleAnalysisCachePath"]);
+        a.Environment["DOTNET_MultiCoreJitMinNumCpus"].ShouldBe(int.MaxValue.ToString());
+        b.Environment["DOTNET_MultiCoreJitMinNumCpus"].ShouldBe(int.MaxValue.ToString());
         if (!OperatingSystem.IsWindows())
         {
             a.Environment.ShouldContainKey("XDG_CACHE_HOME");
@@ -157,10 +250,49 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
     }
 
     [Fact]
+    public async Task ProbeCleanup_RetainsOnlyCacheWhoseTerminationFailed()
+    {
+        var first = new DocsLintScriptTests.PowerShellStartupState();
+        var second = new DocsLintScriptTests.PowerShellStartupState();
+        using var a = new Process();
+        using var b = new Process();
+        var attempted = new System.Collections.Concurrent.ConcurrentBag<Process>();
+        var bothAttempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var cleanup = CleanupProbesAsync(
+            [(a, true, first), (b, true, second)],
+            async (process, _, token) =>
+            {
+                attempted.Add(process);
+                if (attempted.Count == 2)
+                {
+                    bothAttempted.TrySetResult();
+                }
+                await release.Task.WaitAsync(token);
+                if (process == b)
+                {
+                    throw new InvalidOperationException("fixture termination failure");
+                }
+            });
+
+        await bothAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cleanup.IsCompleted.ShouldBeFalse("both termination attempts must begin before either is awaited");
+        release.TrySetResult();
+        var failure = await Should.ThrowAsync<AggregateException>(async () => await cleanup);
+
+        attempted.ShouldBe([a, b], ignoreOrder: true);
+        Directory.Exists(first.Root).ShouldBeFalse("confirmed termination permits owned cache cleanup");
+        Directory.Exists(second.Root).ShouldBeTrue("failed termination must retain owned cache state");
+        failure.Message.ShouldContain(second.Root);
+        second.Dispose();
+    }
+
+    [Fact]
     public async Task ConcurrentChildren_ReportActualPowerShellCacheRoots()
     {
-        using var first = new DocsLintScriptTests.PowerShellStartupState();
-        using var second = new DocsLintScriptTests.PowerShellStartupState();
+        var first = new DocsLintScriptTests.PowerShellStartupState();
+        var second = new DocsLintScriptTests.PowerShellStartupState();
         using var a = CreateProbe(first);
         using var b = CreateProbe(second);
         // Safety deadline only: success depends on child observations, never elapsed time.
@@ -194,15 +326,44 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
             // A cancelled protocol token must not cancel cleanup. Start both cleanup attempts
             // before awaiting either, so one failure cannot strand the other child.
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            await Task.WhenAll(
-                StopIfRunningAsync(a, startedA, cleanup.Token),
-                StopIfRunningAsync(b, startedB, cleanup.Token)).WaitAsync(cleanup.Token);
+            await CleanupProbesAsync(
+                [(a, startedA, first), (b, startedB, second)],
+                StopIfRunningAsync, cleanup.Token).WaitAsync(cleanup.Token);
+        }
+    }
+
+    private static async Task CleanupProbesAsync(
+        IReadOnlyList<(Process Process, bool Started, DocsLintScriptTests.PowerShellStartupState State)> probes,
+        Func<Process, bool, CancellationToken, Task> stop,
+        CancellationToken token = default)
+    {
+        var outcomes = await Task.WhenAll(probes.Select(async probe =>
+        {
+            try
+            {
+                await stop(probe.Process, probe.Started, token);
+                probe.State.Dispose();
+                return (probe.State.Root, Error: (Exception?)null);
+            }
+            catch (Exception error)
+            {
+                return (probe.State.Root, Error: error);
+            }
+        }));
+        var failures = outcomes
+            .Where(outcome => outcome.Error is not null)
+            .Select(outcome => new InvalidOperationException(
+                $"PowerShell probe cleanup failed; cache retained: {outcome.Root}", outcome.Error))
+            .ToArray();
+        if (failures.Length > 0)
+        {
+            throw new AggregateException(failures);
         }
     }
 
     private static Process CreateProbe(DocsLintScriptTests.PowerShellStartupState state)
     {
-        const string command = "[ordered]@{ cache = [System.Management.Automation.PSObject].Assembly.GetType('System.Management.Automation.Platform').GetField('CacheDirectory', [Reflection.BindingFlags]'Static,NonPublic').GetValue($null); moduleCache = $env:PSModuleAnalysisCachePath; version = $PSVersionTable.PSVersion.ToString(); runtime = [System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription; executable = [Environment]::ProcessPath } | ConvertTo-Json -Compress; [Console]::ReadLine() | Out-Null";
+        const string command = "[ordered]@{ cache = [System.Management.Automation.PSObject].Assembly.GetType('System.Management.Automation.Platform').GetField('CacheDirectory', [Reflection.BindingFlags]'Static,NonPublic').GetValue($null); moduleCache = $env:PSModuleAnalysisCachePath; minimumCpuCount = $env:DOTNET_MultiCoreJitMinNumCpus; version = $PSVersionTable.PSVersion.ToString(); runtime = [System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription; executable = [Environment]::ProcessPath } | ConvertTo-Json -Compress; [Console]::ReadLine() | Out-Null";
         var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh")
         {
             RedirectStandardOutput = true,
@@ -226,6 +387,7 @@ public sealed class PowerShellStartupIsolationTests(Xunit.Abstractions.ITestOutp
         output.WriteLine("PowerShell startup probe: " + line);
         var root = document.RootElement;
         root.GetProperty("moduleCache").GetString().ShouldBe(Path.Combine(state.Root, "ModuleAnalysisCache"));
+        root.GetProperty("minimumCpuCount").GetString().ShouldBe(int.MaxValue.ToString());
         root.GetProperty("version").GetString().ShouldNotBeNullOrWhiteSpace();
         root.GetProperty("runtime").GetString().ShouldNotBeNullOrWhiteSpace();
         root.GetProperty("executable").GetString().ShouldNotBeNullOrWhiteSpace();

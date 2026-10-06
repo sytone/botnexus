@@ -40,18 +40,20 @@ namespace BotNexus.Gateway.Configuration;
 /// here.
 /// </para>
 /// </remarks>
-public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDisposable
+public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDisposable, IAcceptedRawConfigDocumentProvider
 {
     private static readonly TimeSpan DefaultDetectionInterval = TimeSpan.FromSeconds(1);
 
     private readonly IConfigStore _store;
     private readonly Action<string, Exception?>? _onLoadFailure;
     private readonly TimeSpan _detectionInterval;
+    private readonly TimeProvider _timeProvider;
     private readonly bool _startChangeDetection;
     private readonly SemaphoreSlim _reloadLock = new(1, 1);
     private readonly CancellationTokenSource _disposeToken = new();
     private Task? _changeDetectionTask;
     private long _appliedRevision = -1;
+    private ConfigDocument? _acceptedRawDocument;
 
     /// <summary>Creates a provider over <paramref name="store"/>.</summary>
     /// <param name="store">The configuration store to read.</param>
@@ -62,11 +64,13 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
         IConfigStore store,
         Action<string, Exception?>? onLoadFailure = null,
         TimeSpan? detectionInterval = null,
-        bool startChangeDetection = true)
+        bool startChangeDetection = true,
+        TimeProvider? timeProvider = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _onLoadFailure = onLoadFailure;
         _detectionInterval = detectionInterval ?? DefaultDetectionInterval;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _startChangeDetection = startChangeDetection;
 
         if (_detectionInterval <= TimeSpan.Zero)
@@ -138,9 +142,12 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
             }
 
             IDictionary<string, string?> candidate;
+            ConfigDocument rawDocument;
             try
             {
-                candidate = Parse(ConfigDocumentRehydrator.Rehydrate(snapshot.Entries));
+                var rehydrated = ConfigDocumentRehydrator.Rehydrate(snapshot.Entries);
+                rawDocument = new ConfigDocument(rehydrated.DeepClone().AsObject());
+                candidate = Parse(rehydrated);
             }
             catch (Exception ex)
             {
@@ -150,6 +157,7 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
             }
 
             Data = candidate;
+            _acceptedRawDocument = rawDocument;
             _appliedRevision = snapshot.Revision;
             if (notify)
             {
@@ -166,7 +174,7 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
 
     private async Task DetectChangesAsync(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(_detectionInterval);
+        using var timer = new PeriodicTimer(_detectionInterval, _timeProvider);
         try
         {
             while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
@@ -230,6 +238,9 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
     /// </summary>
     public void NotifyChanged()
         => _ = CheckForChangesAsync().GetAwaiter().GetResult();
+
+    ConfigDocument? IAcceptedRawConfigDocumentProvider.GetAcceptedRawDocument()
+        => _acceptedRawDocument?.DeepClone();
 
     /// <inheritdoc />
     public void Dispose()

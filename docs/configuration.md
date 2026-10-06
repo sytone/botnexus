@@ -2,6 +2,8 @@
 
 BotNexus uses a hierarchical, dictionary-based configuration model with a unified home directory at `~/.botnexus/` (or `BOTNEXUS_HOME`). Use the `botnexus` CLI to read and change configuration; it applies the same commands whether the active backend is the existing JSON file or the SQLite configuration store.
 
+> **SQLite filename migration:** BotNexus-owned databases now use `.sqlite`. On first access, access to a lone legacy `.db` database blocks while BotNexus validates it, creates and validates a temporary SQLite backup with committed WAL data, promotes the canonical database, and archives the legacy database plus sidecars under `sqlite-archive/`. No interactive input is required. If both active names already exist, BotNexus fails closed because it cannot determine that they represent the same data.
+
 ## Table of Contents
 
 1. [Quick Start](#quick-start)
@@ -234,7 +236,7 @@ BotNexus follows a **defaults → overrides** pattern. The CLI is the management
 
 1. **Defaults** — Built-in constants in code (e.g., `Model = "gpt-4o"`)
 2. **Environment variables** — Supply settings not present in the persistent platform configuration (see [Environment Variable Overrides](#environment-variable-overrides))
-3. **Persistent platform configuration** — `config.json`, `config.db`, or both during migration; when both contain a key, the SQLite value wins
+3. **Persistent platform configuration** — `config.json`, `config.sqlite`, or both during migration; when both contain a key, the SQLite value wins
 4. **Named agent overrides** — Per-agent customization in the `agents` dictionary
 
 **Example:**
@@ -247,21 +249,22 @@ Named agent override (agents.planner.model) = "gpt-4-turbo"
 ```
 
 Named agents are keyed directly under `agents`; there is no `agents.named` wrapper. The reserved
-`agents.defaults` entry supplies world-level defaults for the fields it declares, while a named
-agent's own values override those defaults.
+`agents.defaults` entry is parsed and validated, but named agents do not currently inherit its
+values. Configure every effective agent value on that named agent until the defaults redesign in
+[#3503](https://github.com/Sytone/botnexus/issues/3503) is complete.
 
 ---
 
 ## Primary Deployment: ~/.botnexus/
 
-BotNexus resolves its home from `~/.botnexus/` or `BOTNEXUS_HOME`. Manage the configuration in that home through the CLI; the active persistent backend may be `config.json`, `config.db`, or both while an installation is migrating.
+BotNexus resolves its home from `~/.botnexus/` or `BOTNEXUS_HOME`. Manage the configuration in that home through the CLI; the active persistent backend may be `config.json`, `config.sqlite`, or both while an installation is migrating.
 
 On startup, BotNexus creates the required home structure. During the transition it can contain:
 
 ```text
 ~/.botnexus/
 ├── config.json        # legacy JSON backend; optional for a store-backed home
-├── config.db          # SQLite configuration backend, when enabled
+├── config.sqlite      # SQLite configuration backend, when enabled
 ├── extensions/
 │   ├── providers/
 │   ├── channels/
@@ -277,32 +280,36 @@ On startup, BotNexus creates the required home structure. During the transition 
 
 ### Configuration Binding
 
-The `BotNexus` section is bound to the `BotNexusConfig` class at startup:
-
-```csharp
-// In Gateway/Api startup
-var botNexusConfig = new BotNexusConfig();
-configuration.GetSection(BotNexusConfig.SectionName).Bind(botNexusConfig);
-services.AddSingleton(botNexusConfig);
-```
+The composed configuration root is materialized as `PlatformConfig`; there is no enclosing
+`BotNexus` section. JSON, SQLite, environment, and provider overlays are composed first, then the
+options pipeline binds and post-configures the root object. `PlatformConfigLoader` supplies the
+same deserialize, migration, and validation contract for direct reads.
 
 ## Configuration Sections
 
-### Root: BotNexusConfig
+### Navigating the Configuration page
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `Version` | int | `1` | Configuration schema version for forward compatibility |
-| `worldId` | string (GUID) | generated | Stable identity of this BotNexus world. Generated and persisted on first gateway start; see [World identity](#world-identity) |
-| `ExtensionsPath` | string | `~/.botnexus/extensions` | Path to extension discovery folder (dynamic loading) |
-| `Extensions` | ExtensionLoadingConfig | — | Extension loader behavior (signing, max assemblies) |
-| `Agents` | AgentDefaults | — | Agent defaults and named agent configurations |
-| `Providers` | ProvidersConfig | — | LLM provider registry (Copilot, OpenAI, Anthropic, Azure) |
-| `Channels` | ChannelsConfig | — | Channel integrations such as Telegram, Service Bus, SignalR, Agent 365, Matrix, TUI, and test |
-| `Gateway` | GatewayConfig | — | Gateway HTTP server settings |
-| `Tools` | ToolsConfig | — | Tool/extension tool settings (exec, web search, MCP) |
-| `Api` | ApiConfig | — | OpenAI-compatible REST API (optional) |
-| `Cron` | CronConfig | — | Scheduled job execution (agent prompts, system actions, maintenance) |
+The web Configuration page derives its section and subsection navigation from the configuration schema. When a section has multiple `x-ui-group` groups, each group appears as an addressable subsection at `/configuration/<section>/<subsection>`. Fields without a group appear under **General**. Sections with only one subsection omit the redundant subsection navigation.
+
+Changing sections or subsections keeps the same in-progress edit buffer and does not itself mark configuration as changed. **Save Changes**, **Validate**, and **Reload** continue to apply to the whole configuration page, not only the visible subsection.
+
+### Root: PlatformConfig
+
+| JSON property | Bound type | Default | Description |
+|---------------|------------|---------|-------------|
+| `version` | `int` (`PlatformVersion`) | `1` | Configuration schema version for forward compatibility |
+| `worldId` | `string` (GUID) | generated | Stable identity of this BotNexus world. Generated and persisted on first gateway start; see [World identity](#world-identity) |
+| `world` | `WorldSettingsConfig` | `null` | World-scoped extension configuration |
+| `gateway` | `GatewaySettingsConfig` | `null` | Gateway, security, extension-loader, compaction, shell, and related runtime settings |
+| `agents` | `Dictionary<string, AgentDefinitionConfig>` | `null` | Named agent definitions plus the reserved `defaults` entry extracted during post-configuration |
+| `providers` | `Dictionary<string, ProviderConfig>` | `null` | Provider-instance configuration |
+| `extensionRepositories` | `Dictionary<string, ExtensionRepositoryRegistration>` | `null` | Registered extension source repositories |
+| `channels` | `Dictionary<string, ChannelConfig>` | `null` | Channel configuration keyed by channel name |
+| `apiKey` | `string` | `null` | Legacy top-level gateway API key |
+| `cron` | `CronConfig` | `null` | Scheduler settings and optional seed jobs |
+| `promptTemplates` | `Dictionary<string, PromptTemplateConfig>` | `null` | Named prompt templates |
+| `workspace` | `WorkspacePortalConfig` | `null` | Workspace and Portal display settings |
+| `FeatureManagement` | `Dictionary<string, JsonElement>` | `null` | Feature flags; PascalCase is intentional and required by Microsoft.FeatureManagement |
 
 ---
 
@@ -473,18 +480,18 @@ source.
 
 ### Configuration store (SQLite)
 
-A SQLite-backed configuration store can sit alongside `config.json` at `config.db` in the same
+A SQLite-backed configuration store can sit alongside `config.json` at `config.sqlite` in the same
 directory. `botnexus config get`, `botnexus config set`, and the purpose-built provider and agent
 commands remain the operator interface in either state; callers do not select a backend per command.
 
 **It is an ordinary .NET configuration provider.** There is no feature flag, no migration service,
 and no verification harness. The store is registered after the JSON file, so any key it holds wins;
-absent a `config.db` the file serves everything and behaviour is exactly as it always was.
+absent a `config.sqlite` the file serves everything and behaviour is exactly as it always was.
 
 | State | Behaviour |
 |-------|-----------|
-| No `config.db` | File-only configuration. This is the default. |
-| `config.db` present | Store values win over the file, for every consumer alike. |
+| No `config.sqlite` | File-only configuration. This is the default. |
+| `config.sqlite` present | Store values win over the file, for every consumer alike. |
 
 Each committed SQLite mutation advances a revision in the same transaction as its changed keys. A
 running gateway checks that revision once per second and reloads one complete store snapshot when it
@@ -499,13 +506,13 @@ The store is created by an explicit command, never as a startup side effect - en
 configuration backend is a decision, so it takes an action:
 
 ```bash
-# Create config.db and import the current config.json.
+# Create config.sqlite and import the current config.json.
 botnexus config store enable
 
 # Report whether the store exists and how many entries it holds.
 botnexus config store status
 
-# Delete config.db. Configuration returns to the file on the next start.
+# Delete config.sqlite. Configuration returns to the file on the next start.
 botnexus config store disable
 ```
 
@@ -543,7 +550,6 @@ botnexus config set agents.defaults.toolTimeoutSeconds 300
 botnexus config set agents.assistant.displayName Assistant
 botnexus config set agents.assistant.provider copilot
 botnexus config set agents.assistant.model gpt-4.1
-botnexus config set agents.assistant.systemPromptFiles '["SOUL.md","IDENTITY.md"]'
 botnexus config set agents.assistant.toolIds '["read","write","web_search"]'
 botnexus config set agents.assistant.enabled true
 ```
@@ -645,10 +651,12 @@ layer. Naming both coordinates turns the hunt into a single edit.
 
 #### Per-agent properties
 
-Backed by `AgentDefinitionConfig`. Every key below is a real, bound property; a per-agent value
-overrides the corresponding `agents.defaults` value. The `Inherits` column states the declared policy.
+Backed by `AgentDefinitionConfig`. Every key below is a real, bound property. The `Declared policy`
+column records the intended defaults redesign, but it is not active runtime inheritance: current
+`PlatformConfigAgentSource` uses each named agent block exactly as authored. Code defaults still
+apply where the property description says so.
 
-| Property | Type | Default | Inherits | Description |
+| Property | Type | Default | Declared policy (not active) | Description |
 |----------|------|---------|----------|-------------|
 | `provider` | string | `null` | `ScalarOverride` | Provider name (for example `copilot`) |
 | `displayName` | string | `null` | `LocalOnly` | Human-readable display name shown for this agent in clients |
@@ -657,8 +665,6 @@ overrides the corresponding `agents.defaults` value. The `Inherits` column state
 | `summary` | string | `null` | `LocalOnly` | Agent-maintained account of what the agent is *currently* doing. Written by the agent itself through `update_agent`, and only for its own id - a cross-agent summary write is refused with a policy denial. Length is bounded by `gateway.agentSummary.maxLength` (default 500); a longer summary is refused rather than truncated. When unset the field is omitted from every projection entirely |
 | `model` | string | `null` | `ScalarOverride` | Model identifier (for example `gpt-4.1`) |
 | `allowedModels` | array | `null` | `ReplaceAsUnit` | Model ids this agent may use. Null or an empty list means unrestricted within the provider allowlist. A non-empty list also governs per-run and per-conversation overrides: `/model` and the conversation override API reject models outside it, and an older forbidden stored override is ignored at runtime in favor of the agent default |
-| `systemPromptFiles` | array | `null` | `ReplaceAsUnit` | Ordered list of files to load as the system prompt. Empty means the default order |
-| `systemPromptFile` | string | `null` | `ScalarOverride` | Single system prompt file path (legacy - prefer `systemPromptFiles`) |
 | `toolIds` | array | `null` | `ReplaceAsUnit` | Tool identifiers this agent has access to |
 | `toolTimeoutSeconds` | int? | inherits | `ScalarOverride` | Per-tool timeout in seconds for this agent |
 | `subAgents` | array | `null` | `ReplaceAsUnit` | Agent ids this agent can call as sub-agents |
@@ -704,33 +710,35 @@ cooldown), not under `agents`.
 
 ---
 
-### Providers: ProvidersConfig
+### Providers: `Dictionary<string, ProviderConfig>`
 
-Dictionary mapping provider names to provider configurations. Keys are case-insensitive and match extension folder names under `extensions/providers/{name}/`.
+Dictionary mapping provider-instance names to `ProviderConfig` objects. Keys are case-insensitive model-registry identities; they are not extension folder names. Built-in LLM providers are registered directly in `Program.cs`.
 
 ```json
 {
   "providers": {
-    "github-copilot": { ... },
-    "openai": { ... },
-    "anthropic": { ... },
-    "my-compatible-endpoint": { ... }
+    "github-copilot": { "apiKey": "auth:github-copilot" },
+    "openai": { "apiKey": "auth:openai" },
+    "anthropic": { "apiKey": "auth:anthropic" },
+    "my-compatible-endpoint": {
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKey": "auth:compatible-endpoint",
+      "chat": {
+        "api": "openai-compat",
+        "models": ["my-model"]
+      }
+    }
   }
 }
 ```
 
+The provider-instance key is what an agent stores in `agents.<id>.provider`. `api` selects the registered wire contract; it does not name an account. `apiKey` can hold a literal credential or an `auth:<entry>` reference. Keep credentials under providers, not agents.
+
+Named compatible endpoints can coexist because each entry explicitly supplies its endpoint, credential reference, API contract and model list. That does not make arbitrary names complete instances of a built-in provider. In particular, Copilot login, discovery and diagnostics currently target the canonical `github-copilot` instance. See [GitHub Copilot accounts and aliases](providers/github-copilot.md#accounts-provider-instances-and-the-copilot-alias).
+
 #### ProviderConfig: Common Properties
 
-All providers inherit these properties:
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `Auth` | string | `"apikey"` | Authentication type: `"apikey"` or `"oauth"` |
-| `ApiKey` | string | `""` | API key (used if Auth="apikey"; ignored for OAuth) |
-| `ApiBase` | string | null | Custom API base URL (useful for proxies, Azure endpoints) |
-| `DefaultModel` | string | null | Default model for this provider (e.g., gpt-4o, gpt-4-turbo) |
-| `TimeoutSeconds` | int | 120 | Request timeout in seconds |
-| `MaxRetries` | int | 3 | Number of retries on transient failure |
+The current common fields are `enabled`, `apiKey`, `baseUrl`, `streamIdleTimeoutMs`, and the nested `chat` and `embeddings` capability objects. Deprecated flat chat fields remain readable during migration and are listed in the [canonical field table](#canonical-shape), but nested capability fields take precedence per field. Retired authentication-mode, API-base, provider-timeout, retry-count, and OAuth-client-id fields are not properties on the current `ProviderConfig`.
 
 #### Copilot Provider: Supported Models
 
@@ -776,6 +784,11 @@ disagree. **Extra-high** marks a model that accepts the `xhigh` thinking level.
 | `gpt-5.6-luna` | GPT-5.6 Luna | **Yes** | **Yes** | 922K | 128K | text, image |
 | `gpt-5.6-sol` | GPT-5.6 Sol | **Yes** | **Yes** | 922K | 128K | text, image |
 | `gpt-5.6-terra` | GPT-5.6 Terra | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-6-astra` | GPT-6 Astra | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-6-luna` | GPT-6 Luna | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-6-sol` | GPT-6 Sol | **Yes** | **Yes** | 922K | 128K | text, image |
+
+The GPT-6 model pages describe a 1,050,000-token total context composed of up to 922,000 input tokens and 128,000 output tokens. The registry's **Context** column records the maximum input budget rather than adding input and output together.
 
 ##### Gemini Models (OpenAI Completions API)
 | Model ID | Name | Reasoning | Extra-high | Context | Max Output | Input Types |
@@ -818,24 +831,15 @@ botnexus config set agents.coder.provider copilot
 
 #### Copilot Provider (OAuth Device Code Flow)
 
-**Folder:** `extensions/providers/copilot/`  
-**Auth:** OAuth (no API key required)
+Run the supported login command before using a Copilot agent:
 
 ```bash
-botnexus config set providers.copilot.defaultModel gpt-4o
+botnexus provider setup --provider github-copilot
 ```
 
-**How it works:**
-1. On first use, agent prompts user to visit `https://github.com/login/device` and enter a code
-2. Token cached at `~/.botnexus/tokens/copilot.json` (encrypted on supported platforms)
-3. On subsequent runs, cached token is reused automatically
-4. Token is automatically refreshed if expired
+The command performs the device-code flow immediately, saves or replaces the canonical `github-copilot` entry in `auth.json`, and writes `providers.github-copilot.apiKey` as `auth:github-copilot` through the active configuration backend. Agents do not trigger login on first use. The gateway refreshes an expiring stored OAuth session when the retained credential permits it.
 
-**Properties:**
-- `Auth`: Must be `"oauth"` (required)
-- `DefaultModel`: Any supported Copilot model ID (e.g., `claude-opus-4.6`, `gpt-5.4`, `gpt-4o`)
-- `ApiBase`: GitHub Copilot endpoint (fixed: `https://api.individual.githubcopilot.com`)
-- `OAuthClientId`: GitHub app client ID (defaults to official BotNexus client ID)
+`copilot` is a model-registry alias for `github-copilot`, not another account. Named independently authenticated built-in Copilot instances are planned but not implemented; use separate BotNexus homes/gateways if two subscriptions must remain isolated. See the [Copilot provider guide](providers/github-copilot.md#accounts-provider-instances-and-the-copilot-alias).
 
 **Copilot API Headers:**
 
@@ -854,23 +858,23 @@ These headers identify the client to the Copilot API and enable proper rate limi
 
 #### OpenAI Provider
 
-**Folder:** `extensions/providers/openai/`  
-**Auth:** API Key
+Use the setup wizard so the API key is entered at a secret prompt rather than exposed in shell history:
 
 ```bash
-botnexus config set providers.openai.apiKey sk-...
-botnexus config set providers.openai.defaultModel gpt-4-turbo
+botnexus provider setup --provider openai
 ```
+
+The wizard writes the built-in `openai` provider instance and its selected default model. See the [OpenAI provider guide](providers/openai.md) for credential resolution and registered model IDs.
 
 #### Anthropic Provider
 
-**Folder:** `extensions/providers/anthropic/`  
-**Auth:** API Key
+Use the setup wizard so the API key is entered at a secret prompt rather than exposed in shell history:
 
 ```bash
-botnexus config set providers.anthropic.apiKey sk-ant-...
-botnexus config set providers.anthropic.defaultModel claude-3-5-sonnet-20241022
+botnexus provider setup --provider anthropic
 ```
+
+The wizard writes the built-in `anthropic` provider instance and its selected default model. See the [Anthropic provider guide](providers/anthropic.md) for credential resolution and registered model IDs.
 
 
 ---
@@ -1008,6 +1012,8 @@ botnexus config set gateway.subAgents.defaultTimeoutSeconds 1800
 botnexus config set gateway.subAgents.maxTimeoutSeconds 1800
 botnexus config set gateway.subAgents.defaultMaxTurns 30
 botnexus config set gateway.subAgents.maxTurnsCeiling 30
+botnexus config set gateway.subAgents.advisoryMaxTurns 30
+botnexus config set gateway.subAgents.advisoryTimeoutSeconds 1500
 botnexus config set gateway.subAgents.maxConcurrentPerSession 5
 botnexus config set gateway.subAgents.parentOverrides.farnsworth.defaultTimeoutSeconds 3600
 botnexus config set gateway.subAgents.parentOverrides.farnsworth.maxTimeoutSeconds 3600
@@ -1021,12 +1027,21 @@ Configuration reloads apply to subsequent spawns; running sub-agents retain the 
 selected when they started. Clamp warning logs include `ParentAgentId` and `PolicyTier` (`global`
 or `parent-override`) so operators can audit which authorization tier applied.
 
+Prefer narrower staged tasks over increasing `defaultMaxTurns`, `maxTurnsCeiling`, or timeout values.
+The runtime reserves the final turn inside `maxTurns` for one tool-free synthesis attempt when earlier
+turns consume the exploratory budget. It also stops exploration before the absolute timeout, reserving
+10% of the configured duration (bounded to 100 ms through 30 seconds) for that same attempt; finalization
+still uses the original deadline and any response arriving after it is discarded. Larger ceilings add cost and delay without guaranteeing a better
+result; split investigation, implementation, and validation into separate sub-agent stages instead.
+
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `subAgents.defaultTimeoutSeconds` | int | 600 | Timeout used when a spawn omits or supplies a non-positive timeout. |
 | `subAgents.maxTimeoutSeconds` | int | 1800 | Global timeout ceiling. |
+| `subAgents.advisoryTimeoutSeconds` | int | 1500 | Effective timeout above which a staging advisory is returned and logged; `0` disables it. The advisory does not change the timeout. |
 | `subAgents.defaultMaxTurns` | int | 30 | Turn budget used when omitted. |
 | `subAgents.maxTurnsCeiling` | int | 30 | Global turn ceiling. |
+| `subAgents.advisoryMaxTurns` | int | 30 | Effective turn budget above which a staging advisory is returned and logged; `0` disables it. The advisory does not change the turn budget. |
 | `subAgents.maxConcurrentPerSession` | int | 5 | Global running-child limit per parent session. |
 | `subAgents.parentOverrides.<parentAgentId>` | object | none | Trusted partial override of the five budget fields above. |
 | `subAgents.workspaceRoot` | string | ` ` (empty) | Temporary root directory under which each sub-agent's isolated workspace is created and later reclaimed. Empty preserves the historical default of `<OS temp>/botnexus-subagent-workspaces`. Supports `~` and environment-variable expansion and is normalized to an absolute path. The gateway (`FileAgentWorkspaceManager`) and the CLI (`botnexus subagent workspace list|prune` plus `doctor`) resolve this through the same shared resolver, so they can never target different directories. |
@@ -1959,7 +1974,7 @@ BotNexus monitors `~/.botnexus/config.json` for changes and applies most configu
 | Setting | Effect |
 |---------|--------|
 | `agents.<id>.*` | The named agent is re-registered from its new effective descriptor. |
-| `agents.defaults.*` | Named agents inheriting the changed default are re-registered. |
+| `agents.defaults.*` | The parsed defaults record is refreshed. Named-agent descriptors remain unchanged because they do not currently inherit these values. |
 | `providers.*` | Provider filtering and capability resolution read the rebound configuration. |
 | `cron.*` | Seeded job definitions are reloaded. |
 | `gateway.apiKey` / `gateway.apiKeys.*` | Authentication reads the rebound gateway configuration. |
@@ -1970,54 +1985,12 @@ metadata, isolation options, extension config, memory, soul, heartbeat, datetime
 conversation retention and `fileAccess` — via a single stable fingerprint, so any effective per-agent
 change takes effect on the next reload.
 
-### Nullable Parameters (Provider Defaults)
-
-When `MaxTokens` or `Temperature` are not specified (null), providers use their own defaults:
-
-```json
-{
-  "agents": {
-    "model": "gpt-4o",
-    "maxTokens": null,      // Provider uses OpenAI default (e.g., 4096)
-    "temperature": null     // Provider uses OpenAI default (e.g., 0.7)
-  }
-}
-```
-
-**Fallback Order:**
-1. Agent-specific config (if set)
-2. Default agent config (if set)
-3. Provider's built-in default
-
-**Benefits:**
-- Keeps config minimal (only override when needed)
-- Providers can optimize defaults per model
-- Easy to test different models without reconfig
-
-**Example:**
-```json
-{
-  "agents": {
-      "fast-agent": {
-        "model": "gpt-4o",
-        "temperature": 0.5     // Set explicitly
-        // MaxTokens not set → use OpenAI default
-      },
-      "creative-agent": {
-        "model": "claude-3-5-sonnet",
-        // Both MaxTokens and Temperature use Anthropic defaults
-      }
-    }
-  }
-}
-```
-
 ### What requires a restart
 
 | Setting | Reason |
 |---------|--------|
-| `Gateway.Host` / `Gateway.Port` | Kestrel bind address is set at startup |
-| `ExtensionsPath` | Extension assemblies are loaded once at startup |
+| `gateway.listenUrl` | Kestrel bind address is set at startup |
+| `gateway.extensionLoader.*` | Extension discovery and loading occur during startup |
 
 ### Activity Stream Notification
 
@@ -2076,21 +2049,14 @@ public class CopilotExtensionRegistrar : IExtensionRegistrar
 
 ### Extension Config Keys
 
-Configuration keys in `Providers`, `Channels`, `Tools.Extensions`, and `Tools.McpServers` must match the folder name under `extensions/{type}/{name}/`.
-
-**Examples:**
-- Config key `"copilot"` → loads from `extensions/providers/copilot/`
-- Config key `"telegram"` → loads from `extensions/channels/telegram/`
-- Config key `"github"` → loads from `extensions/tools/github/`
-
-Keys are **case-insensitive** for matching but should use kebab-case by convention.
+Do not apply one naming rule to unrelated extension systems. LLM provider keys are model-registry provider-instance identities and are consumed by the built-in provider registration in `Program.cs`; they do not load folders under `extensions/providers`. Channel, tool, and extension-owned configuration follows the contract of that extension and may use its registration ID. Consult the owning extension guide before creating a key.
 
 ### Extension-Specific Configuration
 
-Extension-specific config is placed in `Tools.Extensions`:
-
-
-Extensions access their config from the DI container or from the main `BotNexusConfig`.
+Extension-specific configuration lives at the scope owned by that extension. World extensions use
+`world.extensions`, gateway extensions use `gateway.extensions`, and agent extensions use
+`agents.<id>.extensions`. The extension binds its own value from the contributed configuration or
+DI registration. The older tool-scoped extension bag and root configuration class are not current contracts.
 
 ---
 
@@ -2275,7 +2241,7 @@ Templates can be defined in three ways:
    - **`.prompt.md`** (recommended for multi-line, human-authored prompts) — YAML front matter + Markdown body for readable content
    - **`.prompt.json`** (supported for compatibility and machine-generated templates) — Single-file JSON format
 
-The CLI merges all sources when listing or rendering templates. When both `foo.prompt.md` and `foo.prompt.json` exist with the same name, `.prompt.md` takes precedence.
+BotNexus resolves templates for the selected agent in this precedence order: workspace, agent, shared, then configuration. A higher-precedence template with the same name shadows the lower-precedence definition. Within one file directory, `foo.prompt.md` takes precedence over `foo.prompt.json`. The CLI and desktop picker use this same effective catalogue; the picker shows the winning source without exposing file paths or template bodies.
 
 **Sample Templates:** The CLI ships bundled sample prompt files. Run `botnexus prompt create samples` to copy them into `~/.botnexus/prompts/`, then modify them for your workflow.
 
@@ -2403,6 +2369,12 @@ Parameters are declared using `{{name}}` placeholders in the template body. The 
 - `required: true` — Parameter must be supplied by caller if no default is set
 - `required: false` — Parameter is optional; renders as empty string if missing
 - `default` — Fallback value when caller does not supply it
+
+### Insert from the desktop composer
+
+In the desktop inline or expanded composer, choose **Templates**, search the effective catalogue, enter parameter values, and select **Preview**. The preview is the exact text the gateway renderer will produce. **Insert** replaces the current textarea selection, or inserts at a collapsed caret, while preserving the rest of the draft, its line endings, attachments, and current delivery intent. Insertion is a normal textarea edit, so browser undo restores the previous draft.
+
+**Insert never dispatches a message.** You can edit the inserted text and must still use the composer's normal **Send**, **Steer**, **Follow Up**, or **Redirect** action. This differs from `botnexus prompt run`, which renders the template and immediately starts an agent run.
 
 ### Examples
 
@@ -2604,10 +2576,10 @@ botnexus config set gateway.defaultAgentId assistant
 botnexus config set version 1
 botnexus config set agents.planner.provider openai
 botnexus config set agents.planner.model gpt-4-turbo
-botnexus config set agents.planner.systemPromptFiles '["planner-soul.md"]'
+# Put planner instructions in the planner workspace's AGENTS.md or SOUL.md.
 botnexus config set agents.writer.provider openai
 botnexus config set agents.writer.model gpt-4o
-botnexus config set agents.writer.systemPromptFiles '["writer-soul.md"]'
+# Put writer instructions in the writer workspace's AGENTS.md or SOUL.md.
 botnexus config set providers.openai.apiKey sk-...
 botnexus config set providers.openai.defaultModel gpt-4-turbo
 botnexus config set gateway.defaultAgentId planner
@@ -2623,11 +2595,6 @@ botnexus config set providers.copilot.defaultModel gpt-4o
 botnexus config set channels.telegram.botToken 123456789:ABCdef...
 botnexus config set channels.telegram.agentId researcher
 botnexus config set channels.telegram.allowedUserIds '[12345]'
-botnexus config set channels.discord.enabled true
-botnexus config set channels.discord.settings.botToken xoxp-...
-botnexus config set channels.slack.enabled true
-botnexus config set channels.slack.settings.botToken xoxb-...
-botnexus config set channels.slack.settings.signingSecret 8f742231b91ee1522d...
 botnexus config set gateway.listenUrl http://0.0.0.0:5005
 botnexus config set gateway.defaultAgentId researcher
 botnexus config set apiKey gateway-secret-key
@@ -2683,10 +2650,10 @@ export BOTNEXUS_API_KEY="$(openssl rand -hex 32)"
 
 ### Extension Not Loading
 
-1. Verify folder structure matches config key: `extensions/{type}/{name}/`
-2. Check file extension matches platform (.dll on Windows, .so on Linux)
-3. Verify `Enabled` flag in config (especially for channels)
-4. Check `BotNexusConfig.ExtensionsPath` points to correct directory
+1. Run `botnexus plugin list` and inspect the extension's reported state.
+2. Verify the manifest entry assembly and compatibility metadata match the installed artifact.
+3. Verify the extension is enabled at its documented configuration scope.
+4. Inspect gateway startup diagnostics for discovery, signature, compatibility, or registration failures.
 
 ---
 

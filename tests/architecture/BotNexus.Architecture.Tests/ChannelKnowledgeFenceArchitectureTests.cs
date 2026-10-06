@@ -130,11 +130,7 @@ public sealed class ChannelKnowledgeFenceArchitectureTests : ArchitectureTest
         new("R5", Path.Combine("gateway", "BotNexus.Gateway", "GatewayHost.cs"),
             "direct SendStreamDeltaAsync/SendStreamEventAsync/SendAsync from the agent loop", "#2087"),
 
-        // Session lifecycle notifications delivered by direct adapter send.
-        new("R5", Path.Combine("gateway", "BotNexus.Gateway", "Sessions", "InterruptedTurnNotificationService.cs"),
-            "direct adapter SendAsync for the interrupted-turn notice", "#2088"),
-        new("R5", Path.Combine("gateway", "BotNexus.Gateway", "Sessions", "SessionCompactionCoordinator.cs"),
-            "direct adapter SendAsync for the compaction notice", "#2088"),
+        // Session lifecycle notifications still delivered by direct adapter send.
 
         // Legacy direct delivery / outbound binding fan-out.
         new("R5", Path.Combine("gateway", "BotNexus.Gateway", "OutboundResponseDeliverer.cs"),

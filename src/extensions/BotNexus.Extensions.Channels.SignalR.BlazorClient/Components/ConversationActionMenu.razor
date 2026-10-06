@@ -1,0 +1,136 @@
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="conversation-action-context-target" data-testid="conversation-action-context-target"
+     tabindex="@(ChildContent is null ? null : "0")"
+     @oncontextmenu="OpenFromContextMenu" @oncontextmenu:preventDefault="true"
+     @onkeydown="HandleTargetKeyDown">
+    @ChildContent
+    @if (Actions.Count > 0)
+    {
+        <button type="button" class="conversation-actions-trigger" data-testid="conversation-actions-trigger"
+                @ref="_trigger" aria-label="More conversation actions" aria-haspopup="menu"
+                aria-expanded="@(_open ? "true" : "false")" @onclick="Toggle">
+            <span aria-hidden="true">&#x22EF;</span>
+        </button>
+    }
+</div>
+
+@if (_open)
+{
+    <button type="button" class="conversation-action-menu-dismiss" data-testid="conversation-action-menu-dismiss"
+            aria-label="Dismiss conversation actions" @onclick="Close"></button>
+    <div class="conversation-action-menu" data-testid="conversation-action-menu" role="menu" tabindex="-1"
+         @ref="_menu" style="left:@(_x)px;top:@(_y)px" @onkeydown="HandleMenuKeyDown">
+        @for (var i = 0; i < Actions.Count; i++)
+        {
+            var index = i;
+            var action = Actions[index];
+            <button type="button" role="menuitem" tabindex="@(index == _activeIndex ? "0" : "-1")"
+                    class="conversation-action-menu-item @(action.IsDestructive ? "destructive" : null)"
+                    data-action-id="@action.Id"
+                    data-section-id="@(action.Id.StartsWith("move-", StringComparison.Ordinal) && action.Id != "move-none" ? action.Id[5..] : null)"
+                    @onclick="() => InvokeAction(action)">@action.Label</button>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ConversationActionDefinition> Actions { get; set; } = [];
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private ElementReference _trigger;
+    private ElementReference _menu;
+    private DotNetObjectReference<ConversationActionMenu>? _reference;
+    private bool _open;
+    private bool _focusMenu;
+    private int _activeIndex;
+    private double _x;
+    private double _y;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_open || !_focusMenu)
+            return;
+        _focusMenu = false;
+        _reference ??= DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("conversationActionMenu.open", _menu, _reference);
+        await JS.InvokeVoidAsync("conversationActionMenu.focusItem", _menu, _activeIndex);
+    }
+
+    private void Toggle(MouseEventArgs args)
+    {
+        if (_open) { Close(); return; }
+        Open(args.ClientX, args.ClientY);
+    }
+
+    private void OpenFromContextMenu(MouseEventArgs args) => Open(args.ClientX, args.ClientY);
+
+    private void Open(double x, double y)
+    {
+        if (Actions.Count == 0) return;
+        _x = x;
+        _y = y;
+        _activeIndex = 0;
+        _open = true;
+        _focusMenu = true;
+    }
+
+    private void HandleTargetKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key is "ContextMenu" || (args.ShiftKey && args.Key == "F10"))
+            Open(0, 0);
+    }
+
+    private async Task HandleMenuKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") { await CloseAndRestoreFocus(); return; }
+        if (args.Key is "ArrowDown" or "ArrowUp" or "Home" or "End")
+        {
+            _activeIndex = args.Key switch
+            {
+                "ArrowDown" => (_activeIndex + 1) % Actions.Count,
+                "ArrowUp" => (_activeIndex - 1 + Actions.Count) % Actions.Count,
+                "Home" => 0,
+                _ => Actions.Count - 1
+            };
+            await JS.InvokeVoidAsync("conversationActionMenu.focusItem", _menu, _activeIndex);
+            return;
+        }
+        if (args.Key is "Enter" or " ")
+            await InvokeAction(Actions[_activeIndex]);
+    }
+
+    private async Task InvokeAction(ConversationActionDefinition action)
+    {
+        _open = false;
+        await action.Invoke();
+        await JS.InvokeVoidAsync("conversationActionMenu.focus", _trigger);
+    }
+
+    public void Close() => _open = false;
+
+    [JSInvokable]
+    public async Task DismissFromBrowser(string reason)
+    {
+        if (!_open) return;
+        _open = false;
+        await InvokeAsync(StateHasChanged);
+        await JS.InvokeVoidAsync("conversationActionMenu.focus", _trigger);
+    }
+
+    private async Task CloseAndRestoreFocus()
+    {
+        _open = false;
+        await JS.InvokeVoidAsync("conversationActionMenu.focus", _trigger);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_reference is not null)
+        {
+            try { await JS.InvokeVoidAsync("conversationActionMenu.close"); } catch { }
+            _reference.Dispose();
+        }
+    }
+}

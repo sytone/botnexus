@@ -147,6 +147,28 @@ public sealed class SqliteMemoryStoreVectorScanTruncationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SearchWithReport_VectorScanExcludesExpiredEntries()
+    {
+        var vectors = new Dictionary<string, float[]>
+        {
+            ["query text"] = [1f, 0f, 0f, 0f],
+            ["expired semantic note"] = [1f, 0f, 0f, 0f],
+            ["live semantic note"] = [1f, 0f, 0f, 0f]
+        };
+        await using var store = CreateStore(Embeddings(vectors), maxScanRows: 10);
+        await store.InitializeAsync();
+        var now = DateTimeOffset.UtcNow;
+        await store.InsertAsync(Entry("expired", "expired semantic note", now) with { ExpiresAt = now.AddMinutes(-1) });
+        await store.InsertAsync(Entry("live", "live semantic note", now));
+
+        var result = await store.SearchWithReportAsync("query text", 10);
+
+        Assert.DoesNotContain(result.Entries, scored => scored.Entry.Id == "expired");
+        Assert.Contains(result.Entries, scored => scored.Entry.Id == "live");
+        Assert.Equal(1, result.VectorScan.RowsScanned);
+    }
+
+    [Fact]
     public async Task SearchWithReport_NoCeilingConfigured_ReportsCompleteWithNoCeiling()
     {
         var vectors = new Dictionary<string, float[]>

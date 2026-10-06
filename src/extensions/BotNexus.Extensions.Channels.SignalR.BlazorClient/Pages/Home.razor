@@ -80,9 +80,10 @@ else
     {
         get
         {
-            if (Store.ActiveAgentId is not { Length: > 0 } activeAgentId)
+            if (string.IsNullOrWhiteSpace(AgentId))
                 return "BotNexus";
 
+            var activeAgentId = Uri.UnescapeDataString(AgentId);
             var agent = Store.GetAgent(activeAgentId);
             if (agent is null)
                 return "BotNexus";
@@ -91,8 +92,8 @@ else
                 ? System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(activeAgentId.Replace("-", " "))
                 : agent.DisplayName;
 
-            if (agent.ActiveConversationId is not { Length: > 0 } convId ||
-                !agent.Conversations.TryGetValue(convId, out var conv) ||
+            if (string.IsNullOrWhiteSpace(ConversationId) ||
+                !agent.Conversations.TryGetValue(Uri.UnescapeDataString(ConversationId), out var conv) ||
                 string.IsNullOrWhiteSpace(conv.Title))
             {
                 return $"{agentLabel} - BotNexus";
@@ -152,7 +153,7 @@ else
     /// when it must stay put. Warm circuits answer from this circuit's per-agent MRU; a COLD circuit
     /// (hard refresh, empty MRU) falls back to server state via
     /// <see cref="PortalListOrdering.ResolveColdStartConversation"/> instead of leaving every
-    /// component below to consult the ambient <c>AgentState.ActiveConversationId</c> that #3064 exists
+    /// component below to consult the ambient <c>deleted per-agent conversation state</c> that #3064 exists
     /// to stop consulting.
     /// </summary>
     /// <remarks>
@@ -226,7 +227,7 @@ else
             if (routeConversationId is null)
             {
                 // #3064 AC2/AC3: an agent-only route names no conversation, so every component below
-                // would have to resolve identity ambiently from AgentState.ActiveConversationId.
+                // would have to resolve identity ambiently from deleted per-agent conversation state.
                 // Resolve it ONCE here instead, from this circuit's per-agent MRU, and redirect to the
                 // canonical explicit shape so the URL is the single source of rendered identity.
                 // replace:true is load-bearing: a pushed entry would leave the redirecting route in
@@ -263,8 +264,11 @@ else
             // warm MRU entry (the MRU is not consulted at all on this branch).
             Mru.Record(routeAgentId, routeConversationId);
 
-            if (!string.Equals(agent.ActiveConversationId, routeConversationId, StringComparison.Ordinal))
+            if (Store is not IDisplayedConversation displayed
+                || !displayed.IsConversationDisplayed(routeAgentId, routeConversationId))
+            {
                 await Interaction.SelectConversationAsync(routeAgentId, routeConversationId);
+            }
 
             _appliedRouteKey = routeKey;
         }

@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tests.TestUtils;
 using BotNexus.Agent.Core.Types;
@@ -56,20 +57,20 @@ public class AgentLoopRunnerTests
         transformedSnapshots.Distinct(StringComparer.Ordinal).ShouldHaveSingleItem();
     }
 
-    private static AgentLoopConfig CreateConfig(TransformContextDelegate transformContext)
+    private static AgentLoopConfig CreateConfig(AgentContextTransformer transformContext)
     {
         return new AgentLoopConfig(
             Model: TestHelpers.CreateTestModel("test-api-retry"),
             LlmClient: TestHelpers.CreateLlmClient(),
-            ConvertToLlm: (messages, _) => Task.FromResult<IReadOnlyList<Message>>(ToProviderMessages(messages)),
-            TransformContext: transformContext,
-            GetApiKey: (_, _) => Task.FromResult<string?>(null),
-            GetSteeringMessages: null,
-            GetFollowUpMessages: null,
+            ProviderMessageTransformer: (messages, _) => Task.FromResult<IReadOnlyList<Message>>(ToProviderMessages(messages)),
+            AgentContextTransformer: transformContext,
+            ProviderExecutionOptionsProvider: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
+            SteeringMessageProvider: null,
+            FollowUpMessageProvider: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
-            BeforeToolCall: null,
-            AfterToolCall: null,
-            GenerationSettings: new SimpleStreamOptions());
+            ToolExecutionPolicy: null,
+            ToolResultTransformer: null,
+            GenerationSettings: new GenerationOptions());
     }
 
     private static IReadOnlyList<Message> ToProviderMessages(IReadOnlyList<AgentMessage> messages)

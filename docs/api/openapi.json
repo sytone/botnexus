@@ -720,10 +720,6 @@
             "type": "string",
             "nullable": true
           },
-          "systemPromptFile": {
-            "type": "string",
-            "nullable": true
-          },
           "toolIds": {
             "type": "array",
             "items": {

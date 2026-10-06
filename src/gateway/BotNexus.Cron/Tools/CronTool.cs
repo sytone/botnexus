@@ -542,7 +542,8 @@ public sealed class CronTool(
             var runs = statuses is null
                 ? await cronStore.GetRunHistoryAsync(jobId, limit, cancellationToken).ConfigureAwait(false)
                 : await cronStore.GetRecentRunsAsync([jobId], statuses, limit, cancellationToken).ConfigureAwait(false);
-            return TextResult(JsonSerializer.Serialize(runs, JsonOptions));
+            var projectedRuns = await scheduler.GetRunHealthAsync(runs, cancellationToken).ConfigureAwait(false);
+            return TextResult(JsonSerializer.Serialize(projectedRuns, JsonOptions));
         }
 
         // The cross-job scope is derived by applying the SAME CanManage rule the per-job path
@@ -555,7 +556,8 @@ public sealed class CronTool(
             .ToList();
 
         var recent = await cronStore.GetRecentRunsAsync(manageable, statuses, limit, cancellationToken).ConfigureAwait(false);
-        return TextResult(JsonSerializer.Serialize(recent, JsonOptions));
+        var projectedRecent = await scheduler.GetRunHealthAsync(recent, cancellationToken).ConfigureAwait(false);
+        return TextResult(JsonSerializer.Serialize(projectedRecent, JsonOptions));
     }
 
     /// <summary>
@@ -657,6 +659,7 @@ public sealed class CronTool(
         CronRunStatus.Error,
         CronRunStatus.TimedOut,
         CronRunStatus.NoToolCalls,
+        CronRunStatus.Incomplete,
         // #3161: a run whose output reached nobody is exactly what the operator asking 'what broke'
         // needs to see - it is the failure shape that used to be invisible entirely.
         CronRunStatus.DeliveryFailed,

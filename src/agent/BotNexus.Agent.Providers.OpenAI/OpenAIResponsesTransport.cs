@@ -35,7 +35,7 @@ public static class OpenAIResponsesTransport
                 stream, reader, model, options, profileApi, logger, emitError,
                 onParsedEvent: null,
                 resolveConfiguredServiceTier: static o => o is OpenAIResponsesOptions ro ? ro.ServiceTier : null,
-                ct),
+                ct, secretRedactor),
         DecorateHeaders: static (request, model, messages, _) =>
         {
             if (string.Equals(model.Provider, "github-copilot", StringComparison.OrdinalIgnoreCase))

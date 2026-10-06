@@ -33,6 +33,45 @@ public sealed class SubAgentTurnBudgetTests
         result.Status.ShouldBe(SubAgentStatus.BudgetExhausted);
     }
 
+    /// <summary>
+    /// #4286: the typed interrupted response remains useful when the hard turn ceiling wins.
+    /// Child narration stays explicitly unverified; successful tool output is projected separately.
+    /// </summary>
+    [Fact]
+    public async Task RunSubAgent_BudgetExhausted_PreservesStructuredPartialEvidence()
+    {
+        var partial = new AgentResponse
+        {
+            Content = "Found the relevant manager boundary; implementation remains.",
+            RunUsage = new AgentResponseUsage(InputTokens: 120, OutputTokens: 30, CacheRead: 10),
+            TurnCount = 2,
+            ToolCalls =
+            [
+                new AgentToolCallInfo("read-1", "read", false, ResultContent: "DefaultSubAgentManager.cs:1398"),
+                new AgentToolCallInfo("write-1", "write", false, IsIncomplete: true)
+            ]
+        };
+        var handle = new TurnDrivingHandle(turnsToAttempt: 50, interruptedResponse: partial);
+        var manager = CreateManager(handle, out _);
+
+        var result = await SpawnAndAwaitTerminalAsync(manager, maxTurns: 2);
+
+        result.Status.ShouldBe(SubAgentStatus.BudgetExhausted);
+        result.PartialResult.ShouldNotBeNull();
+        result.PartialResult.Completion.ShouldBe(SubAgentCompletion.Partial);
+        result.PartialResult.StopReason.ShouldBe(SubAgentStopReason.TurnLimit);
+        result.PartialResult.Summary.ShouldBe(partial.Content);
+        result.PartialResult.SummaryIsVerified.ShouldBeFalse();
+        result.PartialResult.TurnsUsed.ShouldBe(2);
+        result.PartialResult.Usage.ShouldBe(partial.RunUsage);
+        result.PartialResult.VerifiedEvidence.ShouldHaveSingleItem().ToolCallId.ShouldBe("read-1");
+        result.PartialResult.ActionsTaken.Count.ShouldBe(2);
+        result.PartialResult.ActionsTaken.Single(action => action.ToolCallId == "write-1").Completed.ShouldBeFalse();
+        result.ResultSummary.ShouldNotBeNull();
+        result.ResultSummary.ShouldContain("[partial:turn_limit]");
+        result.ResultSummary.ShouldContain(partial.Content);
+    }
+
     /// <summary>AC2: budget exhaustion is a DIFFERENT disposition from a wall-clock timeout.</summary>
     [Fact]
     public async Task RunSubAgent_BudgetExhausted_DispositionDiffersFromTimeout()
@@ -105,6 +144,20 @@ public sealed class SubAgentTurnBudgetTests
 
         result.Status.ShouldBe(SubAgentStatus.BudgetExhausted);
         result.TurnsUsed.ShouldBe(5);
+    }
+
+    /// <summary>Late callbacks from a cancellation-ignoring handle cannot over-report the hard ceiling.</summary>
+    [Fact]
+    public async Task RunSubAgent_LateObserverCallbacks_TurnsUsedNeverExceedsMaxTurns()
+    {
+        var handle = new TurnDrivingHandle(turnsToAttempt: 50, ignoreCancellation: true);
+        ISubAgentManager manager = CreateManager(handle, out _);
+
+        var result = await SpawnAndAwaitTerminalAsync(manager, maxTurns: 3);
+
+        result.TurnsUsed.ShouldBe(3);
+        result.TurnsUsed.ShouldBeLessThanOrEqualTo(3);
+        handle.ObservedTurns.ShouldBeGreaterThan(3);
     }
 
     /// <summary>AC5: the #1344 clamp is intact — an above-ceiling request is clamped and warns.</summary>
@@ -205,11 +258,15 @@ public sealed class SubAgentTurnBudgetTests
     }
 
     /// <summary>
-    /// A handle that drives a deterministic number of turns through the <c>ObserveTurns</c> seam.
-    /// It fires turn notifications in a tight loop with no timing dependency and stops as soon as
-    /// its prompt token is cancelled, which is exactly what the budget enforcement does.
+    /// A handle that drives deterministic exploratory turns through the <c>ObserveTurns</c> seam,
+    /// then counts the manager's reserved text-only finalization call as the last model turn. It has
+    /// no timing dependency and stops exploration as soon as its budget token is cancelled.
     /// </summary>
-    private sealed class TurnDrivingHandle(int turnsToAttempt, bool hangUntilCancelled = false) : IAgentHandle
+    private sealed class TurnDrivingHandle(
+        int turnsToAttempt,
+        bool hangUntilCancelled = false,
+        AgentResponse? interruptedResponse = null,
+        bool ignoreCancellation = false) : IAgentHandle
     {
         private readonly List<Action> _observers = [];
         private int _observedTurns;
@@ -243,7 +300,7 @@ public sealed class SubAgentTurnBudgetTests
 
             for (var i = 0; i < turnsToAttempt; i++)
             {
-                if (cancellationToken.IsCancellationRequested)
+                if (cancellationToken.IsCancellationRequested && !ignoreCancellation)
                     break;
 
                 Interlocked.Increment(ref _observedTurns);
@@ -262,7 +319,11 @@ public sealed class SubAgentTurnBudgetTests
                 await Task.Yield();
             }
 
-            cancellationToken.ThrowIfCancellationRequested();
+            if (cancellationToken.IsCancellationRequested && interruptedResponse is not null)
+                throw new AgentPromptInterruptedException(interruptedResponse, cancellationToken);
+
+            if (!ignoreCancellation)
+                cancellationToken.ThrowIfCancellationRequested();
             return new AgentResponse { Content = "Completed the work." };
         }
 
@@ -270,6 +331,15 @@ public sealed class SubAgentTurnBudgetTests
             BotNexus.Gateway.Abstractions.Models.AgentUserMessage message,
             CancellationToken cancellationToken = default)
             => PromptAsync(message.Content, cancellationToken);
+
+        public Task<AgentResponse> PromptWithoutToolsAsync(
+            string message,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _observedTurns);
+            return Task.FromResult(new AgentResponse { Content = string.Empty });
+        }
 
         public IAsyncEnumerable<AgentStreamEvent> StreamAsync(string message, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();

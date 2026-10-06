@@ -121,6 +121,57 @@ for removing the fence-token check. That historical fence-mutation evidence is d
 the current append-preservation assertion; updating this guide does not constitute a new test
 or mutation run.
 
+### Cron aggregate (worked example)
+
+Cron has no broad `UpdateAsync`/full-row replacement entry point. The current source contract is
+`UpdateDefinitionAsync`, a `NarrowPatch` over caller-authored definition columns. Scheduler
+bookkeeping, run-history rows and the conversation reservation remain separate writes.
+
+| Entry point | Class | Owns |
+| --- | --- | --- |
+| `CreateAsync` | Create | one new `cron_jobs` row; the store initializes store-owned timestamps |
+| `UpdateDefinitionAsync` | NarrowPatch | definition columns, plus a store-owned schedule-activation stamp when schedule/time-zone inputs change |
+| `SetNextRunAtAsync` / `SetBackoffUntilAsync` | NarrowPatch | one scheduler bookkeeping column each |
+| `RecordRunFinalizationAsync` | NarrowPatch | `last_run_at`, `last_run_status`, `last_run_error` |
+| `TrySetConversationIdAsync` | CompareAndSwap | `conversation_id`, only while it is null |
+| `RecordRunStartAsync` | Create | one `cron_runs` row and the job's `last_run_*` bookkeeping |
+| `TryRecordMissedRunAsync` | Merge | one idempotent missed-run history row per scheduled occurrence |
+| `RecordRunSessionAsync` / `RecordRunCompleteAsync` | NarrowPatch | owned columns of one run-history row |
+| `DeleteAsync` / `PurgeRunsOlderThanAsync` | NarrowPatch | predicate-selected job/run rows |
+
+The executable `CronWriteInventoryTests` reflects over `ICronStore`, asserts a non-empty exact
+mutation set in both directions, and rejects stale inventory rows. This deliberately classifies
+`UpdateDefinitionAsync`; there is no obsolete broad `UpdateAsync` to document or test.
+
+`CronLostUpdateSeamTests` uses the real `SqliteCronStore` and `LostUpdateScenario<CronJob>` to take
+a detached job snapshot, commit run finalization or conversation CAS through an independent store,
+then apply a stale definition update. Both writes compose: the definition edit is accepted while
+the concurrently committed bookkeeping or conversation winner survives. Verification uses a fresh
+store against the same on-disk database, and no step relies on a sleep.
+
+### Webhook registrations and runs
+
+Webhook registration edits are narrow patches, not full-row replacements. Definition changes own
+only `label`, `default_response_mode`, and `enabled`; first-use bookkeeping and conversation pinning
+remain independent writes. Run updates similarly exclude immutable request identity and intent.
+
+| Entry point | Class | Owns |
+| --- | --- | --- |
+| registration `CreateAsync` | Create | one new registration row |
+| registration `UpdateAsync` | NarrowPatch | label, default response mode, enabled |
+| `TouchLastUsedAsync` | NarrowPatch | `last_used_at` only |
+| `TryPinConversationAsync` | CompareAndSwap | `pinned_conversation_id`, only while null |
+| registration `DeleteAsync` | NarrowPatch | one selected registration row |
+| run `CreateAsync` | Create | one new run row |
+| run `UpdateAsync` | NarrowPatch | mutable execution outcome columns; immutable request fields are excluded |
+| `PurgeOlderThanAsync` | NarrowPatch | predicate-selected terminal run rows |
+
+`WebhookWriteInventoryTests` reflects over both store interfaces and requires a non-empty exact
+classification in both directions. `WebhookLostUpdateSeamTests` takes a detached registration
+snapshot, commits either the conversation CAS or last-used bookkeeping through an independent real
+SQLite store, and then applies a stale registration edit. The accepted edit must preserve the
+concurrently committed state when read through a fresh store.
+
 ## The harness
 
 `tests/persistence/BotNexus.Persistence.Seam.Tests` provides two reusable pieces:
@@ -178,7 +229,27 @@ knowledge; a harness that guessed it would quietly weaken assertions.
 
 ## Scope today
 
-Conversations and **sessions**. Cron jobs, webhook registrations/runs and configuration writers
-are still uninventoried and untested, and remain tracked on issue #3327 along with an architecture
-test that flags new broad aggregate updates in high-risk services. Each domain ships as its own
-PR; #2130 closes only when all of them are covered.
+Conversations, **sessions**, **cron jobs/runs**, and **webhook registrations/runs**. Configuration
+writers remain uninventoried and untested, and issue #3327 also tracks an architecture test that
+flags new broad aggregate updates in high-risk services. Each domain ships as its own PR; #2130
+closes only when all of them are covered.
+
+
+## Governed agent proposal ledger
+
+`IAgentProposalStore` is the repository-owned durable queue and audit boundary for governed agent
+create/update proposals. Each row carries the target `AgentId`, the **complete** proposed
+`AgentDescriptor` JSON, justification, proposer and proposal timestamp, plus pending/approved/rejected
+review state. Review events are stored in an append-only child table.
+
+`SqliteAgentProposalStore` follows the shared SQLite contract: connections come from
+`SqliteConnectionFactory` (per-open busy timeout), journal mode comes from filesystem-aware
+`SqliteWalMaintenance`, and schema version 1 is recorded through `SqliteSchemaMigrator`. The gateway
+registers the ledger as `agent-proposals.sqlite` under `BotNexusHome.DataPath`, the writable runtime
+data location.
+
+The only terminal mutation is a compare-and-swap update guarded by `WHERE status = 'pending'`.
+Updating the proposal and appending its audit event share one transaction, so repeated or concurrent
+reviews return the first stored decision and cannot replace it. This store deliberately has no agent
+registry, configuration writer, or config-store dependency: persistence is not approval application,
+and applying an approved descriptor belongs to the lifecycle layer.

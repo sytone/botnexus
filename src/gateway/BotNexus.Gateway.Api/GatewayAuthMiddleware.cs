@@ -13,7 +13,7 @@ namespace BotNexus.Gateway.Api;
 /// </summary>
 public sealed class GatewayAuthMiddleware
 {
-    internal const string CallerIdentityItemKey = "BotNexus.Gateway.CallerIdentity";
+    internal const string CallerIdentityItemKey = GatewayAuthHttpContext.CallerIdentityItemKey;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -154,8 +154,11 @@ public sealed class GatewayAuthMiddleware
 
     private static async Task<string?> ExtractRequestedAgentIdAsync(HttpRequest request, CancellationToken cancellationToken)
     {
-        if (request.Query.TryGetValue("agent", out var agentQueryValue))
+        foreach (var queryName in new[] { "agent", "agentId" })
         {
+            if (!request.Query.TryGetValue(queryName, out var agentQueryValue))
+                continue;
+
             var agentId = agentQueryValue.ToString();
             if (!string.IsNullOrWhiteSpace(agentId))
                 return agentId;

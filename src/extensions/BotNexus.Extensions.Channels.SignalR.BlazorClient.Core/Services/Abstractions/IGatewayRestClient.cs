@@ -48,9 +48,34 @@ public interface IGatewayRestClient
         ConversationExportRequest request,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Downloads a single-session transcript.</summary>
+    Task<ExportDownload?> ExportSessionAsync(
+        string sessionId,
+        ConversationExportRequest request,
+        CancellationToken cancellationToken = default);
+
     /// <summary>GET /api/conversations/{conversationId}</summary>
     Task<ConversationResponseDto?> GetConversationAsync(
         string conversationId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Adds an address binding to a conversation and returns the persisted binding.</summary>
+    Task<ConversationBindingDto?> AddConversationBindingAsync(
+        string conversationId,
+        AddConversationBindingRequestDto request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Removes one binding from a conversation.</summary>
+    Task<bool> RemoveConversationBindingAsync(
+        string conversationId,
+        string bindingId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Moves one binding to another conversation owned by the same agent.</summary>
+    Task<ConversationBindingDto?> MoveConversationBindingAsync(
+        string conversationId,
+        string bindingId,
+        MoveConversationBindingRequestDto request,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -215,6 +240,18 @@ public interface IGatewayRestClient
     /// <summary>GET /api/sessions/{sessionId}/subagents — returns the live sub-agents for a session.</summary>
     Task<IReadOnlyList<SubAgentInfo>> ListSessionSubAgentsAsync(
         string sessionId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Lists the effective prompt-template catalogue for one agent.</summary>
+    Task<IReadOnlyList<PromptTemplateDescriptorDto>> GetPromptTemplatesAsync(
+        string agentId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Renders a named prompt template without dispatching it.</summary>
+    Task<PromptTemplateRenderResultDto> RenderPromptTemplateAsync(
+        string agentId,
+        string templateName,
+        IReadOnlyDictionary<string, string> parameters,
         CancellationToken cancellationToken = default);
 
     /// <summary>Current API base URL (set via Configure). Null if not yet configured.</summary>

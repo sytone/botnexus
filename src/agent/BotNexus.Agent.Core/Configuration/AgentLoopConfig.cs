@@ -1,4 +1,9 @@
 using BotNexus.Agent.Core.Diagnostics;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
+using BotNexus.Agent.Core.ExtensionPoints.ProviderExecution;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
@@ -10,22 +15,21 @@ namespace BotNexus.Agent.Core.Configuration;
 /// Defines the immutable runtime contract for a pi-mono compatible agent loop.
 /// </summary>
 /// <param name="Model">The model definition used for provider calls.</param>
-/// <param name="ConvertToLlm">Converts agent messages to provider chat messages before each LLM call.</param>
-/// <param name="TransformContext">Optional context transformer before provider invocation (defaults to identity passthrough).</param>
-/// <param name="GetApiKey">Resolves provider API keys on demand (called before each LLM invocation).</param>
-/// <param name="GetSteeringMessages">Provides steering messages when configured (drained at turn boundaries).</param>
-/// <param name="GetFollowUpMessages">Provides follow-up messages when configured (drained after runs complete).</param>
+/// <param name="LlmClient">The provider client used to stream model responses during runs.</param>
+/// <param name="ProviderMessageTransformer">Converts agent messages to provider chat messages before each LLM call.</param>
+/// <param name="AgentContextTransformer">Optional context transformer before provider invocation (defaults to identity passthrough).</param>
+/// <param name="ProviderExecutionOptionsProvider">Resolves provider execution policy on demand (called before each LLM invocation).</param>
+/// <param name="SteeringMessageProvider">Provides steering messages when configured (drained at turn boundaries).</param>
+/// <param name="FollowUpMessageProvider">Provides follow-up messages when configured (drained after runs complete).</param>
 /// <param name="ToolExecutionMode">Controls tool execution ordering (Sequential or Parallel).</param>
-/// <param name="BeforeToolAudit">Optional durable audit hook invoked before the policy-only tool-call hook.</param>
-/// <param name="BeforeToolCall">Optional pre-tool-call hook for validation and blocking.</param>
-/// <param name="BeforeToolCallTimeout">
-/// Wall-clock budget for the <paramref name="BeforeToolCall"/> hook (#2518). The hook is the
-/// pre-execution policy gate, so a hook that never returns would otherwise stall the whole turn.
-/// When the budget elapses the tool call is <em>blocked</em> (fail closed), never allowed through.
-/// Null means the loop default of 15 seconds; set to <see cref="System.Threading.Timeout.InfiniteTimeSpan"/>
-/// or a non-positive value to disable the budget (not recommended).
+/// <param name="ToolAuditGate">Optional durable audit gate with blocking authority, invoked before tool-execution policy.</param>
+/// <param name="ToolExecutionPolicy">Optional tool-execution policy for validation and blocking.</param>
+/// <param name="ToolExecutionPolicyTimeout">
+/// Cooperative tool-execution policy budget; null selects 15 seconds. Timeout fails closed,
+/// subject to host-suspend adjustment, but cannot forcibly interrupt an uncooperative callback.
+/// Set to <see cref="Timeout.InfiniteTimeSpan"/> or a non-positive value to disable.
 /// </param>
-/// <param name="AfterToolCall">Optional post-tool-call hook for result transformation.</param>
+/// <param name="ToolResultTransformer">Optional tool-result transformer applied after execution.</param>
 /// <param name="GenerationSettings">The generation settings for model calls (temperature, maxTokens, etc.).</param>
 /// <param name="MaxRetryDelayMs">
 /// Maximum delay in milliseconds for transient retry backoff, and the ceiling applied to a
@@ -35,29 +39,38 @@ namespace BotNexus.Agent.Core.Configuration;
 /// for as long as it asked, with no operator-visible bound. A null or non-positive value is treated as
 /// "use the default ceiling", so the delay is bounded on every path.
 /// </param>
-/// <param name="RetryRandomSource">
+/// <param name="RetryRandomnessProvider">
 /// Injectable randomness source in <c>[0,1]</c> for the transient-retry backoff jitter (#3035).
 /// Null uses <see cref="BotNexus.Agent.Providers.Core.Resilience.RetryJitter.DefaultRandomSource"/>.
 /// The seam exists so the jitter is deterministically testable rather than being untestable
 /// non-determinism: pinned to <c>0</c> the loop reproduces the historical 500/1000/2000ms sequence.
 /// </param>
 /// <param name="SkipInitialSteeringPoll">True to skip the first steering queue drain for this run.</param>
-/// <param name="ToolTimeout">Per-tool execution timeout. Null = no timeout (not recommended). Defaults to 120 seconds.</param>
+/// <param name="ToolTimeout">
+/// Loop-level tool-execution timeout; null disables this budget, while tool-declared defaults still apply.
+/// Supported caller-requested timeouts can extend a configured budget. AgentOptions supplies 120 seconds when unset.
+/// </param>
 /// <param name="ClaimAudit">
 /// Optional post-turn claim-auditor configuration (#1600). When null the auditor does not run.
 /// When provided and enabled, the agent's final message is audited for artifact-shaped claims that
-/// lack a backing tool call, and a <see cref="BotNexus.Agent.Core.Types.ClaimAuditEvent"/> is emitted on detection.
+/// lack a backing tool call, and a <see cref="ClaimAuditEvent"/> is emitted on detection.
 /// </param>
-/// <param name="MaybeCompactAsync">
-/// Optional best-effort auto-compaction hook (#1710/#4302). When set it is awaited before every
-/// provider turn, after any preceding tool batch and its results have completed, so both inner tool
-/// chains and outer follow-up iterations re-check the compaction threshold before growing further.
-/// A returned context replaces the loop's live snapshot. Failures are diagnosed and the loop
-/// continues to its bounded reactive overflow fallback. Null means no mid-loop re-check.
+/// <param name="ContextCompactionService">
+/// Optional auto-compaction service. When set it is awaited before every provider
+/// turn, after any preceding tool batch and its results have completed, so both inner tool chains and
+/// outer follow-up iterations re-check the compaction threshold before growing further. A returned
+/// context replaces the loop's live snapshot; a null result retains it. Hosts throw <see cref="ProactiveCompactionException"/>
+/// when compaction was required but failed; that typed failure blocks provider invocation. Other
+/// non-cancellation exceptions retain the optional best-effort behavior; cancellation propagates.
+/// Null means no mid-loop re-check.
 /// </param>
-/// <param name="OnDiagnostic">
-/// Optional non-fatal diagnostic sink. Used to surface hook-budget breaches (#2518) so a slow or
+/// <param name="DiagnosticObserver">
+/// Optional non-fatal diagnostic sink. Used to surface policy-budget breaches so a slow or
 /// wedged policy provider is diagnosable rather than silently stalling the loop.
+/// </param>
+/// <param name="SuspendDetector">
+/// Optional active-time clock used to distinguish policy-budget breaches from host suspension.
+/// Null uses HostSuspendDetector.Instance.
 /// </param>
 /// <param name="SuspensionRegistry">
 /// Optional provider-exhaustion suspension registry (#3015). When set, a non-transient exhaustion
@@ -80,18 +93,38 @@ namespace BotNexus.Agent.Core.Configuration;
 /// tool-result cap. This is a backstop <em>beneath</em> the existing per-tool caps, not a
 /// replacement for them.
 /// </param>
-/// <param name="SanitizeToolResultText">
-/// Optional host-owned sanitizer applied to finalized generic tool text after replacement hooks
+/// <param name="ToolResultTextTransformer">
+/// Optional host-owned sanitizer applied to finalized generic tool text after result transformation
 /// and before central budgeting and continuation retention (#4096).
 /// </param>
-/// <param name="EvaluateRunCompletion">
+/// <param name="ToolExecutionDecisionObserver">
+/// Optional observer reporting whether a validated, audited tool call will execute after policy evaluation.
+/// Observer exceptions are not swallowed by the executor.
+/// </param>
+/// <param name="SatelliteToolExecution">
+/// Optional satellite dispatch configuration; null executes tools locally. Classified remote-capable
+/// tools use its executor, and tools classified as unsupported return an error result.
+/// </param>
+/// <param name="RunCompletionPolicy">
 /// Optional authoritative host evaluation invoked before a normal run end. It may accept completion,
 /// park the run with a structured stop disposition, or require another bounded continuation turn.
 /// Null preserves ordinary simple-run behavior.
 /// </param>
 /// <param name="MaxCompletionContinuations">
-/// Maximum automatic turns added when <paramref name="EvaluateRunCompletion"/> reports actionable
+/// Maximum automatic turns added when <paramref name="RunCompletionPolicy"/> reports actionable
 /// work. Exhausting the bound records an incomplete outcome rather than successful completion.
+/// </param>
+/// <param name="CredentialInvalidationService">
+/// Optional host-owned credential invalidation seam. When set, one authentication rejection
+/// invalidates credentials, re-resolves provider execution options, and retries exactly once.
+/// </param>
+/// <param name="RecoveryCoordinator">
+/// Optional shared provider-recovery admission coordinator scoped by provider and auth profile.
+/// Null disables coordinated admission, not the loop's retry handling.
+/// </param>
+/// <param name="RecoveryAdmissionTimeout">
+/// Maximum wait for coordinated provider admission; null uses the effective retry-delay ceiling.
+/// Used only when RecoveryCoordinator is set. Admission failures and cancellation propagate to the run.
 /// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
@@ -100,38 +133,41 @@ namespace BotNexus.Agent.Core.Configuration;
 public record AgentLoopConfig(
     LlmModel Model,
     LlmClient LlmClient,
-    ConvertToLlmDelegate ConvertToLlm,
-    TransformContextDelegate? TransformContext,
-    GetApiKeyDelegate GetApiKey,
-    GetMessagesDelegate? GetSteeringMessages,
-    GetMessagesDelegate? GetFollowUpMessages,
+    ProviderMessageTransformer ProviderMessageTransformer,
+    AgentContextTransformer? AgentContextTransformer,
+    ProviderExecutionOptionsProvider ProviderExecutionOptionsProvider,
+    AgentMessageProvider? SteeringMessageProvider,
+    AgentMessageProvider? FollowUpMessageProvider,
     ToolExecutionMode ToolExecutionMode,
-    BeforeToolCallDelegate? BeforeToolCall,
-    AfterToolCallDelegate? AfterToolCall,
-    SimpleStreamOptions GenerationSettings,
+    ToolExecutionPolicy? ToolExecutionPolicy,
+    ToolResultTransformer? ToolResultTransformer,
+    GenerationOptions GenerationSettings,
     int? MaxRetryDelayMs = AgentLoopConfig.DefaultMaxRetryDelayMs,
     bool SkipInitialSteeringPoll = false,
     TimeSpan? ToolTimeout = null,
     ClaimAuditOptions? ClaimAudit = null,
-    Func<CancellationToken, Task<AgentContext?>>? MaybeCompactAsync = null,
-    TimeSpan? BeforeToolCallTimeout = null,
-    Action<string>? OnDiagnostic = null,
-    BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry? SuspensionRegistry = null,
+    Func<CancellationToken, Task<AgentContext?>>? ContextCompactionService = null,
+    TimeSpan? ToolExecutionPolicyTimeout = null,
+    Action<string>? DiagnosticObserver = null,
+    IProviderSuspensionRegistry? SuspensionRegistry = null,
     string? AuthProfile = null,
-    Func<double>? RetryRandomSource = null,
+    Func<double>? RetryRandomnessProvider = null,
     int? MaxToolOutputBytes = null,
-    BotNexus.Agent.Core.Loop.IHostSuspendDetector? SuspendDetector = null,
-    BeforeToolAuditDelegate? BeforeToolAudit = null,
-    ToolCallDispositionDelegate? OnToolCallDisposition = null,
-    Func<string, string>? SanitizeToolResultText = null,
+    IHostSuspendDetector? SuspendDetector = null,
+    ToolAuditGate? ToolAuditGate = null,
+    ToolExecutionDecisionObserver? ToolExecutionDecisionObserver = null,
+    Func<string, string>? ToolResultTextTransformer = null,
     BotNexus.Agent.Core.Tools.SatelliteToolExecutionOptions? SatelliteToolExecution = null,
-    EvaluateRunCompletionDelegate? EvaluateRunCompletion = null,
-    int MaxCompletionContinuations = 2)
+    RunCompletionPolicy? RunCompletionPolicy = null,
+    int MaxCompletionContinuations = 2,
+    CredentialInvalidationService? CredentialInvalidationService = null,
+    IProviderRecoveryCoordinator? RecoveryCoordinator = null,
+    TimeSpan? RecoveryAdmissionTimeout = null)
 {
     /// <summary>
-    /// Default wall-clock budget for the <see cref="BeforeToolCall"/> policy hook (#2518).
+    /// Default cooperative cancellation budget for the tool-execution policy.
     /// </summary>
-    public static readonly TimeSpan DefaultBeforeToolCallTimeout = TimeSpan.FromSeconds(15);
+    public static readonly TimeSpan DefaultToolExecutionPolicyTimeout = TimeSpan.FromSeconds(15);
 
     /// <summary>
     /// Default ceiling for transient retry backoff and for a server-supplied <c>Retry-After</c> (#3035).

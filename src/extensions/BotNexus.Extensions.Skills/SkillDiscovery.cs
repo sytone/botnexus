@@ -120,14 +120,27 @@ public static class SkillDiscovery
                 // outstanding findings are named individually by relative path and ruleId.
                 var scanSummary = SkillSecurityScanner.ScanDirectory(skillDir, fileSystem: fileSystem);
                 var outstanding = FindUnacknowledgedCriticalFindings(
-                    scanSummary, skill.Name, skillDir, fileSystem, securityAcknowledgements);
+                    scanSummary, skill.Name, skillDir, source, fileSystem, securityAcknowledgements);
 
                 if (outstanding.Count > 0)
                 {
-                    logger?.LogWarning(
-                        "Skill at '{SkillDir}' skipped: security scan found unacknowledged critical finding(s): {Findings}. " +
-                        "Record a scoped acknowledgement (skill + ruleId + file) to load it anyway.",
-                        skillDir, string.Join("; ", outstanding));
+                    foreach (var evidence in outstanding)
+                    {
+                        logger?.LogWarning(
+                            "Skill {SkillName} ({SkillScope}) blocked by {RuleId} {FindingSeverity} finding {ScannerFindingId} at {RelativePath}:{FindingLine}; scanner {ScannerVersion}, file {FileSha256}, revision {FindingId}, evidence {EvidenceStatus} ({EvidenceReason}).",
+                            evidence.Skill,
+                            evidence.Scope,
+                            evidence.RuleId,
+                            evidence.Severity,
+                            evidence.ScannerFindingId,
+                            evidence.RelativePath ?? "[missing]",
+                            evidence.Line,
+                            evidence.ScannerVersion,
+                            evidence.FileSha256,
+                            evidence.RevisionId ?? evidence.ScannerFindingId,
+                            evidence.IsComplete ? "complete" : "incomplete",
+                            evidence.MissingReason ?? "none");
+                    }
                     continue;
                 }
 
@@ -176,14 +189,15 @@ public static class SkillDiscovery
     /// That is the whole point of #3355 clause 3 — an acknowledgement records what a human
     /// actually reviewed, so it must not inherit approval for something they never saw.
     /// </remarks>
-    private static List<string> FindUnacknowledgedCriticalFindings(
+    private static List<SkillSecurityFindingEvidence> FindUnacknowledgedCriticalFindings(
         ScanSummary scanSummary,
         string skillName,
         string skillDir,
+        SkillSource source,
         IFileSystem fileSystem,
         IReadOnlyList<SkillSecurityAcknowledgement>? acknowledgements)
     {
-        var outstanding = new List<string>();
+        var outstanding = new List<SkillSecurityFindingEvidence>();
 
         foreach (var finding in scanSummary.Findings)
         {
@@ -194,10 +208,12 @@ public static class SkillDiscovery
 
             var acknowledged = acknowledgements is { Count: > 0 }
                 && acknowledgements.Any(ack => SkillSecurityAcknowledgements.IsAcknowledged(
-                    ack, skillName, relative, finding.RuleId, fileSystem, finding.File));
+                    ack, skillName, relative, finding.RuleId, finding.Severity,
+                    SkillSecurityScanner.ComputeFindingId(finding), fileSystem, finding.File));
 
             if (!acknowledged)
-                outstanding.Add($"{relative}:{finding.Line} ({finding.RuleId})");
+                outstanding.Add(SkillSecurityFindingEvidence.Create(
+                    skillName, source, skillDir, finding, fileSystem));
         }
 
         return outstanding;

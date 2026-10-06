@@ -198,6 +198,25 @@ public sealed class ResilientJsonConfigurationReloadTests : IDisposable
         Assert.Equal("http://localhost:5099", Bind().Gateway?.ListenUrl);
     }
 
+    [Fact]
+    public void RejectedReload_RetainsLastAcceptedRawDocument()
+    {
+        File.WriteAllText(ConfigPath, """
+            { "world": { "extensions": { "sample": { "value": "true" } } } }
+            """);
+        var root = new ConfigurationBuilder()
+            .AddResilientJsonFile(ConfigPath, optional: false, reloadOnChange: false, validatePlatformConfig: false)
+            .Build();
+
+        File.WriteAllText(ConfigPath, "{{ broken");
+        root.Reload();
+        var config = new PlatformConfig();
+        root.Bind(config);
+        new PlatformConfigPostConfigure(root).PostConfigure(Options.DefaultName, config);
+
+        config.World!.Extensions!["sample"].GetProperty("value").GetString().ShouldBe("true");
+    }
+
     /// <summary>
     /// Sanity: the fixture JSON really is malformed, so a failing assertion above cannot be an
     /// artefact of an accidentally-valid document.

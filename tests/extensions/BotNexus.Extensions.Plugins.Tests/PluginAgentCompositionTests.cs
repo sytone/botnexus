@@ -1,9 +1,12 @@
 using System.IO.Abstractions;
+using System.IO.Abstractions.TestingHelpers;
 using System.Text.Json;
+using BotNexus.Extensions.Plugins.Agents;
 using BotNexus.Extensions.Plugins.Api;
 using BotNexus.Extensions.Plugins.Lifecycle;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
 using BotNexus.Gateway.Hooks;
@@ -131,6 +134,37 @@ public sealed class PluginAgentCompositionTests : IDisposable
     {
         if (Directory.Exists(_root))
             Directory.Delete(_root, recursive: true);
+    }
+
+    private sealed class StubWorkspaceManager(string workspacePath) : IAgentWorkspaceManager
+    {
+        public Task<AgentWorkspace> LoadWorkspaceAsync(string agentName, CancellationToken ct = default)
+            => Task.FromResult(new AgentWorkspace(
+                agentName,
+                Soul: string.Empty,
+                Identity: string.Empty,
+                User: string.Empty,
+                Memory: string.Empty));
+
+        public Task SaveMemoryAsync(string agentName, string content, CancellationToken ct = default)
+            => Task.CompletedTask;
+
+        public Task SaveMemoryAsync(
+            string agentName,
+            string? filePath,
+            string content,
+            CancellationToken ct = default)
+            => Task.CompletedTask;
+
+        public Task SaveMemoryAsync(
+            string agentName,
+            string? filePath,
+            string content,
+            string? memoryPathOverride,
+            CancellationToken ct = default)
+            => Task.CompletedTask;
+
+        public string GetWorkspacePath(string agentName) => workspacePath;
     }
 
     private sealed class RecordingAgentRegistry : IAgentRegistry

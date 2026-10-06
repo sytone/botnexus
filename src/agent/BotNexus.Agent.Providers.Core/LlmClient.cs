@@ -90,6 +90,21 @@ public sealed class LlmClient
         }
     }
 
+    /// <summary>Executes a semantic generation using separate provider execution policy.</summary>
+    public LlmStream StreamSimple(
+        LlmModel model,
+        Context context,
+        GenerationOptions generation,
+        ProviderExecutionOptions? execution)
+        => StreamSimple(model, context, MapSimpleOptions(generation, execution));
+
+    /// <summary>Completes a semantic generation using separate provider execution policy.</summary>
+    public async Task<AssistantMessage> CompleteSimpleAsync(
+        LlmModel model,
+        Context context,
+        GenerationOptions generation,
+        ProviderExecutionOptions? execution)
+        => await StreamSimple(model, context, generation, execution).GetResultAsync();
     /// <summary>
     /// Executes complete simple async.
     /// </summary>
@@ -118,6 +133,31 @@ public sealed class LlmClient
         return ApiProviders.Get(model.Api)?.Capabilities ?? ProviderCapabilities.Default;
     }
 
+    internal static SimpleStreamOptions MapSimpleOptions(
+        GenerationOptions generation,
+        ProviderExecutionOptions? execution)
+    {
+        ArgumentNullException.ThrowIfNull(generation);
+        return new SimpleStreamOptions
+        {
+            Temperature = generation.Temperature,
+            MaxTokens = generation.MaxTokens,
+            ContextWindow = generation.ContextWindow,
+            CancellationToken = generation.CancellationToken,
+            CacheRetention = generation.CacheRetention,
+            SessionId = generation.SessionId,
+            Reasoning = generation.Reasoning,
+            ThinkingBudgets = generation.ThinkingBudgets,
+            ApiKey = execution?.ApiKey,
+            Transport = execution?.Transport ?? Transport.Sse,
+            Headers = execution?.Headers is null ? null : new Dictionary<string, string>(execution.Headers),
+            OnPayload = execution?.OnPayload,
+            Metadata = execution?.Metadata is null ? null : new Dictionary<string, object>(execution.Metadata),
+            MaxRetryDelayMs = execution?.MaxRetryDelayMs ?? new ProviderExecutionOptions().MaxRetryDelayMs,
+            StreamSetupTimeoutMs = execution?.StreamSetupTimeoutMs ?? 0,
+            StreamIdleTimeoutMs = execution?.StreamIdleTimeoutMs
+        };
+    }
     private IApiProvider ResolveProvider(string api)
     {
         return ApiProviders.Get(api)

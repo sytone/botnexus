@@ -142,5 +142,6 @@ public sealed class TemporalDecayAgentConfig
         GroupName = "Temporal decay",
         Order = 1)]
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "temporal-decay", Order = 1)]
+    [Range(1, int.MaxValue, ErrorMessage = "Temporal decay half life days must be greater than zero.")]
     public int HalfLifeDays { get; set; } = 30;
 }

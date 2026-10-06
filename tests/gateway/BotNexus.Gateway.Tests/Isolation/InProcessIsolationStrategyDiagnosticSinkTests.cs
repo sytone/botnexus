@@ -3,6 +3,7 @@ using BotNexus.Memory.Embeddings;
 using System.IO.Abstractions;
 using System.Reflection;
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
@@ -12,6 +13,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Isolation;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Domain.Gateway.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Isolation;
@@ -30,7 +32,7 @@ namespace BotNexus.Gateway.Tests.Isolation;
 
 /// <summary>
 /// #2548 - the agent core emits non-fatal runtime diagnostics through
-/// <c>AgentOptions.OnDiagnostic</c>. Nothing in production assigned that callback, so every
+/// <c>AgentOptions.DiagnosticObserver</c>. Nothing in production assigned that callback, so every
 /// diagnostic the core produced was silently discarded. These tests assert the OBSERVABLE:
 /// a diagnostic produced inside <see cref="BotNexus.Agent.Core.Agent"/> is RECEIVED by the
 /// host's <see cref="ILogger"/>. Asserting the delegate is merely non-null would not prove
@@ -38,6 +40,35 @@ namespace BotNexus.Gateway.Tests.Isolation;
 /// </summary>
 public sealed class InProcessIsolationStrategyDiagnosticSinkTests
 {
+    [Fact]
+    public void MapAgentEvent_ProviderRecovery_ProjectsBoundedPayloadWithoutCredentialOrErrorText()
+    {
+        var coreEvent = new ProviderRecoveryEvent(
+            new ProviderRecoveryObservation(
+                ProviderRecoveryStage.RetryScheduled,
+                "github-copilot",
+                ProviderRecoveryState.Open,
+                7,
+                2,
+                3,
+                DateTimeOffset.UnixEpoch.AddSeconds(2),
+                Attempt: 2,
+                MaxAttempts: 4,
+                Delay: TimeSpan.FromMilliseconds(750)),
+            DateTimeOffset.UnixEpoch);
+
+        var projected = InProcessAgentHandle.MapAgentEvent(coreEvent, "message-1");
+
+        projected.ShouldNotBeNull();
+        projected.Type.ShouldBe(AgentStreamEventType.ProviderRecovery);
+        projected.ProviderRecovery.ShouldNotBeNull();
+        projected.ProviderRecovery.Stage.ShouldBe("RetryScheduled");
+        projected.ProviderRecovery.Provider.ShouldBe("github-copilot");
+        projected.ProviderRecovery.Attempt.ShouldBe(2);
+        projected.ProviderRecovery.DelayMilliseconds.ShouldBe(750);
+        projected.ErrorMessage.ShouldBeNull();
+    }
+
     [Fact]
     public async Task AgentCoreDiagnostic_WhenListenerThrows_IsReceivedByHostLogger()
     {

@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Abstractions.Triggers;
 
@@ -62,6 +63,14 @@ public sealed record InternalTriggerRequest
     public ConversationId? ResolvedConversationId { get; set; }
 
     /// <summary>
+    /// Optional callback invoked immediately after a trigger durably creates its session, before
+    /// the potentially long-running turn begins. Cron uses this to persist run ownership while the
+    /// row is still running, so a crash or sealed session can be reconciled without waiting for an
+    /// age-only orphan threshold (#4283).
+    /// </summary>
+    public Func<SessionId, CancellationToken, Task>? SessionCreatedAsync { get; init; }
+
+    /// <summary>
     /// Written back by the trigger after the turn completes: the number of tool invocations the
     /// turn performed (#2985). <c>null</c> means the trigger never reported one - e.g. the turn
     /// was interrupted and re-surfaced as a cancellation, in which case the run has its own
@@ -107,6 +116,13 @@ public sealed record InternalTriggerRequest
     /// </para>
     /// </summary>
     public string? DeliveryError { get; set; }
+
+    /// <summary>
+    /// Authoritative completion disposition written back by the trigger after the agent run settles.
+    /// Cron uses this to prevent an execution-class run with unfinished checklist work from being
+    /// persisted as successful merely because the action returned normally.
+    /// </summary>
+    public RunCompletionSignal? Completion { get; set; }
 
     /// <summary>
     /// Identifier (raw string from <see cref="BotNexus.Cron.CronJob.CreatedBy"/>) of the

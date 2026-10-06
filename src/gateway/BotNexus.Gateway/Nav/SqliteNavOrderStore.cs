@@ -25,6 +25,11 @@ public sealed class SqliteNavOrderStore(
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _initialized;
 
+    /// <summary>The schema version this build of the nav-order store understands.</summary>
+    public const int CurrentSchemaVersion = 1;
+
+    private static readonly SqliteSchemaMigration[] Migrations = [];
+
     /// <inheritdoc />
     public async Task InitializeAsync(CancellationToken ct = default)
     {
@@ -51,6 +56,8 @@ public sealed class SqliteNavOrderStore(
                 );
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
 
             _initialized = true;
         }

@@ -58,6 +58,15 @@ public sealed class PlatformConfig : IValidatableObject
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 2)]
     public string? WorldId { get; set; }
 
+    /// <summary>World-scoped extension-owned runtime configuration.</summary>
+    [Display(
+        Name = "World",
+        Description = "World-scoped settings shared across the BotNexus installation, including extension-owned world configuration.",
+        GroupName = "General",
+        Order = 5)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "general", Order = 5)]
+    public WorldSettingsConfig? World { get; set; }
+
     /// <summary>Gateway-specific settings.</summary>
     [Display(
         Name = "Gateway",
@@ -237,6 +246,48 @@ public sealed class ExtensionRepositoryRegistration
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "extension-repository", Order = 3)]
     [DefaultValue(true)]
     public bool UpdatesEnabled { get; set; } = true;
+
+    /// <summary>Current reconciliation state, or null before the first attempt.</summary>
+    [Display(
+        Name = "Reconciliation status",
+        Description = "Latest repository reconciliation outcome recorded by the CLI.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 4)]
+    public string? ReconciliationStatus { get; set; }
+
+    /// <summary>Exact commit selected by the most recent successful reconciliation.</summary>
+    [Display(
+        Name = "Resolved commit",
+        Description = "Exact Git commit selected by the most recent successful reconciliation.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 5)]
+    public string? ResolvedCommit { get; set; }
+
+    /// <summary>Managed clone path used by the reconciler.</summary>
+    [Display(
+        Name = "Clone path",
+        Description = "Managed local path where BotNexus materializes this repository.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 6)]
+    public string? ClonePath { get; set; }
+
+    /// <summary>UTC timestamp of the most recent reconciliation attempt.</summary>
+    [Display(
+        Name = "Last attempt",
+        Description = "UTC timestamp of the most recent repository reconciliation attempt.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 7)]
+    public DateTimeOffset? LastAttemptUtc { get; set; }
+
+    /// <summary>UTC timestamp of the most recent successful reconciliation.</summary>
+    [Display(
+        Name = "Last success",
+        Description = "UTC timestamp of the most recent successful repository reconciliation.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 8)]
+    public DateTimeOffset? LastSuccessUtc { get; set; }
+
+    /// <summary>Named failure and diagnostic from the most recent failed attempt.</summary>
+    [Display(
+        Name = "Latest failure",
+        Description = "Named failure and bounded diagnostic from the most recent failed reconciliation.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extension-repository", Order = 9)]
+    public string? LatestFailure { get; set; }
 }
 
 /// <summary>Read model for an extension repository registration and its dictionary key.</summary>
@@ -245,11 +296,43 @@ public sealed record ExtensionRepositoryRegistrationInfo(
     string RepositoryUrl,
     string RequestedRef,
     bool Enabled,
-    bool UpdatesEnabled);
+    bool UpdatesEnabled,
+    string? ReconciliationStatus,
+    string? ResolvedCommit,
+    string? ClonePath,
+    DateTimeOffset? LastAttemptUtc,
+    DateTimeOffset? LastSuccessUtc,
+    string? LatestFailure);
+
+/// <summary>Provider-owned authentication settings.</summary>
+public sealed class ProviderAuthenticationConfig
+{
+    /// <summary>Required authentication mode discriminator.</summary>
+    [Display(Name = "Type", Description = "Authentication mode discriminator.", GroupName = "Provider authentication", Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "provider-authentication", Order = 0)]
+    public string? Type { get; set; }
+
+    /// <summary>User-assigned managed identity client ID when that mode is selected.</summary>
+    [Display(Name = "Client ID", Description = "Client ID of the user-assigned managed identity.", GroupName = "Provider authentication", Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider-authentication", Order = 1)]
+    public string? ClientId { get; set; }
+}
 
 /// <summary>Provider-specific configuration.</summary>
 public sealed class ProviderConfig
 {
+    /// <summary>
+    /// Built-in provider type implemented by this configured provider instance. Null preserves the
+    /// legacy behavior where the dictionary key itself identifies the provider.
+    /// </summary>
+    [Display(
+        Name = "Type",
+        Description = "Optional built-in provider type for this named provider instance (for example, github-copilot).",
+        GroupName = "Provider",
+        Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider", Order = 0)]
+    public string? Type { get; set; }
+
     /// <summary>Whether this provider is enabled. Disabled providers are hidden from API.</summary>
     [Display(
         Name = "Enabled",
@@ -268,6 +351,15 @@ public sealed class ProviderConfig
         Order = 1)]
     [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "provider", Order = 1, Secret = true)]
     public string? ApiKey { get; set; }
+
+    /// <summary>Explicit authentication mode for providers that support more than API keys.</summary>
+    [Display(
+        Name = "Authentication",
+        Description = "Explicit provider authentication mode. Microsoft Foundry supports entra-default, managed-identity, user-assigned-managed-identity, and api-key.",
+        GroupName = "Provider",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "provider", Order = 2)]
+    public ProviderAuthenticationConfig? Authentication { get; set; }
 
     /// <summary>Base URL override.</summary>
     [Display(
@@ -552,9 +644,27 @@ public sealed class ProviderEmbeddingsConfig
     public int? Dimensions { get; set; }
 }
 
+/// <summary>Configuration owned by the singular BotNexus world.</summary>
+public sealed class WorldSettingsConfig
+{
+    /// <summary>World-scoped extension-owned runtime configuration, keyed by extension ID.</summary>
+    [Display(
+        Name = "World extensions",
+        Description = "Extension-owned configuration that applies once to the whole BotNexus world.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extensions", Order = 0)]
+    public Dictionary<string, JsonElement>? Extensions { get; set; }
+}
+
 /// <summary>Gateway runtime configuration.</summary>
 public sealed class GatewaySettingsConfig
 {
+    /// <summary>Gateway-scoped extension-owned runtime configuration, keyed by extension ID.</summary>
+    [Display(
+        Name = "Gateway extensions",
+        Description = "Extension-owned configuration for the singular gateway runtime.")]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extensions", Order = 1)]
+    public Dictionary<string, JsonElement>? Extensions { get; set; }
+
     /// <summary>Gateway HTTP listen URL.</summary>
     [Display(
         Name = "Listen URL",
@@ -610,9 +720,9 @@ public sealed class GatewaySettingsConfig
     [Display(
         Name = "Session store",
         Description = "Backend used to persist sessions and conversation history.",
-        GroupName = "Storage",
-        Order = 2)]
-    [ConfigField(Group = "storage", Order = 2)]
+        GroupName = "Session store",
+        Order = 0)]
+    [ConfigField(Group = "session-store", Order = 0)]
     public SessionStoreConfig? SessionStore { get; set; }
 
     /// <summary>Interval in minutes between periodic PASSIVE SQLite WAL checkpoints (#1438). Default 30.</summary>
@@ -733,14 +843,10 @@ public sealed class GatewaySettingsConfig
     // .GetSection_GatewaySection_RedactsApiKeysConnectionStringsAndCrossWorldSecrets.
     [ConfigField(Group = "security", Order = 0)]
     public Dictionary<string, ApiKeyConfig>? ApiKeys { get; set; }
-    /// <summary>Extensions loading settings.</summary>
-    [Display(
-        Name = "Extensions",
-        Description = "Dynamic extension loading: whether extensions load, from where, and their world-level defaults.",
-        GroupName = "Extensions",
-        Order = 0)]
+    /// <summary>Dynamic extension discovery and loading settings.</summary>
+    [Display(Name = "Extension loader", Description = "Dynamic extension loading settings.", GroupName = "Extensions", Order = 0)]
     [ConfigField(Group = "extensions", Order = 0)]
-    public ExtensionsConfig? Extensions { get; set; }
+    public ExtensionLoaderConfig? ExtensionLoader { get; set; }
     /// <summary>World identity shown by gateway clients.</summary>
     [Display(
         Name = "World identity",
@@ -753,9 +859,9 @@ public sealed class GatewaySettingsConfig
     [Display(
         Name = "Locations",
         Description = "Named locations registry used for resource management and path resolution.",
-        GroupName = "Storage",
-        Order = 3)]
-    [ConfigField(Group = "storage", Order = 3)]
+        GroupName = "Locations",
+        Order = 0)]
+    [ConfigField(Group = "locations", Order = 0)]
     public Dictionary<string, LocationConfig>? Locations { get; set; }
     /// <summary>Optional explicit cross-world communication permissions.</summary>
     [Display(
@@ -1866,7 +1972,7 @@ public sealed class PromptTemplateParameterConfig
 }
 
 /// <summary>Configuration for dynamic extension discovery and loading.</summary>
-public sealed class ExtensionsConfig
+public sealed class ExtensionLoaderConfig
 {
     /// <summary>
     /// Root directory containing extension folders with botnexus-extension.json manifests.
@@ -1890,17 +1996,6 @@ public sealed class ExtensionsConfig
     [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "extensions", Order = 1)]
     public bool Enabled { get; set; } = true;
 
-    /// <summary>
-    /// World-level default extension configuration, keyed by extension ID.
-    /// Deep-merged with agent-level overrides to produce effective config per agent.
-    /// </summary>
-    [Display(
-        Name = "Defaults",
-        Description = "World-level default extension configuration, keyed by extension ID. Deep-merged with agent-level overrides to produce effective config per agent.",
-        GroupName = "Extensions",
-        Order = 2)]
-    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "extensions", Order = 2)]
-    public Dictionary<string, JsonElement>? Defaults { get; set; }
 }
 
 /// <summary>Agent definition in platform config.</summary>
@@ -1968,22 +2063,9 @@ public sealed class AgentDefinitionConfig
         Order = 9)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 9)]
     public List<string>? AllowedModels { get; set; }
-    /// <summary>Ordered list of files to load as the system prompt. Empty = default order.</summary>
-    [Display(
-        Name = "System prompt files",
-        Description = "Ordered list of files to load as the system prompt. Empty = default order.",
-        GroupName = "Agent",
-        Order = 10)]
-    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 10)]
-    public List<string>? SystemPromptFiles { get; set; }
-    /// <summary>Path to a single system prompt file (legacy, prefer SystemPromptFiles).</summary>
-    [Display(
-        Name = "System prompt file",
-        Description = "Path to a single system prompt file (legacy, prefer SystemPromptFiles).",
-        GroupName = "Agent",
-        Order = 11)]
-    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "agent", Order = 11)]
-    public string? SystemPromptFile { get; set; }
+    /// <summary>Whether the source JSON contained either retired custom prompt-file key.</summary>
+    [JsonIgnore]
+    internal bool LegacyPromptFileKeysPresent { get; set; }
     /// <summary>Tool identifiers this agent has access to.</summary>
     [Display(
         Name = "Tool ids",

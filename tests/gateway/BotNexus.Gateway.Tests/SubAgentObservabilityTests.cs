@@ -89,7 +89,7 @@ public sealed class SubAgentObservabilityTests : IDisposable
 
         result.Count.ShouldBe(1);
         result[0].SubAgentId.ShouldBe("sub-f");
-        result[0].Status.ShouldBe("Failed");
+        result[0].Status.ShouldBe(SubAgentStatus.Failed);
     }
 
     [Fact]
@@ -108,6 +108,56 @@ public sealed class SubAgentObservabilityTests : IDisposable
         result.Count.ShouldBe(2);
     }
 
+    [Fact]
+    public async Task ListAllSubAgentSessionsAsync_WithCombinedFilters_FiltersBeforePaginationAndIncludesLegacyRows()
+    {
+        await _store.GetAsync(SessionId.From("nonexistent")); // trigger schema
+        var startedAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        await SeedSubAgentRowAsync("match-old", "parent-1", "agent-a", "child-target", null,
+            startedAt, null, "Completed");
+        await SeedSubAgentRowAsync("match-new", "parent-1", "agent-a", "child-target", null,
+            startedAt.AddMinutes(1), null, "Completed");
+        await SeedSubAgentRowAsync("wrong-parent", "parent-2", "agent-a", "child-target", null,
+            startedAt.AddMinutes(2), null, "Completed");
+        await SeedSubAgentRowAsync("wrong-child", "parent-1", "agent-a", "child-other", null,
+            startedAt.AddMinutes(3), null, "Completed");
+        await SeedSubAgentRowAsync("wrong-status", "parent-1", "agent-a", "child-target", null,
+            startedAt.AddMinutes(4), null, "Failed");
+
+        var result = await _store.ListAllSubAgentSessionsAsync(
+            status: "completed", limit: 1, parentSessionId: "parent-1", childAgentId: "child-target", offset: 1);
+
+        result.ShouldHaveSingleItem().SubAgentId.ShouldBe("match-old");
+        result[0].ChildAgentId.ShouldBe("child-target");
+    }
+
+    [Fact]
+    public async Task ListAllSubAgentSessionsAsync_WithOffsetAndTiedStartTimes_UsesStableOrder()
+    {
+        await _store.GetAsync(SessionId.From("nonexistent")); // trigger schema
+        var startedAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        await SeedSubAgentRowAsync("sub-b", "parent-1", "agent-a", "agent-b", null, startedAt, null, "Active");
+        await SeedSubAgentRowAsync("sub-a", "parent-1", "agent-a", "agent-b", null, startedAt, null, "Active");
+        await SeedSubAgentRowAsync("sub-c", "parent-1", "agent-a", "agent-b", null, startedAt, null, "Active");
+
+        var page = await _store.ListAllSubAgentSessionsAsync(limit: 2, offset: 1);
+
+        page.Count.ShouldBe(2);
+        page[0].SubAgentId.ShouldBe("sub-b");
+        page[1].SubAgentId.ShouldBe("sub-a");
+    }
+
+    [Fact]
+    public async Task List_WithNegativeOffset_ReturnsBadRequest()
+    {
+        var controller = new SubAgentsController(_store);
+
+        var actionResult = await controller.List(
+            status: null, limit: 200, offset: -1, cancellationToken: CancellationToken.None);
+
+        actionResult.Result.ShouldBeOfType<BadRequestObjectResult>();
+    }
+
     // ── controller-level tests ─────────────────────────────────────────────
 
     [Fact]
@@ -119,7 +169,7 @@ public sealed class SubAgentObservabilityTests : IDisposable
         var actionResult = await controller.List(status: null, limit: 200, CancellationToken.None);
 
         var ok = actionResult.Result.ShouldBeOfType<OkObjectResult>();
-        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentSessionSummary>>();
+        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentRunDetail>>();
         summaries!.ShouldBeEmpty();
     }
 
@@ -134,7 +184,7 @@ public sealed class SubAgentObservabilityTests : IDisposable
         var actionResult = await controller.List(status: null, limit: 200, CancellationToken.None);
 
         var ok = actionResult.Result.ShouldBeOfType<OkObjectResult>();
-        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentSessionSummary>>();
+        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentRunDetail>>();
         summaries!.Count.ShouldBe(1);
         summaries[0].SubAgentId.ShouldBe("sub-1");
     }
@@ -152,7 +202,7 @@ public sealed class SubAgentObservabilityTests : IDisposable
         var actionResult = await controller.List(status: "Killed", limit: 200, CancellationToken.None);
 
         var ok = actionResult.Result.ShouldBeOfType<OkObjectResult>();
-        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentSessionSummary>>();
+        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentRunDetail>>();
         summaries!.Count.ShouldBe(1);
         summaries[0].SubAgentId.ShouldBe("sub-k");
     }

@@ -59,10 +59,6 @@ public sealed record PluginAgentDefinition
     [JsonPropertyName("systemPrompt")]
     public string? SystemPrompt { get; init; }
 
-    /// <summary>Ordered system-prompt file paths, or <c>null</c>.</summary>
-    [JsonPropertyName("systemPromptFiles")]
-    public IReadOnlyList<string>? SystemPromptFiles { get; init; }
-
     /// <summary>
     /// Tool identifiers the agent requests. These name tools the HOST has registered; an id the
     /// host does not know resolves to nothing, so this cannot conjure an uninstalled capability.
@@ -108,7 +104,6 @@ public sealed record PluginAgentDefinition
         ModelId = Model ?? string.Empty,
         ApiProvider = Provider ?? string.Empty,
         SystemPrompt = SystemPrompt,
-        SystemPromptFiles = SystemPromptFiles?.ToArray() ?? [],
         ToolIds = ToolIds?.ToArray() ?? [],
         AllowedModelIds = AllowedModels?.ToArray() ?? [],
         Thinking = Thinking,

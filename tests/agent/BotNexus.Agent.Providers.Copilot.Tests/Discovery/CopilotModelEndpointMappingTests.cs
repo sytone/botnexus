@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Agent.Providers.Copilot.Discovery;
 using Shouldly;
@@ -12,6 +13,44 @@ namespace BotNexus.Agent.Providers.Copilot.Tests.Discovery;
 /// </summary>
 public class CopilotModelEndpointMappingTests
 {
+    [Fact]
+    public void Billing_absent_fields_remain_unknown_after_deserialization()
+    {
+        var model = JsonSerializer.Deserialize<CopilotModelInfo>("""
+            {
+              "id": "gpt-5.6-sol",
+              "billing": {
+                "restricted_to": ["enterprise"]
+              }
+            }
+            """);
+
+        model.ShouldNotBeNull();
+        model.Billing.ShouldNotBeNull();
+        model.Billing.IsPremium.ShouldBeNull();
+        model.Billing.Multiplier.ShouldBeNull();
+        model.Billing.RestrictedTo.ShouldBe(["enterprise"]);
+    }
+
+    [Fact]
+    public void Billing_explicit_false_and_zero_remain_provider_supplied_values()
+    {
+        var model = JsonSerializer.Deserialize<CopilotModelInfo>("""
+            {
+              "id": "gpt-5.6-sol",
+              "billing": {
+                "is_premium": false,
+                "multiplier": 0
+              }
+            }
+            """);
+
+        model.ShouldNotBeNull();
+        model.Billing.ShouldNotBeNull();
+        model.Billing.IsPremium.ShouldBe(false);
+        model.Billing.Multiplier.ShouldBe(0d);
+    }
+
     // --- Advertised endpoint wins over the name heuristic ---
 
     [Fact]
@@ -85,14 +124,15 @@ public class CopilotModelEndpointMappingTests
     }
 
     [Fact]
-    public void UnrecognisedAdvertisedList_falls_back_to_name_heuristic()
+    public void UnrecognisedAdvertisedList_is_not_guessed_from_the_model_name()
     {
-        // An advertised list that contains no known endpoint falls through to the name heuristic.
+        // A non-empty provider list is authoritative. Guessing here would expose an invocation
+        // route Copilot did not advertise and make the diagnostic contradict its own catalogue.
         var api = CopilotModelDiscoveryProvider.ResolveApiFormat(
             id: "gpt-5-mini", family: "gpt-5", vendor: "OpenAI",
             supportedEndpoints: new[] { "/some/unknown/path" });
 
-        api.ShouldBe("github-copilot-responses");
+        api.ShouldBeNull();
     }
 
     // --- End-to-end through MapToLlmModel ---

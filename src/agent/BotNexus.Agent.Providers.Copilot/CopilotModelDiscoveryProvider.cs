@@ -14,7 +14,7 @@ namespace BotNexus.Agent.Providers.Copilot;
 public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
 {
     /// <inheritdoc/>
-    public string ProviderKey => "github-copilot";
+    public string ProviderKey { get; }
 
     private static readonly IReadOnlyDictionary<string, string> CopilotHeaders = new Dictionary<string, string>
     {
@@ -51,14 +51,18 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
     /// Returns (null, null) if credentials are unavailable.
     /// </param>
     /// <param name="logger">Logger.</param>
+    /// <param name="providerKey">Provider-instance key used for discovery and model registration.</param>
     public CopilotModelDiscoveryProvider(
         CopilotDiscoveryClient discoveryClient,
         Func<CancellationToken, Task<(string? SessionToken, string? Endpoint)>> credentialResolver,
-        ILogger<CopilotModelDiscoveryProvider> logger)
+        ILogger<CopilotModelDiscoveryProvider> logger,
+        string providerKey = "github-copilot")
     {
         _discoveryClient = discoveryClient ?? throw new ArgumentNullException(nameof(discoveryClient));
         _credentialResolver = credentialResolver ?? throw new ArgumentNullException(nameof(credentialResolver));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerKey);
+        ProviderKey = providerKey;
     }
 
     /// <inheritdoc/>
@@ -92,14 +96,27 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
             return null;
         }
 
-        var models = new List<LlmModel>(response.Data.Count);
+        return ProjectModels(response, endpoint, ProviderKey);
+    }
 
-        foreach (var info in response.Data)
+    /// <summary>
+    /// Projects one Copilot discovery response into the effective BotNexus model descriptors used
+    /// by both gateway registration and diagnostics. Keeping this conversion in one place prevents
+    /// the listing and invocation paths from disagreeing about endpoint routing or capabilities.
+    /// </summary>
+    public static IReadOnlyList<LlmModel> ProjectModels(
+        CopilotModelsResponse response,
+        string? baseUrl,
+        string providerKey = "github-copilot")
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerKey);
+
+        var entries = response.Data ?? [];
+        var models = new List<LlmModel>(entries.Count);
+        foreach (var info in entries)
         {
-            if (string.IsNullOrWhiteSpace(info.Id))
-                continue;
-
-            var model = MapToLlmModel(info, endpoint);
+            var model = MapToLlmModel(info, baseUrl, providerKey);
             if (model is not null)
                 models.Add(model);
         }
@@ -124,7 +141,15 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
     /// <param name="info">The Copilot model info.</param>
     /// <param name="baseUrl">The resolved API host to stamp onto the model.</param>
     public static LlmModel? MapToLlmModel(CopilotModelInfo info, string? baseUrl)
+        => MapToLlmModel(info, baseUrl, "github-copilot");
+
+    /// <summary>
+    /// Maps a discovered Copilot model beneath the selected provider-instance identity while
+    /// preserving the wire API selected from the advertised model capabilities.
+    /// </summary>
+    public static LlmModel? MapToLlmModel(CopilotModelInfo info, string? baseUrl, string providerKey)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerKey);
         if (string.IsNullOrWhiteSpace(info.Id))
             return null;
 
@@ -139,7 +164,13 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
         var family = info.Capabilities?.Family ?? string.Empty;
         var vendor = info.Vendor ?? string.Empty;
 
-        var api = ResolveApiFormat(id, family, vendor, info.SupportedEndpoints);
+        var api = ResolveAdvertisedApiFormat(info.SupportedEndpoints)
+            ?? (info.SupportedEndpoints is { Count: > 0 }
+                ? null
+                : ResolveApiFormatFromName(id, family, vendor));
+        if (api is null)
+            return null;
+
         var reasoning = IsReasoningModel(id, family);
         var supportsExtraHigh = SupportsExtraHighThinking(id, family);
         var input = ResolveInputModalities(info);
@@ -151,7 +182,7 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
             Id: id,
             Name: name,
             Api: api,
-            Provider: "github-copilot",
+            Provider: providerKey,
             BaseUrl: resolvedBaseUrl,
             Reasoning: reasoning,
             Input: input,
@@ -180,19 +211,13 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
     /// <param name="supportedEndpoints">
     /// The endpoints Copilot advertises for this model, when present. Preferred over the name heuristic.
     /// </param>
-    public static string ResolveApiFormat(string id, string family, string vendor, IReadOnlyList<string>? supportedEndpoints)
+    public static string? ResolveApiFormat(string id, string family, string vendor, IReadOnlyList<string>? supportedEndpoints)
     {
-        // Prefer the advertised endpoint list when Copilot supplies one (#1762).
+        // An advertised endpoint list is authoritative in both directions. If Copilot names only
+        // contracts BotNexus cannot invoke, the model is not projected as invokable; guessing from
+        // its name would make diagnostics promise a route the provider did not advertise.
         if (supportedEndpoints is { Count: > 0 })
-        {
-            if (ContainsEndpoint(supportedEndpoints, "/v1/messages"))
-                return "github-copilot-messages";
-            if (ContainsEndpoint(supportedEndpoints, "/responses"))
-                return "github-copilot-responses";
-            if (ContainsEndpoint(supportedEndpoints, "/chat/completions"))
-                return "github-copilot-completions";
-            // An advertised-but-unrecognised list falls through to the name heuristic below.
-        }
+            return ResolveAdvertisedApiFormat(supportedEndpoints);
 
         return ResolveApiFormatFromName(id, family, vendor);
     }
@@ -205,12 +230,25 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
     /// <param name="family">The model family (from capabilities).</param>
     /// <param name="vendor">The model vendor.</param>
     public static string ResolveApiFormat(string id, string family, string vendor)
-        => ResolveApiFormat(id, family, vendor, supportedEndpoints: null);
+        => ResolveApiFormatFromName(id, family, vendor);
 
     /// <summary>
     /// The legacy model-name heuristic. Used only when Copilot does not advertise a supported
     /// endpoint list for the model (#1762 fallback).
     /// </summary>
+    private static string? ResolveAdvertisedApiFormat(IReadOnlyList<string>? supportedEndpoints)
+    {
+        if (supportedEndpoints is not { Count: > 0 })
+            return null;
+        if (ContainsEndpoint(supportedEndpoints, "/v1/messages"))
+            return "github-copilot-messages";
+        if (ContainsEndpoint(supportedEndpoints, "/responses"))
+            return "github-copilot-responses";
+        if (ContainsEndpoint(supportedEndpoints, "/chat/completions"))
+            return "github-copilot-completions";
+        return null;
+    }
+
     private static string ResolveApiFormatFromName(string id, string family, string vendor)
     {
         // Claude models use the messages API
@@ -220,6 +258,7 @@ public sealed class CopilotModelDiscoveryProvider : IModelDiscoveryProvider
 
         // GPT-5+ and o-series use the responses API
         if (id.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase) ||
+            id.StartsWith("gpt-6", StringComparison.OrdinalIgnoreCase) ||
             id.StartsWith("o3", StringComparison.OrdinalIgnoreCase) ||
             id.StartsWith("o4", StringComparison.OrdinalIgnoreCase))
             return "github-copilot-responses";

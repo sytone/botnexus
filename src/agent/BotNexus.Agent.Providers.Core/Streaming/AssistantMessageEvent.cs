@@ -175,6 +175,12 @@ public static class WarningCodes
     /// been lost.
     /// </summary>
     public const string MalformedChunkSkipped = "malformed_chunk_skipped";
+
+    /// <summary>
+    /// The provider used reasoning but exposed no displayable summary. Opaque encrypted reasoning
+    /// remains undisclosed and is never projected as thinking content.
+    /// </summary>
+    public const string ReasoningSummaryUnavailable = "reasoning_summary_unavailable";
 }
 
 /// <summary>

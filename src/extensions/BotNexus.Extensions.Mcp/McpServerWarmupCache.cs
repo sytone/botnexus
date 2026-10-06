@@ -13,7 +13,7 @@ internal static class McpServerWarmupCache
     private static readonly ConcurrentDictionary<string, WarmupEntry> WarmupEntriesByKey = new(StringComparer.OrdinalIgnoreCase);
 
     public static WarmupEntry EnsureStarted(
-        string agentId,
+        AgentId agentId,
         McpExtensionConfig config,
         ILogger logger)
     {
@@ -45,13 +45,13 @@ internal static class McpServerWarmupCache
     /// without reading a process-global count that unrelated agents also mutate.
     /// </summary>
     internal static bool Contains(AgentId agentId, McpExtensionConfig config)
-        => WarmupEntriesByKey.ContainsKey(BuildKey(agentId.Value, config));
+        => WarmupEntriesByKey.ContainsKey(BuildKey(agentId, config));
 
-    private static string BuildKey(string agentId, McpExtensionConfig config)
+    private static string BuildKey(AgentId agentId, McpExtensionConfig config)
     {
         var json = JsonSerializer.Serialize(config, JsonContext.Default.McpExtensionConfig);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
-        return $"{agentId}:{hash}";
+        return $"{agentId.Value}:{hash}";
     }
 
     internal sealed class WarmupEntry : IAsyncDisposable

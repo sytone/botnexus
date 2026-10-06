@@ -317,7 +317,7 @@ public sealed class GatewayProcessManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task GetStatusAsync_WhenStalePidExists_CleansAndReturnsNotRunning()
+    public async Task GetStatusAsync_WhenStalePidExists_PreservesAndReturnsNotRunning()
     {
         // Write a PID file with a definitely-dead PID
         await WritePidFileAsync(99999);
@@ -329,15 +329,15 @@ public sealed class GatewayProcessManagerTests : IDisposable
         status.Uptime.ShouldBeNull();
         status.Message.ShouldNotBeNull();
         var message = status.Message ?? throw new InvalidOperationException("Expected status message.");
-        message.ShouldContain("stale PID");
+        message.ShouldContain("no longer exists");
 
-        // PID file should be cleaned up
+        // Status is diagnostic-only; lifecycle commands own cleanup.
         var pidFilePath = GetPidFilePath();
-        File.Exists(pidFilePath).ShouldBeFalse();
+        File.Exists(pidFilePath).ShouldBeTrue();
     }
 
     [Fact]
-    public async Task GetStatusAsync_WhenProcessHasExited_CleansUpPidFile()
+    public async Task GetStatusAsync_WhenProcessHasExited_PreservesPidFile()
     {
         // Start a long-running dotnet process (which will pass the name check)
         var psi = new ProcessStartInfo
@@ -361,7 +361,7 @@ public sealed class GatewayProcessManagerTests : IDisposable
             var status = await _manager.GetStatusAsync(_testPidDirectory);
 
             status.State.ShouldBe(GatewayState.NotRunning);
-            File.Exists(GetPidFilePath()).ShouldBeFalse();
+            File.Exists(GetPidFilePath()).ShouldBeTrue();
         }
         finally
         {
@@ -410,9 +410,9 @@ public sealed class GatewayProcessManagerTests : IDisposable
         status.State.ShouldBe(GatewayState.NotRunning);
         status.Pid.ShouldBeNull();
 
-        // PID file should be cleaned up
+        // Status preserves stale diagnostic evidence for lifecycle commands.
         var pidFilePath = GetPidFilePath();
-        File.Exists(pidFilePath).ShouldBeFalse();
+        File.Exists(pidFilePath).ShouldBeTrue();
     }
 
     [Fact]

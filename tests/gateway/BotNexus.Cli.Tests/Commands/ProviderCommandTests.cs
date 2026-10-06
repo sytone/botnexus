@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using BotNexus.Agent.Providers.Copilot;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Wizard;
@@ -7,9 +8,10 @@ using Spectre.Console;
 namespace BotNexus.Cli.Tests.Commands;
 
 [Collection("AnsiConsole")]
-public class ProviderCommandTests : IDisposable
+public partial class ProviderCommandTests : IDisposable
 {
     private readonly IAnsiConsole _originalConsole;
+    private readonly StringWriter _output = new();
 
     public ProviderCommandTests()
     {
@@ -19,9 +21,11 @@ public class ProviderCommandTests : IDisposable
         _originalConsole = AnsiConsole.Console;
         AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
         {
-            Out = new AnsiConsoleOutput(new StringWriter()),
+            Out = new AnsiConsoleOutput(_output),
+            Ansi = AnsiSupport.No,
             Interactive = InteractionSupport.No
         });
+        AnsiConsole.Console.Profile.Width = 300;
     }
 
     public void Dispose()
@@ -123,6 +127,92 @@ public class ProviderCommandTests : IDisposable
         };
 
         entry.Expires.ShouldBe(1700000000000);
+    }
+
+    [Fact]
+    public async Task SaveAuthEntry_NamedInstance_PreservesOtherCredentialEntries()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var authPath = Path.Combine(tempDir, "auth.json");
+            await File.WriteAllTextAsync(authPath, """
+                {
+                  "github-copilot": {
+                    "type": "oauth",
+                    "refresh": "default-refresh",
+                    "access": "default-access",
+                    "expires": 1700000000000,
+                    "endpoint": "https://api.individual.githubcopilot.com"
+                  }
+                }
+                """);
+
+            ProviderCommand.SaveAuthEntry(
+                "copilot-work",
+                new OAuthCredentials("work-access", "work-refresh", 1800000000, "https://api.enterprise.githubcopilot.com"),
+                tempDir);
+
+            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(authPath));
+            var entries = document.RootElement;
+            entries.GetProperty("github-copilot").GetProperty("access").GetString().ShouldBe("default-access");
+            entries.GetProperty("copilot-work").GetProperty("access").GetString().ShouldBe("work-access");
+            entries.GetProperty("copilot-work").GetProperty("refresh").GetString().ShouldBe("work-refresh");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteTestAsync_HealthyLiveProvider_UsesGatewayRegistryAndCredentialHealthPath()
+    {
+        using var server = new MockHttpServer();
+        server.SetResponse("/api/providers/new-instance/health", System.Net.HttpStatusCode.OK,
+            """{"providerId":"new-instance","status":"healthy","latencyMs":3,"checkedAt":"2026-10-01T00:00:00Z","models":1,"hasCredentials":true,"error":null}""");
+
+        var exit = await ProviderCommand.ExecuteTestAsync(
+            server.BaseUrl, "new-instance", CancellationToken.None);
+
+        exit.ShouldBe(0);
+        var output = NormalizeOutput(_output.ToString());
+        output.ShouldContain("Provider new-instance is active and validated by the running gateway");
+        output.ShouldContain("Models: 1");
+        output.ShouldContain("Credentials: resolved");
+    }
+
+    [Fact]
+    public async Task ExecuteTestAsync_UnknownLiveProvider_ReturnsPreciseRegistryRemediation()
+    {
+        using var server = new MockHttpServer();
+        server.SetResponse("/api/providers/new-instance/health", System.Net.HttpStatusCode.NotFound,
+            "\"Provider 'new-instance' not found.\"");
+
+        var exit = await ProviderCommand.ExecuteTestAsync(
+            server.BaseUrl, "new-instance", CancellationToken.None);
+
+        exit.ShouldBe(1);
+        var output = NormalizeOutput(_output.ToString());
+        output.ShouldContain("Provider new-instance is not ready in the running gateway");
+        output.ShouldContain("absent from the live model registry");
+    }
+
+    [Fact]
+    public async Task ExecuteTestAsync_UnhealthyLiveProvider_ReturnsFailureWithGatewayRemediation()
+    {
+        using var server = new MockHttpServer();
+        server.SetResponse("/api/providers/new-instance/health", System.Net.HttpStatusCode.ServiceUnavailable,
+            """{"providerId":"new-instance","status":"unhealthy","latencyMs":2,"checkedAt":"2026-10-01T00:00:00Z","models":0,"hasCredentials":false,"error":"No models registered for this provider."}""");
+
+        var exit = await ProviderCommand.ExecuteTestAsync(
+            server.BaseUrl, "new-instance", CancellationToken.None);
+
+        exit.ShouldBe(1);
+        var output = NormalizeOutput(_output.ToString());
+        output.ShouldContain("Provider new-instance is not ready in the running gateway");
+        output.ShouldContain("No models registered for this provider");
     }
 
     [Fact]
@@ -228,6 +318,90 @@ public class ProviderCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAddAsync_refuses_disabling_assigned_provider_without_mutation()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            var original = """
+                {
+                  "providers": {
+                    "copilot-work": { "type": "github-copilot", "enabled": true, "defaultModel": "original" },
+                    "github-copilot": { "type": "github-copilot", "enabled": true }
+                  },
+                  "agents": {
+                    "quill": { "provider": "COPILOT-WORK", "model": "original" },
+                    "aurum": { "provider": "copilot-work", "model": "original" },
+                    "nova": { "provider": "github-copilot", "model": "original" }
+                  },
+                  "extensionState": { "keep": "untouched" }
+                }
+                """;
+            await File.WriteAllTextAsync(configPath, original);
+
+            var exit = await new ProviderCommand().ExecuteAddAsync(
+                configPath, "copilot-work", api: null, apiKey: null, baseUrl: null,
+                defaultModel: "changed", models: Array.Empty<string>(), enabled: false,
+                verbose: false, CancellationToken.None);
+
+            exit.ShouldBe(1);
+            var output = _output.ToString();
+            output.ShouldContain("2 agent(s)");
+            output.ShouldContain("aurum");
+            output.ShouldContain("quill");
+            output.ShouldContain("Reassign");
+            (await File.ReadAllTextAsync(configPath)).ShouldBe(original);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAddAsync_disables_unassigned_provider_preserving_other_sections()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "providers": {
+                    "copilot-work": { "type": "github-copilot", "enabled": true, "defaultModel": "original" },
+                    "github-copilot": { "type": "github-copilot", "enabled": true }
+                  },
+                  "agents": { "nova": { "provider": "github-copilot", "model": "original" } },
+                  "extensionState": { "keep": "untouched" }
+                }
+                """);
+
+            var exit = await new ProviderCommand().ExecuteAddAsync(
+                configPath, "copilot-work", api: null, apiKey: null, baseUrl: null,
+                defaultModel: "updated", models: Array.Empty<string>(), enabled: false,
+                verbose: false, CancellationToken.None);
+
+            exit.ShouldBe(0);
+            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(configPath));
+            doc.RootElement.GetProperty("providers").GetProperty("copilot-work")
+                .GetProperty("enabled").GetBoolean().ShouldBeFalse();
+            doc.RootElement.GetProperty("providers").GetProperty("copilot-work")
+                .GetProperty("defaultModel").GetString().ShouldBe("updated");
+            doc.RootElement.GetProperty("agents").GetProperty("nova")
+                .GetProperty("provider").GetString().ShouldBe("github-copilot");
+            doc.RootElement.GetProperty("extensionState").GetProperty("keep")
+                .GetString().ShouldBe("untouched");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
     public async Task ExecuteRemoveAsync_removes_provider_when_present()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
@@ -244,6 +418,53 @@ public class ProviderCommandTests : IDisposable
             var json = await File.ReadAllTextAsync(configPath);
             using var doc = JsonDocument.Parse(json);
             doc.RootElement.GetProperty("providers").TryGetProperty("to-remove", out _).ShouldBeFalse();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteRemoveAsync_refuses_provider_assigned_to_agents_without_mutation()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "providers": {
+                    "copilot-work": {
+                      "type": "github-copilot",
+                      "enabled": true
+                    }
+                  },
+                  "agents": {
+                    "aurum": {
+                      "provider": "COPILOT-WORK",
+                      "model": "gpt-5.6"
+                    },
+                    "quill": {
+                      "provider": "copilot-work",
+                      "model": "claude-sonnet-4.6"
+                    },
+                    "nova": {
+                      "provider": "github-copilot",
+                      "model": "gpt-5.6"
+                    }
+                  }
+                }
+                """);
+
+            var exit = await new ProviderCommand().ExecuteRemoveAsync(
+                configPath, "copilot-work", verbose: false, CancellationToken.None);
+
+            exit.ShouldBe(1);
+            var json = await File.ReadAllTextAsync(configPath);
+            using var doc = JsonDocument.Parse(json);
+            doc.RootElement.GetProperty("providers").TryGetProperty("copilot-work", out _).ShouldBeTrue();
         }
         finally
         {
@@ -326,6 +547,12 @@ public class ProviderCommandTests : IDisposable
         result.Outcome.ShouldBe(StepOutcome.GoTo);
         result.GoToStep.ShouldBe("pick-model");
     }
+
+    private static string NormalizeOutput(string value)
+        => AnsiEscapeSequence().Replace(value, string.Empty);
+
+    [GeneratedRegex("\\x1B\\[[0-?]*[ -/]*[@-~]")]
+    private static partial Regex AnsiEscapeSequence();
 
     [Fact]
     public async Task OAuthFlowStep_on_failure_aborts()

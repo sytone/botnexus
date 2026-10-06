@@ -37,6 +37,26 @@ public sealed class ConversationListCssTests
     }
 
     [Fact]
+    public void ConversationMetadata_IsLeftAlignedAndActionsReserveTheTitleLine()
+    {
+        var content = File.ReadAllText(s_cssPath);
+
+        var metadataRule = FindRuleContaining(content, ".conversation-list-item-meta {");
+        metadataRule.ShouldContain("align-self: flex-start");
+        metadataRule.ShouldNotContain("margin-left: auto");
+
+        var titleReservationRule = FindRuleContaining(
+            content,
+            ".conversation-list-item:has(.conversation-row-actions) .conversation-list-item-main");
+        titleReservationRule.ShouldContain("min-height: 28px");
+        titleReservationRule.ShouldContain("padding-right: var(--conversation-row-actions-width)");
+
+        var actionsRule = FindRuleContaining(content, ".conversation-row-actions {");
+        actionsRule.ShouldContain("top: 0.6rem");
+        actionsRule.ShouldNotContain("bottom: 0");
+    }
+
+    [Fact]
     public void ConversationRowActions_FocusWithinRevealsStripAndEveryButton()
     {
         var content = File.ReadAllText(s_cssPath);

@@ -6,7 +6,7 @@ namespace BotNexus.Architecture.Tests;
 /// <summary>
 /// Architecture fitness function enforcing the issue #2310 single-creation-seam contract:
 /// <c>new Conversation { ... }</c> may appear in EXACTLY ONE production type,
-/// <c>ConversationFactory</c>, plus <c>ConversationRowMapper</c> for persistence hydration.
+/// <c>ConversationFactory</c>, plus <c>SqliteDataReaderExtensions</c> for persistence hydration.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,7 +17,7 @@ namespace BotNexus.Architecture.Tests;
 /// that lies about its own origin. Nothing failed the build. This test is that missing build failure.
 /// </para>
 /// <para>
-/// <b>Allowlist rationale.</b> <c>ConversationFactory</c> is the seam itself. <c>ConversationRowMapper</c>
+/// <b>Allowlist rationale.</b> <c>ConversationFactory</c> is the seam itself. <c>SqliteDataReaderExtensions</c>
 /// is not creation at all - it rehydrates a conversation that already exists in the store, and its
 /// provenance is read off the row rather than chosen; routing it through the factory would mean
 /// re-stamping <c>CreatedAt</c> and inventing a <c>Source</c> the row already carries. Tests are
@@ -46,7 +46,7 @@ public sealed class ConversationCreationSeamArchitectureTests : ArchitectureTest
         (SeamFileName,
             "The creation seam itself (#2310). This is the one place a Conversation is constructed."),
 
-        ("ConversationRowMapper.cs",
+        ("SqliteDataReaderExtensions.cs",
             "Persistence hydration, not creation: rebuilds a Conversation that already exists in the " +
             "store, reading Source/Kind/CreatedAt off the row rather than choosing them."),
     };
@@ -70,7 +70,7 @@ public sealed class ConversationCreationSeamArchitectureTests : ArchitectureTest
 
         violations.ShouldBeEmpty(
             $"A Conversation may only be constructed in {SeamFileName} (the creation seam) and " +
-            "ConversationRowMapper.cs (persistence hydration). Every other origin path must call an " +
+            "SqliteDataReaderExtensions.cs (persistence hydration). Every other origin path must call an " +
             "intent-revealing ConversationFactory.CreateForChannel / CreateForCron / CreateForWebhook / " +
             "CreateForAgent factory, so provenance (Source, Kind) is chosen by which factory you call " +
             "and cannot be silently omitted (#2310). A raw `new Conversation { ... }` that forgets " +

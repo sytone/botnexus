@@ -1,4 +1,4 @@
-using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Providers.Core.Models;
 

@@ -84,6 +84,16 @@ public sealed class ProviderErrorRedactionFenceArchitectureTests : ArchitectureT
         new(@"throw\s+new\s+\w+[^;]*\{\s*(errorBody|providerError|responseBody|rawBody)\s*\}",
             RegexOptions.Compiled | RegexOptions.Singleline);
 
+    /// <summary>
+    /// Detects direct terminal emission or interpolation of peer-derived streaming diagnostics.
+    /// The helper name in the same source is an explicit positive pin: streamed failures must pass
+    /// through the shared redaction seam before reaching persisted events, logs, or activities.
+    /// </summary>
+    private static readonly Regex RawStreamDiagnosticSink = new(
+        @"(?:EmitError\s*\([^;]*(?:ex\.Message|evt\.Data|errorMsg|GetErrorMessage\s*\()|" +
+        @"(?:Log(?:Error|Warning)|SetStatus|EndWithoutResult)\s*\([^;]*ex\.Message)",
+        RegexOptions.Compiled | RegexOptions.Singleline);
+
     [Fact]
     public void ChokePointAndCallSiteFiles_Exist()
     {
@@ -196,6 +206,30 @@ public sealed class ProviderErrorRedactionFenceArchitectureTests : ArchitectureT
     /// on the tree so the clause is verified rather than taken on trust.
     /// </summary>
     [Fact]
+    public void StreamedPeerDiagnostics_AreRedactedBeforeTerminalEmissionOrInterpolation()
+    {
+        var streamedFiles = new[]
+        {
+            "src/agent/BotNexus.Agent.Providers.Copilot/Messages/CopilotMessagesStreamParser.cs",
+            "src/agent/BotNexus.Agent.Providers.Core/Streaming/ResponsesStreamParser.cs",
+            "src/agent/BotNexus.Agent.Providers.Copilot/Responses/CopilotResponsesProvider.cs",
+        };
+        var offenders = streamedFiles
+            .Where(rel =>
+            {
+                var source = File.ReadAllText(ResolvePath(rel));
+                return RawStreamDiagnosticSink.IsMatch(source) ||
+                    !source.Contains("ProviderHttpErrorHelper.RedactDiagnosticText", StringComparison.Ordinal);
+            })
+            .ToList();
+
+        offenders.ShouldBeEmpty(
+            "Peer-derived streamed errors reach terminal events, logs, and activity status. Route " +
+            "them through ProviderHttpErrorHelper.RedactDiagnosticText before emission or " +
+            "interpolation. See #4119.\nOffenders: " + string.Join(", ", offenders));
+    }
+
+    [Fact]
     public void AgentTree_ReferencesTheRedactionSeam()
     {
         var hits = Directory
@@ -226,6 +260,11 @@ public sealed class ProviderErrorRedactionFenceArchitectureTests : ArchitectureT
         SecretRedactorReference.IsMatch(leaking).ShouldBeFalse(
             "Vacuity guard: a helper with no ISecretRedactor parameter must NOT match the redactor " +
             "detector. If this fails, the call-site fence passes vacuously.");
+
+        const string leakingStream =
+            "ResponsesStreamEngine.EmitError(stream, api, model, ex.Message, content);";
+        RawStreamDiagnosticSink.IsMatch(leakingStream).ShouldBeTrue(
+            "Vacuity guard: direct streamed peer diagnostic emission must be detected.");
     }
 
     [Fact]

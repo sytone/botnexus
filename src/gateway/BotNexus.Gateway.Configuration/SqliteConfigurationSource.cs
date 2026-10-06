@@ -27,12 +27,15 @@ public sealed class SqliteConfigurationSource : IConfigurationSource
     /// </summary>
     public Action<string, Exception?>? OnLoadFailure { get; init; }
 
+    internal bool StartChangeDetection { get; init; } = true;
+
     /// <inheritdoc />
     public IConfigurationProvider Build(IConfigurationBuilder builder)
         => new SqliteConfigurationProvider(
             Store ?? throw new InvalidOperationException(
                 $"{nameof(SqliteConfigurationSource)}.{nameof(Store)} must be set before the source is built."),
-            OnLoadFailure);
+            OnLoadFailure,
+            startChangeDetection: StartChangeDetection);
 }
 
 /// <summary>

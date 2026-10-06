@@ -1,6 +1,7 @@
 using System.CommandLine;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Services;
+using BotNexus.Gateway.Configuration;
 using NSubstitute;
 using Spectre.Console;
 
@@ -23,6 +24,32 @@ public class UpdateCommandTests
         protected override Task<int> RunBuildAndDeployAsync(
             string repoRoot, string home, bool verbose, CancellationToken cancellationToken)
             => Task.FromResult(0);
+    }
+
+    private sealed class DeploymentFailureUpdateCommand(IGatewayProcessManager processManager)
+        : UpdateCommand(processManager)
+    {
+        internal bool RestartCalled { get; private set; }
+        protected override Task<int> RunGitPullStepAsync(
+            string repoRoot, bool verbose, CancellationToken cancellationToken)
+            => Task.FromResult(0);
+
+        protected override Task<bool> CanSkipRebuildAsync(string repoRoot, CancellationToken cancellationToken)
+            => Task.FromResult(false);
+
+        protected override Task<bool> WaitForPortFreeAsync(int port, CancellationToken cancellationToken)
+            => Task.FromResult(true);
+
+        protected override Task<int> RunBuildAndDeployAsync(
+            string repoRoot, string home, bool verbose, CancellationToken cancellationToken)
+            => Task.FromResult(ExtensionDeploymentFailureExitCode);
+
+        protected override Task<int> RunRestartAsync(
+            string home, int port, string repoRoot, CancellationToken cancellationToken)
+        {
+            RestartCalled = true;
+            return Task.FromResult(0);
+        }
     }
 
     private sealed class GitPullStepProbeCommand(IGatewayProcessManager processManager)
@@ -98,11 +125,46 @@ public class UpdateCommandTests
     private static UpdateCommand BuildCommand()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(true, null));
         pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStartResult(true, 99999, null));
         return new UpdateCommand(pm);
+    }
+
+    [Fact]
+    public void DeploymentExitCode_WhenReconciliationReportsInTreeFailure_ReturnsNonZero()
+    {
+        var result = new ExtensionDeploymentResult(
+            0,
+            Array.Empty<string>(),
+            [new ExtensionDeploymentFailure("in-tree:audio-transcription", "activation failed")]);
+
+        UpdateCommand.DeploymentExitCode(result).ShouldBe(UpdateCommand.ExtensionDeploymentFailureExitCode);
+    }
+
+    [Fact]
+    public async Task Update_WhenDeploymentFailsRestartsGatewayAndReturnsNonZero()
+    {
+        var pm = Substitute.For<IGatewayProcessManager>();
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
+            .Returns(new GatewayStopResult(true, "Stopped"));
+        pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
+            .Returns(new GatewayStartResult(true, 1234, null));
+        var command = new DeploymentFailureUpdateCommand(pm);
+        var tempDir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"botnexus-update-deployfail-{Guid.NewGuid():N}")).FullName;
+
+        try
+        {
+            var exitCode = await command.ExecuteAsync(tempDir, tempDir, 5005, false, CancellationToken.None);
+
+            exitCode.ShouldBe(UpdateCommand.ExtensionDeploymentFailureExitCode);
+            command.RestartCalled.ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     [Fact]
@@ -138,7 +200,7 @@ public class UpdateCommandTests
     public async Task Update_WhenStopFails_ReturnsNonZeroAndDoesNotStartGateway()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(false, "Kill failed"));
         var cmd = new NoOpPreStopUpdateCommand(pm);
 
@@ -173,7 +235,7 @@ public class UpdateCommandTests
         var busyPort = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
 
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(true, "Stopped"));
         var cmd = new NoOpPreStopUpdateCommand(pm);
 
@@ -204,7 +266,7 @@ public class UpdateCommandTests
     public async Task Update_with_non_git_directory_returns_nonzero()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
-        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        pm.StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>())
             .Returns(new GatewayStopResult(true, null));
         pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStartResult(false, null, "not expected in this test"));
@@ -251,7 +313,7 @@ public class UpdateCommandTests
                 cancellationToken: cts.Token);
 
             exitCode.ShouldBe(130);
-            await pm.DidNotReceive().StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+            await pm.DidNotReceive().StopAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<string?>());
             await pm.DidNotReceive().StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>());
         }
         finally

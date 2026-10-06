@@ -46,6 +46,9 @@ public sealed record SubAgentInfo
     /// </summary>
     public ConversationId? ChildConversationId { get; init; }
 
+    /// <summary>Gets the supervisor conversation that owns this run.</summary>
+    public ConversationId? ParentConversationId { get; init; }
+
     /// <summary>
     /// Gets the delegated task assigned to the sub-agent.
     /// </summary>
@@ -81,10 +84,22 @@ public sealed record SubAgentInfo
     /// </summary>
     public int TurnsUsed { get; init; }
 
+    /// <summary>Gets the effective turn ceiling enforced for this run, or null when unknown.</summary>
+    public int? EffectiveMaxTurns { get; init; }
+
+    /// <summary>Gets the effective wall-clock budget in seconds, or null when unknown.</summary>
+    public int? EffectiveTimeoutSeconds { get; init; }
+
     /// <summary>
     /// Gets an optional completion summary produced by the sub-agent.
     /// </summary>
     public string? ResultSummary { get; init; }
+
+    /// <summary>
+    /// Gets the structured result retained when a bounded run stops before ordinary completion.
+    /// Narrated summary text is explicitly unverified; tool-backed evidence is projected separately.
+    /// </summary>
+    public SubAgentPartialResult? PartialResult { get; init; }
 
     /// <summary>
     /// Gets the budget reduction applied to this spawn, or <c>null</c> when the request fitted
@@ -93,6 +108,12 @@ public sealed record SubAgentInfo
     /// must mean "your requested budget was reduced and you should re-scope the task".
     /// </summary>
     public SubAgentBudgetClamp? BudgetClamp { get; init; }
+
+    /// <summary>
+    /// Gets optional staging guidance when an effective turn or timeout budget exceeds its
+    /// configured advisory threshold. The advisory never changes either effective budget.
+    /// </summary>
+    public SubAgentBudgetAdvisory? BudgetAdvisory { get; init; }
 
     /// <summary>
     /// Gets bounded recovery evidence captured from a caller-granted Git worktree when this run
@@ -121,6 +142,59 @@ public sealed record SubAgentInfo
     /// rather than only "it did not arrive".
     /// </summary>
     public string? CompletionDeliveryError { get; init; }
+}
+
+/// <summary>Structured disposition of a bounded sub-agent result.</summary>
+public enum SubAgentCompletion
+{
+    Complete,
+    Partial,
+    Parked,
+    Failed,
+    Cancelled
+}
+
+/// <summary>Authoritative reason a bounded run stopped.</summary>
+public enum SubAgentStopReason
+{
+    TurnLimit,
+    Timeout,
+    TokenLimit,
+    NoProgress,
+    CallerCancelled
+}
+
+/// <summary>A tool action retained from the interrupted run's authoritative timeline.</summary>
+public sealed record SubAgentPartialAction(
+    string ToolCallId,
+    string ToolName,
+    bool Completed,
+    bool Succeeded);
+
+/// <summary>Successful tool evidence retained separately from unverified child narration.</summary>
+public sealed record SubAgentVerifiedEvidence(
+    string ToolCallId,
+    string ToolName,
+    string? Result);
+
+/// <summary>
+/// Machine-readable result retained when a bounded run is interrupted. Unknown usage remains
+/// <c>null</c>; a missing measurement is never serialized as measured zero.
+/// </summary>
+public sealed record SubAgentPartialResult
+{
+    public required SubAgentCompletion Completion { get; init; }
+    public required SubAgentStopReason StopReason { get; init; }
+    public string? Summary { get; init; }
+    public bool SummaryIsVerified { get; init; }
+    public IReadOnlyList<SubAgentVerifiedEvidence> VerifiedEvidence { get; init; } = [];
+    public IReadOnlyList<string> UnresolvedWork { get; init; } = [];
+    public IReadOnlyList<SubAgentPartialAction> ActionsTaken { get; init; } = [];
+    public IReadOnlyList<string> SideEffects { get; init; } = [];
+    public int TurnsUsed { get; init; }
+    public AgentResponseUsage? Usage { get; init; }
+    public SessionId? CheckpointSessionId { get; init; }
+    public ConversationId? CheckpointConversationId { get; init; }
 }
 
 /// <summary>
@@ -174,6 +248,18 @@ public sealed record SubAgentBudgetClamp(
     /// <summary>Gets a value indicating whether the timeout specifically was reduced.</summary>
     public bool TimeoutSecondsClamped => RequestedTimeoutSeconds > EffectiveTimeoutSeconds;
 }
+
+/// <summary>
+/// Advises the caller to split an unusually large permitted budget into one coherent stage. The
+/// effective values are the budgets threaded into the run after hard policy is applied.
+/// </summary>
+public sealed record SubAgentBudgetAdvisory(
+    bool MaxTurnsAboveThreshold,
+    int MaxTurnsThreshold,
+    int EffectiveMaxTurns,
+    bool TimeoutSecondsAboveThreshold,
+    int TimeoutSecondsThreshold,
+    int EffectiveTimeoutSeconds);
 
 /// <summary>
 /// Represents the lifecycle state of a sub-agent run.

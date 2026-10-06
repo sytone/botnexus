@@ -37,10 +37,6 @@ window.chatScroll = {
         }, 100);
     },
 
-    /** Returns true when the viewport matches the mobile breakpoint (≤768px). */
-    isMobileView: function () {
-        return window.innerWidth <= 768;
-    },
 
     /** Auto-resizes a textarea to fit its content, capped at maxRows rows. */
     autoResizeTextarea: function (element, maxRows) {
@@ -235,16 +231,79 @@ window.chatAttachments = {
     bindPaste: function (element, dotNetRef) {
         if (!element || element._attachmentPasteBound) return;
         element.addEventListener('paste', async function (event) {
-            var clipboardFiles = event.clipboardData ? event.clipboardData.files : [];
-            var images = Array.from(clipboardFiles).filter(function (file) {
+            var clipboard = event.clipboardData;
+            var images = clipboard ? Array.from(clipboard.files || []).filter(function (file) {
                 return file.type.startsWith('image/');
-            });
+            }) : [];
+
+            // Some browsers expose pasted images only as DataTransferItems. Ordinary text paste
+            // remains native because the handler returns unless at least one image blob exists.
+            if (!images.length && clipboard && clipboard.items) {
+                images = Array.from(clipboard.items).filter(function (item) {
+                    return item.kind === 'file' && item.type.startsWith('image/');
+                }).map(function (item) {
+                    return item.getAsFile();
+                }).filter(Boolean);
+            }
             if (!images.length) return;
 
             event.preventDefault();
-            var drafts = await window.chatAttachments.readFiles(images);
-            await dotNetRef.invokeMethodAsync('OnAttachmentsPasted', drafts);
+            try {
+                var drafts = await window.chatAttachments.readFiles(images);
+                await dotNetRef.invokeMethodAsync('OnAttachmentsPasted', drafts);
+            } catch (error) {
+                try { await dotNetRef.invokeMethodAsync('OnAttachmentPasteFailed'); } catch (_) { }
+            }
         });
         element._attachmentPasteBound = true;
+    }
+};
+
+
+window.chatComposer = {
+    /** Replaces the current textarea selection as one native undo step, then reports DOM state. */
+    replaceSelection: function (element, text, expectedContext) {
+        if (!element || typeof element.setRangeText !== 'function') {
+            throw new Error('Composer textarea is unavailable.');
+        }
+        if (element.dataset.composerContext !== expectedContext) {
+            throw new Error('Composer context changed.');
+        }
+        element.focus();
+        var start = typeof element.selectionStart === 'number' ? element.selectionStart : element.value.length;
+        var end = typeof element.selectionEnd === 'number' ? element.selectionEnd : start;
+        element.setRangeText(text, start, end, 'end');
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        return {
+            value: element.value,
+            selectionStart: element.selectionStart,
+            selectionEnd: element.selectionEnd
+        };
+    },
+    focusFirst: function (container) {
+        if (!container) return;
+        if (!container._promptTemplateFocusTrap) {
+            container.addEventListener('keydown', function (event) {
+                if (event.key !== 'Tab') return;
+                var focusable = Array.from(container.querySelectorAll('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+                if (focusable.length === 0) return;
+                var first = focusable[0];
+                var last = focusable[focusable.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            });
+            container._promptTemplateFocusTrap = true;
+        }
+        var target = container.querySelector('[data-testid="prompt-template-search"]')
+            || container.querySelector('input, button, [tabindex]:not([tabindex="-1"])');
+        if (target) target.focus();
+    },
+    focusElement: function (element) {
+        if (element && typeof element.focus === 'function') element.focus();
     }
 };

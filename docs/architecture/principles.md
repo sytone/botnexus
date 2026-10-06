@@ -282,7 +282,7 @@ AgentCore and Providers are **independent libraries** — they have no knowledge
 
 **Application:**
 
-- `BeforeToolCall` / `AfterToolCall` delegates intercept tool execution
+- `ToolExecutionPolicy` / `ToolResultTransformer` delegates intercept tool execution
 - Hooks can:
   - Block tools (path validation)
   - Transform arguments (sanitization)

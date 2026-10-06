@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Agent.Providers.Core.Utilities;
 using Microsoft.Extensions.Logging;
 
@@ -59,7 +60,8 @@ public static class ResponsesStreamParser
         Action<LlmStream, LlmModel, string, IReadOnlyList<ContentBlock>?> emitError,
         Action<JsonElement>? onParsedEvent,
         Func<StreamOptions?, string?>? resolveConfiguredServiceTier,
-        CancellationToken ct)
+        CancellationToken ct,
+        ISecretRedactor? secretRedactor = null)
         => ParseEventsAsync(
             stream,
             async cancellationToken =>
@@ -74,7 +76,8 @@ public static class ResponsesStreamParser
             emitError,
             onParsedEvent,
             resolveConfiguredServiceTier,
-            ct);
+            ct,
+            secretRedactor);
 
     /// <summary>
     /// Normalizes Responses JSON events from any provider-private wire transport into the shared
@@ -91,7 +94,8 @@ public static class ResponsesStreamParser
         Action<LlmStream, LlmModel, string, IReadOnlyList<ContentBlock>?> emitError,
         Action<JsonElement>? onParsedEvent,
         Func<StreamOptions?, string?>? resolveConfiguredServiceTier,
-        CancellationToken ct)
+        CancellationToken ct,
+        ISecretRedactor? secretRedactor = null)
     {
         var contentBlocks = new List<ContentBlock>();
         var usage = Usage.Empty();
@@ -106,6 +110,8 @@ public static class ResponsesStreamParser
 
         var textStates = new Dictionary<string, (int ContentIndex, StringBuilder Text)>(StringComparer.Ordinal);
         var thinkingStates = new Dictionary<string, (int ContentIndex, StringBuilder Text)>(StringComparer.Ordinal);
+        var sawOpaqueReasoning = false;
+        var sawDisplayableReasoning = false;
         var toolStates = new Dictionary<string, ToolState>(StringComparer.Ordinal);
         // Per-text-item delta counts, carried solely so the assembly-conformance diagnostic can
         // report how many fragments produced a mismatched buffer (#2443).
@@ -137,7 +143,8 @@ public static class ResponsesStreamParser
 
             if (string.Equals(evt.Event, "error", StringComparison.Ordinal))
             {
-                emitError(stream, model, evt.Data, null);
+                emitError(stream, model,
+                    ProviderHttpErrorHelper.RedactDiagnosticText(evt.Data, secretRedactor), null);
                 return;
             }
 
@@ -237,6 +244,7 @@ public static class ResponsesStreamParser
                     if (itemId is null || !thinkingStates.TryGetValue(itemId, out var state)) continue;
                     var delta = GetString(root, "delta") ?? "";
                     if (delta.Length == 0) continue;
+                    sawDisplayableReasoning = true;
                     state.Text.Append(delta);
                     contentBlocks[state.ContentIndex] = new ThinkingContent(state.Text.ToString());
                     stream.Push(new ThinkingDeltaEvent(state.ContentIndex, delta, BuildPartial()));
@@ -386,12 +394,29 @@ public static class ResponsesStreamParser
                     switch (itemType)
                     {
                         case "reasoning" when itemId is not null && thinkingStates.TryGetValue(itemId, out var thinkingState):
+                        {
+                            sawOpaqueReasoning |= HasNonEmptyString(item, "encrypted_content");
+                            var terminalSummary = GetReasoningSummaryText(item);
+                            var accumulated = thinkingState.Text.ToString();
+                            if (accumulated.Length == 0 && terminalSummary.Length > 0)
+                            {
+                                sawDisplayableReasoning = true;
+                                thinkingState.Text.Append(terminalSummary);
+                                contentBlocks[thinkingState.ContentIndex] = new ThinkingContent(terminalSummary);
+                                stream.Push(new ThinkingDeltaEvent(
+                                    thinkingState.ContentIndex,
+                                    terminalSummary,
+                                    BuildPartial()));
+                                accumulated = terminalSummary;
+                            }
+
                             contentBlocks[thinkingState.ContentIndex] = new ThinkingContent(
-                                thinkingState.Text.ToString(),
+                                accumulated,
                                 JsonSerializer.Serialize(item));
-                            stream.Push(new ThinkingEndEvent(thinkingState.ContentIndex, thinkingState.Text.ToString(), BuildPartial()));
+                            stream.Push(new ThinkingEndEvent(thinkingState.ContentIndex, accumulated, BuildPartial()));
                             thinkingStates.Remove(itemId);
                             break;
+                        }
 
                         case "message" when itemId is not null && textStates.TryGetValue(itemId, out var textState):
                             var phase = GetString(item, "phase");
@@ -461,6 +486,21 @@ public static class ResponsesStreamParser
                         usage = ApplyServiceTierPricing(usage, responseTier ?? configuredTier);
                     }
 
+                    if (!sawDisplayableReasoning && (sawOpaqueReasoning || usage.Reasoning > 0))
+                    {
+                        const string warningMessage =
+                            "Reasoning used; summary not provided. Opaque reasoning content was not exposed.";
+                        logger.LogInformation(
+                            "Provider reasoning summary unavailable for {Provider}/{Model}; "
+                            + "opaque content remains undisclosed",
+                            model.Provider,
+                            model.Id);
+                        stream.Push(new WarningEvent(
+                            WarningCodes.ReasoningSummaryUnavailable,
+                            warningMessage,
+                            BuildPartial()));
+                    }
+
                     if (contentBlocks.OfType<ToolCallContent>().Any() && stopReason == StopReason.Stop)
                         stopReason = StopReason.ToolUse;
 
@@ -469,7 +509,8 @@ public static class ResponsesStreamParser
 
                 if (evt.Event is "response.failed")
                 {
-                    var message = GetErrorMessage(root);
+                    var message = ProviderHttpErrorHelper.RedactDiagnosticText(
+                        GetErrorMessage(root), secretRedactor);
                     emitError(stream, model, message, contentBlocks);
                     return;
                 }
@@ -606,5 +647,26 @@ public static class ResponsesStreamParser
         if (TryGetObjectProperty(element, propertyName, out var value) && value.ValueKind == JsonValueKind.String)
             return value.GetString();
         return null;
+    }
+
+    private static bool HasNonEmptyString(JsonElement element, string propertyName)
+        => !string.IsNullOrEmpty(GetString(element, propertyName));
+
+    private static string GetReasoningSummaryText(JsonElement item)
+    {
+        if (!TryGetObjectProperty(item, "summary", out var summary) || summary.ValueKind != JsonValueKind.Array)
+            return string.Empty;
+
+        var text = new StringBuilder();
+        foreach (var part in summary.EnumerateArray())
+        {
+            if (GetString(part, "type") is not "summary_text")
+                continue;
+            var value = GetString(part, "text");
+            if (!string.IsNullOrEmpty(value))
+                text.Append(value);
+        }
+
+        return text.ToString();
     }
 }

@@ -81,7 +81,7 @@ public sealed class ConversationCronAlertTargetResolverTests
 
         var bad = await CronAlertTarget.ValidateAsync(resolver, ConversationId.From("c_typo"));
         bad.IsValid.ShouldBeFalse();
-        bad.Error.ShouldBe(CronAlertTarget.UnresolvableMessage("c_typo"));
+        bad.Error.ShouldBe(CronAlertTarget.UnresolvableMessage(ConversationId.From("c_typo")));
         bad.Error!.ShouldNotContain("cannot be verified");
     }
 

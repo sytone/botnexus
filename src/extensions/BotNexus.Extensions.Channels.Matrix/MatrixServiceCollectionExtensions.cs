@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Extensions.Channels.Matrix;
 
@@ -59,7 +60,9 @@ public static class MatrixServiceCollectionExtensions
             var home = sp.GetService<BotNexusHome>();
             var dataRoot = home?.DataPath ?? BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath();
             return new SqliteMatrixSyncCursorStore(
-                Path.Combine(dataRoot, "data", "matrix-sync-cursor.db"));
+                SqliteStorePathPolicy.ResolveOwnedStorePath(
+                    Path.Combine(dataRoot, "data"),
+                    "matrix-sync-cursor"));
         });
 
         services.AddSingleton<MatrixChannelAdapter>();

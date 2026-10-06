@@ -14,6 +14,8 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/logs")]
 public sealed class LogController : ControllerBase
 {
+    private const int MaxClientFieldLength = 16_384;
+
     private readonly ILogger<LogController> _logger;
     private readonly IRecentLogStore _recentLogs;
 
@@ -37,6 +39,14 @@ public sealed class LogController : ControllerBase
     [HttpPost]
     public IActionResult Post([FromBody] ClientLogEntry entry)
     {
+        if (ExceedsLimit(entry.Version) || ExceedsLimit(entry.Message) || ExceedsLimit(entry.Data))
+        {
+            return BadRequest(new
+            {
+                error = $"Client log version, message, and data must each be at most {MaxClientFieldLength} characters."
+            });
+        }
+
         var level = (entry.Level?.ToLowerInvariant()) switch
         {
             "error" or "err" => LogLevel.Error,
@@ -50,6 +60,8 @@ public sealed class LogController : ControllerBase
 
         return Ok();
     }
+
+    private static bool ExceedsLimit(string? value) => value?.Length > MaxClientFieldLength;
 
     /// <summary>Returns recent structured log entries for diagnostics.</summary>
     /// <summary>

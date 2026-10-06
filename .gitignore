@@ -76,3 +76,4 @@ cognitive-coverage/
 
 # In-app user guide: copied from docs/user-guide at build time (see CopyUserGuide).
 src/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/wwwroot/guide/
+dirs.sln

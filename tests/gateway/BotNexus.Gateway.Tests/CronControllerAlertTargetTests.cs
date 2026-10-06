@@ -163,7 +163,7 @@ public sealed partial class CronControllerTests
         var updateMessage = updateResult.Result.ShouldBeOfType<BadRequestObjectResult>().Value!.ToString();
 
         createMessage.ShouldBe(updateMessage);
-        createMessage.ShouldBe(CronAlertTarget.UnresolvableMessage("conv-shared"));
+        createMessage.ShouldBe(CronAlertTarget.UnresolvableMessage(ConversationId.From("conv-shared")));
     }
 
     // #3168 AC3: the controller must accept a real target when wired to the PRODUCTION resolver,
@@ -215,7 +215,7 @@ public sealed partial class CronControllerTests
             CancellationToken.None);
 
         rejected.Result.ShouldBeOfType<BadRequestObjectResult>()
-            .Value!.ToString().ShouldBe(CronAlertTarget.UnresolvableMessage("c_nope"));
+            .Value!.ToString().ShouldBe(CronAlertTarget.UnresolvableMessage(ConversationId.From("c_nope")));
         (await store.GetAsync(JobId.From("job-dead"))).ShouldBeNull();
     }
 

@@ -78,7 +78,7 @@ public sealed class ConversationRetentionHostedService(
             return 0;
 
         var now = DateTimeOffset.UtcNow;
-        var conversations = await _conversationStore.ListAsync(ct: cancellationToken)
+        var conversations = await _conversationStore.GetRetentionCandidatesAsync(ct: cancellationToken)
             .ConfigureAwait(false);
 
         var archivedCount = 0;
@@ -87,17 +87,14 @@ public sealed class ConversationRetentionHostedService(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Only archive Active conversations.
-            if (conv.Status != ConversationStatus.Active)
-                continue;
-
-            // Exclude pinned conversations. IsPinned is always false until #780 is implemented;
-            // this guard is a forward-compatible no-op that prevents regressions once pinning lands.
-            if (IsConversationPinned(conv))
+            // The candidate query is active-only. Exclude webhook-owned rows because
+            // their source-specific worker owns those thresholds; this also avoids duplicate work.
+            if (conv.IsPinned || conv.Source == ConversationSource.Webhook)
                 continue;
 
             // Resolve per-agent effective threshold.
-            var effectiveThresholdDays = ResolveEffectiveThreshold(conv.AgentId, worldThresholdDays);
+            var agentId = conv.AgentId;
+            var effectiveThresholdDays = ResolveEffectiveThreshold(agentId, worldThresholdDays);
             if (effectiveThresholdDays <= 0)
                 continue;
 
@@ -105,17 +102,21 @@ public sealed class ConversationRetentionHostedService(
             if (inactiveFor < TimeSpan.FromDays(effectiveThresholdDays))
                 continue;
 
-            await _conversationStore.ArchiveAsync(conv.ConversationId, "retention", conv.ConversationId.Value, "system", cancellationToken)
-                .ConfigureAwait(false);
+            var conversationId = conv.ConversationId;
+            if (!await _conversationStore.TryArchiveAsync(conversationId, "retention", conv.ConversationId.Value, "system", cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                continue;
+            }
 
             _logger.LogInformation(
                 "Auto-archived conversation {ConversationId} (agent {AgentId}) after {InactiveDays:F1} days of inactivity (threshold: {ThresholdDays}d).",
-                conv.ConversationId,
-                conv.AgentId,
+                conversationId,
+                agentId,
                 inactiveFor.TotalDays,
                 effectiveThresholdDays);
 
-            await NotifyBestEffortAsync(conv, cancellationToken).ConfigureAwait(false);
+            await NotifyBestEffortAsync(agentId, conversationId, cancellationToken).ConfigureAwait(false);
             archivedCount++;
         }
 
@@ -142,13 +143,10 @@ public sealed class ConversationRetentionHostedService(
         return worldDefault;
     }
 
-    /// <summary>
-    /// Returns <c>true</c> when the conversation is pinned and should be excluded from retention.
-    /// </summary>
-    private static bool IsConversationPinned(Conversation conversation) =>
-        conversation.IsPinned;
-
-    private async Task NotifyBestEffortAsync(Conversation conv, CancellationToken cancellationToken)
+    private async Task NotifyBestEffortAsync(
+        AgentId agentId,
+        ConversationId conversationId,
+        CancellationToken cancellationToken)
     {
         if (_changeNotifiers.Count == 0)
             return;
@@ -159,8 +157,8 @@ public sealed class ConversationRetentionHostedService(
             {
                 await notifier.NotifyConversationChangedAsync(
                     "archived",
-                    conv.AgentId.Value,
-                    conv.ConversationId.Value,
+                    agentId.Value,
+                    conversationId.Value,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -168,7 +166,7 @@ public sealed class ConversationRetentionHostedService(
                 _logger.LogDebug(
                     ex,
                     "SignalR notify failed for auto-archive of conversation {ConversationId}; portal will refresh on next poll.",
-                    conv.ConversationId);
+                    conversationId);
             }
         }
     }

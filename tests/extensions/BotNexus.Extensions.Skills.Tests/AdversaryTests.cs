@@ -102,7 +102,8 @@ public sealed class AdversaryTests : IDisposable
     {
         // ARRANGE: Many skills
         var skills = Enumerable.Range(1, 50).Select(i => MakeSkill($"skill-{i}")).ToList();
-        var tool = new SkillTool(skills, config: null);
+        // This test isolates concurrent dictionary safety; budget behavior has dedicated coverage.
+        var tool = new SkillTool(skills, new SkillsConfig { MaxLoadedSkills = -1 });
 
         // ACT: Concurrent loads - this may throw or corrupt with non-thread-safe HashSet
         var tasks = Enumerable.Range(0, 200).Select(i =>

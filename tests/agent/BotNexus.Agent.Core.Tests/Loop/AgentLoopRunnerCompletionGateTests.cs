@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tests.TestUtils;
 using BotNexus.Agent.Core.Types;
@@ -23,7 +24,7 @@ public sealed class AgentLoopRunnerCompletionGateTests
         var events = new List<AgentEvent>();
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel("completion-gate-continues")) with
         {
-            EvaluateRunCompletion = _ => Task.FromResult(
+            RunCompletionPolicy = _ => Task.FromResult(
                 Interlocked.Increment(ref evaluations) == 1
                     ? RunCompletionDecision.Continue(["publish"], "Publication is still actionable.")
                     : RunCompletionDecision.Completed),
@@ -60,7 +61,7 @@ public sealed class AgentLoopRunnerCompletionGateTests
         var events = new List<AgentEvent>();
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel("completion-gate-bounded")) with
         {
-            EvaluateRunCompletion = _ => Task.FromResult(
+            RunCompletionPolicy = _ => Task.FromResult(
                 RunCompletionDecision.Continue(["implement", "validate"], "Work remains actionable.")),
             MaxCompletionContinuations = 2,
         };
@@ -93,7 +94,7 @@ public sealed class AgentLoopRunnerCompletionGateTests
         var events = new List<AgentEvent>();
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel("completion-gate-parked")) with
         {
-            EvaluateRunCompletion = _ => Task.FromResult(RunCompletionDecision.Parked(
+            RunCompletionPolicy = _ => Task.FromResult(RunCompletionDecision.Parked(
                 RunStopReason.UserInput,
                 ["decision"],
                 "ask_user request ask-1 is persisted",
@@ -115,6 +116,89 @@ public sealed class AgentLoopRunnerCompletionGateTests
         completion.OpenItemIds.ShouldBe(["decision"]);
     }
 
+    [Theory]
+    [InlineData(null, "persisted approval", "user", "user approves")]
+    [InlineData(RunStopReason.Approval, "", "user", "user approves")]
+    [InlineData(RunStopReason.Approval, "persisted approval", "", "user approves")]
+    [InlineData(RunStopReason.Approval, "persisted approval", "user", "")]
+    public async Task MalformedParkedDisposition_ContinuesInsteadOfEndingParked(
+        RunStopReason? stopReason,
+        string evidence,
+        string continuationOwner,
+        string wakeCondition)
+    {
+        var providerCalls = 0;
+        var providerName = $"completion-gate-invalid-park-{Guid.NewGuid():N}";
+        using var provider = TestHelpers.RegisterProvider(new TestApiProvider(
+            providerName,
+            simpleStreamFactory: (_, _, _) =>
+            {
+                Interlocked.Increment(ref providerCalls);
+                return TestStreamFactory.CreateTextResponse("claimed blocker");
+            }));
+        var events = new List<AgentEvent>();
+        var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(providerName)) with
+        {
+            RunCompletionPolicy = _ => Task.FromResult(new RunCompletionDecision(
+                RunCompletionStatus.Parked,
+                ["publish"],
+                stopReason,
+                Evidence: evidence,
+                ContinuationOwner: continuationOwner,
+                WakeCondition: wakeCondition)),
+            MaxCompletionContinuations = 1,
+        };
+
+        _ = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("deliver")],
+            new AgentContext(null, [], []),
+            config,
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        providerCalls.ShouldBe(2);
+        var completion = events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion;
+        completion.Status.ShouldBe(RunCompletionStatus.IncompleteWithoutStopReason);
+        completion.OpenItemIds.ShouldBe(["publish"]);
+        completion.ContinuationAttempts.ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(RunStopReason.UserInput)]
+    [InlineData(RunStopReason.Approval)]
+    [InlineData(RunStopReason.ExternalBlocker)]
+    [InlineData(RunStopReason.Cancellation)]
+    [InlineData(RunStopReason.SafetyBoundary)]
+    [InlineData(RunStopReason.DurableAsyncWait)]
+    public async Task StructuredParkedDisposition_AcceptsEveryBoundedStopReason(RunStopReason stopReason)
+    {
+        var providerName = $"completion-gate-valid-park-{Guid.NewGuid():N}";
+        using var provider = TestHelpers.RegisterProvider(new TestApiProvider(
+            providerName,
+            simpleStreamFactory: (_, _, _) => TestStreamFactory.CreateTextResponse("waiting")));
+        var events = new List<AgentEvent>();
+        var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(providerName)) with
+        {
+            RunCompletionPolicy = _ => Task.FromResult(RunCompletionDecision.Parked(
+                stopReason,
+                ["publish"],
+                "authoritative persisted evidence",
+                "runtime",
+                "durable wake signal")),
+        };
+
+        _ = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("deliver")],
+            new AgentContext(null, [], []),
+            config,
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        var completion = events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion;
+        completion.Status.ShouldBe(RunCompletionStatus.Parked);
+        completion.StopReason.ShouldBe(stopReason);
+    }
+
     [Fact]
     public async Task ProviderError_BypassesChecklistContinuationAndEndsFailed()
     {
@@ -129,7 +213,7 @@ public sealed class AgentLoopRunnerCompletionGateTests
         var events = new List<AgentEvent>();
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel("completion-gate-error")) with
         {
-            EvaluateRunCompletion = _ => Task.FromResult(
+            RunCompletionPolicy = _ => Task.FromResult(
                 RunCompletionDecision.Continue(["publish"], "Work remains actionable.")),
         };
 

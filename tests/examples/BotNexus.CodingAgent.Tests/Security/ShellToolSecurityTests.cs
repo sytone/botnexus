@@ -1,4 +1,4 @@
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
 using BotNexus.Agent.Core.Types;
 using BotNexus.CodingAgent;
 using BotNexus.CodingAgent.Hooks;
@@ -116,10 +116,10 @@ public sealed class ShellToolSecurityTests : IDisposable
             $"expected output to contain 'first' or 'timed out' but was: {output}");
     }
 
-    private static BeforeToolCallContext CreateShellContext(string command)
+    private static ToolExecutionContext CreateShellContext(string command)
     {
         var args = new Dictionary<string, object?> { ["command"] = command };
-        return new BeforeToolCallContext(
+        return new ToolExecutionContext(
             new AssistantAgentMessage("shell"),
             new ToolCallContent("tc-1", "bash", args),
             args,

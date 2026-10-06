@@ -80,6 +80,22 @@ public sealed class PathValidatorTests
     }
 
     [Fact]
+    public void FilesystemRootDeny_RejectsWorkspaceDescendantsForReadAndWrite()
+    {
+        var filesystemRoot = Path.GetPathRoot(TestWorkspace).ShouldNotBeNull();
+        var sut = CreateValidator(new FileAccessPolicy
+        {
+            DeniedPaths = [filesystemRoot]
+        }, workspace: TestWorkspace);
+
+        var descendant = Path.Combine(TestWorkspace, "nested", "secret.txt");
+        sut.CanRead(descendant).ShouldBeFalse();
+        sut.CanWrite(descendant).ShouldBeFalse();
+        sut.CanRead(filesystemRoot).ShouldBeFalse();
+        sut.CanWrite(filesystemRoot).ShouldBeFalse();
+    }
+
+    [Fact]
     public void ValidateAndResolve_ResolvesRelativePath()
     {
         var sut = CreateValidator(policy: null);

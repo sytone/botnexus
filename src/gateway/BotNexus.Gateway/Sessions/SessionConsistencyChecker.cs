@@ -100,6 +100,22 @@ public sealed class SessionConsistencyChecker(
         var now = _timeProvider.GetUtcNow();
         var discrepancies = new List<SessionConsistencyDiscrepancy>();
 
+        // One transcript-free projection serves both consistency phases. The previous code called
+        // GetAsync once per conversation and ListAsync once per pass, hydrating the complete history
+        // of thousands of persisted sessions and consuming tens of gigabytes (#4657).
+        var allSessions = await _sessions.ListSummariesAsync(
+            DateTimeOffset.MinValue, limit: null, offset: 0, cancellationToken).ConfigureAwait(false);
+        var sessionsById = allSessions.ToDictionary(
+            static session => session.SessionId,
+            StringComparer.Ordinal);
+        var sessionsByConversation = allSessions
+            .Where(static session => !string.IsNullOrWhiteSpace(session.ConversationId))
+            .GroupBy(static session => session.ConversationId!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<SessionSummary>)group.ToArray(),
+                StringComparer.Ordinal);
+
         var allConversations = await _conversations.ListAsync(null, cancellationToken).ConfigureAwait(false);
         var conversationBudget = options.MaxConversationsPerRun > 0
             ? options.MaxConversationsPerRun
@@ -114,14 +130,17 @@ public sealed class SessionConsistencyChecker(
             cancellationToken.ThrowIfCancellationRequested();
             conversationsScanned++;
 
-            var found = await CheckConversationAsync(conversation, effectiveDryRun, cancellationToken).ConfigureAwait(false);
+            var found = await CheckConversationAsync(
+                conversation,
+                sessionsById,
+                sessionsByConversation,
+                effectiveDryRun,
+                cancellationToken).ConfigureAwait(false);
             if (found is not null)
                 discrepancies.Add(found);
         }
 
-        // Stale-active-cron sweep across all sessions.
         var sessionsScanned = 0;
-        var allSessions = await _sessions.ListAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
         foreach (var session in allSessions)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -144,16 +163,16 @@ public sealed class SessionConsistencyChecker(
 
     private async Task<SessionConsistencyDiscrepancy?> CheckConversationAsync(
         Conversation conversation,
+        IReadOnlyDictionary<string, SessionSummary> sessionsById,
+        IReadOnlyDictionary<string, IReadOnlyList<SessionSummary>> sessionsByConversation,
         bool dryRun,
         CancellationToken cancellationToken)
     {
         if (conversation.ActiveSessionId is not { } activeSessionId)
             return null;
 
-        var active = await _sessions.GetAsync(activeSessionId, cancellationToken).ConfigureAwait(false);
-
         // Invariant: active-session-missing. Pointer references a session that no longer exists.
-        if (active is null)
+        if (!sessionsById.ContainsKey(activeSessionId.Value))
         {
             var previous = $"ActiveSessionId={activeSessionId.Value} (not found in store)";
             if (dryRun)
@@ -173,11 +192,11 @@ public sealed class SessionConsistencyChecker(
         // while a more-recent non-cron session exists in the same conversation.
         if (activeSessionId.IsCron)
         {
-            var candidate = await ResolveLatestNonCronSessionAsync(conversation.ConversationId, cancellationToken).ConfigureAwait(false);
+            var candidate = ResolveLatestNonCronSession(conversation.ConversationId, sessionsByConversation);
             if (candidate is null)
                 return null; // Nothing unambiguous to restore; leave the pointer untouched.
 
-            var previous = $"ActiveSessionId={activeSessionId.Value} (cron); latestNonCron={candidate.SessionId.Value}";
+            var previous = $"ActiveSessionId={activeSessionId.Value} (cron); latestNonCron={candidate.SessionId}";
 
             // Guard: never re-point while a turn is genuinely executing on the poisoned pointer.
             if (_turnTracker?.HasLiveTurn(activeSessionId.Value) == true)
@@ -188,15 +207,15 @@ public sealed class SessionConsistencyChecker(
 
             if (dryRun)
             {
-                LogDiscrepancy("active-session-cron-poison", conversation.ConversationId.Value, activeSessionId.Value, previous, $"would re-point to {candidate.SessionId.Value}");
-                return new SessionConsistencyDiscrepancy("active-session-cron-poison", conversation.ConversationId.Value, activeSessionId.Value, previous, $"re-point to {candidate.SessionId.Value}", false);
+                LogDiscrepancy("active-session-cron-poison", conversation.ConversationId.Value, activeSessionId.Value, previous, $"would re-point to {candidate.SessionId}");
+                return new SessionConsistencyDiscrepancy("active-session-cron-poison", conversation.ConversationId.Value, activeSessionId.Value, previous, $"re-point to {candidate.SessionId}", false);
             }
 
-            conversation.ActiveSessionId = candidate.SessionId;
+            conversation.ActiveSessionId = SessionId.From(candidate.SessionId);
             conversation.UpdatedAt = _timeProvider.GetUtcNow();
             await _conversations.SaveAsync(conversation, cancellationToken).ConfigureAwait(false);
-            LogDiscrepancy("active-session-cron-poison", conversation.ConversationId.Value, activeSessionId.Value, previous, $"re-pointed to {candidate.SessionId.Value}");
-            return new SessionConsistencyDiscrepancy("active-session-cron-poison", conversation.ConversationId.Value, activeSessionId.Value, previous, $"re-pointed to {candidate.SessionId.Value}", true);
+            LogDiscrepancy("active-session-cron-poison", conversation.ConversationId.Value, activeSessionId.Value, previous, $"re-pointed to {candidate.SessionId}");
+            return new SessionConsistencyDiscrepancy("active-session-cron-poison", conversation.ConversationId.Value, activeSessionId.Value, previous, $"re-pointed to {candidate.SessionId}", true);
         }
 
         return null;
@@ -204,25 +223,28 @@ public sealed class SessionConsistencyChecker(
 
     // Latest non-cron, non-sealed session for the conversation, preferring the most recently
     // created. Returns null when there is no unambiguous channel-compatible candidate.
-    private async Task<GatewaySession?> ResolveLatestNonCronSessionAsync(
+    private static SessionSummary? ResolveLatestNonCronSession(
         ConversationId conversationId,
-        CancellationToken cancellationToken)
+        IReadOnlyDictionary<string, IReadOnlyList<SessionSummary>> sessionsByConversation)
     {
-        var members = await _sessions.ListByConversationAsync(conversationId, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (!sessionsByConversation.TryGetValue(conversationId.Value, out var members))
+            return null;
+
         return members
-            .Where(s => !s.SessionId.IsCron && s.Status != SessionStatus.Sealed)
-            .OrderByDescending(s => s.CreatedAt)
-            .ThenByDescending(s => s.UpdatedAt)
+            .Where(static session => !SessionId.From(session.SessionId).IsCron && session.Status != SessionStatus.Sealed)
+            .OrderByDescending(static session => session.CreatedAt)
+            .ThenByDescending(static session => session.UpdatedAt)
             .FirstOrDefault();
     }
 
     private async Task<SessionConsistencyDiscrepancy?> CheckStaleActiveCronAsync(
-        GatewaySession session,
+        SessionSummary session,
         DateTimeOffset now,
         bool dryRun,
         CancellationToken cancellationToken)
     {
-        if (!session.SessionId.IsCron || session.Status != SessionStatus.Active)
+        var sessionId = SessionId.From(session.SessionId);
+        if (!sessionId.IsCron || session.Status != SessionStatus.Active)
             return null;
 
         var threshold = Options.StaleActiveCronThreshold;
@@ -230,22 +252,24 @@ public sealed class SessionConsistencyChecker(
             return null;
 
         // Never terminalize a cron session that still has a live turn.
-        if (_turnTracker?.HasLiveTurn(session.SessionId.Value) == true)
+        if (_turnTracker?.HasLiveTurn(session.SessionId) == true)
             return null;
 
         var previous = $"cron session Active, updatedAt={session.UpdatedAt:O}";
 
         if (dryRun)
         {
-            LogDiscrepancy("stale-active-cron", session.ConversationId.Value, session.SessionId.Value, previous, "would seal stale active cron session");
-            return new SessionConsistencyDiscrepancy("stale-active-cron", session.ConversationId.Value, session.SessionId.Value, previous, "seal stale active cron session", false);
+            LogDiscrepancy("stale-active-cron", session.ConversationId, session.SessionId, previous, "would seal stale active cron session");
+            return new SessionConsistencyDiscrepancy("stale-active-cron", session.ConversationId, session.SessionId, previous, "seal stale active cron session", false);
         }
 
-        session.Status = SessionStatus.Sealed;
-        session.UpdatedAt = _timeProvider.GetUtcNow();
-        await _sessions.SaveAsync(session, cancellationToken).ConfigureAwait(false);
-        LogDiscrepancy("stale-active-cron", session.ConversationId.Value, session.SessionId.Value, previous, "sealed stale active cron session");
-        return new SessionConsistencyDiscrepancy("stale-active-cron", session.ConversationId.Value, session.SessionId.Value, previous, "sealed stale active cron session", true);
+        var transition = await _sessions.TransitionStatusAsync(
+            sessionId, [SessionStatus.Active], SessionStatus.Sealed, cancellationToken).ConfigureAwait(false);
+        if (transition.Outcome != SessionMutationOutcome.Applied)
+            return null;
+
+        LogDiscrepancy("stale-active-cron", session.ConversationId, session.SessionId, previous, "sealed stale active cron session");
+        return new SessionConsistencyDiscrepancy("stale-active-cron", session.ConversationId, session.SessionId, previous, "sealed stale active cron session", true);
     }
 
     private void LogDiscrepancy(string invariant, string? conversationId, string? sessionId, string previousState, string repair)

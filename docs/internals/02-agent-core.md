@@ -131,19 +131,19 @@ public record AgentOptions(
     AgentInitialState? InitialState,
     LlmModel Model,
     LlmClient LlmClient,
-    ConvertToLlmDelegate? ConvertToLlm,
-    TransformContextDelegate? TransformContext,
+    ProviderMessageTransformer? ProviderMessageTransformer,
+    AgentContextTransformer? AgentContextTransformer,
     GetApiKeyDelegate GetApiKey,
-    GetMessagesDelegate? GetSteeringMessages,
-    GetMessagesDelegate? GetFollowUpMessages,
+    AgentMessageProvider? SteeringMessageProvider,
+    AgentMessageProvider? FollowUpMessageProvider,
     ToolExecutionMode ToolExecutionMode,
-    BeforeToolCallDelegate? BeforeToolCall,
-    AfterToolCallDelegate? AfterToolCall,
+    ToolExecutionPolicy? ToolExecutionPolicy,
+    ToolResultTransformer? ToolResultTransformer,
     SimpleStreamOptions GenerationSettings,
     QueueMode SteeringMode,
     QueueMode FollowUpMode,
     string? SessionId = null,
-    Action<string>? OnDiagnostic = null,
+    Action<string>? DiagnosticObserver = null,
     int? MaxRetryDelayMs = AgentLoopConfig.DefaultMaxRetryDelayMs
 );
 ```
@@ -153,19 +153,19 @@ public record AgentOptions(
 | `InitialState` | Optional initial state (system prompt, model override, tools, pre-seeded messages) |
 | `Model` | Default LLM model for this agent |
 | `LlmClient` | The client used to call providers (routes to correct `IApiProvider`) |
-| `ConvertToLlm` | Converts `AgentMessage` list → provider-level `Message` list (auto-defaults to `DefaultMessageConverter` if not provided — Phase 4) |
-| `TransformContext` | Optional context window compaction — trim, summarize, or rewrite messages before each LLM call (defaults to identity passthrough if not provided — Phase 4) |
+| `ProviderMessageTransformer` | Converts `AgentMessage` list → provider-level `Message` list (auto-defaults to `DefaultProviderMessageTransformer` if not provided — Phase 4) |
+| `AgentContextTransformer` | Optional context window compaction — trim, summarize, or rewrite messages before each LLM call (defaults to identity passthrough if not provided — Phase 4) |
 | `GetApiKey` | Resolves API key by provider name |
-| `GetSteeringMessages` | Optional delegate that produces steering messages at turn boundaries |
-| `GetFollowUpMessages` | Optional delegate that produces follow-up messages after runs |
+| `SteeringMessageProvider` | Optional delegate that produces steering messages at turn boundaries |
+| `FollowUpMessageProvider` | Optional delegate that produces follow-up messages after runs |
 | `ToolExecutionMode` | `Sequential` or `Parallel` tool execution |
-| `BeforeToolCall` | Hook that fires before each tool executes — can block execution |
-| `AfterToolCall` | Hook that fires after each tool executes — can transform results |
+| `ToolExecutionPolicy` | Delegate that fires before each tool executes — can block execution |
+| `ToolResultTransformer` | Delegate that fires after each tool executes — can transform results |
 | `GenerationSettings` | `SimpleStreamOptions` for controlling temperature, max tokens, etc. |
 | `SteeringMode` | `QueueMode.All` (drain all at once) or `QueueMode.OneAtATime` (Phase 4: configurable via setter) |
 | `FollowUpMode` | `QueueMode.All` or `QueueMode.OneAtATime` (Phase 4: configurable via setter) |
 | `SessionId` | Optional session identifier for logging and persistence |
-| `OnDiagnostic` | Optional callback for non-fatal runtime diagnostics (e.g., swallowed listener exceptions — Phase 4) |
+| `DiagnosticObserver` | Optional callback for non-fatal runtime diagnostics (e.g., swallowed listener exceptions — Phase 4) |
 | `MaxRetryDelayMs` | Max delay (ms) for transient retry backoff and the ceiling applied to a server-supplied `Retry-After`. Defaults to 60,000ms (#3035); null is normalised to that same ceiling, never uncapped |
 
 > **Key takeaway:** `AgentOptions` is set-once wiring. To change behavior at runtime, modify `AgentState` properties instead.
@@ -199,8 +199,8 @@ static async Task<IReadOnlyList<AgentMessage>> ContinueAsync(
 TURN LOOP:
   ┌─────────────────────────────────────────────────────────────────┐
   │ 1. Drain steering messages → add to timeline                   │
-  │ 2. Transform context (compaction via TransformContextDelegate)  │
-  │ 3. Convert agent messages → provider messages (ConvertToLlm)   │
+    │ 2. Transform context (AgentContextTransformer)                 │
+    │ 3. Convert agent messages (ProviderMessageTransformer)          │
   │ 4. Call LLM via StreamSimple()                                 │
   │ 5. Accumulate stream → AssistantAgentMessage (StreamAccumulator)│
   │ 6. Add assistant message to timeline                           │
@@ -221,11 +221,11 @@ FOLLOW-UP LOOP:
   └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Step 1 — Drain steering:** Any messages queued via `Agent.Steer()` or `GetSteeringMessages` are pulled from the queue and appended to the timeline. This happens at the top of every turn, so steering messages are visible to the LLM on the next call.
+**Step 1 — Drain steering:** Any messages queued via `Agent.Steer()` or `SteeringMessageProvider` are pulled from the queue and appended to the timeline. This happens at the top of every turn, so steering messages are visible to the LLM on the next call.
 
 > **Steering poll skip (Phase 5):** When `ContinueAsync()` drains queued messages, it tracks whether they came from the steering queue (`fromSteeringQueue`). If they did, `_skipInitialSteeringPollForNextRun` is set to `true`, so the next run skips the redundant initial steering poll. Follow-up messages do **not** set this flag — they always allow a steering poll before the LLM call. This prevents dropping concurrent steering messages during follow-up continuations.
 
-**Step 2 — Transform context (Phase 5):** The `TransformContextDelegate` runs **per retry attempt**. This is where context window compaction happens — old messages can be summarized, trimmed, or removed entirely. Running per-attempt ensures that overflow compaction is visible to the transform function.
+**Step 2 — Transform context (Phase 5):** The `AgentContextTransformer` runs **per retry attempt**. This is where context window compaction happens — old messages can be summarized, trimmed, or removed entirely. Running per-attempt ensures that overflow compaction is visible to the transform function.
 
 **Context transform flow (Phase 5):**
 ```
@@ -245,7 +245,7 @@ Attempt N (after ContextOverflow):
 
 Before Phase 5, the transform ran once and wasn't re-triggered on overflow recovery. Now it runs for each attempt, so custom transforms can observe context compaction if it occurs.
 
-**Step 3 — Convert to LLM format:** `ConvertToLlmDelegate` maps `AgentMessage` instances to provider-level `Message` objects. Each provider has its own message format, and this delegate handles the translation.
+**Step 3 — Convert to LLM format:** `ProviderMessageTransformer` maps `AgentMessage` instances to provider-level `Message` objects. Each provider has its own message format, and this delegate handles the translation.
 
 **Step 4 — Call LLM:** `StreamSimple()` on the `LlmClient` sends the converted context to the provider. This returns an `LlmStream` — an async enumerable of provider-level streaming events.
 
@@ -307,9 +307,9 @@ The accumulator maintains a running snapshot of the `AssistantAgentMessage` as d
 ```
 Tool Lookup (case-insensitive by Name)
     → PrepareArgumentsAsync (validate/transform arguments)
-        → BeforeToolCall hook (can block execution)
+        → ToolExecutionPolicy (can block execution)
             → ExecuteAsync (run the tool)
-                → AfterToolCall hook (can transform result)
+            → ToolResultTransformer (can transform result)
                     → ToolResultAgentMessage
 ```
 
@@ -331,9 +331,9 @@ Tools execute one at a time in the order they appear in the assistant message. F
 1. Emit `ToolExecutionStartEvent` (with raw arguments)
 2. Look up tool by name (case-insensitive)
 3. Call `PrepareArgumentsAsync` — validate and transform raw arguments
-4. Call `BeforeToolCall` hook — if it returns `Block = true`, skip execution and produce an error result
+4. Call `ToolExecutionPolicy` — if it returns `Block = true`, skip execution and produce an error result
 5. Call `ExecuteAsync` — run the tool
-6. Call `AfterToolCall` hook — optionally transform the result
+6. Call `ToolResultTransformer` — optionally transform the result
 7. Emit `ToolExecutionEndEvent`
 8. Build `ToolResultAgentMessage`
 
@@ -343,7 +343,7 @@ Events are emitted in deterministic order matching the assistant message.
 
 Parallel mode executes tools concurrently, but with an important constraint: **preparation is always sequential**.
 
-1. **Preparation phase (sequential):** For each tool in order, look up the tool, call `PrepareArgumentsAsync`, and call the `BeforeToolCall` hook. Emit `ToolExecutionStartEvent` for all tools.
+1. **Preparation phase (sequential):** For each tool in order, look up the tool, call `PrepareArgumentsAsync`, and call `ToolExecutionPolicy`. Emit `ToolExecutionStartEvent` for all tools.
 2. **Execution phase (concurrent):** All prepared tools execute simultaneously via `Task.WhenAll`.
 3. **Finalization phase (ordered):** `ToolExecutionEndEvent`s are emitted in the original assistant message order, regardless of which tool finished first.
 
@@ -368,7 +368,7 @@ public interface IAgentTool
     Tool Definition { get; }
 
     // Validate and transform raw LLM arguments before execution.
-    // Called before BeforeToolCall hook. Use this to normalize paths,
+    // Called before ToolExecutionPolicy. Use this to normalize paths,
     // resolve defaults, or reject invalid input.
     Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
         IReadOnlyDictionary<string, object?> arguments,
@@ -410,36 +410,36 @@ public interface IAgentTool
 
 Hooks let you intercept tool execution without modifying tool implementations. They're set on `AgentOptions` and apply to all tools.
 
-### BeforeToolCall
+### ToolExecutionPolicy
 
 ```csharp
-public delegate Task<BeforeToolCallResult?> BeforeToolCallDelegate(
-    BeforeToolCallContext context,
+public delegate Task<ToolExecutionDecision?> ToolExecutionPolicy(
+    ToolExecutionContext context,
     CancellationToken cancellationToken);
 
-public record BeforeToolCallContext(
+public record ToolExecutionContext(
     AssistantAgentMessage AssistantMessage,
     ToolCallContent ToolCallRequest,
     IReadOnlyDictionary<string, object?> ValidatedArgs,
     AgentContext AgentContext);
 
-public record BeforeToolCallResult(bool Block, string? Reason = null);
+public record ToolExecutionDecision(bool Block, string? Reason = null);
 ```
 
-Return `null` to allow execution. Return `new BeforeToolCallResult(Block: true, Reason: "...")` to block the tool — the agent receives an error result with your reason.
+Return `null` to allow execution. Return `new ToolExecutionDecision(Block: true, Reason: "...")` to block the tool — the agent receives an error result with your reason.
 
 **Example — Block dangerous commands:**
 
 ```csharp
 var options = new AgentOptions(
     // ... other fields ...
-    BeforeToolCall: async (context, ct) =>
+    ToolExecutionPolicy: async (context, ct) =>
     {
         if (context.ToolCallRequest.Name == "bash" &&
             context.ValidatedArgs.TryGetValue("command", out var cmd) &&
             cmd?.ToString()?.Contains("rm -rf") == true)
         {
-            return new BeforeToolCallResult(Block: true, Reason: "Destructive command blocked.");
+            return new ToolExecutionDecision(Block: true, Reason: "Destructive command blocked.");
         }
         return null; // allow
     },
@@ -447,14 +447,14 @@ var options = new AgentOptions(
 );
 ```
 
-### AfterToolCall
+### ToolResultTransformer
 
 ```csharp
-public delegate Task<AfterToolCallResult?> AfterToolCallDelegate(
-    AfterToolCallContext context,
+public delegate Task<ToolResultTransformResult?> ToolResultTransformer(
+    ToolResultTransformContext context,
     CancellationToken cancellationToken);
 
-public record AfterToolCallContext(
+public record ToolResultTransformContext(
     AssistantAgentMessage AssistantMessage,
     ToolCallContent ToolCallRequest,
     IReadOnlyDictionary<string, object?> ValidatedArgs,
@@ -462,36 +462,36 @@ public record AfterToolCallContext(
     bool IsError,
     AgentContext AgentContext);
 
-public record AfterToolCallResult(
+public record ToolResultTransformResult(
     IReadOnlyList<AgentToolContent>? Content = null,
     object? Details = null,
     bool? IsError = null);
 ```
 
-Return `null` to pass the result through unchanged. Return an `AfterToolCallResult` to replace the content, details, or error status.
+Return `null` to pass the result through unchanged. Return a `ToolResultTransformResult` to replace the content, details, or error status.
 
 **Example — Truncate large results:**
 
 ```csharp
-AfterToolCall: async (context, ct) =>
+ToolResultTransformer: async (context, ct) =>
 {
     var text = context.Result.Content.FirstOrDefault()?.Value ?? "";
     if (text.Length > 10_000)
     {
-        return new AfterToolCallResult(
+        return new ToolResultTransformResult(
             Content: [new AgentToolContent(AgentToolContentType.Text, text[..10_000] + "\n[truncated]")]);
     }
     return null; // pass through
 }
 ```
 
-> **Key takeaway:** `BeforeToolCall` gates execution (allow/block); `AfterToolCall` transforms results. Both are optional and apply globally to all tools.
+> **Key takeaway:** `ToolExecutionPolicy` gates execution (allow/block); `ToolResultTransformer` transforms results. Both are optional and apply globally to all tools.
 
 ## Event system
 
 The agent emits a structured stream of events during every run. Subscribe via `Agent.Subscribe()` to observe progress, render UI, log activity, or drive external integrations.
 
-> **Phase 4 note:** Listener exceptions on failure/abort paths are now logged via `OnDiagnostic` instead of being swallowed. This improves observability when listening to agent events.
+> **Phase 4 note:** Listener exceptions on failure/abort paths are now logged via `DiagnosticObserver` instead of being swallowed. This improves observability when listening to agent events.
 
 ### Event lifecycle
 
@@ -556,7 +556,7 @@ Steering messages are consumed **during** a run, at turn boundaries. They're add
 agent.Steer(new UserMessage("Focus on error handling, ignore styling."));
 ```
 
-Or supply a delegate in `AgentOptions.GetSteeringMessages` that's called automatically at each turn boundary.
+Or supply a delegate in `AgentOptions.SteeringMessageProvider` that's called automatically at each turn boundary.
 
 **When they fire:** At step 1 of the turn loop — before context transformation and LLM call.
 
@@ -569,7 +569,7 @@ Follow-up messages are consumed **after** a run settles (no more tool calls, no 
 agent.FollowUp(new UserMessage("Now write tests for the code you just produced."));
 ```
 
-Or supply `AgentOptions.GetFollowUpMessages` for automatic follow-ups.
+Or supply `AgentOptions.FollowUpMessageProvider` for automatic follow-ups.
 
 **When they fire:** At step 9 of the turn loop — after the model finishes naturally with no tool calls.
 
@@ -627,9 +627,9 @@ If the provider stream emits an `ErrorEvent`, the `StreamAccumulator` converts i
 
 Exceptions thrown during `ExecuteAsync` are caught and converted to an error `AgentToolResult` with `IsError = true`. The error message is included in the `ToolResultAgentMessage` sent back to the LLM, which can then decide how to proceed (retry, apologize, or try a different approach).
 
-### Hook errors
+### Policy and transformer errors
 
-Exceptions in `BeforeToolCall` or `AfterToolCall` hooks are logged and ignored. The tool execution continues as if the hook returned `null`. This prevents buggy hooks from crashing the agent.
+Exceptions in `ToolExecutionPolicy` fail closed: execution is blocked and an error tool result explains the failure. Exceptions in `ToolResultTransformer` leave the completed tool result unchanged. These boundaries retain their existing failure behavior after renaming.
 
 ### Concurrency
 
@@ -641,7 +641,7 @@ await agent.WaitForIdleAsync();
 await agent.PromptAsync("Start fresh with a new approach.");
 ```
 
-> **Key takeaway:** The agent is resilient — LLM errors stop the loop cleanly, tool errors are reported to the LLM, hook errors are swallowed, and concurrent access is serialized.
+> **Key takeaway:** LLM errors stop the loop, tool errors are reported to the LLM, policy failures block execution, and concurrent access is serialized.
 
 ## Code example: creating a simple agent with custom tools
 
@@ -717,14 +717,14 @@ var options = new AgentOptions(
         Tools: [new CalculatorTool()]),
     Model: model,
     LlmClient: llmClient,
-    ConvertToLlm: contextConverter.ConvertAsync,
-    TransformContext: (messages, ct) => Task.FromResult(messages),
+    ProviderMessageTransformer: contextConverter.ConvertAsync,
+    AgentContextTransformer: (messages, ct) => Task.FromResult(messages),
     GetApiKey: (provider, ct) => Task.FromResult<string?>(apiKey),
-    GetSteeringMessages: null,
-    GetFollowUpMessages: null,
+    SteeringMessageProvider: null,
+    FollowUpMessageProvider: null,
     ToolExecutionMode: ToolExecutionMode.Sequential,
-    BeforeToolCall: null,
-    AfterToolCall: null,
+    ToolExecutionPolicy: null,
+    ToolResultTransformer: null,
     GenerationSettings: new SimpleStreamOptions(),
     SteeringMode: QueueMode.All,
     FollowUpMode: QueueMode.All);
@@ -763,12 +763,12 @@ All delegate types are defined in `BotNexus.Agent.Core.Configuration.Delegates`:
 
 ```csharp
 // Convert agent messages to provider-level messages.
-public delegate Task<IReadOnlyList<Message>> ConvertToLlmDelegate(
+public delegate Task<IReadOnlyList<Message>> ProviderMessageTransformer(
     IReadOnlyList<AgentMessage> messages,
     CancellationToken cancellationToken);
 
 // Transform context before LLM call (compaction, summarization, filtering).
-public delegate Task<IReadOnlyList<AgentMessage>> TransformContextDelegate(
+public delegate Task<IReadOnlyList<AgentMessage>> AgentContextTransformer(
     IReadOnlyList<AgentMessage> messages,
     CancellationToken cancellationToken);
 
@@ -778,28 +778,28 @@ public delegate Task<string?> GetApiKeyDelegate(
     CancellationToken cancellationToken);
 
 // Produce contextual messages (used for steering and follow-up).
-public delegate Task<IReadOnlyList<AgentMessage>> GetMessagesDelegate(
+public delegate Task<IReadOnlyList<AgentMessage>> AgentMessageProvider(
     CancellationToken cancellationToken);
 
 // Intercept before tool execution (can block).
-public delegate Task<BeforeToolCallResult?> BeforeToolCallDelegate(
-    BeforeToolCallContext context,
+public delegate Task<ToolExecutionDecision?> ToolExecutionPolicy(
+    ToolExecutionContext context,
     CancellationToken cancellationToken);
 
 // Intercept after tool execution (can transform result).
-public delegate Task<AfterToolCallResult?> AfterToolCallDelegate(
-    AfterToolCallContext context,
+public delegate Task<ToolResultTransformResult?> ToolResultTransformer(
+    ToolResultTransformContext context,
     CancellationToken cancellationToken);
 ```
 
 | Delegate | Input | Output | Nullable return? |
 |----------|-------|--------|------------------|
-| `ConvertToLlmDelegate` | Agent messages | Provider messages | No |
-| `TransformContextDelegate` | Agent messages | Transformed agent messages | No |
+| `ProviderMessageTransformer` | Agent messages | Provider messages | No |
+| `AgentContextTransformer` | Agent messages | Transformed agent messages | No |
 | `GetApiKeyDelegate` | Provider name | API key string | Yes (null = no key) |
-| `GetMessagesDelegate` | — | Message list | No |
-| `BeforeToolCallDelegate` | `BeforeToolCallContext` | `BeforeToolCallResult` | Yes (null = allow) |
-| `AfterToolCallDelegate` | `AfterToolCallContext` | `AfterToolCallResult` | Yes (null = pass through) |
+| `AgentMessageProvider` | — | Message list | No |
+| `ToolExecutionPolicy` | `ToolExecutionContext` | `ToolExecutionDecision` | Yes (null = allow) |
+| `ToolResultTransformer` | `ToolResultTransformContext` | `ToolResultTransformResult` | Yes (null = pass through) |
 
 > **Key takeaway:** Delegates are the extension points of `AgentOptions`. They let you customize message conversion, context management, key resolution, and tool interception without subclassing.
 

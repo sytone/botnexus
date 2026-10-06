@@ -39,6 +39,10 @@ public sealed class MobileChatConcurrentStoreMutationTests : IDisposable
         _portalLoad.InitializeAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
+        var displayedConversation = Substitute.For<IDisplayedConversation>();
+        displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
+            .Returns(call => call.Arg<string?>() is { } agentId ? (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agentId) : null);
+        _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.Services.AddSingleton(_interaction);
@@ -71,7 +75,7 @@ public sealed class MobileChatConcurrentStoreMutationTests : IDisposable
         _js.OnMarkdownRender = () => _store.GetConversation("conv-1")!
             .AppendMessage(new ChatMessage("assistant", "raced", DateTimeOffset.UtcNow));
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
         _store.NotifyChanged();
 
         cut.WaitForAssertion(() =>
@@ -92,7 +96,7 @@ public sealed class MobileChatConcurrentStoreMutationTests : IDisposable
     {
         _store.AppendMessage("conv-1", new ChatMessage("assistant", "seed", DateTimeOffset.UtcNow));
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         var conv = _store.GetConversation("conv-1")!;
         var errors = new List<Exception>();

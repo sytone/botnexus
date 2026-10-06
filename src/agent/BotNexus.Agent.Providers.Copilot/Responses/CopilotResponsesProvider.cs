@@ -44,8 +44,9 @@ public sealed class CopilotResponsesProvider : IApiProvider
     internal CopilotResponsesProvider(
         HttpClient httpClient,
         ILogger<CopilotResponsesProvider> logger,
-        ICopilotResponsesWebSocketTransport webSocket)
-        : this(httpClient, logger, () => webSocket, null)
+        ICopilotResponsesWebSocketTransport webSocket,
+        ISecretRedactor? secretRedactor = null)
+        : this(httpClient, logger, () => webSocket, secretRedactor)
     {
     }
 
@@ -112,7 +113,7 @@ public sealed class CopilotResponsesProvider : IApiProvider
             Metadata = options?.Metadata
         };
         if (reasoning is not null && model.Reasoning)
-            responsesOptions.ReasoningEffort = MapThinkingLevel(reasoning.Value);
+            responsesOptions.ReasoningEffort = MapThinkingLevel(model, reasoning.Value);
         return Stream(model, context, responsesOptions);
     }
 
@@ -196,7 +197,8 @@ public sealed class CopilotResponsesProvider : IApiProvider
                         static (stream, failedModel, message, content) => ResponsesStreamEngine.EmitError(stream, "github-copilot-responses", failedModel, message, content),
                         static root => Telemetry.CopilotUsageActivity.TryParseAndEmit(root, Activity.Current),
                         static value => value is CopilotResponsesOptions responseOptions ? responseOptions.ServiceTier : null,
-                        options?.CancellationToken ?? CancellationToken.None).ConfigureAwait(false);
+                        options?.CancellationToken ?? CancellationToken.None,
+                        _secretRedactor).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -210,8 +212,9 @@ public sealed class CopilotResponsesProvider : IApiProvider
                     // finalizer thread to escalate into an [FTL] breadcrumb on a healthy gateway. A
                     // parse fault with no cancellation requested still fails the stream exactly as
                     // before, so this is a guard rather than a blanket swallow.
+                    var parseDiagnostic = ProviderHttpErrorHelper.RedactDiagnosticText(ex.Message, _secretRedactor);
                     normalized.EndWithoutResult(
-                        $"Copilot Responses stream parse failed: {ex.Message}",
+                        $"Copilot Responses stream parse failed: {parseDiagnostic}",
                         options?.CancellationToken ?? CancellationToken.None);
                 }
             });
@@ -239,10 +242,11 @@ public sealed class CopilotResponsesProvider : IApiProvider
                 "Copilot Responses");
             activity?.SetTag("botnexus.provider.transport.fallback", "none");
             activity?.SetTag("botnexus.provider.transport.auth_failure_status", authStatus);
-            _logger.LogError(ex,
+            var authDiagnostic = ProviderHttpErrorHelper.RedactDiagnosticText(ex.Message, _secretRedactor);
+            _logger.LogError(
                 "Copilot Responses WebSocket handshake was rejected with HTTP {StatusCode} for {Model}; "
-                + "this is an authentication failure, so the SSE fallback is suppressed",
-                authStatus, model.Id);
+                + "this is an authentication failure, so the SSE fallback is suppressed. Failure: {Failure}",
+                authStatus, model.Id, authDiagnostic);
             ResponsesStreamEngine.EmitError(output, Api, model, failure.Message, partial?.Content);
             activity?.SetStatus(ActivityStatusCode.Error, failure.Message);
         }
@@ -250,8 +254,10 @@ public sealed class CopilotResponsesProvider : IApiProvider
         {
             activity?.SetTag("botnexus.provider.transport.fallback", "sse");
             activity?.SetTag("botnexus.provider.transport.fallback_reason", DescribeFallbackReason(ex));
-            _logger.LogWarning(ex,
-                "Copilot Responses WebSocket failed before semantic output for {Model}; falling back to SSE", model.Id);
+            var fallbackDiagnostic = ProviderHttpErrorHelper.RedactDiagnosticText(ex.Message, _secretRedactor);
+            _logger.LogWarning(
+                "Copilot Responses WebSocket failed before semantic output for {Model}; falling back to SSE. Failure: {Failure}",
+                model.Id, fallbackDiagnostic);
             await ForwardAsync(StreamSse(model, context, options), output, options?.CancellationToken ?? CancellationToken.None).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -260,10 +266,12 @@ public sealed class CopilotResponsesProvider : IApiProvider
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex,
-                "Copilot Responses WebSocket failed after semantic output for {Model}; SSE replay is suppressed", model.Id);
-            ResponsesStreamEngine.EmitError(output, Api, model, ex.Message, partial?.Content);
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            var diagnostic = ProviderHttpErrorHelper.RedactDiagnosticText(ex.Message, _secretRedactor);
+            _logger.LogError(
+                "Copilot Responses WebSocket failed after semantic output for {Model}; SSE replay is suppressed. Failure: {Failure}",
+                model.Id, diagnostic);
+            ResponsesStreamEngine.EmitError(output, Api, model, diagnostic, partial?.Content);
+            activity?.SetStatus(ActivityStatusCode.Error, diagnostic);
         }
     }
 
@@ -366,7 +374,7 @@ public sealed class CopilotResponsesProvider : IApiProvider
             ResponsesStreamParser.ParseAsync(stream, reader, model, options, api, logger, emitError,
                 static root => Telemetry.CopilotUsageActivity.TryParseAndEmit(root, Activity.Current),
                 static value => value is CopilotResponsesOptions responseOptions ? responseOptions.ServiceTier : null,
-                ct),
+                ct, secretRedactor),
         DecorateHeaders: static (request, _, messages, options) =>
         {
             var hasImages = CopilotHeaders.HasVisionInput(messages);
@@ -379,14 +387,21 @@ public sealed class CopilotResponsesProvider : IApiProvider
         OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current),
         SecretRedactor: secretRedactor);
 
-    private static string MapThinkingLevel(ThinkingLevel level) => level switch
+    internal static string MapThinkingLevel(LlmModel model, ThinkingLevel level)
     {
-        ThinkingLevel.Minimal => "minimal",
-        ThinkingLevel.Low => "low",
-        ThinkingLevel.Medium => "medium",
-        ThinkingLevel.High => "high",
-        ThinkingLevel.ExtraHigh => "xhigh",
-        ThinkingLevel.Max => "xhigh",
-        _ => "medium"
-    };
+        if (level == ThinkingLevel.Minimal &&
+            ModelFamilyVersion.IsAtLeast(model.Id, "gpt", major: 6))
+            return "none";
+
+        return level switch
+        {
+            ThinkingLevel.Minimal => "minimal",
+            ThinkingLevel.Low => "low",
+            ThinkingLevel.Medium => "medium",
+            ThinkingLevel.High => "high",
+            ThinkingLevel.ExtraHigh => "xhigh",
+            ThinkingLevel.Max => "max",
+            _ => "medium"
+        };
+    }
 }

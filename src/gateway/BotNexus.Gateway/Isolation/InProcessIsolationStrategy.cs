@@ -6,7 +6,10 @@ using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core;
 using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Diagnostics;
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Resolution;
@@ -339,10 +342,10 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             cancellationToken).ConfigureAwait(false);
 
         var hookDispatcher = _serviceProvider.GetService<IHookDispatcher>();
-        BeforeToolAuditDelegate? beforeToolAudit = null;
-        BeforeToolCallDelegate? beforeToolCall = null;
-        ToolCallDispositionDelegate? onToolCallDisposition = null;
-        AfterToolCallDelegate? afterToolCall = null;
+        ToolAuditGate? beforeToolAudit = null;
+        ToolExecutionPolicy? beforeToolCall = null;
+        ToolExecutionDecisionObserver? onToolCallDisposition = null;
+        ToolResultTransformer? afterToolCall = null;
         // #2615: the fail-closed tool-audit write-ahead. Pre-#2615 this existed only for sub-agents
         // (#2113), so a top-level agent's tool call was never written ahead and a crash mid-tool left
         // no evidence the tool had been invoked at all. It now runs for EVERY agent, and it is the
@@ -377,7 +380,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                     ctx.ValidatedArgs);
                 if (classificationPrompt is not null)
                 {
-                    return new BotNexus.Agent.Core.Hooks.BeforeToolCallResult(
+                    return new BotNexus.Agent.Core.ExtensionPoints.ToolExecution.ToolExecutionDecision(
                         Block: true,
                         Reason: classificationPrompt);
                 }
@@ -431,7 +434,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 var denied = results.FirstOrDefault(r => r.Denied);
                 if (denied is not null)
                 {
-                    return new BotNexus.Agent.Core.Hooks.BeforeToolCallResult(
+                    return new BotNexus.Agent.Core.ExtensionPoints.ToolExecution.ToolExecutionDecision(
                         Block: true,
                         Reason: denied.DenyReason);
                 }
@@ -528,7 +531,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 initialMessages.Count, summaries.Count, context.History.Count, context.SessionId);
         }
 
-        // #1710/#4121: best-effort mid-loop auto-compaction hook. A long dispatch re-checks
+        // #1710/#4121/#4379: fail-closed mid-loop auto-compaction hook. A long dispatch re-checks
         // between outer iterations, but it must not evict the handle that is executing this callback:
         // DisposeAsync would call Agent.AbortAsync and await the same active run. Instead the
         // coordinator persists without eviction and this callback returns a replacement context for
@@ -551,21 +554,92 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 modelWindow: model.ContextWindow);
             maybeCompactAsync = async cancellationToken =>
             {
-                var liveSession = await sessionStore.GetAsync(compactSessionId, cancellationToken).ConfigureAwait(false);
                 var scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
-                if (liveSession is null || !compactor.ShouldCompact(liveSession.Session, scopedOptions))
+                GatewaySession? liveSession = null;
+                for (var attempt = 0; attempt < 2; attempt++)
                 {
-                    return null;
+                    liveSession = await sessionStore.GetAsync(compactSessionId, cancellationToken).ConfigureAwait(false);
+                    if (liveSession is null)
+                    {
+                        if (attempt == 0)
+                        {
+                            return null;
+                        }
+
+                        throw new ProactiveCompactionException(
+                            "Required proactive compaction could not refresh the session after a conflict.",
+                            retryable: true);
+                    }
+
+                    if (!compactor.ShouldCompact(liveSession.Session, scopedOptions))
+                    {
+                        if (attempt == 0)
+                        {
+                            return null;
+                        }
+
+                        _logger.LogInformation(
+                            "Proactive compaction conflict for session {SessionId} was reconciled by a newer bounded session snapshot.",
+                            compactSessionId);
+                        break;
+                    }
+
+                    SessionCompactionOutcome outcome;
+                    try
+                    {
+                        outcome = await compactionCoordinator.CompactAsync(
+                            compactAgentId,
+                            liveSession,
+                            cancellationToken,
+                            handlePolicy: CompactionHandlePolicy.KeepCurrent).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new ProactiveCompactionException(
+                            "Required proactive compaction failed before it produced an outcome.",
+                            retryable: true,
+                            ex);
+                    }
+
+                    if (outcome.Applied)
+                    {
+                        _logger.LogInformation(
+                            "Proactive compaction applied for session {SessionId} on attempt {Attempt}.",
+                            compactSessionId,
+                            attempt + 1);
+                        break;
+                    }
+
+                    if (outcome.SkipReason != CompactionSkipReason.ConcurrentHistoryChange)
+                    {
+                        throw new ProactiveCompactionException(
+                            $"Required proactive compaction did not apply (reason={outcome.SkipReason?.Value ?? "Unspecified"}).",
+                            retryable: false);
+                    }
+
+                    if (attempt == 0)
+                    {
+                        _logger.LogInformation(
+                            "Proactive compaction conflict for session {SessionId}; refreshing and retrying once.",
+                            compactSessionId);
+                        continue;
+                    }
+
+                    _logger.LogWarning(
+                        "Proactive compaction conflict retry exhausted for session {SessionId}; provider invocation is blocked.",
+                        compactSessionId);
+                    throw new ProactiveCompactionException(
+                        "Required proactive compaction conflict retry was exhausted.",
+                        retryable: true);
                 }
 
-                var outcome = await compactionCoordinator.CompactAsync(
-                    compactAgentId,
-                    liveSession,
-                    cancellationToken,
-                    handlePolicy: CompactionHandlePolicy.KeepCurrent).ConfigureAwait(false);
-                if (!outcome.Applied)
+                if (liveSession is null)
                 {
-                    return null;
+                    throw new InvalidOperationException("Applied proactive compaction did not retain its session snapshot.");
                 }
 
                 var compactedEntries = SessionContextProjector.ProjectForResume(liveSession.History);
@@ -605,7 +679,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             _logger.LogDebug(ex, "Could not resolve auth profile id for provider '{Provider}'.", model.Provider);
         }
 
-        BotNexus.Agent.Core.Loop.EvaluateRunCompletionDelegate? evaluateRunCompletion = null;
+        BotNexus.Agent.Core.ExtensionPoints.RunCompletion.RunCompletionPolicy? evaluateRunCompletion = null;
         var completionConversationStore = _serviceProvider.GetService<IConversationStore>();
         var completionConversationId = completionConversationStore is null
             ? null
@@ -629,15 +703,21 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 Messages: initialMessages),
             Model: model,
             LlmClient: _llmClient,
-            ConvertToLlm: null,
-            TransformContext: null,
-            GetApiKey: (provider, cancellationToken) => _authManager.GetApiKeyAsync(provider, cancellationToken),
-            GetSteeringMessages: null,
-            GetFollowUpMessages: null,
+            ProviderMessageTransformer: null,
+            AgentContextTransformer: null,
+            ProviderExecutionOptionsProvider: async (provider, cancellationToken) =>
+                await _authManager.CreateExecutionOptionsAsync(provider, cancellationToken: cancellationToken).ConfigureAwait(false),
+            CredentialInvalidationService: (_, _) =>
+            {
+                _authManager.InvalidateCache();
+                return Task.CompletedTask;
+            },
+            SteeringMessageProvider: null,
+            FollowUpMessageProvider: null,
             ToolExecutionMode: ToolExecutionMode.Parallel,
-            BeforeToolCall: beforeToolCall,
-            AfterToolCall: afterToolCall,
-            GenerationSettings: new SimpleStreamOptions
+            ToolExecutionPolicy: beforeToolCall,
+            ToolResultTransformer: afterToolCall,
+            GenerationSettings: new GenerationOptions
             {
                 // Parse per-agent cacheRetentionMode string ("none", "short", "long").
                 // Falls back to Short when absent or unrecognised.
@@ -648,10 +728,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                 // #1705: apply the effective thinking/context resolved through the centralized
                 // three-layer resolver. Null means "provider default" and leaves the option unset.
                 Reasoning = effectiveModel.Thinking,
-                ContextWindow = effectiveModel.ContextWindow,
-                StreamIdleTimeoutMs = ResolveStreamIdleTimeoutMs(
-                    platformConfig?.Value,
-                    descriptor.ApiProvider)
+                ContextWindow = effectiveModel.ContextWindow
             },
             SteeringMode: QueueMode.All,
             FollowUpMode: QueueMode.All,
@@ -668,13 +745,13 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // means work was silently lost, but none of them failed the turn. Information would
             // bury them in the normal hot-path stream; Error would page on a condition the agent
             // already recovered from.
-            OnDiagnostic: diagnostic => _logger.LogWarning(
+            DiagnosticObserver: diagnostic => _logger.LogWarning(
                 "Agent diagnostic for '{AgentId}' session '{SessionId}': {Diagnostic}",
                 descriptor.AgentId.Value, context.SessionId.Value, diagnostic),
             ToolTimeout: ResolveToolTimeout(descriptor),
             ClaimAudit: ResolveClaimAuditOptions(platformConfig?.Value.Gateway?.ClaimAudit),
-            MaybeCompactAsync: maybeCompactAsync,
-            EvaluateRunCompletion: evaluateRunCompletion,
+            ContextCompactionService: maybeCompactAsync,
+            RunCompletionPolicy: evaluateRunCompletion,
             // #3015: the exhaustion lane's memory. The registry is a gateway singleton so a
             // suspension recorded on one turn is still visible on the next -- pre-#3015 all retry
             // state lived in a local attempt counter and died with the call, which is precisely why
@@ -683,6 +760,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // strategy without the full service graph keep working (null simply records nothing;
             // the one-attempt fail-fast still applies).
             SuspensionRegistry: _serviceProvider.GetService<BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry>(),
+            RecoveryCoordinator: _serviceProvider.GetService<BotNexus.Agent.Core.Loop.IProviderRecoveryCoordinator>(),
             AuthProfile: authProfileId,
             // #3162: the central tool-output backstop. Reads gateway:toolOutputBudget and defaults
             // ON (256 KiB) when the section is absent; disabled (0) only when Enabled=false or
@@ -692,9 +770,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // result seam but cannot depend upward on Gateway.Security, so thread the base redactor
             // into that seam. Do not use RedactForExternalDelivery: model-visible tool results must
             // retain actionable local login instructions.
-            SanitizeToolResultText: (_serviceProvider.GetService<ISecretRedactor>() ?? new SecretRedactor()).Redact,
-            BeforeToolAudit: beforeToolAudit,
-            OnToolCallDisposition: onToolCallDisposition);
+            ToolResultTextTransformer: (_serviceProvider.GetService<ISecretRedactor>() ?? new SecretRedactor()).Redact,
+            ToolAuditGate: beforeToolAudit,
+            ToolExecutionDecisionObserver: onToolCallDisposition);
 
         var agent = new BotNexus.Agent.Core.Agent(options);
 
@@ -1352,6 +1430,34 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
+    public async Task<AgentResponse> PromptWithoutToolsAsync(string message, CancellationToken cancellationToken = default)
+    {
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.finalize", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", AgentId);
+        activity?.SetTag("botnexus.session.id", SessionId);
+        _activityTracker?.RecordActivity();
+        try
+        {
+            var messages = await _agent.PromptWithoutToolsAsync(message, cancellationToken);
+            var response = BuildResponse(messages, _agent.State.LastCompletion);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return response;
+        }
+        catch (OperationCanceledException oce)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
+            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
+            throw BuildInterruptedException(oce);
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<AgentResponse> PromptAsync(AgentUserMessage message, CancellationToken cancellationToken = default)
     {
         using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);
@@ -1366,6 +1472,42 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             var messages = await _agent.PromptAsync(message.ToCore(), cancellationToken);
             var response = BuildResponse(messages, _agent.State.LastCompletion);
 
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return response;
+        }
+        catch (OperationCanceledException oce)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
+            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
+            throw BuildInterruptedException(oce);
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<AgentResponse> PromptWhenAvailableAsync(
+        AgentUserMessage message,
+        Func<Task> onStartedAsync,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(onStartedAsync);
+        using var activity = AgentDiagnostics.Source.StartActivity("agent.prompt", ActivityKind.Internal);
+        activity?.SetTag("botnexus.agent.id", AgentId);
+        activity?.SetTag("botnexus.session.id", SessionId);
+        activity?.SetTag("botnexus.correlation.id", System.Diagnostics.Activity.Current?.TraceId.ToString());
+        _activityTracker?.RecordActivity();
+        try
+        {
+            var messages = await _agent.PromptWhenAvailableAsync(
+                message.ToCore(), onStartedAsync, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var response = BuildResponse(messages, _agent.State.LastCompletion);
             activity?.SetStatus(ActivityStatusCode.Ok);
             return response;
         }
@@ -1804,6 +1946,22 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 },
             TurnEndEvent
                 => new AgentStreamEvent { Type = AgentStreamEventType.TurnEnd, MessageId = messageId },
+            ProviderRecoveryEvent recovery
+                => new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.ProviderRecovery,
+                    MessageId = messageId,
+                    ProviderRecovery = new ProviderRecoverySignal(
+                        recovery.Stage.ToString(),
+                        recovery.Provider,
+                        recovery.State.ToString(),
+                        recovery.Attempt,
+                        recovery.MaxAttempts,
+                        recovery.Delay?.TotalMilliseconds,
+                        recovery.Observation.InFlightCalls,
+                        recovery.Observation.QueueLength,
+                        recovery.Observation.NextProbeAt)
+                },
             ClaimAuditEvent claimAudit
                 => new AgentStreamEvent
                 {

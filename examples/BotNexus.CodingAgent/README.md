@@ -573,11 +573,11 @@ Agent Loop (AgentCore)
     ↓
 Tool Call Request
     ↓
-BeforeToolCall Hook (SafetyHooks validates path/command)
+ToolExecutionPolicy (SafetyHooks validates path/command)
     ↓
 Tool Execution (read/write/edit/bash/find/ls/grep)
     ↓
-AfterToolCall Hook (AuditHooks logs call)
+ToolResultTransformer (AuditHooks logs call)
     ↓
 Tool Result → LLM Context
     ↓
@@ -600,7 +600,7 @@ BotNexus.CodingAgent is a C# port inspired by pi-mono's architecture. Key differ
 | **Tool Execution** | JavaScript-based | C# tool classes |
 | **Configuration** | Environment + .pirc | Environment + config.json |
 | **Minimal Design** | ~1000 tokens system prompt | Similar minimal approach |
-| **Hooks/Validation** | Custom provider plugins | BeforeToolCall/AfterToolCall hooks |
+| **Hooks/Validation** | Custom provider plugins | ToolExecutionPolicy/ToolResultTransformer delegates |
 
 Both systems prioritize:
 - Minimal core functionality (~1000 token system prompt)

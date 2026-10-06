@@ -15,6 +15,12 @@
       "blurb": "The distinction that trips everyone up, and how a message finds its conversation."
     },
     {
+      "id": "release-history",
+      "file": "release-history.md",
+      "title": "Release history",
+      "blurb": "Review published versions and open their public documentation."
+    },
+    {
       "id": "agents",
       "file": "agents.md",
       "title": "Agents",

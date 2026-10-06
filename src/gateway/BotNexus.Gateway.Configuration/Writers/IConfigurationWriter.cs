@@ -3,6 +3,12 @@ using BotNexus.Gateway.Configuration.Store;
 
 namespace BotNexus.Gateway.Configuration.Writers;
 
+/// <summary>Describes a configuration backend that participated in a write.</summary>
+/// <param name="Name">Stable backend name.</param>
+/// <param name="Location">Redaction-safe persistence location.</param>
+/// <param name="WinsOnRead">Whether this backend takes precedence when configuration is read.</param>
+public sealed record ConfigurationBackendDescriptor(string Name, string Location, bool WinsOnRead = false);
+
 /// <summary>
 /// Persists a platform configuration document to one backing store (#3527).
 /// </summary>
@@ -33,6 +39,9 @@ public interface IConfigurationWriter
     /// failed" is not actionable when two backends are registered.
     /// </remarks>
     string Name { get; }
+
+    /// <summary>The exact backends this writer will update when a write succeeds.</summary>
+    IReadOnlyList<ConfigurationBackendDescriptor> Backends => [new(Name, string.Empty)];
 
     /// <summary>
     /// Persists <paramref name="document"/>.

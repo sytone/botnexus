@@ -101,6 +101,11 @@ public sealed class MemoryController(
                 query,
                 entries = dtos,
                 count = dtos.Count,
+                temporalDecay = new
+                {
+                    enabled = result.TemporalDecay?.Enabled ?? true,
+                    halfLifeDays = result.TemporalDecay?.HalfLifeDays ?? MemoryTemporalDecayPolicy.Default.HalfLifeDays
+                },
                 vectorScan = new
                 {
                     status = result.VectorScan.Status.ToString(),

@@ -34,17 +34,21 @@ using BotNexus.Gateway.Ralph;
 using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Security;
+using BotNexus.Gateway.Search;
 using BotNexus.Gateway.Federation;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Contracts.Memory;
 using BotNexus.Gateway.Providers;
 using BotNexus.Gateway.Abstractions.Providers;
+using BotNexus.Gateway.Contracts.Agents;
+using BotNexus.Gateway.Agents.Proposals;
 using BotNexus.Gateway.Contracts.Events;
 using BotNexus.Gateway.Events;
 using BotNexus.Gateway.Evaluations;
 using BotNexus.Gateway.Abstractions.Evaluations;
 using BotNexus.Agent.Providers.Core.Embeddings;
 using BotNexus.Memory;
+using BotNexus.Memory.Embeddings;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -92,6 +96,12 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<SqliteWalCheckpointOptions>();
         services.AddOptions<LivenessWatchdogOptions>();
         services.AddOptions<SessionConsistencyOptions>();
+        services.AddOptions<SearchAggregationOptions>();
+        services.AddOptions<MemoryReembeddingOptions>()
+            .Validate(options => options.AgentBatchSize is > 0 and <= MemoryReembeddingOptions.MaxAgentBatchSize, $"AgentBatchSize must be between 1 and {MemoryReembeddingOptions.MaxAgentBatchSize}.")
+            .Validate(options => options.ItemBatchSize is > 0 and <= MemoryReembeddingOptions.MaxItemBatchSize, $"ItemBatchSize must be between 1 and {MemoryReembeddingOptions.MaxItemBatchSize}.")
+            .Validate(options => options.PassDelay > TimeSpan.Zero, "PassDelay must be positive.")
+            .Validate(options => options.ItemYieldDelay > TimeSpan.Zero, "ItemYieldDelay must be positive.");
         if (configure is not null)
             services.Configure(configure);
         if (config is not null)
@@ -110,6 +120,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<SubAgentWorktreeSnapshotOptions>(config.GetSection("gateway:subAgents:worktreeSnapshot"));
             services.Configure<LivenessWatchdogOptions>(config.GetSection("gateway:livenessWatchdog"));
             services.Configure<SessionConsistencyOptions>(config.GetSection("gateway:sessionConsistency"));
+            services.Configure<SearchAggregationOptions>(config.GetSection("gateway:search"));
             services.Configure<SqliteWalCheckpointOptions>(o =>
                 o.IntervalMinutes = ParseInt(
                     config["gateway:walCheckpointIntervalMinutes"],
@@ -138,8 +149,13 @@ public static class GatewayServiceCollectionExtensions
             }
         }
 
-        // Core services
+        services.TryAddSingleton<SearchAggregator>();
+
+        // Core services. AddPlatformConfiguration replaces this inert default with a verified home
+        // rooted at the already-resolved configuration directory (#3411).
         services.TryAddSingleton<IFileSystem, FileSystem>();
+        services.TryAddSingleton(serviceProvider =>
+            new SqliteWalMaintenance(serviceProvider.GetRequiredService<IFileSystem>()));
         services.TryAddSingleton<BotNexusHome>();
 
         // Credential resolution. Providers are registered per scheme with TryAddEnumerable so a
@@ -159,17 +175,15 @@ public static class GatewayServiceCollectionExtensions
         // empty - composition populates it only for providers that opted in, and an empty
         // registry resolves every key to absent, which is the lexical-only default.
         services.TryAddSingleton<EmbeddingProviderRegistry>();
+        services.TryAddSingleton<IMemoryEmbeddingService>(serviceProvider =>
+            MemoryEmbeddingComposition.Build(
+                serviceProvider.GetService<IOptions<MemoryEmbeddingsConfig>>()?.Value,
+                serviceProvider.GetService<EmbeddingProviderRegistry>(),
+                serviceProvider.GetService<ILoggerFactory>()));
         services.TryAddSingleton<IMemoryStoreFactory>(serviceProvider =>
         {
             var workspaceManager = serviceProvider.GetRequiredService<IAgentWorkspaceManager>();
             var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
-            // #2855: built here rather than inside BotNexus.Memory so that project keeps its
-            // zero dependency on the provider stack. An absent or disabled section yields
-            // MemoryEmbeddingService.Disabled and the store behaves exactly as it does today.
-            var embeddings = MemoryEmbeddingComposition.Build(
-                serviceProvider.GetService<IOptions<MemoryEmbeddingsConfig>>()?.Value,
-                serviceProvider.GetService<EmbeddingProviderRegistry>(),
-                serviceProvider.GetService<ILoggerFactory>());
             return new EmbeddingAwareMemoryStoreFactory(agentId =>
             {
                 var agentDirectory = workspaceManager is FileAgentWorkspaceManager fileWorkspaces
@@ -177,10 +191,19 @@ public static class GatewayServiceCollectionExtensions
                     : fileSystem.Path.GetDirectoryName(workspaceManager.GetWorkspacePath(agentId))
                         ?? throw new InvalidOperationException($"Agent '{agentId}' workspace has no parent directory.");
                 return fileSystem.Path.Combine(agentDirectory, "data", "memory.sqlite");
-            }, embeddings, fileSystem);
+            },
+            serviceProvider.GetRequiredService<IMemoryEmbeddingService>(),
+            fileSystem,
+            serviceProvider.GetService<ILoggerFactory>(),
+            serviceProvider.GetRequiredService<IAgentRegistry>());
         });
         services.AddSingleton<IAgentWorkspaceManager, FileAgentWorkspaceManager>();
         services.TryAddSingleton<IAgentMemoryFactory, DefaultAgentMemoryFactory>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, MemorySearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, FileSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, AgentSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, ConversationSearchContributor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ISearchContributor, SessionSearchContributor>());
          services.AddSingleton<IContextBuilder, WorkspaceContextBuilder>();
          services.AddSingleton<IAgentRegistry, DefaultAgentRegistry>();
          // #3569: the backstop workspace sweep must consult a lifecycle authority before deleting.
@@ -251,6 +274,13 @@ public static class GatewayServiceCollectionExtensions
             var subAgents = serviceProvider.GetRequiredService<ISubAgentManager>();
             return new LocalManagedTaskExecutor(subAgents, attempts);
         });
+        // Optional runtime integration: inert without a host-supplied managed-task ledger; when present,
+        // startup recovers interrupted continuation claims and dispatches pending owner callbacks.
+        services.TryAddSingleton(serviceProvider => new ManagedTaskWaitCoordinator(
+            serviceProvider.GetRequiredService<SqliteManagedTaskFlowLedger>(),
+            serviceProvider.GetServices<IManagedTaskContinuationOwner>(),
+            serviceProvider.GetRequiredService<ILogger<ManagedTaskWaitCoordinator>>()));
+        services.AddHostedService<ManagedTaskWaitRecoveryService>();
         services.TryAddSingleton<SessionLifecycleEvents>();
         services.TryAddSingleton<ISessionLifecycleEvents>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionLifecycleEvents>());
@@ -280,6 +310,7 @@ public static class GatewayServiceCollectionExtensions
             AttachArchiveDrain(new InMemorySessionStore(), serviceProvider));
         services.TryAddSingleton<ISessionWriteLock, SessionWriteLock>();
         services.TryAddSingleton<IConversationStore, InMemoryConversationStore>();
+        services.TryAddSingleton<IConversationReadStateStore, InMemoryConversationReadStateStore>();
         services.TryAddSingleton<IConversationSectionStore, InMemoryConversationSectionStore>();
         services.TryAddSingleton<IAgentIdentityResolver, AgentIdentityResolver>();
         services.AddSingleton<IAgentCanvasNotifier, ConversationCanvasNotifier>();
@@ -305,7 +336,15 @@ public static class GatewayServiceCollectionExtensions
         // explicit MessageRole.Notification, discriminated against the SAME scope-resolved window.
         services.TryAddSingleton<IContextExhaustionNotifier, ContextExhaustionNotifier>();
         services.AddSingleton<IPreCompactionMemoryFlusher, PreCompactionMemoryFlusher>();
-        services.AddSingleton<ISessionCompactionCoordinator, SessionCompactionCoordinator>();
+        services.AddSingleton<ISessionCompactionCoordinator>(serviceProvider => new SessionCompactionCoordinator(
+            serviceProvider.GetRequiredService<ISessionCompactor>(),
+            serviceProvider.GetRequiredService<ISessionStore>(),
+            serviceProvider.GetRequiredService<IAgentSupervisor>(),
+            serviceProvider.GetRequiredService<IConversationEventPublisher>(),
+            serviceProvider.GetRequiredService<IConversationStore>(),
+            serviceProvider.GetRequiredService<IOptionsMonitor<CompactionOptions>>(),
+            serviceProvider.GetRequiredService<ILogger<SessionCompactionCoordinator>>(),
+            serviceProvider.GetService<IPreCompactionMemoryFlusher>()));
         services.AddSingleton<ISessionEndMemoryFlusher, SessionEndMemoryFlusher>();
         services.AddSingleton<IConversationResetService, DefaultConversationResetService>();
         services.AddSingleton<IMediaPipeline, MediaPipeline>();
@@ -395,11 +434,29 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<INetworkPathDetector>(sp =>
             new NetworkPathDetector(sp.GetRequiredService<IFileSystem>()));
 
+        // Governed proposals are runtime state, not configuration. Keep this ledger in the writable
+        // data directory and deliberately give the store no registry or configuration-writer
+        // dependency: approval application belongs to the later lifecycle slice (#4093).
+        services.TryAddSingleton<IAgentProposalStore>(serviceProvider =>
+        {
+            var home = serviceProvider.GetRequiredService<BotNexusHome>();
+            var fileSystem = serviceProvider.GetRequiredService<IFileSystem>();
+            var databasePath = fileSystem.Path.Combine(home.DataPath, "agent-proposals.sqlite");
+            serviceProvider.GetRequiredService<ISqliteDatabaseRegistry>().Register(databasePath);
+            return new SqliteAgentProposalStore(
+                databasePath,
+                fileSystem,
+                serviceProvider.GetRequiredService<INetworkPathDetector>(),
+                serviceProvider.GetService<ILogger<SqliteWalMaintenance>>());
+        });
+
         // Extension state store
         services.TryAddSingleton<IExtensionStateStore>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
-            var dbPath = Path.Combine(home.RootPath, "data", "extension-state.db");
+            var dbPath = SqliteStorePathPolicy.ResolveOwnedStorePath(
+                Path.Combine(home.RootPath, "data"),
+                "extension-state");
             serviceProvider.GetRequiredService<ISqliteDatabaseRegistry>().Register(dbPath);
             var fs = serviceProvider.GetRequiredService<IFileSystem>();
             var storeLogger = serviceProvider.GetRequiredService<ILogger<SqliteExtensionStateStore>>();
@@ -453,19 +510,22 @@ public static class GatewayServiceCollectionExtensions
             sp.GetRequiredService<ISessionStore>(),
             sp.GetRequiredService<IAgentRegistry>(),
             sp.GetRequiredService<IActivityBroadcaster>(),
-            sp.GetRequiredService<IChannelManager>(),
+            sp.GetRequiredService<IConversationEventPublisher>(),
             sp.GetRequiredService<ILogger<InterruptedTurnNotificationService>>(),
             sp.GetService<IInboundMessageOrchestrator>(),
             sp.GetService<IOptions<GatewayOptions>>(),
-            sp.GetService<IConversationStore>()));
+            sp.GetService<IConversationStore>(),
+            sp.GetService<SessionLifecycleEvents>()));
         services.AddHostedService<SessionCleanupService>();
         // Session/conversation consistency monitor + safe auto-heal path (#2046).
         services.TryAddSingleton<Sessions.SessionConsistencyChecker>();
         services.AddHostedService<SessionConsistencyHostedService>();
         services.TryAddSingleton<IConversationChangeNotifier, NullConversationChangeNotifier>();
         services.AddHostedService<ConversationRetentionHostedService>();
+        services.AddHostedService<LegacyToolInvocationBackfillHostedService>();
         services.AddHostedService<SubAgentWorkspaceSweepHostedService>();
         services.AddHostedService<MemoryIndexer>();
+        services.AddHostedService<MemoryReembeddingWorker>();
 
         // #2956: converge memory rows left behind by sessions deleted while the gateway was down
         // (or before the delete path existed). Fails closed on a session-corpus scan error.
@@ -552,6 +612,8 @@ public static class GatewayServiceCollectionExtensions
         // restore the four-round-trips-per-turn tax the split exists to remove.
         services.TryAddSingleton<BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry>(
             _ => new BotNexus.Agent.Core.Loop.ProviderSuspensionRegistry());
+        services.TryAddSingleton<BotNexus.Agent.Core.Loop.IProviderRecoveryCoordinator>(
+            _ => new BotNexus.Agent.Core.Loop.ProviderRecoveryCoordinator());
 
         services.TryAddSingleton<ILocationResolver>(serviceProvider =>
             new DefaultLocationResolver(
@@ -600,6 +662,16 @@ public static class GatewayServiceCollectionExtensions
         var worldId = WorldIdResolver.Resolve(resolvedConfigPath, fileSystem, out var worldIdGenerated);
         services.Replace(ServiceDescriptor.Singleton(worldId));
         services.Replace(ServiceDescriptor.Singleton(new WorldIdOrigin(worldIdGenerated)));
+        // #3411: bind both the identity and home path to this one composition resolution. Passing the
+        // configuration directory explicitly avoids a second process-global home lookup and hands
+        // every file-backed guard the same WorldId used by the SQLite identity seam below.
+        services.Replace(ServiceDescriptor.Singleton<BotNexusHome>(serviceProvider =>
+            new BotNexusHome(
+                serviceProvider.GetRequiredService<IFileSystem>(),
+                homePath: configDirectory,
+                dataPath: BotNexusHome.ResolveDataPath(),
+                worldId: worldId.Value,
+                logger: serviceProvider.GetService<ILogger<BotNexusHome>>())));
         services.AddHostedService<WorldIdPersistenceService>();
 
         // #2833: hand that SAME resolved value to the SQLite connection seam, so every store this
@@ -641,7 +713,10 @@ public static class GatewayServiceCollectionExtensions
             // back" is an obvious operation for whoever needs it at 3am.
             var fs = sp.GetRequiredService<IFileSystem>();
             var directory = PlatformConfigLoader.GetDefaultConfigDirectory(fs);
-            return new SqliteConfigStore($"Data Source={Path.Combine(directory, "config.db")}");
+            var storePath = ConfigStoreBootstrap.ResolveStorePath(
+                Path.Combine(directory, "config.json"),
+                fs);
+            return new SqliteConfigStore($"Data Source={storePath}");
         });
 
         // #2635: additively reconcile the bundled agent catalog into config.json. Registered
@@ -653,6 +728,13 @@ public static class GatewayServiceCollectionExtensions
             serviceProvider.GetRequiredService<BotNexusHome>(),
             serviceProvider.GetRequiredService<IFileSystem>(),
             serviceProvider.GetRequiredService<ILogger<PlatformAgentReconciliationService>>()));
+
+        // Reconcile config-defined model registrations before agent descriptors consume the live
+        // registry. Both services subscribe to the same options monitor; registration order keeps
+        // the catalogue revision ahead of agent validation for each reload.
+        services.TryAddSingleton<ConfigDefinedModelRegistryReconciler>();
+        services.AddSingleton<IHostedService>(serviceProvider =>
+            serviceProvider.GetRequiredService<ConfigDefinedModelRegistryReconciler>());
 
         // #2136: the six worker archetypes (researcher, coder, planner, reviewer, writer, analyst)
         // are no longer registered as named conversational agents. They are resolved at spawn time
@@ -823,14 +905,14 @@ public static class GatewayServiceCollectionExtensions
             services.Replace(ServiceDescriptor.Singleton<ISessionStore>(serviceProvider =>
             {
                 var fs = serviceProvider.GetRequiredService<IFileSystem>();
-                fs.Directory.CreateDirectory(sessionsPath);
                 return AttachArchiveDrain(
                     new FileSessionStore(
                         sessionsPath,
                         serviceProvider.GetRequiredService<ILogger<FileSessionStore>>(),
                         fs,
                         conversationStore: serviceProvider.GetRequiredService<IConversationStore>(),
-                        redactor: serviceProvider.GetService<ISecretRedactor>()),
+                        redactor: serviceProvider.GetService<ISecretRedactor>(),
+                        home: serviceProvider.GetRequiredService<BotNexusHome>()),
                     serviceProvider);
             }));
             return;
@@ -852,7 +934,8 @@ public static class GatewayServiceCollectionExtensions
                         connectionString,
                         serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>(),
                         serviceProvider.GetRequiredService<IConversationStore>(),
-                        storeMetrics: serviceProvider.GetService<StoreMetrics>()),
+                        storeMetrics: serviceProvider.GetService<StoreMetrics>(),
+                        journalModeMaintenance: serviceProvider.GetRequiredService<SqliteWalMaintenance>()),
                     serviceProvider);
             }));
             return;
@@ -893,6 +976,7 @@ public static class GatewayServiceCollectionExtensions
         if (resolvedType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
         {
             services.Replace(ServiceDescriptor.Singleton<IConversationStore, InMemoryConversationStore>());
+            services.Replace(ServiceDescriptor.Singleton<IConversationReadStateStore, InMemoryConversationReadStateStore>());
             services.Replace(ServiceDescriptor.Singleton<IConversationSectionStore, InMemoryConversationSectionStore>());
             return;
         }
@@ -914,6 +998,10 @@ public static class GatewayServiceCollectionExtensions
                     fs,
                     serviceProvider.GetService<IWorldContext>());
             }));
+            services.Replace(ServiceDescriptor.Singleton<IConversationReadStateStore>(serviceProvider =>
+                new FileConversationReadStateStore(
+                    Path.Combine(conversationsPath, "read-state"),
+                    serviceProvider.GetRequiredService<IFileSystem>())));
             services.Replace(ServiceDescriptor.Singleton<IConversationSectionStore>(serviceProvider =>
                 new SqliteConversationSectionStore(
                     $"Data Source={Path.Combine(dataDirectory, "sections.sqlite")}",
@@ -935,11 +1023,14 @@ public static class GatewayServiceCollectionExtensions
                     connectionString,
                     serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>(),
                     serviceProvider.GetService<IWorldContext>(),
-                    storeMetrics: serviceProvider.GetService<StoreMetrics>());
+                    storeMetrics: serviceProvider.GetService<StoreMetrics>(),
+                    journalModeMaintenance: serviceProvider.GetRequiredService<SqliteWalMaintenance>());
             }));
 
             services.AddSingleton<IConversationAuditLog>(
                 new SqliteConversationAuditLog(connectionString));
+            services.Replace(ServiceDescriptor.Singleton<IConversationReadStateStore>(
+                new SqliteConversationReadStateStore(connectionString)));
             services.Replace(ServiceDescriptor.Singleton<IConversationSectionStore>(serviceProvider =>
                 new SqliteConversationSectionStore(
                     connectionString,

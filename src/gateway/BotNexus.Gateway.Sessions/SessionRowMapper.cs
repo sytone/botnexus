@@ -82,6 +82,7 @@ internal static class SessionRowMapper
             Status = status,
             CreatedAt = createdAt,
             UpdatedAt = updatedAt,
+            ExpiresAt = GetOptionalNullableTimestamp(reader, "expires_at"),
             Metadata = metadata
         };
 
@@ -144,20 +145,40 @@ internal static class SessionRowMapper
 
     /// <summary>
     /// Maps the current row of the <c>sub_agent_sessions</c> <c>SELECT</c> in
-    /// <c>ListSubAgentSessionsAsync</c> to a <see cref="SubAgentSessionSummary"/>.
+    /// <c>ListSubAgentSessionsAsync</c> to a <see cref="SubAgentRunDetail"/>.
     /// </summary>
-    internal static SubAgentSessionSummary MapSubAgentSession(SqliteDataReader reader)
-        => new()
+    internal static SubAgentRunDetail MapSubAgentSession(SqliteDataReader reader)
+    {
+        var json = GetOptionalNullableString(reader, "detail_json");
+        if (!string.IsNullOrWhiteSpace(json))
         {
-            SubAgentId = reader.GetString(reader.GetOrdinal("id")),
-            ParentSessionId = reader.GetString(reader.GetOrdinal("parent_session_id")),
-            ParentAgentId = reader.GetString(reader.GetOrdinal("parent_agent_id")),
-            ChildAgentId = reader.GetString(reader.GetOrdinal("child_agent_id")),
-            Archetype = GetNullableString(reader, "archetype"),
-            StartedAt = ParseTimestamp(reader.GetString(reader.GetOrdinal("started_at"))),
-            EndedAt = GetNullableTimestamp(reader, "ended_at"),
-            Status = reader.GetString(reader.GetOrdinal("status"))
+            var detail = JsonSerializer.Deserialize<SubAgentRunDetail>(json, SqliteSessionStore.JsonOptions);
+            if (detail is not null)
+                return detail;
+
+        }
+
+        var rawStatus = reader.GetString(reader.GetOrdinal("status"));
+        var status = string.Equals(rawStatus, "Active", StringComparison.OrdinalIgnoreCase)
+            ? SubAgentStatus.Running
+            : Enum.TryParse<SubAgentStatus>(rawStatus, true, out var parsed) ? parsed : SubAgentStatus.Failed;
+        var started = ParseTimestamp(reader.GetString(reader.GetOrdinal("started_at")));
+        var completed = GetNullableTimestamp(reader, "ended_at");
+        return new SubAgentRunDetail
+        {
+            SubAgentId = reader.GetString(reader.GetOrdinal("id")), ParentSessionId = reader.GetString(reader.GetOrdinal("parent_session_id")),
+            ParentAgentId = GetNullableString(reader, "parent_agent_id"), ChildAgentId = GetNullableString(reader, "child_agent_id"),
+            Archetype = GetNullableString(reader, "archetype"), StartedAt = started, CompletedAt = completed, Status = status,
+            ElapsedSeconds = completed.HasValue ? Math.Max(0, (completed.Value - started).TotalSeconds) : null
         };
+    }
+
+    private static string? GetOptionalNullableString(SqliteDataReader reader, string column)
+    {
+        try { return GetNullableString(reader, column); }
+        catch (ArgumentOutOfRangeException) { return null; }
+        catch (IndexOutOfRangeException) { return null; }
+    }
 
     private static string? GetNullableString(SqliteDataReader reader, string column)
     {
@@ -169,6 +190,13 @@ internal static class SessionRowMapper
     {
         var raw = GetNullableString(reader, column);
         return raw is null ? (ChannelKey?)null : ChannelKey.From(raw);
+    }
+
+    private static DateTimeOffset? GetOptionalNullableTimestamp(SqliteDataReader reader, string column)
+    {
+        try { return GetNullableTimestamp(reader, column); }
+        catch (ArgumentOutOfRangeException) { return null; }
+        catch (IndexOutOfRangeException) { return null; }
     }
 
     private static DateTimeOffset? GetNullableTimestamp(SqliteDataReader reader, string column)

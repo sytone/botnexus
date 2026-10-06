@@ -7,7 +7,7 @@ namespace BotNexus.Memory.Tests.TestInfrastructure;
 
 internal sealed class MemoryStoreTestContext : IAsyncDisposable
 {
-    private MemoryStoreTestContext(string tempDirectory, string dbPath, SqliteMemoryStore store)
+    internal MemoryStoreTestContext(string tempDirectory, string dbPath, SqliteMemoryStore store)
     {
         TempDirectory = tempDirectory;
         DbPath = dbPath;
@@ -35,7 +35,8 @@ internal sealed class MemoryStoreTestContext : IAsyncDisposable
         string? sessionId = null,
         int? turnIndex = null,
         DateTimeOffset? createdAt = null,
-        string? metadataJson = null)
+        string? metadataJson = null,
+        DateTimeOffset? expiresAt = null)
     {
         return new MemoryEntry
         {
@@ -49,7 +50,7 @@ internal sealed class MemoryStoreTestContext : IAsyncDisposable
             Embedding = null,
             CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
             UpdatedAt = null,
-            ExpiresAt = null,
+            ExpiresAt = expiresAt,
             IsArchived = false
         };
     }

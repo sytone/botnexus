@@ -44,7 +44,6 @@ public sealed class MobileSettingsMenuTests : IDisposable
             DisplayName = "Agent 1",
             Emoji = null,
             SessionId = "session-1",
-            ActiveConversationId = "conv-1"
         };
         agentState.Conversations["conv-1"] = convState;
 
@@ -58,6 +57,9 @@ public sealed class MobileSettingsMenuTests : IDisposable
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.Services.AddSingleton(_interaction);
+        var rest = Substitute.For<IGatewayRestClient>();
+        rest.ApiBaseUrl.Returns("");
+        _ctx.Services.AddSingleton(new GatewayInfoService(new HttpClient(), rest));
         _ctx.JSInterop.Mode = JSRuntimeMode.Loose;
     }
 
@@ -74,6 +76,18 @@ public sealed class MobileSettingsMenuTests : IDisposable
         // The new "Settings" entry must be present.
         var settings = cut.Find("[data-testid='settings-btn']");
         Assert.NotNull(settings);
+    }
+
+    [Fact]
+    public void Overflow_menu_has_explicit_desktop_view_link()
+    {
+        var cut = _ctx.Render<Chat>();
+
+        cut.Find(".overflow-btn").Click();
+
+        var link = cut.Find("[data-testid='desktop-view-link']");
+        link.TextContent.Trim().ShouldBe("Desktop view");
+        link.GetAttribute("href").ShouldBe("/");
     }
 
     [Fact]

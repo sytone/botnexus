@@ -52,11 +52,41 @@ public sealed class GatewayStopDiscoveryTests : IDisposable
         public bool WaitForExit(int milliseconds) => true;
     }
 
+    private sealed class GracefulProcessHandle(int id, string executablePath, params bool[] waitResults)
+        : IGatewayProcessHandle
+    {
+        private readonly Queue<bool> _waitResults = new(waitResults);
+
+        public int Id { get; } = id;
+        public string? ExecutablePath { get; } = executablePath;
+        public int GracefulStopCount { get; private set; }
+        public int KillCount { get; private set; }
+
+        public bool RequestGracefulStop()
+        {
+            GracefulStopCount++;
+            return true;
+        }
+
+        public void Kill() => KillCount++;
+
+        public bool WaitForExit(int milliseconds) => _waitResults.Dequeue();
+    }
+
     private GatewayProcessManager NewManager(params IGatewayProcessHandle[] processes)
         => new(
             _healthChecker,
             NullLogger<GatewayProcessManager>.Instance,
             processEnumerator: () => processes);
+
+    private GatewayProcessManager NewManager(
+        Func<string?, string, CancellationToken, Task<bool>> plannedShutdownRequester,
+        params IGatewayProcessHandle[] processes)
+        => new(
+            _healthChecker,
+            NullLogger<GatewayProcessManager>.Instance,
+            processEnumerator: () => processes,
+            plannedShutdownRequester: plannedShutdownRequester);
 
     /// <summary>The managed DLL path this deployment would launch. Never created on disk - discovery
     /// is a path-identity comparison, not a file probe.</summary>
@@ -141,6 +171,80 @@ public sealed class GatewayStopDiscoveryTests : IDisposable
     // -------------------------------------------------------------------------------------
     // AC3 (SECURITY, #2369): an unidentified process is NEVER signalled.
     // -------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task PlannedStop_RequestsHostShutdownBeforeNativeSignals()
+    {
+        var gateway = new GracefulProcessHandle(900, GatewayDll, true);
+        var requestedUrl = string.Empty;
+        var manager = NewManager(
+            (_, url, _) =>
+            {
+                requestedUrl = url;
+                return Task.FromResult(true);
+            },
+            gateway);
+
+        var result = await manager.StopAsync(
+            _home,
+            GatewayDll,
+            CancellationToken.None,
+            "http://localhost:6123");
+
+        requestedUrl.ShouldBe("http://localhost:6123");
+        gateway.GracefulStopCount.ShouldBe(0);
+        gateway.KillCount.ShouldBe(0);
+        result.Message.ShouldNotBeNull().ShouldContain("gracefully");
+    }
+
+    [Fact]
+    public async Task PlannedStop_WhenHostRequestIsUnavailable_FallsBackToNativeGracefulSignal()
+    {
+        var gateway = new GracefulProcessHandle(9001, GatewayDll, true);
+        var manager = NewManager((_, _, _) => Task.FromResult(false), gateway);
+
+        var result = await manager.StopAsync(
+            _home,
+            GatewayDll,
+            CancellationToken.None,
+            "http://localhost:6123");
+
+        gateway.GracefulStopCount.ShouldBe(1);
+        gateway.KillCount.ShouldBe(0);
+        result.Outcome.ShouldBe(GatewayStopOutcome.Stopped);
+    }
+
+    [Fact]
+    public async Task AC5_StopAsync_RequestsGracefulStop_AndDoesNotKillWhenProcessExits()
+    {
+        var gateway = new GracefulProcessHandle(901, GatewayDll, true);
+        var manager = NewManager(gateway);
+
+        var result = await manager.StopAsync(_home, GatewayDll, CancellationToken.None);
+
+        gateway.GracefulStopCount.ShouldBe(1);
+        gateway.KillCount.ShouldBe(0);
+        result.Outcome.ShouldBe(GatewayStopOutcome.Stopped);
+    }
+
+    [Fact]
+    public async Task AC5_StopAsync_EscalatesAfterExplicitGracefulTimeout()
+    {
+        var gateway = new GracefulProcessHandle(902, GatewayDll, false, true);
+        var manager = new GatewayProcessManager(
+            _healthChecker,
+            NullLogger<GatewayProcessManager>.Instance,
+            gracefulStopTimeout: TimeSpan.FromSeconds(3),
+            processEnumerator: () => new[] { gateway });
+
+        var result = await manager.StopAsync(_home, GatewayDll, CancellationToken.None);
+
+        gateway.GracefulStopCount.ShouldBe(1);
+        gateway.KillCount.ShouldBe(1);
+        var message = result.Message.ShouldNotBeNull();
+        message.ShouldContain("3");
+        message.ShouldContain("forced kill");
+    }
 
     [Fact]
     public async Task AC3_StopAsync_NeverKillsAForeignProcess()

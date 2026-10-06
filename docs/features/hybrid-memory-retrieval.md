@@ -23,12 +23,14 @@ Each candidate row carries up to three signals:
 | --- | --- | --- |
 | Lexical score | `bm25()` on the FTS index, or term-hit count on the LIKE fallback | Clamped to be non-negative |
 | Cosine similarity | Query vector vs. stored vector | `null` when no comparable vector exists |
-| Age | `created_at` | Feeds the existing exponential temporal decay (30-day half-life) |
+| Age | `created_at` | Feeds exponential temporal decay using the agent's configured half-life (30 days by default) |
 
 The lexical score is normalised by the maximum in the candidate set (scale normalisation,
 not min-max — an affine shift would reorder rows once decay multiplies through). Similarity
 is mapped from `[-1, 1]` into `[0, 1]`. The two are fused with a 0.6 / 0.4 weighting and
-then multiplied by the temporal decay factor.
+then multiplied by the temporal decay factor. When temporal decay is disabled for the agent,
+age contributes no penalty. The same effective policy applies to lexical, LIKE fallback,
+and vector candidates before the shared ranker orders them.
 
 A row with **no comparable vector** receives a neutral similarity prior of `0.5` rather
 than being treated as dissimilar. This matters: without it, enabling embeddings would

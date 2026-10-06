@@ -9,7 +9,7 @@
 1. Agent lifecycle (create → prompt → loop → tool calls → complete)
 2. All event types and when they fire
 3. Subscribe/unsubscribe pattern
-4. Hook system (BeforeToolCall, AfterToolCall)
+4. Tool execution policy and result transformation
 5. Steering and follow-up message queues
 6. Error handling and abort flow
 
@@ -82,8 +82,8 @@ All entry points return `Task<IReadOnlyList<AgentMessage>>` — the messages pro
    ├── 5. INNER LOOP (while tool calls pending or steering messages queued):
    │   │
    │   ├── 6. Emit TurnStartEvent
-   │   ├── 7. Transform context (if TransformContext delegate provided)
-   │   ├── 8. Convert agent messages → provider messages (ConvertToLlm)
+    │   ├── 7. Transform context (if AgentContextTransformer provided)
+    │   ├── 8. Convert messages (ProviderMessageTransformer)
    │   ├── 9. Call LLM via LlmClient → get LlmStream
    │   ├── 10. StreamAccumulator: consume stream → emit Message events
    │   ├── 11. If FinishReason is Error/Aborted → exit loop
@@ -246,14 +246,14 @@ logSub.Dispose();
 
 Hooks intercept tool execution at two points: **before** (to validate/block) and **after** (to transform/audit).
 
-### BeforeToolCall
+### ToolExecutionPolicy
 
 Runs after argument validation (`PrepareArgumentsAsync`) and before `ExecuteAsync`. Can block the tool call.
 
 **Context record:**
 
 ```csharp
-public sealed record BeforeToolCallContext(
+public sealed record ToolExecutionContext(
     AssistantAgentMessage AssistantMessage,             // The message requesting the call
     ToolCallContent ToolCallRequest,                    // ID, name, and arguments
     IReadOnlyDictionary<string, object?> ValidatedArgs, // Args after PrepareArgumentsAsync
@@ -264,7 +264,7 @@ public sealed record BeforeToolCallContext(
 **Result record:**
 
 ```csharp
-public sealed record BeforeToolCallResult(
+public sealed record ToolExecutionDecision(
     bool Block,          // true → tool call is prevented
     string? Reason       // Error message returned to the LLM
 );
@@ -276,27 +276,27 @@ public sealed record BeforeToolCallResult(
 var agent = new Agent(new AgentOptions
 {
     // ... other options ...
-    BeforeToolCall = async (context, ct) =>
+    ToolExecutionPolicy = async (context, ct) =>
     {
         if (context.ToolCallRequest.Name == "bash")
         {
             var command = context.ValidatedArgs["command"]?.ToString() ?? "";
             if (command.Contains("rm -rf /"))
-                return new BeforeToolCallResult(Block: true, Reason: "Blocked: destructive command");
+                return new ToolExecutionDecision(Block: true, Reason: "Blocked: destructive command");
         }
         return null; // Allow the call
     }
 });
 ```
 
-### AfterToolCall
+### ToolResultTransformer
 
 Runs after `ExecuteAsync` completes (or fails). Can transform results, redact content, or override error status.
 
 **Context record:**
 
 ```csharp
-public sealed record AfterToolCallContext(
+public sealed record ToolResultTransformContext(
     AssistantAgentMessage AssistantMessage,
     ToolCallContent ToolCallRequest,
     IReadOnlyDictionary<string, object?> ValidatedArgs,
@@ -309,7 +309,7 @@ public sealed record AfterToolCallContext(
 **Result record:**
 
 ```csharp
-public sealed record AfterToolCallResult(
+public sealed record ToolResultTransformResult(
     IReadOnlyList<AgentToolContent>? Content = null,  // Replace result content
     object? Details = null,                            // Replace metadata
     bool? IsError = null                               // Override error flag
@@ -320,7 +320,7 @@ public sealed record AfterToolCallResult(
 **Example — redact secrets from tool output:**
 
 ```csharp
-AfterToolCall = async (context, ct) =>
+ToolResultTransformer = async (context, ct) =>
 {
     if (context.ToolCallRequest.Name == "bash")
     {
@@ -328,7 +328,7 @@ AfterToolCall = async (context, ct) =>
         if (output.Contains("SECRET_KEY"))
         {
             var redacted = output.Replace("SECRET_KEY=abc123", "SECRET_KEY=***");
-            return new AfterToolCallResult(
+            return new ToolResultTransformResult(
                 Content: [new AgentToolContent(AgentToolContentType.Text, redacted)]
             );
         }
@@ -345,11 +345,11 @@ For each tool call in the assistant message:
 ├── 1. Emit ToolExecutionStartEvent (with raw args)
 ├── 2. Find tool by name (case-sensitive)
 ├── 3. PrepareArgumentsAsync (validate/coerce arguments)
-├── 4. BeforeToolCall hook
+├── 4. ToolExecutionPolicy
 │     ├── Block=true → return error result, skip execution
 │     └── Block=false or null → proceed
 ├── 5. tool.ExecuteAsync(toolCallId, validatedArgs, ct, updateCallback)
-├── 6. AfterToolCall hook (may transform result)
+├── 6. ToolResultTransformer (may transform result)
 ├── 7. Emit ToolExecutionEndEvent
 └── 8. Create ToolResultAgentMessage
 ```
@@ -487,19 +487,19 @@ public record AgentOptions(
     AgentInitialState? InitialState,            // Optional initial state seed
     LlmModel Model,                             // Model for provider calls
     LlmClient LlmClient,                        // LLM client for streaming
-    ConvertToLlmDelegate? ConvertToLlm,          // Message converter (default: built-in)
-    TransformContextDelegate? TransformContext,   // Context transformer before LLM
+    ProviderMessageTransformer? ProviderMessageTransformer, // Message converter (default: built-in)
+    AgentContextTransformer? AgentContextTransformer, // Context transformer before LLM
     GetApiKeyDelegate GetApiKey,                  // API key resolver
-    GetMessagesDelegate? GetSteeringMessages,     // Steering message provider
-    GetMessagesDelegate? GetFollowUpMessages,     // Follow-up message provider
+    AgentMessageProvider? SteeringMessageProvider, // Steering message provider
+    AgentMessageProvider? FollowUpMessageProvider, // Follow-up message provider
     ToolExecutionMode ToolExecutionMode,          // Sequential or Parallel
-    BeforeToolCallDelegate? BeforeToolCall,        // Pre-tool-call hook
-    AfterToolCallDelegate? AfterToolCall,          // Post-tool-call hook
+    ToolExecutionPolicy? ToolExecutionPolicy,     // Pre-execution policy
+    ToolResultTransformer? ToolResultTransformer, // Post-execution transformation
     SimpleStreamOptions GenerationSettings,       // Temperature, maxTokens, etc.
     QueueMode SteeringMode,                       // Queue drain mode for steering
     QueueMode FollowUpMode,                       // Queue drain mode for follow-ups
     string? SessionId,                            // Caller-provided session ID
-    Action<string>? OnDiagnostic,                 // Non-fatal diagnostic callback
+    Action<string>? DiagnosticObserver,          // Non-fatal diagnostic callback
     int? MaxRetryDelayMs                          // Max retry backoff delay (ms); also caps Retry-After. Defaults to 60,000 (#3035)
 );
 ```
@@ -508,12 +508,12 @@ public record AgentOptions(
 
 | Delegate | Signature | Purpose |
 |---|---|---|
-| `ConvertToLlmDelegate` | `(AgentMessage[], ct) → Message[]` | Convert agent messages to provider format |
-| `TransformContextDelegate` | `(AgentMessage[], ct) → AgentMessage[]` | Transform messages before LLM call |
+| `ProviderMessageTransformer` | `(AgentMessage[], ct) → Message[]` | Convert agent messages to provider format |
+| `AgentContextTransformer` | `(AgentMessage[], ct) → AgentMessage[]` | Transform messages before LLM call |
 | `GetApiKeyDelegate` | `(provider, ct) → string?` | Resolve API key on demand |
-| `GetMessagesDelegate` | `(ct) → AgentMessage[]` | Produce steering or follow-up messages |
-| `BeforeToolCallDelegate` | `(BeforeToolCallContext, ct) → BeforeToolCallResult?` | Pre-tool-call interception |
-| `AfterToolCallDelegate` | `(AfterToolCallContext, ct) → AfterToolCallResult?` | Post-tool-call interception |
+| `AgentMessageProvider` | `(ct) → AgentMessage[]` | Produce steering or follow-up messages |
+| `ToolExecutionPolicy` | `(ToolExecutionContext, ct) → ToolExecutionDecision?` | Pre-execution policy |
+| `ToolResultTransformer` | `(ToolResultTransformContext, ct) → ToolResultTransformResult?` | Post-execution transformation |
 
 ---
 
