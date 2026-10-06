@@ -173,6 +173,33 @@ public sealed class ChannelKnowledgeFenceArchitectureTests : ArchitectureTest
     public void Rule7_ChannelExtensions_CanReachTheGenericEventSinkContract()
         => AssertRule("R7", FindRule7Violations());
 
+    /// <summary>
+    /// #2090: every installed channel extension owns its projection decision. Merely referencing
+    /// the event contract is insufficient: the concrete adapter must consume the event stream so
+    /// filtering and rendering cannot silently fall back to gateway-selected delivery.
+    /// </summary>
+    [Fact]
+    public void InstalledChannelExtensions_OwnConversationEventProjection()
+    {
+        var violations = ChannelExtensionProjects()
+            .Select(project => new
+            {
+                Project = project,
+                AdapterSources = CsFiles(Path.GetDirectoryName(project)!)
+                    .Where(IsChannelAdapterSource)
+                    .ToList(),
+            })
+            .Where(extension => extension.AdapterSources.Count == 0
+                || extension.AdapterSources.All(source => !DeclaresConversationEventSink(File.ReadAllText(source))))
+            .Select(extension => Rel(Repository.SourceRoot, extension.Project))
+            .ToList();
+
+        violations.ShouldBeEmpty(
+            "#2090: every installed channel extension must project conversation events in its own adapter; " +
+            "gateway-selected delivery is not a substitute. Missing IConversationEventSink adapters:\n  " +
+            string.Join("\n  ", violations));
+    }
+
     // ---------------------------------------------------------------------------------------
     // Baseline integrity
     // ---------------------------------------------------------------------------------------
@@ -486,6 +513,18 @@ public sealed class ChannelKnowledgeFenceArchitectureTests : ArchitectureTest
 
     private static readonly Regex s_channelExtensionRef =
         new(@"BotNexus\.Extensions\.Channels\.", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static bool IsChannelAdapterSource(string path)
+        => Path.GetFileName(path).EndsWith("ChannelAdapter.cs", StringComparison.Ordinal)
+           && !Path.GetFileName(path).Equals("IChannelAdapter.cs", StringComparison.Ordinal);
+
+    private static bool DeclaresConversationEventSink(string source)
+    {
+        var code = StripComments(source);
+        return code.Contains("ChannelAdapterBase", StringComparison.Ordinal)
+               && code.Contains("IConversationEventSink", StringComparison.Ordinal)
+               && code.Contains("OnConversationEventAsync", StringComparison.Ordinal);
+    }
 
     private static bool HasChannelExtensionReference(string projectXml)
         => s_channelExtensionRef.IsMatch(projectXml);
