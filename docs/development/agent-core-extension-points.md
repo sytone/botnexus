@@ -17,7 +17,7 @@ matching file. Its namespace is `BotNexus.Agent.Core.ExtensionPoints.<Family>`.
 | `Messages/` | `ProviderMessageTransformer`, `AgentContextTransformer`, `AgentMessageProvider`, `DefaultProviderMessageTransformer` |
 | `ProviderExecution/` | `ProviderExecutionOptionsProvider`, `CredentialInvalidationService` |
 | `ToolExecution/` | `ToolExecutionPolicy`, `ToolAuditGate`, `ToolExecutionDecisionObserver`, `ToolExecutionContext`, `ToolExecutionDecision` |
-| `ToolResults/` | `ToolResultTransformer`, `ToolResultTransformContext`, `ToolResultTransformResult` |
+| `ToolResults/` | `ToolResultTransformer`, `ToolResultTransformContext`, `ToolResultTransformResult`, `ToolProgressPolicy`, `ToolProgressContext`, `ToolProgressDecision`, `DefaultToolProgressPolicy` |
 | `RunCompletion/` | `RunCompletionPolicy`, `RunCompletionDecision`, `RunCompletionResult`, `RunCompletionStatus`, `RunStopReason` |
 
 `Configuration/` owns configuration records, not a shared delegate collection.
@@ -236,6 +236,7 @@ unless they qualify the behavior of a listed seam.
 | `ToolExecutionPolicy` | Policy | Tool execution decision after argument validation and audit |
 | `ToolAuditGate` | Mixed service and policy | Durable audit work that can block execution; these responsibilities are not yet separated |
 | `ToolResultTransformer` | Transformer | Optional replacement of tool-result content, details, or error status |
+| `ToolProgressPolicy` | Policy | Post-execution classification of one retained tool result as progress, non-progress, or unclassified; the loop owns sequence state and control flow |
 | `RunCompletionPolicy` | Policy | Run completion decision; receives only a cancellation token |
 | `ProviderMessageTransformer` | Transformer | Agent messages to provider messages |
 | `AgentContextTransformer` | Transformer | Context-message transformation before provider invocation |

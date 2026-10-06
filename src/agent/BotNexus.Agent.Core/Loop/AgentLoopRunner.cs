@@ -2,6 +2,7 @@ using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Agent.Core.ExtensionPoints.Messages;
 using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
@@ -205,7 +206,8 @@ public static class AgentLoopRunner
         IReadOnlyList<AgentMessage> followUpSeed = [];
         var completionContinuationAttempts = 0;
         RunCompletionDecision? lastCompletionDecision = null;
-        var nonProgressGuard = new ToolNonProgressGuard();
+        var nonProgressGuard = new ToolNonProgressGuard(
+            config.ToolProgressPolicy ?? DefaultToolProgressPolicy.EvaluateAsync);
 
         // #2519: taint accumulation is scoped to the whole RUN, not to each provider turn. The
         // laundering path this closes is inherently multi-turn - the model fetches a page on one
@@ -418,7 +420,11 @@ public static class AgentLoopRunner
                 await AuditClaimsAsync(config, assistantMessage, turnToolNames, emit).ConfigureAwait(false);
 
                 var nonProgress = hasMoreToolCalls
-                    ? nonProgressGuard.Observe(assistantMessage.ToolCalls!, toolResults)
+                    ? await nonProgressGuard.ObserveAsync(
+                            assistantMessage.ToolCalls!,
+                            toolResults,
+                            cancellationToken)
+                        .ConfigureAwait(false)
                     : null;
                 if (nonProgress is { WarningReady: true })
                 {
@@ -534,9 +540,8 @@ public static class AgentLoopRunner
     }
 
     private static string BuildNonProgressGuidance(ToolNonProgressObservation observation)
-        => observation.Kind == "edit-found-zero"
-            ? "[Tool progress guard] Repeated edit attempts found no matching target. Re-read the current file, then change the editing mechanism (for example, use a smaller unique anchor or a different patch method). Do not retry by only varying the same missing anchor."
-            : "[Tool progress guard] Repeated tool calls produced no observable progress. Check for new state or evidence, change the approach, or ask the user for direction instead of repeating the same operation.";
+        => observation.Guidance
+            ?? "[Tool progress guard] Repeated tool calls produced no observable progress. Check for new state or evidence, change the approach, or ask the user for direction instead of repeating the same operation.";
 
     private static string BuildNonProgressStopDetail(ToolNonProgressObservation observation)
         => $"Tool non-progress guard stopped the loop after {observation.ConsecutiveCount} consecutive {observation.Kind} outcomes. " +

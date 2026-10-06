@@ -126,6 +126,11 @@ namespace BotNexus.Agent.Core.Configuration;
 /// Maximum wait for coordinated provider admission; null uses the effective retry-delay ceiling.
 /// Used only when RecoveryCoordinator is set. Admission failures and cancellation propagate to the run.
 /// </param>
+/// <param name="ToolProgressPolicy">
+/// Optional policy invoked once per retained tool result. Null uses the core default policy.
+/// The loop owns run-local aggregation and applies warning or stop decisions. Policy exceptions
+/// and cancellation propagate; an unclassified result resets repeated non-progress tracking.
+/// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
 /// It is immutable and passed through the loop to ensure consistent configuration.
@@ -162,7 +167,8 @@ public record AgentLoopConfig(
     int MaxCompletionContinuations = 2,
     CredentialInvalidationService? CredentialInvalidationService = null,
     IProviderRecoveryCoordinator? RecoveryCoordinator = null,
-    TimeSpan? RecoveryAdmissionTimeout = null)
+    TimeSpan? RecoveryAdmissionTimeout = null,
+    ToolProgressPolicy? ToolProgressPolicy = null)
 {
     /// <summary>
     /// Default cooperative cancellation budget for the tool-execution policy.

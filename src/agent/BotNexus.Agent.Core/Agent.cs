@@ -747,7 +747,8 @@ public sealed class Agent
             MaxCompletionContinuations: _options.MaxCompletionContinuations,
             CredentialInvalidationService: _options.CredentialInvalidationService,
             RecoveryCoordinator: _options.RecoveryCoordinator,
-            RecoveryAdmissionTimeout: _options.RecoveryAdmissionTimeout);
+            RecoveryAdmissionTimeout: _options.RecoveryAdmissionTimeout,
+            ToolProgressPolicy: _options.ToolProgressPolicy);
     }
 
     private Func<CancellationToken, Task<AgentContext?>>? BuildContextCompactionService()

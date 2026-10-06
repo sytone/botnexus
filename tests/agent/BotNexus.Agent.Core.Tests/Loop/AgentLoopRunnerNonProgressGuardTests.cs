@@ -2,6 +2,7 @@ using System.Text.Json;
 using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tests.TestUtils;
 using BotNexus.Agent.Core.Tools;
@@ -256,6 +257,104 @@ public sealed class AgentLoopRunnerNonProgressGuardTests
         messages.OfType<AgentUserMessage>().ShouldContain(message => message.Content.Contains("child has completed", StringComparison.Ordinal));
         events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Completed);
         messages.OfType<AssistantAgentMessage>().Last().FinishReason.ShouldBe(StopReason.Stop);
+    }
+
+    [Fact]
+    public async Task AgentOptions_PassesConfiguredToolProgressPolicyIntoLoopRuntime()
+    {
+        const string api = "non-progress-agent-options";
+        var tool = new ScriptedTool("custom_probe", _ => "still waiting");
+        using var provider = RegisterRepeatedToolUseProvider(api, "custom_probe", GuardLimit);
+        var policyCalls = 0;
+        var initial = new AgentInitialState(
+            Model: TestHelpers.CreateTestModel(api),
+            Tools: [tool],
+            Messages: []);
+        var options = TestHelpers.CreateTestOptions(initial, initial.Model) with
+        {
+            ToolProgressPolicy = (_, _) =>
+            {
+                Interlocked.Increment(ref policyCalls);
+                return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.NoProgress(
+                    "agent-options-probe", "waiting", "custom-wait"));
+            }
+        };
+        var agent = new BotNexus.Agent.Core.Agent(options);
+
+        await agent.PromptAsync("wait for the custom operation");
+
+        policyCalls.ShouldBe(GuardLimit);
+        agent.State.LastCompletion.ShouldNotBeNull().Status.ShouldBe(RunCompletionStatus.Parked);
+    }
+
+    [Fact]
+    public async Task ConfiguredToolProgressPolicy_ClassifiesCustomToolWithoutOwningLoopState()
+    {
+        const string api = "non-progress-custom-policy";
+        var tool = new ScriptedTool("custom_probe", _ => "still waiting");
+        using var provider = RegisterRepeatedToolUseProvider(api, "custom_probe", GuardLimit);
+        var policyCalls = 0;
+        var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with
+        {
+            ToolProgressPolicy = (context, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Interlocked.Increment(ref policyCalls);
+                context.ToolCall.Name.ShouldBe("custom_probe");
+                context.ToolResult.ToolName.ShouldBe("custom_probe");
+                return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.NoProgress(
+                    "custom-probe",
+                    "waiting",
+                    "custom-wait",
+                    "Use the custom completion signal instead of probing again."));
+            }
+        };
+        var events = new List<AgentEvent>();
+
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("wait for the custom operation")],
+            new AgentContext(null, [], [tool]),
+            config,
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        policyCalls.ShouldBe(GuardLimit);
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        messages.OfType<AgentUserMessage>().ShouldContain(message =>
+            message.Content == "Use the custom completion signal instead of probing again.");
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status
+            .ShouldBe(RunCompletionStatus.Parked);
+    }
+
+    [Fact]
+    public async Task ConfiguredToolProgressPolicy_ProgressDecisionResetsTheSequence()
+    {
+        const string api = "non-progress-custom-reset";
+        var tool = new ScriptedTool("custom_probe", _ => "result");
+        using var provider = RegisterRepeatedToolUseProvider(api, "custom_probe", GuardLimit);
+        var policyCalls = 0;
+        var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with
+        {
+            ToolProgressPolicy = (_, _) =>
+            {
+                var call = Interlocked.Increment(ref policyCalls);
+                return Task.FromResult<ToolProgressDecision?>(call == 3
+                    ? ToolProgressDecision.Progress
+                    : ToolProgressDecision.NoProgress("custom-probe", "waiting", "custom-wait"));
+            }
+        };
+        var events = new List<AgentEvent>();
+
+        await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("wait")],
+            new AgentContext(null, [], [tool]),
+            config,
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        policyCalls.ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status
+            .ShouldBe(RunCompletionStatus.Completed);
     }
 
     [Fact]
