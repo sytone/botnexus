@@ -43,6 +43,67 @@ public sealed class InMemorySessionStoreTests
     }
 
     [Fact]
+    public async Task ExpireIfMatchesAsync_UninitializedConversationProjection_AppliesAtomically()
+    {
+        var store = new InMemorySessionStore();
+        var session = new GatewaySession
+        {
+            SessionId = SessionId.From("legacy-expire"),
+            AgentId = AgentId.From("agent-a"),
+            Status = SessionStatus.Active,
+            UpdatedAt = DateTimeOffset.Parse("2026-06-01T12:00:00Z")
+        };
+        await store.SaveAsync(session);
+        var row = (await store.ListCleanupPlanAsync(10)).Rows.ShouldHaveSingleItem();
+        var expiry = DateTimeOffset.Parse("2026-06-02T12:00:00Z");
+
+        var outcome = await store.ExpireIfMatchesAsync(SessionCleanupFence.Capture(row), expiry);
+
+        outcome.ShouldBe(SessionMutationOutcome.Applied);
+        var reloaded = await store.GetAsync(session.SessionId);
+        reloaded.ShouldNotBeNull();
+        reloaded.Status.ShouldBe(SessionStatus.Expired);
+        reloaded.ExpiresAt.ShouldBe(expiry);
+        reloaded.UpdatedAt.ShouldBe(expiry);
+    }
+
+    [Fact]
+    public async Task DeleteIfMatchesAsync_UninitializedConversationProjection_RejectsStaleFence()
+    {
+        var store = new InMemorySessionStore();
+        var session = new GatewaySession
+        {
+            SessionId = SessionId.From("legacy-delete"),
+            AgentId = AgentId.From("agent-a"),
+            Status = SessionStatus.Sealed,
+            UpdatedAt = DateTimeOffset.Parse("2026-06-01T12:00:00Z")
+        };
+        await store.SaveAsync(session);
+        var fence = SessionCleanupFence.Capture(
+            (await store.ListCleanupPlanAsync(10)).Rows.ShouldHaveSingleItem());
+        session.UpdatedAt = session.UpdatedAt.AddMinutes(1);
+
+        var outcome = await store.DeleteIfMatchesAsync(fence);
+
+        outcome.ShouldBe(SessionMutationOutcome.Conflict);
+        (await store.GetAsync(session.SessionId)).ShouldBeSameAs(session);
+    }
+
+    [Fact]
+    public async Task DeleteIfMatchesAsync_UninitializedConversationProjection_DeletesMatchingRow()
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("legacy-delete"), AgentId.From("agent-a"));
+        var fence = SessionCleanupFence.Capture(
+            (await store.ListCleanupPlanAsync(10)).Rows.ShouldHaveSingleItem());
+
+        var outcome = await store.DeleteIfMatchesAsync(fence);
+
+        outcome.ShouldBe(SessionMutationOutcome.Applied);
+        (await store.GetAsync(session.SessionId)).ShouldBeNull();
+    }
+
+    [Fact]
     public async Task DeleteAsync_RemovesSession()
     {
         var store = new InMemorySessionStore();

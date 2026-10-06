@@ -776,6 +776,166 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     }
 
     /// <inheritdoc />
+    public override async Task<UnresolvedCrashSentinelPage> ListUnresolvedCrashSentinelsAsync(
+        int limit, string? cursor = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        return await RetryOnTransientAsync(async () =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT DISTINCT h.session_id
+                FROM session_history h
+                WHERE h.is_crash_sentinel = 1
+                  AND ($cursor IS NULL OR h.session_id > $cursor)
+                ORDER BY h.session_id
+                LIMIT $limit
+                """;
+            command.Parameters.AddWithValue("$cursor", (object?)cursor ?? DBNull.Value);
+            command.Parameters.AddWithValue("$limit", limit + 1);
+            var ids = new List<SessionId>();
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                    ids.Add(SessionId.From(reader.GetString(0)));
+            }
+
+            var hasMore = ids.Count > limit;
+            if (hasMore) ids.RemoveAt(ids.Count - 1);
+            var sessions = new List<GatewaySession>(ids.Count);
+            foreach (var id in ids)
+            {
+                var session = await LoadSessionAsync(connection, id, cancellationToken).ConfigureAwait(false);
+                if (session is not null) sessions.Add(session);
+            }
+            return new UnresolvedCrashSentinelPage(sessions, hasMore && ids.Count > 0 ? ids[^1].Value : null);
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public override async Task<SessionCleanupPlanPage> ListCleanupPlanAsync(
+        int limit, string? cursor = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        return await RetryOnTransientAsync(async () =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT s.id, s.conversation_id, s.status, s.updated_at,
+                       COUNT(h.id) AS message_count,
+                       length(CAST(COALESCE(s.metadata, '') AS BLOB))
+                         + COALESCE(SUM(64
+                           + length(CAST(COALESCE(h.content, '') AS BLOB))
+                           + length(CAST(COALESCE(h.tool_name, '') AS BLOB))
+                           + length(CAST(COALESCE(h.tool_call_id, '') AS BLOB))), 0) AS bytes
+                FROM sessions s
+                LEFT JOIN session_history h ON h.session_id = s.id
+                WHERE ($cursor IS NULL OR s.id > $cursor)
+                GROUP BY s.id
+                ORDER BY s.id
+                LIMIT $limit
+                """;
+            command.Parameters.AddWithValue("$cursor", (object?)cursor ?? DBNull.Value);
+            command.Parameters.AddWithValue("$limit", limit + 1);
+            var raw = new List<(SessionId Id, ConversationId ConversationId, SessionStatus Status, DateTimeOffset UpdatedAt, int Count, long Bytes)>();
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    var conversation = ConversationId.From(reader.GetString(1));
+                    raw.Add((SessionId.From(reader.GetString(0)), conversation, ParseStatus(reader.IsDBNull(2) ? null : reader.GetString(2)),
+                        DateTimeOffset.Parse(reader.GetString(3), System.Globalization.CultureInfo.InvariantCulture),
+                        checked((int)reader.GetInt64(4)), reader.GetInt64(5)));
+                }
+            }
+            var hasMore = raw.Count > limit;
+            if (hasMore) raw.RemoveAt(raw.Count - 1);
+            var rows = new List<SessionCleanupPlanRow>(raw.Count);
+            foreach (var row in raw)
+            {
+                var agent = await ResolveAgentForConversationAsync(row.ConversationId.Value, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(agent))
+                    rows.Add(new SessionCleanupPlanRow(row.Id, AgentId.From(agent), row.ConversationId, row.Status, row.UpdatedAt, row.Count, row.Bytes));
+            }
+            return new SessionCleanupPlanPage(rows, hasMore && raw.Count > 0 ? raw[^1].Id.Value : null);
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public override async Task<SessionMutationOutcome> ExpireIfMatchesAsync(
+        SessionCleanupFence fence, DateTimeOffset expiresAt, CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        using var sessionLock = await AcquireSessionLockAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        var affected = await RetryOnTransientAsync(async () =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE sessions SET status = $newStatus, expires_at = COALESCE(expires_at, $expiresAt), updated_at = $newUpdatedAt
+                WHERE id = $id AND conversation_id = $conversationId
+                  AND status = $expectedStatus AND updated_at = $expectedUpdatedAt
+                """;
+            command.Parameters.AddWithValue("$newStatus", SessionStatus.Expired.ToString());
+            command.Parameters.AddWithValue("$expiresAt", expiresAt.ToString("O"));
+            command.Parameters.AddWithValue("$newUpdatedAt", expiresAt.ToString("O"));
+            AddCleanupFenceParameters(command, fence);
+            return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+        _cache.Remove(fence.SessionId);
+        return affected > 0 ? SessionMutationOutcome.Applied : SessionMutationOutcome.Conflict;
+    }
+
+    /// <inheritdoc />
+    public override async Task<SessionMutationOutcome> DeleteIfMatchesAsync(
+        SessionCleanupFence fence, CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        using var sessionLock = await AcquireSessionLockAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        var affected = await RetryOnTransientAsync(async () =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await using var deleteSession = connection.CreateCommand();
+            deleteSession.Transaction = (SqliteTransaction)transaction;
+            deleteSession.CommandText = """
+                DELETE FROM sessions WHERE id = $id AND conversation_id = $conversationId
+                  AND status = $expectedStatus AND updated_at = $expectedUpdatedAt
+                """;
+            AddCleanupFenceParameters(deleteSession, fence);
+            var deleted = await deleteSession.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            if (deleted > 0)
+            {
+                await using var deleteHistory = connection.CreateCommand();
+                deleteHistory.Transaction = (SqliteTransaction)transaction;
+                deleteHistory.CommandText = "DELETE FROM session_history WHERE session_id = $id";
+                deleteHistory.Parameters.AddWithValue("$id", fence.SessionId.Value);
+                await deleteHistory.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return deleted;
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+        _cache.Remove(fence.SessionId);
+        return affected > 0 ? SessionMutationOutcome.Applied : SessionMutationOutcome.Conflict;
+    }
+
+    private static void AddCleanupFenceParameters(SqliteCommand command, SessionCleanupFence fence)
+    {
+        command.Parameters.AddWithValue("$id", fence.SessionId.Value);
+        command.Parameters.AddWithValue("$conversationId", fence.ConversationId.Value);
+        command.Parameters.AddWithValue("$expectedStatus", fence.ExpectedStatus.ToString());
+        command.Parameters.AddWithValue("$expectedUpdatedAt", fence.ExpectedUpdatedAt.ToString("O"));
+    }
+
+    /// <inheritdoc />
     public override async Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("session.delete", ActivityKind.Internal);
@@ -1276,6 +1436,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                     metadata TEXT,
                     created_at TEXT,
                     updated_at TEXT,
+                    expires_at TEXT,
                     conversation_id TEXT
                 );
 
@@ -1316,8 +1477,15 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-            // Migrate: add tool columns to existing databases
+            // Migrate before creating indexes that reference additive columns. Legacy
+            // session_history tables do not have is_crash_sentinel until this completes.
             await MigrateAsync(connection, cancellationToken).ConfigureAwait(false);
+            await using (var crashSentinelIndex = connection.CreateCommand())
+            {
+                crashSentinelIndex.CommandText =
+                    "CREATE INDEX IF NOT EXISTS idx_session_history_crash_sentinel ON session_history(is_crash_sentinel, session_id);";
+                await crashSentinelIndex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
             await using (var subAgentDetailMigration = connection.CreateCommand())
             {
                 subAgentDetailMigration.CommandText = "ALTER TABLE sub_agent_sessions ADD COLUMN detail_json TEXT";
@@ -1569,7 +1737,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                  {
                      ("session_type", "TEXT"),
                      ("participants_json", "TEXT"),
-                     ("conversation_id", "TEXT")
+                     ("conversation_id", "TEXT"),
+                     ("expires_at", "TEXT")
                  })
         {
             await using var cmd = connection.CreateCommand();
@@ -1985,7 +2154,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         // HydrateAgentIdAsync below from Conversation.AgentId. The column itself is
         // dropped from the schema by DropLegacyAgentIdColumnAsync at startup.
         sessionCommand.CommandText = """
-            SELECT id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, conversation_id
+            SELECT id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, expires_at, conversation_id
             FROM sessions
             WHERE id = $sessionId
             """;
@@ -2074,8 +2243,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         // and is hydrated on load via IAgentIdentityResolver. Writing it here is a no-op
         // post-migration because the column has been ALTER TABLE DROP COLUMN'd.
         command.CommandText = """
-            INSERT INTO sessions (id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, conversation_id)
-            VALUES ($id, $channelType, $callerId, $sessionType, $participantsJson, $status, $metadata, $createdAt, $updatedAt, $conversationId)
+            INSERT INTO sessions (id, channel_type, caller_id, session_type, participants_json, status, metadata, created_at, updated_at, expires_at, conversation_id)
+            VALUES ($id, $channelType, $callerId, $sessionType, $participantsJson, $status, $metadata, $createdAt, $updatedAt, $expiresAt, $conversationId)
             ON CONFLICT(id) DO UPDATE SET
                 channel_type = excluded.channel_type,
                 caller_id = excluded.caller_id,
@@ -2085,6 +2254,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 metadata = excluded.metadata,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
+                expires_at = excluded.expires_at,
                 conversation_id = excluded.conversation_id
             """;
         command.Parameters.AddWithValue("$id", session.SessionId.Value);
@@ -2098,6 +2268,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         command.Parameters.AddWithValue("$metadata", JsonSerializer.Serialize(session.Metadata, JsonOptions));
         command.Parameters.AddWithValue("$createdAt", session.CreatedAt.ToString("O"));
         command.Parameters.AddWithValue("$updatedAt", session.UpdatedAt.ToString("O"));
+        command.Parameters.AddWithValue("$expiresAt", (object?)session.ExpiresAt?.ToString("O") ?? DBNull.Value);
         // Phase 9 / P9-B-2 (#627): the save-time backfill (EnsureConversationIdStampedAsync,
         // line 136) is responsible for guaranteeing a non-default ConversationId by the
         // time we reach this writer. Fail loud here instead of silently writing a NULL
