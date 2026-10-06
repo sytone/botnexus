@@ -2241,6 +2241,11 @@ html, body, #app {
     cursor: not-allowed;
 }
 
+.composer-action-btn > .bn-icon {
+    display: block;
+    vertical-align: 0;
+}
+
 .composer-toolbar-divider {
     width: 1px;
     height: 1.5rem;
@@ -2376,15 +2381,18 @@ html, body, #app {
 }
 
 .send-btn {
-    padding: 0.6rem 1.25rem;
     border: none;
     border-radius: var(--radius);
     background: var(--accent);
     color: var(--color-on-accent);
-    font-weight: 600;
-    font-size: var(--text-body);
     cursor: pointer;
     transition: background 0.15s;
+}
+
+.send-btn:not(.composer-action-btn) {
+    padding: 0.6rem 1.25rem;
+    font-weight: 600;
+    font-size: var(--text-body);
     align-self: flex-end;
 }
 
