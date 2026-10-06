@@ -470,6 +470,15 @@ public sealed class SqliteConversationStore : IConversationStore
         string? correlationId,
         string actor,
         CancellationToken ct = default)
+        => _ = await TryArchiveAsync(conversationId, source, correlationId, actor, ct).ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<bool> TryArchiveAsync(
+        ConversationId conversationId,
+        string source,
+        string? correlationId,
+        string actor,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
@@ -502,12 +511,17 @@ public sealed class SqliteConversationStore : IConversationStore
                         active_session_id = NULL,
                         updated_at = $updatedAt,
                         version = version + 1
-                    WHERE id = $id
+                    WHERE id = $id AND status = $activeStatus
                     """;
                 archive.Parameters.AddWithValue("$status", ConversationStatus.Archived.ToString());
+                archive.Parameters.AddWithValue("$activeStatus", ConversationStatus.Active.ToString());
                 archive.Parameters.AddWithValue("$updatedAt", updatedAt.ToString("O"));
                 archive.Parameters.AddWithValue("$id", conversationId.Value);
-                await archive.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                if (await archive.ExecuteNonQueryAsync(ct).ConfigureAwait(false) == 0)
+                {
+                    await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                    return false;
+                }
             }
 
             await using (var audit = connection.CreateCommand())
@@ -538,6 +552,8 @@ public sealed class SqliteConversationStore : IConversationStore
                 archived.Version = cached.Version + 1;
                 _cache.Set(conversationId.Value, archived);
             }
+
+            return true;
         }
         finally
         {
@@ -1089,6 +1105,43 @@ public sealed class SqliteConversationStore : IConversationStore
 
         metric?.Complete(summaries.Count);
         return summaries;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ConversationRetentionCandidate>> GetRetentionCandidatesAsync(
+        ConversationSource? source = null,
+        CancellationToken ct = default)
+    {
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, agent_id, updated_at, is_pinned, source, source_id
+            FROM conversations
+            WHERE status = $status AND ($source IS NULL OR source = $source)
+            ORDER BY updated_at ASC
+            """;
+        command.Parameters.AddWithValue("$status", ConversationStatus.Active.ToString());
+        command.Parameters.AddWithValue("$source", source is null ? DBNull.Value : source.Value.ToString());
+
+        var candidates = new List<ConversationRetentionCandidate>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var sourceText = reader.GetString(4);
+            candidates.Add(new ConversationRetentionCandidate(
+                ConversationId.From(reader.GetString(0)),
+                AgentId.From(reader.GetString(1)),
+                DateTimeOffset.Parse(reader.GetString(2), System.Globalization.CultureInfo.InvariantCulture),
+                reader.GetInt64(3) != 0,
+                Enum.TryParse<ConversationSource>(sourceText, ignoreCase: true, out var parsedSource)
+                    ? parsedSource
+                    : ConversationSource.Channel,
+                reader.IsDBNull(5) ? null : reader.GetString(5)));
+        }
+
+        return candidates;
     }
 
     /// <inheritdoc />
