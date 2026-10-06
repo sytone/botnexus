@@ -13,6 +13,7 @@ public sealed record RunCompletionResult(
     string? WakeCondition = null,
     int ContinuationAttempts = 0)
 {
+    /// <summary>Reports successful completion with no open work items or continuation attempts.</summary>
     public static RunCompletionResult Completed { get; } =
         new(RunCompletionStatus.Completed, []);
 }

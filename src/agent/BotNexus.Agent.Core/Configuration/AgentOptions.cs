@@ -14,6 +14,7 @@ namespace BotNexus.Agent.Core.Configuration;
 /// </summary>
 /// <param name="InitialState">The optional initial mutable state seed (system prompt, model, tools, messages).</param>
 /// <param name="Model">The model definition used for provider calls (can be overridden in InitialState).</param>
+/// <param name="LlmClient">The provider client used to stream model responses during runs.</param>
 /// <param name="ProviderMessageTransformer">Optional converter for agent messages to provider chat messages before each LLM call.</param>
 /// <param name="AgentContextTransformer">Optional context transformer before provider invocation (defaults to identity passthrough).</param>
 /// <param name="ProviderExecutionOptionsProvider">Resolves provider execution policy, including credentials, on demand.</param>
@@ -23,9 +24,9 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="ToolAuditGate">Optional durable audit gate with blocking authority, invoked before tool-execution policy.</param>
 /// <param name="ToolExecutionPolicy">Optional tool-execution policy for validation and blocking.</param>
 /// <param name="ToolExecutionPolicyTimeout">
-/// Wall-clock budget for the pre-tool-call policy hook (#2518). Defaults to 15 seconds when null.
-/// A hook that exceeds the budget fails CLOSED: the tool call is blocked. Set to
-/// <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> or a non-positive value to disable.
+/// Cooperative tool-execution policy budget; null selects 15 seconds. Timeout fails closed,
+/// subject to host-suspend adjustment, but cannot forcibly interrupt an uncooperative callback.
+/// Set to <see cref="Timeout.InfiniteTimeSpan"/> or a non-positive value to disable.
 /// </param>
 /// <param name="ToolResultTransformer">Optional tool-result transformer applied after execution.</param>
 /// <param name="GenerationSettings">The generation settings for model calls (temperature, maxTokens, sessionId, etc.).</param>
@@ -40,16 +41,17 @@ namespace BotNexus.Agent.Core.Configuration;
 /// a null value is normalised to that same ceiling, so the retry delay is bounded on every path.
 /// </param>
 /// <param name="ToolTimeout">
-/// Per-tool execution timeout. Defaults to 120 seconds. Set to null to disable (not recommended).
+/// Loop-level tool-execution timeout; null selects 120 seconds when the runtime config is built.
+/// Tool-declared defaults and supported caller-requested timeouts can extend the effective budget.
 /// </param>
 /// <param name="ClaimAudit">
 /// Optional post-turn claim-auditor configuration (#1600). When null the auditor does not run.
 /// </param>
 /// <param name="ContextCompactionService">
-/// Optional auto-compaction hook (#1710/#4379). Flows to the loop config and is awaited before
-/// each provider turn so a long dispatch re-checks the compaction threshold between turns. A typed
-/// <see cref="Loop.ProactiveCompactionException"/> fails closed when compaction was required.
-/// Null means no mid-loop re-check.
+/// Optional auto-compaction service awaited before each provider turn to re-check the threshold.
+/// A returned context refreshes the agent state and loop snapshot; null retains the current context.
+/// <see cref="Loop.ProactiveCompactionException"/> blocks provider invocation when required compaction fails;
+/// cancellation propagates and other exceptions are best-effort. Null means no mid-loop re-check.
 /// </param>
 /// <param name="SuspensionRegistry">
 /// Optional provider-exhaustion suspension registry (#3015). Flows to the loop config; when set, a
@@ -65,12 +67,24 @@ namespace BotNexus.Agent.Core.Configuration;
 /// disables the backstop.
 /// </param>
 /// <param name="ToolResultTextTransformer">
-/// Optional host-owned sanitizer for finalized generic tool text before budgeting and retention.
+/// Optional host-owned sanitizer for generic tool text after result transformation and before budgeting and retention.
+/// </param>
+/// <param name="ToolExecutionDecisionObserver">
+/// Optional observer reporting whether a validated, audited tool call will execute after policy evaluation.
+/// Observer exceptions are not swallowed by the executor.
 /// </param>
 /// <param name="RunCompletionPolicy">Optional authoritative host completion evaluator.</param>
 /// <param name="MaxCompletionContinuations">Bound on automatic completion-gate continuation turns.</param>
 /// <param name="CredentialInvalidationService">
 /// Optional host-owned credential invalidation invoked before one bounded authentication retry.
+/// </param>
+/// <param name="RecoveryCoordinator">
+/// Optional shared provider-recovery admission coordinator scoped by provider and auth profile.
+/// Null disables coordinated admission, not the loop's retry handling.
+/// </param>
+/// <param name="RecoveryAdmissionTimeout">
+/// Maximum wait for coordinated provider admission; null uses the effective retry-delay ceiling.
+/// Used only when RecoveryCoordinator is set. Admission failures and cancellation propagate to the run.
 /// </param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.

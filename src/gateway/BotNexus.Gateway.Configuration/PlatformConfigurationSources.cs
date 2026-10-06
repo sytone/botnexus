@@ -13,7 +13,7 @@ namespace BotNexus.Gateway.Configuration;
 /// <para>
 /// <b>Why this exists.</b> Before it, the gateway built the provider pipeline in <c>Program.cs</c>
 /// while seventeen other call sites - fourteen of them CLI commands - read and bound
-/// <c>config.json</c> by hand through <c>PlatformConfigLoader</c>. Those hand-loads could not see
+/// the JSON projection by hand through <c>PlatformConfigLoader</c>. Those hand-loads could not see
 /// the SQLite store, got no hot reload, and did not benefit from the last-known-good protection in
 /// <see cref="ResilientJsonConfigurationSource"/> (#2358), because all three of those live in the
 /// provider pipeline rather than in the file read.
@@ -55,7 +55,7 @@ public static class PlatformConfigurationSources
     /// order.
     /// </summary>
     /// <param name="builder">The configuration builder.</param>
-    /// <param name="configPath">Absolute path to <c>config.json</c>.</param>
+    /// <param name="configPath">Absolute path to the generated configuration projection.</param>
     /// <param name="onLoadFailure">
     /// Invoked with a human-readable reason when a source rejects a load and retains its previously
     /// loaded values. Null discards the diagnostic, which is appropriate for short-lived processes

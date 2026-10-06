@@ -15,6 +15,7 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
         var calls = 0;
         var service = CreateSqliteService(
             (_, _) => { calls++; return new(0, 0, 0, false, true); },
+            (_, _, _) => new(0, 0, 0, 0, 0, false),
             (_, _) => { delayReached.TrySetResult(); return releaseDelay.Task; });
 
         await service.StartAsync(CancellationToken.None);
@@ -39,6 +40,7 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
                 if (calls == 3) completed.TrySetResult();
                 return new(1, 1, 1, calls < 3, true);
             },
+            (_, _, _) => new(0, 0, 0, 0, 0, false),
             (delay, _) => { delays.Add(delay); return Task.CompletedTask; });
 
         await service.StartAsync(CancellationToken.None);
@@ -53,12 +55,41 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_BackfillComplete_RunsCleanupUntilEligibleWorkIsExhausted()
+    {
+        var cleanupCalls = 0;
+        var delays = new List<TimeSpan>();
+        var completed = NewSignal();
+        var service = CreateSqliteService(
+            (_, _) => new(0, 0, 0, false, true),
+            (_, batchSize, afterInvocationId) =>
+            {
+                batchSize.ShouldBe(LegacyToolInvocationBackfillHostedService.BatchSize);
+                afterInvocationId.ShouldBe(cleanupCalls == 0 ? 0 : 100);
+                cleanupCalls++;
+                if (cleanupCalls == 2) completed.TrySetResult();
+                return new(1, 2, 10, -1, -1, cleanupCalls < 2, cleanupCalls * 100);
+            },
+            (delay, _) => { delays.Add(delay); return Task.CompletedTask; });
+
+        await service.StartAsync(CancellationToken.None);
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await service.StopAsync(CancellationToken.None);
+
+        cleanupCalls.ShouldBe(2);
+        delays.ShouldBe([
+            LegacyToolInvocationBackfillHostedService.InitialDelay,
+            LegacyToolInvocationBackfillHostedService.BatchDelay]);
+    }
+
+    [Fact]
     public async Task StopAsync_DuringInitialDelay_CancelsWithoutRunningBatch()
     {
         var delayReached = NewSignal();
         var calls = 0;
         var service = CreateSqliteService(
             (_, _) => { calls++; return new(0, 0, 0, false, true); },
+            (_, _, _) => new(0, 0, 0, 0, 0, false),
             async (_, cancellationToken) =>
             {
                 delayReached.TrySetResult();
@@ -86,6 +117,7 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
                 completed.TrySetResult();
                 return new(0, 0, 0, false, true);
             },
+            (_, _, _) => new(0, 0, 0, 0, 0, false),
             (delay, _) => { delays.Add(delay); return Task.CompletedTask; });
 
         await service.StartAsync(CancellationToken.None);
@@ -134,6 +166,7 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
                 completed.TrySetResult();
                 return new(7, 5, 3, false, true);
             },
+            (_, _, _) => new(0, 0, 0, 0, 0, false),
             (_, _) => Task.CompletedTask,
             new BotNexusMetrics(meter));
 
@@ -157,6 +190,7 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
         var service = new LegacyToolInvocationBackfillHostedService(
             new InMemorySessionStore(),
             (_, _) => { calls++; return new(0, 0, 0, false, true); },
+            (_, _, _) => new(0, 0, 0, 0, 0, false),
             (_, _) => { delays++; return Task.CompletedTask; },
             new BotNexusMetrics(),
             NullLogger<LegacyToolInvocationBackfillHostedService>.Instance);
@@ -170,6 +204,7 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
 
     private static LegacyToolInvocationBackfillHostedService CreateSqliteService(
         Func<SqliteSessionStore, int, LegacyToolInvocationBackfillReport> runBatch,
+        Func<SqliteSessionStore, int, long, LegacyToolPayloadCleanupReport> runCleanupBatch,
         Func<TimeSpan, CancellationToken, Task> delay,
         IMetrics? metrics = null)
     {
@@ -180,6 +215,7 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
         return new(
             store,
             runBatch,
+            runCleanupBatch,
             delay,
             metrics ?? new BotNexusMetrics(),
             NullLogger<LegacyToolInvocationBackfillHostedService>.Instance);

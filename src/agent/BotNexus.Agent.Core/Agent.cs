@@ -18,13 +18,15 @@ namespace BotNexus.Agent.Core;
 /// </remarks>
 public sealed class Agent
 {
-    private static readonly AgentContextTransformer IdentityTransformContext =
+    private static readonly AgentContextTransformer IdentityAgentContextTransformer =
         (messages, _) => Task.FromResult(messages);
 
+    // Creation-time configuration and message transformation.
     private readonly AgentOptions _options;
-    private readonly ProviderMessageTransformer _convertToLlm;
+    private readonly ProviderMessageTransformer _providerMessageTransformer;
     private readonly AgentState _state;
-    private readonly AgentContextTransformer _transformContext;
+    private readonly AgentContextTransformer _agentContextTransformer;
+    // Pending input and run/state synchronization.
     private readonly PendingMessageQueue _steeringQueue;
     private readonly PendingMessageQueue _followUpQueue;
     private readonly SemaphoreSlim _runLock = new(1, 1);
@@ -32,6 +34,7 @@ public sealed class Agent
     private readonly object _stateLock = new();
     private readonly object _listenersLock = new();
 
+    // Subscriptions and the active run's lifecycle.
     private List<Func<AgentEvent, CancellationToken, Task>> _listeners = [];
     private CancellationTokenSource? _cts;
     private TaskCompletionSource? _activeRun;
@@ -58,8 +61,8 @@ public sealed class Agent
         }
 
         _options = options;
-        _convertToLlm = options.ProviderMessageTransformer ?? DefaultProviderMessageTransformer.TransformAsync;
-        _transformContext = options.AgentContextTransformer ?? IdentityTransformContext;
+        _providerMessageTransformer = options.ProviderMessageTransformer ?? DefaultProviderMessageTransformer.TransformAsync;
+        _agentContextTransformer = options.AgentContextTransformer ?? IdentityAgentContextTransformer;
 
         var initial = options.InitialState;
         _state = new AgentState
@@ -329,7 +332,7 @@ public sealed class Agent
     /// </para>
     /// <para>
     /// <strong>Important:</strong> The last message in context must convert to a user or tool result message
-    /// via ConvertToLlm. If it doesn't, the LLM provider will reject the request.
+    /// via the configured <see cref="ProviderMessageTransformer"/>. If it doesn't, the LLM provider will reject the request.
     /// </para>
     /// <para>
     /// Throws InvalidOperationException if the last message is from the assistant.
@@ -713,27 +716,28 @@ public sealed class Agent
             generationSettings = generationSettings with { SessionId = _options.SessionId };
         }
 
+        // Name arguments for clarity without changing the record's positional compatibility or evaluation order.
         return new AgentLoopConfig(
-            model,
-            _options.LlmClient,
-            _convertToLlm,
-            _transformContext,
-            _options.ProviderExecutionOptionsProvider,
-            BuildQueueDelegate(_steeringQueue, _options.SteeringMessageProvider),
-            BuildQueueDelegate(_followUpQueue, _options.FollowUpMessageProvider),
-            _options.ToolExecutionMode,
-            _options.ToolExecutionPolicy,
-            _options.ToolResultTransformer,
-            generationSettings,
-            _options.MaxRetryDelayMs,
-            skipInitialSteeringPoll,
-            _options.ToolTimeout ?? TimeSpan.FromSeconds(120),
-            _options.ClaimAudit,
-            BuildMaybeCompactDelegate(),
-            _options.ToolExecutionPolicyTimeout,
-            _options.DiagnosticObserver,
-            _options.SuspensionRegistry,
-            _options.AuthProfile,
+            Model: model,
+            LlmClient: _options.LlmClient,
+            ProviderMessageTransformer: _providerMessageTransformer,
+            AgentContextTransformer: _agentContextTransformer,
+            ProviderExecutionOptionsProvider: _options.ProviderExecutionOptionsProvider,
+            SteeringMessageProvider: BuildMessageProvider(_steeringQueue, _options.SteeringMessageProvider),
+            FollowUpMessageProvider: BuildMessageProvider(_followUpQueue, _options.FollowUpMessageProvider),
+            ToolExecutionMode: _options.ToolExecutionMode,
+            ToolExecutionPolicy: _options.ToolExecutionPolicy,
+            ToolResultTransformer: _options.ToolResultTransformer,
+            GenerationSettings: generationSettings,
+            MaxRetryDelayMs: _options.MaxRetryDelayMs,
+            SkipInitialSteeringPoll: skipInitialSteeringPoll,
+            ToolTimeout: _options.ToolTimeout ?? TimeSpan.FromSeconds(120),
+            ClaimAudit: _options.ClaimAudit,
+            ContextCompactionService: BuildContextCompactionService(),
+            ToolExecutionPolicyTimeout: _options.ToolExecutionPolicyTimeout,
+            DiagnosticObserver: _options.DiagnosticObserver,
+            SuspensionRegistry: _options.SuspensionRegistry,
+            AuthProfile: _options.AuthProfile,
             RetryRandomnessProvider: null,
             MaxToolOutputBytes: _options.MaxToolOutputBytes,
             ToolAuditGate: _options.ToolAuditGate,
@@ -746,7 +750,7 @@ public sealed class Agent
             RecoveryAdmissionTimeout: _options.RecoveryAdmissionTimeout);
     }
 
-    private Func<CancellationToken, Task<AgentContext?>>? BuildMaybeCompactDelegate()
+    private Func<CancellationToken, Task<AgentContext?>>? BuildContextCompactionService()
     {
         if (_options.ContextCompactionService is null)
         {
@@ -777,7 +781,7 @@ public sealed class Agent
         return source with { };
     }
 
-    private static AgentMessageProvider BuildQueueDelegate(
+    private static AgentMessageProvider BuildMessageProvider(
         PendingMessageQueue queue,
         AgentMessageProvider? extra)
     {

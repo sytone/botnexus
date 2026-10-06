@@ -15,6 +15,7 @@ namespace BotNexus.Agent.Core.Configuration;
 /// Defines the immutable runtime contract for a pi-mono compatible agent loop.
 /// </summary>
 /// <param name="Model">The model definition used for provider calls.</param>
+/// <param name="LlmClient">The provider client used to stream model responses during runs.</param>
 /// <param name="ProviderMessageTransformer">Converts agent messages to provider chat messages before each LLM call.</param>
 /// <param name="AgentContextTransformer">Optional context transformer before provider invocation (defaults to identity passthrough).</param>
 /// <param name="ProviderExecutionOptionsProvider">Resolves provider execution policy on demand (called before each LLM invocation).</param>
@@ -24,11 +25,9 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="ToolAuditGate">Optional durable audit gate with blocking authority, invoked before tool-execution policy.</param>
 /// <param name="ToolExecutionPolicy">Optional tool-execution policy for validation and blocking.</param>
 /// <param name="ToolExecutionPolicyTimeout">
-/// Wall-clock budget for the <paramref name="ToolExecutionPolicy"/> hook (#2518). The hook is the
-/// pre-execution policy gate, so a hook that never returns would otherwise stall the whole turn.
-/// When the budget elapses the tool call is <em>blocked</em> (fail closed), never allowed through.
-/// Null means the loop default of 15 seconds; set to <see cref="System.Threading.Timeout.InfiniteTimeSpan"/>
-/// or a non-positive value to disable the budget (not recommended).
+/// Cooperative tool-execution policy budget; null selects 15 seconds. Timeout fails closed,
+/// subject to host-suspend adjustment, but cannot forcibly interrupt an uncooperative callback.
+/// Set to <see cref="Timeout.InfiniteTimeSpan"/> or a non-positive value to disable.
 /// </param>
 /// <param name="ToolResultTransformer">Optional tool-result transformer applied after execution.</param>
 /// <param name="GenerationSettings">The generation settings for model calls (temperature, maxTokens, etc.).</param>
@@ -47,23 +46,31 @@ namespace BotNexus.Agent.Core.Configuration;
 /// non-determinism: pinned to <c>0</c> the loop reproduces the historical 500/1000/2000ms sequence.
 /// </param>
 /// <param name="SkipInitialSteeringPoll">True to skip the first steering queue drain for this run.</param>
-/// <param name="ToolTimeout">Per-tool execution timeout. Null = no timeout (not recommended). Defaults to 120 seconds.</param>
+/// <param name="ToolTimeout">
+/// Loop-level tool-execution timeout; null disables this budget, while tool-declared defaults still apply.
+/// Supported caller-requested timeouts can extend a configured budget. AgentOptions supplies 120 seconds when unset.
+/// </param>
 /// <param name="ClaimAudit">
 /// Optional post-turn claim-auditor configuration (#1600). When null the auditor does not run.
 /// When provided and enabled, the agent's final message is audited for artifact-shaped claims that
-/// lack a backing tool call, and a <see cref="BotNexus.Agent.Core.Types.ClaimAuditEvent"/> is emitted on detection.
+/// lack a backing tool call, and a <see cref="ClaimAuditEvent"/> is emitted on detection.
 /// </param>
 /// <param name="ContextCompactionService">
-/// Optional auto-compaction hook (#1710/#4302/#4379). When set it is awaited before every provider
+/// Optional auto-compaction service. When set it is awaited before every provider
 /// turn, after any preceding tool batch and its results have completed, so both inner tool chains and
 /// outer follow-up iterations re-check the compaction threshold before growing further. A returned
-/// context replaces the loop's live snapshot. Hosts throw <see cref="ProactiveCompactionException"/>
+/// context replaces the loop's live snapshot; a null result retains it. Hosts throw <see cref="ProactiveCompactionException"/>
 /// when compaction was required but failed; that typed failure blocks provider invocation. Other
-/// exceptions retain the optional best-effort behavior. Null means no mid-loop re-check.
+/// non-cancellation exceptions retain the optional best-effort behavior; cancellation propagates.
+/// Null means no mid-loop re-check.
 /// </param>
 /// <param name="DiagnosticObserver">
-/// Optional non-fatal diagnostic sink. Used to surface hook-budget breaches (#2518) so a slow or
+/// Optional non-fatal diagnostic sink. Used to surface policy-budget breaches so a slow or
 /// wedged policy provider is diagnosable rather than silently stalling the loop.
+/// </param>
+/// <param name="SuspendDetector">
+/// Optional active-time clock used to distinguish policy-budget breaches from host suspension.
+/// Null uses HostSuspendDetector.Instance.
 /// </param>
 /// <param name="SuspensionRegistry">
 /// Optional provider-exhaustion suspension registry (#3015). When set, a non-transient exhaustion
@@ -87,8 +94,16 @@ namespace BotNexus.Agent.Core.Configuration;
 /// replacement for them.
 /// </param>
 /// <param name="ToolResultTextTransformer">
-/// Optional host-owned sanitizer applied to finalized generic tool text after replacement hooks
+/// Optional host-owned sanitizer applied to finalized generic tool text after result transformation
 /// and before central budgeting and continuation retention (#4096).
+/// </param>
+/// <param name="ToolExecutionDecisionObserver">
+/// Optional observer reporting whether a validated, audited tool call will execute after policy evaluation.
+/// Observer exceptions are not swallowed by the executor.
+/// </param>
+/// <param name="SatelliteToolExecution">
+/// Optional satellite dispatch configuration; null executes tools locally. Classified remote-capable
+/// tools use its executor, and tools classified as unsupported return an error result.
 /// </param>
 /// <param name="RunCompletionPolicy">
 /// Optional authoritative host evaluation invoked before a normal run end. It may accept completion,
@@ -102,6 +117,14 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="CredentialInvalidationService">
 /// Optional host-owned credential invalidation seam. When set, one authentication rejection
 /// invalidates credentials, re-resolves provider execution options, and retries exactly once.
+/// </param>
+/// <param name="RecoveryCoordinator">
+/// Optional shared provider-recovery admission coordinator scoped by provider and auth profile.
+/// Null disables coordinated admission, not the loop's retry handling.
+/// </param>
+/// <param name="RecoveryAdmissionTimeout">
+/// Maximum wait for coordinated provider admission; null uses the effective retry-delay ceiling.
+/// Used only when RecoveryCoordinator is set. Admission failures and cancellation propagate to the run.
 /// </param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
@@ -126,11 +149,11 @@ public record AgentLoopConfig(
     Func<CancellationToken, Task<AgentContext?>>? ContextCompactionService = null,
     TimeSpan? ToolExecutionPolicyTimeout = null,
     Action<string>? DiagnosticObserver = null,
-    BotNexus.Agent.Core.Loop.IProviderSuspensionRegistry? SuspensionRegistry = null,
+    IProviderSuspensionRegistry? SuspensionRegistry = null,
     string? AuthProfile = null,
     Func<double>? RetryRandomnessProvider = null,
     int? MaxToolOutputBytes = null,
-    BotNexus.Agent.Core.Loop.IHostSuspendDetector? SuspendDetector = null,
+    IHostSuspendDetector? SuspendDetector = null,
     ToolAuditGate? ToolAuditGate = null,
     ToolExecutionDecisionObserver? ToolExecutionDecisionObserver = null,
     Func<string, string>? ToolResultTextTransformer = null,
@@ -142,7 +165,7 @@ public record AgentLoopConfig(
     TimeSpan? RecoveryAdmissionTimeout = null)
 {
     /// <summary>
-    /// Default wall-clock budget for the <see cref="ToolExecutionPolicy"/> policy hook (#2518).
+    /// Default cooperative cancellation budget for the tool-execution policy.
     /// </summary>
     public static readonly TimeSpan DefaultToolExecutionPolicyTimeout = TimeSpan.FromSeconds(15);
 

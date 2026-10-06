@@ -82,7 +82,9 @@ public sealed class WebhookConversationRetentionHostedService(
             return 0;
 
         var now = DateTimeOffset.UtcNow;
-        var conversations = await _conversationStore.ListAsync(ct: cancellationToken).ConfigureAwait(false);
+        var conversations = await _conversationStore
+            .GetRetentionCandidatesAsync(ConversationSource.Webhook, cancellationToken)
+            .ConfigureAwait(false);
 
         var archivedCount = 0;
 
@@ -90,18 +92,16 @@ public sealed class WebhookConversationRetentionHostedService(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Only Active conversations are candidates.
-            if (conv.Status != ConversationStatus.Active)
+            // The source-partitioned query is active-only. Legacy rows without a source id remain
+            // intentionally ineligible because their registration cannot be identified safely.
+            if (conv.IsPinned || string.IsNullOrWhiteSpace(conv.SourceId))
+            {
                 continue;
+            }
 
-            // User-pinned conversations are never archived by automation.
-            if (conv.IsPinned)
-                continue;
-
-            // Identify webhook conversations by authoritative provenance, not title. Legacy
-            // conversations without provenance are skipped entirely.
-            if (WebhookConversationProvenance.TryGetWebhookId(conv) is not { } webhookId)
-                continue;
+            var conversationId = conv.ConversationId;
+            var agentId = conv.AgentId;
+            var webhookId = WebhookId.From(conv.SourceId);
 
             var thresholdDays = await ResolveThresholdDaysAsync(conv, webhookId, options, cancellationToken)
                 .ConfigureAwait(false);
@@ -112,22 +112,25 @@ public sealed class WebhookConversationRetentionHostedService(
             if (inactiveFor < TimeSpan.FromDays(thresholdDays))
                 continue;
 
-            await _conversationStore.ArchiveAsync(
-                conv.ConversationId,
-                "webhook-retention",
-                conv.ConversationId.Value,
-                "system",
-                cancellationToken).ConfigureAwait(false);
+            if (!await _conversationStore.TryArchiveAsync(
+                    conversationId,
+                    "webhook-retention",
+                    conv.ConversationId.Value,
+                    "system",
+                    cancellationToken).ConfigureAwait(false))
+            {
+                continue;
+            }
 
             _logger.LogInformation(
                 "Webhook-retention archived conversation {ConversationId} (webhook {WebhookId}, agent {AgentId}) after {InactiveDays:F1} days inactive (threshold {ThresholdDays}d).",
-                conv.ConversationId,
+                conversationId,
                 webhookId,
-                conv.AgentId,
+                agentId,
                 inactiveFor.TotalDays,
                 thresholdDays);
 
-            await NotifyBestEffortAsync(conv, cancellationToken).ConfigureAwait(false);
+            await NotifyBestEffortAsync(agentId, conversationId, cancellationToken).ConfigureAwait(false);
             archivedCount++;
         }
 
@@ -143,7 +146,7 @@ public sealed class WebhookConversationRetentionHostedService(
     /// (canonical conversation of an enabled registration) or the applicable rule is disabled.
     /// </summary>
     private async Task<int> ResolveThresholdDaysAsync(
-        Conversation conv,
+        ConversationRetentionCandidate conv,
         WebhookId webhookId,
         WebhookConversationRetentionOptions options,
         CancellationToken cancellationToken)
@@ -170,7 +173,10 @@ public sealed class WebhookConversationRetentionHostedService(
         return options.OrphanInactivityDays;
     }
 
-    private async Task NotifyBestEffortAsync(Conversation conv, CancellationToken cancellationToken)
+    private async Task NotifyBestEffortAsync(
+        AgentId agentId,
+        ConversationId conversationId,
+        CancellationToken cancellationToken)
     {
         if (_changeNotifiers.Count == 0)
             return;
@@ -181,8 +187,8 @@ public sealed class WebhookConversationRetentionHostedService(
             {
                 await notifier.NotifyConversationChangedAsync(
                     "archived",
-                    conv.AgentId.Value,
-                    conv.ConversationId.Value,
+                    agentId.Value,
+                    conversationId.Value,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -190,7 +196,7 @@ public sealed class WebhookConversationRetentionHostedService(
                 _logger.LogDebug(
                     ex,
                     "SignalR notify failed for webhook-retention archive of conversation {ConversationId}; portal will refresh on next poll.",
-                    conv.ConversationId);
+                    conversationId);
             }
         }
     }

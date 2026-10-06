@@ -191,6 +191,64 @@ public sealed class FileSessionStore : SessionStoreBase
     }
 
     /// <inheritdoc />
+    public override async Task<SessionMutationOutcome> ExpireIfMatchesAsync(
+        SessionCleanupFence fence,
+        DateTimeOffset expiresAt,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var session = _cache.GetValueOrDefault(fence.SessionId)
+                ?? await LoadFromFileAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+            if (session is null)
+                return SessionMutationOutcome.NotFound;
+            if (!MatchesCleanupFence(session, fence))
+                return SessionMutationOutcome.Conflict;
+
+            session.Status = SessionStatus.Expired;
+            session.ExpiresAt ??= expiresAt;
+            session.UpdatedAt = expiresAt;
+            _cache[fence.SessionId] = session;
+            await PersistSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            return SessionMutationOutcome.Applied;
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public override async Task<SessionMutationOutcome> DeleteIfMatchesAsync(
+        SessionCleanupFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var session = _cache.GetValueOrDefault(fence.SessionId)
+                ?? await LoadFromFileAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+            if (session is null)
+                return SessionMutationOutcome.NotFound;
+            if (!MatchesCleanupFence(session, fence))
+                return SessionMutationOutcome.Conflict;
+
+            _cache.Remove(fence.SessionId);
+            var historyPath = GetHistoryPath(fence.SessionId);
+            var metaPath = GetMetaPath(fence.SessionId);
+            if (_fileSystem.File.Exists(historyPath)) _fileSystem.File.Delete(historyPath);
+            if (_fileSystem.File.Exists(metaPath)) _fileSystem.File.Delete(metaPath);
+            return SessionMutationOutcome.Applied;
+        }
+        finally { _lock.Release(); }
+    }
+
+    private static bool MatchesCleanupFence(GatewaySession session, SessionCleanupFence fence) =>
+        session.ConversationId == fence.ConversationId
+        && session.Status == fence.ExpectedStatus
+        && session.UpdatedAt == fence.ExpectedUpdatedAt;
+
+    /// <inheritdoc />
     public override async Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("session.delete", ActivityKind.Internal);

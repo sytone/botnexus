@@ -82,6 +82,7 @@ internal static class SessionRowMapper
             Status = status,
             CreatedAt = createdAt,
             UpdatedAt = updatedAt,
+            ExpiresAt = GetOptionalNullableTimestamp(reader, "expires_at"),
             Metadata = metadata
         };
 
@@ -189,6 +190,13 @@ internal static class SessionRowMapper
     {
         var raw = GetNullableString(reader, column);
         return raw is null ? (ChannelKey?)null : ChannelKey.From(raw);
+    }
+
+    private static DateTimeOffset? GetOptionalNullableTimestamp(SqliteDataReader reader, string column)
+    {
+        try { return GetNullableTimestamp(reader, column); }
+        catch (ArgumentOutOfRangeException) { return null; }
+        catch (IndexOutOfRangeException) { return null; }
     }
 
     private static DateTimeOffset? GetNullableTimestamp(SqliteDataReader reader, string column)

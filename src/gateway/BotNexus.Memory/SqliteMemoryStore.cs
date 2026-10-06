@@ -20,6 +20,13 @@ public sealed class SqliteMemoryStore(
     ILogger<SqliteMemoryStore>? logger = null,
     Func<MemoryTemporalDecayPolicy>? temporalDecayPolicy = null) : IMemoryStore
 {
+    internal const int CurrentSchemaVersion = 2;
+    private static readonly SqliteSchemaMigration[] Migrations =
+    [
+        // The legacy version-two FTS transition is completed by UpgradeSearchContractAsync
+        // before the shared runner stamps the same physical database.
+        new(2, "adopt the completed memory FTS transition", static _ => { })
+    ];
     private const int MaxReembeddingErrorLength = 2048;
     private const int ReembeddingReconciliationBatchSize = 128;
     private const int MaxReembeddingClaimBatchSize = 128;
@@ -71,6 +78,9 @@ public sealed class SqliteMemoryStore(
             {
                 await using var connection = CreateConnection();
                 await connection.OpenAsync(token).ConfigureAwait(false);
+                // Refuse a newer stamped schema before the legacy initializer can write to it.
+                // SqliteConnectionFactory has already checked this store's world identity.
+                SqliteSchemaMigrator.ValidateReadOnly(connection, CurrentSchemaVersion);
 
                 // Journal mode must be selected outside a transaction. The schema transaction
                 // then takes SQLite's cross-connection write lock before inspecting or changing
@@ -160,6 +170,11 @@ public sealed class SqliteMemoryStore(
                 await EnsureReembeddingItemColumnsAsync(connection, transaction, token).ConfigureAwait(false);
                 await UpgradeSearchContractAsync(connection, transaction, token).ConfigureAwait(false);
                 await transaction.CommitAsync(token).ConfigureAwait(false);
+
+                // The shared runner owns store_meta and PRAGMA user_version. Its transaction
+                // cannot nest in the legacy schema transaction above; that transition must
+                // finish before a pre-existing unversioned database adopts version two.
+                SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
 
                 // #3244: report the scan ceiling being exceeded once per store open.
                 await WarnIfEmbeddedRowsExceedScanCeilingAsync(connection, token).ConfigureAwait(false);

@@ -155,7 +155,7 @@ public sealed class CronToolFailureAlertSurfaceTests
             ["failureAlertConversationId"] = "c_missing"
         }));
 
-        error.Message.ShouldContain(CronAlertTarget.UnresolvableMessage("c_missing"));
+        error.Message.ShouldContain(CronAlertTarget.UnresolvableMessage(ConversationId.From("c_missing")));
         (await context.Store.ListAsync()).ShouldBeEmpty();
     }
 
@@ -177,7 +177,7 @@ public sealed class CronToolFailureAlertSurfaceTests
             ["failureAlertConversationId"] = "c_unverifiable"
         }));
 
-        error.Message.ShouldContain(CronAlertTarget.UnverifiableMessage("c_unverifiable"));
+        error.Message.ShouldContain(CronAlertTarget.UnverifiableMessage(ConversationId.From("c_unverifiable")));
         (await context.Store.GetAsync(JobId.From(jobId)))!.FailureAlertConversationId.ShouldBeNull();
     }
 

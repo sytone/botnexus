@@ -61,7 +61,7 @@ config-json|src/gateway/BotNexus.Gateway.Configuration/PlatformConfig.cs|6
 config-json|src/gateway/BotNexus.Gateway.Configuration/PlatformConfigConcurrencyException.cs|1
 config-json|src/gateway/BotNexus.Gateway.Configuration/PlatformConfigLoader.cs|3
 config-json|src/gateway/BotNexus.Gateway.Configuration/PlatformConfigLockTimeoutException.cs|1
-config-json|src/gateway/BotNexus.Gateway.Configuration/PlatformConfigurationSources.cs|3
+config-json|src/gateway/BotNexus.Gateway.Configuration/PlatformConfigurationSources.cs|1
 config-json|src/gateway/BotNexus.Gateway.Configuration/PlatformConfigValidator.cs|2
 config-json|src/gateway/BotNexus.Gateway.Configuration/PlatformConfigWriter.cs|4
 config-json|src/gateway/BotNexus.Gateway.Configuration/PlatformWorldContext.cs|1

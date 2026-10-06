@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Gateway.Sessions;
 
@@ -25,7 +26,7 @@ public static class LegacyToolInvocationBackfill
         if (batchSize < 1)
             throw new ArgumentOutOfRangeException(nameof(batchSize), "Batch size must be positive.");
 
-        using var connection = new SqliteConnection(connectionString);
+        using var connection = SqliteConnectionFactory.Create(connectionString);
         connection.Open();
         using var transaction = commit ? connection.BeginTransaction() : null;
         var rows = ReadBatch(connection, transaction, batchSize);

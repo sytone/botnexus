@@ -5,11 +5,15 @@ namespace BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
 /// </summary>
 /// <param name="context">The tool-execution policy context.</param>
 /// <param name="cancellationToken">The cancellation token.</param>
-/// <returns>An optional tool-execution decision.</returns>
+/// <returns>
+/// A decision that permits execution only when <see cref="ToolExecutionDecision.IsUnambiguousAllow"/>
+/// is true, or null for the historical no-opinion allow.
+/// </returns>
 /// <remarks>
-/// Use to validate, block, or log tool calls before execution.
-/// Return ToolExecutionDecision with Block=true to prevent execution.
-/// Must not throw — exceptions are logged and ignored.
+/// Ordinary exceptions block the tool call; ambient cancellation propagates.
+/// The configured cooperative timeout fails closed when cancellation is observed or a decision
+/// arrives after the budget, subject to the executor's host-suspend adjustment. Cancellation
+/// requests do not forcibly interrupt a callback that ignores its token.
 /// </remarks>
 public delegate Task<ToolExecutionDecision?> ToolExecutionPolicy(
     ToolExecutionContext context,

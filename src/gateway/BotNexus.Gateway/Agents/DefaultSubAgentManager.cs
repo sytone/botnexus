@@ -1135,10 +1135,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (info.ParentSessionId != requestingSessionId)
             return false;
 
-        // Publish the winning terminal disposition before cancellation can run callbacks or wake
-        // the timeout-completion path. A stale read followed by an unconditional update lets kill
-        // overwrite a completed run, or lets cancellation audit a timeout for a successful kill.
-        if (!record.TryMarkKilled(out var updatedInfo))
+        // Claim the terminal winner before cancellation can run callbacks or wake the timeout path.
+        // A stale read followed by an unconditional update lets kill overwrite a completed run, or
+        // lets cancellation audit a timeout for a successful kill.
+        if (!record.TryClaimSnapshotTerminal(SubAgentStatus.Killed)
+            || !record.TryMarkKilled(out var updatedInfo))
             return false;
 
         try
@@ -1922,6 +1923,13 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (!_records.TryGetValue(subAgentId, out var record))
             return;
 
+        // Claim the timeout/budget disposition before capture starts. A concurrent explicit kill
+        // must not win after recovery capture has already begun, and observers must not see the
+        // terminal status until its snapshot evidence is ready to publish.
+        if ((status is SubAgentStatus.TimedOut or SubAgentStatus.BudgetExhausted)
+            && !record.TryClaimSnapshotTerminal(status))
+            return;
+
         SubAgentWorktreeSnapshot? snapshot = null;
         if (status is SubAgentStatus.TimedOut or SubAgentStatus.BudgetExhausted
             && _worktreeSnapshotService is not null)
@@ -1943,8 +1951,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             }
         }
 
-        // Publish the terminal disposition and its recovery evidence in one compare-and-swap. A
-        // concurrent kill therefore sees Running until capture finishes and can win cleanly; no
+        // Publish the terminal disposition and its recovery evidence in one compare-and-swap.
+        // The earlier claim prevents a concurrent kill from winning after capture begins; no
         // observer can see timeout/budget status without the corresponding snapshot result.
         if (!record.TryPublishTerminal(status, diagnostic, snapshot, partialResult, out _))
         {
@@ -2302,6 +2310,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         private static long _spawnSequenceCounter;
 
         private SubAgentInfo _info = info;
+        private int _snapshotTerminalClaim;
         private int _completionProcessed;
         private int _cleanupStarted;
         private long _retiredAtTicks;
@@ -2357,9 +2366,21 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
 
         /// <summary>
-        /// Claims a still-live run for kill before its cancellation callbacks can claim completion.
-        /// Competing terminal transitions and duplicate kills cannot overwrite the winning state.
+        /// Claims whether kill or timeout/budget owns the terminal transition before cancellation
+        /// callbacks or recovery capture can run.
         /// </summary>
+        public bool TryClaimSnapshotTerminal(SubAgentStatus status)
+        {
+            var claim = status switch
+            {
+                SubAgentStatus.Killed => 1,
+                SubAgentStatus.TimedOut => 2,
+                SubAgentStatus.BudgetExhausted => 3,
+                _ => throw new ArgumentOutOfRangeException(nameof(status), status, null)
+            };
+            return Interlocked.CompareExchange(ref _snapshotTerminalClaim, claim, 0) == 0;
+        }
+
         public bool TryMarkKilled(out SubAgentInfo updatedInfo)
         {
             while (true)

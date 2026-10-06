@@ -74,7 +74,8 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
         foreach (var (providerName, providerConfig) in config.Providers)
         {
             if (!providerConfig.Enabled ||
-                string.Equals(providerConfig.Type, "github-copilot", StringComparison.OrdinalIgnoreCase))
+                string.Equals(providerConfig.Type, "github-copilot", StringComparison.OrdinalIgnoreCase) ||
+                IsLegacyCanonicalCopilot(providerName, providerConfig))
                 continue;
 
             var apiName = string.IsNullOrWhiteSpace(providerConfig.ResolveChatApi())
@@ -121,4 +122,9 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
 
         return registrations;
     }
+
+    private static bool IsLegacyCanonicalCopilot(string providerName, ProviderConfig providerConfig) =>
+        string.Equals(providerName, "github-copilot", StringComparison.OrdinalIgnoreCase) &&
+        string.IsNullOrWhiteSpace(providerConfig.Type) &&
+        string.IsNullOrWhiteSpace(providerConfig.BaseUrl);
 }

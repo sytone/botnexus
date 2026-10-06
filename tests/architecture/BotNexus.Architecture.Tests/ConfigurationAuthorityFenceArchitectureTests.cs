@@ -11,7 +11,7 @@ public sealed class ConfigurationAuthorityFenceArchitectureTests : ArchitectureT
 {
     private const string BaselineFileName = "ConfigurationAuthorityBaseline.baseline";
     private const int ExpectedBaselineEntryCount = 89;
-    private const int ExpectedBaselineOccurrenceCount = 220;
+    private const int ExpectedBaselineOccurrenceCount = 218;
 
     private static readonly Rule[] Rules =
     [

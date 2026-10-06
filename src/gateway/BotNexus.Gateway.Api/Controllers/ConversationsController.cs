@@ -5,8 +5,11 @@ using BotNexus.Domain.World;
 using BotNexus.Gateway.Conversations;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using BotNexus.Gateway.Abstractions;
+using BotNexus.Gateway.Abstractions.Configuration;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Events;
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -42,6 +45,8 @@ public sealed class ConversationsController : ControllerBase
     private readonly IConversationHistoryAssembler _historyAssembler;
     private readonly ModelRegistry? _modelRegistry;
     private readonly IAgentRegistry? _agentRegistry;
+    private readonly IConversationReadStateStore? _readStateStore;
+    private readonly IWorldContext? _worldContext;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
@@ -60,6 +65,8 @@ public sealed class ConversationsController : ControllerBase
     /// test harnesses constructing the controller directly), a default instance over the same stores is used.</param>
     /// <param name="modelRegistry">Optional model registry used to validate per-conversation model / thinking / context overrides against real model capabilities. When omitted, override values are stored without capability validation.</param>
     /// <param name="agentRegistry">Optional agent registry used to resolve the owning agent's provider and default model when validating overrides.</param>
+    /// <param name="readStateStore">Optional durable per-reader conversation cursor store.</param>
+    /// <param name="worldContext">Optional current-world authority used to scope cursor keys.</param>
     /// <param name="conversationEventPublisher">Publishes channel-neutral conversation facts after their backing store mutation commits. Optional only for legacy direct-construction test harnesses; production DI supplies it.</param>
     public ConversationsController(
         IConversationStore conversations,
@@ -72,6 +79,8 @@ public sealed class ConversationsController : ControllerBase
         IConversationHistoryAssembler? historyAssembler = null,
         ModelRegistry? modelRegistry = null,
         IAgentRegistry? agentRegistry = null,
+        IConversationReadStateStore? readStateStore = null,
+        IWorldContext? worldContext = null,
         IConversationEventPublisher? conversationEventPublisher = null)
     {
         _conversations = conversations;
@@ -88,7 +97,97 @@ public sealed class ConversationsController : ControllerBase
         _historyAssembler = historyAssembler ?? new ConversationHistoryAssembler(conversations, sessions);
         _modelRegistry = modelRegistry;
         _agentRegistry = agentRegistry;
+        _readStateStore = readStateStore;
+        _worldContext = worldContext;
     }
+
+    /// <summary>Returns this caller's durable read cursor for one authorized conversation.</summary>
+    [HttpGet("{conversationId}/read-state")]
+    [ProducesResponseType(typeof(ConversationReadStateResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> GetReadState(
+        string conversationId,
+        CancellationToken cancellationToken)
+    {
+        var access = await ResolveReadStateAccessAsync(conversationId, cancellationToken).ConfigureAwait(false);
+        if (access.Failure is not null)
+            return access.Failure;
+
+        var state = await _readStateStore!.GetAsync(
+            _worldContext!.CurrentWorldId,
+            access.ReaderId!.Value,
+            access.ConversationId!.Value,
+            cancellationToken).ConfigureAwait(false);
+        return state is null ? NoContent() : Ok(ToReadStateResponse(state));
+    }
+
+    /// <summary>Monotonically advances this caller's durable read cursor.</summary>
+    [HttpPut("{conversationId}/read-state")]
+    [ProducesResponseType(typeof(ConversationReadStateResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult> AdvanceReadState(
+        string conversationId,
+        [FromBody] AdvanceConversationReadStateRequest request,
+        CancellationToken cancellationToken)
+    {
+        var access = await ResolveReadStateAccessAsync(conversationId, cancellationToken).ConfigureAwait(false);
+        if (access.Failure is not null)
+            return access.Failure;
+
+        var state = await _readStateStore!.AdvanceAsync(
+            _worldContext!.CurrentWorldId,
+            access.ReaderId!.Value,
+            access.ConversationId!.Value,
+            request.Position,
+            cancellationToken).ConfigureAwait(false);
+        return Ok(ToReadStateResponse(state));
+    }
+
+    private async Task<ReadStateAccess> ResolveReadStateAccessAsync(
+        string conversationId,
+        CancellationToken cancellationToken)
+    {
+        if (_readStateStore is null || _worldContext is null)
+            throw new InvalidOperationException("Conversation read state is not configured.");
+
+        var readerId = ConversationReaderIdentity.Resolve(User);
+        if (readerId is null)
+            return new ReadStateAccess(null, null, Unauthorized());
+
+        if (string.IsNullOrWhiteSpace(conversationId))
+            return new ReadStateAccess(null, null, BadRequest());
+
+        var typedConversationId = ConversationId.From(conversationId);
+        var conversation = await _conversations.GetAsync(typedConversationId, cancellationToken).ConfigureAwait(false);
+        if (conversation is null || !IsCallerAuthorizedFor(conversation.AgentId))
+            return new ReadStateAccess(null, null, NotFound());
+
+        return new ReadStateAccess(readerId, typedConversationId, null);
+    }
+
+    private bool IsCallerAuthorizedFor(AgentId agentId)
+    {
+        if (!HttpContext.Items.TryGetValue(GatewayAuthMiddleware.CallerIdentityItemKey, out var value) ||
+            value is not GatewayCallerIdentity identity)
+            return true;
+
+        return identity.IsAdmin ||
+               identity.AllowedAgents.Count == 0 ||
+               identity.AllowedAgents.Any(allowed =>
+                   string.Equals(allowed, agentId.Value, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static ConversationReadStateResponse ToReadStateResponse(ConversationReadState state) =>
+        new(state.ConversationId, state.Position.Value, state.Version);
+
+    private sealed record ReadStateAccess(
+        ConversationReaderId? ReaderId,
+        ConversationId? ConversationId,
+        ActionResult? Failure);
 
     /// <summary>
     /// Lists conversations. With no <paramref name="agentId"/>, returns global active summaries
@@ -463,7 +562,11 @@ public sealed class ConversationsController : ControllerBase
             return NotFound();
 
         await AuditAsync(conversationId, "binding_added", "api", "rest-api", null, DescribeBinding(binding), cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
+        // The transactional append returns only success. Re-read the committed aggregate rather
+        // than publishing the detached pre-mutation conversation or its mutable binding list.
+        var updated = await _conversations.GetAsync(conversation.ConversationId, cancellationToken);
+        if (updated is not null && updated.ChannelBindings.Any(b => b.BindingId == binding.BindingId))
+            await PublishConversationBindingAddedBestEffortAsync(updated, binding.BindingId, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created, ToBindingResponse(binding));
     }
@@ -958,6 +1061,34 @@ public sealed class ConversationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to publish archive event for conversation {ConversationId}; clients must reconcile from durable conversation state.", archived.ConversationId);
+        }
+    }
+
+    private async Task PublishConversationBindingAddedBestEffortAsync(Conversation updated, BindingId bindingId, CancellationToken cancellationToken)
+    {
+        if (_conversationEventPublisher is null)
+            return;
+
+        try
+        {
+            // Snapshot both the affected binding and the complete committed set before handing
+            // the fact to sinks; publication is post-commit and intentionally non-transactional.
+            var persistedBinding = updated.ChannelBindings.First(b => b.BindingId == bindingId);
+            var accepted = await _conversationEventPublisher.PublishAsync(new ConversationBindingAddedEvent
+            {
+                AgentId = updated.AgentId,
+                ConversationId = updated.ConversationId,
+                Binding = ConversationBindingSnapshot.From(persistedBinding),
+                Bindings = ConversationBindingSnapshot.FromMany(updated.ChannelBindings),
+                OccurredAt = updated.UpdatedAt
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (!accepted)
+                _logger.LogWarning("Conversation event publisher rejected binding attachment for conversation {ConversationId}; clients must reconcile from durable conversation state.", updated.ConversationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to publish binding attachment for conversation {ConversationId}; clients must reconcile from durable conversation state.", updated.ConversationId);
         }
     }
 

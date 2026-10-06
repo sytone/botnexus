@@ -83,6 +83,53 @@ public sealed class ConfigDefinedModelRegistryReconcilerTests
     }
 
     [Fact]
+    public async Task StartAndReload_UntypedCanonicalCopilot_DoesNotRejectValidResponsesOverlay()
+    {
+        var initial = ConfigWithProvider(
+            "github-copilot",
+            enabled: true,
+            baseUrl: null,
+            api: "openai-completions",
+            models: ["copilot-model"]);
+        initial.Providers!["foundry"] = new ProviderConfig
+        {
+            Enabled = true,
+            BaseUrl = "https://one.example/v1",
+            Chat = new ProviderChatConfig { Api = "openai-responses", Models = ["model-a"] }
+        };
+        var monitor = new TestOptionsMonitor<PlatformConfig>(initial);
+        var registry = new ModelRegistry();
+        registry.Register("github-copilot", Model("copilot-model", "github-copilot", "github-copilot", string.Empty));
+        using var reconciler = new ConfigDefinedModelRegistryReconciler(
+            monitor,
+            registry,
+            NullLogger<ConfigDefinedModelRegistryReconciler>.Instance);
+
+        await reconciler.StartAsync(CancellationToken.None);
+
+        registry.GetModel("foundry", "model-a").ShouldNotBeNull();
+        registry.GetModel("github-copilot", "copilot-model")!.Api.ShouldBe("github-copilot");
+
+        var updated = ConfigWithProvider(
+            "github-copilot",
+            enabled: true,
+            baseUrl: null,
+            api: "openai-completions",
+            models: ["copilot-model"]);
+        updated.Providers!["foundry"] = new ProviderConfig
+        {
+            Enabled = true,
+            BaseUrl = "https://two.example/v1",
+            Chat = new ProviderChatConfig { Api = "openai-responses", Models = ["model-b"] }
+        };
+        monitor.RaiseChanged(updated);
+
+        registry.GetModel("foundry", "model-a").ShouldBeNull();
+        registry.GetModel("foundry", "model-b")!.BaseUrl.ShouldBe("https://two.example/v1");
+        registry.GetModel("github-copilot", "copilot-model")!.Api.ShouldBe("github-copilot");
+    }
+
+    [Fact]
     public async Task Reload_InvalidOpenAiCompletionsProvider_KeepsLastKnownGoodCatalogue()
     {
         var monitor = new TestOptionsMonitor<PlatformConfig>(ConfigWithProvider(
