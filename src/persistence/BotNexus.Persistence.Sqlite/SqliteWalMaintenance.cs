@@ -204,7 +204,8 @@ public sealed class SqliteWalMaintenance
     /// <param name="connection">An open SQLite connection to the target database.</param>
     /// <param name="mode">Checkpoint aggressiveness - see <see cref="SqliteCheckpointMode"/>.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public static async Task CheckpointAsync(
+    /// <returns>The checkpoint progress reported by SQLite.</returns>
+    public static async Task<SqliteCheckpointResult> CheckpointAsync(
         SqliteConnection connection,
         SqliteCheckpointMode mode = SqliteCheckpointMode.Passive,
         CancellationToken cancellationToken = default)
@@ -218,23 +219,25 @@ public sealed class SqliteWalMaintenance
             _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported checkpoint mode."),
         };
 
-        await TryExecutePragmaCoreAsync<object?>(
+        var (executed, result) = await TryExecutePragmaCoreAsync(
             connection,
             $"PRAGMA wal_checkpoint({modeKeyword});",
             static async (cmd, ct) =>
             {
-                // wal_checkpoint returns a result row (busy, log, checkpointed); execute as a reader
-                // so the row is consumed, but we do not need the values for a fire-and-forget
-                // checkpoint.
                 await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
-                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                if (!await reader.ReadAsync(ct).ConfigureAwait(false))
                 {
-                    // drain
+                    throw new InvalidOperationException("SQLite wal_checkpoint did not return its outcome row.");
                 }
 
-                return (object?)null;
+                return new SqliteCheckpointResult(
+                    reader.GetInt32(0),
+                    reader.GetInt32(1),
+                    reader.GetInt32(2));
             },
             cancellationToken).ConfigureAwait(false);
+
+        return executed && result is not null ? result : SqliteCheckpointResult.NotExecuted;
     }
 
     private static async Task<(bool Verified, string Mode)> QueryEffectiveJournalModeAsync(
