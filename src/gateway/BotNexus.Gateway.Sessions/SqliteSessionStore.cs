@@ -133,6 +133,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     // may gate the write to force a concurrent mutation; production leaves it null.
     internal Func<SessionHistoryPersistenceSnapshot, CancellationToken, Task>? BeforeHistoryWriteAsync { get; set; }
     internal Func<IReadOnlyList<SessionEntry>, CancellationToken, Task>? AfterAppendHistoryCommittedAsync { get; set; }
+    internal Func<CancellationToken, Task>? BeforeLegacyAgentIdMigrationTransactionAsync { get; set; }
+    internal Func<CancellationToken, Task>? BeforeLegacyAgentIdColumnDropAsync { get; set; }
     internal int LastHistoryRowsMutated { get; private set; }
     internal bool LastHistoryWriteReconciled { get; private set; }
 
@@ -1386,13 +1388,22 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     /// migration paths to gate legacy <c>agent_id</c> reads/writes/drops so fresh DBs
     /// skip the entire orphan-migration + column-drop dance.
     /// </summary>
-    private static async Task<bool> HasColumnAsync(
+    private static Task<bool> HasColumnAsync(
         SqliteConnection connection,
         string table,
         string column,
         CancellationToken cancellationToken)
+        => HasColumnAsync(connection, table, column, transaction: null, cancellationToken);
+
+    private static async Task<bool> HasColumnAsync(
+        SqliteConnection connection,
+        string table,
+        string column,
+        SqliteTransaction? transaction,
+        CancellationToken cancellationToken)
     {
         await using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
         // PRAGMA does not support parameter binding for the table name in older SQLite
         // versions; interpolation is safe here because `table` is a hardcoded literal
         // controlled by callers (not user input).
@@ -1427,37 +1438,54 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     /// </remarks>
     private async Task DropLegacyAgentIdColumnAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
-        await VerifyAgentIdColumnConsistencyAsync(connection, cancellationToken).ConfigureAwait(false);
+        if (BeforeLegacyAgentIdMigrationTransactionAsync is { } beforeTransaction)
+            await beforeTransaction(cancellationToken).ConfigureAwait(false);
+
+        await using var transaction = connection.BeginTransaction(deferred: false);
+
+        // Another process may have completed the migration after this store's outer probe.
+        // Revalidate only after taking SQLite's database-wide writer lock.
+        if (!await HasColumnAsync(connection, "sessions", "agent_id", transaction, cancellationToken).ConfigureAwait(false))
+        {
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await VerifyAgentIdColumnConsistencyAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
 
         await using (var dropAgentIndex = connection.CreateCommand())
         {
+            dropAgentIndex.Transaction = transaction;
             dropAgentIndex.CommandText = "DROP INDEX IF EXISTS idx_sessions_agent_id;";
             await dropAgentIndex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
         await using (var dropConvIndex = connection.CreateCommand())
         {
+            dropConvIndex.Transaction = transaction;
             dropConvIndex.CommandText = "DROP INDEX IF EXISTS idx_sessions_conversation_agent;";
             await dropConvIndex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        if (BeforeLegacyAgentIdColumnDropAsync is { } beforeColumnDrop)
+            await beforeColumnDrop(cancellationToken).ConfigureAwait(false);
+
         await using (var dropColumn = connection.CreateCommand())
         {
+            dropColumn.Transaction = transaction;
             dropColumn.CommandText = "ALTER TABLE sessions DROP COLUMN agent_id;";
             await dropColumn.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        // Recreate the conversation-routing index in its new (no agent_id) shape.
-        // EnsureCreatedAsync ran CREATE INDEX IF NOT EXISTS earlier; that statement is
-        // a no-op when the index already exists, so we run it explicitly here too in
-        // case the database had only the old shape and nothing else.
         await using (var newIndex = connection.CreateCommand())
         {
+            newIndex.Transaction = transaction;
             newIndex.CommandText =
                 "CREATE INDEX IF NOT EXISTS idx_sessions_conversation_created ON sessions(conversation_id, created_at, id);";
             await newIndex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         _logger.LogInformation(
             "P9-I: dropped legacy 'sessions.agent_id' column and dependent indexes. " +
             "AgentId is now hydrated from Conversation.AgentId via IAgentIdentityResolver.");
@@ -1470,9 +1498,13 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     /// resolvable conversation, which indicates pre-existing orphan data the migration
     /// could not link.
     /// </summary>
-    private async Task VerifyAgentIdColumnConsistencyAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    private async Task VerifyAgentIdColumnConsistencyAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
     {
         await using var scanCmd = connection.CreateCommand();
+        scanCmd.Transaction = transaction;
         scanCmd.CommandText = """
             SELECT id, agent_id, conversation_id
             FROM sessions
