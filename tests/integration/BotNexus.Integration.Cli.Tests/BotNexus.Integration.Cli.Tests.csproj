@@ -18,4 +18,8 @@
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Real gateway fixture: kill/reap its child if a test host is interrupted. -->
+    <Compile Include="$(MSBuildThisFileDirectory)../Shared/SandboxProcessGuard.cs" Link="Shared/SandboxProcessGuard.cs" />
+  </ItemGroup>
 </Project>
