@@ -302,11 +302,20 @@ public interface ISessionStore
         return new UnresolvedCrashSentinelPage(rows, hasMore ? rows[^1].SessionId.Value : null);
     }
 
+    /// <summary>Returns one bounded page of transcript-free rows with byte accounting.</summary>
+    Task<SessionCleanupPlanPage> ListCleanupPlanAsync(
+        int limit,
+        string? cursor = null,
+        CancellationToken cancellationToken = default) =>
+        ListCleanupPlanAsync(limit, includeBytes: true, cursor, cancellationToken);
+
     /// <summary>
-    /// Returns one bounded page of transcript-free rows sufficient for age and disk-budget cleanup planning.
+    /// Returns one bounded page of transcript-free rows sufficient for cleanup planning.
+    /// Payload-byte accounting is omitted unless <paramref name="includeBytes"/> is requested for disk-budget enforcement.
     /// </summary>
     async Task<SessionCleanupPlanPage> ListCleanupPlanAsync(
         int limit,
+        bool includeBytes,
         string? cursor = null,
         CancellationToken cancellationToken = default)
     {
@@ -318,7 +327,7 @@ public interface ISessionStore
             .Take(limit + 1)
             .Select(session => new SessionCleanupPlanRow(
                 session.SessionId, session.AgentId, session.ConversationId, session.Status, session.UpdatedAt,
-                session.MessageCount, SessionDiskAccounting.Measure(session)))
+                session.MessageCount, includeBytes ? SessionDiskAccounting.Measure(session) : 0))
             .ToList();
         var hasMore = rows.Count > limit;
         if (hasMore) rows.RemoveAt(rows.Count - 1);

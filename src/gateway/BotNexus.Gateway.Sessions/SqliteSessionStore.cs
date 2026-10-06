@@ -842,7 +842,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
     /// <inheritdoc />
     public override async Task<SessionCleanupPlanPage> ListCleanupPlanAsync(
-        int limit, string? cursor = null, CancellationToken cancellationToken = default)
+        int limit, bool includeBytes, string? cursor = null, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
@@ -851,21 +851,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             await using var connection = CreateConnection();
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
             await using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT s.id, s.conversation_id, s.status, s.updated_at,
-                       COUNT(h.id) AS message_count,
-                       length(CAST(COALESCE(s.metadata, '') AS BLOB))
-                         + COALESCE(SUM(64
-                           + length(CAST(COALESCE(h.content, '') AS BLOB))
-                           + length(CAST(COALESCE(h.tool_name, '') AS BLOB))
-                           + length(CAST(COALESCE(h.tool_call_id, '') AS BLOB))), 0) AS bytes
-                FROM sessions s
-                LEFT JOIN session_history h ON h.session_id = s.id
-                WHERE ($cursor IS NULL OR s.id > $cursor)
-                GROUP BY s.id
-                ORDER BY s.id
-                LIMIT $limit
-                """;
+            command.CommandText = BuildCleanupPlanSql(includeBytes);
             command.Parameters.AddWithValue("$cursor", (object?)cursor ?? DBNull.Value);
             command.Parameters.AddWithValue("$limit", limit + 1);
             var raw = new List<(SessionId Id, ConversationId ConversationId, SessionStatus Status, DateTimeOffset UpdatedAt, int Count, long Bytes)>();
@@ -891,6 +877,37 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             return new SessionCleanupPlanPage(rows, hasMore && raw.Count > 0 ? raw[^1].Id.Value : null);
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
+
+    internal static string BuildCleanupPlanSql(bool includeBytes) => includeBytes
+        ? """
+            WITH candidates AS (
+                SELECT id, conversation_id, status, updated_at, metadata
+                FROM sessions
+                WHERE ($cursor IS NULL OR id > $cursor)
+                ORDER BY id
+                LIMIT $limit
+            )
+            SELECT c.id, c.conversation_id, c.status, c.updated_at,
+                   COUNT(h.id) AS message_count,
+                   length(CAST(COALESCE(c.metadata, '') AS BLOB))
+                     + COALESCE(SUM(CASE WHEN h.id IS NULL THEN 0 ELSE 64
+                       + length(CAST(COALESCE(h.content, '') AS BLOB))
+                       + length(CAST(COALESCE(h.tool_name, '') AS BLOB))
+                       + length(CAST(COALESCE(h.tool_call_id, '') AS BLOB)) END), 0) AS bytes
+            FROM candidates c
+            LEFT JOIN session_history h ON h.session_id = c.id
+            GROUP BY c.id, c.conversation_id, c.status, c.updated_at, c.metadata
+            ORDER BY c.id
+            """
+        : """
+            SELECT s.id, s.conversation_id, s.status, s.updated_at,
+                   (SELECT COUNT(*) FROM session_history h WHERE h.session_id = s.id) AS message_count,
+                   0 AS bytes
+            FROM sessions s
+            WHERE ($cursor IS NULL OR s.id > $cursor)
+            ORDER BY s.id
+            LIMIT $limit
+            """;
 
     /// <inheritdoc />
     public override async Task<SessionMutationOutcome> ExpireIfMatchesAsync(
@@ -1157,18 +1174,18 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
             // Read raw rows first; resolving the agent per row touches the conversation
             // store and must not happen while the data reader holds the connection.
-            var rows = new List<SessionRowMapper.SessionSummaryRow>();
+            var rows = new List<SqliteDataReaderExtensions.SessionSummaryRow>();
 
 
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
             {
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    // #1627: the summary-row ordinals live in SessionRowMapper.MapSummaryRow.
+                    // #1627: the summary-row ordinals live in SqliteDataReaderExtensions.MapSummaryRow.
                     // The updatedAfter bound is applied on the parsed value (not in SQL) because
                     // timestamps preserve their original UTC offset, so a lexicographic compare
                     // would be wrong across rows written at different offsets.
-                    var row = SessionRowMapper.MapSummaryRow(reader);
+                    var row = reader.MapSummaryRow();
                     if (row.Updated < updatedAfter)
                         continue;
                     rows.Add(row);
@@ -1218,7 +1235,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     /// Where the predicate can be expressed in SQL it is:
     /// <list type="bullet">
     /// <item>Status becomes <c>lower(coalesce(status,'active')) NOT IN ('sealed','expired','closed')</c>,
-    /// which reproduces <c>SessionRowMapper.ParseStatus</c> exactly (legacy <c>closed</c> is
+    /// which reproduces <c>SqliteDataReaderExtensions.ParseStatus</c> exactly (legacy <c>closed</c> is
     /// <see cref="SessionStatus.Sealed"/>, and NULL/unknown is <see cref="SessionStatus.Active"/>).</item>
     /// <item>Agent becomes <c>conversation_id IN (...)</c>. Post-P9-I (#674) the sessions table has
     /// no <c>agent_id</c> column - ownership lives on <c>Conversation.AgentId</c> - so the agent
@@ -1268,7 +1285,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             var clauses = new List<string>();
             if (!query.IncludeInactive)
             {
-                // Mirrors SessionRowMapper.ParseStatus: NULL/unknown parses to Active, and the
+                // Mirrors SqliteDataReaderExtensions.ParseStatus: NULL/unknown parses to Active, and the
                 // legacy 'closed' value parses to Sealed.
                 clauses.Add("lower(coalesce(s.status, 'active')) NOT IN ('sealed', 'expired', 'closed')");
             }
@@ -1334,11 +1351,11 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 command.Parameters.AddWithValue("$offset", offset);
             }
 
-            var rows = new List<SessionRowMapper.SessionSummaryRow>();
+            var rows = new List<SqliteDataReaderExtensions.SessionSummaryRow>();
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
             {
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-                    rows.Add(SessionRowMapper.MapSummaryRow(reader));
+                    rows.Add(reader.MapSummaryRow());
             }
 
             var summaries = new List<SessionSummary>(rows.Count);
@@ -1372,7 +1389,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     /// <see cref="ListSummaryPageAsync"/> so the two reads cannot disagree about
     /// <c>IsInteractive</c>.
     /// </summary>
-    private static SessionSummary ToSummary(SessionRowMapper.SessionSummaryRow row, string agentId)
+    private static SessionSummary ToSummary(SqliteDataReaderExtensions.SessionSummaryRow row, string agentId)
     {
         // Mirror Session.IsInteractive: a user-facing session is UserAgent-typed and
         // not delivered over the internal "cron" channel.
@@ -2235,10 +2252,10 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;
 
-        // #1627: the per-session row ordinals live in SessionRowMapper.MapSession - the single
+        // #1627: the per-session row ordinals live in SqliteDataReaderExtensions.MapSession - the single
         // source of truth for this shape. participants_json is read-and-discarded there (P9-F);
         // a NULL conversation_id leaves Session.ConversationId at its uninitialized sentinel.
-        var mapped = SessionRowMapper.MapSession(reader);
+        var mapped = reader.MapSession();
         var session = new GatewaySession(mapped.Session, _redactor)
         {
             // P9-I (#674): AgentId is no longer sourced from a legacy column on the
@@ -2270,8 +2287,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         var entries = new List<SessionEntry>();
         while (await historyReader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            // #1627: all 12 history-column ordinals live in SessionRowMapper.MapHistoryEntry.
-            entries.Add(SessionRowMapper.MapHistoryEntry(historyReader));
+            // #1627: all 12 history-column ordinals live in SqliteDataReaderExtensions.MapHistoryEntry.
+            entries.Add(historyReader.MapHistoryEntry());
 
         }
 
@@ -3068,7 +3085,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         command.Parameters.AddWithValue("$parentSessionId", sessionId.Value);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         var results = new List<SubAgentRunDetail>();
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) results.Add(SessionRowMapper.MapSubAgentSession(reader));
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) results.Add(reader.MapSubAgentSession());
         return results;
     }
 
@@ -3098,7 +3115,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         var results = new List<SubAgentRunDetail>();
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            results.Add(SessionRowMapper.MapSubAgentSession(reader));
+            results.Add(reader.MapSubAgentSession());
         return results;
     }
 

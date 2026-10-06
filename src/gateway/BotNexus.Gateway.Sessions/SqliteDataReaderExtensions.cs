@@ -30,7 +30,7 @@ namespace BotNexus.Gateway.Sessions;
 /// ordinals and remove the dead FieldCount probing.
 /// </para>
 /// </remarks>
-internal static class SessionRowMapper
+internal static class SqliteDataReaderExtensions
 {
     /// <summary>
     /// The mapped result of a single <c>sessions</c> row: the hydrated domain <see cref="Session"/>
@@ -64,7 +64,7 @@ internal static class SessionRowMapper
     /// A NULL <c>conversation_id</c> leaves <see cref="Session.ConversationId"/> at its uninitialized
     /// sentinel (writing <c>default</c> is prohibited by the Vogen analyzer), exactly as before.
     /// </summary>
-    internal static SessionRow MapSession(SqliteDataReader reader)
+    internal static SessionRow MapSession(this SqliteDataReader reader)
     {
         var sessionId = SessionId.From(reader.GetString(reader.GetOrdinal("id")));
         var channelType = GetNullableChannelKey(reader, "channel_type");
@@ -98,7 +98,7 @@ internal static class SessionRowMapper
     /// to a <see cref="SessionEntry"/>. Every column in that projection is required; the prior
     /// <c>FieldCount &gt; N</c> tolerance on the trailing columns has been removed (#1627).
     /// </summary>
-    internal static SessionEntry MapHistoryEntry(SqliteDataReader reader)
+    internal static SessionEntry MapHistoryEntry(this SqliteDataReader reader)
         => new()
         {
             PersistenceId = reader.GetInt64(reader.GetOrdinal("id")),
@@ -129,7 +129,7 @@ internal static class SessionRowMapper
     /// Maps the current row of the transcript-free summary <c>SELECT</c> in <c>ListSummariesAsync</c>
     /// to a <see cref="SessionSummaryRow"/>.
     /// </summary>
-    internal static SessionSummaryRow MapSummaryRow(SqliteDataReader reader)
+    internal static SessionSummaryRow MapSummaryRow(this SqliteDataReader reader)
     {
         var id = reader.GetString(reader.GetOrdinal("id"));
         var channel = GetNullableChannelKey(reader, "channel_type");
@@ -147,7 +147,7 @@ internal static class SessionRowMapper
     /// Maps the current row of the <c>sub_agent_sessions</c> <c>SELECT</c> in
     /// <c>ListSubAgentSessionsAsync</c> to a <see cref="SubAgentRunDetail"/>.
     /// </summary>
-    internal static SubAgentRunDetail MapSubAgentSession(SqliteDataReader reader)
+    internal static SubAgentRunDetail MapSubAgentSession(this SqliteDataReader reader)
     {
         var json = GetOptionalNullableString(reader, "detail_json");
         if (!string.IsNullOrWhiteSpace(json))
