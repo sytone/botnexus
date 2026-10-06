@@ -16,6 +16,8 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
     private readonly IOptionsMonitor<PlatformConfig> _config;
     private readonly ModelRegistry _registry;
     private readonly ILogger<ConfigDefinedModelRegistryReconciler> _logger;
+    private volatile IReadOnlyDictionary<string, string> _activationFailures =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private IDisposable? _subscription;
 
     public ConfigDefinedModelRegistryReconciler(
@@ -49,15 +51,31 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
         _subscription = null;
     }
 
+    /// <summary>
+    /// Returns the current activation failure for a configured provider, if its latest catalogue
+    /// revision was rejected. A successful later revision clears the failure.
+    /// </summary>
+    public string? GetActivationFailure(string providerName) =>
+        _activationFailures.TryGetValue(providerName, out var failure) ? failure : null;
+
     private void Apply(PlatformConfig config)
     {
         try
         {
             var registrations = BuildRegistrations(config);
             _registry.ReplaceOwnedRegistrations(Owner, registrations);
+            _activationFailures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             _logger.LogInformation(
                 "Reconciled {ModelCount} config-defined model registrations.",
                 registrations.Count);
+        }
+        catch (ConfigDefinedProviderActivationException ex)
+        {
+            _activationFailures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [ex.ProviderName] = ex.Message
+            };
+            _logger.LogError(ex, "Rejected config-defined model catalogue; retaining last-known-good registrations.");
         }
         catch (Exception ex)
         {
@@ -82,7 +100,9 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
                 ? "openai-completions"
                 : providerConfig.ResolveChatApi()!;
             if (apiName == "openai-completions" && string.IsNullOrWhiteSpace(providerConfig.BaseUrl))
-                throw new InvalidOperationException($"Provider '{providerName}' requires a base URL for openai-completions.");
+                throw new ConfigDefinedProviderActivationException(
+                    providerName,
+                    $"Provider '{providerName}' requires a base URL for openai-completions.");
 
             var modelIds = providerConfig.ResolveChatModels()?.ToList() ?? [];
             if (config.Agents is not null)
@@ -127,4 +147,10 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
         string.Equals(providerName, "github-copilot", StringComparison.OrdinalIgnoreCase) &&
         string.IsNullOrWhiteSpace(providerConfig.Type) &&
         string.IsNullOrWhiteSpace(providerConfig.BaseUrl);
+
+    private sealed class ConfigDefinedProviderActivationException(string providerName, string message)
+        : InvalidOperationException(message)
+    {
+        public string ProviderName { get; } = providerName;
+    }
 }

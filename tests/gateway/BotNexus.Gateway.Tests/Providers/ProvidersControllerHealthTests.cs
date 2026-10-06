@@ -1,7 +1,10 @@
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace BotNexus.Gateway.Tests.Providers;
@@ -12,6 +15,44 @@ public sealed class ProvidersControllerHealthTests
     private readonly IProviderHealthCheck _healthCheck = Substitute.For<IProviderHealthCheck>();
 
     private ProvidersController CreateSut() => new(_modelFilter, _healthCheck);
+
+    [Fact]
+    public async Task CheckHealth_RejectedConfiguredProvider_ReturnsActivationFailure()
+    {
+        _modelFilter.GetProviders().Returns(new List<string> { "copilot" });
+        var monitor = new TestOptionsMonitor<PlatformConfig>(new PlatformConfig
+        {
+            Providers = new Dictionary<string, ProviderConfig>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["rejected"] = new()
+                {
+                    Enabled = true,
+                    Chat = new ProviderChatConfig
+                    {
+                        Api = "openai-completions",
+                        Models = ["model-a"]
+                    }
+                }
+            }
+        });
+        using var reconciler = new ConfigDefinedModelRegistryReconciler(
+            monitor,
+            new ModelRegistry(),
+            NullLogger<ConfigDefinedModelRegistryReconciler>.Instance);
+        await reconciler.StartAsync(CancellationToken.None);
+        var sut = new ProvidersController(_modelFilter, _healthCheck, reconciler);
+
+        var result = await sut.CheckHealth("rejected", CancellationToken.None);
+
+        var statusResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, statusResult.StatusCode);
+        var response = Assert.IsType<ProviderHealthResponse>(statusResult.Value);
+        Assert.Equal("activation_failed", response.Status);
+        Assert.Contains("requires a base URL", response.Error);
+        Assert.Equal(0, response.Models);
+        Assert.False(response.HasCredentials);
+        await _healthCheck.DidNotReceiveWithAnyArgs().CheckAsync(default!, default);
+    }
 
     [Fact]
     public async Task CheckHealth_ProviderNotFound_Returns404()

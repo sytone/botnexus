@@ -154,6 +154,36 @@ public sealed class ConfigDefinedModelRegistryReconcilerTests
 
         registry.GetModel("dynamic", "model-a").ShouldNotBeNull();
         registry.GetModel("dynamic", "model-b").ShouldBeNull();
+        reconciler.GetActivationFailure("dynamic").ShouldBe("Provider 'dynamic' requires a base URL for openai-completions.");
+    }
+
+    [Fact]
+    public async Task SuccessfulReload_ClearsPreviousActivationFailure()
+    {
+        var monitor = new TestOptionsMonitor<PlatformConfig>(ConfigWithProvider(
+            "dynamic",
+            enabled: true,
+            baseUrl: null,
+            api: "openai-completions",
+            models: ["model-a"]));
+        var registry = new ModelRegistry();
+        using var reconciler = new ConfigDefinedModelRegistryReconciler(
+            monitor,
+            registry,
+            NullLogger<ConfigDefinedModelRegistryReconciler>.Instance);
+
+        await reconciler.StartAsync(CancellationToken.None);
+        reconciler.GetActivationFailure("dynamic").ShouldNotBeNull();
+
+        monitor.RaiseChanged(ConfigWithProvider(
+            "dynamic",
+            enabled: true,
+            baseUrl: "https://valid.example/v1",
+            api: "openai-completions",
+            models: ["model-a"]));
+
+        reconciler.GetActivationFailure("dynamic").ShouldBeNull();
+        registry.GetModel("dynamic", "model-a").ShouldNotBeNull();
     }
 
     private static PlatformConfig ConfigWithProvider(

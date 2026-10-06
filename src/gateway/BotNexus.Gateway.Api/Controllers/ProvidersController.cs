@@ -1,5 +1,6 @@
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
 namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
@@ -11,12 +12,17 @@ public sealed class ProvidersController : ControllerBase
 {
     private readonly IModelFilter _modelFilter;
     private readonly IProviderHealthCheck? _healthCheck;
+    private readonly ConfigDefinedModelRegistryReconciler? _configModelReconciler;
 
     /// <inheritdoc cref="ProvidersController"/>
-    public ProvidersController(IModelFilter modelFilter, IProviderHealthCheck? healthCheck = null)
+    public ProvidersController(
+        IModelFilter modelFilter,
+        IProviderHealthCheck? healthCheck = null,
+        ConfigDefinedModelRegistryReconciler? configModelReconciler = null)
     {
         _modelFilter = modelFilter ?? throw new ArgumentNullException(nameof(modelFilter));
         _healthCheck = healthCheck;
+        _configModelReconciler = configModelReconciler;
     }
 
     /// <summary>
@@ -50,6 +56,23 @@ public sealed class ProvidersController : ControllerBase
         if (_healthCheck is null)
         {
             return NotFound("Provider health check service not available.");
+        }
+
+        // A rejected config revision can leave the provider absent from the live registry or retain
+        // its previous catalogue. Surface that activation result before ordinary registry health so
+        // persistence is never mistaken for readiness.
+        if (_configModelReconciler?.GetActivationFailure(id) is { } activationFailure)
+        {
+            return StatusCode(503, new ProviderHealthResponse
+            {
+                ProviderId = id,
+                Status = "activation_failed",
+                LatencyMs = 0,
+                CheckedAt = DateTimeOffset.UtcNow,
+                Models = 0,
+                HasCredentials = false,
+                Error = activationFailure
+            });
         }
 
         // Verify provider exists in the registry

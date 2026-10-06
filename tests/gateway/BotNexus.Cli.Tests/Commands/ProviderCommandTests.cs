@@ -200,6 +200,23 @@ public partial class ProviderCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteTestAsync_ActivationFailure_ReturnsPreciseReconcilerFailure()
+    {
+        using var server = new MockHttpServer();
+        server.SetResponse("/api/providers/new-instance/health", System.Net.HttpStatusCode.ServiceUnavailable,
+            """{"providerId":"new-instance","status":"activation_failed","latencyMs":0,"checkedAt":"2026-10-01T00:00:00Z","models":0,"hasCredentials":false,"error":"Provider 'new-instance' requires a base URL for openai-completions."}""");
+
+        var exit = await ProviderCommand.ExecuteTestAsync(
+            server.BaseUrl, "new-instance", CancellationToken.None);
+
+        exit.ShouldBe(1);
+        var output = NormalizeOutput(_output.ToString());
+        output.ShouldContain("Provider new-instance is not ready in the running gateway");
+        output.ShouldContain("requires a base URL for openai-completions");
+        output.ShouldNotContain("absent from the live model registry");
+    }
+
+    [Fact]
     public async Task ExecuteTestAsync_UnhealthyLiveProvider_ReturnsFailureWithGatewayRemediation()
     {
         using var server = new MockHttpServer();

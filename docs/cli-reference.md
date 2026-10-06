@@ -1700,7 +1700,7 @@ When a provider with the given `--name` already exists, only the flags you pass 
 
 A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated provider models then become available for agent assignment without restarting the process. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact.
 
-The command is an offline configuration writer, so its receipt distinguishes persistence from runtime activation: persistence succeeded, activation was not validated by the command, and no restart is required when the running gateway receives the reload. Verify activation and credential resolution with `botnexus provider test --name <NAME>` before assigning an agent. The test calls the running gateway's provider-health route, which reads the same live model registry and credential resolver used by agent setup. If an out-of-process configuration change has not reached the running gateway yet, the saved provider can still be absent from that live catalogue; persistence alone is not a readiness result.
+The command is an offline configuration writer, so its receipt distinguishes persistence from runtime activation: persistence succeeded, activation was not validated by the command, and no restart is required when the running gateway receives the reload. Verify activation and credential resolution with `botnexus provider test --name <NAME>` before assigning an agent. The test calls the running gateway's provider-health route, which reads the same live model registry and credential resolver used by agent setup. If an out-of-process configuration change has not reached the running gateway yet, the saved provider can still be absent from that live catalogue; persistence alone is not a readiness result. If a reload is rejected, the gateway retains the complete last-known-good catalogue and `provider test` reports `activation_failed` with the rejected provider's validation error until a later valid revision activates.
 
 ### Usage
 
@@ -1751,7 +1751,7 @@ botnexus provider add --name local-vllm `
 
 ## provider test
 
-Validate a provider instance against the running gateway rather than the offline configuration file. The command succeeds only when the instance is present in the live model registry, has at least one registered model, and its configured credential resolves. It does not send a billable model request.
+Validate a provider instance against the running gateway rather than the offline configuration file. The command succeeds only when the instance is present in the live model registry, has at least one registered model, and its configured credential resolves. A rejected configuration reload returns the reconciler's `activation_failed` detail instead of collapsing the result into an unknown-provider message. It does not send a billable model request.
 
 ### Usage
 
