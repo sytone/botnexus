@@ -19,7 +19,7 @@ public sealed class SqliteConversationAuditLog : IConversationAuditLog, IDisposa
     public void Dispose()
     {
         // Release any pooled connections so the database file can be deleted in test scenarios.
-        using var conn = new SqliteConnection(_connectionString);
+        using var conn = SqliteConnectionFactory.Create(_connectionString);
         SqliteConnection.ClearPool(conn);
     }
 
@@ -27,7 +27,7 @@ public sealed class SqliteConversationAuditLog : IConversationAuditLog, IDisposa
     {
         if (Interlocked.CompareExchange(ref _initialized, 1, 0) == 0)
         {
-            using var connection = new SqliteConnection(_connectionString);
+            using var connection = SqliteConnectionFactory.Create(_connectionString);
             connection.Open();
             using var command = connection.CreateCommand();
             command.CommandText = """
@@ -62,7 +62,7 @@ public sealed class SqliteConversationAuditLog : IConversationAuditLog, IDisposa
     public async Task LogAsync(ConversationAuditEntry entry, CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        await using var connection = new SqliteConnection(_connectionString);
+        await using var connection = SqliteConnectionFactory.Create(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -83,7 +83,7 @@ public sealed class SqliteConversationAuditLog : IConversationAuditLog, IDisposa
     public async Task<IReadOnlyList<ConversationAuditEntry>> GetAsync(string conversationId, int limit = 50, CancellationToken cancellationToken = default)
     {
         EnsureInitialized();
-        await using var connection = new SqliteConnection(_connectionString);
+        await using var connection = SqliteConnectionFactory.Create(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = """

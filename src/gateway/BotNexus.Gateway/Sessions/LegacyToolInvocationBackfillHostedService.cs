@@ -18,7 +18,7 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
 
     private readonly SqliteSessionStore? _store;
     private readonly Func<SqliteSessionStore, int, LegacyToolInvocationBackfillReport> _runBatch;
-    private readonly Func<SqliteSessionStore, int, LegacyToolPayloadCleanupReport> _runCleanupBatch;
+    private readonly Func<SqliteSessionStore, int, long, LegacyToolPayloadCleanupReport> _runCleanupBatch;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly LegacyToolInvocationBackfillMetrics _metrics;
     private readonly ILogger<LegacyToolInvocationBackfillHostedService> _logger;
@@ -33,7 +33,7 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
         : this(
             sessionStore,
             static (store, batchSize) => store.BackfillLegacyToolInvocations(batchSize),
-            static (store, batchSize) => store.CleanupLegacyToolPayloads(batchSize),
+            static (store, batchSize, afterInvocationId) => store.CleanupLegacyToolPayloads(batchSize, afterInvocationId),
             Task.Delay,
             metrics,
             logger)
@@ -43,7 +43,7 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
     internal LegacyToolInvocationBackfillHostedService(
         ISessionStore sessionStore,
         Func<SqliteSessionStore, int, LegacyToolInvocationBackfillReport> runBatch,
-        Func<SqliteSessionStore, int, LegacyToolPayloadCleanupReport> runCleanupBatch,
+        Func<SqliteSessionStore, int, long, LegacyToolPayloadCleanupReport> runCleanupBatch,
         Func<TimeSpan, CancellationToken, Task> delay,
         IMetrics? metrics,
         ILogger<LegacyToolInvocationBackfillHostedService> logger)
@@ -71,6 +71,7 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
             return;
         }
 
+        long cleanupCursor = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             TimeSpan? nextDelay = null;
@@ -84,14 +85,15 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
                 }
                 else
                 {
-                    var cleanup = _runCleanupBatch(_store, BatchSize);
+                    var cleanup = _runCleanupBatch(_store, BatchSize, cleanupCursor);
+                    cleanupCursor = cleanup.LastScannedInvocationId;
                     _logger.LogInformation(
-                        "Legacy tool payload cleanup batch cleaned {CleanedInvocations} invocation(s) and {CleanedRows} row(s), cleared {ClearedBytes} byte(s), protected {ProtectedInvocations} invocation(s), remaining {RemainingInvocations}; more eligible work: {HasMore}.",
+                        "Legacy tool payload cleanup batch scanned {ScannedInvocations} invocation(s), cleaned {CleanedInvocations} invocation(s) and {CleanedRows} row(s), cleared {ClearedBytes} byte(s), and removed {OrphanedInvocationsDeleted} orphaned invocation(s); more candidate work: {HasMore}.",
+                        cleanup.ScannedInvocations,
                         cleanup.CleanedInvocations,
                         cleanup.CleanedRows,
                         cleanup.ClearedBytes,
-                        cleanup.ProtectedInvocations,
-                        cleanup.RemainingInvocations,
+                        cleanup.OrphanedInvocationsDeleted,
                         cleanup.HasMore);
                     if (!cleanup.HasMore)
                         return;

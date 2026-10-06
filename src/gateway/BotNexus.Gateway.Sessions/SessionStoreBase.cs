@@ -94,6 +94,74 @@ public abstract class SessionStoreBase : ISessionStore
         return SessionSaveOutcome.Persisted;
     }
 
+    /// <inheritdoc />
+    public virtual async Task<UnresolvedCrashSentinelPage> ListUnresolvedCrashSentinelsAsync(
+        int limit, string? cursor = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        var rows = (await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false))
+            .Where(session => session.History.Any(static entry => entry.IsCrashSentinel))
+            .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
+            .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
+            .Take(limit + 1)
+            .ToList();
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        return new UnresolvedCrashSentinelPage(rows, hasMore ? rows[^1].SessionId.Value : null);
+    }
+
+    /// <inheritdoc />
+    public virtual async Task<SessionCleanupPlanPage> ListCleanupPlanAsync(
+        int limit, string? cursor = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        var rows = (await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false))
+            .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
+            .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
+            .Take(limit + 1)
+            .Select(session => new SessionCleanupPlanRow(
+                session.SessionId, session.AgentId, session.ConversationId, session.Status, session.UpdatedAt,
+                session.MessageCount, SessionDiskAccounting.Measure(session)))
+            .ToList();
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        return new SessionCleanupPlanPage(rows, hasMore ? rows[^1].SessionId.Value : null);
+    }
+
+    /// <inheritdoc />
+    public virtual async Task<SessionMutationOutcome> ExpireIfMatchesAsync(
+        SessionCleanupFence fence, DateTimeOffset expiresAt, CancellationToken cancellationToken = default)
+    {
+        var session = await GetAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return SessionMutationOutcome.NotFound;
+        if (!MatchesCleanupFence(session, fence)) return SessionMutationOutcome.Conflict;
+        session.Status = SessionStatus.Expired;
+        session.ExpiresAt ??= expiresAt;
+        session.UpdatedAt = expiresAt;
+        // The portable stores return their authoritative aggregate instance. Passing that same
+        // instance through the post-run fence after changing its status makes the fence observe
+        // the just-applied Expired state and reject its own write. The cleanup fence above already
+        // compared the complete cleanup version (conversation, status, updated_at), so preserve
+        // the pre-projection store semantics by committing through the ordinary save path.
+        await SaveAsync(session, cancellationToken).ConfigureAwait(false);
+        return SessionMutationOutcome.Applied;
+    }
+
+    /// <inheritdoc />
+    public virtual async Task<SessionMutationOutcome> DeleteIfMatchesAsync(
+        SessionCleanupFence fence, CancellationToken cancellationToken = default)
+    {
+        var session = await GetAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return SessionMutationOutcome.NotFound;
+        if (!MatchesCleanupFence(session, fence)) return SessionMutationOutcome.Conflict;
+        await DeleteAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        return SessionMutationOutcome.Applied;
+    }
+
+    private static bool MatchesCleanupFence(GatewaySession session, SessionCleanupFence fence) =>
+        session.ConversationId == fence.ConversationId && session.Status == fence.ExpectedStatus
+        && session.UpdatedAt == fence.ExpectedUpdatedAt;
+
     public abstract Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -57,6 +57,18 @@ public sealed class SessionWriteInventoryTests
             + "re-read and reported as Conflict with the authoritative status rather than claimed "
             + "as a write."),
 
+        new("sessions", nameof(ISessionStore.ExpireIfMatchesAsync), WriteClassification.CompareAndSwap,
+            "status, expires_at (only when absent), and updated_at for one cleanup candidate",
+            "SQLite uses one conditional UPDATE whose WHERE clause matches session id, conversation "
+            + "id, status, and the projected updated_at version. A concurrent save changes that "
+            + "version, so cleanup reports Conflict instead of expiring newer work."),
+
+        new("sessions", nameof(ISessionStore.DeleteIfMatchesAsync), WriteClassification.CompareAndSwap,
+            "removal of one sessions row and its history for the exact cleanup projection version",
+            "The sessions-row DELETE matches session id, conversation id, status, and updated_at "
+            + "inside the striped lock and transaction. History is removed only when that exact row "
+            + "was deleted, so a stale cleanup plan cannot erase a concurrent save."),
+
         new("sessions", nameof(ISessionStore.RebindSessionsAsync), WriteClassification.NarrowPatch,
             "the conversation_id column of sessions owned by one agent whose ids match an exact prefix",
             "SQLite resolves the agent's authoritative conversation ids first, then applies one "

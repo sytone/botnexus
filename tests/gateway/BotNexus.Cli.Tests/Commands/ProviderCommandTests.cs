@@ -318,6 +318,90 @@ public partial class ProviderCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAddAsync_refuses_disabling_assigned_provider_without_mutation()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            var original = """
+                {
+                  "providers": {
+                    "copilot-work": { "type": "github-copilot", "enabled": true, "defaultModel": "original" },
+                    "github-copilot": { "type": "github-copilot", "enabled": true }
+                  },
+                  "agents": {
+                    "quill": { "provider": "COPILOT-WORK", "model": "original" },
+                    "aurum": { "provider": "copilot-work", "model": "original" },
+                    "nova": { "provider": "github-copilot", "model": "original" }
+                  },
+                  "extensionState": { "keep": "untouched" }
+                }
+                """;
+            await File.WriteAllTextAsync(configPath, original);
+
+            var exit = await new ProviderCommand().ExecuteAddAsync(
+                configPath, "copilot-work", api: null, apiKey: null, baseUrl: null,
+                defaultModel: "changed", models: Array.Empty<string>(), enabled: false,
+                verbose: false, CancellationToken.None);
+
+            exit.ShouldBe(1);
+            var output = _output.ToString();
+            output.ShouldContain("2 agent(s)");
+            output.ShouldContain("aurum");
+            output.ShouldContain("quill");
+            output.ShouldContain("Reassign");
+            (await File.ReadAllTextAsync(configPath)).ShouldBe(original);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAddAsync_disables_unassigned_provider_preserving_other_sections()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "providers": {
+                    "copilot-work": { "type": "github-copilot", "enabled": true, "defaultModel": "original" },
+                    "github-copilot": { "type": "github-copilot", "enabled": true }
+                  },
+                  "agents": { "nova": { "provider": "github-copilot", "model": "original" } },
+                  "extensionState": { "keep": "untouched" }
+                }
+                """);
+
+            var exit = await new ProviderCommand().ExecuteAddAsync(
+                configPath, "copilot-work", api: null, apiKey: null, baseUrl: null,
+                defaultModel: "updated", models: Array.Empty<string>(), enabled: false,
+                verbose: false, CancellationToken.None);
+
+            exit.ShouldBe(0);
+            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(configPath));
+            doc.RootElement.GetProperty("providers").GetProperty("copilot-work")
+                .GetProperty("enabled").GetBoolean().ShouldBeFalse();
+            doc.RootElement.GetProperty("providers").GetProperty("copilot-work")
+                .GetProperty("defaultModel").GetString().ShouldBe("updated");
+            doc.RootElement.GetProperty("agents").GetProperty("nova")
+                .GetProperty("provider").GetString().ShouldBe("github-copilot");
+            doc.RootElement.GetProperty("extensionState").GetProperty("keep")
+                .GetString().ShouldBe("untouched");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
     public async Task ExecuteRemoveAsync_removes_provider_when_present()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));

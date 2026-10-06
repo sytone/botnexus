@@ -212,7 +212,17 @@ internal sealed class ProviderCommand
 
         var exitCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            document => document.TryPatchEntry(ProvidersPath, name, patch, out var error) ? null : error,
+            document =>
+            {
+                if (!enabled)
+                {
+                    var dependentAgents = GetDependentAgents(document, name);
+                    if (dependentAgents.Count > 0)
+                        return FormatAssignedProviderError(name, dependentAgents, "disabling");
+                }
+
+                return document.TryPatchEntry(ProvidersPath, name, patch, out var error) ? null : error;
+            },
             "before-provider-update",
             verbose,
             cancellationToken,
@@ -335,6 +345,31 @@ internal sealed class ProviderCommand
     private const string ProvidersPath = "providers";
     private const string AgentsPath = "agents";
 
+    private static IReadOnlyList<string> GetDependentAgents(ConfigDocument document, string providerName) =>
+        document.GetEntryKeys(AgentsPath)
+            .Where(agentName =>
+            {
+                var agentJson = document.DescribeEntry(AgentsPath, agentName);
+                if (agentJson is null)
+                    return false;
+
+                using var agent = JsonDocument.Parse(agentJson);
+                return agent.RootElement.TryGetProperty("provider", out var provider)
+                       && provider.ValueKind == JsonValueKind.String
+                       && string.Equals(provider.GetString(), providerName, StringComparison.OrdinalIgnoreCase);
+            })
+            .OrderBy(agentName => agentName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private static string FormatAssignedProviderError(
+        string providerName,
+        IReadOnlyCollection<string> dependentAgents,
+        string operation)
+    {
+        var agentList = string.Join(", ", dependentAgents.Select(CliText.SafeDisplay));
+        return $"Provider '{CliText.SafeDisplay(providerName)}' is assigned to {dependentAgents.Count} agent(s): {agentList}. Reassign those agents before {operation} the provider.";
+    }
+
     internal async Task<int> ExecuteRemoveAsync(string configPath, string name, bool verbose, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(name))
@@ -354,26 +389,9 @@ internal sealed class ProviderCommand
             configPath,
             candidate =>
             {
-                var dependentAgents = candidate.GetEntryKeys(AgentsPath)
-                    .Where(agentName =>
-                    {
-                        var agentJson = candidate.DescribeEntry(AgentsPath, agentName);
-                        if (agentJson is null)
-                            return false;
-
-                        using var agent = JsonDocument.Parse(agentJson);
-                        return agent.RootElement.TryGetProperty("provider", out var provider)
-                               && provider.ValueKind == JsonValueKind.String
-                               && string.Equals(provider.GetString(), name, StringComparison.OrdinalIgnoreCase);
-                    })
-                    .OrderBy(agentName => agentName, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
+                var dependentAgents = GetDependentAgents(candidate, name);
                 if (dependentAgents.Count > 0)
-                {
-                    var agentList = string.Join(", ", dependentAgents.Select(CliText.SafeDisplay));
-                    return $"Provider '{CliText.SafeDisplay(name)}' is assigned to {dependentAgents.Count} agent(s): {agentList}. Reassign those agents before removing the provider.";
-                }
+                    return FormatAssignedProviderError(name, dependentAgents, "removing");
 
                 return candidate.TryRemoveEntry(ProvidersPath, name, out var error) ? null : error;
             },

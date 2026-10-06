@@ -126,10 +126,27 @@ public sealed class SqliteWalCheckpointHostedService : BackgroundService
             Mode = SqliteOpenMode.ReadWrite,
         }.ToString();
 
-        await using var connection = new SqliteConnection(connectionString);
+        await using var connection = SqliteConnectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await SqliteWalMaintenance.CheckpointAsync(connection, mode, cancellationToken).ConfigureAwait(false);
+        var result = await SqliteWalMaintenance.CheckpointAsync(connection, mode, cancellationToken).ConfigureAwait(false);
 
-        _logger.LogDebug("WAL {Mode} checkpoint completed for database {DatabasePath}.", mode, databasePath);
+        if (result.ReclamationCompleted)
+        {
+            _logger.LogDebug(
+                "WAL {Mode} checkpoint completed for database {DatabasePath}: busy={Busy}, log={LogFrames}, checkpointed={CheckpointedFrames}.",
+                mode, databasePath, result.Busy, result.LogFrames, result.CheckpointedFrames);
+        }
+        else if (mode == SqliteCheckpointMode.Truncate)
+        {
+            _logger.LogWarning(
+                "WAL shutdown TRUNCATE checkpoint was incomplete for database {DatabasePath}: busy={Busy}, log={LogFrames}, checkpointed={CheckpointedFrames}, executed={Executed}.",
+                databasePath, result.Busy, result.LogFrames, result.CheckpointedFrames, result.Executed);
+        }
+        else
+        {
+            _logger.LogDebug(
+                "WAL PASSIVE checkpoint made incomplete progress for database {DatabasePath}: busy={Busy}, log={LogFrames}, checkpointed={CheckpointedFrames}, executed={Executed}.",
+                databasePath, result.Busy, result.LogFrames, result.CheckpointedFrames, result.Executed);
+        }
     }
 }

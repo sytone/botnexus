@@ -28,6 +28,7 @@ public sealed class SqliteConversationStore : IConversationStore
     };
 
     private readonly string _connectionString;
+    private readonly SqliteWalMaintenance _journalModeMaintenance;
     private readonly ILogger<SqliteConversationStore> _logger;
     private readonly IWorldContext? _worldContext;
     private readonly StoreMetrics? _storeMetrics;
@@ -133,9 +134,11 @@ public sealed class SqliteConversationStore : IConversationStore
         ILogger<SqliteConversationStore> logger,
         IWorldContext? worldContext,
         int cacheCapacity = DefaultConversationCacheCapacity,
-        StoreMetrics? storeMetrics = null)
+        StoreMetrics? storeMetrics = null,
+        SqliteWalMaintenance? journalModeMaintenance = null)
     {
         _connectionString = connectionString;
+        _journalModeMaintenance = journalModeMaintenance ?? new SqliteWalMaintenance();
         _logger = logger;
         _worldContext = worldContext;
         _storeMetrics = storeMetrics;
@@ -470,6 +473,15 @@ public sealed class SqliteConversationStore : IConversationStore
         string? correlationId,
         string actor,
         CancellationToken ct = default)
+        => _ = await TryArchiveAsync(conversationId, source, correlationId, actor, ct).ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<bool> TryArchiveAsync(
+        ConversationId conversationId,
+        string source,
+        string? correlationId,
+        string actor,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
@@ -502,12 +514,17 @@ public sealed class SqliteConversationStore : IConversationStore
                         active_session_id = NULL,
                         updated_at = $updatedAt,
                         version = version + 1
-                    WHERE id = $id
+                    WHERE id = $id AND status = $activeStatus
                     """;
                 archive.Parameters.AddWithValue("$status", ConversationStatus.Archived.ToString());
+                archive.Parameters.AddWithValue("$activeStatus", ConversationStatus.Active.ToString());
                 archive.Parameters.AddWithValue("$updatedAt", updatedAt.ToString("O"));
                 archive.Parameters.AddWithValue("$id", conversationId.Value);
-                await archive.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                if (await archive.ExecuteNonQueryAsync(ct).ConfigureAwait(false) == 0)
+                {
+                    await transaction.RollbackAsync(ct).ConfigureAwait(false);
+                    return false;
+                }
             }
 
             await using (var audit = connection.CreateCommand())
@@ -538,6 +555,8 @@ public sealed class SqliteConversationStore : IConversationStore
                 archived.Version = cached.Version + 1;
                 _cache.Set(conversationId.Value, archived);
             }
+
+            return true;
         }
         finally
         {
@@ -1092,6 +1111,43 @@ public sealed class SqliteConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<ConversationRetentionCandidate>> GetRetentionCandidatesAsync(
+        ConversationSource? source = null,
+        CancellationToken ct = default)
+    {
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, agent_id, updated_at, is_pinned, source, source_id
+            FROM conversations
+            WHERE status = $status AND ($source IS NULL OR source = $source)
+            ORDER BY updated_at ASC
+            """;
+        command.Parameters.AddWithValue("$status", ConversationStatus.Active.ToString());
+        command.Parameters.AddWithValue("$source", source is null ? DBNull.Value : source.Value.ToString());
+
+        var candidates = new List<ConversationRetentionCandidate>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            var sourceText = reader.GetString(4);
+            candidates.Add(new ConversationRetentionCandidate(
+                ConversationId.From(reader.GetString(0)),
+                AgentId.From(reader.GetString(1)),
+                DateTimeOffset.Parse(reader.GetString(2), System.Globalization.CultureInfo.InvariantCulture),
+                reader.GetInt64(3) != 0,
+                Enum.TryParse<ConversationSource>(sourceText, ignoreCase: true, out var parsedSource)
+                    ? parsedSource
+                    : ConversationSource.Channel,
+                reader.IsDBNull(5) ? null : reader.GetString(5)));
+        }
+
+        return candidates;
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
     {
         using var activity = ActivitySource.StartActivity("conversation.get_pending_ask_user_checkpoints", ActivityKind.Internal);
@@ -1180,9 +1236,13 @@ public sealed class SqliteConversationStore : IConversationStore
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
 
-            await using var walCommand = connection.CreateCommand();
-            walCommand.CommandText = "PRAGMA journal_mode=WAL;";
-            await walCommand.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            // The conversation and session stores share this database in production. Both must
+            // apply the same filesystem-aware authority so initialization order cannot re-enable
+            // WAL on a network-mounted database.
+            await _journalModeMaintenance.ApplyJournalModeAsync(
+                connection,
+                connection.DataSource,
+                cancellationToken: ct).ConfigureAwait(false);
 
             await using var command = connection.CreateCommand();
             command.CommandText = """
@@ -2125,7 +2185,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
 
-        await using var connection = new SqliteConnection(_connectionString);
+        await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
@@ -2141,7 +2201,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
 
-        await using var connection = new SqliteConnection(_connectionString);
+        await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();

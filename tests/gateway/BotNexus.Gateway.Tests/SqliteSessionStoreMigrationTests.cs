@@ -111,6 +111,30 @@ public sealed class SqliteSessionStoreMigrationTests : IDisposable
         return result is DBNull or null ? null : (string)result;
     }
 
+    private static async Task<bool> SchemaObjectExistsAsync(
+        string connectionString,
+        string type,
+        string name)
+    {
+        await using var conn = new SqliteConnection(connectionString);
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_schema WHERE type = $type AND name = $name";
+        cmd.Parameters.AddWithValue("$type", type);
+        cmd.Parameters.AddWithValue("$name", name);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync()) == 1;
+    }
+
+    private static async Task<bool> ColumnExistsAsync(string connectionString, string table, string column)
+    {
+        await using var conn = new SqliteConnection(connectionString);
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = $column";
+        cmd.Parameters.AddWithValue("$column", column);
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync()) == 1;
+    }
+
     // ─── tests ───────────────────────────────────────────────────────────────
 
     [Fact]
@@ -184,6 +208,69 @@ public sealed class SqliteSessionStoreMigrationTests : IDisposable
 
         // No extra conversations created.
         convsAfter.Count.ShouldBe(convsBefore.Count);
+    }
+
+    [Fact]
+    public async Task LegacyAgentIdDrop_TwoStoresSerializeAndTreatPeerCompletionAsSuccess()
+    {
+        var connectionString = $"Data Source={_sessionDbPath};Pooling=False";
+        await InsertOrphanedSessionAsync(
+            connectionString,
+            "s-race-1",
+            "agent-race",
+            DateTimeOffset.UtcNow);
+
+        var first = CreateSessionStore(CreateConversationStore());
+        var second = CreateSessionStore(CreateConversationStore());
+        var bothReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readyCount = 0;
+        Task WaitAtTransactionBoundaryAsync(CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref readyCount) == 2)
+                bothReady.SetResult();
+            return bothReady.Task.WaitAsync(cancellationToken);
+        }
+
+        first.BeforeLegacyAgentIdMigrationTransactionAsync = WaitAtTransactionBoundaryAsync;
+        second.BeforeLegacyAgentIdMigrationTransactionAsync = WaitAtTransactionBoundaryAsync;
+
+        await Task.WhenAll(
+            first.GetAsync(SessionId.From("probe-first"), CancellationToken.None),
+            second.GetAsync(SessionId.From("probe-second"), CancellationToken.None));
+
+        (await ColumnExistsAsync(connectionString, "sessions", "agent_id")).ShouldBeFalse();
+        (await SchemaObjectExistsAsync(connectionString, "index", "idx_sessions_agent_id")).ShouldBeFalse();
+        (await SchemaObjectExistsAsync(connectionString, "index", "idx_sessions_conversation_agent")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task LegacyAgentIdDrop_FailureBeforeColumnDropRollsBackAndRetryCompletes()
+    {
+        var connectionString = $"Data Source={_sessionDbPath};Pooling=False";
+        await InsertOrphanedSessionAsync(
+            connectionString,
+            "s-recovery-1",
+            "agent-recovery",
+            DateTimeOffset.UtcNow);
+
+        var interrupted = CreateSessionStore(CreateConversationStore());
+        interrupted.BeforeLegacyAgentIdColumnDropAsync = _ =>
+            throw new InvalidOperationException("injected migration interruption");
+
+        var exception = await Should.ThrowAsync<InvalidOperationException>(
+            interrupted.GetAsync(SessionId.From("probe-interrupted"), CancellationToken.None));
+        exception.Message.ShouldBe("injected migration interruption");
+
+        (await ColumnExistsAsync(connectionString, "sessions", "agent_id")).ShouldBeTrue();
+        (await SchemaObjectExistsAsync(connectionString, "index", "idx_sessions_agent_id")).ShouldBeTrue();
+        (await SchemaObjectExistsAsync(connectionString, "index", "idx_sessions_conversation_agent")).ShouldBeTrue();
+
+        var retry = CreateSessionStore(CreateConversationStore());
+        _ = await retry.GetAsync(SessionId.From("probe-retry"), CancellationToken.None);
+
+        (await ColumnExistsAsync(connectionString, "sessions", "agent_id")).ShouldBeFalse();
+        (await SchemaObjectExistsAsync(connectionString, "index", "idx_sessions_agent_id")).ShouldBeFalse();
+        (await SchemaObjectExistsAsync(connectionString, "index", "idx_sessions_conversation_agent")).ShouldBeFalse();
     }
 
     [Fact]

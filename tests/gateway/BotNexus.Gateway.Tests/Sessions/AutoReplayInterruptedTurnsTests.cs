@@ -88,11 +88,21 @@ public sealed class AutoReplayInterruptedTurnsTests
     private static Mock<ISessionStore> CreateStore(params GatewaySession[] sessions)
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((AgentId? agentId, CancellationToken _) =>
-                sessions.Where(s => !agentId.HasValue || s.AgentId == agentId.Value).ToList());
-        store.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+        store.Setup(s => s.ListUnresolvedCrashSentinelsAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int limit, string? cursor, CancellationToken _) =>
+            {
+                var page = sessions
+                    .Where(session => session.History.Any(entry => entry.IsCrashSentinel))
+                    .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
+                    .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
+                    .Take(limit)
+                    .ToList();
+                return new UnresolvedCrashSentinelPage(page, null);
+            });
+        store.Setup(s => s.SaveAsync(
+                It.IsAny<GatewaySession>(), It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SessionSaveOutcome.Persisted);
         return store;
     }
 
@@ -144,6 +154,31 @@ public sealed class AutoReplayInterruptedTurnsTests
     }
 
     // ── Tests ──────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Recovery_WhenFencedSaveConflicts_DoesNotPublishOrReplay()
+    {
+        var session = CreateSession("fenced-conflict", "agent-a", withSentinel: true,
+            channelType: ChannelKey.From("signalr"), lastUserContent: "hello agent");
+        var store = CreateStore(session);
+        store.Setup(sessionStore => sessionStore.SaveAsync(
+                It.IsAny<GatewaySession>(), It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SessionSaveOutcome.Rebound);
+        var orchestrator = CreateOrchestrator();
+        var broadcaster = new Mock<IActivityBroadcaster>();
+        var eventPublisher = new Mock<IConversationEventPublisher>();
+        var service = CreateService(store.Object, CreateRegistry("agent-a"),
+            new GatewayOptions { AutoReplayInterruptedTurns = false }, orchestrator.Object,
+            broadcaster.Object, eventPublisher.Object);
+
+        await service.StartedAsync(CancellationToken.None);
+
+        eventPublisher.Verify(publisher => publisher.PublishAsync(
+            It.IsAny<ConversationSessionItemPersistedEvent>(), It.IsAny<CancellationToken>()), Times.Never);
+        broadcaster.Verify(publisher => publisher.PublishAsync(
+            It.IsAny<GatewayActivity>(), It.IsAny<CancellationToken>()), Times.Never);
+        orchestrator.Verify(orchestration => orchestration.Post(It.IsAny<InboundMessage>()), Times.Never);
+    }
 
     [Fact]
     public async Task AutoReplay_WhenEnabled_PostsLastUserMessage()

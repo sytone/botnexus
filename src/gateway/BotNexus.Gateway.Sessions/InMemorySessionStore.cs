@@ -109,6 +109,56 @@ public sealed class InMemorySessionStore : SessionStoreBase
     }
 
     /// <inheritdoc />
+    public override Task<SessionMutationOutcome> ExpireIfMatchesAsync(
+        SessionCleanupFence fence,
+        DateTimeOffset expiresAt,
+        CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (!_sessions.TryGetValue(fence.SessionId, out var session))
+                return Task.FromResult(SessionMutationOutcome.NotFound);
+            if (!MatchesCleanupFence(session, fence))
+                return Task.FromResult(SessionMutationOutcome.Conflict);
+
+            session.Status = SessionStatus.Expired;
+            session.ExpiresAt ??= expiresAt;
+            session.UpdatedAt = expiresAt;
+            return Task.FromResult(SessionMutationOutcome.Applied);
+        }
+    }
+
+    /// <inheritdoc />
+    public override Task<SessionMutationOutcome> DeleteIfMatchesAsync(
+        SessionCleanupFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (!_sessions.TryGetValue(fence.SessionId, out var session))
+                return Task.FromResult(SessionMutationOutcome.NotFound);
+            if (!MatchesCleanupFence(session, fence))
+                return Task.FromResult(SessionMutationOutcome.Conflict);
+
+            _sessions.Remove(fence.SessionId);
+            return Task.FromResult(SessionMutationOutcome.Applied);
+        }
+    }
+
+    private static bool MatchesCleanupFence(GatewaySession session, SessionCleanupFence fence) =>
+        ConversationIdsMatch(session.ConversationId, fence.ConversationId)
+        && session.Status == fence.ExpectedStatus
+        && session.UpdatedAt == fence.ExpectedUpdatedAt;
+
+    private static bool ConversationIdsMatch(ConversationId current, ConversationId expected)
+    {
+        var currentIsInitialized = current.IsInitialized();
+        var expectedIsInitialized = expected.IsInitialized();
+        return currentIsInitialized == expectedIsInitialized
+            && (!currentIsInitialized || current == expected);
+    }
+
+    /// <inheritdoc />
     public override Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("session.delete", ActivityKind.Internal);
