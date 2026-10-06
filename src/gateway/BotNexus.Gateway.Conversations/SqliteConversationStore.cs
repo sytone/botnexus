@@ -2125,7 +2125,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
 
-        await using var connection = new SqliteConnection(_connectionString);
+        await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
@@ -2141,7 +2141,7 @@ public sealed class SqliteConversationStore : IConversationStore
     {
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
 
-        await using var connection = new SqliteConnection(_connectionString);
+        await using var connection = CreateConnection();
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();

@@ -209,6 +209,29 @@ public sealed class SqliteBusyTimeoutArchitectureTests : ArchitectureTest
     }
 
     [Fact]
+    public void ProductionSqliteConnections_RouteThroughTheCanonicalFactory()
+    {
+        var violations = Directory
+            .EnumerateFiles(Path.Combine(Repository.Root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Select(path => new
+            {
+                Relative = Path.GetRelativePath(Repository.Root, path).Replace('\\', '/'),
+                Source = File.ReadAllText(path),
+            })
+            .Where(file => Regex.IsMatch(file.Source, @"FOREIGN\s+KEY|REFERENCES\s+[A-Za-z_]", RegexOptions.IgnoreCase))
+            .Where(file => Regex.IsMatch(file.Source, @"new\s+SqliteConnection\s*\(", RegexOptions.IgnoreCase))
+            .Select(file => file.Relative)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        violations.ShouldBeEmpty(
+            "Production stores and writers must route connection opens through " +
+            "SqliteConnectionFactory so per-connection busy-timeout, foreign-key, and store-identity " +
+            "policies cannot be bypassed. This fence covers every production source file that " +
+            "declares a SQLite foreign-key relationship.");
+    }
+
+    [Fact]
     public void BusyTimeoutHandlerFence_PositivePin_AcceptsTheSenderShape()
     {
         // Positive pin: the fixed shape (named handler taking sender) must NOT be flagged, so the
