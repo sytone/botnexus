@@ -132,6 +132,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     // Deterministic test seam for #3907. It observes the immutable work item after capture and
     // may gate the write to force a concurrent mutation; production leaves it null.
     internal Func<SessionHistoryPersistenceSnapshot, CancellationToken, Task>? BeforeHistoryWriteAsync { get; set; }
+    internal Func<SessionHistoryPersistenceSnapshot, CancellationToken, Task>? BeforeHistoryCommitAsync { get; set; }
     internal Func<IReadOnlyList<SessionEntry>, CancellationToken, Task>? AfterAppendHistoryCommittedAsync { get; set; }
     internal int LastHistoryRowsMutated { get; private set; }
     internal bool LastHistoryWriteReconciled { get; private set; }
@@ -315,8 +316,17 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             {
                 await using var connection = CreateConnection();
                 await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-                await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
-                return await PersistHistoryAsync(connection, session.SessionId, history, cancellationToken).ConfigureAwait(false);
+                await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+                await UpsertSessionAsync(connection, session, cancellationToken, transaction).ConfigureAwait(false);
+                var result = await PersistHistoryAsync(
+                    connection,
+                    session.SessionId,
+                    history,
+                    cancellationToken,
+                    transaction,
+                    BeforeHistoryCommitAsync).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return result;
             }, cancellationToken: cancellationToken).ConfigureAwait(false);
             session.AcknowledgeHistoryPersistence(history, persistence.InsertedRowIds);
             RecordHistoryMutation(activity, history, persistence);
@@ -367,11 +377,13 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 await using var connection = CreateConnection();
                 await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
+                await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
                 // Re-read the authoritative row identity (conversation + status) directly from
-                // SQLite, inside the lock, before deciding whether to write. A NULL result means
-                // the row was deleted mid-run; a diverged conversation_id or a sealed/expired
+                // SQLite in the same transaction that performs the aggregate write. A NULL result
+                // means the row was deleted mid-run; a diverged conversation_id or a sealed/expired
                 // status means a competing reset rebound/sealed it. Either way the fence fails.
-                var snapshot = await ReadFenceSnapshotAsync(connection, session.SessionId, cancellationToken).ConfigureAwait(false);
+                var snapshot = await ReadFenceSnapshotAsync(connection, session.SessionId, cancellationToken, transaction).ConfigureAwait(false);
                 if (!SessionFenceEvaluator.Passes(fence, snapshot))
                 {
                     activity?.SetTag("botnexus.session.fence.rebound", true);
@@ -382,8 +394,15 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 if (BeforeHistoryWriteAsync is { } beforeHistoryWrite)
                     await beforeHistoryWrite(history, cancellationToken).ConfigureAwait(false);
 
-                await UpsertSessionAsync(connection, session, cancellationToken).ConfigureAwait(false);
-                var persistence = await PersistHistoryAsync(connection, session.SessionId, history, cancellationToken).ConfigureAwait(false);
+                await UpsertSessionAsync(connection, session, cancellationToken, transaction).ConfigureAwait(false);
+                var persistence = await PersistHistoryAsync(
+                    connection,
+                    session.SessionId,
+                    history,
+                    cancellationToken,
+                    transaction,
+                    BeforeHistoryCommitAsync).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 session.AcknowledgeHistoryPersistence(history, persistence.InsertedRowIds);
                 RecordHistoryMutation(activity, history, persistence);
                 return true;
@@ -421,9 +440,11 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     private async Task<GatewaySession?> ReadFenceSnapshotAsync(
         SqliteConnection connection,
         SessionId sessionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SqliteTransaction? transaction = null)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT status, conversation_id
             FROM sessions
@@ -2067,9 +2088,14 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         return session;
     }
 
-    private async Task UpsertSessionAsync(SqliteConnection connection, GatewaySession session, CancellationToken cancellationToken)
+    private async Task UpsertSessionAsync(
+        SqliteConnection connection,
+        GatewaySession session,
+        CancellationToken cancellationToken,
+        SqliteTransaction? transaction = null)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         // P9-I (#674): agent_id column removed — AgentId lives on Conversation.AgentId
         // and is hydrated on load via IAgentIdentityResolver. Writing it here is a no-op
         // post-migration because the column has been ALTER TABLE DROP COLUMN'd.
@@ -2118,19 +2144,25 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         SqliteConnection connection,
         SessionId sessionId,
         SessionHistoryPersistenceSnapshot snapshot,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SqliteTransaction? transaction = null,
+        Func<SessionHistoryPersistenceSnapshot, CancellationToken, Task>? beforeCommit = null)
         => snapshot.RequiresReplacement
-            ? ReconcileHistoryAsync(connection, sessionId, snapshot, cancellationToken)
-            : InsertHistoryAsync(connection, sessionId, snapshot.Entries, cancellationToken);
+            ? ReconcileHistoryAsync(connection, sessionId, snapshot, cancellationToken, transaction, beforeCommit)
+            : InsertHistoryAsync(connection, sessionId, snapshot.Entries, cancellationToken, transaction, snapshot, beforeCommit);
 
     private static async Task<HistoryPersistenceResult> ReconcileHistoryAsync(
         SqliteConnection connection,
         SessionId sessionId,
         SessionHistoryPersistenceSnapshot snapshot,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SqliteTransaction? transaction = null,
+        Func<SessionHistoryPersistenceSnapshot, CancellationToken, Task>? beforeCommit = null)
     {
-        await using var dbTransaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var transaction = (SqliteTransaction)dbTransaction;
+        await using var ownedTransaction = transaction is null
+            ? (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)
+            : null;
+        transaction ??= ownedTransaction!;
 
         var entries = snapshot.Entries;
         var currentPersistedIds = new HashSet<long>();
@@ -2216,7 +2248,10 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         foreach (var recoveredRowId in recoveredRowIds)
             acknowledgedRowIds.Add(recoveredRowId.Key, recoveredRowId.Value);
 
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        if (beforeCommit is not null)
+            await beforeCommit(snapshot, cancellationToken).ConfigureAwait(false);
+        if (ownedTransaction is not null)
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return new HistoryPersistenceResult(acknowledgedRowIds, writeResult.InsertedRowCount, updatedCount, deletedCount);
     }
 
@@ -2424,14 +2459,22 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         SqliteConnection connection,
         SessionId sessionId,
         IReadOnlyList<SessionEntry> entries,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SqliteTransaction? transaction = null,
+        SessionHistoryPersistenceSnapshot? snapshot = null,
+        Func<SessionHistoryPersistenceSnapshot, CancellationToken, Task>? beforeCommit = null)
     {
-        await using var dbTransaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var transaction = (SqliteTransaction)dbTransaction;
+        await using var ownedTransaction = transaction is null
+            ? (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false)
+            : null;
+        transaction ??= ownedTransaction!;
 
         var writeResult = await WriteHistoryRowsAsync(connection, transaction, sessionId, entries, cancellationToken).ConfigureAwait(false);
 
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        if (beforeCommit is not null)
+            await beforeCommit(snapshot!, cancellationToken).ConfigureAwait(false);
+        if (ownedTransaction is not null)
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return new HistoryPersistenceResult(
             writeResult.AcknowledgedRowIds,
             writeResult.InsertedRowCount,
