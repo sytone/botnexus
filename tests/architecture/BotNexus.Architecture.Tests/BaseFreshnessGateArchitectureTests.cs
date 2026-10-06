@@ -24,9 +24,9 @@ namespace BotNexus.Architecture.Tests;
 /// </summary>
 /// <remarks>
 /// Assertions are shape-level on purpose: they require the job, the merge-with-main step, the
-/// architecture-test invocation, the inherited-vs-introduced classification and the main-health
-/// probe's event-driven trigger to all still be present. They deliberately do NOT pin exact
-/// commands, runner images, or the schedule interval, which are maintainer tuning decisions.
+/// architecture-test invocation and the inherited-vs-introduced classification to still be
+/// present. They deliberately do NOT pin exact commands or runner images, which are maintainer
+/// tuning decisions. The removed main-health probe must not come back as a redundant trigger.
 /// Anti-vacuity is asserted first: a scanner that cannot find the file must fail loudly rather
 /// than pass by finding nothing.
 /// </remarks>
@@ -121,79 +121,16 @@ public sealed class BaseFreshnessGateArchitectureTests : ArchitectureTest
     }
 
     [Fact]
-    public void BaseFreshnessWorkflow_ProbesMainHealthOnASchedule()
+    public void BaseFreshnessWorkflow_RunsOnlyOnPullRequestsWithoutMainHealthProbe()
     {
         var text = ReadWorkflow();
-
-        text.ShouldContain("schedule",
-            customMessage: "AC3 of #3173: a red `main` must surface within one gate cycle rather " +
-            "than being discovered via an unrelated PR. That requires a scheduled probe - a " +
-            "pull_request-only workflow can only report to whoever happens to open a PR.");
-    }
-
-    [Fact]
-    public void MainHealthProbe_DoesNotDependOnCronDeliveryAlone()
-    {
-        var text = ReadWorkflow();
-
-        text.ShouldContain("workflow_run",
-            customMessage: "Issue #3715: `schedule` events are delivered best-effort and were " +
-            "measured at 8% of the declared `*/15` rate over 213 h (68 runs against an expected " +
-            "853, median gap 149 min, worst gap 11.4 h). A cron-only probe therefore advertises a " +
-            "detection guarantee GitHub does not honour - during the 2026-08-30 incident `main` " +
-            "sat red for ~90 h. The probe must be driven by an EVENT that fires when `main`'s " +
-            "verdict actually exists, with cron demoted to a backstop. This fence deliberately " +
-            "does not pin the cron interval, which remains a tuning decision; it pins only that a " +
-            "non-cron trigger exists.");
-        text.ShouldContain("CI: Build & Test",
-            customMessage: "Issue #3715: the non-cron trigger must be the completion of the " +
-            "workflow whose conclusion the probe reports, otherwise it fires at a moment when " +
-            "`main`'s verdict is not yet available and reports the PREVIOUS commit's result.");
-    }
-
-    [Fact]
-    public void MainHealthProbe_ReadsOnlyCompletedRuns()
-    {
-        var text = ReadWorkflow();
-
-        text.ShouldContain("--status completed",
-            customMessage: "Issue #3715: the probe is now triggered by `workflow_run`, so it can " +
-            "race an in-progress run on `main`. `gh run list` without `--status completed` returns " +
-            "the newest run regardless of state, whose `conclusion` is null while it is running - " +
-            "which the probe would read as not-a-failure and report a red `main` as fine. " +
-            "Filtering to completed runs is what makes the faster trigger safe.");
-    }
-
-    [Fact]
-    public void Fence_IsNotVacuous_RejectsACronOnlyMainHealthProbe()
-    {
-        // Synthetic regression: the pre-#3715 shape. It has a `schedule` and therefore passes
-        // the AC3 check above, yet its detection latency is whatever GitHub feels like
-        // delivering - measured at 8% of the declared rate. This pins the #3715 detectors as
-        // actually discriminating rather than matching text every workflow contains.
-        const string cronOnlyYaml = """
-            name: "CI: Base Freshness"
-            on:
-              pull_request:
-                branches: [ main ]
-              schedule:
-                - cron: '*/15 * * * *'
-            jobs:
-              main-health:
-                runs-on: ubuntu-latest
-                steps:
-                  - run: gh run list --workflow 'CI: Build & Test' --branch main --limit 1
-            """;
-
-        cronOnlyYaml.ShouldContain("schedule",
-            customMessage: "Sanity: the synthetic pre-#3715 shape really is the cron-only shape.");
-        cronOnlyYaml.ShouldNotContain("workflow_run",
-            customMessage: "Vacuity guard: the cron-only workflow must NOT satisfy the #3715 " +
-            "event-driven check. If it did, that detector would pass on the exact configuration " +
-            "the issue was filed about.");
-        cronOnlyYaml.ShouldNotContain("--status completed",
-            customMessage: "Vacuity guard: the cron-only workflow must NOT satisfy the " +
-            "completed-runs check.");
+        // Inspect YAML keys, not comments: the rationale may still mention retired triggers.
+        text.ShouldNotMatch(@"(?m)^  (workflow_run|schedule|workflow_dispatch):\s*$",
+            customMessage: "The redundant main-health probe must not schedule or follow main CI.");
+        text.ShouldNotMatch(@"(?m)^  main-health:\s*$",
+            customMessage: "The PR merge-tree gate must not include a main-health polling job.");
+        text.ShouldContain("  base-freshness:",
+            customMessage: "Removing the noisy probe must not remove the PR merged-tree gate.");
     }
 
     [Fact]
@@ -257,8 +194,6 @@ public sealed class BaseFreshnessGateArchitectureTests : ArchitectureTest
             on:
               pull_request:
                 branches: [ main ]
-              schedule:
-                - cron: '*/15 * * * *'
             jobs:
               base-freshness:
                 runs-on: ubuntu-latest
@@ -275,7 +210,7 @@ public sealed class BaseFreshnessGateArchitectureTests : ArchitectureTest
         fixedYaml.ShouldContain("BotNexus.Architecture.Tests");
         fixedYaml.ShouldContain("INHERITED");
         fixedYaml.ShouldContain("INTRODUCED");
-        fixedYaml.ShouldContain("schedule");
+        fixedYaml.ShouldNotContain("  main-health:");
     }
 
     // ---- helpers ----

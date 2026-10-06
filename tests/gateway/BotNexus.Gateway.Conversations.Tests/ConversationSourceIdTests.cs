@@ -288,7 +288,7 @@ public sealed class ConversationSourceIdTests
         using var reader = command.ExecuteReader();
         reader.Read().ShouldBeTrue();
 
-        var mapped = ConversationRowMapper.MapConversation(reader);
+        var mapped = reader.MapConversation();
         mapped.SourceId.ShouldBeNull();
         mapped.Source.ShouldBe(ConversationSource.Cron);
     }
@@ -332,7 +332,7 @@ public sealed class ConversationSourceIdTests
         using var reader = command.ExecuteReader();
         reader.Read().ShouldBeTrue();
 
-        ConversationRowMapper.MapConversation(reader).SourceId.ShouldBe(expected);
+        reader.MapConversation().SourceId.ShouldBe(expected);
     }
 
     // ---------------------------------------------------------------------

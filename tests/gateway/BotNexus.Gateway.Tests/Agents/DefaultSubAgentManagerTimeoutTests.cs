@@ -429,7 +429,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
 
 
     [Fact]
-    public async Task RunSubAgentAsync_KillWinsDuringCapture_DeletesOrphanedArtifact()
+    public async Task RunSubAgentAsync_CompletionWinsDuringCapture_DeletesOrphanedArtifact()
     {
         var handle = CreateHandle(async token =>
         {
@@ -470,29 +470,39 @@ public sealed class DefaultSubAgentManagerTimeoutTests
 
         time.Advance(TimeSpan.FromSeconds(300));
         await captureStarted.Task.WaitAsync(HangGuard);
-        var killed = await manager.KillAsync(spawned.SubAgentId, SessionId.From("parent-session"));
+        await manager.OnCompletedAsync(spawned.SubAgentId, "External completion wins.");
         releaseCapture.SetResult(new SubAgentWorktreeSnapshot(
             SubAgentWorktreeSnapshotOutcome.Captured, "worktree", artifactPath, 12, [], false));
         await artifactDeleted.Task.WaitAsync(HangGuard);
         var result = await manager.GetAsync(spawned.SubAgentId);
 
-        killed.ShouldBeTrue();
         result.ShouldNotBeNull();
-        result.Status.ShouldBe(SubAgentStatus.Killed);
+        result.Status.ShouldBe(SubAgentStatus.Completed);
         result.WorktreeSnapshot.ShouldBeNull();
         snapshotService.VerifyAll();
+        snapshotService.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public async Task KillAsync_ExplicitCallerKill_DoesNotCaptureSnapshot()
+    public async Task RunSubAgentAsync_TimeoutCaptureStarted_KillCannotWin()
     {
         var handle = CreateHandle(async token =>
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return new AgentResponse { Content = "unreachable" };
         });
+        var captureStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCapture = new TaskCompletionSource<SubAgentWorktreeSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var snapshotService = new Mock<ISubAgentWorktreeSnapshotService>(MockBehavior.Strict);
-        var (manager, _, _) = CreateManager(handle, new ControllableTimeProvider(), snapshotService: snapshotService.Object);
+        snapshotService
+            .Setup(service => service.CaptureAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                captureStarted.SetResult();
+                return await releaseCapture.Task;
+            });
+        var time = new ControllableTimeProvider();
+        var (manager, _, dispatched) = CreateManager(handle, time, timeoutSecondsBudget: 300, snapshotService: snapshotService.Object);
         var spawned = await manager.SpawnAsync(new SubAgentSpawnRequest
         {
             ParentAgentId = AgentId.From("parent-agent"),
@@ -504,7 +514,58 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             InheritedConversationId = ConversationId.From("inherited-conversation")
         });
 
+        time.Advance(TimeSpan.FromSeconds(300));
+        await captureStarted.Task.WaitAsync(HangGuard);
         var killed = await manager.KillAsync(spawned.SubAgentId, SessionId.From("parent-session"));
+        killed.ShouldBeFalse();
+        time.Advance(TimeSpan.FromSeconds(300));
+        releaseCapture.SetResult(new SubAgentWorktreeSnapshot(
+            SubAgentWorktreeSnapshotOutcome.Captured, "worktree", Path.Combine(Path.GetTempPath(), "timeout-loser.patch"), 12, [], false));
+        await dispatched.Task.WaitAsync(HangGuard);
+        var result = await manager.GetAsync(spawned.SubAgentId);
+
+        result.ShouldNotBeNull();
+        result.Status.ShouldBe(SubAgentStatus.TimedOut);
+        result.WorktreeSnapshot.ShouldNotBeNull();
+        snapshotService.VerifyAll();
+        snapshotService.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task KillAsync_ExplicitCallerKill_DoesNotCaptureSnapshot()
+    {
+        var promptStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = CreateHandle(async token =>
+        {
+            promptStarted.TrySetResult();
+            using var registration = token.Register(() => cancellationObserved.TrySetResult());
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return new AgentResponse { Content = "unreachable" };
+        });
+        var subscription = new Mock<IDisposable>();
+        subscription.Setup(item => item.Dispose()).Callback(() => runExited.TrySetResult());
+        handle.Setup(item => item.ObserveTurns(It.IsAny<Action>())).Returns(subscription.Object);
+        var snapshotService = new Mock<ISubAgentWorktreeSnapshotService>(MockBehavior.Strict);
+        var time = new ControllableTimeProvider();
+        var (manager, _, _) = CreateManager(handle, time, snapshotService: snapshotService.Object);
+        var spawned = await manager.SpawnAsync(new SubAgentSpawnRequest
+        {
+            ParentAgentId = AgentId.From("parent-agent"),
+            ParentSessionId = SessionId.From("parent-session"),
+            Task = "Do background work",
+            TimeoutSeconds = 300,
+            GrantedWritePaths = ["granted"],
+            Mode = new Embody(SubAgentArchetype.General),
+            InheritedConversationId = ConversationId.From("inherited-conversation")
+        });
+
+        await promptStarted.Task.WaitAsync(HangGuard);
+        var killed = await manager.KillAsync(spawned.SubAgentId, SessionId.From("parent-session"));
+        await cancellationObserved.Task.WaitAsync(HangGuard);
+        time.Advance(TimeSpan.FromSeconds(300));
+        await runExited.Task.WaitAsync(HangGuard);
         var result = await manager.GetAsync(spawned.SubAgentId);
 
         killed.ShouldBeTrue();

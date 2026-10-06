@@ -10,6 +10,7 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Xunit.SkippableFact" />
     <PackageReference Include="NetArchTest.Rules" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <!-- #2616: the agent-execution fence enumerates call sites from IL, not from file names. -->
     <PackageReference Include="Mono.Cecil" />
     <PackageReference Include="Vogen" />

@@ -12,8 +12,15 @@ internal static class TagFreeLocalSourceRepository
         // Fetch only HEAD into this fixture-owned bare repository. No release tags or
         // ambient main branch are required in the CI checkout, and sourceRepo is never mutated.
         var fetch = await ProcessRunner.RunAsync(
-            "git", $"-C \"{localRepo}\" fetch --no-tags \"{sourceRepo}\" HEAD:refs/heads/main", timeout: timeout);
+            "git", $"-C \"{localRepo}\" fetch --update-shallow --no-tags \"{sourceRepo}\" HEAD:refs/heads/main", timeout: timeout);
         fetch.ExitCode.ShouldBe(0, fetch.Combined);
+
+        // A shallow GitHub Actions checkout can cause git fetch to reject updating main
+        // with a warning while still returning exit code zero. Prove the ref exists instead
+        // of passing an empty remote to install --latest.
+        var main = await ProcessRunner.RunAsync(
+            "git", $"-C \"{localRepo}\" rev-parse --verify refs/heads/main^{{commit}}", timeout: timeout);
+        main.ExitCode.ShouldBe(0, $"The fixture remote did not publish main.\nFetch: {fetch.Combined}\nRef: {main.Combined}");
         return localRepo;
     }
 }

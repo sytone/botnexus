@@ -1080,11 +1080,10 @@ public sealed class SqliteConversationStore : IConversationStore
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
             var conversationId = reader.GetString(0);
-            // #1627: the summary row ordinals live in ConversationRowMapper.MapSummary - the
+            // #1627: the summary row ordinals live in SqliteDataReaderExtensions.MapSummary - the
             // single source of truth shared with the full-conversation mapper. The roster is
             // resolved once via the batch query above (#1427) to avoid an N+1 participant lookup.
-            summaries.Add(ConversationRowMapper.MapSummary(
-                reader,
+            summaries.Add(reader.MapSummary(
                 rosters.TryGetValue(conversationId, out var roster) ? roster : []));
         }
 
@@ -1157,8 +1156,8 @@ public sealed class SqliteConversationStore : IConversationStore
                 rosters[conversationId] = list;
             }
             // #1627: kind/id/role ordinals (offset past the leading conversation_id) live in
-            // ConversationRowMapper.MapParticipantSummary - one source of truth for this shape.
-            list.Add(ConversationRowMapper.MapParticipantSummary(reader, offset: 1));
+            // SqliteDataReaderExtensions.MapParticipantSummary - one source of truth for this shape.
+            list.Add(reader.MapParticipantSummary(offset: 1));
         }
 
         return rosters.ToDictionary(
@@ -1549,7 +1548,7 @@ public sealed class SqliteConversationStore : IConversationStore
         if (!await reader.ReadAsync(ct).ConfigureAwait(false))
             return null;
 
-        var conversation = ConversationRowMapper.MapConversation(reader, logger);
+        var conversation = reader.MapConversation(logger);
 
         await reader.DisposeAsync().ConfigureAwait(false);
         conversation.ChannelBindings = await LoadBindingsAsync(connection, conversation.ConversationId, ct).ConfigureAwait(false);
@@ -1656,7 +1655,7 @@ public sealed class SqliteConversationStore : IConversationStore
             await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
-                var conversation = ConversationRowMapper.MapConversation(reader, _logger);
+                var conversation = reader.MapConversation(_logger);
                 conversation.ChannelBindings = [];
                 conversation.Participants = [];
                 byId[conversation.ConversationId.Value] = conversation;
@@ -1694,7 +1693,7 @@ public sealed class SqliteConversationStore : IConversationStore
                     list = [];
                     bindingsById[conversationId] = list;
                 }
-                list.Add(ConversationRowMapper.MapBinding(reader, offset: 1));
+                list.Add(reader.MapBinding(offset: 1));
             }
         }
 
@@ -1719,7 +1718,7 @@ public sealed class SqliteConversationStore : IConversationStore
             {
                 var conversationId = reader.GetString(0);
                 if (!byId.ContainsKey(conversationId)
-                    || ConversationRowMapper.MapParticipant(reader, offset: 1, _logger) is not { } participant)
+                    || reader.MapParticipant(offset: 1, _logger) is not { } participant)
                 {
                     continue;
                 }
@@ -1778,7 +1777,7 @@ public sealed class SqliteConversationStore : IConversationStore
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
-            if (ConversationRowMapper.MapParticipant(reader, offset: 0, logger) is { } participant)
+            if (reader.MapParticipant(offset: 0, logger) is { } participant)
                 participants.Add(participant);
         }
 
@@ -1801,7 +1800,7 @@ public sealed class SqliteConversationStore : IConversationStore
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
-            bindings.Add(ConversationRowMapper.MapBinding(reader, offset: 0));
+            bindings.Add(reader.MapBinding(offset: 0));
         }
 
         return bindings;
@@ -2017,7 +2016,7 @@ public sealed class SqliteConversationStore : IConversationStore
     // Dictionary<string, object?> we fall back to an empty dictionary rather than letting the clone
     // (and therefore every list/cache-seed path that clones) abort. This method is static and has no
     // instance logger; the row is degraded silently to a safe default which is acceptable because the
-    // authoritative on-disk read path (ConversationRowMapper.DeserializeMetadata) already logs.
+    // authoritative on-disk read path (SqliteDataReaderExtensions.DeserializeMetadata) already logs.
     private static Dictionary<string, object?> CloneMetadata(IReadOnlyDictionary<string, object?> metadata)
     {
         try
