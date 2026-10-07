@@ -699,6 +699,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             InitialState: new AgentInitialState(
                 SystemPrompt: resumeSystemPrompt,
                 Model: model,
+                ThinkingLevel: effectiveModel.Thinking,
                 Tools: tools,
                 Messages: initialMessages),
             Model: model,

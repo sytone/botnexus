@@ -72,13 +72,6 @@ internal static class OpenAIResponsesRequestBuilder
                 };
                 payload["include"] = new JsonArray { "reasoning.encrypted_content" };
             }
-            else if (!string.Equals(model.Provider, "github-copilot", StringComparison.OrdinalIgnoreCase))
-            {
-                payload["reasoning"] = new JsonObject
-                {
-                    ["effort"] = "none"
-                };
-            }
         }
 
         return payload;

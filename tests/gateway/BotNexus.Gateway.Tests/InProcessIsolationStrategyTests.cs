@@ -717,13 +717,16 @@ public sealed class InProcessIsolationStrategyTests
         return agent!.State.Tools;
     }
 
-    private static AgentOptions GetAgentOptions(IAgentHandle handle)
+    private static BotNexus.Agent.Core.Agent GetAgent(IAgentHandle handle)
     {
         var agentField = handle.GetType().GetField("_agent", BindingFlags.Instance | BindingFlags.NonPublic);
         agentField.ShouldNotBeNull();
-        var agent = agentField!.GetValue(handle) as BotNexus.Agent.Core.Agent;
-        agent.ShouldNotBeNull();
+        return agentField!.GetValue(handle).ShouldBeOfType<BotNexus.Agent.Core.Agent>();
+    }
 
+    private static AgentOptions GetAgentOptions(IAgentHandle handle)
+    {
+        var agent = GetAgent(handle);
         var optionsField = typeof(BotNexus.Agent.Core.Agent).GetField("_options", BindingFlags.Instance | BindingFlags.NonPublic);
         optionsField.ShouldNotBeNull();
         return optionsField!.GetValue(agent).ShouldBeOfType<AgentOptions>();
@@ -886,8 +889,9 @@ public sealed class InProcessIsolationStrategyTests
             descriptor,
             new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-think") });
 
-        var options = GetAgentOptions(handle);
-        var settings = options.GenerationSettings.ShouldBeOfType<GenerationOptions>();
+        var agent = GetAgent(handle);
+        var settings = GetAgentOptions(handle).GenerationSettings.ShouldBeOfType<GenerationOptions>();
+        agent.State.ThinkingLevel.ShouldBe(ThinkingLevel.High);
         settings.Reasoning.ShouldBe(ThinkingLevel.High);
         settings.ContextWindow.ShouldBe(1_000_000);
     }

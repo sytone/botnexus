@@ -54,7 +54,7 @@ public class OpenAIResponsesProviderTests
     }
 
     [Fact]
-    public async Task Stream_WhenNoReasoningOnNonCopilot_SendsReasoningNone()
+    public async Task Stream_WhenReasoningIsUnset_OmitsReasoningOverride()
     {
         var handler = new RecordingHandler();
         var provider = new OpenAIResponsesProvider(
@@ -67,7 +67,8 @@ public class OpenAIResponsesProviderTests
         _ = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
         using var body = JsonDocument.Parse(handler.LastRequestBody!);
-        body.RootElement.GetProperty("reasoning").GetProperty("effort").GetString().ShouldBe("none");
+        body.RootElement.TryGetProperty("reasoning", out _).ShouldBeFalse();
+        body.RootElement.TryGetProperty("include", out _).ShouldBeFalse();
     }
 
     [Fact]
