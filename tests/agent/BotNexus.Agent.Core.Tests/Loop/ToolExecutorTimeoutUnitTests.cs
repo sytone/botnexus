@@ -158,6 +158,42 @@ public sealed class ToolExecutorTimeoutUnitTests
     }
 
     /// <summary>
+    /// A durable interactive wait with no caller-requested expiry must not inherit the generic
+    /// executor deadline. Its checkpoint remains live until the user answers or cancels.
+    /// </summary>
+    [Fact]
+    public void DurableInteractiveWait_WithoutRequestedTimeout_YieldsNoBudget()
+    {
+        var tool = new DurableDeclaringTool(
+            new ToolTimeoutArgument("timeout_seconds", ToolTimeoutUnit.Seconds));
+
+        var resolved = ToolExecutor.ResolveEffectiveTimeout(
+            tool,
+            new Dictionary<string, object?>(),
+            SafetyCap);
+
+        resolved.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Supplying the interactive tool's explicit expiry restores the executor safety boundary;
+    /// the tool's own timeout remains responsible for producing its normal terminal response.
+    /// </summary>
+    [Fact]
+    public void DurableInteractiveWait_WithRequestedTimeout_KeepsSafetyBudget()
+    {
+        var tool = new DurableDeclaringTool(
+            new ToolTimeoutArgument("timeout_seconds", ToolTimeoutUnit.Seconds));
+
+        var resolved = ToolExecutor.ResolveEffectiveTimeout(
+            tool,
+            new Dictionary<string, object?> { ["timeout_seconds"] = 5 },
+            SafetyCap);
+
+        resolved.ShouldBe(SafetyCap);
+    }
+
+    /// <summary>
     /// With no configured safety cap and no tool default there is no budget to widen.
     /// </summary>
     [Fact]
@@ -185,7 +221,7 @@ public sealed class ToolExecutorTimeoutUnitTests
             .ToTimeSpan(5000).ShouldBe(TimeSpan.FromSeconds(5));
     }
 
-    private sealed class DeclaringTool(
+    private class DeclaringTool(
         ToolTimeoutArgument? timeoutArgument,
         TimeSpan? defaultTimeout = null) : IAgentTool
     {
@@ -208,4 +244,7 @@ public sealed class ToolExecutorTimeoutUnitTests
             AgentToolUpdateCallback? onUpdate = null)
             => Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")]));
     }
+
+    private sealed class DurableDeclaringTool(ToolTimeoutArgument timeoutArgument)
+        : DeclaringTool(timeoutArgument), IDurableInteractiveWaitTool;
 }

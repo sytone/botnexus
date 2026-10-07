@@ -27,7 +27,7 @@ public sealed class AskUserTool(
     AgentId agentId,
     SessionId sessionId,
     ConversationId? conversationId,
-    IConversationStore? conversationStore = null) : IAgentTool
+    IConversationStore? conversationStore = null) : IDurableInteractiveWaitTool
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -36,6 +36,7 @@ public sealed class AskUserTool(
 
     public string Name => "ask_user";
     public string Label => "Ask User";
+    public ToolTimeoutArgument? TimeoutArgument => new("timeout_seconds", ToolTimeoutUnit.Seconds);
 
     public Tool Definition => new(
         Name,

@@ -74,12 +74,12 @@ public sealed class SqliteSessionMaintenanceProjectionTests : IDisposable
         var first = await store.ListUnresolvedCrashSentinelsAsync(1);
         var second = await store.ListUnresolvedCrashSentinelsAsync(1, first.NextCursor);
 
-        first.Sessions.Select(session => session.SessionId.Value).ShouldBe(["a"]);
+        first.Rows.Select(row => row.SessionId.Value).ShouldBe(["a"]);
+        first.Rows.ShouldAllBe(row => row.AgentId == AgentId.From("agent-a"));
         first.NextCursor.ShouldBe("a");
-        second.Sessions.Select(session => session.SessionId.Value).ShouldBe(["c"]);
+        second.Rows.Select(row => row.SessionId.Value).ShouldBe(["c"]);
+        second.Rows.ShouldAllBe(row => row.AgentId == AgentId.From("agent-a"));
         second.NextCursor.ShouldBeNull();
-        first.Sessions[0].History.ShouldContain(entry => entry.IsCrashSentinel);
-        second.Sessions[0].History.ShouldContain(entry => entry.IsCrashSentinel);
         conversations.Verify(store => store.GetAsync(
             ConversationId.From("conv-b"), It.IsAny<CancellationToken>()), Times.Never,
             "a non-candidate transcript must not be hydrated during the sentinel scan");

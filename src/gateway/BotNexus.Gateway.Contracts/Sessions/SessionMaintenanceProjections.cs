@@ -3,9 +3,14 @@ using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Abstractions.Sessions;
 
-/// <summary>A bounded page of sessions carrying unresolved crash sentinels.</summary>
+/// <summary>Identity and owner projected for a session carrying an unresolved crash sentinel.</summary>
+public sealed record UnresolvedCrashSentinelRow(
+    SessionId SessionId,
+    AgentId AgentId);
+
+/// <summary>A bounded, transcript-free page of sessions carrying unresolved crash sentinels.</summary>
 public sealed record UnresolvedCrashSentinelPage(
-    IReadOnlyList<GatewaySession> Sessions,
+    IReadOnlyList<UnresolvedCrashSentinelRow> Rows,
     string? NextCursor);
 
 /// <summary>Transcript-free row used to plan one cleanup iteration.</summary>

@@ -200,12 +200,35 @@ public sealed class ChatPanelTests : IDisposable
 
         var composer = cut.Find("[data-testid='chat-composer']");
         composer.ClassList.ShouldContain("composer-active");
+        composer.ClassList.ShouldNotContain("composer-motion-disabled");
         composer.GetAttribute("aria-busy").ShouldBe("true");
         cut.Find("[data-testid='chat-composer-status']").TextContent.ShouldContain("Agent is working");
         cut.Find("[data-testid='chat-input']").GetAttribute("placeholder").ShouldNotBeNull().ShouldContain("steer");
         cut.Find("[data-testid='chat-steer-btn']");
         cut.Find("[data-testid='chat-redirect-btn']");
         cut.Find("[data-testid='chat-followup-btn']");
+        cut.Find("[data-testid='chat-abort-btn']");
+    }
+
+    [Fact]
+    public void Preference_change_stops_motion_immediately_without_hiding_active_semantics()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.GetStreamState("conv-1").IsRunActive = true;
+        var preferences = _ctx.Services.GetRequiredService<IPortalPreferencesService>();
+        var snapshot = new PortalPreferences();
+        preferences.Current.Returns(snapshot);
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
+
+        snapshot.AnimateActiveRunIndicator = false;
+        preferences.OnChanged += Raise.Event<Action>();
+
+        var composer = cut.Find("[data-testid='chat-composer']");
+        composer.ClassList.ShouldContain("composer-active");
+        composer.ClassList.ShouldContain("composer-motion-disabled");
+        composer.GetAttribute("aria-busy").ShouldBe("true");
+        cut.Find("[data-testid='chat-composer-status']").TextContent.ShouldContain("Agent is working");
         cut.Find("[data-testid='chat-abort-btn']");
     }
 

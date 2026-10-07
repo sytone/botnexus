@@ -50,13 +50,18 @@ const recordState = async (page, name, expectedBusy, options = {}) => {
     check('browserState', `${name}:reduced-motion`, reduced && animationName === 'none', `media=${reduced}; animation=${animationName}`);
   }
   if (typeof options.animationTime === 'number') {
-    const actualTime = await composer.evaluate(element => {
+    const visual = await composer.evaluate(element => {
       const item = document.getAnimations().find(candidate => candidate.effect?.target === element && candidate.effect?.pseudoElement === '::before');
-      return item?.currentTime;
+      const style = getComputedStyle(element, '::before');
+      return { currentTime: item?.currentTime, opacity: Number(style.opacity), bottom: style.bottom, height: style.height, offsetPath: style.offsetPath };
     });
-    check('browserState', `${name}:animation-position`, actualTime === options.animationTime, `expected ${options.animationTime}; observed ${actualTime}`);
-    const offsetDistance = await composer.evaluate(element => getComputedStyle(element, '::before').offsetDistance);
-    check('browserState', `${name}:before-offset-distance`, /^\d+(?:\.\d+)?%$/.test(offsetDistance), `computed ::before offset-distance ${offsetDistance}`);
+    check('browserState', `${name}:animation-position`, visual.currentTime === options.animationTime, `expected ${options.animationTime}; observed ${visual.currentTime}`);
+    check('browserState', `${name}:bottom-edge`, visual.bottom !== 'auto' && visual.height === '2px' && visual.offsetPath === 'none', `bottom=${visual.bottom}; height=${visual.height}; offsetPath=${visual.offsetPath}`);
+    check('browserState', `${name}:before-opacity`, Number.isFinite(visual.opacity), `computed ::before opacity ${visual.opacity}`);
+  }
+  if (options.staticMotion) {
+    const visual = await composer.evaluate(element => { const style = getComputedStyle(element, '::before'); return { animationName: style.animationName, opacity: style.opacity, bottom: style.bottom, height: style.height }; });
+    check('browserState', `${name}:static-bottom-edge`, visual.animationName === 'none' && visual.bottom !== 'auto' && visual.height === '2px' && Number(visual.opacity) > 0, JSON.stringify(visual));
   }
   if (options.content) {
     const content = await page.locator('#evidence-agent-conversation-panel [data-testid="streaming-message"]').allTextContents();
@@ -222,39 +227,36 @@ try {
     await mobilePage.locator('[data-testid="mobile-composer"][aria-busy="true"]').waitFor({ state: 'visible', timeout: 15000 });
     await saveCapture(mobilePage, captures, 'mobile-active', { busy: true, mobile: true, conversationId: mobileActive.conversationId });
 
-    const composer = mobilePage.locator('[data-testid="mobile-composer"]').first();
+    const composer = desktopPage.locator('#evidence-agent-conversation-panel [data-testid="chat-composer"]').first();
     const animationName = await composer.evaluate(element => getComputedStyle(element, '::before').animationName);
-    check('browserState', 'animation:active-name', animationName !== 'none', `observed ${animationName}`);
-    const animation = await composer.evaluate(element => document.getAnimations().find(item => item.effect?.target === element && item.effect?.pseudoElement === '::before' && item.playState !== 'idle'));
-    const animationInventory = await composer.evaluate(element => document.getAnimations().map(item => ({ name: item.animationName, pseudo: item.effect?.pseudoElement, target: item.effect?.target?.getAttribute('data-testid'), state: item.playState, time: item.currentTime })).slice(0, 30));
-    check('browserState', 'animation:real-browser-animation', Boolean(animation), `CSS animation is running in the browser: ${JSON.stringify(animationInventory)}`);
-    if (!animation) throw new Error('Active composer CSS animation was not found.');
-    const timing = await composer.evaluate(element => {
-      const item = document.getAnimations().find(candidate => candidate.effect?.target === element && candidate.effect?.pseudoElement === '::before' && candidate.playState !== 'idle');
-      return item?.effect?.getComputedTiming().duration;
-    });
+    check('browserState', 'animation:active-name', animationName === 'composer-bottom-edge-pulse', `observed ${animationName}`);
+    const animation = await composer.evaluateHandle(element => document.getAnimations().find(item => item.effect?.target === element && item.effect?.pseudoElement === '::before' && item.playState !== 'idle'));
+    const hasAnimation = await animation.evaluate(item => Boolean(item));
+    check('browserState', 'animation:real-browser-animation', hasAnimation, 'bottom-edge CSS animation is running in the browser');
+    if (!hasAnimation) throw new Error('Active composer bottom-edge animation was not found.');
+    const timing = await composer.evaluate(element => document.getAnimations().find(item => item.effect?.target === element && item.effect?.pseudoElement === '::before')?.effect?.getComputedTiming().duration);
     check('browserState', 'animation:finite-duration', typeof timing === 'number' && Number.isFinite(timing), `iterationDuration=${timing}`);
-    const initialAnimationTime = await animation.currentTime;
-    const animationPositions = [['animation-start', 0], ['animation-midpoint', timing * 0.5], ['animation-end', Math.max(0, timing - 1)]];
-    const offsetDistances = {};
+    const animationPositions = [['animated-active-low', 0], ['animated-active-high', timing * 0.5]];
+    const opacities = {};
     for (const [name, position] of animationPositions) {
       await composer.evaluate((element, value) => {
-        const item = document.getAnimations().find(candidate => candidate.effect?.target === element && candidate.effect?.pseudoElement === '::before' && candidate.playState !== 'idle');
-        if (!item) throw new Error('Composer animation disappeared before capture.');
+        const item = document.getAnimations().find(candidate => candidate.effect?.target === element && candidate.effect?.pseudoElement === '::before');
+        if (!item) throw new Error('Composer bottom-edge animation disappeared before capture.');
         item.pause();
         item.currentTime = value;
       }, position);
       await composer.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      const offsetDistance = await composer.evaluate(element => getComputedStyle(element, '::before').offsetDistance);
-      check('browserState', `${name}:before-offset-distance`, /^\d+(?:\.\d+)?%$/.test(offsetDistance), `computed ::before offset-distance ${offsetDistance}`);
-      offsetDistances[name] = offsetDistance;
-      await saveCapture(mobilePage, captures, name, { busy: true, mobile: true, animationTime: position });
+      opacities[name] = await composer.evaluate(element => Number(getComputedStyle(element, '::before').opacity));
+      await saveCapture(desktopPage, captures, name, { busy: true, animationTime: position });
     }
-    check('browserState', 'animation:offset-distance-changes', offsetDistances['animation-start'] !== offsetDistances['animation-midpoint'], `start=${offsetDistances['animation-start']}; midpoint=${offsetDistances['animation-midpoint']}`);
-    await composer.evaluate((element, value) => {
-      const item = document.getAnimations().find(candidate => candidate.effect?.target === element && candidate.effect?.pseudoElement === '::before');
-      if (item && typeof value === 'number') { item.play(); item.currentTime = value; }
-    }, initialAnimationTime);
+    check('browserState', 'animation:bottom-edge-opacity-changes', opacities['animated-active-low'] < opacities['animated-active-high'], `low=${opacities['animated-active-low']}; high=${opacities['animated-active-high']}`);
+
+    await desktopPage.locator('[data-testid="banner-settings-btn"]').click();
+    const motionToggle = desktopPage.locator('[data-testid="animate-active-run-toggle"]');
+    await motionToggle.waitFor({ state: 'visible', timeout: 10000 });
+    await motionToggle.uncheck();
+    await desktopPage.locator('[data-testid="portal-settings-close"]').click();
+    await saveCapture(desktopPage, captures, 'preference-disabled-active', { busy: true, staticMotion: true });
 
     const reduced = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
     const reducedPage = await reduced.newPage();

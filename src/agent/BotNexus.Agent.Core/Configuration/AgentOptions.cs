@@ -33,7 +33,12 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="SteeringMode">Controls steering message queue consumption (All or OneAtATime).</param>
 /// <param name="FollowUpMode">Controls follow-up message queue consumption (All or OneAtATime).</param>
 /// <param name="SessionId">Optional caller-provided session identifier (overrides GenerationSettings.SessionId if set).</param>
-/// <param name="DiagnosticObserver">Optional callback for non-fatal runtime diagnostics.</param>
+/// <param name="DiagnosticObserver">
+/// Optional synchronous callback for non-fatal runtime diagnostics. Multicast subscribers are
+/// invoked independently in registration order. Subscriber exceptions, including cancellation
+/// exceptions, are ignored and cannot replace the runtime outcome or stop later subscribers.
+/// Callbacks should return promptly; delivery does not impose a timeout or prevent side effects.
+/// </param>
 /// <param name="MaxRetryDelayMs">
 /// Maximum delay in milliseconds for transient retry backoff, and the ceiling applied to a
 /// server-supplied <c>Retry-After</c>. Must be greater than zero when set.

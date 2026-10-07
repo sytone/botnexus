@@ -85,11 +85,11 @@ function Test-UiEvidenceOutput {
     $actualHash = (Get-FileHash -LiteralPath $screenshotPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actualHash -ne $manifest.screenshot.sha256) { throw 'Screenshot SHA-256 does not match evidence.json.' }
     if ($manifest.PSObject.Properties.Name -contains 'captures' -and $null -ne $manifest.captures) {
-        $expectedCaptures = @('desktop-idle','mobile-idle','mobile-active','active-pre-token','active-tool-gap','focused-active','reduced-motion','returned-idle','animation-start','animation-midpoint','animation-end')
+        $expectedCaptures = @('desktop-idle','mobile-idle','mobile-active','active-pre-token','active-tool-gap','focused-active','reduced-motion','returned-idle','animated-active-low','animated-active-high','preference-disabled-active')
         $captureNames = @($manifest.captures | ForEach-Object { $_.name })
         if ($captureNames.Count -ne $expectedCaptures.Count -or @($captureNames | Select-Object -Unique).Count -ne $expectedCaptures.Count) { throw 'Evidence capture matrix must contain each required state exactly once.' }
         foreach ($name in $expectedCaptures) { if ($captureNames -notcontains $name) { throw "Evidence capture matrix is missing '$name'." } }
-        if (@($manifest.assertions | Where-Object { $_.target -eq 'animation:offset-distance-changes' -and $_.passed }).Count -eq 0) { throw 'Evidence is missing the computed animation offset-distance change assertion.' }
+        if (@($manifest.assertions | Where-Object { $_.target -eq 'animation:bottom-edge-opacity-changes' -and $_.passed }).Count -eq 0) { throw 'Evidence is missing the computed animation bottom-edge opacity change assertion.' }
         foreach ($capture in $manifest.captures) {
             if ($capture.screenshot.path -notmatch '^[A-Za-z0-9._-]+\.png$') { throw "Screenshot path is unsafe for '$($capture.name)'." }
             $capturePath = Join-Path $OutputDirectory $capture.screenshot.path
@@ -103,9 +103,12 @@ function Test-UiEvidenceOutput {
                 $requiredTargets = @("$($capture.name):route", "$($capture.name):composer-selector", "$($capture.name):aria-busy", "$($capture.name):$statusTarget")
                 foreach ($target in $requiredTargets) { if (@($capture.assertions | Where-Object { $_.target -eq $target -and $_.passed }).Count -eq 0) { throw "Mobile capture '$($capture.name)' is missing passing assertion '$target'." } }
             }
-            if ($capture.name -in @('animation-start','animation-midpoint')) {
-                $target = "$($capture.name):before-offset-distance"
-                if (@($capture.assertions | Where-Object { $_.target -eq $target -and $_.passed }).Count -eq 0) { throw "Animation capture '$($capture.name)' is missing computed ::before offset-distance assertion." }
+            if ($capture.name -in @('animated-active-low','animated-active-high')) {
+                $target = "$($capture.name):bottom-edge"
+                if (@($capture.assertions | Where-Object { $_.target -eq $target -and $_.passed }).Count -eq 0) { throw "Animation capture '$($capture.name)' is missing computed bottom-edge assertion." }
+            }
+            if ($capture.name -eq 'preference-disabled-active') {
+                if (@($capture.assertions | Where-Object { $_.target -eq 'preference-disabled-active:static-bottom-edge' -and $_.passed }).Count -eq 0) { throw "Preference-disabled capture is missing the static bottom-edge assertion." }
             }
         }
     }

@@ -281,8 +281,8 @@ public interface ISessionStore
     }
 
     /// <summary>
-    /// Returns one globally-scoped, bounded page of sessions that still contain crash sentinels.
-    /// Implementations should identify candidates without hydrating unrelated transcripts.
+    /// Returns one globally-scoped, bounded, transcript-free page of sessions that still contain crash sentinels.
+    /// Callers hydrate one selected session at a time through <see cref="GetAsync"/>.
     /// </summary>
     async Task<UnresolvedCrashSentinelPage> ListUnresolvedCrashSentinelsAsync(
         int limit,
@@ -296,6 +296,7 @@ public interface ISessionStore
             .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
             .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
             .Take(limit + 1)
+            .Select(session => new UnresolvedCrashSentinelRow(session.SessionId, session.AgentId))
             .ToList();
         var hasMore = rows.Count > limit;
         if (hasMore) rows.RemoveAt(rows.Count - 1);

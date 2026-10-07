@@ -335,21 +335,25 @@ body {
     content: "";
     position: absolute;
     z-index: 2;
-    top: 4px;
     left: 7px;
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #64a0dc;
-    box-shadow: 0 0 7px rgba(100, 160, 220, 0.65);
-    offset-path: inset(4px 7px round 11px);
-    offset-anchor: center;
+    right: 7px;
+    bottom: 4px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--accent, #64a0dc);
+    opacity: 0.45;
     pointer-events: none;
-    animation: mobile-composer-perimeter-travel 3.2s linear infinite;
+    animation: mobile-composer-bottom-edge-pulse 2.4s ease-in-out infinite;
 }
 
-@keyframes mobile-composer-perimeter-travel {
-    to { offset-distance: 100%; }
+@keyframes mobile-composer-bottom-edge-pulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 0.9; }
+}
+
+.bottom-bar.composer-active.composer-motion-disabled::before {
+    animation: none;
+    opacity: 0.7;
 }
 
 .bottom-bar .composer-active-status {
@@ -378,26 +382,18 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
     .bottom-bar.composer-active::before {
-        inset: 4px 7px;
-        width: auto;
-        height: auto;
-        border: 2px solid #64a0dc;
-        border-radius: 11px;
-        background: none;
-        box-shadow: none;
-        offset-path: none;
         animation: none;
+        opacity: 0.7;
     }
 }
 
 @media (forced-colors: active) {
     .bottom-bar.composer-active::before {
         animation: none;
-        border: 0;
-        background: none;
-        mask: none;
-        outline: 2px solid Highlight;
-        outline-offset: -2px;
+        height: 2px;
+        background: Highlight;
+        opacity: 1;
+        forced-color-adjust: none;
     }
 
     .bottom-bar .composer-active-status-dot {

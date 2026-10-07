@@ -67,6 +67,10 @@ namespace BotNexus.Agent.Core.Configuration;
 /// <param name="DiagnosticObserver">
 /// Optional non-fatal diagnostic sink. Used to surface policy-budget breaches so a slow or
 /// wedged policy provider is diagnosable rather than silently stalling the loop.
+/// Multicast subscribers run synchronously in registration order with independent exception
+/// isolation, including subscriber-thrown cancellation. Failures do not replace runtime outcomes
+/// or stop later subscribers. Callbacks should return promptly; no timeout is imposed and side
+/// effects are not prevented. Actual operation cancellation retains its normal propagation.
 /// </param>
 /// <param name="SuspendDetector">
 /// Optional active-time clock used to distinguish policy-budget breaches from host suspension.

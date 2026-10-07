@@ -95,8 +95,11 @@ internal sealed class ProviderCommand
     {
         var cmd = new Command("add", "Add or update a provider non-interactively. Useful for scripts and CI.");
         var nameOpt = new Option<string>("--name", "Provider name (e.g. 'openai', 'integration-mock').") { IsRequired = true };
+        var typeOpt = new Option<string?>("--type", () => null, "Built-in provider type. Use 'microsoft-foundry' for Microsoft Foundry Responses instances.");
         var apiOpt = new Option<string?>("--api", () => null, "API contract handled by this provider (e.g. 'openai-completions', 'openai-responses', 'anthropic-messages', 'integration-mock'). Defaults to 'openai-completions'.");
         var apiKeyOpt = new Option<string?>("--api-key", () => null, "API key value, or 'auth:<name>' to reference an auth.json OAuth entry.");
+        var authenticationOpt = new Option<string?>("--authentication", () => null, "Authentication mode for Microsoft Foundry: entra-default, managed-identity, user-assigned-managed-identity, or api-key.");
+        var clientIdOpt = new Option<string?>("--client-id", () => null, "Client ID for user-assigned managed identity authentication.");
         var baseUrlOpt = new Option<string?>("--base-url", () => null, "Base URL for OpenAI-compatible endpoints, or catalog path for 'integration-mock'.");
         var defaultModelOpt = new Option<string?>("--default-model", () => null, "Default model id for this provider.");
         var modelsOpt = new Option<string[]>("--model", () => Array.Empty<string>(), "Allowed model id (repeatable). Omit to allow all models registered for this provider.")
@@ -106,8 +109,11 @@ internal sealed class ProviderCommand
         var disabledOpt = new Option<bool>("--disabled", () => false, "Mark the provider as disabled. Disabled providers are hidden from the API.");
 
         cmd.AddOption(nameOpt);
+        cmd.AddOption(typeOpt);
         cmd.AddOption(apiOpt);
         cmd.AddOption(apiKeyOpt);
+        cmd.AddOption(authenticationOpt);
+        cmd.AddOption(clientIdOpt);
         cmd.AddOption(baseUrlOpt);
         cmd.AddOption(defaultModelOpt);
         cmd.AddOption(modelsOpt);
@@ -120,15 +126,23 @@ internal sealed class ProviderCommand
             var home = CliPaths.ResolveTarget(target);
             var configPath = Path.Combine(home, "config.json");
             var name = context.ParseResult.GetValueForOption(nameOpt)!;
+            var type = context.ParseResult.GetValueForOption(typeOpt);
             var api = context.ParseResult.GetValueForOption(apiOpt);
             var apiKey = context.ParseResult.GetValueForOption(apiKeyOpt);
+            var authentication = context.ParseResult.GetValueForOption(authenticationOpt);
+            var clientId = context.ParseResult.GetValueForOption(clientIdOpt);
             var baseUrl = context.ParseResult.GetValueForOption(baseUrlOpt);
             var defaultModel = context.ParseResult.GetValueForOption(defaultModelOpt);
             var models = context.ParseResult.GetValueForOption(modelsOpt) ?? Array.Empty<string>();
             var disabled = context.ParseResult.GetValueForOption(disabledOpt);
 
-            context.ExitCode = await new ProviderCommand().ExecuteAddAsync(
-                configPath, name, api, apiKey, baseUrl, defaultModel, models, enabled: !disabled, verbose, CancellationToken.None);
+            context.ExitCode = string.Equals(type, "microsoft-foundry", StringComparison.OrdinalIgnoreCase)
+                ? await new ProviderCommand().ExecuteAddMicrosoftFoundryAsync(
+                    configPath, name, baseUrl, authentication, clientId, apiKey, defaultModel, models,
+                    enabled: !disabled, verbose, CancellationToken.None)
+                : await new ProviderCommand().ExecuteAddAsync(
+                    configPath, name, api, apiKey, baseUrl, defaultModel, models,
+                    enabled: !disabled, verbose, CancellationToken.None);
         });
 
         return cmd;
@@ -246,6 +260,101 @@ internal sealed class ProviderCommand
         }
 
         return 0;
+    }
+
+    internal async Task<int> ExecuteAddMicrosoftFoundryAsync(
+        string configPath,
+        string name,
+        string? baseUrl,
+        string? authenticationType,
+        string? clientId,
+        string? apiKey,
+        string? defaultModel,
+        IReadOnlyCollection<string> models,
+        bool enabled,
+        bool verbose,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return WriteFoundryValidationError("--name is required.");
+        if (!TryValidateFoundryEndpoint(baseUrl, out var endpointError))
+            return WriteFoundryValidationError(endpointError);
+
+        var normalizedAuthentication = authenticationType?.Trim().ToLowerInvariant();
+        var authenticationError = normalizedAuthentication switch
+        {
+            "entra-default" when string.IsNullOrWhiteSpace(clientId) && string.IsNullOrWhiteSpace(apiKey) => null,
+            "managed-identity" when string.IsNullOrWhiteSpace(clientId) && string.IsNullOrWhiteSpace(apiKey) => null,
+            "user-assigned-managed-identity" when !string.IsNullOrWhiteSpace(clientId) && string.IsNullOrWhiteSpace(apiKey) => null,
+            "api-key" when !string.IsNullOrWhiteSpace(apiKey) && string.IsNullOrWhiteSpace(clientId) => null,
+            "user-assigned-managed-identity" => "--client-id is required for user-assigned managed identity, and --api-key is not allowed.",
+            "api-key" => "--api-key is required for API-key authentication, and --client-id is not allowed.",
+            "entra-default" or "managed-identity" => "--client-id and --api-key are not allowed for the selected Entra authentication mode.",
+            _ => "--authentication must be entra-default, managed-identity, user-assigned-managed-identity, or api-key."
+        };
+        if (authenticationError is not null)
+            return WriteFoundryValidationError(authenticationError);
+        if (string.IsNullOrWhiteSpace(defaultModel) && models.Count == 0)
+            return WriteFoundryValidationError("--default-model or at least one --model is required.");
+
+        var resolvedModels = models.Count > 0 ? models.ToArray() : new[] { defaultModel! };
+        var resolvedDefaultModel = string.IsNullOrWhiteSpace(defaultModel) ? resolvedModels[0] : defaultModel;
+        var authentication = new ConfigValueMap().Set("type", normalizedAuthentication);
+        if (!string.IsNullOrWhiteSpace(clientId))
+            authentication.Set("clientId", clientId);
+
+        var patch = new ConfigValueMap()
+            .Set("type", "microsoft-foundry")
+            .Set("enabled", enabled)
+            .Set("api", "microsoft-foundry-responses")
+            .Set("baseUrl", baseUrl!.TrimEnd('/'))
+            .Set("authentication", authentication)
+            .Set("apiKey", normalizedAuthentication == "api-key" ? apiKey : null)
+            .Set("defaultModel", resolvedDefaultModel)
+            .Set("models", resolvedModels);
+
+        var existed = (await CliConfigMutation.ReadAsync(configPath, cancellationToken))
+            .FindEntryKey(ProvidersPath, name) is not null;
+        var exitCode = await CliConfigMutation.ApplyAsync(
+            configPath,
+            document => document.TryPatchEntry(ProvidersPath, name, patch, out var error) ? null : error,
+            "before-provider-update",
+            verbose,
+            cancellationToken,
+            namedSections: [ProvidersPath]);
+        if (exitCode != 0)
+            return exitCode;
+
+        AnsiConsole.MarkupLine(existed
+            ? $"[green]✓[/] Microsoft Foundry provider [green]{name}[/] updated."
+            : $"[green]✓[/] Microsoft Foundry provider [green]{name}[/] added.");
+        exitCode.PrintReceipt();
+        PrintProviderActivationReceipt();
+        return 0;
+    }
+
+    private static bool TryValidateFoundryEndpoint(string? baseUrl, out string error)
+    {
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var endpoint) ||
+            endpoint.Scheme != Uri.UriSchemeHttps ||
+            !endpoint.IsDefaultPort ||
+            endpoint.UserInfo.Length > 0 ||
+            endpoint.Query.Length > 0 ||
+            endpoint.Fragment.Length > 0 ||
+            !string.Equals(endpoint.AbsolutePath.TrimEnd('/'), "/openai/v1", StringComparison.Ordinal))
+        {
+            error = "--base-url must be an HTTPS Microsoft Foundry inference endpoint ending in /openai/v1.";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private static int WriteFoundryValidationError(string error)
+    {
+        AnsiConsole.MarkupLine($"[red]{CliText.SafeDisplay(error)}[/]");
+        return 1;
     }
 
     internal static void PrintProviderActivationReceipt()

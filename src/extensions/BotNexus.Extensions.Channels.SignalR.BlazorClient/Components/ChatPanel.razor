@@ -555,7 +555,7 @@
     }
     else
     {
-        <div class="chat-input-area @(IsStreaming ? "composer-active" : null)"
+        <div class="chat-input-area @(IsStreaming ? "composer-active" : null) @(!AnimateActiveRunIndicator ? "composer-motion-disabled" : null)"
              data-testid="chat-composer"
              aria-busy="@(IsStreaming ? "true" : "false")">
             @if (!IsReadOnly)
@@ -821,6 +821,7 @@
     protected override void OnInitialized()
     {
         Store.OnChanged += HandleStoreChanged;
+        Prefs.OnChanged += HandlePreferenceChanged;
     }
 
     /// <summary>
@@ -871,9 +872,12 @@
         _ = InvokeAsync(StateHasChanged);
     }
 
+    private void HandlePreferenceChanged() => _ = InvokeAsync(StateHasChanged);
+
     public void Dispose()
     {
         Store.OnChanged -= HandleStoreChanged;
+        Prefs.OnChanged -= HandlePreferenceChanged;
         _loadMoreRef?.Dispose();
         _attachmentPasteRef?.Dispose();
     }
@@ -966,6 +970,7 @@ private bool IsStreaming =>
     private string ThinkingBuffer => ActiveConversation?.StreamState.ThinkingBuffer ?? string.Empty;
     private string CurrentStreamBuffer => ActiveConversation?.StreamState.Buffer ?? string.Empty;
     private string ExpandingInputClass => Prefs?.Current?.ExpandingInput == true ? "expanding" : string.Empty;
+    private bool AnimateActiveRunIndicator => Prefs?.Current?.AnimateActiveRunIndicator != false;
 
     private string _inputText = "";
     private sealed record ConversationDraft(string Text, IReadOnlyList<DraftAttachment> Attachments);

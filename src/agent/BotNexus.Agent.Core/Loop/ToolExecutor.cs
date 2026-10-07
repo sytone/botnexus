@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.Diagnostics;
 using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
 using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Tools;
@@ -458,7 +459,8 @@ internal static class ToolExecutor
     /// <summary>
     /// Computes the per-tool cancellation budget as the largest of the configured safety cap, the
     /// tool's declared <see cref="IAgentTool.DefaultTimeout"/>, and any caller-requested timeout
-    /// read from the argument the tool declares via <see cref="IAgentTool.TimeoutArgument"/>.
+    /// read from the argument the tool declares via <see cref="IAgentTool.TimeoutArgument"/>. A
+    /// durable interactive wait that omits its declared expiry is exempt from the generic deadline.
     /// </summary>
     /// <remarks>
     /// The unit of a requested timeout is taken from the tool's declaration, never inferred from the
@@ -491,6 +493,18 @@ internal static class ToolExecutor
         if (declaration is null)
         {
             return effectiveTimeout;
+        }
+
+        // A durable interactive wait owns a persisted checkpoint that remains actionable after the
+        // original turn disappears. Applying the generic safety deadline would publish a false
+        // terminal failure while leaving that checkpoint live. Omission means no caller expiry;
+        // an explicit timeout argument restores ordinary executor budgeting around the tool's own
+        // terminal expiry path.
+        if (tool is IDurableInteractiveWaitTool
+            && !args.ContainsKey(declaration.ArgumentName)
+            && (declaration.DeprecatedAliasName is not { } durableAlias || !args.ContainsKey(durableAlias)))
+        {
+            return null;
         }
 
         // Only the declared argument is consulted, and only in the declared unit. The deprecated
@@ -903,14 +917,7 @@ internal static class ToolExecutor
             "hook's running time stayed within budget. This is not a hook timeout and the tool " +
             "call was not blocked.";
 
-        try
-        {
-            config.DiagnosticObserver?.Invoke(message);
-        }
-        catch
-        {
-            // A misbehaving diagnostic sink must never change the outcome.
-        }
+        DiagnosticNotification.Report(config.DiagnosticObserver, message);
     }
 
     private static AgentToolResult BuildErrorResult(string message)
@@ -935,14 +942,7 @@ internal static class ToolExecutor
             $"(budget {budget.TotalSeconds:F1}s) for tool '{toolCall.Name}' (call {toolCall.Id}). " +
             "Tool call blocked because no policy decision was reached.";
 
-        try
-        {
-            config.DiagnosticObserver?.Invoke(message);
-        }
-        catch
-        {
-            // A misbehaving diagnostic sink must never mask the fail-closed outcome.
-        }
+        DiagnosticNotification.Report(config.DiagnosticObserver, message);
 
         return new ToolPreparation(null, BuildErrorResult(message), true);
     }
