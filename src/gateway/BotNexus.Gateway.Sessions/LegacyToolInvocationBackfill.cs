@@ -26,23 +26,29 @@ public static class LegacyToolInvocationBackfill
         if (batchSize < 1)
             throw new ArgumentOutOfRangeException(nameof(batchSize), "Batch size must be positive.");
 
-        using var connection = SqliteConnectionFactory.Create(connectionString);
-        connection.Open();
-        using var transaction = commit ? connection.BeginTransaction() : null;
-        var rows = ReadBatch(connection, transaction, batchSize);
-        var invocationCount = rows.Select(row => (row.SessionId, row.ToolCallId)).Distinct().Count();
-        var hasMore = HasMore(connection, transaction, rows.Count == 0 ? null : rows[^1].Id);
+        List<LegacyRow> rows;
+        bool hasMore;
+        using (var readConnection = SqliteConnectionFactory.Create(connectionString))
+        {
+            readConnection.Open();
+            rows = ReadBatch(readConnection, transaction: null, batchSize);
+            hasMore = HasMore(readConnection, transaction: null, rows.Count == 0 ? null : rows[^1].Id);
+        }
 
+        var invocationCount = rows.Select(row => (row.SessionId, row.ToolCallId)).Distinct().Count();
         if (!commit)
             return new LegacyToolInvocationBackfillReport(rows.Count, 0, invocationCount, hasMore, false);
 
+        using var writeConnection = SqliteConnectionFactory.Create(connectionString);
+        writeConnection.Open();
+        using var transaction = writeConnection.BeginTransaction();
         foreach (var group in rows.GroupBy(row => (row.SessionId, row.ToolCallId)))
         {
-            UpsertInvocation(connection, transaction!, group);
-            LinkRows(connection, transaction!, group);
+            UpsertInvocation(writeConnection, transaction, group);
+            LinkRows(writeConnection, transaction, group);
         }
 
-        transaction!.Commit();
+        transaction.Commit();
         return new LegacyToolInvocationBackfillReport(rows.Count, rows.Count, invocationCount, hasMore, true);
     }
 

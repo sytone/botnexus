@@ -25,8 +25,21 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         await using var connection = await OpenAsync();
         var columns = await ReadStringsAsync(connection, "SELECT name FROM pragma_table_info('tool_invocations') ORDER BY cid");
         columns.ShouldBe(["id", "session_id", "tool_call_id", "tool_name", "arguments_json", "started_at", "completed_at", "status", "is_error", "result_content", "result_bytes", "result_sha256", "retention_state"]);
-        var indexes = await ReadStringsAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%tool_invocation%' ORDER BY name");
-        indexes.ShouldBe(["idx_session_history_tool_invocation_id", "idx_tool_invocations_retention_completed", "idx_tool_invocations_session_started"]);
+        var indexes = await ReadStringsAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_%tool_invocation%' OR name = 'idx_session_history_unlinked_tool_rows') ORDER BY name");
+        indexes.ShouldBe(["idx_session_history_tool_invocation_id", "idx_session_history_unlinked_tool_rows", "idx_tool_invocations_retention_completed", "idx_tool_invocations_session_started"]);
+
+        var plan = await ReadStringsAsync(connection, """
+            EXPLAIN QUERY PLAN
+            SELECT id
+            FROM session_history
+            WHERE tool_invocation_id IS NULL
+              AND tool_call_id IS NOT NULL
+              AND (message_kind IN ('tool-start', 'tool-result')
+                   OR (message_kind IS NULL AND role = 'tool'))
+            ORDER BY id
+            LIMIT 100
+            """, ordinal: 3);
+        plan.ShouldContain(detail => detail.Contains("USING INDEX idx_session_history_unlinked_tool_rows", StringComparison.Ordinal));
 
         foreach (var sql in new[]
         {
@@ -362,7 +375,7 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         (await reader.ReadAsync()).ShouldBeTrue();
         return new InvocationRow(ReadNullable(reader,0),ReadNullable(reader,1),ReadNullable(reader,2),ReadNullable(reader,3),reader.GetString(4),ReadNullable(reader,5),reader.GetInt64(6),ReadNullable(reader,7),reader.GetInt64(8));
     }
-    private static async Task<List<string>> ReadStringsAsync(SqliteConnection connection,string sql) { await using var command=connection.CreateCommand(); command.CommandText=sql; await using var reader=await command.ExecuteReaderAsync(); var values=new List<string>(); while(await reader.ReadAsync()) values.Add(reader.GetString(0)); return values; }
+    private static async Task<List<string>> ReadStringsAsync(SqliteConnection connection,string sql,int ordinal=0) { await using var command=connection.CreateCommand(); command.CommandText=sql; await using var reader=await command.ExecuteReaderAsync(); var values=new List<string>(); while(await reader.ReadAsync()) values.Add(reader.GetString(ordinal)); return values; }
     private static async Task<long> ScalarLongAsync(SqliteConnection connection,string sql) { await using var command=connection.CreateCommand(); command.CommandText=sql; return Convert.ToInt64(await command.ExecuteScalarAsync()); }
     private static string? ReadNullable(SqliteDataReader reader,int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     public void Dispose() { SqlitePoolCleanup.ClearPoolForConnectionString(ConnectionString); if(Directory.Exists(_directoryPath)) Directory.Delete(_directoryPath,true); }
