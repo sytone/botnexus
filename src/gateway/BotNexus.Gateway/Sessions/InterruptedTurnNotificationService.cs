@@ -156,19 +156,23 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
             {
                 var page = await _sessions.ListUnresolvedCrashSentinelsAsync(pageSize, cursor, cancellationToken)
                     .ConfigureAwait(false);
-                scanned += page.Sessions.Count;
-                foreach (var session in page.Sessions)
+                scanned += page.Rows.Count;
+                foreach (var row in page.Rows)
                 {
-                    if (!registeredAgents.Contains(session.AgentId))
+                    if (!registeredAgents.Contains(row.AgentId))
+                        continue;
+
+                    var session = await _sessions.GetAsync(row.SessionId, cancellationToken).ConfigureAwait(false);
+                    if (session is null || !session.History.Any(static entry => entry.IsCrashSentinel))
                         continue;
 
                     _logger.LogInformation(
                         "Session {SessionId} (agent {AgentId}) has unresolved crash sentinels - notifying user",
-                        session.SessionId.Value, session.AgentId.Value);
+                        row.SessionId.Value, row.AgentId.Value);
                     var isAgentOnlyConversation = await IsAgentOnlyConversationAsync(session, cancellationToken)
                         .ConfigureAwait(false);
                     var didReplay = await RecoverSessionAsync(
-                        session, session.AgentId, isAgentOnlyConversation, cancellationToken).ConfigureAwait(false);
+                        session, row.AgentId, isAgentOnlyConversation, cancellationToken).ConfigureAwait(false);
                     if (didReplay) replayed++;
                     notified++;
                 }

@@ -76,8 +76,11 @@ public sealed class InterruptedTurnNotificationServiceTests
                     .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
                     .Take(limit)
                     .ToList();
-                return new UnresolvedCrashSentinelPage(page, null);
+                return new UnresolvedCrashSentinelPage(page.Select(session => new UnresolvedCrashSentinelRow(session.SessionId, session.AgentId)).ToList(), null);
             });
+        store.Setup(s => s.GetAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SessionId id, CancellationToken _) =>
+                sessions.SingleOrDefault(session => session.SessionId == id));
         store.Setup(s => s.SaveAsync(
                 It.IsAny<GatewaySession>(), It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(SessionSaveOutcome.Persisted);

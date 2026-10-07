@@ -104,6 +104,7 @@ public abstract class SessionStoreBase : ISessionStore
             .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
             .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
             .Take(limit + 1)
+            .Select(session => new UnresolvedCrashSentinelRow(session.SessionId, session.AgentId))
             .ToList();
         var hasMore = rows.Count > limit;
         if (hasMore) rows.RemoveAt(rows.Count - 1);

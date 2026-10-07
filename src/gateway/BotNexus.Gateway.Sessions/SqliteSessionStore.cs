@@ -812,8 +812,9 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
             await using var command = connection.CreateCommand();
             command.CommandText = """
-                SELECT DISTINCT h.session_id
+                SELECT DISTINCT h.session_id, s.conversation_id
                 FROM session_history h
+                INNER JOIN sessions s ON s.id = h.session_id
                 WHERE h.is_crash_sentinel = 1
                   AND ($cursor IS NULL OR h.session_id > $cursor)
                 ORDER BY h.session_id
@@ -821,22 +822,26 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 """;
             command.Parameters.AddWithValue("$cursor", (object?)cursor ?? DBNull.Value);
             command.Parameters.AddWithValue("$limit", limit + 1);
-            var ids = new List<SessionId>();
+            var candidates = new List<(SessionId SessionId, ConversationId ConversationId)>();
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
             {
                 while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-                    ids.Add(SessionId.From(reader.GetString(0)));
+                    candidates.Add((SessionId.From(reader.GetString(0)), ConversationId.From(reader.GetString(1))));
             }
 
-            var hasMore = ids.Count > limit;
-            if (hasMore) ids.RemoveAt(ids.Count - 1);
-            var sessions = new List<GatewaySession>(ids.Count);
-            foreach (var id in ids)
+            var hasMore = candidates.Count > limit;
+            if (hasMore) candidates.RemoveAt(candidates.Count - 1);
+            var rows = new List<UnresolvedCrashSentinelRow>(candidates.Count);
+            foreach (var candidate in candidates)
             {
-                var session = await LoadSessionAsync(connection, id, cancellationToken).ConfigureAwait(false);
-                if (session is not null) sessions.Add(session);
+                var agentId = await ResolveAgentForConversationAsync(candidate.ConversationId.Value, cancellationToken)
+                    .ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(agentId))
+                    rows.Add(new UnresolvedCrashSentinelRow(candidate.SessionId, AgentId.From(agentId)));
             }
-            return new UnresolvedCrashSentinelPage(sessions, hasMore && ids.Count > 0 ? ids[^1].Value : null);
+            return new UnresolvedCrashSentinelPage(
+                rows,
+                hasMore && candidates.Count > 0 ? candidates[^1].SessionId.Value : null);
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 

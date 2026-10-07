@@ -68,7 +68,9 @@ public sealed class InterruptedTurnScanOrderingTests
         var store = new Mock<ISessionStore>();
         store.Setup(s => s.ListUnresolvedCrashSentinelsAsync(
                 It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UnresolvedCrashSentinelPage([session], null));
+            .ReturnsAsync(new UnresolvedCrashSentinelPage([new UnresolvedCrashSentinelRow(session.SessionId, session.AgentId)], null));
+        store.Setup(s => s.GetAsync(session.SessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
         store.Setup(s => s.SaveAsync(
                 It.IsAny<GatewaySession>(), It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(SessionSaveOutcome.Persisted);
