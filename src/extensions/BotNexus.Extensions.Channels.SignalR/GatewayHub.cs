@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Abstractions.Services;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
@@ -73,6 +74,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     // same UserId survives reconnects and conversation history stays keyed to a stable identity.
     private readonly IUserRegistry? _userRegistry;
     private readonly IWorldContext? _worldContext;
+    private readonly IActiveLoopTracker? _activeLoopTracker;
 
     public GatewayHub(
         IAgentSupervisor supervisor,
@@ -86,7 +88,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         IAskUserPromptResolver? askUserPromptResolver = null,
         IAskUserCheckpointService? askUserCheckpointService = null,
         IUserRegistry? userRegistry = null,
-        IWorldContext? worldContext = null)
+        IWorldContext? worldContext = null,
+        IActiveLoopTracker? activeLoopTracker = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -100,6 +103,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _askUserCheckpointService = askUserCheckpointService;
         _userRegistry = userRegistry;
         _worldContext = worldContext;
+        _activeLoopTracker = activeLoopTracker;
     }
 
     /// <summary>
@@ -155,10 +159,15 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // session replacement, so after the join either the edge is observed or this second read
         // authoritatively sees the running continuation.
         var activitySessions = await _app.GetAvailableSessionsAsync(Context.ConnectionAborted);
+        var activeSessionIds = _activeLoopTracker?.GetSnapshot().ActiveLoops
+            .Select(loop => loop.SessionId)
+            .Where(sessionId => !string.IsNullOrWhiteSpace(sessionId))
+            .ToHashSet(StringComparer.Ordinal);
         var activeRuns = activitySessions
-            .Where(session => _supervisor.GetHandle(
-                AgentId.From(session.AgentId),
-                SessionId.From(session.SessionId))?.IsRunning == true)
+            .Where(session => activeSessionIds?.Contains(session.SessionId) ??
+                _supervisor.GetHandle(
+                    AgentId.From(session.AgentId),
+                    SessionId.From(session.SessionId))?.IsRunning == true)
             .Select(session => new RunActivitySnapshot(
                 session.SessionId,
                 session.AgentId,
