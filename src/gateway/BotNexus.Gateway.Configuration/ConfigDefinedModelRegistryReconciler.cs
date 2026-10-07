@@ -15,6 +15,7 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
     private const string Owner = "platform-config";
     private readonly IOptionsMonitor<PlatformConfig> _config;
     private readonly ModelRegistry _registry;
+    private readonly ApiProviderRegistry? _apiProviders;
     private readonly ILogger<ConfigDefinedModelRegistryReconciler> _logger;
     private volatile IReadOnlyDictionary<string, string> _activationFailures =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -24,9 +25,23 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
         IOptionsMonitor<PlatformConfig> config,
         ModelRegistry registry,
         ILogger<ConfigDefinedModelRegistryReconciler> logger)
+        : this(config, registry, apiProviders: null, logger)
+    {
+    }
+
+    /// <summary>
+    /// Creates the production reconciler with the execution-provider registry used to reject
+    /// catalogue entries that cannot be routed by an agent turn.
+    /// </summary>
+    public ConfigDefinedModelRegistryReconciler(
+        IOptionsMonitor<PlatformConfig> config,
+        ModelRegistry registry,
+        ApiProviderRegistry? apiProviders,
+        ILogger<ConfigDefinedModelRegistryReconciler> logger)
     {
         _config = config;
         _registry = registry;
+        _apiProviders = apiProviders;
         _logger = logger;
     }
 
@@ -83,7 +98,7 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
         }
     }
 
-    internal static IReadOnlyList<ModelRegistration> BuildRegistrations(PlatformConfig config)
+    internal IReadOnlyList<ModelRegistration> BuildRegistrations(PlatformConfig config)
     {
         var registrations = new List<ModelRegistration>();
         if (config.Providers is null)
@@ -103,6 +118,10 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
                 throw new ConfigDefinedProviderActivationException(
                     providerName,
                     $"Provider '{providerName}' requires a base URL for openai-completions.");
+            if (_apiProviders is not null && _apiProviders.Get(apiName) is null)
+                throw new ConfigDefinedProviderActivationException(
+                    providerName,
+                    $"Provider '{providerName}' uses unregistered chat API '{apiName}'.");
 
             var modelIds = providerConfig.ResolveChatModels()?.ToList() ?? [];
             if (config.Agents is not null)

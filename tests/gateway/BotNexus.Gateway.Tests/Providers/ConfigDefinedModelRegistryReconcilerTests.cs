@@ -2,6 +2,7 @@ using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 
 namespace BotNexus.Gateway.Tests.Providers;
 
@@ -184,6 +185,49 @@ public sealed class ConfigDefinedModelRegistryReconcilerTests
 
         reconciler.GetActivationFailure("dynamic").ShouldBeNull();
         registry.GetModel("dynamic", "model-a").ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task Reload_UnregisteredApi_KeepsLastKnownGoodCatalogueAndReportsFailure()
+    {
+        var monitor = new TestOptionsMonitor<PlatformConfig>(ConfigWithProvider(
+            "dynamic",
+            enabled: true,
+            baseUrl: "https://one.example/v1",
+            api: "openai-responses",
+            models: ["model-a"]));
+        var registry = new ModelRegistry();
+        using var reconciler = new ConfigDefinedModelRegistryReconciler(
+            monitor,
+            registry,
+            ApiProviders("openai-responses"),
+            NullLogger<ConfigDefinedModelRegistryReconciler>.Instance);
+        await reconciler.StartAsync(CancellationToken.None);
+
+        monitor.RaiseChanged(ConfigWithProvider(
+            "dynamic",
+            enabled: true,
+            baseUrl: "https://two.example/v1",
+            api: "unregistered-chat-api",
+            models: ["model-b"]));
+
+        registry.GetModel("dynamic", "model-a").ShouldNotBeNull();
+        registry.GetModel("dynamic", "model-b").ShouldBeNull();
+        reconciler.GetActivationFailure("dynamic").ShouldBe(
+            "Provider 'dynamic' uses unregistered chat API 'unregistered-chat-api'.");
+    }
+
+    private static ApiProviderRegistry ApiProviders(params string[] apiNames)
+    {
+        var registry = new ApiProviderRegistry();
+        foreach (var apiName in apiNames)
+        {
+            var provider = Substitute.For<IApiProvider>();
+            provider.Api.Returns(apiName);
+            registry.Register(provider);
+        }
+
+        return registry;
     }
 
     private static PlatformConfig ConfigWithProvider(
