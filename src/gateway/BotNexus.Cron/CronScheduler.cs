@@ -18,12 +18,15 @@ public sealed class CronScheduler(
     IServiceScopeFactory scopeFactory,
     IOptionsMonitor<CronOptions> optionsMonitor,
     ILogger<CronScheduler> logger,
-    TimeProvider? timeProvider = null) : BackgroundService
+    TimeProvider? timeProvider = null,
+    IPlannedShutdownState? plannedShutdownState = null) : BackgroundService
 {
     private readonly ICronStore _cronStore = cronStore;
     private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
     private readonly IOptionsMonitor<CronOptions> _optionsMonitor = optionsMonitor;
     private readonly ILogger<CronScheduler> _logger = logger;
+    private readonly IPlannedShutdownState? _plannedShutdownState = plannedShutdownState;
+    private int _previousPlannedShutdownPending = plannedShutdownState?.PreviousShutdownWasPlanned == true ? 1 : 0;
 
     // #3545: manual runs accepted from a short-lived tool call belong to the scheduler. ExecuteAsync
     // publishes the BackgroundService stopping token here, so accepted work outlives its caller
@@ -134,6 +137,15 @@ public sealed class CronScheduler(
     /// orphaned run is never confused with a genuine action failure or a graceful abort (#2410).
     /// </summary>
     internal const string OrphanedRunReason = "Cron run orphaned - no terminal write was recorded by its owning process.";
+
+    /// <summary>
+    /// Durable terminal reason used when a cron occurrence is interrupted by an acknowledged
+    /// planned gateway restart. The same reason is used by graceful host cancellation and by the
+    /// next process's one-time startup reconciliation when the prior process died before its
+    /// terminal write committed.
+    /// </summary>
+    internal const string PlannedRestartReason =
+        "Cron run interrupted by a planned gateway restart; this occurrence was terminalized and was not reported as successful.";
 
     public async Task<CronRun> RunNowAsync(JobId jobId, CancellationToken cancellationToken = default)
     {
@@ -804,7 +816,12 @@ public sealed class CronScheduler(
             // shutdown/cancel). The run was already stamped Running by RecordRunStartAsync above,
             // so record the abort here too - otherwise it stays stuck Running. CancellationToken.None
             // for the write since `ct` is cancelled.
-            await RecordAbortedRunAsync(run.Id, job, triggeredAt).ConfigureAwait(false);
+            await RecordAbortedRunAsync(
+                    run.Id,
+                    job,
+                    triggeredAt,
+                    reason: ResolveHostAbortReason())
+                .ConfigureAwait(false);
             // #2634 (AC2): a one-shot aborted before it even acquired the lock is still terminal --
             // it will never run again on its own -- so the job is removed here too. Leaving it out
             // would rebuild exactly the bug: an early-ending turn leaving the job scheduled forever.
@@ -994,7 +1011,13 @@ public sealed class CronScheduler(
                 _logger.LogWarning(
                     "Cron job aborted (cancellation requested). JobId: {JobId}, ActionType: {ActionType}",
                     job.Id, job.ActionType);
-                await RecordAbortedRunAsync(run.Id, job, triggeredAt, cost: context.Cost).ConfigureAwait(false);
+                await RecordAbortedRunAsync(
+                        run.Id,
+                        job,
+                        triggeredAt,
+                        reason: ResolveHostAbortReason(),
+                        cost: context.Cost)
+                    .ConfigureAwait(false);
                 throw;
             }
             finally
@@ -1940,6 +1963,8 @@ public sealed class CronScheduler(
         var options = _optionsMonitor.CurrentValue ?? new CronOptions();
         var bound = TimeSpan.FromSeconds(Math.Max(1, options.OrphanedRunThresholdSeconds));
 
+        var reconcilePreviousPlannedShutdown =
+            Interlocked.Exchange(ref _previousPlannedShutdownPending, 0) == 1;
         var running = await _cronStore.ListRunningRunsAsync(ct).ConfigureAwait(false);
         if (running.Count == 0)
         {
@@ -1962,14 +1987,18 @@ public sealed class CronScheduler(
             // Rows without a published session retain the bounded age fallback for non-session
             // actions and the short pre-session creation window.
             if (hasActiveExecutor
-                || (!ownerIsTerminal && (now - run.StartedAt).Duration() <= bound))
+                || (!reconcilePreviousPlannedShutdown
+                    && !ownerIsTerminal
+                    && (now - run.StartedAt).Duration() <= bound))
             {
                 continue;
             }
 
-            var reason = ownerIsTerminal
-                ? $"Cron run orphaned - owner session is {ownerState} and no active executor owns the run."
-                : OrphanedRunReason;
+            var reason = reconcilePreviousPlannedShutdown
+                ? PlannedRestartReason
+                : ownerIsTerminal
+                    ? $"Cron run orphaned - owner session is {ownerState} and no active executor owns the run."
+                    : OrphanedRunReason;
 
             await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, reason, ct: ct)
                 .ConfigureAwait(false);
@@ -2066,6 +2095,11 @@ public sealed class CronScheduler(
     /// already cancelled - passing it would cancel the very writes that record the outcome.
     /// </para>
     /// </remarks>
+    private string ResolveHostAbortReason()
+        => _plannedShutdownState?.CurrentShutdownIsPlanned == true
+            ? PlannedRestartReason
+            : "Cron run aborted before completion.";
+
     private async Task RecordAbortedRunAsync(
         RunId runId,
         CronJob job,

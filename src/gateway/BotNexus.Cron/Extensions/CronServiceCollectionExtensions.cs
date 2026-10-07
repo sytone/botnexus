@@ -35,7 +35,13 @@ public static class CronServiceCollectionExtensions
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<SkillReviewCronProvisioner>());
         // Also expose as ISkillReviewProvisioner so AgentsController can call ProvisionAsync at runtime.
         services.TryAddSingleton<ISkillReviewProvisioner>(sp => sp.GetRequiredService<SkillReviewCronProvisioner>());
-        services.TryAddSingleton<CronScheduler>();
+        services.TryAddSingleton<CronScheduler>(sp => new CronScheduler(
+            sp.GetRequiredService<ICronStore>(),
+            sp.GetServices<ICronAction>(),
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<CronOptions>>(),
+            sp.GetRequiredService<ILogger<CronScheduler>>(),
+            plannedShutdownState: sp.GetService<IPlannedShutdownState>()));
         services.AddSingleton<IHostedService>(sp => sp.GetRequiredService<CronScheduler>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, AgentPromptAction>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ICronAction, HeartbeatAction>());

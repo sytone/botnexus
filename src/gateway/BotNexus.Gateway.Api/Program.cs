@@ -307,6 +307,8 @@ builder.Services.AddSignalR(options =>
 builder.Services.AddSingleton(_ => new BotNexus.Gateway.Diagnostics.CleanShutdownMarker(
     new System.IO.Abstractions.FileSystem(),
     BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath()));
+builder.Services.AddSingleton<BotNexus.Cron.IPlannedShutdownState>(services =>
+    services.GetRequiredService<BotNexus.Gateway.Diagnostics.CleanShutdownMarker>());
 builder.Services.AddBotNexusGatewayApi();
 builder.Services.AddCors(options =>
 {

@@ -41,6 +41,24 @@ public sealed class CronOrphanedRunReaperTests
     }
 
     [Fact]
+    public async Task ReapOrphanedRunsAsync_PreviousPlannedShutdown_TerminalizesFreshRunImmediately()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
+        _ = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
+        var scheduler = CreateScheduler(
+            context.Store,
+            shutdownState: new PlannedShutdownState(Current: false, Previous: true));
+
+        var reaped = await scheduler.ReapOrphanedRunsAsync();
+
+        reaped.ShouldBe(1);
+        var terminal = (await context.Store.GetRunHistoryAsync(JobId.From("job-1"))).ShouldHaveSingleItem();
+        terminal.Status.ShouldBe(CronRunStatus.Error);
+        terminal.Error.ShouldBe(CronScheduler.PlannedRestartReason);
+    }
+
+    [Fact]
     public async Task ReapOrphanedRunsAsync_ReapsFutureDatedStartedAtBeyondBound()
     {
         // A future-dated started_at (clock skew, restored DB, forced run) must also be reaped.
@@ -271,7 +289,8 @@ public sealed class CronOrphanedRunReaperTests
     private static CronScheduler CreateScheduler(
         ICronStore store,
         ISessionStore? sessionStore = null,
-        ICronAction? action = null)
+        ICronAction? action = null,
+        IPlannedShutdownState? shutdownState = null)
     {
         var services = new ServiceCollection();
         if (sessionStore is not null)
@@ -288,7 +307,8 @@ public sealed class CronOrphanedRunReaperTests
                 TickIntervalSeconds = 1,
                 OrphanedRunThresholdSeconds = 3600
             }),
-            NullLogger<CronScheduler>.Instance);
+            NullLogger<CronScheduler>.Instance,
+            plannedShutdownState: shutdownState);
     }
 
     private sealed class SessionHoldingAction : ICronAction
@@ -321,6 +341,12 @@ public sealed class CronOrphanedRunReaperTests
         command.Parameters.AddWithValue("$value", value.ToString("O"));
         command.Parameters.AddWithValue("$runId", runId.Value);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private sealed record PlannedShutdownState(bool Current, bool Previous) : IPlannedShutdownState
+    {
+        public bool CurrentShutdownIsPlanned => Current;
+        public bool PreviousShutdownWasPlanned => Previous;
     }
 
     private sealed class StaticOptionsMonitor<T>(T currentValue) : IOptionsMonitor<T>
