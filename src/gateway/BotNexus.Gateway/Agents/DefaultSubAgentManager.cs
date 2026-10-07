@@ -606,7 +606,18 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds), _timeProvider);
         admittedRecord.TimeoutCts = timeoutCts;
 
-        _ = Task.Run(() => RunSubAgentAsync(subAgentId, admittedHandle, request.Task, timeoutSeconds, maxTurns), CancellationToken.None);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await RunSubAgentAsync(subAgentId, admittedHandle, request.Task, timeoutSeconds, maxTurns)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                admittedRecord.MarkRunCompleted();
+            }
+        }, CancellationToken.None);
 
         _logger.LogInformation(
             "Spawned sub-agent '{SubAgentId}' for parent session '{ParentSessionId}' in child session '{ChildSessionId}'.",
@@ -1121,6 +1132,15 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     /// </summary>
     internal bool IsRetiredForTest(string subAgentId)
         => _records.TryGetValue(subAgentId, out var record) && record.RetiredAt is not null;
+
+    /// <summary>
+    /// Returns a diagnostic boundary that completes only after the run-loop frame has exited and
+    /// disposed its method-scoped resources. It does not alter runtime lifecycle semantics.
+    /// </summary>
+    internal Task WaitForRunCompletionForTestAsync(string subAgentId)
+        => _records.TryGetValue(subAgentId, out var record)
+            ? record.RunCompletion
+            : Task.CompletedTask;
 
     /// <inheritdoc />
     public async Task<bool> KillAsync(string subAgentId, SessionId requestingSessionId, CancellationToken ct = default)
@@ -2314,6 +2334,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         private int _completionProcessed;
         private int _cleanupStarted;
         private long _retiredAtTicks;
+        private readonly TaskCompletionSource _runCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <summary>
         /// Strictly-increasing spawn-order sequence, assigned once at construction. Provides a total,
@@ -2345,6 +2366,12 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         /// <summary>The current immutable runtime snapshot. Swapped atomically via <see cref="TryUpdateInfo"/>.</summary>
         public SubAgentInfo Info => Volatile.Read(ref _info);
+
+        /// <summary>Completes after the outer run-loop frame has returned and disposed its locals.</summary>
+        public Task RunCompletion => _runCompletion.Task;
+
+        /// <summary>Signals the post-disposal run-loop boundary exactly once.</summary>
+        public void MarkRunCompleted() => _runCompletion.TrySetResult();
 
         /// <summary>
         /// Atomically applies <paramref name="updateFactory"/> to the current snapshot using a

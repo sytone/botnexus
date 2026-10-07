@@ -544,6 +544,7 @@ public sealed class SubAgentWorkspaceProvisioningTests
             await _childRunExited.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await _unregistered.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Manager.IsRetiredForTest(subAgentId).ShouldBeTrue();
+            await Manager.WaitForRunCompletionForTestAsync(subAgentId).WaitAsync(TimeSpan.FromSeconds(30));
         }
 
         public async ValueTask DisposeAsync()
