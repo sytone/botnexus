@@ -297,7 +297,7 @@ public sealed class SqliteCronStore(
                 await SqliteAdditiveMigration.ExecuteAsync(migrateCost, ct).ConfigureAwait(false);
             }
 
-            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
+            connection.Apply( CurrentSchemaVersion, Migrations);
 
             _initialized = true;
         }

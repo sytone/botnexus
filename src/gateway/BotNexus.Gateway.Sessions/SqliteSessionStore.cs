@@ -1615,7 +1615,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 await DropLegacyAgentIdColumnAsync(connection, cancellationToken).ConfigureAwait(false);
             }
 
-            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
+            connection.Apply( CurrentSchemaVersion, Migrations);
 
             _initialized = true;
         }
