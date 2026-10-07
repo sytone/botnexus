@@ -15,6 +15,49 @@ public sealed class CleanShutdownMarkerTests
     private static string LivenessPath =>
         Path.Combine(DataDir, ".gateway-liveness");
 
+    private static string PlannedPath =>
+        Path.Combine(DataDir, ".gateway-planned-shutdown");
+
+    [Fact]
+    public void PlannedShutdown_CleanStopIsObservedOnceAndClearedOnNextBoot()
+    {
+        var fs = new MockFileSystem();
+        var marker = new CleanShutdownMarker(fs, DataDir);
+        var requested = new DateTimeOffset(2026, 10, 2, 8, 0, 0, TimeSpan.Zero);
+
+        marker.TryMarkPlannedShutdown(requested).ShouldBeTrue();
+        fs.FileExists(PlannedPath).ShouldBeTrue();
+        marker.DetectPreviousRun().WasClean.ShouldBeFalse();
+        marker.WasPreviousShutdownPlanned().ShouldBeFalse();
+
+        marker.MarkCleanShutdown(requested.AddSeconds(1));
+        marker.WasPreviousShutdownPlanned().ShouldBeTrue();
+        marker.MarkRunning();
+        fs.FileExists(PlannedPath).ShouldBeFalse();
+        marker.WasPreviousShutdownPlanned().ShouldBeFalse();
+    }
+
+    [Fact]
+    public void PlannedShutdown_StaleIntentCannotDescribeLaterCleanStop()
+    {
+        var fs = new MockFileSystem();
+        var marker = new CleanShutdownMarker(fs, DataDir);
+        var stopped = new DateTimeOffset(2026, 10, 2, 8, 0, 0, TimeSpan.Zero);
+        marker.TryMarkPlannedShutdown(stopped.AddSeconds(1)).ShouldBeTrue();
+        marker.MarkCleanShutdown(stopped);
+        marker.WasPreviousShutdownPlanned().ShouldBeFalse();
+    }
+
+    [Fact]
+    public void PlannedShutdown_UnreadableIntentRefusesAcknowledgement()
+    {
+        var fs = new MockFileSystem();
+        fs.AddFile(PlannedPath, new MockFileData("not-a-timestamp"));
+        var marker = new CleanShutdownMarker(fs, DataDir);
+        // The on-disk intent must be parseable; a corrupt file is not evidence of a planned stop.
+        marker.WasPreviousShutdownPlanned().ShouldBeFalse();
+    }
+
     // ---- #3680: the unclean branch must be able to report a real last-alive instant ----
 
     /// <summary>

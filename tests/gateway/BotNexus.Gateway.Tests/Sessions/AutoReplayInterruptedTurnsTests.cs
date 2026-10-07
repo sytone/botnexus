@@ -9,6 +9,8 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Diagnostics;
+using System.IO.Abstractions.TestingHelpers;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -140,7 +142,8 @@ public sealed class AutoReplayInterruptedTurnsTests
         IActivityBroadcaster? broadcaster = null,
         IConversationEventPublisher? eventPublisher = null,
         IConversationStore? conversationStore = null,
-        SessionLifecycleEvents? lifecycleEvents = null)
+        SessionLifecycleEvents? lifecycleEvents = null,
+        CleanShutdownMarker? shutdownMarker = null)
     {
         broadcaster ??= Mock.Of<IActivityBroadcaster>();
         eventPublisher ??= Mock.Of<IConversationEventPublisher>();
@@ -153,7 +156,8 @@ public sealed class AutoReplayInterruptedTurnsTests
             orchestrator,
             options is not null ? Options.Create(options) : null,
             conversationStore,
-            lifecycleEvents);
+            lifecycleEvents,
+            shutdownMarker);
     }
 
     // ── Tests ──────────────────────────────────────────────────────────────
@@ -181,6 +185,31 @@ public sealed class AutoReplayInterruptedTurnsTests
         broadcaster.Verify(publisher => publisher.PublishAsync(
             It.IsAny<GatewayActivity>(), It.IsAny<CancellationToken>()), Times.Never);
         orchestrator.Verify(orchestration => orchestration.Post(It.IsAny<InboundMessage>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PlannedRestart_ReplaysHumanTurnWithoutInstallationOptIn()
+    {
+        var session = CreateSession("planned-human", "agent-a", withSentinel: true,
+            channelType: ChannelKey.From("signalr"), lastUserContent: "continue after restart");
+        var fs = new MockFileSystem();
+        var marker = new CleanShutdownMarker(fs, "/data");
+        var requested = new DateTimeOffset(2026, 10, 7, 5, 0, 0, TimeSpan.Zero);
+        marker.TryMarkPlannedShutdown(requested).ShouldBeTrue();
+        marker.MarkCleanShutdown(requested.AddSeconds(1));
+        marker.WasPreviousShutdownPlanned().ShouldBeTrue();
+        marker.MarkRunning();
+
+        var store = CreateStore(session);
+        var orchestrator = CreateOrchestrator();
+        var service = CreateService(store.Object, CreateRegistry("agent-a"),
+            new GatewayOptions { AutoReplayInterruptedTurns = false, MaxAutoReplayAttempts = 2 },
+            orchestrator.Object, shutdownMarker: marker);
+
+        await service.StartedAsync(CancellationToken.None);
+
+        orchestrator.Verify(o => o.Post(It.Is<InboundMessage>(m =>
+            m.Content == "continue after restart" && (bool)m.Metadata["isReplay"]!)), Times.Once);
     }
 
     [Fact]

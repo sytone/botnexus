@@ -8,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -92,6 +93,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
     private readonly GatewayOptions _options;
     private readonly IConversationStore? _conversations;
     private readonly SessionLifecycleEvents? _lifecycleEvents;
+    private readonly CleanShutdownMarker? _shutdownMarker;
     private readonly ConditionalWeakTable<GatewaySession, SemaphoreSlim> _recoveryGates = new();
 
     /// <summary>
@@ -106,7 +108,8 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         IInboundMessageOrchestrator? orchestrator,
         IOptions<GatewayOptions>? options,
         IConversationStore? conversations = null,
-        SessionLifecycleEvents? lifecycleEvents = null)
+        SessionLifecycleEvents? lifecycleEvents = null,
+        CleanShutdownMarker? shutdownMarker = null)
     {
         _sessions = sessions;
         _agentRegistry = agentRegistry;
@@ -117,6 +120,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         _options = options?.Value ?? new GatewayOptions();
         _conversations = conversations;
         _lifecycleEvents = lifecycleEvents;
+        _shutdownMarker = shutdownMarker;
     }
 
     /// <inheritdoc />
@@ -256,7 +260,9 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         };
         session.AddEntry(notification);
 
-        var shouldAttemptReplay = (_options.AutoReplayInterruptedTurns || isAgentOnlyConversation)
+        var shouldAttemptReplay = (_options.AutoReplayInterruptedTurns
+                || isAgentOnlyConversation
+                || _shutdownMarker?.PreviousShutdownWasPlanned == true)
             && session.IsInteractive
             && _orchestrator is not null;
         var didReplay = shouldAttemptReplay

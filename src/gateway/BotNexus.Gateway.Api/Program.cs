@@ -304,6 +304,9 @@ static string? ResolveCronModel(CronJobConfig config)
 builder.Services.AddExtensionLoading();
 builder.Services.AddSignalR(options =>
     SignalRHubLimits.Apply(options, startupPlatformConfig.Gateway?.SignalR));
+builder.Services.AddSingleton(_ => new BotNexus.Gateway.Diagnostics.CleanShutdownMarker(
+    new System.IO.Abstractions.FileSystem(),
+    BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath()));
 builder.Services.AddBotNexusGatewayApi();
 builder.Services.AddCors(options =>
 {
@@ -689,8 +692,6 @@ void InstallCrashObservability(WebApplication application)
 {
     try
     {
-        var dataDirectory = BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath();
-
         // 1. Last-chance fault handler: flush a structured [FTL] breadcrumb the instant the
         //    process is about to die (unhandled exception / unobserved task / abrupt exit), so
         //    even a dump-less hard exit leaves an investigable trail.
@@ -703,10 +704,10 @@ void InstallCrashObservability(WebApplication application)
 
         // 2. Detect how the previous run ended using the clean-shutdown marker, then clear it for
         //    this run so any subsequent hard exit is detectable as unclean on the next boot.
-        var marker = new BotNexus.Gateway.Diagnostics.CleanShutdownMarker(
-            new System.IO.Abstractions.FileSystem(),
-            dataDirectory);
+        var marker = application.Services.GetRequiredService<BotNexus.Gateway.Diagnostics.CleanShutdownMarker>();
         var previousRun = marker.DetectPreviousRun();
+        if (marker.WasPreviousShutdownPlanned())
+            application.Logger.LogInformation("Previous gateway shutdown was requested through the planned lifecycle endpoint");
         // Clause 3 of #3680: with no stamp of any kind there is nothing useful to say about when
         // the gateway was last alive, so the builder omits the timestamp clause entirely rather
         // than printing a placeholder that reads like a transient lookup failure.

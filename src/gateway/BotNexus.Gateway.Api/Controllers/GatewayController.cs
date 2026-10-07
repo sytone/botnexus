@@ -1,4 +1,6 @@
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Diagnostics;
+using BotNexus.Gateway.Dispatching;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -11,10 +13,14 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/gateway")]
 public sealed class GatewayController(
     IOptions<GatewayOptions> options,
-    IHostApplicationLifetime? hostLifetime = null) : ControllerBase
+    IHostApplicationLifetime hostLifetime,
+    CleanShutdownMarker shutdownMarker,
+    IInboundAdmissionControl admissionControl) : ControllerBase
 {
     private readonly GatewayOptions _options = options.Value;
-    private readonly IHostApplicationLifetime? _hostLifetime = hostLifetime;
+    private readonly IHostApplicationLifetime _hostLifetime = hostLifetime;
+    private readonly CleanShutdownMarker _shutdownMarker = shutdownMarker;
+    private readonly IInboundAdmissionControl _admissionControl = admissionControl;
 
     /// <summary>Returns runtime and build information about the running gateway.</summary>
     [HttpGet("info")]
@@ -37,11 +43,12 @@ public sealed class GatewayController(
     [HttpPost("shutdown")]
     public IActionResult Shutdown()
     {
-        if (_hostLifetime is null)
+        if (!_shutdownMarker.TryMarkPlannedShutdown(DateTimeOffset.UtcNow))
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
 
+        _admissionControl.TryBeginQuiesce();
         HttpContext.Response.OnCompleted(() =>
         {
             _hostLifetime.StopApplication();

@@ -1,5 +1,8 @@
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Diagnostics;
+using BotNexus.Gateway.Dispatching;
+using System.IO.Abstractions.TestingHelpers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -19,7 +22,8 @@ public sealed class GatewayLifecycleControllerTests
         var responseFeature = new RecordingResponseFeature();
         var features = new FeatureCollection();
         features.Set<Microsoft.AspNetCore.Http.Features.IHttpResponseFeature>(responseFeature);
-        var controller = new GatewayController(Options.Create(new GatewayOptions()), lifetime)
+        var marker = new CleanShutdownMarker(new MockFileSystem(), Path.Combine(Path.GetTempPath(), "planned-shutdown-controller"));
+        var controller = new GatewayController(Options.Create(new GatewayOptions()), lifetime, marker, Substitute.For<IInboundAdmissionControl>())
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext(features) }
         };
@@ -30,6 +34,43 @@ public sealed class GatewayLifecycleControllerTests
         lifetime.DidNotReceive().StopApplication();
         await responseFeature.CompleteAsync();
         lifetime.Received(1).StopApplication();
+    }
+
+    [Fact]
+    public async Task Shutdown_PersistsIntentBeforeAcknowledgingAndStopsOnlyAfterResponse()
+    {
+        var fs = new MockFileSystem();
+        var marker = new CleanShutdownMarker(fs, Path.Combine(Path.GetTempPath(), "planned-shutdown-controller"));
+        var lifetime = Substitute.For<IHostApplicationLifetime>();
+        var responseFeature = new RecordingResponseFeature();
+        var features = new FeatureCollection();
+        features.Set<IHttpResponseFeature>(responseFeature);
+        var controller = new GatewayController(Options.Create(new GatewayOptions()), lifetime, marker, Substitute.For<IInboundAdmissionControl>())
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext(features) }
+        };
+
+        controller.Shutdown().ShouldBeOfType<AcceptedResult>();
+        marker.MarkCleanShutdown();
+        marker.WasPreviousShutdownPlanned().ShouldBeTrue();
+        lifetime.DidNotReceive().StopApplication();
+        await responseFeature.CompleteAsync();
+        lifetime.Received(1).StopApplication();
+    }
+
+    [Fact]
+    public void Shutdown_ClosesAdmissionBeforeAcknowledging()
+    {
+        var lifetime = Substitute.For<IHostApplicationLifetime>();
+        var admission = Substitute.For<IInboundAdmissionControl>();
+        var marker = new CleanShutdownMarker(new MockFileSystem(), Path.Combine(Path.GetTempPath(), "planned-shutdown-admission"));
+        var controller = new GatewayController(Options.Create(new GatewayOptions()), lifetime, marker, admission)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+
+        controller.Shutdown().ShouldBeOfType<AcceptedResult>();
+        admission.Received(1).TryBeginQuiesce();
     }
 
     private sealed class RecordingResponseFeature : Microsoft.AspNetCore.Http.Features.IHttpResponseFeature

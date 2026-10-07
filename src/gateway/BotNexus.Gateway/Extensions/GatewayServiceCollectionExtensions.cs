@@ -503,6 +503,8 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IChannelDispatcher>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.TryAddSingleton<IInboundMessageProcessor>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.TryAddSingleton<IInboundMessageOrchestrator>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>().Orchestrator);
+        services.TryAddSingleton<IInboundAdmissionControl>(serviceProvider =>
+            (IInboundAdmissionControl)serviceProvider.GetRequiredService<GatewayHost>().Orchestrator);
         services.AddSingleton<IHostedService>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.AddSingleton<IHostedService>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionWarmupService>());
@@ -515,7 +517,8 @@ public static class GatewayServiceCollectionExtensions
             sp.GetService<IInboundMessageOrchestrator>(),
             sp.GetService<IOptions<GatewayOptions>>(),
             sp.GetService<IConversationStore>(),
-            sp.GetService<SessionLifecycleEvents>()));
+            sp.GetService<SessionLifecycleEvents>(),
+            sp.GetService<Diagnostics.CleanShutdownMarker>()));
         services.AddHostedService<SessionCleanupService>();
         // Session/conversation consistency monitor + safe auto-heal path (#2046).
         services.TryAddSingleton<Sessions.SessionConsistencyChecker>();
