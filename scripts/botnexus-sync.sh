@@ -29,14 +29,10 @@ gateway_is_running() {
 }
 
 gateway_stop() {
-    local pidfile="$1" label="$2"
-    if [[ -f "$pidfile" ]]; then
-        local pid; pid=$(cat "$pidfile")
-        log "[$label] Stopping gateway (pid $pid)..."
-        kill "$pid" 2>/dev/null || true
-        sleep 2; kill -9 "$pid" 2>/dev/null || true
-        rm -f "$pidfile"
-    fi
+    local repo="$1" home="$2" label="$3"
+    log "[$label] Stopping gateway through the CLI..."
+    BOTNEXUS_HOME="$home" "$DOTNET" "$repo/src/gateway/BotNexus.Cli/bin/Debug/net10.0/BotNexus.Cli.dll" \
+        gateway stop --source "$repo" --target "$home" >> "$LOG_FILE" 2>&1
 }
 
 gateway_start() {
@@ -54,7 +50,7 @@ gateway_start() {
         log "[$label] Started (pid $pid)"
     else
         log "[$label] ERROR: Exited immediately — check $logfile"
-        rm -f "$pidfile"; return 1
+        return 1
     fi
 }
 
@@ -121,7 +117,7 @@ sync_instance() {
     log "[$label] Extensions deployed."
 
     if gateway_is_running "$pidfile"; then
-        gateway_stop "$pidfile" "$label"
+        gateway_stop "$repo" "$home" "$label"
     fi
     gateway_start "$dll" "$home" "$port" "$pidfile" "$gwlog" "$label"
 }
