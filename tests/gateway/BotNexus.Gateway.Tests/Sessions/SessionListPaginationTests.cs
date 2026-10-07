@@ -204,6 +204,26 @@ public sealed class SessionListPaginationTests : IDisposable
 
     // SQLite store: filter-then-window, with a real LIMIT/OFFSET over the filtered set.
 
+    [Fact]
+    public void BoundedSummaryPageSql_MaterializesThePageBeforeCountingHistory()
+    {
+        var sql = SqliteSessionStore.BuildBoundedSummaryPageSql(
+            "WHERE s.conversation_id IN ($conv0)");
+
+        var boundedPage = sql.IndexOf("bounded_sessions AS MATERIALIZED", StringComparison.Ordinal);
+        var limit = sql.IndexOf("LIMIT $limit OFFSET $offset", StringComparison.Ordinal);
+        var historyCount = sql.IndexOf("FROM session_history h", StringComparison.Ordinal);
+
+        boundedPage.ShouldBeGreaterThanOrEqualTo(0);
+        limit.ShouldBeGreaterThan(boundedPage);
+        historyCount.ShouldBeGreaterThan(limit,
+            "history counting must consume the materialized bounded page rather than precede its LIMIT");
+        sql.Contains("WHERE h.session_id = b.id", StringComparison.Ordinal).ShouldBeTrue(
+            "the existing session_history(session_id) index must be addressable once per selected session");
+        sql.Contains("GROUP BY session_id", StringComparison.Ordinal).ShouldBeFalse(
+            "a corpus-wide history aggregate defeats a bounded outer page");
+    }
+
     /// <summary>
     /// #2532 AC1, at the store. With sessions for two agents interleaved, a page requested for one
     /// agent must be a page of THAT AGENT'S rows - not a page of the raw table that happens to

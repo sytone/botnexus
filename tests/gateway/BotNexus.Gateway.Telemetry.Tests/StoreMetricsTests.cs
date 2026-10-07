@@ -66,6 +66,30 @@ public sealed class StoreMetricsTests
     }
 
     [Fact]
+    public void Operation_RecordsManagedAllocationWithTheSameBoundedTags()
+    {
+        using var meter = new Meter("BotNexus.Test.StoreMetrics.Allocation");
+        var observed = new List<(string Name, double Value, IReadOnlyDictionary<string, string> Tags)>();
+        using var listener = Listen(meter, observed);
+        var metrics = new StoreMetrics(new BotNexusMetrics(meter));
+
+        using (var operation = metrics.Start("session", "summary-page", recordAllocatedBytes: true))
+        {
+            _ = new byte[1024];
+            operation.Complete(rows: 7);
+        }
+
+        var allocation = observed.Single(item => item.Name == StoreMetrics.AllocatedBytesInstrumentName);
+        allocation.Value.ShouldBeGreaterThanOrEqualTo(0);
+        allocation.Tags.ShouldBe(new Dictionary<string, string>
+        {
+            ["operation"] = "summary-page",
+            ["outcome"] = "success",
+            ["store"] = "session"
+        }, ignoreOrder: true);
+    }
+
+    [Fact]
     public async Task MetricsFailure_DoesNotAlterSuccessfulStoreResult()
     {
         var metrics = new StoreMetrics(new ThrowingMetrics());

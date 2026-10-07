@@ -1259,8 +1259,9 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
+        using var metric = _storeMetrics?.Start("session", "summary-page", recordAllocatedBytes: true);
 
-        return await RetryOnTransientAsync(async () =>
+        var result = await RetryOnTransientAsync(async () =>
         {
             await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
 
@@ -1329,19 +1330,16 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             }
 
             await using var command = connection.CreateCommand();
-            command.CommandText = $"""
-                SELECT s.id, s.channel_type, s.session_type, s.status,
-                       s.created_at, s.updated_at, s.conversation_id,
-                       COALESCE(h.cnt, 0) AS message_count
-                FROM sessions s
-                LEFT JOIN (
-                    SELECT session_id, COUNT(*) AS cnt
-                    FROM session_history
-                    GROUP BY session_id
-                ) h ON h.session_id = s.id
-                {where}
-                ORDER BY s.updated_at DESC, s.id ASC
-                """;
+            command.CommandText = boundedInSql
+                ? BuildBoundedSummaryPageSql(where)
+                : $"""
+                    SELECT s.id, s.channel_type, s.session_type, s.status,
+                           s.created_at, s.updated_at, s.conversation_id,
+                           (SELECT COUNT(*) FROM session_history h WHERE h.session_id = s.id) AS message_count
+                    FROM sessions s
+                    {where}
+                    ORDER BY s.updated_at DESC, s.id ASC
+                    """;
 
             if (conversationIds is not null)
             {
@@ -1351,7 +1349,6 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
             if (boundedInSql)
             {
-                command.CommandText += "\nLIMIT $limit OFFSET $offset";
                 command.Parameters.AddWithValue("$limit", query.Limit!.Value);
                 command.Parameters.AddWithValue("$offset", offset);
             }
@@ -1386,7 +1383,31 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 totalCount,
                 offset + summaries.Count < totalCount);
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
+        metric?.Complete(result.Items.Count);
+        return result;
     }
+
+    /// <summary>
+    /// Builds the common bounded page query so SQLite must materialize the filtered session
+    /// window before it performs indexed history counts. The explicit materialization fence is
+    /// intentional: without it the optimizer may flatten the CTE and recover the former
+    /// corpus-wide work shape even though the outer result remains row-bounded.
+    /// </summary>
+    internal static string BuildBoundedSummaryPageSql(string where) => $"""
+        WITH bounded_sessions AS MATERIALIZED (
+            SELECT s.id, s.channel_type, s.session_type, s.status,
+                   s.created_at, s.updated_at, s.conversation_id
+            FROM sessions s
+            {where}
+            ORDER BY s.updated_at DESC, s.id ASC
+            LIMIT $limit OFFSET $offset
+        )
+        SELECT b.id, b.channel_type, b.session_type, b.status,
+               b.created_at, b.updated_at, b.conversation_id,
+               (SELECT COUNT(*) FROM session_history h WHERE h.session_id = b.id) AS message_count
+        FROM bounded_sessions b
+        ORDER BY b.updated_at DESC, b.id ASC
+        """;
 
     /// <summary>
     /// Projects a metadata-only session row plus its resolved agent into a
