@@ -339,6 +339,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         if (conversation is null)
             throw new HubException($"Conversation '{normalizedConversationId.Value}' not found.");
 
+        // Join before resolving either a live waiter or durable continuation. The durable path can
+        // synchronously start an internal-origin run and publish RunStarted; without this membership
+        // edge, the browser that submitted the answer can miss the continuation it just initiated.
+        await SubscribeConversationInternalAsync(normalizedConversationId);
+
         // #2654: there is deliberately NO channel-binding check here. Whether the conversation
         // carries a `signalr` binding is a ROUTING property owned by fan-out, not a statement about
         // who is calling, so gating on it made a prompt on a non-SignalR conversation permanently

@@ -700,7 +700,20 @@ public sealed class SignalRHubTests
         });
 
         var resumed = new List<AskUserRequest>();
-        var resumer = new DelegatingResumer((req, _) => { resumed.Add(req); return Task.CompletedTask; });
+        var groups = new Mock<IGroupManager>();
+        var joinedBeforeResume = false;
+        groups.Setup(value => value.AddToGroupAsync(
+                "conn-1",
+                SignalRChannelAdapter.GetConversationGroup(conversation.ConversationId.Value),
+                It.IsAny<CancellationToken>()))
+            .Callback(() => joinedBeforeResume = true)
+            .Returns(Task.CompletedTask);
+        var resumer = new DelegatingResumer((req, _) =>
+        {
+            joinedBeforeResume.ShouldBeTrue("the answering connection must join before the continuation can publish RunStarted");
+            resumed.Add(req);
+            return Task.CompletedTask;
+        });
 
         // The #2322 resolver is the front door for every channel; with no live waiter it reports
         // NoPendingPrompt, which is precisely what makes the hub fall through to the durable
@@ -710,9 +723,11 @@ public sealed class SignalRHubTests
             resolver, conversationStore, NullLogger<AskUserCheckpointService>.Instance, resumer);
 
         var hub = CreateHub(
+            groups: groups.Object,
             conversationStore: conversationStore,
             askUserPromptResolver: resolver,
-            askUserCheckpointService: checkpointService);
+            askUserCheckpointService: checkpointService,
+            connectionId: "conn-1");
 
         await hub.RespondToAskUser(conversation.ConversationId.Value, "req-restart", "resumed answer", null, cancelled: false);
 
