@@ -26,6 +26,8 @@
     <None Include="ConfigPathResolutionBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
     <!-- #4567: production configuration authority debt is an exact shrink-only ceiling. -->
     <None Include="ConfigurationAuthorityBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
+    <!-- #3114: reviewed current-source classification for subject-shaped static helpers. -->
+    <None Include="StaticHelperClassification.csv" CopyToOutputDirectory="PreserveNewest" />
     <!-- Finite waits are frozen so new timing-based synchronization cannot enter the test suite. -->
     <None Include="TestDelayFlakeBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
