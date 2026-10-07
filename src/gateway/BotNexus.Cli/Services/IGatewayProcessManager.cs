@@ -16,19 +16,24 @@ public interface IGatewayProcessManager
     /// </returns>
     Task<GatewayStartResult> StartAsync(GatewayStartOptions options, CancellationToken cancellationToken = default);
 
+    /// <summary>Requests authenticated planned shutdown without requiring a PID or process handle.</summary>
+    Task<bool> RequestPlannedShutdownAsync(
+        string? homePath,
+        string gatewayUrl,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
-    /// Stops the running gateway process by sending a hard kill signal.
-    /// Waits up to 5 seconds for the process to exit, then deletes the PID file.
+    /// Requests planned shutdown through the gateway API, waits boundedly for confirmed process
+    /// exit, and only then escalates through identity-verified native signalling when necessary.
+    /// The PID file is retained whenever termination cannot be observed.
     /// </summary>
     /// <param name="homePath">BotNexus home directory containing the PID file. Defaults to ~/.botnexus.</param>
     /// <param name="gatewayBinaryPath">Optional path of the gateway assembly this deployment would
     /// launch. When supplied, a missing or stale PID file falls back to discovering a live process
     /// whose executable path matches it (issue #2772). When null, only the PID file is consulted.</param>
-    /// <param name="cancellationToken">Cancellation token for stop timeout.</param>
-    /// <returns>
-    /// A result carrying both whether the gateway is now down and what was actually observed
-    /// (<see cref="GatewayStopOutcome"/>).
-    /// </returns>
+    /// <param name="cancellationToken">Cancellation token bounding the complete planned-shutdown and escalation operation.</param>
+    /// <param name="gatewayUrl">Effective gateway URL used for the API-first planned-shutdown request.</param>
+    /// <returns>A result carrying whether the gateway is down and what was observed.</returns>
     Task<GatewayStopResult> StopAsync(
         string? homePath = null,
         string? gatewayBinaryPath = null,

@@ -10,10 +10,12 @@ namespace BotNexus.Cli.Commands;
 internal sealed class ServeCommand
 {
     private readonly GatewayCommand _gatewayCommand;
+    private readonly IGatewayProcessManager _processManager;
 
-    public ServeCommand(GatewayCommand gatewayCommand)
+    public ServeCommand(GatewayCommand gatewayCommand, IGatewayProcessManager processManager)
     {
         _gatewayCommand = gatewayCommand;
+        _processManager = processManager;
     }
 
     public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
@@ -68,7 +70,7 @@ internal sealed class ServeCommand
         return command;
     }
 
-    private static async Task<int> ServeGatewayAsync(string repoRoot, string home, int port, bool verbose, CancellationToken cancellationToken)
+    private async Task<int> ServeGatewayAsync(string repoRoot, string home, int port, bool verbose, CancellationToken cancellationToken)
     {
         var buildResult = await BuildCommand.BuildSolutionAsync(repoRoot, verbose, cancellationToken);
         if (buildResult != 0)
@@ -131,8 +133,13 @@ internal sealed class ServeCommand
             using var process = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start Gateway process.");
 
-            await process.WaitForExitAsync(cancellationToken);
-            lastExitCode = process.ExitCode;
+            lastExitCode = await ForegroundGatewayLifecycle.WaitForExitAsync(
+                process,
+                _processManager,
+                home,
+                gatewayDll,
+                gatewayUrl,
+                cancellationToken);
 
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine($"[dim]Gateway exited (code [yellow]{lastExitCode}[/]).[/]");
