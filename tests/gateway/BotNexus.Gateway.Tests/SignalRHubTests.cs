@@ -138,6 +138,56 @@ public sealed class SignalRHubTests
     }
 
     [Fact]
+    public async Task GatewayHub_SubscribeAll_RefreshesSessionsAfterJoiningGroupsBeforeSnapshot()
+    {
+        var conversationId = "conversation-1";
+        var oldSession = new SessionSummary(
+            "session-old",
+            "agent-1",
+            ChannelKey.From("signalr"),
+            SessionStatus.Active,
+            SessionType.UserAgent,
+            true,
+            3,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            conversationId);
+        var continuationSession = oldSession with { SessionId = "session-continuation" };
+        var warmup = new Mock<ISessionWarmupService>();
+        warmup.SetupSequence(service => service.GetAvailableSessionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([oldSession])
+            .ReturnsAsync([oldSession, continuationSession]);
+
+        var continuationHandle = new Mock<IAgentHandle>();
+        continuationHandle.SetupGet(value => value.IsRunning).Returns(true);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.GetHandle(
+                AgentId.From("agent-1"),
+                BotNexus.Domain.Primitives.SessionId.From("session-continuation")))
+            .Returns(continuationHandle.Object);
+
+        var groups = new Mock<IGroupManager>();
+        groups.Setup(value => value.AddToGroupAsync(
+                "conn-1",
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHub(
+            groups: groups.Object,
+            warmup: warmup.Object,
+            supervisor: supervisor.Object,
+            connectionId: "conn-1");
+
+        var result = await hub.SubscribeAll();
+
+        result.ActiveRuns.ShouldHaveSingleItem().SessionId.ShouldBe("session-continuation");
+        warmup.Verify(
+            service => service.GetAvailableSessionsAsync(It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
     public async Task GatewayHub_GetAgents_ExcludesSubAgentsAndBuiltins()
     {
         var registry = new Mock<IAgentRegistry>();

@@ -148,7 +148,14 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             sessions.Count,
             groupKeys.Count);
 
-        var activeRuns = sessions
+        // Refresh after group membership exists. A durable ask_user continuation can create a
+        // replacement session while SubscribeAll is in flight. If it starts after the first read
+        // but before the group join, its RunStarted edge can be missed; deriving activity from the
+        // first list would then return a false-idle snapshot. Conversation groups survive the
+        // session replacement, so after the join either the edge is observed or this second read
+        // authoritatively sees the running continuation.
+        var activitySessions = await _app.GetAvailableSessionsAsync(Context.ConnectionAborted);
+        var activeRuns = activitySessions
             .Where(session => _supervisor.GetHandle(
                 AgentId.From(session.AgentId),
                 SessionId.From(session.SessionId))?.IsRunning == true)
