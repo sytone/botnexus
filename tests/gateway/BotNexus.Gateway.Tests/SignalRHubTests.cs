@@ -9,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tests.Dispatching;
 using BotNexus.Gateway.Tests.Diagnostics;
@@ -135,6 +136,44 @@ public sealed class SignalRHubTests
         activeRun.SessionId.ShouldBe("session-1");
         activeRun.AgentId.ShouldBe("agent-1");
         activeRun.ConversationId.ShouldBe("conversation-1");
+    }
+
+    [Fact]
+    public async Task GatewayHub_SubscribeAll_UsesWholeRunTrackerAcrossPerTurnIdleGap()
+    {
+        var summary = new SessionSummary(
+            "session-1",
+            "agent-1",
+            ChannelKey.From("signalr"),
+            SessionStatus.Active,
+            SessionType.UserAgent,
+            true,
+            3,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            "conversation-1");
+        var warmup = new Mock<ISessionWarmupService>();
+        warmup.Setup(service => service.GetAvailableSessionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([summary]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(value => value.IsRunning).Returns(false);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.GetHandle(AgentId.From("agent-1"), SessionId.From("session-1")))
+            .Returns(handle.Object);
+
+        var activeLoops = new ActiveLoopTracker();
+        _ = activeLoops.TrackStart("agent-1", "conversation-1", "session-1");
+
+        var hub = CreateHub(
+            warmup: warmup.Object,
+            supervisor: supervisor.Object,
+            activeLoopTracker: activeLoops,
+            connectionId: "conn-1");
+
+        var result = await hub.SubscribeAll();
+
+        result.ActiveRuns.ShouldHaveSingleItem().SessionId.ShouldBe("session-1");
     }
 
     [Fact]
@@ -1409,6 +1448,7 @@ public sealed class SignalRHubTests
         IAskUserPromptResolver? askUserPromptResolver = null,
         IAskUserCheckpointService? askUserCheckpointService = null,
         IConversationResetService? resetService = null,
+        IActiveLoopTracker? activeLoopTracker = null,
         string connectionId = "conn-test",
         string? userIdentifier = "user",
         string? clientQueryValue = null,
@@ -1456,7 +1496,8 @@ public sealed class SignalRHubTests
             logger ?? NullLogger<GatewayHub>.Instance,
             convStore,
             askUserPromptResolver,
-            askUserCheckpointService)
+            askUserCheckpointService,
+            activeLoopTracker: activeLoopTracker)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),

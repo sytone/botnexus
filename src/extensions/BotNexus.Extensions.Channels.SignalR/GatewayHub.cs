@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Abstractions.Services;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
 using ChannelKey = BotNexus.Domain.Primitives.ChannelKey;
@@ -53,6 +54,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     private readonly ISessionStore _sessions;
     private readonly IActivityBroadcaster _activity;
     private readonly IConversationRouter _conversationRouter;
+    private readonly IActiveLoopTracker? _activeLoopTracker;
 
     /// <summary>
     /// Upper bound on the best-effort binding-mute sweep performed during
@@ -86,7 +88,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         IAskUserPromptResolver? askUserPromptResolver = null,
         IAskUserCheckpointService? askUserCheckpointService = null,
         IUserRegistry? userRegistry = null,
-        IWorldContext? worldContext = null)
+        IWorldContext? worldContext = null,
+        IActiveLoopTracker? activeLoopTracker = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -100,6 +103,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _askUserCheckpointService = askUserCheckpointService;
         _userRegistry = userRegistry;
         _worldContext = worldContext;
+        _activeLoopTracker = activeLoopTracker;
     }
 
     /// <summary>
@@ -155,18 +159,42 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // session replacement, so after the join either the edge is observed or this second read
         // authoritatively sees the running continuation.
         var activitySessions = await _app.GetAvailableSessionsAsync(Context.ConnectionAborted);
-        var activeRuns = activitySessions
-            .Where(session => _supervisor.GetHandle(
-                AgentId.From(session.AgentId),
-                SessionId.From(session.SessionId))?.IsRunning == true)
-            .Select(session => new RunActivitySnapshot(
-                session.SessionId,
-                session.AgentId,
-                session.ConversationId))
-            .ToArray();
+        var activeRuns = BuildRunActivitySnapshot(activitySessions);
 
         return new SubscribeAllResult(sessions, activeRuns);
     }
+
+    private RunActivitySnapshot[] BuildRunActivitySnapshot(IReadOnlyList<SessionSummary> activitySessions)
+    {
+        if (_activeLoopTracker is null)
+        {
+            return activitySessions
+                .Where(session => _supervisor.GetHandle(
+                    AgentId.From(session.AgentId),
+                    SessionId.From(session.SessionId))?.IsRunning == true)
+                .Select(ToRunActivitySnapshot)
+                .ToArray();
+        }
+
+        // IAgentHandle.IsRunning is a per-turn signal. It drops between provider/tool steps even
+        // though the gateway still owns the enclosing run, which made the portal's recovery
+        // snapshot clear Steer/Follow Up/Stop until the next ToolStart repaired it (#4725).
+        // The active-loop tracker brackets GatewayHost's complete execution and is therefore the
+        // authoritative source for this whole-run snapshot. Intersect with the caller's available
+        // sessions so diagnostics never broaden the hub's existing authorization boundary.
+        var activeSessionIds = _activeLoopTracker.GetSnapshot().ActiveLoops
+            .Select(loop => loop.SessionId)
+            .Where(static sessionId => !string.IsNullOrWhiteSpace(sessionId))
+            .ToHashSet(StringComparer.Ordinal);
+
+        return activitySessions
+            .Where(session => activeSessionIds.Contains(session.SessionId))
+            .Select(ToRunActivitySnapshot)
+            .ToArray();
+    }
+
+    private static RunActivitySnapshot ToRunActivitySnapshot(SessionSummary session)
+        => new(session.SessionId, session.AgentId, session.ConversationId);
 
     /// <summary>
     /// Joins the connection to the per-agent notification groups for the agents it renders, so it
