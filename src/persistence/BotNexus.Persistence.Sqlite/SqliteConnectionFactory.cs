@@ -58,7 +58,7 @@ public static class SqliteConnectionFactory
         }
 
         var connection = new SqliteConnection(connectionString);
-        AttachBusyTimeout(connection, busyTimeoutMs);
+        connection.AttachBusyTimeout(busyTimeoutMs);
         return connection;
     }
 
@@ -103,7 +103,7 @@ public static class SqliteConnectionFactory
     /// The <c>busy_timeout</c> to apply on open, in milliseconds. Defaults to
     /// <see cref="DefaultBusyTimeoutMs"/>.
     /// </param>
-    public static void AttachBusyTimeout(SqliteConnection connection, int busyTimeoutMs = DefaultBusyTimeoutMs)
+    public static void AttachBusyTimeout(this SqliteConnection connection, int busyTimeoutMs = DefaultBusyTimeoutMs)
     {
         ArgumentNullException.ThrowIfNull(connection);
         if (busyTimeoutMs < 0)

@@ -2,6 +2,38 @@
   "schemaVersion": "1.0.0",
   "releases": [
     {
+      "version": "0.49.1",
+      "tag": "v0.49.1",
+      "commit": "d7f9ea581d6233d44d499640c3086a7d40ed8bfb",
+      "releasedAt": "2026-10-07",
+      "releaseUrl": "https://github.com/sytone/botnexus/releases/tag/v0.49.1",
+      "documentationUrl": "https://sytone.github.io/botnexus/releases/v0.49.1/",
+      "categories": [
+        {
+          "name": "Bug Fixes",
+          "changes": [
+            {
+              "summary": "**cli:** Route gateway termination through planned shutdown (#4723)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Preserve whole-run activity snapshots (#4727)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Refactor",
+          "changes": [
+            {
+              "summary": "**persistence:** Make busy-timeout attachment an extension (#4722)",
+              "documentationUrls": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.49.0",
       "tag": "v0.49.0",
       "commit": "eca72c95e06fe876b3504d53c3dcbc32c45a3cbf",
