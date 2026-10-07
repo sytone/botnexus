@@ -247,7 +247,7 @@ else
                     </div>
                 }
                 @if (_composerError is not null) { <div class="mobile-composer-error" role="alert">@_composerError</div> }
-                <div class="bottom-bar @(streamState?.IsTurnActive == true ? "composer-active" : null)"
+                <div class="bottom-bar @(streamState?.IsTurnActive == true ? "composer-active" : null) @(!Preferences.AnimateActiveRunIndicator ? "composer-motion-disabled" : null)"
                      data-testid="mobile-composer"
                      aria-busy="@(streamState?.IsTurnActive == true ? "true" : "false")">
                     @if (streamState?.IsTurnActive == true)
@@ -464,6 +464,8 @@ else
         PortalLoad.OnReadyChanged += HandleReadyChanged;
         PortalLoad.OnConnectionStateChanged += HandleConnectionStateChanged;
         Store.OnChanged += HandleStateChanged;
+        if (Services.GetService(typeof(IPortalPreferencesService)) is IPortalPreferencesService preferences)
+            preferences.OnChanged += HandlePreferenceChanged;
     }
 
     protected override async Task OnParametersSetAsync()
@@ -1276,9 +1278,13 @@ else
         catch { }
     }
 
+    private void HandlePreferenceChanged() => _ = InvokeAsync(StateHasChanged);
+
     public void Dispose()
     {
         Store.OnChanged -= HandleStateChanged;
+        if (Services.GetService(typeof(IPortalPreferencesService)) is IPortalPreferencesService preferences)
+            preferences.OnChanged -= HandlePreferenceChanged;
         PortalLoad.OnReadyChanged -= HandleReadyChanged;
         PortalLoad.OnConnectionStateChanged -= HandleConnectionStateChanged;
         _dotNetRef?.Dispose();
