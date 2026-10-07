@@ -40,6 +40,18 @@ public sealed class StaticHelperClassificationArchitectureTests : ArchitectureTe
     }
 
     [Fact]
+    public void ExtensionNames_DoNotCollideWithSubjectInstanceMembers()
+    {
+        var collisions = Scan(includeExtensions: true)
+            .Where(item => SubjectInstanceMemberNames(item.SubjectType).Contains(item.Method))
+            .Select(item => item.Key)
+            .OrderBy(key => key, StringComparer.Ordinal);
+
+        collisions.ShouldBeEmpty(
+            "An extension method shadowed by an instance member silently changes call-site behavior; rename or retain the helper instead.");
+    }
+
+    [Fact]
     public void ClassificationArtifact_IsCompleteStableAndReviewable()
     {
         var rows = ReadRows();
@@ -170,6 +182,22 @@ public sealed class StaticHelperClassificationArchitectureTests : ArchitectureTe
 
     private static bool IsTargetSubject(string subjectType) =>
         subjectType is "JsonObject" or "JsonElement" or "SqliteConnection" or "SqliteDataReader";
+
+    private static IReadOnlySet<string> SubjectInstanceMemberNames(string subjectType)
+    {
+        var type = subjectType switch
+        {
+            "JsonObject" => typeof(System.Text.Json.Nodes.JsonObject),
+            "JsonElement" => typeof(System.Text.Json.JsonElement),
+            "SqliteConnection" => typeof(Microsoft.Data.Sqlite.SqliteConnection),
+            "SqliteDataReader" => typeof(Microsoft.Data.Sqlite.SqliteDataReader),
+            _ => throw new ArgumentOutOfRangeException(nameof(subjectType), subjectType, "Unknown classified subject type.")
+        };
+
+        return type.GetMembers(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)
+            .Select(member => member.Name)
+            .ToHashSet(StringComparer.Ordinal);
+    }
 
     private static bool IsNamedTypeSyntax(TypeSyntax type, IReadOnlySet<string> interfaceNames)
     {

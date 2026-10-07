@@ -157,7 +157,7 @@ public static class SqliteConnectionFactory
                 // Verify world ownership before the validation boundary creates or updates its
                 // durable stamp. Opening the wrong world's database must remain read-only failure.
                 StoreKinds.TryGetValue(opened, out var declaredKind);
-                SqliteStoreIdentityGuard.Verify(opened, declaredKind);
+                opened.Verify(declaredKind);
                 EnsureForeignKeyIntegrity(opened);
             }
             catch (ObjectDisposedException)
