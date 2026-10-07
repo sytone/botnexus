@@ -8,6 +8,7 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// </summary>
 public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporter
 {
+    private const int MaximumApiErrorBytes = 4 * 1024;
     private readonly HttpClient _http;
     private string? _apiBaseUrl;
 
@@ -532,6 +533,72 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
         EnsureConfigured();
         var requestPath = BuildSkillsRequestPath(path);
         return await _http.GetFromJsonAsync<WorkspaceResponseDto>(requestPath, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<SkillSecurityFindingsDto?> GetSkillSecurityFindingsAsync(CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        return await _http.GetFromJsonAsync<SkillSecurityFindingsDto>(
+            $"{_apiBaseUrl}skills/security-findings", cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<SkillSecurityAcknowledgementResult> AcknowledgeSkillSecurityFindingAsync(
+        SkillSecurityAcknowledgementDto request, CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        using var response = await _http.PostAsJsonAsync(
+            $"{_apiBaseUrl}skills/security-acknowledgements", request, cancellationToken);
+        var responseText = response.IsSuccessStatusCode
+            ? null
+            : await ReadBoundedApiErrorAsync(response.Content, cancellationToken);
+        return new SkillSecurityAcknowledgementResult(
+            response.StatusCode,
+            response.IsSuccessStatusCode ? null : ReadApiError(responseText));
+    }
+
+    private static async Task<string?> ReadBoundedApiErrorAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is > MaximumApiErrorBytes)
+            return null;
+
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        var buffer = new byte[MaximumApiErrorBytes + 1];
+        var length = 0;
+        while (length < buffer.Length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(length, buffer.Length - length), cancellationToken);
+            if (read == 0)
+                break;
+            length += read;
+        }
+
+        return length > MaximumApiErrorBytes
+            ? null
+            : System.Text.Encoding.UTF8.GetString(buffer, 0, length);
+    }
+
+    private static string? ReadApiError(string? responseText)
+    {
+        if (string.IsNullOrWhiteSpace(responseText))
+            return null;
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(responseText);
+            if (document.RootElement.TryGetProperty("error", out var error)
+                && error.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                return error.GetString();
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+
+        return null;
     }
 
     /// <inheritdoc />
