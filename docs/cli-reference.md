@@ -1470,6 +1470,8 @@ botnexus gateway start --attached
 
 Detached startup waits up to 60 seconds for the effective `--port` health endpoint to become ready. With `--verbose`, readiness diagnostics include the endpoint, timeout, elapsed duration, and whether the process became healthy, exited, or remained alive but unhealthy.
 
+For `--attached`, Ctrl+C requests authenticated planned shutdown through the gateway API and waits boundedly for the child to exit. Native signalling is used only as bounded escalation when the API is unavailable, rejects the request, or the graceful deadline expires.
+
 ### gateway stop
 
 Stop the running gateway process.
@@ -1477,6 +1479,8 @@ Stop the running gateway process.
 ```powershell
 botnexus gateway stop
 ```
+
+The CLI first requests authenticated planned shutdown through the effective configured gateway URL. It then waits boundedly for confirmed process exit and uses identity-verified native signalling only as escalation. The PID file is retained if termination cannot be confirmed.
 
 ### gateway status
 
@@ -1552,6 +1556,8 @@ Remove the OS service registration.
 ```powershell
 botnexus gateway uninstall
 ```
+
+Uninstall follows the same API-first planned-shutdown policy. It observes service exit before removing the service definition; a bounded native service stop is the final fallback, and failure to confirm termination leaves the definition intact.
 
 ---
 
