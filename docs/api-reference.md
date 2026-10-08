@@ -3378,12 +3378,29 @@ The response also includes these diagnostic fields:
 | `gcHeapSizeBytes` | Managed heap size reported by the last garbage collection (GC), including fragmentation. |
 | `gcFragmentedBytes` | Fragmentation reported by that GC. This is not a current live-object census. |
 | `gcCollectionIndex` | Index of the GC supplying these values. Zero means no GC information is available yet. |
+| `sqliteAllocatorAvailable` | Whether the SQLite raw provider was available at capture. If false, both allocator byte counters are `null`, not zero. |
+| `sqliteAllocatorCurrentBytes` | Current bytes reported by the current SQLite native library allocator, as an Int64; `null` when unavailable. An available zero is valid. |
+| `sqliteAllocatorPeakBytes` | Peak allocator bytes since the native library's last high-water reset, as an Int64, read without resetting; `null` when unavailable. |
 | `unattributedPrivateBytesAboveLastGcCommitment` | `max(0, privateMemoryBytes - gcCommittedBytes)`. The process and last-GC measurements are not atomic or necessarily contemporaneous. This difference does not identify native allocations, SQLite caches, or retained transcripts. |
 
 `gcCommittedBytes` and the other GC memory values describe the last collection, not current
 allocation ownership. Capture does not force a collection. The pressure percentage and level
 continue to use GC commitment; the extra fields do not change alert thresholds or establish a
 safe memory bound. Use repeated samples and allocation profiling to investigate a peak.
+
+SQLite allocator counters cover only the current SQLite native library's allocator, not all
+SQLite mappings or page-cache memory, connection counts, or all process-native allocations.
+They do not establish that SQLite owns the private-minus-GC gap. Current and peak are separate,
+non-atomic reads; the peak is not scoped to the history window. Capture does not
+initialize or change the SQLite provider, open a database, release memory, or reset the peak.
+Both memory-pressure endpoints expose these fields; history returns the stored readings without
+resampling SQLite. These counters include SQLite allocator overhead but exclude underlying
+system-allocator overhead. SQLite memory-status collection can be disabled by its build or
+configuration; an available zero does not prove the absence of SQLite allocations. The sampler
+does not enable memory-status collection or change library configuration. See the SQLite
+[allocator statistics](https://www.sqlite.org/c3ref/memory_highwater.html) and
+[memory-status configuration](https://www.sqlite.org/c3ref/c_config_covering_index_scan.html#sqliteconfigmemstatus)
+contracts.
 
 ```json
 {
