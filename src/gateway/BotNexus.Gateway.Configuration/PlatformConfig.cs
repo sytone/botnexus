@@ -916,6 +916,17 @@ public sealed class GatewaySettingsConfig
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "execution", Order = 1)]
     public string[]? ShellCommand { get; set; }
 
+    /// <summary>
+    /// Exact ambient environment names approved for local shell/exec children, in addition to
+    /// OS essentials. Null or empty uses secure defaults. Values are never stored here.
+    /// No wildcard, prefix or inherit-all mode is supported. Changes require a gateway restart.
+    /// </summary>
+    [Display(Name = "Local child environment pass-through",
+        Description = "Exact ambient variable names allowed in shell/exec children. Names only; no wildcard or inherit-all mode. Requires restart.",
+        GroupName = "Execution", Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "execution", Order = 2)]
+    public List<string>? LocalChildEnvironmentPassThrough { get; set; }
+
     /// <summary>Auto-update settings for self-updating the gateway via the BotNexus CLI.</summary>
     [Display(
         Name = "Auto-update",

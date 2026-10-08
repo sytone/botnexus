@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Core.Tools;
 using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Extensions.ExecTool.Tests;
@@ -16,7 +17,8 @@ public class ExecToolEnvKeyCasingTests : IDisposable
     private const string InheritedName = "BN2892_CASING_PROBE";
     private const string OverrideName = "bn2892_casing_probe";
 
-    private readonly ExecTool _tool = new(workingDirectory: null, fileSystem: new MockFileSystem());
+    private readonly ExecTool _tool = new(workingDirectory: null, fileSystem: new MockFileSystem(),
+        environmentPolicy: new LocalChildEnvironmentPolicy([InheritedName, "BN2892_UNRELATED_PROBE"]));
 
     public ExecToolEnvKeyCasingTests() =>
         Environment.SetEnvironmentVariable(InheritedName, "inherited");
@@ -59,8 +61,7 @@ public class ExecToolEnvKeyCasingTests : IDisposable
     }
 
     /// <summary>
-    /// Guards against a "fix" that drops inherited variables wholesale: an unrelated inherited
-    /// variable must still reach the child.
+    /// An unrelated explicitly approved ambient variable must still reach the child.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_EnvOverride_DoesNotDiscardUnrelatedInheritedVariables()
