@@ -176,6 +176,84 @@ public sealed class AgentLoopRunnerNonProgressGuardTests
     }
 
     [Fact]
+    public async Task AlternatingUnchangedHousekeepingTools_ParkAndRetainEveryExecutedResult()
+    {
+        const string api = "non-progress-alternating-housekeeping";
+        var memory = new ScriptedTool("memory_save", _ => "Saved memory entry.");
+        var workers = new ScriptedTool("list_subagents", _ => "[]");
+        var todos = new ScriptedTool("todo", _ => "[{\"id\":\"done\",\"status\":\"done\"}]");
+        var tools = new IAgentTool[] { memory, workers, todos };
+        var index = -1;
+        using var provider = TestHelpers.RegisterProvider(new TestApiProvider(api, simpleStreamFactory: (_, _, _) =>
+        {
+            var next = Interlocked.Increment(ref index);
+            if (next >= GuardLimit) return TestStreamFactory.CreateTextResponse("Done.");
+            var tool = tools[next % tools.Length];
+            var arguments = tool.Name == "todo"
+                ? new Dictionary<string, object?> { ["action"] = "list" }
+                : tool.Name == "memory_save"
+                    ? new Dictionary<string, object?> { ["content"] = next % 2 == 0 ? "Done." : "Complete." }
+                    : new Dictionary<string, object?>();
+            return TestStreamFactory.CreateToolCallResponse(($"call-{next}", tool.Name, arguments));
+        }));
+        var events = new List<AgentEvent>();
+
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("finish the completed task")],
+            new AgentContext(null, [], tools),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        memory.ExecuteCount.ShouldBe(2);
+        workers.ExecuteCount.ShouldBe(2);
+        todos.ExecuteCount.ShouldBe(2);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(GuardLimit);
+        var completion = events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion;
+        completion.Status.ShouldBe(RunCompletionStatus.Parked);
+        completion.Detail.ShouldNotBeNull().ShouldContain("non-progress");
+    }
+
+    [Fact]
+    public async Task ChangedTodoSnapshotResetsTheHousekeepingSequence()
+    {
+        const string api = "non-progress-changed-todo";
+        var number = 0;
+        var tool = new ScriptedTool("todo", _ => "snapshot-" + Interlocked.Increment(ref number));
+        using var provider = RegisterSequencedToolUseProvider(api, "todo", Enumerable.Repeat("list", GuardLimit).ToArray());
+        var events = new List<AgentEvent>();
+
+        await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("inspect the checklist")],
+            new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Completed);
+    }
+
+    [Fact]
+    public async Task SubstantiveMemoryNoteDoesNotCountAsStatusOnlyHousekeeping()
+    {
+        const string api = "non-progress-substantive-memory";
+        var tool = new ScriptedTool("memory_save", _ => "Saved memory entry.");
+        using var provider = RegisterSequencedToolUseProvider(api, "memory_save", Enumerable.Repeat("evidence", GuardLimit).ToArray());
+        var events = new List<AgentEvent>();
+
+        await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("record new evidence")],
+            new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Completed);
+    }
+
+    [Fact]
     public async Task ChangingClockOutputIsNotEvidenceOfWorkProgress()
     {
         const string api = "non-progress-moving-clock";
@@ -398,7 +476,11 @@ public sealed class AgentLoopRunnerNonProgressGuardTests
                 }
                 : toolName is "get_current_time" or "get_datetime"
                     ? new Dictionary<string, object?>()
-                    : new Dictionary<string, object?> { ["path"] = "same-file.txt", ["variant"] = variants[callNumber] };
+                    : toolName == "todo"
+                        ? new Dictionary<string, object?> { ["action"] = variants[callNumber] }
+                        : toolName == "memory_save"
+                            ? new Dictionary<string, object?> { ["content"] = variants[callNumber] }
+                            : new Dictionary<string, object?> { ["path"] = "same-file.txt", ["variant"] = variants[callNumber] };
             return TestStreamFactory.CreateToolCallResponse((
                 $"call-{callNumber}",
                 toolName,

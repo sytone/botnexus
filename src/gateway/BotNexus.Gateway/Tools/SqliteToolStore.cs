@@ -65,7 +65,7 @@ public sealed class SqliteToolStore(
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
-            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
+            connection.Apply( CurrentSchemaVersion, Migrations);
 
             _initialized = true;
         }
