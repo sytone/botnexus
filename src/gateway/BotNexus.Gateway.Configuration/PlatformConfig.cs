@@ -551,7 +551,8 @@ public sealed class ProviderChatConfig
 
     /// <summary>
     /// Operator-declared capacities keyed by exact, case-sensitive model ID. These values are not
-    /// provider-verified. Assignments are copied with ordinal keys, including configuration binding.
+    /// provider-verified. Assignments are copied with ordinal keys; runtime post-configuration
+    /// materializes this map from accepted raw documents rather than case-insensitive binding.
     /// </summary>
     [Display(Name = "Model capacities", Description = "Operator-declared context and output token capacities keyed by exact, case-sensitive model ID. Configure the complete map with the central configuration CLI; values are declarations, not provider-verified limits.", GroupName = "Provider chat", Order = 8)]
     [ConfigField(Group = "provider-chat", Order = 8)]

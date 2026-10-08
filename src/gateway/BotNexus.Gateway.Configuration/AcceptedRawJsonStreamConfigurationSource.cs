@@ -26,7 +26,8 @@ internal sealed class AcceptedRawJsonStreamConfigurationProvider(AcceptedRawJson
         stream.CopyTo(copy);
         var bytes = copy.ToArray();
         _acceptedRawDocument = ConfigDocument.Parse(Encoding.UTF8.GetString(bytes));
-        base.Load(new MemoryStream(bytes));
+        using var bindingStream = ExactModelCapacityConfiguration.CreateBindingStream(_acceptedRawDocument);
+        base.Load(bindingStream);
     }
 
     ConfigDocument? IAcceptedRawConfigDocumentProvider.GetAcceptedRawDocument()

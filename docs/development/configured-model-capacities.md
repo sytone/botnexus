@@ -13,7 +13,11 @@ botnexus config get 'providers.my-provider.chat.modelCapacities'
 
 The CLI accepts `config set <key> <value>` and parses the dictionary value as JSON. Supplying the whole map avoids dotted-path ambiguity for model IDs containing periods. This example declares synthetic capacities, not verified limits for a real deployment. Only declare limits supported by your deployment's contract. A capacity entry does not itself add a model to `chat.models` or select it for an agent.
 
-The configuration path is `providers.<provider-instance>.chat.modelCapacities.<exact-model-id>`. Keys use ordinal, case-sensitive comparison. Each entry has nullable integer `contextWindow` and `maxTokens` fields. Different models and provider instances resolve independently.
+The map lives at `providers.<provider-instance>.chat.modelCapacities`. Its JSON keys are literal, ordinal, case-sensitive model IDs: `Model.1`, `model.1`, and `vendor:model` remain distinct across JSON, SQLite, and runtime options. Each entry has nullable integer `contextWindow` and `maxTokens` fields. Different models and provider instances resolve independently.
+
+The complete map is one configuration value. A map in a later source replaces an earlier map; an absent map inherits, and an empty object or explicit null clears earlier entries. SQLite follows JSON in the normal provider order, so its map wins when present. Environment or command-line overlays can supply the complete map as a JSON string at the map key. Individual field overlays remain available for IDs that the overlay provider can represent, but separator-containing IDs and case-only siblings require the whole-map form. Do not use a dotted CLI path to address an ID containing a period.
+
+Internally, SQLite stores the map as a JSON-valued leaf rather than splitting model IDs into dotted paths. The framework binding projection omits this map; post-configuration materializes it from accepted documents in provider order. Other configuration values retain ordinary framework binding.
 
 ## Resolution and validation
 
