@@ -40,6 +40,36 @@ public sealed class MemoryPressureEndpointTests
     }
 
     [Fact]
+    public void GetMemoryPressure_PreservesMemoryAttributionDiagnostics()
+    {
+        var result = _controller.GetMemoryPressure();
+        var dto = ((OkObjectResult)result).Value.ShouldBeOfType<MemoryPressureDto>();
+        var snapshot = _monitor.GetHistory(1).ShouldHaveSingleItem();
+
+        AssertMemoryDiagnosticsMatch(snapshot, dto);
+    }
+
+    [Fact]
+    public void GetMemoryPressureHistory_PreservesMemoryAttributionDiagnostics()
+    {
+        var snapshot = _monitor.CaptureSnapshot();
+        var result = _controller.GetMemoryPressureHistory(1);
+        var response = ((OkObjectResult)result).Value.ShouldBeOfType<MemoryPressureHistoryResponse>();
+
+        AssertMemoryDiagnosticsMatch(snapshot, response.Snapshots.ShouldHaveSingleItem());
+    }
+
+    private static void AssertMemoryDiagnosticsMatch(MemoryPressureSnapshot snapshot, MemoryPressureDto dto)
+    {
+        dto.PrivateMemoryBytes.ShouldBe(snapshot.PrivateMemoryBytes);
+        dto.PrivateMemoryReadable.ShouldBe(snapshot.PrivateMemoryReadable);
+        dto.GcHeapSizeBytes.ShouldBe(snapshot.GcHeapSizeBytes);
+        dto.GcFragmentedBytes.ShouldBe(snapshot.GcFragmentedBytes);
+        dto.GcCollectionIndex.ShouldBe(snapshot.GcCollectionIndex);
+        dto.UnattributedPrivateBytesAboveLastGcCommitment.ShouldBe(snapshot.UnattributedPrivateBytesAboveLastGcCommitment);
+    }
+
+    [Fact]
     public void GetMemoryPressure_ReturnsNotFound_WhenMonitorNull()
     {
         var controller = new DiagnosticsController(

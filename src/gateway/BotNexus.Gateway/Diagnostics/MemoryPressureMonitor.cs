@@ -38,14 +38,17 @@ public sealed class MemoryPressureMonitor
     /// <summary>
     /// Captures a point-in-time memory pressure snapshot and adds it to the history ring buffer.
     /// Logs at WARN or ERROR level if pressure thresholds are exceeded.
+    /// Process metrics are current samples; GC metrics describe the last reported collection.
+    /// They are not an atomic measurement. The diagnostic gap does not affect pressure policy.
     /// </summary>
     /// <returns>The captured snapshot.</returns>
     public MemoryPressureSnapshot CaptureSnapshot()
     {
         var gcInfo = GC.GetGCMemoryInfo();
-        var process = Process.GetCurrentProcess();
+        using var process = Process.GetCurrentProcess();
 
         var workingSet = process.WorkingSet64;
+        var privateMemory = process.PrivateMemorySize64;
         var gcCommitted = gcInfo.TotalCommittedBytes;
         var totalAvailable = gcInfo.TotalAvailableMemoryBytes;
 
@@ -74,13 +77,20 @@ public sealed class MemoryPressureMonitor
         {
             CapturedAt = DateTimeOffset.UtcNow,
             WorkingSetBytes = workingSet,
+            PrivateMemoryBytes = privateMemory,
             GcCommittedBytes = gcCommitted,
+            GcHeapSizeBytes = gcInfo.HeapSizeBytes,
+            GcFragmentedBytes = gcInfo.FragmentedBytes,
+            GcCollectionIndex = gcInfo.Index,
+            UnattributedPrivateBytesAboveLastGcCommitment =
+                CalculateUnattributedPrivateBytesAboveLastGcCommitment(privateMemory, gcCommitted),
             TotalAvailableBytes = totalAvailable,
             Gen0Collections = GC.CollectionCount(0),
             Gen1Collections = GC.CollectionCount(1),
             Gen2Collections = GC.CollectionCount(2),
             PressurePercent = Math.Round(pressurePercent, 2),
             WorkingSetReadable = FormatBytes(workingSet),
+            PrivateMemoryReadable = FormatBytes(privateMemory),
             GcCommittedReadable = FormatBytes(gcCommitted),
             TotalAvailableReadable = FormatBytes(totalAvailable),
             Level = level,
@@ -150,6 +160,12 @@ public sealed class MemoryPressureMonitor
                 snapshot.Guidance);
         }
     }
+
+    // Both inputs are nonnegative byte counts, sampled at different times. Keep the
+    // arithmetic in Int64 and clamp the gap without attributing it to an allocator.
+    internal static long CalculateUnattributedPrivateBytesAboveLastGcCommitment(
+        long privateMemoryBytes, long lastGcCommittedBytes) =>
+        Math.Max(0L, privateMemoryBytes - lastGcCommittedBytes);
 
     /// <summary>
     /// Formats a byte count into a human-readable string (e.g. "142.3 MB").
