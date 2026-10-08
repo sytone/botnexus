@@ -1,0 +1,49 @@
+name: "CI: Documentation Site"
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs-site:
+    name: docs-site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Default pull_request checkout is the candidate merge, not the isolated PR head.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify documentation-site inputs
+        id: impact
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ./scripts/repo/Get-DocsSiteImpact.ps1
+
+      - uses: actions/setup-node@v4
+        if: steps.impact.outputs.relevant == 'true'
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.impact.outputs.relevant == 'true'
+        run: npm ci
+
+      - name: Build VitePress site
+        if: steps.impact.outputs.relevant == 'true'
+        run: npm run docs:build
+
+      - name: Documentation-site check not needed
+        if: steps.impact.outputs.relevant == 'false'
+        run: echo "No documentation-site inputs changed; successful noop."
