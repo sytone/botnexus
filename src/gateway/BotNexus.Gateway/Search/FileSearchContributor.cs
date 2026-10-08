@@ -26,7 +26,10 @@ public sealed class FileSearchContributor(
     public string Label => "Files";
 
     /// <inheritdoc />
-    public bool IsAvailable => SearchableAgents().Any(agent => fileSystem.Directory.Exists(agent.WorkspacePath));
+    public bool IsAvailable => IsAvailableFor(SearchScope.All);
+
+    internal bool IsAvailableFor(SearchScope scope)
+        => SearchableAgents(scope).Any(agent => fileSystem.Directory.Exists(agent.WorkspacePath));
 
     /// <inheritdoc />
     public bool CanAssessProvenanceTrust => false;
@@ -45,7 +48,7 @@ public sealed class FileSearchContributor(
         }
 
         var results = new List<SearchResult>(request.MaxResults);
-        foreach (var agent in SearchableAgents())
+        foreach (var agent in SearchableAgents(request.Scope))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!fileSystem.Directory.Exists(agent.WorkspacePath)
@@ -101,9 +104,10 @@ public sealed class FileSearchContributor(
         return results;
     }
 
-    private IEnumerable<SearchableAgent> SearchableAgents()
+    private IEnumerable<SearchableAgent> SearchableAgents(SearchScope? scope = null)
     {
         foreach (var descriptor in agentRegistry.GetAll()
+                     .Where(agent => scope is null || scope.Allows(agent.AgentId))
                      .OrderBy(agent => agent.AgentId.Value, StringComparer.OrdinalIgnoreCase))
         {
             var workspacePath = workspaceManager.GetWorkspacePath(descriptor.AgentId.Value);

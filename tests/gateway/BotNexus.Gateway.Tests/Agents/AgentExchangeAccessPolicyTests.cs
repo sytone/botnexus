@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Domain.AgentExchange;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -7,6 +8,7 @@ using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
+using BotNexus.Gateway.Tools;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -188,6 +190,88 @@ public sealed class AgentExchangeAccessPolicyTests
         result.Status.ShouldBe("sealed");
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task WhitelistPolicy_MalformedRole_ConverseAndDiscoveryHonorOnlyExplicitId(bool jsonRole, bool idGranted)
+    {
+        var initiator = AgentId.From("agent-a");
+        var target = AgentId.From("agent-b");
+        object role = jsonRole ? JsonSerializer.SerializeToElement(42) : 42;
+        var registry = CreateRegistryWithRole(initiator, target,
+            subAgentIds: idGranted ? ["AGENT-B"] : [], subAgentRoles: ["42"], targetRole: role);
+        registry.Setup(r => r.GetAll()).Returns([registry.Object.Get(target).ShouldNotBeNull()]);
+        var options = new AgentExchangeOptions { AccessPolicy = "whitelist" };
+        var conversationStore = new InMemoryConversationStore();
+        var sessionStore = new InMemorySessionStore(redactor: null, conversationStore: conversationStore);
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "Explicit ID granted" });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var service = new AgentExchangeService(
+            registry.Object, supervisor.Object, sessionStore, conversationStore,
+            Options.Create(new GatewayOptions()), NullLogger<AgentExchangeService>.Instance,
+            exchangeOptions: Options.Create(options));
+
+        var discovery = await new ListAgentsTool(registry.Object, initiator, options)
+            .ExecuteAsync("discovery", new Dictionary<string, object?>());
+        using var entries = JsonDocument.Parse(discovery.Content[0].Value);
+        var entry = entries.RootElement.EnumerateArray().ShouldHaveSingleItem();
+        entry.GetProperty("agentId").GetString().ShouldBe(target.Value);
+        entry.GetProperty("canConverse").GetBoolean().ShouldBe(idGranted);
+        var request = new AgentExchangeRequest
+        {
+            InitiatorId = initiator, TargetId = target, Message = "Hello", MaxTurns = 1
+        };
+        if (idGranted)
+        {
+            var result = await service.ConverseAsync(request);
+            result.Status.ShouldBe("sealed");
+            result.FinalResponse.ShouldBe("Explicit ID granted");
+            supervisor.Verify(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Once);
+        }
+        else
+        {
+            await Should.ThrowAsync<UnauthorizedAccessException>(() => service.ConverseAsync(request));
+            supervisor.Verify(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+    }
+
+    [Fact]
+    public void PeerAccessPolicy_UnregisteredFederationTarget_ExplicitIdGrantsWithoutDescriptor()
+    {
+        var target = AgentId.From("remote@peer");
+        var caller = new AgentDescriptor
+        {
+            AgentId = AgentId.From("caller"), DisplayName = "Caller", ModelId = "m", ApiProvider = "p",
+            SubAgentIds = ["REMOTE@PEER"], SubAgentRoles = ["reviewer"]
+        };
+        var options = new AgentExchangeOptions { AccessPolicy = "whitelist" };
+
+        PeerAccessPolicy.IsAllowed(options, caller, target, target: null).ShouldBeTrue();
+        PeerAccessPolicy.IsAllowed(options, caller with { SubAgentIds = [] }, target, target: null).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PeerAccessPolicy_WhitelistMissingCaller_DeniesLocalAndFederatedTargets(bool localTarget)
+    {
+        var targetId = AgentId.From("target");
+        AgentDescriptor? target = localTarget ? new AgentDescriptor
+        {
+            AgentId = targetId, DisplayName = "Target", ModelId = "m", ApiProvider = "p",
+            Metadata = new Dictionary<string, object?> { ["role"] = "reviewer" }
+        } : null;
+
+        PeerAccessPolicy.IsAllowed(new AgentExchangeOptions { AccessPolicy = "whitelist" },
+            initiator: null, targetId, target).ShouldBeFalse();
+    }
+
     [Fact]
     public void IsOpen_CaseInsensitive()
     {
@@ -223,7 +307,7 @@ public sealed class AgentExchangeAccessPolicyTests
     private static Mock<IAgentRegistry> CreateRegistryWithRole(
         AgentId initiator, AgentId target,
         IReadOnlyList<string> subAgentIds, IReadOnlyList<string> subAgentRoles,
-        string targetRole)
+        object targetRole)
     {
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(initiator)).Returns(new AgentDescriptor

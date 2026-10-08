@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Extensions;
 
@@ -6,7 +7,7 @@ namespace BotNexus.Gateway.Search;
 /// <summary>
 /// Searches lightweight conversation summaries from the canonical conversation store.
 /// </summary>
-public sealed class ConversationSearchContributor(IConversationStore conversationStore) : ISearchContributor
+public sealed class ConversationSearchContributor(IConversationStore conversationStore, IAgentRegistry agentRegistry) : ISearchContributor
 {
     internal const int MaxSnippetLength = 240;
 
@@ -30,7 +31,7 @@ public sealed class ConversationSearchContributor(IConversationStore conversatio
         if (string.IsNullOrWhiteSpace(request.Query) || request.MaxResults <= 0)
             return [];
 
-        var summaries = await conversationStore.ListAsync(null, cancellationToken).ConfigureAwait(false);
+        var summaries = await SearchableConversations.ListAsync(conversationStore, request.Scope, cancellationToken, agentRegistry).ConfigureAwait(false);
         var results = new List<SearchResult>(request.MaxResults);
         foreach (var summary in summaries.OrderByDescending(item => item.UpdatedAt)
                      .ThenBy(item => item.ConversationId.Value, StringComparer.Ordinal))

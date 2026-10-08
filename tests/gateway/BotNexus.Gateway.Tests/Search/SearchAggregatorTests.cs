@@ -185,6 +185,20 @@ public sealed class SearchAggregatorTests
         extensionGroup.Results.Single().Target.ShouldBe("/extension");
     }
 
+    [Fact]
+    public async Task SearchAsync_LegacyInternalExtensionsRemainAvailableButScopedAllExcludesThem()
+    {
+        var extension = new DelegateContributor("test-extension", "Extension", (request, _) =>
+        {
+            request.Scope.IsAll.ShouldBeTrue();
+            return Task.FromResult<IReadOnlyList<SearchResult>>([Result("kept", "/kept")]);
+        });
+        var aggregator = CreateAggregator([extension]);
+        (await aggregator.SearchAsync("needle", 1)).ShouldHaveSingleItem().Count.ShouldBe(1);
+        (await aggregator.SearchAsync("needle", 1, SearchScope.All)).ShouldBeEmpty();
+        extension.CallCount.ShouldBe(1);
+    }
+
     private static SearchAggregator CreateAggregator(
         IEnumerable<ISearchContributor> contributors,
         SearchAggregationOptions? options = null)

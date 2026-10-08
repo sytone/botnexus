@@ -1288,6 +1288,16 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 conversationIds = [onlyConversation];
             }
 
+            if (query.ConversationIds is not null)
+            {
+                var eligible = query.ConversationIds.Select(id => id.Value).ToHashSet(StringComparer.Ordinal);
+                conversationIds = conversationIds is null
+                    ? eligible.ToList()
+                    : conversationIds.Where(eligible.Contains).ToList();
+                if (conversationIds.Count == 0)
+                    return SessionSummaryPage.Empty;
+            }
+
             var clauses = new List<string>();
             if (!query.IncludeInactive)
             {
