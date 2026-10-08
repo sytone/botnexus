@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Deliberately framework-only: the child runs against Gateway.Api's deps/runtimeconfig,
+       never a merged architecture-test or probe dependency graph. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

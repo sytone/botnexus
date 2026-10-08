@@ -88,7 +88,14 @@
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.0-preview.3.25171.6" />
 
     <!-- Azure / identity -->
-    <PackageVersion Include="Azure.Core" Version="1.44.1" />
+    <!-- #4778: the host unifies extension references by simple name. Keep the shared
+         Azure/identity closure at least as new as every deployable extension requires.
+         These versions take effect through direct references, not global transitive pinning. -->
+    <PackageVersion Include="Azure.Core" Version="1.50.0" />
+    <PackageVersion Include="System.ClientModel" Version="1.8.0" />
+    <PackageVersion Include="System.Memory.Data" Version="10.0.7" />
+    <PackageVersion Include="Microsoft.Identity.Client" Version="4.83.3" />
+    <PackageVersion Include="Microsoft.IdentityModel.Abstractions" Version="8.15.0" />
     <PackageVersion Include="Azure.Identity" Version="1.13.2" />
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
     <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.18.0" />
