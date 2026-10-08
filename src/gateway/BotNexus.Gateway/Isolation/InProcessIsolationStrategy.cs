@@ -175,6 +175,20 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var model = _llmClient.Models.GetModel(descriptor.ApiProvider, resolvedModelId)
             ?? throw new InvalidOperationException($"Model '{resolvedModelId}' for provider '{descriptor.ApiProvider}' is not registered.");
 
+        // Capture declarations separately from the selected working window. An override may enable
+        // extended context, so this deliberately does not clamp it to the model's standard window.
+        var contextBudget = ContextWindowResolver.ResolveBudget(
+            effectiveModel.ContextWindow,
+            conversationOverrideLayer.ContextWindow.HasValue ? "conversation"
+                : descriptor.ContextWindow.HasValue ? "agent" : null,
+            new ContextBudgetDiagnostics
+            {
+                ModelContextWindowTokens = model.ContextWindow,
+                ModelContextWindowSource = model.ContextWindowSource,
+                ModelMaxOutputTokens = model.MaxTokens,
+                ModelMaxOutputSource = model.MaxTokensSource
+            });
+
         // #2796: hand the prompt builder the SAME resolved settings that configure the model and
         // AgentOptions below. This is the single value; the context builder must never re-resolve
         // the override or read descriptor.ModelId for the runtime block, or the block drifts from
@@ -548,10 +562,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // ModelOverrideResolver above (conversation override > agent descriptor), so reuse it
             // rather than re-reading the stores, falling back to the registered model's own window.
             // Null leaves CompactionOptions.ContextWindowTokens exactly as configured.
-            var scopedContextWindow = ScopedCompactionWindow.Resolve(
-                conversationOverride: null,
-                agentWindow: effectiveModel.ContextWindow,
-                modelWindow: model.ContextWindow);
+            var scopedContextWindow = contextBudget.EffectiveWorkingBudgetTokens;
             maybeCompactAsync = async cancellationToken =>
             {
                 var scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
@@ -811,7 +822,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // #3091: the diagnostics endpoint must report the window this run is ACTUALLY bound to.
             // Resolved from the same effectiveModel/model pair that configures the run below, so the
             // reported window cannot drift from the executed one (same single-derivation rule as #2796).
-            ContextWindowResolver.Resolve(effectiveModel.ContextWindow, model))
+            contextWindowTokens: contextBudget.EffectiveWorkingBudgetTokens,
+            contextBudget: contextBudget)
         {
             RenderedSystemPrompt = resumeSystemPrompt
         };
@@ -1207,6 +1219,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     // #3091: the resolved context window for this run, or null when it could not be established.
     // Never defaulted to a literal - see ContextWindowResolver.
     private readonly int? _contextWindowTokens;
+    private readonly ContextBudgetDiagnostics? _contextBudget;
 
     /// <summary>
     /// The fail-closed tool-audit write-ahead this handle's run writes through (#2615). The handle
@@ -1253,14 +1266,16 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         IReadOnlyList<object>? resourcesToDispose = null,
         IActivityTracker? activityTracker = null,
         ToolAuditWriteAhead? toolWriteAhead = null,
-        int? contextWindowTokens = null)
+        int? contextWindowTokens = null,
+        ContextBudgetDiagnostics? contextBudget = null)
     {
         _agent = agent;
         AgentId = agentId;
         SessionId = sessionId;
         _logger = logger;
         _activityTracker = activityTracker;
-        _contextWindowTokens = contextWindowTokens;
+        _contextBudget = contextBudget;
+        _contextWindowTokens = contextBudget is null ? contextWindowTokens : contextBudget.EffectiveWorkingBudgetTokens;
         _toolWriteAhead = toolWriteAhead;
         _disposableResources = (tools ?? [])
             .Where(static tool => tool is IAsyncDisposable || tool is IDisposable)
@@ -1314,6 +1329,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
     /// <inheritdoc />
     public int? GetContextWindowTokens() => _contextWindowTokens;
+
+    /// <inheritdoc />
+    public ContextBudgetDiagnostics? GetContextBudgetDiagnostics() => _contextBudget;
 
     /// <inheritdoc />
     public ContextDiagnostics? GetContextDiagnostics()
