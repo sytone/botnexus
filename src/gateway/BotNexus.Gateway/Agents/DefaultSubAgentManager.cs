@@ -1704,10 +1704,19 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private async Task CompleteOrdinaryResponseAsync(string subAgentId, SubAgentRecord record,
         AgentResponse response, CancellationTokenSource timeoutCts, int timeoutSeconds)
     {
-        if (timeoutCts.IsCancellationRequested) await CompleteTimedOutAsync(subAgentId, timeoutSeconds);
-        else if (string.IsNullOrWhiteSpace(response.Content))
+        if (timeoutCts.IsCancellationRequested)
+        {
+            await CompleteTimedOutAsync(subAgentId, timeoutSeconds);
+            return;
+        }
+
+        var outcome = SubAgentRunOutcome.From(response);
+        // Provider rejection can return no text. Preserve its diagnostic rather than
+        // treating it as a clean silent run or allowing a descendant handoff to hide it.
+        if (outcome.HasFailure || !string.IsNullOrWhiteSpace(response.Content))
+            await OnCompletedAsync(subAgentId, response.Content, outcome);
+        else
             await CompleteSilentRunAsync(subAgentId, record, timeoutCts.Token);
-        else await OnCompletedAsync(subAgentId, response.Content, SubAgentRunOutcome.From(response));
     }
 
     private static string TurnLimitDiagnostic(int maxTurns)
