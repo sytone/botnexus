@@ -119,6 +119,9 @@ public sealed class DiagnosticsController(
             GcHeapSizeBytes = snapshot.GcHeapSizeBytes,
             GcFragmentedBytes = snapshot.GcFragmentedBytes,
             GcCollectionIndex = snapshot.GcCollectionIndex,
+            SqliteAllocatorAvailable = snapshot.SqliteAllocatorAvailable,
+            SqliteAllocatorCurrentBytes = snapshot.SqliteAllocatorCurrentBytes,
+            SqliteAllocatorPeakBytes = snapshot.SqliteAllocatorPeakBytes,
             UnattributedPrivateBytesAboveLastGcCommitment = snapshot.UnattributedPrivateBytesAboveLastGcCommitment,
             GcCommittedBytes = snapshot.GcCommittedBytes,
             TotalAvailableBytes = snapshot.TotalAvailableBytes,
@@ -158,6 +161,9 @@ public sealed class DiagnosticsController(
                 GcHeapSizeBytes = s.GcHeapSizeBytes,
                 GcFragmentedBytes = s.GcFragmentedBytes,
                 GcCollectionIndex = s.GcCollectionIndex,
+                SqliteAllocatorAvailable = s.SqliteAllocatorAvailable,
+                SqliteAllocatorCurrentBytes = s.SqliteAllocatorCurrentBytes,
+                SqliteAllocatorPeakBytes = s.SqliteAllocatorPeakBytes,
                 UnattributedPrivateBytesAboveLastGcCommitment = s.UnattributedPrivateBytesAboveLastGcCommitment,
                 GcCommittedBytes = s.GcCommittedBytes,
                 TotalAvailableBytes = s.TotalAvailableBytes,
@@ -329,6 +335,18 @@ public sealed class MemoryPressureDto
     /// The samples are non-atomic; this is not native-memory or allocation-owner attribution.
     /// </summary>
     public long UnattributedPrivateBytesAboveLastGcCommitment { get; init; }
+
+    /// <summary>Whether the SQLite raw provider was available; false means allocator counters are null, not zero.</summary>
+    public bool SqliteAllocatorAvailable { get; init; }
+
+    /// <summary>
+    /// Current bytes from the current SQLite native library allocator only; null when unavailable.
+    /// Does not cover all SQLite mappings/page caches, count connections, or attribute process-native memory.
+    /// </summary>
+    public long? SqliteAllocatorCurrentBytes { get; init; }
+
+    /// <summary>SQLite allocator peak bytes since the library's last reset, read without resetting; null when unavailable and non-atomic with current bytes.</summary>
+    public long? SqliteAllocatorPeakBytes { get; init; }
 
     /// <summary>GC committed bytes (managed heap + overhead) reported for the last collection.</summary>
     public required long GcCommittedBytes { get; init; }

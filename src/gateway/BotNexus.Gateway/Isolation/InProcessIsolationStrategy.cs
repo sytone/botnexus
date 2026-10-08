@@ -175,6 +175,20 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var model = _llmClient.Models.GetModel(descriptor.ApiProvider, resolvedModelId)
             ?? throw new InvalidOperationException($"Model '{resolvedModelId}' for provider '{descriptor.ApiProvider}' is not registered.");
 
+        // Capture declarations separately from the selected working window. An override may enable
+        // extended context, so this deliberately does not clamp it to the model's standard window.
+        var contextBudget = ContextWindowResolver.ResolveBudget(
+            effectiveModel.ContextWindow,
+            conversationOverrideLayer.ContextWindow.HasValue ? "conversation"
+                : descriptor.ContextWindow.HasValue ? "agent" : null,
+            new ContextBudgetDiagnostics
+            {
+                ModelContextWindowTokens = model.ContextWindow,
+                ModelContextWindowSource = model.ContextWindowSource,
+                ModelMaxOutputTokens = model.MaxTokens,
+                ModelMaxOutputSource = model.MaxTokensSource
+            });
+
         // #2796: hand the prompt builder the SAME resolved settings that configure the model and
         // AgentOptions below. This is the single value; the context builder must never re-resolve
         // the override or read descriptor.ModelId for the runtime block, or the block drifts from
@@ -548,10 +562,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // ModelOverrideResolver above (conversation override > agent descriptor), so reuse it
             // rather than re-reading the stores, falling back to the registered model's own window.
             // Null leaves CompactionOptions.ContextWindowTokens exactly as configured.
-            var scopedContextWindow = ScopedCompactionWindow.Resolve(
-                conversationOverride: null,
-                agentWindow: effectiveModel.ContextWindow,
-                modelWindow: model.ContextWindow);
+            var scopedContextWindow = contextBudget.EffectiveWorkingBudgetTokens;
             maybeCompactAsync = async cancellationToken =>
             {
                 var scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
@@ -591,7 +602,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                             compactAgentId,
                             liveSession,
                             cancellationToken,
-                            handlePolicy: CompactionHandlePolicy.KeepCurrent).ConfigureAwait(false);
+                            handlePolicy: CompactionHandlePolicy.KeepCurrent,
+                            resolvedOptions: scopedOptions).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
@@ -811,7 +823,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // #3091: the diagnostics endpoint must report the window this run is ACTUALLY bound to.
             // Resolved from the same effectiveModel/model pair that configures the run below, so the
             // reported window cannot drift from the executed one (same single-derivation rule as #2796).
-            ContextWindowResolver.Resolve(effectiveModel.ContextWindow, model))
+            contextWindowTokens: contextBudget.EffectiveWorkingBudgetTokens,
+            contextBudget: contextBudget)
         {
             RenderedSystemPrompt = resumeSystemPrompt
         };
@@ -1207,6 +1220,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     // #3091: the resolved context window for this run, or null when it could not be established.
     // Never defaulted to a literal - see ContextWindowResolver.
     private readonly int? _contextWindowTokens;
+    private readonly ContextBudgetDiagnostics? _contextBudget;
 
     /// <summary>
     /// The fail-closed tool-audit write-ahead this handle's run writes through (#2615). The handle
@@ -1253,14 +1267,16 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         IReadOnlyList<object>? resourcesToDispose = null,
         IActivityTracker? activityTracker = null,
         ToolAuditWriteAhead? toolWriteAhead = null,
-        int? contextWindowTokens = null)
+        int? contextWindowTokens = null,
+        ContextBudgetDiagnostics? contextBudget = null)
     {
         _agent = agent;
         AgentId = agentId;
         SessionId = sessionId;
         _logger = logger;
         _activityTracker = activityTracker;
-        _contextWindowTokens = contextWindowTokens;
+        _contextBudget = contextBudget;
+        _contextWindowTokens = contextBudget is null ? contextWindowTokens : contextBudget.EffectiveWorkingBudgetTokens;
         _toolWriteAhead = toolWriteAhead;
         _disposableResources = (tools ?? [])
             .Where(static tool => tool is IAsyncDisposable || tool is IDisposable)
@@ -1314,6 +1330,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
     /// <inheritdoc />
     public int? GetContextWindowTokens() => _contextWindowTokens;
+
+    /// <inheritdoc />
+    public ContextBudgetDiagnostics? GetContextBudgetDiagnostics() => _contextBudget;
 
     /// <inheritdoc />
     public ContextDiagnostics? GetContextDiagnostics()
@@ -1548,7 +1567,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         return new AgentResponse
         {
             Content = lastAssistant?.Content ?? string.Empty,
-            Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+            Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite) : null,
             RunUsage = AggregateRunUsage(messages),
             TurnCount = messages.OfType<AssistantAgentMessage>().Count(),
             ToolCalls = BuildToolCalls(messages, pendingToolCallIds: null),
@@ -1651,7 +1670,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         var partial = new AgentResponse
         {
             Content = lastAssistant?.Content ?? string.Empty,
-            Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens) : null,
+            Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite) : null,
             // #2641 AC1: an interrupted run still cost what it cost. Carrying the aggregate out on
             // the partial response is what lets the timeout/abort paths record a real figure
             // instead of leaving the most expensive runs on the platform unmeasured.
@@ -2066,7 +2085,28 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         };
     }
 
-    internal static async Task WriteAgentEventAsync(
+    /// <summary>
+    /// Projects a failed run that has not already surfaced a turn error. Required proactive
+    /// compaction fails before TurnEnd, so its precise completion detail must reach the same
+    /// error persistence and delivery seam as provider failures. Cancellation is not a fault.
+    /// </summary>
+    internal static AgentStreamEvent? MapRunError(
+        AgentEvent agentEvent, string messageId, bool errorAlreadyEmitted)
+    {
+        if (errorAlreadyEmitted || agentEvent is not AgentEndEvent { Completion.Status: RunCompletionStatus.Failed } end)
+            return null;
+
+        return new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.Error,
+            ErrorMessage = string.IsNullOrWhiteSpace(end.Completion.Detail)
+                ? "The agent run failed but supplied no detail."
+                : end.Completion.Detail,
+            MessageId = messageId
+        };
+    }
+
+    internal static async Task<bool> WriteAgentEventAsync(
         AgentEvent agentEvent,
         string messageId,
         System.Threading.Channels.ChannelWriter<AgentStreamEvent> writer,
@@ -2075,10 +2115,20 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         Func<bool> isCallerCancellation,
         ILogger logger,
         AgentId agentId,
-        SessionId sessionId)
+        SessionId sessionId,
+        bool errorAlreadyEmitted = false)
     {
         try
         {
+            // Publish failure detail BEFORE RunEnded: clients may finalize their run on that
+            // terminal event. The completion signal itself remains unchanged and authoritative.
+            var runError = MapRunError(agentEvent, messageId, errorAlreadyEmitted);
+            if (runError is not null)
+            {
+                await writer.WriteAsync(runError, cancellationToken);
+                errorAlreadyEmitted = true;
+            }
+
             var streamEvent = map(agentEvent, messageId);
 
             if (streamEvent is not null)
@@ -2090,7 +2140,10 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             var turnError = MapTurnError(agentEvent, messageId);
 
             if (turnError is not null)
+            {
                 await writer.WriteAsync(turnError, cancellationToken);
+                errorAlreadyEmitted = true;
+            }
         }
         catch (OperationCanceledException) when (isCallerCancellation())
         {
@@ -2120,6 +2173,8 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
             writer.TryComplete(ex);
         }
+
+        return errorAlreadyEmitted;
     }
 
     private async IAsyncEnumerable<AgentStreamEvent> StreamCoreAsync(
@@ -2134,6 +2189,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         var messageId = Guid.NewGuid().ToString("N");
         var events = System.Threading.Channels.Channel.CreateUnbounded<AgentStreamEvent>();
         using var promptCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // Run-local latch: a provider TurnEnd error already explains a failed AgentEnd. Agent
+        // listeners are awaited in order, so this state follows the channel's event order.
+        var errorAlreadyEmitted = false;
 
         using var subscription = _agent.Subscribe(async (agentEvent, eventCancellation) =>
         {
@@ -2145,7 +2203,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             // sibling catches in this method already use - caller cancelled the stream, or the
             // linked prompt token tripped. Passing it as a delegate keeps the guard evaluated at
             // throw time (token state), never at subscribe time.
-            await WriteAgentEventAsync(
+            errorAlreadyEmitted = await WriteAgentEventAsync(
                 agentEvent,
                 messageId,
                 events.Writer,
@@ -2157,7 +2215,8 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 () => IsDeliberateTeardown(promptCancellation, cancellationToken),
                 _logger,
                 AgentId,
-                SessionId);
+                SessionId,
+                errorAlreadyEmitted);
         });
 
         async Task RunPromptAsync()

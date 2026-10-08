@@ -73,7 +73,7 @@ public static class ConfigSecretMerge
     /// over the <see cref="PlatformConfig"/> graph, so a newly <c>[ConfigField(Secret = true)]</c>
     /// annotated field is masked automatically.
     /// </summary>
-    public static void Redact(JsonObject config)
+    public static void Redact(this JsonObject config)
     {
         ArgumentNullException.ThrowIfNull(config);
         foreach (var path in PlatformSecretPaths)
@@ -86,7 +86,7 @@ public static class ConfigSecretMerge
     /// present in <paramref name="target"/> but absent from <paramref name="incoming"/>
     /// are preserved (this is what protects omitted channel subtrees).
     /// </summary>
-    public static void DeepMerge(JsonObject target, JsonObject incoming)
+    public static void DeepMerge(this JsonObject target, JsonObject incoming)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(incoming);
@@ -110,7 +110,7 @@ public static class ConfigSecretMerge
     /// exactly the same reflection-discovered field paths as <see cref="Redact"/> so the
     /// two stay symmetric.
     /// </summary>
-    public static void RestoreSecrets(JsonObject existing, JsonObject target)
+    public static void RestoreSecrets(this JsonObject existing, JsonObject target)
     {
         ArgumentNullException.ThrowIfNull(existing);
         ArgumentNullException.ThrowIfNull(target);
@@ -123,7 +123,7 @@ public static class ConfigSecretMerge
     /// (with the cached <see cref="PlatformConfig"/> set) and exposed internally so tests can drive
     /// the same engine over a synthetic graph.
     /// </summary>
-    internal static void RedactPaths(JsonObject config, IReadOnlyList<SecretPath> paths)
+    internal static void RedactPaths(this JsonObject config, IReadOnlyList<SecretPath> paths)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(paths);
@@ -135,7 +135,7 @@ public static class ConfigSecretMerge
     /// Applies secret restoration for an explicit secret-path set. Companion to
     /// <see cref="RedactPaths"/>.
     /// </summary>
-    internal static void RestorePaths(JsonObject existing, JsonObject target, IReadOnlyList<SecretPath> paths)
+    internal static void RestorePaths(this JsonObject existing, JsonObject target, IReadOnlyList<SecretPath> paths)
     {
         ArgumentNullException.ThrowIfNull(existing);
         ArgumentNullException.ThrowIfNull(target);

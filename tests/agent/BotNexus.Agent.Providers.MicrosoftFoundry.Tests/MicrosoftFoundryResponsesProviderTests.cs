@@ -168,6 +168,116 @@ public class MicrosoftFoundryResponsesProviderTests
         result.ErrorMessage.ShouldNotContain("OpenAI");
     }
 
+    private const string SubAgentSessionId =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa::subagent::bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    [Fact]
+    public async Task Stream_SubAgentSessionId_SendsBoundedRepeatableDigest()
+    {
+        SubAgentSessionId.Length.ShouldBe(76);
+        using var first = await StreamPayloadAsync(SubAgentSessionId);
+        using var second = await StreamPayloadAsync(SubAgentSessionId);
+
+        var key = first.RootElement.GetProperty("prompt_cache_key").GetString();
+        key.ShouldNotBeNull();
+        key.Length.ShouldBe(64);
+        key.ShouldBe(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            Encoding.UTF8.GetBytes(SubAgentSessionId))));
+        key.ShouldNotBe(SubAgentSessionId);
+        second.RootElement.GetProperty("prompt_cache_key").GetString().ShouldBe(key);
+        first.RootElement.TryGetProperty("prompt_cache_retention", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Stream_SessionIdsDifferingBeyondFirst64Characters_SendDifferentKeys()
+    {
+        var otherSessionId = SubAgentSessionId[..^1] + "c";
+        SubAgentSessionId[..64].ShouldBe(otherSessionId[..64]);
+        using var first = await StreamPayloadAsync(SubAgentSessionId);
+        using var second = await StreamPayloadAsync(otherSessionId);
+
+        first.RootElement.GetProperty("prompt_cache_key").GetString()
+            .ShouldNotBe(second.RootElement.GetProperty("prompt_cache_key").GetString());
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(32)]
+    [InlineData(64)]
+    [InlineData(65)]
+    public async Task Stream_CacheKeyLengthBoundary_PreservesShortIdsAndHashesLongIds(int length)
+    {
+        var sessionId = new string('s', length);
+        using var payload = await StreamPayloadAsync(sessionId);
+
+        var key = payload.RootElement.GetProperty("prompt_cache_key").GetString();
+        key.ShouldNotBeNull();
+        key.Length.ShouldBeLessThanOrEqualTo(64);
+        key.ShouldBe(length <= 64
+            ? sessionId
+            : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(sessionId))));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" \t\r\n")]
+    public async Task Stream_BlankSessionId_OmitsPromptCacheKey(string? sessionId)
+    {
+        using var payload = await StreamPayloadAsync(sessionId);
+
+        payload.RootElement.TryGetProperty("prompt_cache_key", out _).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("session-123")]
+    [InlineData(SubAgentSessionId)]
+    public async Task Stream_CacheDisabled_OmitsPromptCacheKey(string sessionId)
+    {
+        using var payload = await StreamPayloadAsync(sessionId, CacheRetention.None);
+
+        payload.RootElement.TryGetProperty("prompt_cache_key", out _).ShouldBeFalse();
+        payload.RootElement.TryGetProperty("prompt_cache_retention", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Stream_CacheKeyRejectedByFoundry_SurfacesProviderError()
+    {
+        const string rejection = "prompt_cache_key must be at most 64 characters";
+        var handler = new RecordingHandler(HttpStatusCode.BadRequest,
+            "{\"error\":{\"message\":\"" + rejection + "\"}}");
+        using var provider = Provider("team-foundry", handler, MicrosoftFoundryAuthentication.ApiKey("key"));
+
+        var result = await provider.Stream(
+                Model("deployment", "team-foundry", "https://example.services.ai.azure.com"),
+                Context(), new StreamOptions { SessionId = SubAgentSessionId })
+            .GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        handler.SendCount.ShouldBe(1);
+        result.StopReason.ShouldBe(StopReason.Error);
+        result.ErrorMessage.ShouldNotBeNull();
+        // Ordinary bad requests retain the shared HTTP status/body diagnostic;
+        // authentication failures have the separate provider-named contract.
+        result.ErrorMessage.ShouldStartWith("HTTP 400:");
+        result.ErrorMessage.ShouldContain(rejection);
+    }
+
+    private static async Task<JsonDocument> StreamPayloadAsync(
+        string? sessionId, CacheRetention cacheRetention = CacheRetention.Short)
+    {
+        var handler = new RecordingHandler(rejectOversizedCacheKey: true);
+        using var provider = Provider("team-foundry", handler, MicrosoftFoundryAuthentication.ApiKey("key"));
+        var result = await provider.Stream(
+                Model("deployment", "team-foundry", "https://example.services.ai.azure.com"),
+                Context(), new StreamOptions { SessionId = sessionId, CacheRetention = cacheRetention })
+            .GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        handler.SendCount.ShouldBe(1);
+        result.StopReason.ShouldNotBe(StopReason.Error);
+        handler.Body.ShouldNotBeNull();
+        return JsonDocument.Parse(handler.Body);
+    }
+
     [Fact]
     public void CreateSecureHandler_DisablesAutomaticRedirects()
     {
@@ -237,7 +347,8 @@ public class MicrosoftFoundryResponsesProviderTests
 
     private sealed class RecordingHandler(
         HttpStatusCode statusCode = HttpStatusCode.OK,
-        string? responseBody = null) : HttpMessageHandler
+        string? responseBody = null,
+        bool rejectOversizedCacheKey = false) : HttpMessageHandler
     {
         public int SendCount { get; private set; }
         public Uri? RequestUri { get; private set; }
@@ -258,6 +369,21 @@ public class MicrosoftFoundryResponsesProviderTests
                 pair => pair.Key,
                 pair => string.Join(",", pair.Value),
                 StringComparer.OrdinalIgnoreCase);
+
+            if (rejectOversizedCacheKey && Body is not null)
+            {
+                using var payload = JsonDocument.Parse(Body);
+                if (payload.RootElement.TryGetProperty("prompt_cache_key", out var cacheKey)
+                    && cacheKey.GetString() is { Length: > 64 })
+                {
+                    return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                    {
+                        Content = new StringContent(
+                            "{\"error\":{\"message\":\"prompt_cache_key must be at most 64 characters\"}}",
+                            Encoding.UTF8, "application/json")
+                    };
+                }
+            }
 
             var body = responseBody ??
                 "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n";

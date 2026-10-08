@@ -27,6 +27,7 @@ public sealed class ExecTool : IAgentTool
     /// </summary>
     internal static int MaxOutputBytesForTest => MaxOutputBytes;
 
+    private readonly LocalChildEnvironmentPolicy _environmentPolicy;
     private readonly string? _workingDirectory;
     private readonly IFileSystem _fileSystem;
     private readonly string _processOwner;
@@ -44,16 +45,19 @@ public sealed class ExecTool : IAgentTool
     /// </summary>
     /// <param name="workingDirectory">The agent workspace, or null for process-relative resolution.</param>
     /// <param name="fileSystem">File system used for Windows .cmd/.bat resolution.</param>
-    public ExecTool(string? workingDirectory, IFileSystem? fileSystem = null)
-        : this(workingDirectory, fileSystem, string.Empty) { }
+    /// <param name="environmentPolicy">Trusted ambient-name policy; null uses secure defaults.</param>
+    public ExecTool(string? workingDirectory, IFileSystem? fileSystem = null, LocalChildEnvironmentPolicy? environmentPolicy = null)
+        : this(workingDirectory, fileSystem, string.Empty, environmentPolicy: environmentPolicy) { }
 
     internal ExecTool(
         string? workingDirectory,
         IFileSystem? fileSystem,
         string processOwner,
         BackgroundProcessRegistry? processRegistry = null,
-        Func<BackgroundProcess, Task>? beforeBackgroundRegister = null)
+        Func<BackgroundProcess, Task>? beforeBackgroundRegister = null,
+        LocalChildEnvironmentPolicy? environmentPolicy = null)
     {
+        _environmentPolicy = environmentPolicy ?? LocalChildEnvironmentPolicy.Default;
         _processOwner = processOwner;
         _processRegistry = processRegistry ?? BackgroundProcessRegistry.Instance;
         _beforeBackgroundRegister = beforeBackgroundRegister;
@@ -288,13 +292,8 @@ public sealed class ExecTool : IAgentTool
         // looping over Args by hand here is precisely how a raw cmd payload gets re-escaped.
         launch.ApplyArgumentsTo(startInfo);
 
-
-        if (env is not null)
-        {
-            // Route through the shared merge seam so an override replaces - rather than
-            // duplicates - an inherited variable whose key differs only by case on Windows (#2892).
-            ProcessEnvironment.Merge(startInfo.Environment, env);
-        }
+        // Secure default for both foreground and background; explicit values are merged last.
+        LocalChildEnvironment.Apply(startInfo, _environmentPolicy, env);
 
         // Re-check cancellation immediately before Start(). Everything above - command resolution,
         // PowerShell preflight, working-directory resolution and environment merging - can take arbitrary

@@ -238,11 +238,11 @@ public sealed class PlatformConfigWriter
                 //    symmetric restore walks the same paths RedactSecrets uses.
                 var existingWrapper = new JsonObject { [sectionName] = existing.DeepClone() };
                 var incomingWrapper = new JsonObject { [sectionName] = incoming.DeepClone() };
-                ConfigSecretMerge.RestoreSecrets(existingWrapper, incomingWrapper);
+                existingWrapper.RestoreSecrets(incomingWrapper);
                 var restoredIncoming = incomingWrapper[sectionName] as JsonObject ?? incoming;
 
                 // 2) Deep-merge restored payload over existing so omitted subtrees survive.
-                ConfigSecretMerge.DeepMerge(merged, restoredIncoming);
+                merged.DeepMerge(restoredIncoming);
 
                 root[sectionName] = merged;
             },
@@ -528,7 +528,7 @@ public sealed class PlatformConfigWriter
                 if (applyError is not null)
                     return Task.FromResult<string?>(applyError);
 
-                ConfigSecretMerge.RestoreSecrets(root, candidate);
+                root.RestoreSecrets(candidate);
 
                 root.Clear();
                 foreach (var kvp in candidate)
@@ -611,11 +611,11 @@ public sealed class PlatformConfigWriter
             {
                 var existingWrapper = new JsonObject { [sectionName] = new JsonObject { [key] = existing.DeepClone() } };
                 var incomingWrapper = new JsonObject { [sectionName] = new JsonObject { [key] = incoming.DeepClone() } };
-                ConfigSecretMerge.RestoreSecrets(existingWrapper, incomingWrapper);
+                existingWrapper.RestoreSecrets(incomingWrapper);
                 var restoredIncoming = incomingWrapper[sectionName]![key] as JsonObject ?? incoming;
 
                 var merged = existing.DeepClone().AsObject();
-                ConfigSecretMerge.DeepMerge(merged, restoredIncoming);
+                merged.DeepMerge(restoredIncoming);
                 section[key] = merged;
             }
             else
