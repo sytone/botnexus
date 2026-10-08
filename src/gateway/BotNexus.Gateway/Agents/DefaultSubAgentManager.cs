@@ -32,6 +32,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly IChannelDispatcher _dispatcher;
     private readonly IAgentWorkspaceManager? _workspaceManager;
     private readonly IOptionsMonitor<GatewayOptions> _options;
+    private readonly IOptions<AgentExchangeOptions> _exchangeOptions;
     private readonly ILogger<DefaultSubAgentManager> _logger;
     private readonly DefaultToolPolicyProvider? _policyProvider;
     private readonly TimeProvider _timeProvider;
@@ -89,7 +90,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         IConversationStore? conversationStore = null,
         ModelRegistry? modelRegistry = null,
         IToolAuditSink? toolAudit = null,
-        ISubAgentWorktreeSnapshotService? worktreeSnapshotService = null)
+        ISubAgentWorktreeSnapshotService? worktreeSnapshotService = null,
+        IOptions<AgentExchangeOptions>? exchangeOptions = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -97,6 +99,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _dispatcher = dispatcher;
         _workspaceManager = workspaceManager;
         _options = options;
+        _exchangeOptions = exchangeOptions ?? Options.Create(new AgentExchangeOptions());
         _logger = logger;
         _policyProvider = policyProvider;
         _sessionStore = sessionStore;
@@ -320,6 +323,13 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // Resolve the Embody | Mirror discriminated union into a side-effect-free plan
         // (descriptor + minted child id + customisation overrides). See ResolveSpawnPlan.
         var plan = ResolveSpawnPlan(request, parentDescriptor, uniqueId);
+        // Mirror selects another registered identity. Enforce the same peer grants as converse
+        // against that resolved target before acquiring any child resources; Embody stays local.
+        if (request.Mode is Mirror mirror
+            && !PeerAccessPolicy.IsAllowed(_exchangeOptions.Value, parentDescriptor, mirror.TargetAgentId, plan.BaseDescriptor))
+            throw new UnauthorizedAccessException(
+                $"Agent '{request.ParentAgentId}' is not allowed to mirror '{mirror.TargetAgentId}'.");
+
         var archetype = plan.Archetype;
         var baseDescriptor = plan.BaseDescriptor;
         var childAgentId = plan.ChildAgentId;
