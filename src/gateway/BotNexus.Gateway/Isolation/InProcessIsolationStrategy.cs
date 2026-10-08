@@ -2067,7 +2067,28 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         };
     }
 
-    internal static async Task WriteAgentEventAsync(
+    /// <summary>
+    /// Projects a failed run that has not already surfaced a turn error. Required proactive
+    /// compaction fails before TurnEnd, so its precise completion detail must reach the same
+    /// error persistence and delivery seam as provider failures. Cancellation is not a fault.
+    /// </summary>
+    internal static AgentStreamEvent? MapRunError(
+        AgentEvent agentEvent, string messageId, bool errorAlreadyEmitted)
+    {
+        if (errorAlreadyEmitted || agentEvent is not AgentEndEvent { Completion.Status: RunCompletionStatus.Failed } end)
+            return null;
+
+        return new AgentStreamEvent
+        {
+            Type = AgentStreamEventType.Error,
+            ErrorMessage = string.IsNullOrWhiteSpace(end.Completion.Detail)
+                ? "The agent run failed but supplied no detail."
+                : end.Completion.Detail,
+            MessageId = messageId
+        };
+    }
+
+    internal static async Task<bool> WriteAgentEventAsync(
         AgentEvent agentEvent,
         string messageId,
         System.Threading.Channels.ChannelWriter<AgentStreamEvent> writer,
@@ -2076,10 +2097,20 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         Func<bool> isCallerCancellation,
         ILogger logger,
         AgentId agentId,
-        SessionId sessionId)
+        SessionId sessionId,
+        bool errorAlreadyEmitted = false)
     {
         try
         {
+            // Publish failure detail BEFORE RunEnded: clients may finalize their run on that
+            // terminal event. The completion signal itself remains unchanged and authoritative.
+            var runError = MapRunError(agentEvent, messageId, errorAlreadyEmitted);
+            if (runError is not null)
+            {
+                await writer.WriteAsync(runError, cancellationToken);
+                errorAlreadyEmitted = true;
+            }
+
             var streamEvent = map(agentEvent, messageId);
 
             if (streamEvent is not null)
@@ -2091,7 +2122,10 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             var turnError = MapTurnError(agentEvent, messageId);
 
             if (turnError is not null)
+            {
                 await writer.WriteAsync(turnError, cancellationToken);
+                errorAlreadyEmitted = true;
+            }
         }
         catch (OperationCanceledException) when (isCallerCancellation())
         {
@@ -2121,6 +2155,8 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
             writer.TryComplete(ex);
         }
+
+        return errorAlreadyEmitted;
     }
 
     private async IAsyncEnumerable<AgentStreamEvent> StreamCoreAsync(
@@ -2135,6 +2171,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         var messageId = Guid.NewGuid().ToString("N");
         var events = System.Threading.Channels.Channel.CreateUnbounded<AgentStreamEvent>();
         using var promptCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        // Run-local latch: a provider TurnEnd error already explains a failed AgentEnd. Agent
+        // listeners are awaited in order, so this state follows the channel's event order.
+        var errorAlreadyEmitted = false;
 
         using var subscription = _agent.Subscribe(async (agentEvent, eventCancellation) =>
         {
@@ -2146,7 +2185,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             // sibling catches in this method already use - caller cancelled the stream, or the
             // linked prompt token tripped. Passing it as a delegate keeps the guard evaluated at
             // throw time (token state), never at subscribe time.
-            await WriteAgentEventAsync(
+            errorAlreadyEmitted = await WriteAgentEventAsync(
                 agentEvent,
                 messageId,
                 events.Writer,
@@ -2158,7 +2197,8 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 () => IsDeliberateTeardown(promptCancellation, cancellationToken),
                 _logger,
                 AgentId,
-                SessionId);
+                SessionId,
+                errorAlreadyEmitted);
         });
 
         async Task RunPromptAsync()
