@@ -45,7 +45,7 @@ public static class ConfigPatchApplier
     /// describing the first operation that could not be applied. The caller is expected to abort
     /// the whole batch on a non-null result: a patch presented as one Save must not half-commit.
     /// </returns>
-    public static string? Apply(JsonObject root, IReadOnlyList<ConfigPatchOperation> operations)
+    public static string? Apply(this JsonObject root, IReadOnlyList<ConfigPatchOperation> operations)
     {
         ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(operations);

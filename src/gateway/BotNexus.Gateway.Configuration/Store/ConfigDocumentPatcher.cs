@@ -28,7 +28,7 @@ public static class ConfigDocumentPatcher
     /// </summary>
     /// <param name="document">The document to patch. Intermediate objects are created as needed.</param>
     /// <param name="changes">The keys to upsert and remove.</param>
-    public static void Apply(JsonObject document, ConfigChangeSet changes)
+    public static void Apply(this JsonObject document, ConfigChangeSet changes)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(changes);
