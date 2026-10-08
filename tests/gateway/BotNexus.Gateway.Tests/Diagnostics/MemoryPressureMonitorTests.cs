@@ -35,6 +35,38 @@ public sealed class MemoryPressureMonitorTests
     }
 
     [Fact]
+    public void CaptureSnapshot_CapturesNonnegativeProcessAndLastGcDiagnostics()
+    {
+        var collectionIndexBefore = GC.GetGCMemoryInfo().Index;
+
+        var snapshot = _monitor.CaptureSnapshot();
+
+        var collectionIndexAfter = GC.GetGCMemoryInfo().Index;
+        snapshot.PrivateMemoryBytes.ShouldBeGreaterThanOrEqualTo(0L);
+        snapshot.GcHeapSizeBytes.ShouldBeGreaterThanOrEqualTo(0L);
+        snapshot.GcFragmentedBytes.ShouldBeGreaterThanOrEqualTo(0L);
+        snapshot.GcCollectionIndex.ShouldBeInRange(collectionIndexBefore, collectionIndexAfter);
+        snapshot.UnattributedPrivateBytesAboveLastGcCommitment.ShouldBe(
+            Math.Max(0L, snapshot.PrivateMemoryBytes - snapshot.GcCommittedBytes));
+        snapshot.PrivateMemoryReadable.ShouldBe(
+            MemoryPressureMonitor.FormatBytes(snapshot.PrivateMemoryBytes));
+    }
+
+    [Theory]
+    [InlineData(1000L, 400L, 600L)]
+    [InlineData(400L, 1000L, 0L)]
+    [InlineData(1000L, 1000L, 0L)]
+    [InlineData(0L, 0L, 0L)]
+    [InlineData(8000000000L, 3000000000L, 5000000000L)]
+    [InlineData(3000000000L, 8000000000L, 0L)]
+    public void CalculateUnattributedPrivateBytesAboveLastGcCommitment_ClampsGapWithoutNarrowing(
+        long privateMemoryBytes, long lastGcCommittedBytes, long expected)
+    {
+        MemoryPressureMonitor.CalculateUnattributedPrivateBytesAboveLastGcCommitment(
+            privateMemoryBytes, lastGcCommittedBytes).ShouldBe(expected);
+    }
+
+    [Fact]
     public void CaptureSnapshot_AddsToHistory()
     {
         Assert.Equal(0, _monitor.SnapshotCount);
