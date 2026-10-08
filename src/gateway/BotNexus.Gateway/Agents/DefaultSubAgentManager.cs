@@ -2127,65 +2127,71 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         if (!_records.TryGetValue(subAgentId, out var record) || !record.TryBeginCleanup())
             return;
 
-        // Start the record's retention clock and release the timeout source now that the sub-agent
-        // has finished. The record itself stays in _records (for list_subagents / status queries)
-        // until ReapCompletedRecords ages it out, but its CancellationTokenSource is an IDisposable
-        // that must not be held for the process lifetime. DisposeTimeout is idempotent and a no-op
-        // when an explicit kill already disposed it via CancelTimeout.
-        record.MarkRetired(_timeProvider.GetUtcNow());
-        record.DisposeTimeout();
-
-        var childAgentId = record.ChildAgentId;
-
-        // Remove the dynamic deny-list registered for this ephemeral sub-agent
-        _policyProvider?.RemoveDynamicDenyList(childAgentId);
-
         try
         {
-            await _supervisor.StopAsync(childAgentId, childSessionId, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Failed stopping child agent '{ChildAgentId}' for sub-agent '{SubAgentId}'.",
-                childAgentId,
-                subAgentId);
+            // Release the timeout source promptly once cleanup is owned. Disposal is idempotent
+            // and a no-op when an explicit kill already disposed it via CancelTimeout.
+            record.DisposeTimeout();
+
+            var childAgentId = record.ChildAgentId;
+
+            // Remove the dynamic deny-list registered for this ephemeral sub-agent
+            _policyProvider?.RemoveDynamicDenyList(childAgentId);
+
+            try
+            {
+                await _supervisor.StopAsync(childAgentId, childSessionId, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed stopping child agent '{ChildAgentId}' for sub-agent '{SubAgentId}'.",
+                    childAgentId,
+                    subAgentId);
+            }
+            finally
+            {
+                _registry.Unregister(childAgentId);
+            }
+
+            if (_workspaceManager is null)
+                return;
+
+            try
+            {
+                if (_workspaceManager.TryCleanupWorkspace(childAgentId.Value))
+                {
+                    // #3670 AC4: the lifecycle route is an audit event, not a debug breadcrumb. It is
+                    // logged at Information using the vocabulary the backstop sweep also emits, so one
+                    // operator query returns every reclamation from either route and the suffix says
+                    // which mechanism acted. Previously this was a Debug line with unrelated wording:
+                    // invisible in production and unjoinable with the sweeper's trail.
+                    //
+                    // It is emitted only when TryCleanupWorkspace actually removed something. A line
+                    // logged unconditionally would report phantom reclamations for an already-absent
+                    // directory. Sharing adds access to the parent; the child still owns an isolated
+                    // cwd, and cleanup must never remove the parent's workspace.
+                    _logger.LogInformation(
+                        SubAgentWorkspaceReclamationAudit.LifecycleTemplate,
+                        childAgentId.Value,
+                        terminalStatus);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed cleaning temporary workspace for child agent '{ChildAgentId}'.",
+                    childAgentId);
+            }
         }
         finally
         {
-            _registry.Unregister(childAgentId);
-        }
-
-        if (_workspaceManager is null)
-            return;
-
-        try
-        {
-            if (_workspaceManager.TryCleanupWorkspace(childAgentId.Value))
-            {
-                // #3670 AC4: the lifecycle route is an audit event, not a debug breadcrumb. It is
-                // logged at Information using the vocabulary the backstop sweep also emits, so one
-                // operator query returns every reclamation from either route and the suffix says
-                // which mechanism acted. Previously this was a Debug line with unrelated wording:
-                // invisible in production and unjoinable with the sweeper's trail.
-                //
-                // It is emitted only when TryCleanupWorkspace actually removed something. A line
-                // logged unconditionally would report phantom reclamations for an already-absent
-                // directory. Sharing adds access to the parent; the child still owns an isolated
-                // cwd, and cleanup must never remove the parent's workspace.
-                _logger.LogInformation(
-                    SubAgentWorkspaceReclamationAudit.LifecycleTemplate,
-                    childAgentId.Value,
-                    terminalStatus);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Failed cleaning temporary workspace for child agent '{ChildAgentId}'.",
-                childAgentId);
+            // #4537: retirement is the cleanup-completion boundary, not its ownership claim.
+            // Start retention only after teardown returns or unwinds, including best-effort failures
+            // and the optional-workspace-manager path. Reaping must never evict in-flight cleanup.
+            record.MarkRetired(_timeProvider.GetUtcNow());
         }
     }
 
