@@ -67,13 +67,11 @@
          section with no bespoke plumbing. -->
     <PackageVersion Include="Microsoft.FeatureManagement" Version="4.6.0" />
 
-    <!-- Microsoft 365 Agents SDK (Channels.Agent365 extension). Pinned to 1.6.150.
-         NOTE: these packages depend on the STABLE Microsoft.Extensions.* 10.0.7 line, which is
-         higher than BotNexus's centrally-pinned 10.0.0-preview.3 line. To avoid an NU1605
-         downgrade-as-error the Agent365 extension project overrides the affected
-         Microsoft.Extensions.* packages to 10.0.7 locally via VersionOverride, keeping the bump
-         isolated to that leaf extension (nothing project-references it; it is loaded dynamically
-         through the AssemblyLoadContext extension loader). See docs/extensions/agent365.md. -->
+    <!-- Microsoft 365 Agents SDK (Channels.Agent365 extension), pinned to 1.6.150.
+         Its transitive Microsoft.Extensions.* packages are stable 10.0.7. Runtime sharing is
+         by assembly identity, not NuGet version: Microsoft.AspNetCore.App supplies compatible
+         10.0.0.0 assemblies. Do not infer private isolation from a leaf restore graph.
+         See docs/extensions/agent365.md and the production-artifact compatibility fence. -->
     <PackageVersion Include="Microsoft.Agents.Builder" Version="1.6.150" />
     <PackageVersion Include="Microsoft.Agents.Connector" Version="1.6.150" />
     <PackageVersion Include="Microsoft.Agents.Core" Version="1.6.150" />
@@ -88,7 +86,12 @@
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.0-preview.3.25171.6" />
 
     <!-- Azure / identity -->
-    <PackageVersion Include="Azure.Core" Version="1.44.1" />
+    <!-- Host-shared floors from Agents SDK 1.6.150 production assembly references (#4783).
+         Azure.Core 1.50.0 itself requires System.ClientModel 1.8.0 transitively. -->
+    <PackageVersion Include="Azure.Core" Version="1.50.0" />
+    <PackageVersion Include="Microsoft.Identity.Client" Version="4.83.3" />
+    <PackageVersion Include="Microsoft.IdentityModel.Abstractions" Version="8.15.0" />
+    <PackageVersion Include="System.Memory.Data" Version="10.0.7" />
     <PackageVersion Include="Azure.Identity" Version="1.13.2" />
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
     <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.18.0" />

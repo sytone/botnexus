@@ -55,6 +55,42 @@
     <ProjectReference Include="..\..\scenarios\BotNexus.Scenarios.Tests\BotNexus.Scenarios.Tests.csproj" />
   </ItemGroup>
 
+  <!-- Build deployable extensions without importing their NuGet closure into testhost.
+       Shared with the independently implemented #4778 artifact fence. -->
+  <ItemGroup>
+    <ExtensionArtifactCandidate Include="$(MSBuildThisFileDirectory)../../../src/extensions/**/*.csproj"
+                                Exclude="$(MSBuildThisFileDirectory)../../../src/extensions/**/bin/**;$(MSBuildThisFileDirectory)../../../src/extensions/**/obj/**">
+      <Deployable Condition="Exists('%(RootDir)%(Directory)botnexus-extension.json')">true</Deployable>
+    </ExtensionArtifactCandidate>
+    <ExtensionArtifactProject Include="@(ExtensionArtifactCandidate->WithMetadataValue('Deployable', 'true'))" />
+    <ProjectReference Include="@(ExtensionArtifactProject)" Exclude="@(ProjectReference)"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../tools/BotNexus.ExtensionCompatibilityProbe/BotNexus.ExtensionCompatibilityProbe.csproj"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="RecordExtensionCompatibilityArtifacts" AfterTargets="Build" Condition="'$(SkipTests)' != 'true'">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../../../src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="CompatibilityHostArtifact" />
+    </MSBuild>
+    <MSBuild Projects="@(ExtensionArtifactProject)" Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="CompatibilityExtensionArtifact" />
+    </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../../../tools/BotNexus.ExtensionCompatibilityProbe/BotNexus.ExtensionCompatibilityProbe.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="CompatibilityProbeArtifact" />
+    </MSBuild>
+    <Copy SourceFiles="@(CompatibilityProbeArtifact)"
+          DestinationFolder="@(CompatibilityHostArtifact->'%(RootDir)%(Directory)')" />
+    <WriteLinesToFile File="$(TargetDir)compatibility-host-artifact.txt"
+                      Lines="@(CompatibilityHostArtifact)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <WriteLinesToFile File="$(TargetDir)compatibility-extension-artifacts.txt"
+                      Lines="@(CompatibilityExtensionArtifact)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
   <ItemGroup>
     <Compile Include="..\..\BotNexus.Testing\SqlitePoolCleanup.cs" Link="Shared\SqlitePoolCleanup.cs" />
     <Using Include="BotNexus.Testing" />
