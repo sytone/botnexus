@@ -1080,6 +1080,49 @@ public sealed partial class GatewayHostTests
     }
 
     [Fact]
+    public async Task GatewayHost_AutoCompaction_PassesResolvedBudgetSnapshotToCoordinator()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(value => value.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var session = new GatewaySession { SessionId = SessionId.From("session-1"), AgentId = AgentId.From("agent-a") };
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(value => value.GetOrCreateAsync(session.SessionId, session.AgentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.GetOrCreateAsync(session.AgentId, session.SessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreatePromptHandle("agent-a", "session-1", "ok").Object);
+        var global = new CompactionOptions { ContextWindowTokens = 200_000, TokenThresholdRatio = 0.6 };
+        var resolver = new Mock<ISessionContextWindowResolver>();
+        resolver.Setup(value => value.ResolveAsync(session.AgentId, It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(128_000);
+        CompactionOptions? decisionOptions = null;
+        CompactionOptions? executionOptions = null;
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(value => value.ShouldCompact(session.Session, It.IsAny<CompactionOptions>()))
+            .Callback<Session, CompactionOptions>((_, options) => decisionOptions = options)
+            .Returns(true);
+        var coordinator = new Mock<ISessionCompactionCoordinator>();
+        coordinator.Setup(value => value.CompactAsync(session.AgentId, session, It.IsAny<CancellationToken>(),
+                false, CompactionHandlePolicy.Evict, It.IsAny<CompactionOptions?>()))
+            .Callback<AgentId, GatewaySession, CancellationToken, bool, CompactionHandlePolicy, CompactionOptions?>((_, _, _, _, _, options) => executionOptions = options)
+            .ReturnsAsync(new SessionCompactionOutcome(false, false, HistoryReplaceOutcome.Aborted, 0, 0, 0, 0, "no summary"));
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager(), compactor: compactor.Object,
+            compactionOptions: new TestOptionsMonitor<CompactionOptions>(global),
+            compactionCoordinator: coordinator.Object, contextWindowResolver: resolver.Object);
+
+        await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+
+        decisionOptions.ShouldNotBeNull();
+        decisionOptions.ContextWindowTokens.ShouldBe(128_000);
+        executionOptions.ShouldBeSameAs(decisionOptions);
+        global.ContextWindowTokens.ShouldBe(200_000);
+        coordinator.Verify(value => value.CompactAsync(session.AgentId, session, It.IsAny<CancellationToken>(),
+            false, CompactionHandlePolicy.Evict, It.IsAny<CompactionOptions?>()), Times.Once);
+    }
+
+    [Fact]
     public async Task GatewayHost_AutoCompaction_TriggersWhenAboveThreshold()
     {
         var router = new Mock<IMessageRouter>();
@@ -1829,7 +1872,9 @@ public sealed partial class GatewayHostTests
         IOptions<PlatformConfig>? platformConfig = null,
         LlmClient? llmClient = null,
         ISessionTurnTracker? turnTracker = null,
-        IConversationChangeNotifier? conversationChangeNotifier = null)
+        IConversationChangeNotifier? conversationChangeNotifier = null,
+        ISessionCompactionCoordinator? compactionCoordinator = null,
+        ISessionContextWindowResolver? contextWindowResolver = null)
         => new(
             supervisor,
             router,
@@ -1847,7 +1892,9 @@ public sealed partial class GatewayHostTests
             platformConfig: platformConfig,
             llmClient: llmClient,
             turnTracker: turnTracker,
-            conversationChangeNotifier: conversationChangeNotifier);
+            conversationChangeNotifier: conversationChangeNotifier,
+            compactionCoordinator: compactionCoordinator,
+            contextWindowResolver: contextWindowResolver);
 
     private static InboundMessage CreateMessage(
         string content,

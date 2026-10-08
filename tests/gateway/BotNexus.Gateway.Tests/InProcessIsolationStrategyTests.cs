@@ -457,6 +457,48 @@ public sealed class InProcessIsolationStrategyTests
     }
 
     [Fact]
+    public async Task CreateAsync_MidLoopCompaction_PassesScopedDecisionSnapshotAndKeepsHandle()
+    {
+        var session = new GatewaySession { SessionId = SessionId.From("scoped-midloop"), AgentId = AgentId.From("agent-a") };
+        var store = new Mock<ISessionStore>();
+        store.Setup(value => value.GetAsync(session.SessionId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        CompactionOptions? decisionOptions = null;
+        CompactionOptions? executionOptions = null;
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(value => value.ShouldCompact(session.Session, It.IsAny<CompactionOptions>()))
+            .Callback<Session, CompactionOptions>((_, options) => decisionOptions = options).Returns(true);
+        var coordinator = new Mock<ISessionCompactionCoordinator>();
+        coordinator.Setup(value => value.CompactAsync(session.AgentId, session, It.IsAny<CancellationToken>(),
+                false, CompactionHandlePolicy.KeepCurrent, It.IsAny<CompactionOptions?>()))
+            .Callback<AgentId, GatewaySession, CancellationToken, bool, CompactionHandlePolicy, CompactionOptions?>((_, _, _, _, _, options) => executionOptions = options)
+            .ReturnsAsync(new SessionCompactionOutcome(true, true, HistoryReplaceOutcome.Applied, 1, 0, 100, 10, null));
+        var global = new CompactionOptions { ContextWindowTokens = 200_000, TokenThresholdRatio = 0.6 };
+        var services = new ServiceCollection();
+        services.AddSingleton(store.Object);
+        services.AddSingleton(compactor.Object);
+        services.AddSingleton(coordinator.Object);
+        services.AddSingleton<IOptionsMonitor<CompactionOptions>>(new StaticOptionsMonitor<CompactionOptions>(global));
+        using var serviceProvider = services.BuildServiceProvider();
+        var strategy = CreateStrategyWithRegisteredModel(serviceProvider: serviceProvider);
+        var descriptor = CreateDescriptor() with { ContextWindow = 128_000 };
+        await using var handle = await strategy.CreateAsync(descriptor, new AgentExecutionContext { SessionId = session.SessionId });
+        using var cancellation = new CancellationTokenSource();
+        var hook = GetAgentOptions(handle).ContextCompactionService;
+        hook.ShouldNotBeNull();
+
+        var replacement = await hook(cancellation.Token);
+
+        replacement.ShouldNotBeNull();
+        decisionOptions.ShouldNotBeNull();
+        decisionOptions.ContextWindowTokens.ShouldBe(128_000);
+        decisionOptions.TokenThresholdRatio.ShouldBe(0.6);
+        executionOptions.ShouldBeSameAs(decisionOptions);
+        global.ContextWindowTokens.ShouldBe(200_000);
+        coordinator.Verify(value => value.CompactAsync(session.AgentId, session, cancellation.Token,
+            false, CompactionHandlePolicy.KeepCurrent, It.IsAny<CompactionOptions?>()), Times.Once);
+    }
+
+    [Fact]
     public async Task CreateAsync_MidLoopCompactionConflict_RefreshesOnceAndUsesNewestAppliedContext()
     {
         var sessionId = SessionId.From("session-compaction-conflict-retry");
@@ -489,7 +531,7 @@ public sealed class InProcessIsolationStrategyTests
                 It.IsAny<GatewaySession>(),
                 It.IsAny<CancellationToken>(),
                 false,
-                CompactionHandlePolicy.KeepCurrent))
+                CompactionHandlePolicy.KeepCurrent, It.Is<CompactionOptions?>(options => options != null && options.ContextWindowTokens == 8192)))
             .ReturnsAsync(new SessionCompactionOutcome(
                 false, false, HistoryReplaceOutcome.Aborted, 0, 0, 100, 100,
                 "concurrent history change", CompactionSkipReason.ConcurrentHistoryChange))
@@ -521,7 +563,7 @@ public sealed class InProcessIsolationStrategyTests
             It.IsAny<GatewaySession>(),
             It.IsAny<CancellationToken>(),
             false,
-            CompactionHandlePolicy.KeepCurrent), Times.Exactly(2));
+            CompactionHandlePolicy.KeepCurrent, It.Is<CompactionOptions?>(options => options != null && options.ContextWindowTokens == 8192)), Times.Exactly(2));
     }
 
     [Fact]
@@ -558,7 +600,7 @@ public sealed class InProcessIsolationStrategyTests
                 stale,
                 It.IsAny<CancellationToken>(),
                 false,
-                CompactionHandlePolicy.KeepCurrent))
+                CompactionHandlePolicy.KeepCurrent, It.Is<CompactionOptions?>(options => options != null && options.ContextWindowTokens == 8192)))
             .ReturnsAsync(new SessionCompactionOutcome(
                 false, false, HistoryReplaceOutcome.Aborted, 0, 0, 100, 100,
                 "concurrent history change", CompactionSkipReason.ConcurrentHistoryChange));
@@ -587,7 +629,7 @@ public sealed class InProcessIsolationStrategyTests
             It.IsAny<GatewaySession>(),
             It.IsAny<CancellationToken>(),
             false,
-            CompactionHandlePolicy.KeepCurrent), Times.Once);
+            CompactionHandlePolicy.KeepCurrent, It.Is<CompactionOptions?>(options => options != null && options.ContextWindowTokens == 8192)), Times.Once);
     }
 
     [Fact]
@@ -607,7 +649,7 @@ public sealed class InProcessIsolationStrategyTests
                 It.IsAny<GatewaySession>(),
                 It.IsAny<CancellationToken>(),
                 false,
-                CompactionHandlePolicy.KeepCurrent))
+                CompactionHandlePolicy.KeepCurrent, It.Is<CompactionOptions?>(options => options != null && options.ContextWindowTokens == 8192)))
             .ReturnsAsync(new SessionCompactionOutcome(
                 false, false, HistoryReplaceOutcome.Aborted, 0, 0, 100, 100,
                 "concurrent history change", CompactionSkipReason.ConcurrentHistoryChange));
@@ -633,7 +675,7 @@ public sealed class InProcessIsolationStrategyTests
             It.IsAny<GatewaySession>(),
             It.IsAny<CancellationToken>(),
             false,
-            CompactionHandlePolicy.KeepCurrent), Times.Exactly(2));
+            CompactionHandlePolicy.KeepCurrent, It.Is<CompactionOptions?>(options => options != null && options.ContextWindowTokens == 8192)), Times.Exactly(2));
     }
 
     [Fact]
