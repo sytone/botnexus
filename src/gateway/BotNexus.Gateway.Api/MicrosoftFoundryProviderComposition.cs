@@ -30,6 +30,7 @@ public static class MicrosoftFoundryProviderComposition
         ArgumentNullException.ThrowIfNull(loggerFactory);
 
         var instances = new List<MicrosoftFoundryResponsesInstance>();
+        var registrations = new List<ModelRegistration>();
         if (config.Providers is null)
             return 0;
 
@@ -51,7 +52,8 @@ public static class MicrosoftFoundryProviderComposition
                     providerConfig.ResolveChatSupportsExtraHighThinking(),
                     providerConfig.ResolveChatSupportsExtendedContextWindow(),
                     providerConfig.ResolveChatInput());
-                models.Register(providerName, new LlmModel(
+                var capacity = ConfiguredModelCapacityResolver.Resolve(providerName, providerConfig, modelId);
+                registrations.Add(new ModelRegistration(providerName, new LlmModel(
                     modelId,
                     modelId,
                     ProviderApi,
@@ -60,15 +62,20 @@ public static class MicrosoftFoundryProviderComposition
                     caps.Reasoning,
                     caps.Input,
                     new ModelCost(0, 0, 0, 0),
-                    providerConfig.ResolveChatContextWindow() ?? 128_000,
-                    32_000,
+                    capacity.ContextWindow,
+                    capacity.MaxTokens,
                     caps.SupportsExtraHighThinking,
-                    caps.SupportsExtendedContextWindow));
+                    caps.SupportsExtendedContextWindow,
+                    ContextWindowSource: capacity.ContextWindowSource,
+                    MaxTokensSource: capacity.MaxTokensSource)));
             }
         }
 
         if (instances.Count == 0)
             return 0;
+
+        foreach (var registration in registrations)
+            models.Register(registration.Provider, registration.Model);
 
         apiProviders.Register(new MicrosoftFoundryResponsesProvider(
             instances,

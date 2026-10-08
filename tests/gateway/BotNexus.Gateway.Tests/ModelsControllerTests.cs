@@ -10,6 +10,25 @@ namespace BotNexus.Gateway.Tests;
 public sealed class ModelsControllerTests
 {
     [Fact]
+    public void GetModels_CapacityDiagnostics_PreserveValuesAndOrigins()
+    {
+        var filter = CreateModelFilter();
+        filter.Setup(f => f.GetProviders()).Returns(["dynamic"]);
+        filter.Setup(f => f.GetModels("dynamic")).Returns([
+            new LlmModelInfo("large", "Large", "dynamic", ContextWindow: 1_050_000, MaxTokens: 128_000,
+                ContextWindowSource: "configured-model", MaxTokensSource: "configured-model")
+        ]);
+        var result = CreateController(filter.Object).GetModels();
+        var models = (result.Result as OkObjectResult)?.Value as IEnumerable<ModelInfo>;
+        models.ShouldNotBeNull();
+        var info = models.ShouldHaveSingleItem();
+        info.ContextWindow.ShouldBe(1_050_000);
+        info.MaxTokens.ShouldBe(128_000);
+        info.ContextWindowSource.ShouldBe("configured-model");
+        info.MaxTokensSource.ShouldBe("configured-model");
+    }
+
+    [Fact]
     public void GetModels_WhenNoModelsAvailable_ReturnsEmptyList()
     {
         var modelFilter = CreateModelFilter();

@@ -68,7 +68,7 @@ public sealed class GitHubPullRequestCreateTool : GitHubToolBase
             repository,
             ok = true,
             identity = Config.Identity,
-            pullRequest = GitHubProjections.PullRequest(created),
+            pullRequest = created.PullRequest(),
         });
     }
 }
