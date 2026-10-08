@@ -33,6 +33,19 @@ public sealed class MemoryPressureSnapshot
     /// <summary>Index identifying the GC represented by these metrics; zero when no collection has occurred.</summary>
     public long GcCollectionIndex { get; init; }
 
+    private IReadOnlyList<GcGenerationSnapshot> _gcGenerations = Array.AsReadOnly(Array.Empty<GcGenerationSnapshot>());
+
+    /// <summary>
+    /// Up to five ordinal runtime slots from the same last GC as GcCollectionIndex.
+    /// Empty when no collection data exists. Assignment defensively copies the readings;
+    /// callers cannot mutate retained snapshots through the source collection.
+    /// </summary>
+    public IReadOnlyList<GcGenerationSnapshot> GcGenerations
+    {
+        get => _gcGenerations;
+        init => _gcGenerations = Array.AsReadOnly(value.Take(5).ToArray());
+    }
+
     /// <summary>
     /// Diagnostic gap: max(0, current process private bytes - last-GC committed bytes).
     /// The readings are non-atomic and represent different times; this difference does not

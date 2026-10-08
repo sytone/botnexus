@@ -92,6 +92,7 @@ public sealed class MemoryPressureMonitor
             GcHeapSizeBytes = gcInfo.HeapSizeBytes,
             GcFragmentedBytes = gcInfo.FragmentedBytes,
             GcCollectionIndex = gcInfo.Index,
+            GcGenerations = MapGenerationInfo(gcInfo.Index, gcInfo.GenerationInfo),
             SqliteAllocatorAvailable = sqliteAllocator.IsAvailable,
             SqliteAllocatorCurrentBytes = sqliteAllocator.CurrentBytes,
             SqliteAllocatorPeakBytes = sqliteAllocator.PeakBytes,
@@ -140,7 +141,7 @@ public sealed class MemoryPressureMonitor
         get { lock (_lock) { return _history.Count; } }
     }
 
-    private void AddToHistory(MemoryPressureSnapshot snapshot)
+    internal void AddToHistory(MemoryPressureSnapshot snapshot)
     {
         lock (_lock)
         {
@@ -172,6 +173,25 @@ public sealed class MemoryPressureMonitor
                 snapshot.WorkingSetReadable,
                 snapshot.Guidance);
         }
+    }
+
+    // .NET 10 exposes five ordinal slots. Keep storage bounded and copy only the
+    // public readings from the SAME GCMemoryInfo used for the enclosing snapshot.
+    internal static IReadOnlyList<GcGenerationSnapshot> MapGenerationInfo(
+        long collectionIndex, ReadOnlySpan<GCGenerationInfo> generationInfo)
+    {
+        if (collectionIndex == 0)
+            return Array.AsReadOnly(Array.Empty<GcGenerationSnapshot>());
+
+        var generations = new GcGenerationSnapshot[Math.Min(5, generationInfo.Length)];
+        for (var slot = 0; slot < generations.Length; slot++)
+        {
+            var info = generationInfo[slot];
+            generations[slot] = new GcGenerationSnapshot(slot,
+                info.SizeBeforeBytes, info.FragmentationBeforeBytes,
+                info.SizeAfterBytes, info.FragmentationAfterBytes);
+        }
+        return Array.AsReadOnly(generations);
     }
 
     // Both inputs are nonnegative byte counts, sampled at different times. Keep the
