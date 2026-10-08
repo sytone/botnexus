@@ -31,6 +31,7 @@ public sealed class RawConfigPathMutationTests : IDisposable
     private readonly string _rootPath;
     private readonly string _configPath;
     private readonly IAnsiConsole _originalConsole;
+    private readonly StringWriter _output = new();
 
     /// <summary>
     /// The canary document. Everything outside the single mutated node must survive verbatim.
@@ -91,7 +92,7 @@ public sealed class RawConfigPathMutationTests : IDisposable
         _originalConsole = AnsiConsole.Console;
         AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
         {
-            Out = new AnsiConsoleOutput(new StringWriter()),
+            Out = new AnsiConsoleOutput(_output),
             Interactive = InteractionSupport.No
         });
 
@@ -133,6 +134,50 @@ public sealed class RawConfigPathMutationTests : IDisposable
         // Fresh reload must succeed and be error-free.
         var reloaded = PlatformConfigLoader.Load(_configPath, validateOnLoad: false);
         PlatformConfigLoader.Validate(reloaded).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Config_set_whole_capacity_map_survives_runtime_materialization(bool enableStore)
+    {
+        const string map = """
+            {"Model.1":{"contextWindow":100000,"maxTokens":1000},
+             "model.1":{"contextWindow":200000,"maxTokens":2000},
+             "vendor:model":{"contextWindow":300000,"maxTokens":3000}}
+            """;
+        if (enableStore)
+        {
+            var storePath = ConfigStoreBootstrap.ResolveStorePath(_configPath, new System.IO.Abstractions.FileSystem());
+            await ConfigStoreBootstrap.PopulateAsync(storePath, ReadRoot());
+        }
+
+        var commands = new ConfigCommands(new ConfigPathResolver());
+        var exitCode = await commands.ExecuteSetAsync("providers.copilot.chat.modelCapacities", map,
+            _configPath, verbose: false, CancellationToken.None);
+        exitCode.ShouldBe(0);
+        var config = PlatformConfigurationSources.BuildMonitor(_configPath).CurrentValue;
+        var capacities = config.Providers.ShouldNotBeNull()["copilot"].Chat.ShouldNotBeNull().ModelCapacities;
+        capacities.Count.ShouldBe(3);
+        capacities["Model.1"].ContextWindow.ShouldBe(100000);
+        capacities["Model.1"].MaxTokens.ShouldBe(1000);
+        capacities["model.1"].ContextWindow.ShouldBe(200000);
+        capacities["model.1"].MaxTokens.ShouldBe(2000);
+        capacities["vendor:model"].ContextWindow.ShouldBe(300000);
+        capacities["vendor:model"].MaxTokens.ShouldBe(3000);
+        capacities.ContainsKey("MODEL.1").ShouldBeFalse();
+        _output.GetStringBuilder().Clear();
+        (await commands.ExecuteGetAsync("providers.copilot.chat.modelCapacities", _configPath,
+            verbose: false, CancellationToken.None)).ShouldBe(0);
+        var printed = JsonNode.Parse(_output.ToString()).ShouldBeOfType<JsonObject>();
+        printed.Count.ShouldBe(3);
+        printed["Model.1"].ShouldBeOfType<JsonObject>()["contextWindow"].ShouldNotBeNull().GetValue<int>().ShouldBe(100000);
+        printed["model.1"].ShouldBeOfType<JsonObject>()["maxTokens"].ShouldNotBeNull().GetValue<int>().ShouldBe(2000);
+        printed["vendor:model"].ShouldBeOfType<JsonObject>()["contextWindow"].ShouldNotBeNull().GetValue<int>().ShouldBe(300000);
+        AssertCanariesSurvive();
+        if (enableStore)
+            ConfigStoreBootstrap.ReleaseConnections(ConfigStoreBootstrap.ResolveStorePath(_configPath,
+                new System.IO.Abstractions.FileSystem()));
     }
 
     [Fact]
