@@ -114,6 +114,12 @@ public sealed class DiagnosticsController(
         {
             CapturedAt = snapshot.CapturedAt,
             WorkingSetBytes = snapshot.WorkingSetBytes,
+            PrivateMemoryBytes = snapshot.PrivateMemoryBytes,
+            PrivateMemoryReadable = snapshot.PrivateMemoryReadable,
+            GcHeapSizeBytes = snapshot.GcHeapSizeBytes,
+            GcFragmentedBytes = snapshot.GcFragmentedBytes,
+            GcCollectionIndex = snapshot.GcCollectionIndex,
+            UnattributedPrivateBytesAboveLastGcCommitment = snapshot.UnattributedPrivateBytesAboveLastGcCommitment,
             GcCommittedBytes = snapshot.GcCommittedBytes,
             TotalAvailableBytes = snapshot.TotalAvailableBytes,
             Gen0Collections = snapshot.Gen0Collections,
@@ -147,6 +153,12 @@ public sealed class DiagnosticsController(
             {
                 CapturedAt = s.CapturedAt,
                 WorkingSetBytes = s.WorkingSetBytes,
+                PrivateMemoryBytes = s.PrivateMemoryBytes,
+                PrivateMemoryReadable = s.PrivateMemoryReadable,
+                GcHeapSizeBytes = s.GcHeapSizeBytes,
+                GcFragmentedBytes = s.GcFragmentedBytes,
+                GcCollectionIndex = s.GcCollectionIndex,
+                UnattributedPrivateBytesAboveLastGcCommitment = s.UnattributedPrivateBytesAboveLastGcCommitment,
                 GcCommittedBytes = s.GcCommittedBytes,
                 TotalAvailableBytes = s.TotalAvailableBytes,
                 Gen0Collections = s.Gen0Collections,
@@ -297,7 +309,28 @@ public sealed class MemoryPressureDto
     /// <summary>Process working set (RSS) in bytes.</summary>
     public required long WorkingSetBytes { get; init; }
 
-    /// <summary>GC committed bytes (managed heap + overhead).</summary>
+    /// <summary>Process-private bytes sampled at capture time, not atomically with GC metrics.</summary>
+    public long PrivateMemoryBytes { get; init; }
+
+    /// <summary>Human-readable process-private bytes.</summary>
+    public string PrivateMemoryReadable { get; init; } = "0 B";
+
+    /// <summary>Heap size at the last GC, including fragmentation; not a current live-object census.</summary>
+    public long GcHeapSizeBytes { get; init; }
+
+    /// <summary>Fragmentation at the same last GC.</summary>
+    public long GcFragmentedBytes { get; init; }
+
+    /// <summary>Index of the GC supplying these values; zero means no collection data exists.</summary>
+    public long GcCollectionIndex { get; init; }
+
+    /// <summary>
+    /// Nonnegative difference between current private bytes and last-GC commitment.
+    /// The samples are non-atomic; this is not native-memory or allocation-owner attribution.
+    /// </summary>
+    public long UnattributedPrivateBytesAboveLastGcCommitment { get; init; }
+
+    /// <summary>GC committed bytes (managed heap + overhead) reported for the last collection.</summary>
     public required long GcCommittedBytes { get; init; }
 
     /// <summary>Total available memory as reported by GC.</summary>
