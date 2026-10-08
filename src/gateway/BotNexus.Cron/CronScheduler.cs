@@ -2009,11 +2009,30 @@ public sealed class CronScheduler(
                 var run = entry.Run;
                 // Local execution wins even if ownership appeared after the snapshot. Drop this
                 // identity permanently rather than reclassifying it when its executor leaves.
-                if (_activeRuns.ContainsKey(run.Id.Value)
-                    || (!entry.TerminalWriteSucceeded && !runningIds.Contains(run.Id)))
+                if (_activeRuns.ContainsKey(run.Id.Value))
                 {
                     _startupRestartRuns.Remove(run.Id);
                     continue;
+                }
+
+                if (!entry.TerminalWriteSucceeded && !runningIds.Contains(run.Id))
+                {
+                    // Completion may have committed before its acknowledgement threw. Read the
+                    // exact identity, not bounded history, and only acknowledge our own outcome.
+                    // A failed read leaves this entry intact for the next reconciliation attempt.
+                    var persisted = await _cronStore.GetRunAsync(run.Id, ct).ConfigureAwait(false);
+                    if (persisted is null
+                        || persisted.Id != run.Id
+                        || persisted.JobId != run.JobId
+                        || persisted.StartedAt != run.StartedAt
+                        || !string.Equals(persisted.Status, CronRunStatus.Error, StringComparison.Ordinal)
+                        || !string.Equals(persisted.Error, PlannedRestartReason, StringComparison.Ordinal)
+                        || persisted.CompletedAt is null)
+                    {
+                        _startupRestartRuns.Remove(run.Id);
+                        continue;
+                    }
+                    entry.TerminalWriteSucceeded = true;
                 }
 
                 if (!entry.TerminalWriteSucceeded)

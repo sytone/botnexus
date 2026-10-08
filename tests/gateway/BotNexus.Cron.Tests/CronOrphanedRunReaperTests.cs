@@ -492,6 +492,216 @@ public sealed class CronOrphanedRunReaperTests
         (await context.Store.ListRunningRunsAsync()).ShouldHaveSingleItem().Id.ShouldBe(newer.Id);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(25)]
+    public async Task ReapOrphanedRunsAsync_CommittedTerminalWriteThrows_RetryRepairsMatchingJobWithoutRewriting(int newerHistoryCount)
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
+        await context.Store.RecordRunFinalizationAsync(run.JobId, run.StartedAt, CronRunStatus.Running, null);
+        var store = CreateCommitThenThrowStore(context.Store);
+        var scheduler = CreateScheduler(store.Object, shutdownState: new PlannedShutdownState(false, true));
+
+        await Should.ThrowAsync<IOException>(() => scheduler.ReapOrphanedRunsAsync());
+        var committed = (await context.Store.GetRunHistoryAsync(run.JobId)).ShouldHaveSingleItem();
+        committed.Status.ShouldBe(CronRunStatus.Error);
+        committed.Error.ShouldBe(CronScheduler.PlannedRestartReason);
+        committed.CompletedAt.ShouldNotBeNull();
+        (await context.Store.ListRunningRunsAsync()).ShouldBeEmpty();
+        for (var i = 0; i < newerHistoryCount; i++)
+        {
+            var newer = await context.Store.RecordRunStartAsync(run.JobId);
+            await SetRunStartedAt(context.DbPath, newer.Id, run.StartedAt.AddSeconds(i + 1));
+            await context.Store.RecordRunCompleteAsync(newer.Id, CronRunStatus.Ok);
+        }
+        if (newerHistoryCount > 20)
+        {
+            (await context.Store.GetRunHistoryAsync(run.JobId)).ShouldNotContain(r => r.Id == run.Id);
+            // These rows exercise history depth, not the newer-occurrence guard below. Restore
+            // the matching stuck bookkeeping that this regression is specifically repairing.
+            await context.Store.RecordRunFinalizationAsync(run.JobId, run.StartedAt, CronRunStatus.Running, null);
+        }
+
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(1);
+        var job = await context.Store.GetAsync(run.JobId);
+        job.ShouldNotBeNull();
+        job.LastRunAt.ShouldBe(run.StartedAt);
+        job.LastRunStatus.ShouldBe(CronRunStatus.Error);
+        job.LastRunError.ShouldBe(CronScheduler.PlannedRestartReason);
+        var terminal = (await context.Store.GetRunHistoryAsync(run.JobId, 100)).Single(r => r.Id == run.Id);
+        terminal.ShouldBe(committed);
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(0);
+        VerifySingleRestartWrite(store, run.Id);
+    }
+
+    [Fact]
+    public async Task ReapOrphanedRunsAsync_CommittedTerminalWriteThrows_LookupFailureRetainsCohortForRetry()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
+        await context.Store.RecordRunFinalizationAsync(run.JobId, run.StartedAt, CronRunStatus.Running, null);
+        var store = CreateCommitThenThrowStore(context.Store);
+        var reads = 0;
+        store.Setup(s => s.GetRunAsync(run.Id, It.IsAny<CancellationToken>()))
+            .Returns((RunId id, CancellationToken ct) => ++reads == 1
+                ? Task.FromException<CronRun?>(new IOException("lookup failed"))
+                : context.Store.GetRunAsync(id, ct));
+        var scheduler = CreateScheduler(store.Object, shutdownState: new PlannedShutdownState(false, true));
+
+        await Should.ThrowAsync<IOException>(() => scheduler.ReapOrphanedRunsAsync());
+        var lookupFailure = await Should.ThrowAsync<IOException>(() => scheduler.ReapOrphanedRunsAsync());
+        lookupFailure.Message.ShouldBe("lookup failed");
+        (await context.Store.GetAsync(run.JobId)).ShouldNotBeNull().LastRunStatus.ShouldBe(CronRunStatus.Running);
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(1);
+        (await context.Store.GetAsync(run.JobId)).ShouldNotBeNull().LastRunStatus.ShouldBe(CronRunStatus.Error);
+        VerifySingleRestartWrite(store, run.Id);
+    }
+
+    [Fact]
+    public async Task ReapOrphanedRunsAsync_CommittedTerminalWriteThrows_FinalizationFailureRetriesWithoutRewriting()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
+        await context.Store.RecordRunFinalizationAsync(run.JobId, run.StartedAt, CronRunStatus.Running, null);
+        var store = CreateCommitThenThrowStore(context.Store);
+        var finalizations = 0;
+        store.Setup(s => s.RecordRunFinalizationAsync(run.JobId, run.StartedAt,
+                CronRunStatus.Error, CronScheduler.PlannedRestartReason, It.IsAny<CancellationToken>()))
+            .Returns((JobId id, DateTimeOffset at, string status, string? error, CancellationToken ct) =>
+                ++finalizations == 1 ? Task.FromException(new IOException("finalization failed"))
+                    : context.Store.RecordRunFinalizationAsync(id, at, status, error, ct));
+        var scheduler = CreateScheduler(store.Object, shutdownState: new PlannedShutdownState(false, true));
+
+        await Should.ThrowAsync<IOException>(() => scheduler.ReapOrphanedRunsAsync());
+        var failure = await Should.ThrowAsync<IOException>(() => scheduler.ReapOrphanedRunsAsync());
+        failure.Message.ShouldBe("finalization failed");
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(1);
+        (await context.Store.GetAsync(run.JobId)).ShouldNotBeNull().LastRunStatus.ShouldBe(CronRunStatus.Error);
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(0);
+        finalizations.ShouldBe(2);
+        VerifySingleRestartWrite(store, run.Id);
+    }
+
+    [Theory]
+    [InlineData(CronRunStatus.Ok, null)]
+    [InlineData(CronRunStatus.Error, "another failure")]
+    [InlineData("ERROR", CronScheduler.PlannedRestartReason)]
+    [InlineData(CronRunStatus.Error, "cron run interrupted by a planned gateway restart; this occurrence was terminalized and was not reported as successful.")]
+    public async Task ReapOrphanedRunsAsync_UnacknowledgedOtherTerminalOutcome_DropsWithoutManufacturingJobOutcome(string status, string? reason)
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
+        await context.Store.RecordRunFinalizationAsync(run.JobId, run.StartedAt, CronRunStatus.Running, null);
+        var store = CreateCommitThenThrowStore(context.Store, status, reason);
+        var scheduler = CreateScheduler(store.Object, shutdownState: new PlannedShutdownState(false, true));
+
+        await Should.ThrowAsync<IOException>(() => scheduler.ReapOrphanedRunsAsync());
+        var committed = (await context.Store.GetRunHistoryAsync(run.JobId)).ShouldHaveSingleItem();
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(0);
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(0);
+        (await context.Store.GetRunHistoryAsync(run.JobId)).ShouldHaveSingleItem().ShouldBe(committed);
+        (await context.Store.GetAsync(run.JobId)).ShouldNotBeNull().LastRunStatus.ShouldBe(CronRunStatus.Running);
+        store.Verify(s => s.RecordRunFinalizationAsync(It.IsAny<JobId>(), It.IsAny<DateTimeOffset>(),
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        VerifySingleRestartWrite(store, run.Id);
+    }
+
+    [Fact]
+    public async Task ReapOrphanedRunsAsync_UnacknowledgedMissingRow_DropsWithoutManufacturingOutcome()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
+        await context.Store.RecordRunFinalizationAsync(run.JobId, run.StartedAt, CronRunStatus.Running, null);
+        var store = CreateCommitThenThrowStore(context.Store);
+        var scheduler = CreateScheduler(store.Object, shutdownState: new PlannedShutdownState(false, true));
+        await Should.ThrowAsync<IOException>(() => scheduler.ReapOrphanedRunsAsync());
+        await SetRunCompletedAt(context.DbPath, run.Id, DateTimeOffset.UtcNow.AddDays(-60));
+        (await context.Store.PurgeRunsOlderThanAsync(DateTimeOffset.UtcNow.AddDays(-30))).ShouldBe(1);
+
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(0);
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(0);
+        (await context.Store.GetRunHistoryAsync(run.JobId)).ShouldBeEmpty();
+        (await context.Store.GetAsync(run.JobId)).ShouldNotBeNull().LastRunStatus.ShouldBe(CronRunStatus.Running);
+        VerifySingleRestartWrite(store, run.Id);
+    }
+
+    [Fact]
+    public async Task ReapOrphanedRunsAsync_CommittedTerminalWriteThrows_DoesNotRegressNewerJobOccurrence()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
+        var store = CreateCommitThenThrowStore(context.Store);
+        var scheduler = CreateScheduler(store.Object, shutdownState: new PlannedShutdownState(false, true));
+        await Should.ThrowAsync<IOException>(() => scheduler.ReapOrphanedRunsAsync());
+        var newer = await context.Store.RecordRunStartAsync(run.JobId);
+        await context.Store.RecordRunFinalizationAsync(run.JobId, run.StartedAt.AddSeconds(1), CronRunStatus.Running, null);
+
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(1);
+        (await context.Store.GetAsync(run.JobId)).ShouldNotBeNull().LastRunAt.ShouldBe(run.StartedAt.AddSeconds(1));
+        (await context.Store.GetAsync(run.JobId)).ShouldNotBeNull().LastRunStatus.ShouldBe(CronRunStatus.Running);
+        (await context.Store.ListRunningRunsAsync()).ShouldHaveSingleItem().Id.ShouldBe(newer.Id);
+        VerifySingleRestartWrite(store, run.Id);
+    }
+
+    [Theory]
+    [InlineData("id")]
+    [InlineData("job")]
+    [InlineData("started-at")]
+    [InlineData("completed-at")]
+    public async Task ReapOrphanedRunsAsync_UnacknowledgedMismatchedPersistedEvidence_DropsWithoutFinalization(string mismatch)
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
+        var store = CreateCommitThenThrowStore(context.Store);
+        var scheduler = CreateScheduler(store.Object, shutdownState: new PlannedShutdownState(false, true));
+        await Should.ThrowAsync<IOException>(() => scheduler.ReapOrphanedRunsAsync());
+        var committed = (await context.Store.GetRunAsync(run.Id)).ShouldNotBeNull();
+        var evidence = mismatch switch
+        {
+            "id" => committed with { Id = RunId.From("different-run") },
+            "job" => committed with { JobId = JobId.From("different-job") },
+            "started-at" => committed with { StartedAt = run.StartedAt.AddSeconds(1) },
+            "completed-at" => committed with { CompletedAt = null },
+            _ => throw new ArgumentOutOfRangeException(nameof(mismatch))
+        };
+        store.Setup(s => s.GetRunAsync(run.Id, It.IsAny<CancellationToken>())).ReturnsAsync(evidence);
+
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(0);
+        (await scheduler.ReapOrphanedRunsAsync()).ShouldBe(0);
+        (await context.Store.GetAsync(run.JobId)).ShouldNotBeNull().LastRunStatus.ShouldBe(CronRunStatus.Running);
+        (await context.Store.GetRunAsync(run.Id)).ShouldBe(committed);
+        store.Verify(s => s.GetRunAsync(run.Id, It.IsAny<CancellationToken>()), Times.Once);
+        store.Verify(s => s.RecordRunFinalizationAsync(It.IsAny<JobId>(), It.IsAny<DateTimeOffset>(),
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        VerifySingleRestartWrite(store, run.Id);
+    }
+
+    private static Mock<ICronStore> CreateCommitThenThrowStore(
+        ICronStore inner, string status = CronRunStatus.Error, string? reason = CronScheduler.PlannedRestartReason)
+    {
+        var store = CreateReaperStore(inner);
+        store.Setup(s => s.RecordRunCompleteAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<SessionId?>(), It.IsAny<CronRunCost?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (RunId id, string requestedStatus, string? requestedError, SessionId? session, CronRunCost? cost, CancellationToken ct) =>
+            {
+                await inner.RecordRunCompleteAsync(id, status, reason, session, cost, ct);
+                throw new IOException("terminal write committed but acknowledgement failed");
+            });
+        return store;
+    }
+
+    private static void VerifySingleRestartWrite(Mock<ICronStore> store, RunId runId)
+        => store.Verify(s => s.RecordRunCompleteAsync(runId, CronRunStatus.Error, CronScheduler.PlannedRestartReason,
+            null, null, It.IsAny<CancellationToken>()), Times.Once);
+
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
@@ -506,6 +716,8 @@ public sealed class CronOrphanedRunReaperTests
             .Returns((JobId id, CancellationToken ct) => inner.GetAsync(id, ct));
         store.Setup(s => s.ListRunningRunsAsync(It.IsAny<CancellationToken>()))
             .Returns((CancellationToken ct) => inner.ListRunningRunsAsync(ct));
+        store.Setup(s => s.GetRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .Returns((RunId id, CancellationToken ct) => inner.GetRunAsync(id, ct));
         store.Setup(s => s.RecordRunStartAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
             .Returns((JobId id, CancellationToken ct) => inner.RecordRunStartAsync(id, ct));
         store.Setup(s => s.RecordRunSessionAsync(It.IsAny<RunId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
