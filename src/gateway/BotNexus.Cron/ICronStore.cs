@@ -123,6 +123,13 @@ public interface ICronStore
         IReadOnlyCollection<JobId> jobIds,
         int windowDays,
         CancellationToken ct = default);
+    /// <summary>
+    /// Reads the full persisted run by its exact identity, irrespective of status or recent-history
+    /// limits. Used to reconcile a terminal write whose acknowledgement failed. Returns null only
+    /// when that row is absent; read failures must propagate rather than masquerade as absence.
+    /// </summary>
+    Task<CronRun?> GetRunAsync(RunId runId, CancellationToken ct = default);
+
     Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default);
 
     /// <summary>

@@ -16,6 +16,7 @@
     <Compile Include="CronRunStatus.cs" />
     <Compile Include="ICronAction.cs" />
     <Compile Include="ICronStore.cs" />
+    <Compile Include="IPlannedShutdownState.cs" />
     <Compile Include="SqliteCronStore.cs" />
     <Compile Include="CronOptions.cs" />
     <Compile Include="HeartbeatCronProvisioner.cs" />

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO.Abstractions;
+using BotNexus.Cron;
 
 namespace BotNexus.Gateway.Diagnostics;
 
@@ -35,7 +36,7 @@ public readonly record struct PreviousRunResult(bool WasClean, DateTimeOffset? L
 /// left no trace of.
 /// </para>
 /// </summary>
-public sealed class CleanShutdownMarker
+public sealed class CleanShutdownMarker : IPlannedShutdownState
 {
     private const string MarkerFileName = ".gateway-clean-shutdown";
     private const string LivenessFileName = ".gateway-liveness";
@@ -58,6 +59,9 @@ public sealed class CleanShutdownMarker
 
     /// <summary>Cached boot-time classification retained after MarkRunning clears on-disk evidence.</summary>
     public bool PreviousShutdownWasPlanned { get; private set; }
+
+    /// <summary>Whether this process has durably accepted a planned shutdown request.</summary>
+    public bool CurrentShutdownIsPlanned { get; private set; }
 
     /// <summary>
     /// Creates a marker manager rooted at <paramref name="dataDirectory"/> (the writable
@@ -92,7 +96,7 @@ public sealed class CleanShutdownMarker
                 _fileSystem.Directory.CreateDirectory(_dataDirectory);
             var stamp = requestedAtUtc.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture);
             _fileSystem.File.WriteAllText(_plannedPath, stamp);
-            return _fileSystem.File.ReadAllText(_plannedPath) == stamp;
+            return CurrentShutdownIsPlanned = _fileSystem.File.ReadAllText(_plannedPath) == stamp;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

@@ -36,4 +36,20 @@ Existing registrations without explicit provenance report `registered`. Neither 
 - **Maximum output** describes the output-token ceiling, not an input or working-history budget.
 - **Tokens per minute (TPM)** is a throughput/rate-limit quota. It is not a context window or output ceiling and must not populate either field.
 
-The existing model-list diagnostics expose `contextWindow`, `maxTokens`, `contextWindowSource`, and `maxTokensSource`. This slice adds metadata only: it does not redesign output reservation, prompt allocation, provider request construction, overflow recovery, or compaction thresholds. Full #4738 budget acceptance remains outside this bounded slice.
+The model-list diagnostics expose `contextWindow`, `maxTokens`, `contextWindowSource`, and `maxTokensSource`.
+
+## Active-session working-budget diagnostics
+
+`GET /api/agents/{agentId}/sessions/{sessionId}/context` includes an additive `contextBudget` snapshot for in-process handles. It reports:
+
+| Field | Meaning |
+| --- | --- |
+| `modelContextWindowTokens` / `modelContextWindowSource` | Registered context declaration and its origin |
+| `modelMaxOutputTokens` / `modelMaxOutputSource` | Independent registered output declaration and its origin |
+| `effectiveWorkingBudgetTokens` / `effectiveWorkingBudgetSource` | Selected working window and selection layer: `conversation`, `agent`, or `model` |
+
+The selected working window follows conversation override → agent override → registered model. The existing `contextWindowTokens` and `usagePercent` use this same window, not the maximum output. Capacity declaration origins remain `configured-model`, `configured-provider`, `fallback`, or `registered`; none asserts provider verification. An extended-context override can exceed a model's standard registered window without rewriting that declaration.
+
+The snapshot describes the active handle's binding, not a live resampling after configuration changes. Unknown capacities and origins remain null. Inspectors without budget provenance retain legacy window reporting and return null `contextBudget`. When no scoped window is available, compaction still uses its configured global options; the endpoint does not invent a global window for an unresolvable binding.
+
+Registration-to-scoped-compaction regressions cover configured context/output separation, agent/conversation precedence, fallback model metadata and missing-model global fallback. This diagnostic slice does not redesign output reservation, prompt allocation, provider request construction, overflow recovery, or compaction thresholds. Verified-hard-limit enforcement and output-reserve policy remain outside this bounded #4738 slice; #4736 separately owns coordinator budget propagation.

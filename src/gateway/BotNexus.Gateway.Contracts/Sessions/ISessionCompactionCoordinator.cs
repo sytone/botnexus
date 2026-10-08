@@ -37,12 +37,16 @@ public interface ISessionCompactionCoordinator
     /// automatic heuristics.</param>
     /// <param name="handlePolicy">Controls whether an applied compaction evicts the cached handle.
     /// Mid-loop callers must keep their executing handle and resynchronise its context instead.</param>
+    /// <param name="resolvedOptions">The options snapshot used for the caller's scoped threshold
+    /// decision. Flush and compaction must share this snapshot (with the force override applied).
+    /// Null retains the configured global options for manual and default callers.</param>
     Task<SessionCompactionOutcome> CompactAsync(
         AgentId agentId,
         GatewaySession session,
         CancellationToken cancellationToken,
         bool force = false,
-        CompactionHandlePolicy handlePolicy = CompactionHandlePolicy.Evict);
+        CompactionHandlePolicy handlePolicy = CompactionHandlePolicy.Evict,
+        CompactionOptions? resolvedOptions = null);
 
     /// <summary>
     /// Build the canonical user-facing notification text for an outcome.

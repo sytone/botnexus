@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using BotNexus.Persistence.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Diagnostics;
@@ -17,6 +18,7 @@ public sealed class MemoryPressureMonitor
     private readonly List<MemoryPressureSnapshot> _history = new();
     private readonly object _lock = new();
     private readonly int _maxSnapshots;
+    private readonly Func<SqliteAllocatorSnapshot> _captureSqliteAllocator;
 
     /// <summary>Threshold ratio (0-1) above which pressure is considered Elevated.</summary>
     public const double ElevatedThreshold = 0.70;
@@ -30,9 +32,16 @@ public sealed class MemoryPressureMonitor
     /// <param name="logger">Logger instance for pressure events.</param>
     /// <param name="maxSnapshots">Maximum number of snapshots to retain (default 100).</param>
     public MemoryPressureMonitor(ILogger<MemoryPressureMonitor> logger, int maxSnapshots = 100)
+        : this(logger, maxSnapshots, SqliteAllocatorDiagnostics.Capture)
+    {
+    }
+
+    internal MemoryPressureMonitor(ILogger<MemoryPressureMonitor> logger, int maxSnapshots,
+        Func<SqliteAllocatorSnapshot> captureSqliteAllocator)
     {
         _logger = logger;
         _maxSnapshots = maxSnapshots;
+        _captureSqliteAllocator = captureSqliteAllocator;
     }
 
     /// <summary>
@@ -51,6 +60,7 @@ public sealed class MemoryPressureMonitor
         var privateMemory = process.PrivateMemorySize64;
         var gcCommitted = gcInfo.TotalCommittedBytes;
         var totalAvailable = gcInfo.TotalAvailableMemoryBytes;
+        var sqliteAllocator = _captureSqliteAllocator();
 
         var pressurePercent = totalAvailable > 0
             ? (double)gcCommitted / totalAvailable * 100.0
@@ -82,6 +92,9 @@ public sealed class MemoryPressureMonitor
             GcHeapSizeBytes = gcInfo.HeapSizeBytes,
             GcFragmentedBytes = gcInfo.FragmentedBytes,
             GcCollectionIndex = gcInfo.Index,
+            SqliteAllocatorAvailable = sqliteAllocator.IsAvailable,
+            SqliteAllocatorCurrentBytes = sqliteAllocator.CurrentBytes,
+            SqliteAllocatorPeakBytes = sqliteAllocator.PeakBytes,
             UnattributedPrivateBytesAboveLastGcCommitment =
                 CalculateUnattributedPrivateBytesAboveLastGcCommitment(privateMemory, gcCommitted),
             TotalAvailableBytes = totalAvailable,

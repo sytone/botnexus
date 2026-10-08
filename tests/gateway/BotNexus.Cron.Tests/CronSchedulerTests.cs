@@ -702,7 +702,8 @@ public sealed class CronSchedulerTests
         ICronStore store,
         IEnumerable<ICronAction> actions,
         CronOptions? options = null,
-        ILogger<CronScheduler>? logger = null)
+        ILogger<CronScheduler>? logger = null,
+        IPlannedShutdownState? shutdownState = null)
     {
         var services = new ServiceCollection().BuildServiceProvider();
         var scopeFactory = services.GetRequiredService<IServiceScopeFactory>();
@@ -711,7 +712,8 @@ public sealed class CronSchedulerTests
             actions,
             scopeFactory,
             new StaticOptionsMonitor<CronOptions>(options ?? new CronOptions { Enabled = true, TickIntervalSeconds = 1 }),
-            logger ?? NullLogger<CronScheduler>.Instance);
+            logger ?? NullLogger<CronScheduler>.Instance,
+            plannedShutdownState: shutdownState);
     }
 
     private static async Task InvokeProcessTickAsync(CronScheduler scheduler)
@@ -822,6 +824,12 @@ public sealed class CronSchedulerTests
             // Block until cancelled; Task.Delay observes the linked token and throws on cancel.
             await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private sealed record PlannedShutdownState(bool Current, bool Previous) : IPlannedShutdownState
+    {
+        public bool CurrentShutdownIsPlanned => Current;
+        public bool PreviousShutdownWasPlanned => Previous;
     }
 
     private sealed class StaticOptionsMonitor<T>(T currentValue) : IOptionsMonitor<T>
@@ -954,6 +962,32 @@ public sealed class CronSchedulerTests
         updated!.LastRunStatus.ShouldBe("error");
         updated.LastRunError.ShouldNotBeNull();
         updated.LastRunError.ShouldContain("aborted");
+    }
+
+    [Fact]
+    public async Task RunNow_PlannedShutdown_RecordsExplicitRestartDisposition()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var action = new AbortableAction("test-action");
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1", actionType: "test-action"));
+        var options = new CronOptions { Enabled = true, TickIntervalSeconds = 1, DefaultJobTimeoutSeconds = 600 };
+        var scheduler = CreateScheduler(
+            context.Store,
+            [action],
+            options,
+            shutdownState: new PlannedShutdownState(Current: true, Previous: false));
+
+        using var cts = new CancellationTokenSource();
+        var runTask = scheduler.RunNowAsync(JobId.From("job-1"), cts.Token);
+        await action.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await cts.CancelAsync();
+        await Should.ThrowAsync<OperationCanceledException>(async () => await runTask);
+
+        var entry = (await context.Store.GetRunHistoryAsync(JobId.From("job-1"))).ShouldHaveSingleItem();
+        entry.Status.ShouldBe(CronRunStatus.Error);
+        entry.Error.ShouldBe(CronScheduler.PlannedRestartReason);
+        var updated = await context.Store.GetAsync(JobId.From("job-1"));
+        updated!.LastRunError.ShouldBe(CronScheduler.PlannedRestartReason);
     }
 
     [Fact]
