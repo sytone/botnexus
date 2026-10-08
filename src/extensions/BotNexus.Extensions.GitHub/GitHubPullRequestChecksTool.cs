@@ -109,7 +109,7 @@ public sealed class GitHubPullRequestChecksTool : GitHubToolBase
         if (!checksResponse.IsSuccess || checksResponse.Body is not { } checksBody)
             return ErrorResult(Name, repository, checksResponse);
 
-        var runs = CheckRuns(checksBody).Select(GitHubProjections.CheckRun).ToArray();
+        var runs = CheckRuns(checksBody).Select(run => run.CheckRun()).ToArray();
 
         var succeeded = runs.Count(r => Equals(r["conclusion"], "success"));
         var failed = runs.Count(r => r["conclusion"] is "failure" or "timed_out" or "cancelled" or "action_required");
