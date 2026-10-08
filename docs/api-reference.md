@@ -3370,6 +3370,21 @@ GET /api/diagnostics/memory-pressure
 Returns a point-in-time memory snapshot with both raw byte counts and human-readable forms, GC
 collection counts per generation, a pressure percentage, a `level`, and operator `guidance`.
 
+The response also includes these diagnostic fields:
+
+| Field | Meaning |
+| --- | --- |
+| `privateMemoryBytes`, `privateMemoryReadable` | Process-private memory at capture time, in bytes and readable form. This is not the same as the resident working set. |
+| `gcHeapSizeBytes` | Managed heap size reported by the last garbage collection (GC), including fragmentation. |
+| `gcFragmentedBytes` | Fragmentation reported by that GC. This is not a current live-object census. |
+| `gcCollectionIndex` | Index of the GC supplying these values. Zero means no GC information is available yet. |
+| `unattributedPrivateBytesAboveLastGcCommitment` | `max(0, privateMemoryBytes - gcCommittedBytes)`. The process and last-GC measurements are not atomic or necessarily contemporaneous. This difference does not identify native allocations, SQLite caches, or retained transcripts. |
+
+`gcCommittedBytes` and the other GC memory values describe the last collection, not current
+allocation ownership. Capture does not force a collection. The pressure percentage and level
+continue to use GC commitment; the extra fields do not change alert thresholds or establish a
+safe memory bound. Use repeated samples and allocation profiling to investigate a peak.
+
 ```json
 {
   "capturedAt": "2026-08-16T09:00:00Z",

@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration.Store;
 using Microsoft.Extensions.Configuration;
@@ -29,8 +28,9 @@ namespace BotNexus.Gateway.Configuration;
 /// would therefore produce a key space subtly different from <c>AddJsonFile</c> over the same
 /// document - arrays would arrive as one opaque JSON string instead of indexed children, and binding
 /// a <c>List&lt;T&gt;</c> would silently yield an empty list. So the entries are rehydrated to a
-/// document and handed to the framework's own JSON parser: the key semantics are then identical to
-/// the JSON provider by construction rather than by inspection.
+/// document and handed to the framework's own JSON parser. As with the platform JSON sources,
+/// exact model-capacity maps are excluded from that projection and retained in the accepted raw
+/// document for post-configuration; all other keys use ordinary framework semantics.
 /// </para>
 /// <para>
 /// <b>Fail-safe reload, matching #2358.</b> A store that is missing, unreadable, or corrupt retains
@@ -189,9 +189,9 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
     }
 
     /// <summary>
-    /// Produces provider data with key semantics identical to <c>AddJsonFile</c> over the same
-    /// document, by running the framework's own <see cref="JsonConfigurationProvider"/> over the
-    /// rehydrated document rather than reimplementing the dotted-to-colon and array-indexing rules.
+    /// Produces ordinary binding data with the framework's <see cref="JsonConfigurationProvider"/>.
+    /// Exact model-capacity maps use the same raw-document exception as platform JSON sources;
+    /// dotted-to-colon and array-indexing rules for all other values remain the framework's job.
     /// </summary>
     /// <remarks>
     /// The framework's parser type is <c>internal</c>, so the supported way to reach it is to drive a
@@ -202,8 +202,8 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
     /// </remarks>
     private static IDictionary<string, string?> Parse(JsonObject document)
     {
-        var bytes = Encoding.UTF8.GetBytes(document.ToJsonString());
-        var source = new JsonStreamConfigurationSource { Stream = new MemoryStream(bytes) };
+        using var stream = ExactModelCapacityConfiguration.CreateBindingStream(new ConfigDocument(document));
+        var source = new JsonStreamConfigurationSource { Stream = stream };
         var provider = (JsonStreamConfigurationProvider)source.Build(new ConfigurationBuilder());
         provider.Load();
 

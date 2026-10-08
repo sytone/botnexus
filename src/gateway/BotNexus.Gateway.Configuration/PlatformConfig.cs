@@ -523,6 +523,20 @@ public sealed class ProviderConfig
     public ProviderEmbeddingsConfig? Embeddings { get; set; }
 }
 
+/// <summary>Operator-declared token capacities for one exact chat model identifier.</summary>
+public sealed class ProviderModelCapacityConfig
+{
+    /// <summary>Total context capacity in tokens; null inherits the provider default.</summary>
+    [Display(Name = "Context capacity", Description = "Operator-declared total context capacity in tokens for this exact model. Null inherits the provider default; this declaration is not provider-verified.", GroupName = "Model capacity", Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "model-capacity", Order = 0)]
+    public int? ContextWindow { get; set; }
+
+    /// <summary>Maximum output tokens; null uses the conservative output fallback.</summary>
+    [Display(Name = "Maximum output tokens", Description = "Operator-declared output-token ceiling for this exact model, separate from context capacity and throughput quota. Null uses the conservative fallback; explicit values must be positive and less than context capacity.", GroupName = "Model capacity", Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "model-capacity", Order = 1)]
+    public int? MaxTokens { get; set; }
+}
+
 /// <summary>
 /// Chat-capability settings nested under a provider (#2854).
 /// </summary>
@@ -533,6 +547,21 @@ public sealed class ProviderConfig
 /// </remarks>
 public sealed class ProviderChatConfig
 {
+    private Dictionary<string, ProviderModelCapacityConfig> _modelCapacities = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Operator-declared capacities keyed by exact, case-sensitive model ID. These values are not
+    /// provider-verified. Assignments are copied with ordinal keys; runtime post-configuration
+    /// materializes this map from accepted raw documents rather than case-insensitive binding.
+    /// </summary>
+    [Display(Name = "Model capacities", Description = "Operator-declared context and output token capacities keyed by exact, case-sensitive model ID. Configure the complete map with the central configuration CLI; values are declarations, not provider-verified limits.", GroupName = "Provider chat", Order = 8)]
+    [ConfigField(Group = "provider-chat", Order = 8)]
+    public Dictionary<string, ProviderModelCapacityConfig> ModelCapacities
+    {
+        get => _modelCapacities;
+        set => _modelCapacities = value is null ? new(StringComparer.Ordinal) : new(value, StringComparer.Ordinal);
+    }
+
     /// <summary>API identifier used when registering this provider's chat models.</summary>
     [Display(
         Name = "API",

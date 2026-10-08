@@ -9,6 +9,22 @@ namespace BotNexus.Gateway.Tests;
 public sealed class ConfigModelFilterTests
 {
     [Fact]
+    public void GetModels_CapacityDiagnostics_PreserveValuesAndOrigins()
+    {
+        var registry = new ModelRegistry();
+        registry.Register("openai", CreateModel("openai", "large", "Large") with
+        {
+            ContextWindow = 1_050_000, MaxTokens = 128_000,
+            ContextWindowSource = "configured-model", MaxTokensSource = "configured-model"
+        });
+        var info = CreateFilter(registry, new PlatformConfig()).GetModels("openai").ShouldHaveSingleItem();
+        info.ContextWindow.ShouldBe(1_050_000);
+        info.MaxTokens.ShouldBe(128_000);
+        info.ContextWindowSource.ShouldBe("configured-model");
+        info.MaxTokensSource.ShouldBe("configured-model");
+    }
+
+    [Fact]
     public void GetProviders_WhenProviderConfigMissing_ReturnsAllProvidersSorted()
     {
         var registry = new ModelRegistry();

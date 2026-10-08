@@ -29,9 +29,17 @@ public interface IModelFilter
 /// Context-window sizes (tokens) this model supports. A single value for fixed-window models;
 /// the selectable tiers for models advertising the extended-context capability. (#1705)
 /// </param>
+/// <param name="ContextWindow">Registered context capacity in tokens, or null when unavailable.</param>
+/// <param name="MaxTokens">Registered maximum output tokens, or null when unavailable.</param>
+/// <param name="ContextWindowSource">Context declaration origin, not a verification claim.</param>
+/// <param name="MaxTokensSource">Output declaration origin, not a verification claim.</param>
 public sealed record LlmModelInfo(
     string Id,
     string Name,
     string Provider,
     IReadOnlyList<string>? SupportedThinkingLevels = null,
-    IReadOnlyList<int>? SupportedContextSizes = null);
+    IReadOnlyList<int>? SupportedContextSizes = null,
+    int? ContextWindow = null,
+    int? MaxTokens = null,
+    string? ContextWindowSource = null,
+    string? MaxTokensSource = null);
