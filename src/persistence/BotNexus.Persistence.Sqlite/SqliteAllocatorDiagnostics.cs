@@ -17,7 +17,7 @@ public static class SqliteAllocatorDiagnostics
 
     /// <summary>
     /// Reads current bytes and peak bytes since the library's last high-water reset,
-    /// initializing/changing the provider, opening a database, releasing memory, or forcing GC.
+    /// without initializing/changing the provider, opening a database, releasing memory, or forcing GC.
     /// Returns unavailable with null counters if the raw provider has not been initialized.
     /// The two native reads are not atomic; zero is a valid available reading.
     /// </summary>
