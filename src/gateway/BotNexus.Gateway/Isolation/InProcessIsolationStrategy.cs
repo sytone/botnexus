@@ -591,7 +591,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                             compactAgentId,
                             liveSession,
                             cancellationToken,
-                            handlePolicy: CompactionHandlePolicy.KeepCurrent).ConfigureAwait(false);
+                            handlePolicy: CompactionHandlePolicy.KeepCurrent,
+                            resolvedOptions: scopedOptions).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
