@@ -127,6 +127,71 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         (await ReadInvocationAsync("cleanup", "safe")).ResultContent.ShouldBe(result);
     }
 
+    [Theory]
+    [InlineData("tool-start", false, 1)]
+    [InlineData("tool-start", false, 10)]
+    [InlineData(null, false, 1)]
+    [InlineData(null, false, 10)]
+    [InlineData("tool-start", true, 1)]
+    [InlineData("tool-start", true, 10)]
+    public async Task CleanupLegacyToolPayloads_MissingResultEvidencePreservesHistoryAndAdvancesPastCandidate(string? messageKind, bool addLegacySibling, int batchSize)
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("missing-result"), AgentId.From("agent"));
+        await store.SaveAsync(session);
+        await using var connection = await OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO tool_invocations(session_id,tool_call_id,tool_name,arguments_json,started_at,completed_at,status,is_error,result_content,result_bytes,result_sha256,retention_state)
+            VALUES
+              ('missing-result','protected','x','{}','a','b','success',0,'r',1,'454349e422f05297191ead13e21d3db520e5abef52055e4964b82fb213f593a1','hot'),
+              ('missing-result','safe','x','{}','a','b','success',0,'r',1,'454349e422f05297191ead13e21d3db520e5abef52055e4964b82fb213f593a1','hot');
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id)
+            SELECT 'missing-result','tool','start','a','x','protected','{}',0,$kind,id FROM tool_invocations WHERE tool_call_id='protected';
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id)
+            SELECT 'missing-result','tool','legacy result','b','x','protected','legacy args',0,NULL,id FROM tool_invocations WHERE tool_call_id='protected' AND $addSibling=1;
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id)
+            SELECT 'missing-result','tool','start','a','x','safe','{}',0,'tool-start',id FROM tool_invocations WHERE tool_call_id='safe';
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id)
+            SELECT 'missing-result','tool','r','b','x','safe',NULL,0,'tool-result',id FROM tool_invocations WHERE tool_call_id='safe';
+            """;
+        command.Parameters.AddWithValue("$kind", (object?)messageKind ?? DBNull.Value);
+        command.Parameters.AddWithValue("$addSibling", addLegacySibling ? 1 : 0);
+        await command.ExecuteNonQueryAsync();
+        var protectedId = await ScalarLongAsync(connection, "SELECT id FROM tool_invocations WHERE tool_call_id='protected'");
+        var safeId = await ScalarLongAsync(connection, "SELECT id FROM tool_invocations WHERE tool_call_id='safe'");
+        var protectedInvocation = await ReadInvocationAsync("missing-result", "protected");
+        const string protectedHistorySql = "SELECT json_array(id,session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id) FROM session_history WHERE tool_call_id='protected' ORDER BY id";
+        var protectedHistory = await ReadStringsAsync(connection, protectedHistorySql);
+
+        var first = store.CleanupLegacyToolPayloads(batchSize);
+        first.ScannedInvocations.ShouldBe(batchSize == 1 ? 1 : 2);
+        first.CleanedInvocations.ShouldBe(batchSize == 1 ? 0 : 1);
+        first.CleanedRows.ShouldBe(batchSize == 1 ? 0 : 2);
+        first.ClearedBytes.ShouldBe(batchSize == 1 ? 0 : 3);
+        first.LastScannedInvocationId.ShouldBe(batchSize == 1 ? protectedId : safeId);
+        first.HasMore.ShouldBe(batchSize == 1);
+        if (batchSize == 1)
+        {
+            var next = store.CleanupLegacyToolPayloads(batchSize, first.LastScannedInvocationId);
+            next.ScannedInvocations.ShouldBe(1);
+            next.CleanedInvocations.ShouldBe(1);
+            next.CleanedRows.ShouldBe(2);
+            next.ClearedBytes.ShouldBe(3);
+            next.LastScannedInvocationId.ShouldBe(safeId);
+            next.HasMore.ShouldBeFalse();
+        }
+
+        var finished = store.CleanupLegacyToolPayloads(batchSize, safeId);
+        finished.ScannedInvocations.ShouldBe(0);
+        finished.CleanedInvocations.ShouldBe(0);
+        finished.LastScannedInvocationId.ShouldBe(safeId);
+        finished.HasMore.ShouldBeFalse();
+        (await ReadStringsAsync(connection, protectedHistorySql)).ShouldBe(protectedHistory);
+        (await ReadInvocationAsync("missing-result", "protected")).ShouldBe(protectedInvocation);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_call_id='safe' AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))")).ShouldBe(0);
+    }
+
     [Fact]
     public async Task CleanupLegacyToolPayloads_ProtectsAmbiguousOrNonAuthoritativeInvocations()
     {

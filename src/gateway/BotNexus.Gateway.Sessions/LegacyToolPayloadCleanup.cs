@@ -153,7 +153,8 @@ public static class LegacyToolPayloadCleanup
                 ReadNullable(reader, 17),
                 ReadNullable(reader, 18),
                 ReadNullable(reader, 19),
-                reader.GetInt64(20),
+                // No result row means unknown evidence, not a successful result flag.
+                reader.IsDBNull(20) ? null : reader.GetInt64(20),
                 reader.GetInt64(21),
                 reader.GetInt64(22) != 0));
         }
@@ -223,7 +224,7 @@ public static class LegacyToolPayloadCleanup
         string? StartTimestamp,
         string? LegacyResultContent,
         string? ResultTimestamp,
-        long ResultIsError,
+        long? ResultIsError,
         long LegacyBytes,
         bool HasUnlinkedSibling);
 }
