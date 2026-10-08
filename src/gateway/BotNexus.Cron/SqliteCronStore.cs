@@ -999,6 +999,23 @@ public sealed class SqliteCronStore(
             .ThenBy(r => r.JobId.Value, StringComparer.Ordinal)];
     }
 
+    /// <inheritdoc />
+    public async Task<CronRun?> GetRunAsync(RunId runId, CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT {RunColumns}
+            FROM cron_runs
+            WHERE id = $runId
+            """;
+        command.Parameters.AddWithValue("$runId", runId.Value);
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        return await reader.ReadAsync(ct).ConfigureAwait(false) ? ReadRun(reader) : null;
+    }
+
     public async Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default)
     {
         await InitializeAsync(ct).ConfigureAwait(false);

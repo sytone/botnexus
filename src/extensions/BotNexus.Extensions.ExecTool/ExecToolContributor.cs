@@ -25,14 +25,16 @@ namespace BotNexus.Extensions.ExecTool;
 public sealed class ExecToolContributor : IAgentToolContributor
 {
     private readonly IFileSystem? _fileSystem;
+    private readonly LocalChildEnvironmentPolicy _environmentPolicy;
 
     /// <summary>
     /// Creates the contributor. The file system is injected so Windows <c>.cmd</c>/<c>.bat</c>
     /// resolution stays testable; when omitted the tool uses the real file system.
     /// </summary>
-    public ExecToolContributor(IFileSystem? fileSystem = null)
+    public ExecToolContributor(IFileSystem? fileSystem = null, LocalChildEnvironmentPolicy? environmentPolicy = null)
     {
         _fileSystem = fileSystem;
+        _environmentPolicy = environmentPolicy ?? LocalChildEnvironmentPolicy.Default;
     }
 
     /// <inheritdoc />
@@ -49,7 +51,8 @@ public sealed class ExecToolContributor : IAgentToolContributor
         if (!IsToolAllowed(context.Descriptor.ToolIds, ExecToolName))
             return Task.FromResult(new AgentToolContribution([]));
 
-        var exec = new ExecTool(context.WorkspacePath, _fileSystem, context.Descriptor.AgentId.Value);
+        var exec = new ExecTool(context.WorkspacePath, _fileSystem, context.Descriptor.AgentId.Value,
+            environmentPolicy: _environmentPolicy);
         IReadOnlyList<IAgentTool> tools = [exec];
         return Task.FromResult(new AgentToolContribution(tools));
     }

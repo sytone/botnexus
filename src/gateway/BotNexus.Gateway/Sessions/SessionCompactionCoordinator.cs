@@ -46,10 +46,11 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         GatewaySession session,
         CancellationToken cancellationToken,
         bool force = false,
-        CompactionHandlePolicy handlePolicy = CompactionHandlePolicy.Evict)
+        CompactionHandlePolicy handlePolicy = CompactionHandlePolicy.Evict,
+        CompactionOptions? resolvedOptions = null)
     {
         ArgumentNullException.ThrowIfNull(session);
-        var options = _options.CurrentValue;
+        var options = resolvedOptions ?? _options.CurrentValue;
 
         // When the user explicitly requests compaction, override PreservedTurns
         // to 0 so the compactor always has entries to summarise regardless of

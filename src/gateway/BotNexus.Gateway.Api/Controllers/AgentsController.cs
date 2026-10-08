@@ -576,7 +576,8 @@ public sealed class AgentsController : ControllerBase
         var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
         if (diag is null) return NotFound("Handle does not support diagnostics.");
         var window = (handle as IAgentHandleInspector)?.GetContextWindowTokens();
-        return Ok(BuildContextResponse(agentId, sessionId, diag, window));
+        var budget = (handle as IAgentHandleInspector)?.GetContextBudgetDiagnostics();
+        return Ok(BuildContextResponse(agentId, sessionId, diag, window, budget));
     }
 
     /// <summary>
@@ -630,18 +631,26 @@ public sealed class AgentsController : ControllerBase
     /// <param name="contextWindowTokens">
     /// The resolved context window in tokens, or <see langword="null"/> when unresolvable.
     /// </param>
+    /// <param name="contextBudget">
+    /// The handle's source-backed binding snapshot, when available. Its working budget is the
+    /// denominator; the legacy window remains supported for inspectors without provenance.
+    /// </param>
     public static object BuildContextResponse(
         string agentId,
         string sessionId,
         ContextDiagnostics diag,
-        int? contextWindowTokens = null)
+        int? contextWindowTokens = null,
+        ContextBudgetDiagnostics? contextBudget = null)
     {
+        if (contextBudget is not null)
+            contextWindowTokens = contextBudget.EffectiveWorkingBudgetTokens;
         return new
         {
             agentId,
             sessionId,
             totalEstimatedTokens = diag.TotalEstimatedTokens,
             contextWindowTokens,
+            contextBudget,
             usagePercent = contextWindowTokens is > 0
                 ? Math.Round((double)diag.TotalEstimatedTokens / contextWindowTokens.Value * 100, 1)
                 : (double?)null,

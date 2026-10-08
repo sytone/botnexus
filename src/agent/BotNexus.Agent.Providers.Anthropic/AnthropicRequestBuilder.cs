@@ -21,15 +21,10 @@ internal static class AnthropicRequestBuilder
         Func<string, bool> isAdaptiveThinkingModel)
     {
         var messages = AnthropicMessageConverter.ConvertMessages(context.Messages, model, isOAuthToken);
-        AnthropicMessageConverter.ApplyMultiBreakpointCacheControl(
-            messages,
-            options?.CacheRetention ?? CacheRetention.Short,
-            model.BaseUrl);
-
         var body = new JsonObject
         {
             ["model"] = model.Id,
-            ["messages"] = ToNode(messages),
+            ["messages"] = null,
             ["max_tokens"] = options?.MaxTokens ?? (model.MaxTokens / 3),
             ["stream"] = true
         };
@@ -45,10 +40,12 @@ internal static class AnthropicRequestBuilder
                 new()
                 {
                     ["type"] = "text",
-                    ["text"] = "You are Claude Code, Anthropic's official CLI for Claude.",
-                    ["cache_control"] = cacheControl
+                    ["text"] = "You are Claude Code, Anthropic's official CLI for Claude."
                 }
             };
+
+            if (cacheControl is not null)
+                systemBlocks[0]["cache_control"] = cacheControl;
 
             if (!string.IsNullOrWhiteSpace(context.SystemPrompt))
             {
@@ -139,9 +136,22 @@ internal static class AnthropicRequestBuilder
         if (options?.Temperature.HasValue == true && anthropicOpts?.ThinkingEnabled != true)
             body["temperature"] = options.Temperature.Value;
 
+        // Shared request-budget intent from bradbor23's PR #4132. Preserve the
+        // existing system markers and unmarked tools; only messages spend the remainder.
+        var systemBreakpoints = body["system"] is JsonArray system
+            ? system.Count(block => block?["cache_control"] is not null)
+            : 0;
+        AnthropicMessageConverter.ApplyMultiBreakpointCacheControl(
+            messages,
+            options?.CacheRetention ?? CacheRetention.Short,
+            model.BaseUrl,
+            maxBreakpoints: Math.Min(3, MaxCacheBreakpoints - systemBreakpoints));
+        body["messages"] = ToNode(messages);
+
         return body;
     }
 
+    private const int MaxCacheBreakpoints = 4;
     private const string CacheBoundaryMarker = "\n<!-- BOTNEXUS_CACHE_BOUNDARY -->\n";
 
     /// <summary>

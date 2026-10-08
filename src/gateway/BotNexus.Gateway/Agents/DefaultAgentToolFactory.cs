@@ -35,13 +35,16 @@ public sealed class DefaultAgentToolFactory : IAgentToolFactory
     private readonly string? _platformConfigPath;
     private readonly string[]? _shellCommand;
     private readonly ReadToolOptions? _readToolOptions;
+    private readonly LocalChildEnvironmentPolicy _environmentPolicy;
 
     public DefaultAgentToolFactory(
         ShellPreference shellPreference = ShellPreference.Auto,
         string? platformConfigPath = null,
         string[]? shellCommand = null,
-        ReadToolOptions? readToolOptions = null)
+        ReadToolOptions? readToolOptions = null,
+        LocalChildEnvironmentPolicy? environmentPolicy = null)
     {
+        _environmentPolicy = environmentPolicy ?? LocalChildEnvironmentPolicy.Default;
         _shellPreference = shellPreference;
         _platformConfigPath = platformConfigPath;
         _shellCommand = shellCommand;
@@ -85,7 +88,8 @@ public sealed class DefaultAgentToolFactory : IAgentToolFactory
             new ReadTool(resolved, effectivePathValidator, fileSystem, _readToolOptions),
             new WriteTool(resolved, effectivePathValidator, fileSystem),
             new EditTool(resolved, effectivePathValidator, fileSystem),
-            new ShellTool(workingDirectory: resolved, shellPreference: _shellPreference, shellCommand: effectiveShellCommand),
+            new ShellTool(workingDirectory: resolved, shellPreference: _shellPreference, shellCommand: effectiveShellCommand,
+                environmentPolicy: _environmentPolicy),
             new ListDirectoryTool(resolved, effectivePathValidator, fileSystem),
             new GrepTool(resolved, effectivePathValidator, fileSystem),
             new GlobTool(resolved, effectivePathValidator, fileSystem),

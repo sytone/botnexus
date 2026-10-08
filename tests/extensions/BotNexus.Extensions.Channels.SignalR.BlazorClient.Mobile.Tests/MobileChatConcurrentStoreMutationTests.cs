@@ -1,3 +1,4 @@
+using System.Reflection;
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -26,11 +27,11 @@ public sealed class MobileChatConcurrentStoreMutationTests : IDisposable
     private readonly ClientStateStore _store = new();
     private readonly IPortalLoadService _portalLoad = Substitute.For<IPortalLoadService>();
     private readonly IAgentInteractionService _interaction = Substitute.For<IAgentInteractionService>();
-    private readonly MutatingJsRuntime _js;
+    private readonly PausingJsRuntime _js;
 
     public MobileChatConcurrentStoreMutationTests()
     {
-        _js = new MutatingJsRuntime();
+        _js = new PausingJsRuntime();
 
         _portalLoad.IsReady.Returns(true);
         _portalLoad.IsLoading.Returns(false);
@@ -64,31 +65,62 @@ public sealed class MobileChatConcurrentStoreMutationTests : IDisposable
     public void Dispose() => _ctx.Dispose();
 
     [Fact]
-    public void Markdown_render_pass_survives_message_appended_mid_pass()
+    public async Task Markdown_render_pass_survives_message_appended_mid_pass()
     {
         _store.AppendMessage("conv-1", new ChatMessage("assistant", "first", DateTimeOffset.UtcNow));
         _store.AppendMessage("conv-1", new ChatMessage("assistant", "second", DateTimeOffset.UtcNow));
 
-        // While the render pass is suspended awaiting markdown interop for the FIRST message, a
-        // concurrent handler appends a third message straight onto the conversation timeline (no
-        // notification, so this is purely the mutation half of the race).
-        _js.OnMarkdownRender = () => _store.GetConversation("conv-1")!
-            .AppendMessage(new ChatMessage("assistant", "raced", DateTimeOffset.UtcNow));
-
         var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
-        _store.NotifyChanged();
-
-        cut.WaitForAssertion(() =>
+        _js.PauseFirstMarkdown = true;
+        var activePass = RenderMarkdownPassAsync(cut);
+        try
         {
-            // Every message present when the pass started must still be rendered through markdown.
-            // Under the defect the enumeration threw on the second MoveNext and the pass aborted.
-            cut.Markup.ShouldContain("MD:first");
-            cut.Markup.ShouldContain("MD:second");
-        });
+            // This deadline diagnoses a missing interop boundary; it does not retry assertions.
+            await _js.FirstMarkdownStarted.WaitAsync(TimeSpan.FromSeconds(1));
+            activePass.IsCompleted.ShouldBeFalse();
+            _js.MarkdownSources.ShouldBe(["first"]);
 
+            // No notification: no second pass can hide an aborted first pass. GetMessages already
+            // returns a locked snapshot (#2712), independently of the component's ToArray (#2320).
+            var conv = _store.GetConversation("conv-1")
+                ?? throw new InvalidOperationException("The seeded conversation is missing.");
+            conv.AppendMessage(new ChatMessage("assistant", "raced", DateTimeOffset.UtcNow));
+        }
+        finally
+        {
+            // Always release and drain the actual pass before disposing the renderer, even if a
+            // readiness/mutation assertion fails. Interop returning is NOT pass completion.
+            _js.ResumeFirstMarkdown();
+            await activePass;
+        }
+
+        // Under unsafe live enumeration the second MoveNext throws; awaiting the pass surfaces it
+        // directly instead of letting HandleStateChanged swallow it and an unrelated pass repair it.
+        cut.Markup.ShouldContain("MD:first");
+        cut.Markup.ShouldContain("MD:second");
+        _js.MarkdownSources.ShouldBe(["first", "second"]);
+        cut.Markup.ShouldContain("raced");
+        cut.Markup.ShouldNotContain("MD:raced");
         _js.Failures.ShouldBeEmpty();
-        // ...and the concurrently appended message is visible once the render settles.
-        cut.WaitForAssertion(() => cut.Markup.ShouldContain("raced"));
+
+        await RenderMarkdownPassAsync(cut);
+        cut.Markup.ShouldContain("MD:first");
+        cut.Markup.ShouldContain("MD:second");
+        cut.Markup.ShouldContain("MD:raced");
+        _js.MarkdownSources.ShouldBe(["first", "second", "raced"]);
+        _js.Failures.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Markdown_render_coordination_is_stable_across_parallel_repetitions()
+    {
+        // Independent renderers and signals exercise parallel scheduling without serializing the
+        // assembly or retrying a failed assertion. Every repetition must satisfy the whole contract.
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
+        {
+            using var fixture = new MobileChatConcurrentStoreMutationTests();
+            await fixture.Markdown_render_pass_survives_message_appended_mid_pass();
+        }));
     }
 
     [Fact]
@@ -134,18 +166,33 @@ public sealed class MobileChatConcurrentStoreMutationTests : IDisposable
         cut.WaitForAssertion(() => cut.Markup.ShouldContain("final-marker"));
     }
 
+    private static Task RenderMarkdownPassAsync(IRenderedComponent<Chat> cut)
+    {
+        // NotifyChanged is fire-and-forget and OnAfterRenderAsync does not render markdown. Keep
+        // production encapsulation intact while awaiting the real pass and its StateHasChanged on
+        // the renderer; do not add a production API solely to expose completion to this fixture.
+        var method = typeof(Chat).GetMethod("RenderMarkdownAsync", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Chat.RenderMarkdownAsync was not found.");
+        return cut.InvokeAsync(() => method.Invoke(cut.Instance, null) as Task
+            ?? throw new InvalidOperationException("Chat.RenderMarkdownAsync did not return a Task."));
+    }
+
     /// <summary>
-    /// Minimal JS runtime stand-in. Returns deterministic markdown HTML, records any exception the
-    /// component surfaced while a call was in flight, and lets a test append to the store at the exact
-    /// moment the render pass is suspended on interop.
+    /// Minimal JS runtime stand-in with instance-local readiness/resume signals. The focused race
+    /// test pauses its first markdown call; the background stress test retains yielding interop.
     /// </summary>
-    private sealed class MutatingJsRuntime : IJSRuntime
+    private sealed class PausingJsRuntime : IJSRuntime
     {
         private int _markdownCalls;
+        private readonly TaskCompletionSource _firstMarkdownStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _resumeFirstMarkdown = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Action? OnMarkdownRender { get; set; }
-
+        public bool PauseFirstMarkdown { get; set; }
+        public Task FirstMarkdownStarted => _firstMarkdownStarted.Task;
+        public List<string> MarkdownSources { get; } = new();
         public List<Exception> Failures { get; } = new();
+
+        public void ResumeFirstMarkdown() => _resumeFirstMarkdown.TrySetResult();
 
         public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args)
             => InvokeAsync<TValue>(identifier, CancellationToken.None, args);
@@ -154,21 +201,26 @@ public sealed class MobileChatConcurrentStoreMutationTests : IDisposable
         {
             if (identifier == "BotNexus.renderMarkdown")
             {
-                // Yield first so the caller's enumeration is genuinely suspended before the mutation.
-                await Task.Yield();
-                if (Interlocked.Increment(ref _markdownCalls) == 1)
+                var source = args is { Length: > 0 } && args[0] is string s ? s : string.Empty;
+                MarkdownSources.Add(source);
+                if (Interlocked.Increment(ref _markdownCalls) == 1 && PauseFirstMarkdown)
                 {
+                    _firstMarkdownStarted.TrySetResult();
                     try
                     {
-                        OnMarkdownRender?.Invoke();
+                        await _resumeFirstMarkdown.Task.WaitAsync(cancellationToken);
                     }
                     catch (Exception ex)
                     {
                         Failures.Add(ex);
+                        throw;
                     }
                 }
+                else
+                {
+                    await Task.Yield();
+                }
 
-                var source = args is { Length: > 0 } && args[0] is string s ? s : string.Empty;
                 if (typeof(TValue) == typeof(string))
                     return (TValue)(object)$"<p><strong>MD:{source}</strong></p>";
             }
