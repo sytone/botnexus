@@ -98,7 +98,7 @@ The central package pins and explicit host references satisfy the following buil
 | Azure.Core | 1.50.0 | Authentication and Authentication.Msal request assembly 1.50.0.0. |
 | System.Memory.Data | 10.0.7 | Builder requests assembly 10.0.0.7. |
 | Microsoft.IdentityModel.Abstractions | 8.15.0 | Authentication.Msal and private IdentityModel consumers request assembly 8.15.0.0. |
-| System.ClientModel | 1.8.0 (transitive) | Azure.Core 1.50.0's nuspec requires 1.8.0; Storage consumers request assembly 1.6.1.0. |
+| System.ClientModel | 1.8.0 (explicit host reference) | Azure.Core 1.50.0's nuspec requires 1.8.0; Storage consumers request assembly 1.6.1.0. |
 
 The SDK also restores stable `Microsoft.Extensions.* 10.0.7` packages. Its assembly references
 request `10.0.0.0`, supplied by the host's `Microsoft.AspNetCore.App` framework reference. This

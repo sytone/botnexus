@@ -19,6 +19,9 @@ public sealed class Agent365HostInitializationArchitectureTests
         foreach (var argument in new[] { "exec", "--runtimeconfig", Path.ChangeExtension(host, ".runtimeconfig.json"),
                      "--depsfile", Path.ChangeExtension(host, ".deps.json"), probe, extension })
             start.ArgumentList.Add(argument);
+        // Keep inherited test/runtime injection out of the production dependency graph.
+        start.Environment.Remove("DOTNET_STARTUP_HOOKS");
+        start.Environment.Remove("DOTNET_ADDITIONAL_DEPS");
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start initialization probe.");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();

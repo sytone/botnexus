@@ -1,5 +1,4 @@
-using System.Reflection;
-using System.Runtime.Loader;
+using System.Diagnostics;
 using Mono.Cecil;
 
 namespace BotNexus.Architecture.Tests;
@@ -43,50 +42,59 @@ public sealed class ExtensionHostDependencyCompatibilityArchitectureTests : Arch
         violations.ShouldBeEmpty("Host unification cannot satisfy these built extension references (#4778):\n" + string.Join("\n", violations));
     }
 
-    [Fact]
-    public void ServiceBus_AzureCore_reference_binds_through_the_real_extension_load_context_to_the_host()
+    [Theory]
+    [InlineData("connection-string")]
+    [InlineData("managed-identity")]
+    public async Task ServiceBus_default_factory_constructs_through_the_real_loader_in_an_isolated_host_process(string authMode)
     {
         var hostDirectory = RequireDirectory(ReadArtifactPaths("compatibility-host-artifact.txt").ShouldHaveSingleItem());
         var extensionPath = ReadArtifactPaths("compatibility-extension-artifacts.txt")
             .Single(path => Path.GetFileName(path) == "BotNexus.Extensions.Channels.ServiceBus.dll");
-        var extensionDirectory = RequireDirectory(extensionPath);
-        var serviceBusPath = Path.Combine(extensionDirectory, "Azure.Messaging.ServiceBus.dll");
-        var hostCorePath = Path.Combine(hostDirectory, "Azure.Core.dll");
-        File.Exists(Path.Combine(extensionDirectory, "Azure.Core.dll")).ShouldBeTrue("The extension must ship its private Azure.Core copy.");
-        File.Exists(Path.Combine(hostDirectory, "Azure.Messaging.ServiceBus.dll")).ShouldBeFalse("ServiceBus must remain extension-private.");
-
-        using var serviceBusMetadata = AssemblyDefinition.ReadAssembly(serviceBusPath);
-        var coreReference = serviceBusMetadata.MainModule.AssemblyReferences.Single(reference => reference.Name == "Azure.Core");
-        using var hostCoreMetadata = AssemblyDefinition.ReadAssembly(hostCorePath);
-        var fence = new ManagedAssemblyCompatibilityFence();
-        fence.IsCompatible(coreReference, hostCoreMetadata.Name).ShouldBeTrue(
-            $"ServiceBus requests {coreReference.FullName}, but the production host ships {hostCoreMetadata.Name.FullName}.");
-
-        // Even if another architecture test has touched Azure.Core, it cannot silently replace
-        // the artifact under test with a newer testhost copy. MVID checks content, not just name.
-        var hostCore = AssemblyLoadContext.Default.LoadFromAssemblyPath(hostCorePath);
-        hostCore.ManifestModule.ModuleVersionId.ShouldBe(hostCoreMetadata.MainModule.Mvid,
-            "Testhost Azure.Core differs from the real host artifact; this test must not mask a host downgrade.");
-        var loaderType = typeof(BotNexus.Gateway.GatewayHost).Assembly.GetType(
-            "BotNexus.Gateway.Extensions.ExtensionAssemblyLoadContext", throwOnError: true)
-            ?? throw new InvalidOperationException("The production extension loader type is missing.");
-        var context = Activator.CreateInstance(loaderType, [extensionPath, true]) as AssemblyLoadContext
-            ?? throw new InvalidOperationException("Could not construct the production extension load context.");
+        var hostPath = Path.Combine(hostDirectory, "BotNexus.Gateway.Api.dll");
+        var probePath = Path.Combine(hostDirectory, "BotNexus.ExtensionDependencyProbe.dll");
+        File.Exists(probePath).ShouldBeTrue("Build Architecture.Tests to place the framework-only probe alongside the actual host.");
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo(Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet")
+            {
+                WorkingDirectory = hostDirectory,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            }
+        };
+        foreach (var argument in new[] { "exec", "--runtimeconfig", Path.ChangeExtension(hostPath, ".runtimeconfig.json"),
+                     "--depsfile", Path.ChangeExtension(hostPath, ".deps.json"), probePath, hostPath, extensionPath, authMode })
+            process.StartInfo.ArgumentList.Add(argument);
+        // No inherited startup hooks/additional deps may smuggle test assemblies into this process.
+        process.StartInfo.Environment.Remove("DOTNET_STARTUP_HOOKS");
+        process.StartInfo.Environment.Remove("DOTNET_ADDITIONAL_DEPS");
+        using var drains = new CancellationTokenSource();
+        process.Start().ShouldBeTrue();
+        var stdout = process.StandardOutput.ReadToEndAsync(drains.Token);
+        var stderr = process.StandardError.ReadToEndAsync(drains.Token);
         try
         {
-            var serviceBus = context.LoadFromAssemblyName(AssemblyName.GetAssemblyName(serviceBusPath));
-            AssemblyLoadContext.GetLoadContext(serviceBus).ShouldBeSameAs(context,
-                "A dependency absent from the host must remain extension-private.");
-            serviceBus.GetType("Azure.Messaging.ServiceBus.ServiceBusClient", throwOnError: true).ShouldNotBeNull();
-            var boundCore = context.LoadFromAssemblyName(new AssemblyName(coreReference.FullName));
-            boundCore.ShouldBeSameAs(hostCore, "A private duplicate Azure.Core is not an acceptable fix.");
-            AssemblyLoadContext.GetLoadContext(boundCore).ShouldBeSameAs(AssemblyLoadContext.Default);
-            boundCore.GetType("Azure.Core.TokenCredential", throwOnError: true).ShouldBeSameAs(
-                hostCore.GetType("Azure.Core.TokenCredential", throwOnError: true));
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            await Task.WhenAll(stdout, stderr, process.WaitForExitAsync(deadline.Token)).WaitAsync(deadline.Token);
+            process.ExitCode.ShouldBe(0, $"Isolated {authMode} factory probe failed.\nstdout: {await stdout}\nstderr: {await stderr}");
+            (await stdout).ShouldContain($"FACTORY_OK {authMode}");
         }
         finally
         {
-            context.Unload();
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: true);
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await process.WaitForExitAsync(cleanup.Token).WaitAsync(cleanup.Token);
+                await Task.WhenAll(stdout, stderr).WaitAsync(cleanup.Token);
+            }
+            finally
+            {
+                drains.Cancel();
+            }
         }
     }
 

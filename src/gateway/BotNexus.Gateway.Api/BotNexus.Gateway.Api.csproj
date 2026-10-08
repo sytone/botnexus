@@ -24,11 +24,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Host-shared dependency floors for dynamically loaded Agents SDK consumers (#4783).
-         CPM entries alone do not constrain transitive packages; make host selection explicit. -->
+    <!-- #4778: explicit host-shared convergence. Private extension copies cannot satisfy
+         a higher reference when ExtensionAssemblyLoadContext unifies with the host. -->
+    <PackageReference Include="Azure.Core" />
+    <PackageReference Include="System.ClientModel" />
+    <PackageReference Include="System.Memory.Data" />
     <PackageReference Include="Microsoft.Identity.Client" />
     <PackageReference Include="Microsoft.IdentityModel.Abstractions" />
-    <PackageReference Include="System.Memory.Data" />
     <PackageReference Include="OpenTelemetry" />
     <PackageReference Include="OpenTelemetry.Exporter.Console" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
