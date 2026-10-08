@@ -83,7 +83,7 @@ public sealed partial class GitHubLabelsTool : GitHubToolBase
             if (!response.IsSuccess || response.Body is not { ValueKind: JsonValueKind.Array } labels)
                 return ErrorResult(Name, repository, response);
 
-            var projected = labels.EnumerateArray().Select(GitHubProjections.Label).ToArray();
+            var projected = labels.EnumerateArray().Select(label => label.Label()).ToArray();
             return StructuredResult(new
             {
                 tool = Name,
@@ -118,7 +118,7 @@ public sealed partial class GitHubLabelsTool : GitHubToolBase
             ok = true,
             action,
             identity = Config.Identity,
-            label = GitHubProjections.Label(label),
+            label = label.Label(),
         });
     }
 

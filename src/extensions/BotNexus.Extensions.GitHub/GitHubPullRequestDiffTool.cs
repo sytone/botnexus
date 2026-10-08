@@ -90,7 +90,7 @@ public sealed class GitHubPullRequestDiffTool : GitHubToolBase
             return ErrorResult(Name, repository, response);
 
         var files = array.EnumerateArray()
-            .Select(f => GitHubProjections.PullRequestFile(f, includePatch))
+            .Select(f => f.PullRequestFile(includePatch))
             .ToArray();
 
         return StructuredResult(new
