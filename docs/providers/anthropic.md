@@ -63,6 +63,8 @@ The following models are registered by `BuiltInModels.RegisterAnthropicModels`. 
 
 Use an exact registered identifier in the agent's `model` field. An ID absent from this table requires dynamic discovery or custom registration before use; absence from the built-ins does not establish upstream unavailability.
 
+Discovery applies an overlay only after reaching a terminal page. A missing or repeated continuation cursor, a failed page, or more pages remaining after the ten-request limit makes discovery unavailable; partial results are not applied. Existing registry entries remain unchanged in that case.
+
 ## Features
 
 ### Extended Thinking
