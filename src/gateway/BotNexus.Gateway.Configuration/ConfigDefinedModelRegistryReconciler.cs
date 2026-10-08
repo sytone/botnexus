@@ -141,6 +141,7 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
                     providerConfig.ResolveChatSupportsExtraHighThinking(),
                     providerConfig.ResolveChatSupportsExtendedContextWindow(),
                     providerConfig.ResolveChatInput());
+                var capacity = ConfiguredModelCapacityResolver.Resolve(providerName, providerConfig, modelId);
                 registrations.Add(new ModelRegistration(
                     providerName,
                     new LlmModel(
@@ -152,10 +153,12 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
                         caps.Reasoning,
                         caps.Input,
                         new ModelCost(0, 0, 0, 0),
-                        providerConfig.ResolveChatContextWindow() ?? 128_000,
-                        32_000,
+                        capacity.ContextWindow,
+                        capacity.MaxTokens,
                         caps.SupportsExtraHighThinking,
-                        caps.SupportsExtendedContextWindow)));
+                        caps.SupportsExtendedContextWindow,
+                        ContextWindowSource: capacity.ContextWindowSource,
+                        MaxTokensSource: capacity.MaxTokensSource)));
             }
         }
 
@@ -167,9 +170,4 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
         string.IsNullOrWhiteSpace(providerConfig.Type) &&
         string.IsNullOrWhiteSpace(providerConfig.BaseUrl);
 
-    private sealed class ConfigDefinedProviderActivationException(string providerName, string message)
-        : InvalidOperationException(message)
-    {
-        public string ProviderName { get; } = providerName;
-    }
 }

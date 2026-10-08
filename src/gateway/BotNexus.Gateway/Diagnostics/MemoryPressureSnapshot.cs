@@ -6,6 +6,10 @@ namespace BotNexus.Gateway.Diagnostics;
 /// Represents a point-in-time memory pressure snapshot with readable metrics,
 /// threshold ratios, and actionable operator guidance.
 /// </summary>
+/// <remarks>
+/// Process metrics are sampled at capture time; GC metrics describe the last collection
+/// reported by GCMemoryInfo. These readings are not atomic and can describe different times.
+/// </remarks>
 public sealed class MemoryPressureSnapshot
 {
     /// <summary>Timestamp when the snapshot was captured.</summary>
@@ -14,8 +18,27 @@ public sealed class MemoryPressureSnapshot
     /// <summary>Process Resident Set Size (working set) in bytes.</summary>
     public required long WorkingSetBytes { get; init; }
 
-    /// <summary>GC total committed bytes (managed heap + GC overhead).</summary>
+    /// <summary>Process private memory sampled at capture time, not atomically with the last-GC metrics.</summary>
+    public long PrivateMemoryBytes { get; init; }
+
+    /// <summary>GC total committed bytes (managed heap + GC overhead) reported for the last collection.</summary>
     public required long GcCommittedBytes { get; init; }
+
+    /// <summary>Heap size reported for the last GC, including fragmentation; not a current live-object byte count.</summary>
+    public long GcHeapSizeBytes { get; init; }
+
+    /// <summary>Fragmentation reported for the same last GC as GcHeapSizeBytes.</summary>
+    public long GcFragmentedBytes { get; init; }
+
+    /// <summary>Index identifying the GC represented by these metrics; zero when no collection has occurred.</summary>
+    public long GcCollectionIndex { get; init; }
+
+    /// <summary>
+    /// Diagnostic gap: max(0, current process private bytes - last-GC committed bytes).
+    /// The readings are non-atomic and represent different times; this difference does not
+    /// attribute memory to an allocator or measure live-object bytes.
+    /// </summary>
+    public long UnattributedPrivateBytesAboveLastGcCommitment { get; init; }
 
     /// <summary>GC total available memory in bytes (as reported by GCMemoryInfo).</summary>
     public required long TotalAvailableBytes { get; init; }
@@ -34,6 +57,9 @@ public sealed class MemoryPressureSnapshot
 
     /// <summary>Human-readable RSS (e.g. "142.3 MB").</summary>
     public required string WorkingSetReadable { get; init; }
+
+    /// <summary>Human-readable private memory sampled at capture time (e.g. "142.3 MB").</summary>
+    public string PrivateMemoryReadable { get; init; } = "0 B";
 
     /// <summary>Human-readable GC committed (e.g. "98.7 MB").</summary>
     public required string GcCommittedReadable { get; init; }

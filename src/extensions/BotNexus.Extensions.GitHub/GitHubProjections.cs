@@ -31,7 +31,7 @@ internal static class GitHubProjections
     ];
 
     /// <summary>Projects an issue or pull-request object.</summary>
-    internal static Dictionary<string, object?> Issue(JsonElement element) => new(StringComparer.Ordinal)
+    internal static Dictionary<string, object?> Issue(this JsonElement element) => new(StringComparer.Ordinal)
     {
         ["number"] = Int(element, "number"),
         ["title"] = Str(element, "title"),
@@ -50,7 +50,7 @@ internal static class GitHubProjections
     };
 
     /// <summary>Projects only the selected fields for an issue census row.</summary>
-    internal static Dictionary<string, object?> IssueListItem(JsonElement element, IReadOnlyList<string> fields)
+    internal static Dictionary<string, object?> IssueListItem(this JsonElement element, IReadOnlyList<string> fields)
     {
         var number = Int(element, "number");
         var isPullRequest = element.ValueKind == JsonValueKind.Object
@@ -75,7 +75,7 @@ internal static class GitHubProjections
     }
 
     /// <summary>Projects the pull-request-specific fields on top of the shared issue shape.</summary>
-    internal static Dictionary<string, object?> PullRequest(JsonElement element)
+    internal static Dictionary<string, object?> PullRequest(this JsonElement element)
     {
         var projected = Issue(element);
         projected["draft"] = Bool(element, "draft");
@@ -91,7 +91,7 @@ internal static class GitHubProjections
     }
 
     /// <summary>Projects a comment object.</summary>
-    internal static Dictionary<string, object?> Comment(JsonElement element) => new(StringComparer.Ordinal)
+    internal static Dictionary<string, object?> Comment(this JsonElement element) => new(StringComparer.Ordinal)
     {
         ["id"] = Int(element, "id"),
         ["author"] = Str(Obj(element, "user"), "login"),
@@ -101,7 +101,7 @@ internal static class GitHubProjections
     };
 
     /// <summary>Projects a repository label.</summary>
-    internal static Dictionary<string, object?> Label(JsonElement element) => new(StringComparer.Ordinal)
+    internal static Dictionary<string, object?> Label(this JsonElement element) => new(StringComparer.Ordinal)
     {
         ["id"] = Int(element, "id"),
         ["name"] = Str(element, "name"),
@@ -117,7 +117,7 @@ internal static class GitHubProjections
     /// substituting "pending" preserves the distinction between "not finished" and "finished with an
     /// unknown outcome" - collapsing them is how a caller concludes a red PR is merely slow.
     /// </remarks>
-    internal static Dictionary<string, object?> CheckRun(JsonElement element) => new(StringComparer.Ordinal)
+    internal static Dictionary<string, object?> CheckRun(this JsonElement element) => new(StringComparer.Ordinal)
     {
         ["id"] = Int(element, "id"),
         ["name"] = Str(element, "name"),
@@ -134,7 +134,7 @@ internal static class GitHubProjections
     /// text and a large PR would otherwise spend the whole transcript budget on a diff the agent
     /// only wanted the file list from.
     /// </remarks>
-    internal static Dictionary<string, object?> PullRequestFile(JsonElement element, bool includePatch)
+    internal static Dictionary<string, object?> PullRequestFile(this JsonElement element, bool includePatch)
     {
         var projected = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -153,7 +153,7 @@ internal static class GitHubProjections
     }
 
     /// <summary>Projects one workflow run.</summary>
-    internal static Dictionary<string, object?> WorkflowRun(JsonElement element) => new(StringComparer.Ordinal)
+    internal static Dictionary<string, object?> WorkflowRun(this JsonElement element) => new(StringComparer.Ordinal)
     {
         ["id"] = Int(element, "id"),
         ["name"] = Str(element, "name"),
