@@ -1,4 +1,5 @@
 using BotNexus.Agent.Providers.Core;
+using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Resolution;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -12,8 +13,8 @@ namespace BotNexus.Gateway.Sessions;
 /// <summary>
 /// Default <see cref="ISessionContextWindowResolver"/> (#2896): reads the conversation override from
 /// <see cref="IConversationStore"/>, the agent's configured window from <see cref="IAgentRegistry"/>,
-/// and the registered model's own window from the model registry, then applies
-/// <see cref="ScopedCompactionWindow.Resolve"/>.
+/// and the registered model's own window from the model registry, then uses the same
+/// <see cref="ContextWindowResolver.ResolveBudget"/> derivation as active-handle diagnostics.
 /// </summary>
 /// <remarks>
 /// Every collaborator is optional and every read is best-effort. Compaction is a background health
@@ -58,12 +59,12 @@ public sealed class SessionContextWindowResolver : ISessionContextWindowResolver
                 Model: string.IsNullOrWhiteSpace(conversation?.ModelOverride) ? null : conversation!.ModelOverride,
                 ContextWindow: conversation?.ContextWindowOverride));
 
-        int? modelWindow = null;
+        LlmModel? model = null;
         if (descriptor is not null && _llmClient is not null && !string.IsNullOrWhiteSpace(effective.Model))
         {
             try
             {
-                modelWindow = _llmClient.Models.GetModel(descriptor.ApiProvider, effective.Model!)?.ContextWindow;
+                model = _llmClient.Models.GetModel(descriptor.ApiProvider, effective.Model!);
             }
             catch (Exception ex)
             {
@@ -74,10 +75,18 @@ public sealed class SessionContextWindowResolver : ISessionContextWindowResolver
 
         // effective.ContextWindow already carries conversation-over-agent precedence; the model's own
         // window is the least specific layer and applies only when neither is set.
-        var resolved = ScopedCompactionWindow.Resolve(
-            conversationOverride: effective.ContextWindow,
-            agentWindow: null,
-            modelWindow: modelWindow);
+        var budget = ContextWindowResolver.ResolveBudget(
+            effective.ContextWindow,
+            conversation?.ContextWindowOverride.HasValue == true ? "conversation"
+                : descriptor?.ContextWindow.HasValue == true ? "agent" : null,
+            new ContextBudgetDiagnostics
+            {
+                ModelContextWindowTokens = model?.ContextWindow,
+                ModelContextWindowSource = model?.ContextWindowSource,
+                ModelMaxOutputTokens = model?.MaxTokens,
+                ModelMaxOutputSource = model?.MaxTokensSource
+            });
+        var resolved = budget.EffectiveWorkingBudgetTokens;
 
         _logger.LogDebug(
             "Scoped compaction window for agent {AgentId} / conversation {ConversationId}: " +
@@ -86,7 +95,7 @@ public sealed class SessionContextWindowResolver : ISessionContextWindowResolver
             conversationId.Value,
             conversation?.ContextWindowOverride,
             descriptor?.ContextWindow,
-            modelWindow,
+            budget.ModelContextWindowTokens,
             resolved);
 
         return resolved;

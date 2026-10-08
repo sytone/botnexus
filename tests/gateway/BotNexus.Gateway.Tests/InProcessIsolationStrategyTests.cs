@@ -32,6 +32,8 @@ using System.Text.Json;
 using Moq;
 using AgentCoreUserMessage = BotNexus.Agent.Core.Types.UserMessage;
 using BotNexus.Gateway.Tests.TestInfrastructure;
+using BotNexus.Gateway.Api.Controllers;
+using Microsoft.AspNetCore.Mvc;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -47,6 +49,80 @@ public sealed class InProcessIsolationStrategyTests
             new AgentExecutionContext { SessionId = BotNexus.Domain.Primitives.SessionId.From("session-1") });
 
         handle.ShouldNotBeNull();
+    }
+
+    [Theory]
+    [InlineData(null, "model", 8192)]
+    [InlineData(32_000, "agent", 32_000)]
+    public async Task CreateAsync_InspectorCapturesBudgetAndIndependentRegisteredCapacities(
+        int? agentWindow, string expectedSource, int expectedBudget)
+    {
+        var strategy = CreateStrategyWithRegisteredModel();
+        await using var handle = await strategy.CreateAsync(
+            CreateDescriptor() with { ContextWindow = agentWindow },
+            new AgentExecutionContext { SessionId = SessionId.From("session-budget") });
+        var inspector = handle.ShouldBeAssignableTo<IAgentHandleInspector>();
+        var budget = inspector.GetContextBudgetDiagnostics();
+        budget.ShouldNotBeNull();
+        budget.EffectiveWorkingBudgetTokens.ShouldBe(expectedBudget);
+        budget.EffectiveWorkingBudgetSource.ShouldBe(expectedSource);
+        budget.ModelContextWindowTokens.ShouldBe(8192);
+        budget.ModelMaxOutputTokens.ShouldBe(1024);
+        budget.ModelContextWindowSource.ShouldBe("registered");
+        budget.ModelMaxOutputSource.ShouldBe("registered");
+        inspector.GetContextWindowTokens().ShouldBe(expectedBudget);
+        var settings = GetAgentOptions(handle).GenerationSettings;
+        settings.ContextWindow.ShouldBe(agentWindow);
+    }
+
+    [Fact]
+    public async Task GetContext_RealSupervisorAndHandle_ReportConversationBudgetWithoutChangingModelDeclarations()
+    {
+        var agentId = AgentId.From("agent-a");
+        var sessionId = SessionId.From("session-conversation-budget");
+        var conversations = new InMemoryConversationStore();
+        await conversations.CreateAsync(new Conversation
+        {
+            AgentId = agentId, ConversationId = ConversationId.From("conversation-budget"),
+            ActiveSessionId = sessionId, ContextWindowOverride = 64_000
+        });
+        var sessions = new InMemorySessionStore();
+        using var provider = new ServiceCollection()
+            .AddSingleton<IConversationStore>(conversations)
+            .AddSingleton<ISessionStore>(sessions)
+            .BuildServiceProvider();
+        var strategy = CreateStrategyWithRegisteredModel(serviceProvider: provider);
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        registry.Register(CreateDescriptor() with { ContextWindow = 32_000 });
+        var supervisor = new DefaultAgentSupervisor(registry, [strategy], sessions,
+            NullLogger<DefaultAgentSupervisor>.Instance);
+        var handle = await supervisor.GetOrCreateAsync(agentId, sessionId);
+        try
+        {
+            var inspector = handle.ShouldBeAssignableTo<IAgentHandleInspector>();
+            var budget = inspector.GetContextBudgetDiagnostics();
+            budget.ShouldNotBeNull();
+            budget.EffectiveWorkingBudgetTokens.ShouldBe(64_000);
+            budget.EffectiveWorkingBudgetSource.ShouldBe("conversation");
+            budget.ModelContextWindowTokens.ShouldBe(8192);
+            budget.ModelMaxOutputTokens.ShouldBe(1024);
+            GetAgentOptions(handle).GenerationSettings.ContextWindow.ShouldBe(64_000);
+            var controller = new AgentsController(registry, supervisor, new NoOpAgentConfigurationWriter());
+            var response = controller.GetContext(agentId.Value, sessionId.Value).ShouldBeOfType<OkObjectResult>();
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(response.Value,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            json.RootElement.GetProperty("contextWindowTokens").GetInt32().ShouldBe(64_000);
+            var reported = json.RootElement.GetProperty("contextBudget");
+            reported.GetProperty("effectiveWorkingBudgetSource").GetString().ShouldBe("conversation");
+            reported.GetProperty("modelContextWindowTokens").GetInt32().ShouldBe(8192);
+            reported.GetProperty("modelMaxOutputTokens").GetInt32().ShouldBe(1024);
+            reported.GetProperty("modelContextWindowSource").GetString().ShouldBe("registered");
+            reported.GetProperty("modelMaxOutputSource").GetString().ShouldBe("registered");
+        }
+        finally
+        {
+            await supervisor.StopAsync(agentId, sessionId);
+        }
     }
 
     [Fact]
