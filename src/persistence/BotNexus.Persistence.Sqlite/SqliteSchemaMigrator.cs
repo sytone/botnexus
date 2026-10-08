@@ -27,7 +27,7 @@ public static class SqliteSchemaMigrator
     /// Refuses a newer schema on a read-only connection without attempting to stamp or migrate it.
     /// Unversioned legacy stores remain readable until their owning writer adopts them.
     /// </summary>
-    public static void ValidateReadOnly(SqliteConnection connection, int codeVersion)
+    public static void ValidateReadOnly(this SqliteConnection connection, int codeVersion)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentOutOfRangeException.ThrowIfLessThan(codeVersion, 1);
@@ -64,7 +64,7 @@ public static class SqliteSchemaMigrator
     /// The store was written by a newer schema than this code understands.
     /// </exception>
     public static void Apply(
-        SqliteConnection connection,
+        this SqliteConnection connection,
         int codeVersion,
         IReadOnlyList<SqliteSchemaMigration> migrations)
     {

@@ -252,7 +252,7 @@ public sealed class SqliteAgentProposalStore : IAgentProposalStore, IDisposable,
                     ON agent_proposal_review(proposal_id, review_id);
                 """;
             await schema.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
+            connection.Apply( CurrentSchemaVersion, Migrations);
             _initialized = true;
         }
         finally
