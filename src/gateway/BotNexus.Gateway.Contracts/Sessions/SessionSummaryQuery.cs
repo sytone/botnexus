@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Abstractions.Sessions;
@@ -39,13 +40,15 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 /// for background callers. Request-scoped callers must always pass a bound.
 /// </param>
 /// <param name="Offset">Rows to skip <b>within the filtered set</b>. Negative values are treated as zero.</param>
+/// <param name="ConversationIds">Eligible conversation IDs, intersected with all other predicates before counting or paging. Null adds no filter; empty matches no rows.</param>
 public sealed record SessionSummaryQuery(
     DateTimeOffset UpdatedAfter,
     string? AgentId = null,
     string? ConversationIdFilter = null,
     bool IncludeInactive = false,
     int? Limit = null,
-    int Offset = 0)
+    int Offset = 0,
+    IReadOnlySet<ConversationId>? ConversationIds = null)
 {
     /// <summary>
     /// Returns <c>true</c> when <paramref name="summary"/> satisfies every filter clause. The
@@ -63,6 +66,10 @@ public sealed record SessionSummaryQuery(
             return false;
 
         if (ConversationIdFilter is not null && !string.Equals(summary.ConversationId, ConversationIdFilter, StringComparison.Ordinal))
+            return false;
+
+        if (ConversationIds is not null && (string.IsNullOrWhiteSpace(summary.ConversationId)
+            || !ConversationIds.Contains(ConversationId.From(summary.ConversationId))))
             return false;
 
         if (!IncludeInactive && summary.Status is not (SessionStatus.Active or SessionStatus.Suspended))

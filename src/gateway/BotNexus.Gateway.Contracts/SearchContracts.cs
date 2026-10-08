@@ -34,7 +34,18 @@ public interface ISearchContributor
 /// </summary>
 /// <param name="Query">The source-local query.</param>
 /// <param name="MaxResults">The maximum number of results the contributor may return.</param>
-public sealed record SearchRequest(string Query, int MaxResults);
+public sealed record SearchRequest(string Query, int MaxResults)
+{
+    /// <summary>Creates a bounded search with explicit server-derived authorization.</summary>
+    public SearchRequest(string query, int maxResults, SearchScope scope) : this(query, maxResults)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        Scope = scope;
+    }
+
+    /// <summary>Gets authorization; the legacy two-argument internal request retains all-agent access.</summary>
+    public SearchScope Scope { get; } = SearchScope.All;
+}
 
 /// <summary>
 /// Groups search results under their source identity without imposing cross-source ranking.
