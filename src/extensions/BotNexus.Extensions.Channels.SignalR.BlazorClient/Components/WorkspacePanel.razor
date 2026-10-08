@@ -4,11 +4,11 @@
 
 <div id="@_containerId" class="workspace-panel @MobilePaneClass" data-testid="workspace-panel">
     <section class="workspace-tree-pane">
-        @if (_isLoadingRoot)
+        @if (_isLoadingRoot && !_directoryResponses.ContainsKey(string.Empty))
         {
             <div class="workspace-state">Loading workspace…</div>
         }
-        else if (!string.IsNullOrWhiteSpace(_rootError))
+        else if (!string.IsNullOrWhiteSpace(_rootError) && !_directoryResponses.ContainsKey(string.Empty))
         {
             <div class="workspace-state workspace-state-error">@_rootError</div>
         }
@@ -16,7 +16,7 @@
         {
             <WorkspaceFileTree Entries="@GetDirectoryEntries(string.Empty)"
                                ExpandedPaths="_expandedDirectories"
-                               SelectedFilePath="_selectedFilePath"
+                               SelectedFilePath="@_selectedFilePath"
                                OnDirectoryToggled="ToggleDirectoryAsync"
                                OnFileSelected="SelectFileAsync"
                                OnDeleteRequested="RequestDeleteAsync"
@@ -97,6 +97,11 @@
 
     // Issue #345: turn-end refresh tracking
     private bool _wasStreaming;
+    private bool _refreshRunning;
+    private bool _refreshPending;
+    private bool _disposed;
+    private readonly HashSet<string> _staleDirectories = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, TaskCompletionSource<bool>> _directoryRequests = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Optional state store for turn-end auto-refresh (issue #345).</summary>
     [Parameter]
@@ -117,35 +122,31 @@
             _wasStreaming = Store.GetAgent(AgentId)?.IsStreaming == true;
             Store.OnChanged += HandleStateChanged;
         }
-        await LoadRootAsync();
+        await RefreshWorkspaceAsync(initialLoad: true);
     }
 
     private void HandleStateChanged()
     {
+        if (_disposed) return;
         var agent = Store?.GetAgent(AgentId);
         if (agent is null) return;
 
+        // Capture the notification before dispatch; the store may contain the next
+        // streaming edge by the time the renderer processes this callback.
         var isStreaming = agent.IsStreaming;
-        if (_wasStreaming && !isStreaming)
+        _ = InvokeAsync(async () =>
         {
-            // Turn just ended for our agent -- clear cached directories and reload
-            _wasStreaming = false;
-            _directoryResponses.Clear();
-            _expandedDirectories.Clear();
-            _ = InvokeAsync(async () =>
-            {
-                await LoadRootAsync();
-                StateHasChanged();
-            });
-            return;
-        }
-
-        _wasStreaming = isStreaming;
+            if (_disposed) return;
+            var turnEnded = _wasStreaming && !isStreaming;
+            _wasStreaming = isStreaming;
+            if (turnEnded)
+                await RefreshWorkspaceAsync();
+        });
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
+        if (firstRender && !_disposed)
         {
             await JS.InvokeVoidAsync("BotNexus.splitter.init", _containerId, _storageKey, 560, 200, 0.7, 0.5);
         }
@@ -153,37 +154,153 @@
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         if (Store is not null)
             Store.OnChanged -= HandleStateChanged;
         _cts.Cancel();
         _cts.Dispose();
     }
 
-    private async Task LoadRootAsync()
+    private async Task RefreshWorkspaceAsync(bool initialLoad = false)
     {
-        _isLoadingRoot = true;
-        _rootError = null;
-        await LoadDirectoryAsync(string.Empty, isRoot: true);
-        _isLoadingRoot = false;
+        if (_disposed) return;
+        if (_refreshRunning)
+        {
+            _refreshPending = true;
+            return;
+        }
+
+        _refreshRunning = true;
+        try
+        {
+            do
+            {
+                _refreshPending = false;
+                // Closed branches retain their last listing, but must refetch on reopen.
+                foreach (var path in _directoryResponses.Keys.Concat(_directoryRequests.Keys)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
+                {
+                    // A request started before this turn ended cannot certify the
+                    // post-turn listing, even when its directory is still open.
+                    if (path.Length > 0 && (!IsVisibleDirectory(path) || _directoryRequests.ContainsKey(path)))
+                        InvalidateDirectory(path);
+                }
+
+                _isLoadingRoot = true;
+                _rootError = null;
+                await LoadDirectoryAsync(string.Empty, isRoot: true);
+                if (_disposed) return;
+                _isLoadingRoot = false;
+                StateHasChanged();
+
+                if (!initialLoad)
+                {
+                    var refreshed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    while (!_disposed)
+                    {
+                        // Re-evaluate after every await: never restore expansion over
+                        // clicks made while a directory response was pending.
+                        var path = _expandedDirectories
+                            .Where(path => !refreshed.Contains(path) && IsVisibleDirectory(path))
+                            .OrderBy(path => path.Count(c => c == '/'))
+                            .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
+                            .FirstOrDefault();
+                        if (path is null) break;
+                        refreshed.Add(path);
+                        await LoadDirectoryAsync(path, isRoot: false);
+                        if (!_disposed) StateHasChanged();
+                    }
+                }
+                initialLoad = false;
+            } while (!_disposed && _refreshPending);
+        }
+        finally
+        {
+            if (!_disposed) _refreshRunning = false;
+        }
+    }
+
+    private bool IsVisibleDirectory(string path) =>
+        _expandedDirectories.Contains(path) && IsReachableDirectory(path, requireExpandedParents: true);
+
+    private bool IsReachableDirectory(string path, bool requireExpandedParents = false)
+    {
+        if (path.Length == 0) return true;
+        var parent = GetParentPath(path);
+        return (parent.Length == 0 || ((!requireExpandedParents || _expandedDirectories.Contains(parent))
+                && IsReachableDirectory(parent, requireExpandedParents)))
+            && GetDirectoryEntries(parent).Any(entry =>
+                string.Equals(entry.Type, "directory", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(BuildPath(parent, entry.Name), path, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void InvalidateDirectory(string path)
+    {
+        _staleDirectories.Add(path);
+        // Ownership prevents late expansion/refresh responses from restoring a
+        // collapsed/removed branch or overwriting a newer deletion reload.
+        if (_directoryRequests.Remove(path, out var request))
+            request.TrySetResult(false);
+        _loadingDirectories.Remove(path);
+    }
+
+    private void RemoveDirectoryBranch(string path)
+    {
+        foreach (var cachedPath in _directoryResponses.Keys.Concat(_directoryRequests.Keys)
+            .Concat(_expandedDirectories).Concat(_staleDirectories).Concat(_directoryErrors.Keys)
+            .Where(candidate => string.Equals(candidate, path, StringComparison.OrdinalIgnoreCase)
+                || candidate.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
+        {
+            InvalidateDirectory(cachedPath);
+            _directoryResponses.Remove(cachedPath);
+            _directoryErrors.Remove(cachedPath);
+            _expandedDirectories.Remove(cachedPath);
+            _staleDirectories.Remove(cachedPath);
+        }
     }
 
     private async Task ToggleDirectoryAsync(string directoryPath)
     {
+        if (_disposed) return;
         if (_expandedDirectories.Contains(directoryPath))
         {
             _expandedDirectories.Remove(directoryPath);
+            foreach (var path in _directoryResponses.Keys.Concat(_directoryRequests.Keys)
+                .Append(directoryPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
+            {
+                if (string.Equals(path, directoryPath, StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith(directoryPath + "/", StringComparison.OrdinalIgnoreCase))
+                    InvalidateDirectory(path);
+            }
             return;
         }
 
         _expandedDirectories.Add(directoryPath);
-        if (_directoryResponses.ContainsKey(directoryPath) || _loadingDirectories.Contains(directoryPath))
+        if (_directoryResponses.ContainsKey(directoryPath) && !_staleDirectories.Contains(directoryPath))
             return;
 
         await LoadDirectoryAsync(directoryPath, isRoot: false);
+        // Descendants can remain expanded beneath a collapsed ancestor. Reload
+        // their stale listings in order when that ancestor becomes visible again.
+        var attempted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (!_disposed && IsVisibleDirectory(directoryPath))
+        {
+            var child = _staleDirectories
+                .Where(path => path.StartsWith(directoryPath + "/", StringComparison.OrdinalIgnoreCase)
+                    && !attempted.Contains(path) && IsVisibleDirectory(path))
+                .OrderBy(path => path.Count(c => c == '/')).FirstOrDefault();
+            if (child is null) break;
+            attempted.Add(child);
+            await LoadDirectoryAsync(child, isRoot: false);
+        }
     }
 
     private async Task SelectFileAsync(string filePath)
     {
+        if (_disposed) return;
+        var cancellationToken = _cts.Token;
         // Cancel edit if selecting a different file
         if (_isEditing && !string.Equals(_selectedFilePath, filePath, StringComparison.OrdinalIgnoreCase))
             DiscardEdit();
@@ -195,7 +312,9 @@
 
         try
         {
-            var response = await GatewayRestClient.GetWorkspaceAsync(AgentId, filePath, _cts.Token);
+            var response = await GatewayRestClient.GetWorkspaceAsync(AgentId, filePath, cancellationToken)
+                .WaitAsync(cancellationToken);
+            if (_disposed) return;
             if (response is null)
             {
                 _selectedFileError = "Unable to load file content.";
@@ -219,23 +338,39 @@
         }
         catch (Exception)
         {
-            _selectedFileError = "Unable to load file content.";
+            if (!_disposed) _selectedFileError = "Unable to load file content.";
         }
         finally
         {
-            _isLoadingFile = false;
+            if (!_disposed) _isLoadingFile = false;
         }
     }
 
     private async Task LoadDirectoryAsync(string path, bool isRoot)
     {
+        if (_disposed || !IsReachableDirectory(path)) return;
+        var cancellationToken = _cts.Token;
+        if (_directoryRequests.TryGetValue(path, out var existing))
+        {
+            try { await existing.Task.WaitAsync(cancellationToken); }
+            catch (OperationCanceledException) { }
+            return;
+        }
+
+        var request = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _directoryRequests[path] = request;
         _loadingDirectories.Add(path);
         _directoryErrors.Remove(path);
+
+        bool OwnsRequest() => !_disposed
+            && _directoryRequests.TryGetValue(path, out var current) && ReferenceEquals(current, request);
 
         try
         {
             var requestPath = string.IsNullOrWhiteSpace(path) ? null : path;
-            var response = await GatewayRestClient.GetWorkspaceAsync(AgentId, requestPath, _cts.Token);
+            var response = await GatewayRestClient.GetWorkspaceAsync(AgentId, requestPath, cancellationToken)
+                .WaitAsync(cancellationToken);
+            if (!OwnsRequest() || !IsReachableDirectory(path)) return;
             if (response is null || !string.Equals(response.Type, "directory", StringComparison.OrdinalIgnoreCase))
             {
                 SetDirectoryError(path, isRoot);
@@ -243,6 +378,11 @@
             }
 
             _directoryResponses[path] = response;
+            _staleDirectories.Remove(path);
+            foreach (var child in _directoryResponses.Keys.Concat(_directoryRequests.Keys)
+                .Concat(_expandedDirectories).Where(child => child.Length > 0 && !IsReachableDirectory(child))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
+                RemoveDirectoryBranch(child);
         }
         catch (OperationCanceledException)
         {
@@ -250,11 +390,16 @@
         }
         catch (Exception)
         {
-            SetDirectoryError(path, isRoot);
+            if (OwnsRequest()) SetDirectoryError(path, isRoot);
         }
         finally
         {
-            _loadingDirectories.Remove(path);
+            if (OwnsRequest())
+            {
+                _directoryRequests.Remove(path);
+                _loadingDirectories.Remove(path);
+            }
+            request.TrySetResult(true);
         }
     }
 
@@ -275,10 +420,11 @@
         return [];
     }
 
-    private bool IsDirectoryLoading(string path) => _loadingDirectories.Contains(path);
+    private bool IsDirectoryLoading(string path) =>
+        !_directoryResponses.ContainsKey(path) && _loadingDirectories.Contains(path);
 
     private string? GetDirectoryError(string path) =>
-        _directoryErrors.TryGetValue(path, out var error) ? error : null;
+        !_directoryResponses.ContainsKey(path) && _directoryErrors.TryGetValue(path, out var error) ? error : null;
 
     private void ShowTreeOnMobile() => _showMobileViewer = false;
 
@@ -300,12 +446,15 @@
 
     private async Task SaveEditAsync(string content)
     {
-        if (_selectedFilePath is null || _selectedFile is null)
+        if (_disposed || _selectedFilePath is null || _selectedFile is null)
             return;
+        var cancellationToken = _cts.Token;
 
         try
         {
-            var success = await GatewayRestClient.WriteWorkspaceFileAsync(AgentId, _selectedFilePath, content, _cts.Token);
+            var success = await GatewayRestClient.WriteWorkspaceFileAsync(AgentId, _selectedFilePath, content, cancellationToken)
+                .WaitAsync(cancellationToken);
+            if (_disposed) return;
             if (!success)
             {
                 _selectedFileError = "Failed to save file.";
@@ -320,7 +469,7 @@
         catch (OperationCanceledException) { }
         catch (Exception)
         {
-            _selectedFileError = "Failed to save file.";
+            if (!_disposed) _selectedFileError = "Failed to save file.";
         }
     }
 
@@ -369,14 +518,17 @@
 
     private async Task ConfirmDeleteAsync()
     {
-        if (_deleteConfirmPath is null)
+        if (_disposed || _deleteConfirmPath is null)
             return;
+        var cancellationToken = _cts.Token;
 
         var pathToDelete = _deleteConfirmPath;
         try
         {
             var success = await GatewayRestClient.DeleteWorkspaceItemAsync(
-                AgentId, pathToDelete, force: _deleteIsNonEmptyDir, _cts.Token);
+                AgentId, pathToDelete, force: _deleteIsNonEmptyDir, cancellationToken)
+                .WaitAsync(cancellationToken);
+            if (_disposed) return;
             if (!success)
             {
                 _deleteError = "Delete failed. The server rejected the request.";
@@ -393,20 +545,19 @@
             }
 
             // Remove from directory caches
-            _directoryResponses.Remove(pathToDelete);
-            _expandedDirectories.Remove(pathToDelete);
+            RemoveDirectoryBranch(pathToDelete);
 
             // Reload parent directory so the tree reflects the deletion
             var parentPath = GetParentPath(pathToDelete);
-            _directoryResponses.Remove(parentPath);
+            InvalidateDirectory(parentPath);
             await LoadDirectoryAsync(parentPath, isRoot: string.IsNullOrEmpty(parentPath));
 
-            CancelDelete();
+            if (!_disposed) CancelDelete();
         }
         catch (OperationCanceledException) { }
         catch (Exception)
         {
-            _deleteError = "Delete failed unexpectedly.";
+            if (!_disposed) _deleteError = "Delete failed unexpectedly.";
         }
     }
 
