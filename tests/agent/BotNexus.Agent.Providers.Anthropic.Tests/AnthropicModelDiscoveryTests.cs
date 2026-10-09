@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BotNexus.Agent.Providers.Anthropic.Tests;
@@ -51,8 +52,7 @@ public sealed class AnthropicModelDiscoveryTests
     [Fact]
     public async Task DiscoverModels_NonSuccessStatus_ReturnsNullRatherThanEmptyList()
     {
-        // A 401 must not be reported as "this account has no models" - that would wipe the
-        // built-in entries out of the registry and empty the portal's model picker.
+        // Null signals unavailable discovery; the overlay service leaves existing entries intact.
         var provider = MakeProvider(
             new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized)),
             apiKey: "sk-ant-test");
@@ -91,8 +91,7 @@ public sealed class AnthropicModelDiscoveryTests
     [Fact]
     public async Task DiscoverModels_FailedSecondPage_ReturnsNullRatherThanPartialList()
     {
-        // A partial list is worse than none: the models missing from it silently stop being
-        // selectable, which looks like they were removed from the account.
+        // Discovery overlays existing entries. A failed page must not publish partial updates.
         var page1 = PageJson("claude-opus-5", hasMore: true, lastId: "claude-opus-5");
         var handler = new StubHandler(request =>
             request.RequestUri!.Query.Contains("after_id", StringComparison.Ordinal)
@@ -103,6 +102,152 @@ public sealed class AnthropicModelDiscoveryTests
         var models = await provider.DiscoverModelsAsync();
 
         models.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task DiscoverModels_HasMoreWithoutUsableCursor_ReturnsNullForFallback(string? cursor)
+    {
+        var handler = new StubHandler(_ => Json(PageJson(SonnetId, hasMore: true, lastId: cursor)));
+        var provider = MakeProvider(handler, apiKey: "sk-ant-test");
+
+        var models = await provider.DiscoverModelsAsync();
+
+        models.ShouldBeNull();
+        handler.Requests.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task DiscoverModels_HasMoreWithOmittedCursor_ReturnsNullForFallback()
+    {
+        var handler = new StubHandler(_ => Json(
+            "{\"data\":[{\"id\":\"claude-test\"}],\"has_more\":true}"));
+        var provider = MakeProvider(handler, apiKey: "sk-ant-test");
+
+        var models = await provider.DiscoverModelsAsync();
+
+        models.ShouldBeNull();
+        handler.Requests.Count.ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task DiscoverModels_RepeatedOrCyclicCursor_ReturnsNullWithoutRefetching(int cycleLength)
+    {
+        var requests = 0;
+        var handler = new StubHandler(_ => Json(PageJson(
+            $"model-{++requests}", hasMore: true, lastId: $"cursor-{(requests - 1) % cycleLength}")));
+        var provider = MakeProvider(handler, apiKey: "sk-ant-test");
+
+        var models = await provider.DiscoverModelsAsync();
+
+        models.ShouldBeNull();
+        handler.Requests.Count.ShouldBe(cycleLength + 1);
+    }
+
+    [Fact]
+    public async Task DiscoverModels_CursorsDifferOnlyByCase_FollowsBoth()
+    {
+        var requests = 0;
+        var handler = new StubHandler(_ => Json(++requests switch
+        {
+            1 => PageJson("model-1", hasMore: true, lastId: "Cursor"),
+            2 => PageJson("model-2", hasMore: true, lastId: "cursor"),
+            _ => PageJson("model-3")
+        }));
+        var provider = MakeProvider(handler, apiKey: "sk-ant-test");
+
+        var models = await provider.DiscoverModelsAsync();
+
+        models.ShouldNotBeNull();
+        models.Select(m => m.Id).ShouldBe(["model-1", "model-2", "model-3"]);
+        handler.Requests.Count.ShouldBe(3);
+        handler.Requests[1].RequestUri.ShouldNotBeNull().Query.ShouldContain("after_id=Cursor");
+        handler.Requests[2].RequestUri.ShouldNotBeNull().Query.ShouldContain("after_id=cursor");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DiscoverModels_TenthPage_OnlyTerminalPageAllowsSuccess(bool terminal)
+    {
+        var requests = 0;
+        var handler = new StubHandler(_ => Json(PageJson(
+            $"model-{++requests}", hasMore: !terminal || requests < 10, lastId: $"cursor-{requests}")));
+        var provider = MakeProvider(handler, apiKey: "sk-ant-test");
+
+        var models = await provider.DiscoverModelsAsync();
+
+        handler.Requests.Count.ShouldBe(10);
+        if (terminal)
+        {
+            models.ShouldNotBeNull();
+            models.Select(m => m.Id).ShouldBe(Enumerable.Range(1, 10).Select(i => $"model-{i}"));
+        }
+        else
+        {
+            models.ShouldBeNull();
+        }
+    }
+
+    [Fact]
+    public async Task DiscoverModels_CancellationDuringSecondPage_PropagatesWithoutPartialResult()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var secondPageStarted = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pendingResponse = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requests = 0;
+        using var handler = new AsyncStubHandler(async (_, token) =>
+        {
+            if (++requests == 1)
+                return Json(PageJson(SonnetId, hasMore: true, lastId: "next-page"));
+
+            secondPageStarted.SetResult(token);
+            return await pendingResponse.Task.WaitAsync(token);
+        });
+        var provider = MakeProvider(handler, apiKey: "sk-ant-test");
+
+        var discovery = provider.DiscoverModelsAsync(cancellation.Token);
+        var requestToken = await secondPageStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+
+        await Should.ThrowAsync<OperationCanceledException>(async () => await discovery);
+        requestToken.IsCancellationRequested.ShouldBeTrue();
+        requests.ShouldBe(2);
+    }
+
+    [Theory]
+    [InlineData("missing", "Anthropic model discovery pagination failed: missing continuation cursor. Using built-in models.")]
+    [InlineData("repeated", "Anthropic model discovery pagination failed: repeated continuation cursor. Using built-in models.")]
+    [InlineData("cap", "Anthropic model discovery pagination failed: page limit reached before completion. Using built-in models.")]
+    public async Task DiscoverModels_PaginationFailure_LogsOnlyStaticReason(string failure, string expectedMessage)
+    {
+        const string secret = "sk-ant-synthetic-secret";
+        const string payload = "synthetic-private-model-payload";
+        const string cursor = "synthetic-private-cursor";
+        var logger = new RecordingLogger();
+        var requests = 0;
+        var handler = new StubHandler(_ => Json(PageJson(payload, hasMore: true, lastId: failure switch
+        {
+            "missing" => null,
+            "repeated" => cursor,
+            _ => $"{cursor}-{++requests}"
+        })));
+        using var client = new HttpClient(handler);
+        var provider = new AnthropicModelDiscoveryProvider(client, _ => Task.FromResult<string?>(secret), logger);
+
+        var models = await provider.DiscoverModelsAsync();
+
+        models.ShouldBeNull();
+        var entry = logger.Entries.ShouldHaveSingleItem();
+        entry.Level.ShouldBe(LogLevel.Warning);
+        entry.Message.ShouldBe(expectedMessage);
+        entry.Diagnostic.ShouldNotContain(secret);
+        entry.Diagnostic.ShouldNotContain(payload);
+        entry.Diagnostic.ShouldNotContain(cursor);
     }
 
     [Fact]
@@ -271,6 +416,31 @@ public sealed class AnthropicModelDiscoveryTests
 
     private static HttpResponseMessage Json(string body) =>
         new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+
+    private sealed class RecordingLogger : ILogger<AnthropicModelDiscoveryProvider>
+    {
+        public List<(LogLevel Level, string Message, string Diagnostic)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            var properties = state is IEnumerable<KeyValuePair<string, object?>> values
+                ? string.Join(";", values.Select(value => $"{value.Key}={value.Value}"))
+                : state?.ToString();
+            Entries.Add((logLevel, message, $"{message};{properties};{exception}"));
+        }
+    }
+
+    private sealed class AsyncStubHandler(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) => responder(request, cancellationToken);
+    }
 
     /// <summary>
     /// Records every request and replies from a caller-supplied factory, so a test can assert on
