@@ -14,6 +14,19 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
     private readonly FileWatcherToolOptions _options = options?.Value ?? new FileWatcherToolOptions();
     private readonly IPathValidator? _pathValidator = pathValidator;
 
+    private readonly Func<string, string, FileSystemWatcher> _createWatcher =
+        static (directory, fileName) => new FileSystemWatcher(directory, fileName);
+
+    // Keep native notification delivery controllable in regression tests, without changing
+    // the public constructor used by dependency injection or abstracting the whole filesystem.
+    internal FileWatcherTool(
+        IOptions<FileWatcherToolOptions> options,
+        Func<string, string, FileSystemWatcher> createWatcher)
+        : this(options)
+    {
+        _createWatcher = createWatcher;
+    }
+
     public string Name => "watch_file";
 
     /// <summary>
@@ -105,29 +118,42 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
         if (!Directory.Exists(directory))
             return TextResult($"Error: directory '{directory}' does not exist.");
 
+        // Capture before watcher startup so a persistent existence transition during startup
+        // or the synchronous readiness callback can be reconciled even without a native event.
+        var existedBeforeWatching = File.Exists(fullPath);
+
         // For "modified" and "deleted", the file should already exist
         if (eventType is "modified" or "deleted")
         {
-            if (!File.Exists(fullPath))
+            if (!existedBeforeWatching)
                 return TextResult($"Error: file '{fullPath}' does not exist. Use event type 'created' or 'any' to watch for file creation.");
         }
 
         var stopwatch = Stopwatch.StartNew();
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readinessReconciled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Timer? debounceTimer = null;
         var debounceMs = Math.Max(50, _options.DebounceMilliseconds);
 
         try
         {
-            using var watcher = new FileSystemWatcher(directory, fileName);
+            using var watcher = _createWatcher(directory, fileName);
             watcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.CreationTime;
+
+            async Task CompleteNativeEventAsync(string detectedEvent)
+            {
+                // Native creation may also emit Changed. Do not let a timer race the synchronous
+                // callback's existence reconciliation, even if that callback takes a long time.
+                await readinessReconciled.Task.ConfigureAwait(false);
+                tcs.TrySetResult(detectedEvent);
+            }
 
             void HandleEvent(string detectedEvent)
             {
                 var previousTimer = Interlocked.Exchange(ref debounceTimer, null);
                 previousTimer?.Dispose();
 
-                var newTimer = new Timer(_ => tcs.TrySetResult(detectedEvent), null, debounceMs, Timeout.Infinite);
+                var newTimer = new Timer(_ => { _ = CompleteNativeEventAsync(detectedEvent); }, null, debounceMs, Timeout.Infinite);
                 var replaced = Interlocked.CompareExchange(ref debounceTimer, newTimer, null);
                 if (replaced is not null)
                 {
@@ -158,11 +184,24 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
 
             watcher.EnableRaisingEvents = true;
 
-            // Announce readiness only AFTER the watcher is live. Emitting it earlier made the notice a
-            // lie: a caller that acted on it could still mutate the file before events were being
-            // raised, and would then wait out the full timeout having missed the change entirely. That
-            // is exactly how FileWatcherTool_DetectsFileDeletion failed on a loaded CI runner (#2988).
+            // Arm before announcing readiness (#2988), but do not rely solely on native delivery:
+            // #4542 observed an immediate readiness-callback deletion with no notification.
             onUpdate?.Invoke(TextResult($"Watching '{fullPath}' for {eventType} event (timeout: {timeout}s)..."));
+
+            // A synchronous caller may act inside that notice. Reconcile persistent existence
+            // transitions across startup/the callback; unchanged state must not invent an event.
+            // This does not recover transient delete/recreate cycles or guarantee native delivery.
+            // The completed filesystem operation is already observable, so it needs no debounce.
+            if (eventType is "deleted" or "created" or "any")
+            {
+                var existsAfterReadiness = File.Exists(fullPath);
+                if (existedBeforeWatching && !existsAfterReadiness && eventType is "deleted" or "any")
+                    tcs.TrySetResult("deleted");
+                else if (!existedBeforeWatching && existsAfterReadiness && eventType is "created" or "any")
+                    tcs.TrySetResult("created");
+            }
+
+            readinessReconciled.TrySetResult();
 
             // Link caller cancellation with timeout
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -188,6 +227,8 @@ public sealed class FileWatcherTool(IOptions<FileWatcherToolOptions> options, IP
         }
         finally
         {
+            // Release any already-fired native timer if startup or the caller callback threw.
+            readinessReconciled.TrySetResult();
             var finalTimer = Interlocked.Exchange(ref debounceTimer, null);
             finalTimer?.Dispose();
         }
