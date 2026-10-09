@@ -72,6 +72,9 @@ public sealed class SubAgentSpawnTool(
         if (string.IsNullOrWhiteSpace(task))
             throw new ArgumentException("Missing required argument: task.");
 
+        if (arguments.ContainsKey("timeoutSeconds") && ReadInt(arguments, "timeoutSeconds", 0) < 1)
+            throw new ArgumentException("Argument 'timeoutSeconds' must be at least 1 when supplied.");
+
         // Preparation is read-only: no child admission, tools, or persistence before audit/policy.
         // Never trust a caller-supplied internal hint or replace the raw request: the latter must
         // still reach admission unchanged so clamp and advisory disclosures remain truthful.

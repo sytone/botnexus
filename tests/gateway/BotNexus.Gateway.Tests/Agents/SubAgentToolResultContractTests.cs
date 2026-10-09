@@ -573,13 +573,11 @@ public sealed class SubAgentToolResultContractTests
     }
 
     [Fact]
-    public async Task Spawn_ZeroTimeout_IsRejectedByRealValidator_AndForgedHintIsReplaced()
+    public async Task Spawn_ZeroTimeout_IsRejectedDuringPreparation_AndForgedHintIsReplaced()
     {
         await using var harness = new Harness(timeoutSeconds: 2400);
         var args = new Dictionary<string, object?> { ["task"] = "investigate", ["timeoutSeconds"] = 0 };
-        var valid = BotNexus.Agent.Providers.Core.Validation.ToolCallValidator.Validate(
-            JsonSerializer.SerializeToElement(args), harness.SpawnTool.Definition.Parameters, out _, null);
-        valid.IsValid.ShouldBeFalse();
+        await Should.ThrowAsync<ArgumentException>(() => harness.SpawnTool.PrepareArgumentsAsync(args));
         args.Remove("timeoutSeconds");
         var declaration = harness.SpawnTool.TimeoutArgument.ShouldNotBeNull();
         args[declaration.ArgumentName] = int.MaxValue;
