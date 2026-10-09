@@ -43,6 +43,15 @@ public interface ISubAgentManager
     /// <returns>The sub-agent metadata when found; otherwise <see langword="null" />.</returns>
     Task<SubAgentInfo?> GetAsync(string subAgentId, CancellationToken ct = default);
 
+    /// <summary>Joins a run's terminal boundary without consuming its result.</summary>
+    Task<SubAgentInfo> WaitAsync(string subAgentId, SessionId parentSessionId, CancellationToken ct = default)
+        => throw new NotSupportedException("This manager does not support joining sub-agent runs.");
+
+    /// <summary>Retains a terminal result on the owning parent tool call before returning it.</summary>
+    Task<string> ConsumeResultAsync(SubAgentInfo info, string toolCallId, string toolName,
+        string argumentsJson, string payload, CancellationToken ct = default)
+        => throw new NotSupportedException("This manager does not support durable result consumption.");
+
     /// <summary>
     /// Terminates a running sub-agent if the requesting session is authorized.
     /// </summary>

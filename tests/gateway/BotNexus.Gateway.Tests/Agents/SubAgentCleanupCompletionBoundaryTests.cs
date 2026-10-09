@@ -48,7 +48,7 @@ public sealed class SubAgentCleanupCompletionBoundaryTests
             info.Status.ShouldBe(terminalStatus);
             runCompletion.IsCompleted.ShouldBeFalse();
             harness.VerifyStopAndWorkspace(spawned, workspaceCalls: Times.Never());
-            harness.VerifyDispatch(Times.Once());
+            harness.VerifyDispatch(Times.Never());
             harness.Manager.IsRetiredForTest(spawned.SubAgentId).ShouldBeFalse(
                 "RetiredAt promises finished cleanup; StopAsync is still blocked and workspace cleanup has not run");
 
@@ -59,7 +59,7 @@ public sealed class SubAgentCleanupCompletionBoundaryTests
             harness.RetiredAtWorkspaceCleanup.ShouldBe(false,
                 "retirement must not become visible before workspace cleanup returns");
             harness.VerifyStopAndWorkspace(spawned, workspaceCalls: Times.Once());
-            harness.VerifyDispatch(Times.Once());
+            harness.VerifyDispatch(Times.Never());
         }
         finally
         {
@@ -91,7 +91,7 @@ public sealed class SubAgentCleanupCompletionBoundaryTests
             winner.ResultSummary.ShouldBe("completion winner");
             runCompletion.IsCompleted.ShouldBeFalse();
             harness.VerifyStopAndWorkspace(spawned, workspaceCalls: Times.Never());
-            harness.VerifyDispatch(Times.Once());
+            harness.VerifyDispatch(Times.Never());
             harness.Manager.IsRetiredForTest(spawned.SubAgentId).ShouldBeFalse();
 
             harness.StopRelease.SetResult();
@@ -101,7 +101,7 @@ public sealed class SubAgentCleanupCompletionBoundaryTests
             harness.Manager.IsRetiredForTest(spawned.SubAgentId).ShouldBeTrue();
             harness.RetiredAtWorkspaceCleanup.ShouldBe(false);
             harness.VerifyStopAndWorkspace(spawned, workspaceCalls: Times.Once());
-            harness.VerifyDispatch(Times.Once());
+            harness.VerifyDispatch(Times.Never());
         }
         finally
         {

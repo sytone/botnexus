@@ -41,7 +41,7 @@ public sealed class SubAgentToolTests
             .ReturnsAsync(CreateSubAgentInfo());
         var tool = new SubAgentSpawnTool(manager.Object, AgentId.From("parent-agent"), SessionId.From("parent-session"), ConversationId.From("conv-parent"));
 
-        await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["task"] = "Investigate issue" });
+        await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["background"] = true, ["task"] = "Investigate issue" });
 
         captured.ShouldNotBeNull();
         captured!.ParentAgentId.Value.ShouldBe("parent-agent");
@@ -68,7 +68,7 @@ public sealed class SubAgentToolTests
         var tool = new SubAgentSpawnTool(manager.Object, AgentId.From("parent-agent"), SessionId.From("parent-session"), ConversationId.From("conv-1"));
 
         await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
-        {
+        { ["background"] = true,
             ["task"] = "Investigate issue",
             ["model"] = "gpt-5-mini",
             ["tools"] = new[] { "read", "write" },
@@ -99,7 +99,7 @@ public sealed class SubAgentToolTests
                 name: "Research Task"));
         var tool = new SubAgentSpawnTool(manager.Object, AgentId.From("parent-agent"), SessionId.From("parent-session"), ConversationId.From("conv-1"));
 
-        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["task"] = "Investigate issue" });
+        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?> { ["background"] = true, ["task"] = "Investigate issue" });
         using var document = JsonDocument.Parse(ReadText(result));
 
         document.RootElement.GetProperty("subAgentId").GetString().ShouldBe("sub-123");
@@ -117,7 +117,7 @@ public sealed class SubAgentToolTests
     [Fact]
     public async Task SpawnTool_BuildsMode_AsEmbodyGeneral_WhenNoCustomisations()
     {
-        var captured = await CaptureSpawnRequest(new Dictionary<string, object?> { ["task"] = "T" });
+        var captured = await CaptureSpawnRequest(new Dictionary<string, object?> { ["background"] = true, ["task"] = "T" });
 
         var embody = captured.Mode.ShouldBeOfType<Embody>();
         embody.Role.ShouldBe(SubAgentArchetype.General);
@@ -128,7 +128,7 @@ public sealed class SubAgentToolTests
     public async Task SpawnTool_BuildsMode_AsEmbodyWithArchetype_WhenArchetypeOnlySupplied()
     {
         var captured = await CaptureSpawnRequest(new Dictionary<string, object?>
-        {
+        { ["background"] = true,
             ["task"] = "T",
             ["archetype"] = "reviewer"
         });
@@ -142,7 +142,7 @@ public sealed class SubAgentToolTests
     public async Task SpawnTool_BuildsMode_AsEmbodyWithCustomisations_WhenAnyOverrideSupplied()
     {
         var captured = await CaptureSpawnRequest(new Dictionary<string, object?>
-        {
+        { ["background"] = true,
             ["task"] = "T",
             ["archetype"] = "coder",
             ["name"] = "my-coder",
@@ -165,7 +165,7 @@ public sealed class SubAgentToolTests
     public async Task SpawnTool_BuildsMode_AsMirror_WhenTargetAgentIdOnlySupplied()
     {
         var captured = await CaptureSpawnRequest(new Dictionary<string, object?>
-        {
+        { ["background"] = true,
             ["task"] = "T",
             ["targetAgentId"] = "alex"
         });
@@ -186,7 +186,7 @@ public sealed class SubAgentToolTests
     public async Task SpawnTool_BuildsMode_AsMirror_CarryingRunName_WhenTargetAgentIdAndNameSupplied()
     {
         var captured = await CaptureSpawnRequest(new Dictionary<string, object?>
-        {
+        { ["background"] = true,
             ["task"] = "T",
             ["targetAgentId"] = "alex",
             ["name"] = "pr-review-run"
@@ -207,7 +207,7 @@ public sealed class SubAgentToolTests
     public async Task SpawnTool_MirrorRunName_IsNull_WhenNameIsWhitespace()
     {
         var captured = await CaptureSpawnRequest(new Dictionary<string, object?>
-        {
+        { ["background"] = true,
             ["task"] = "T",
             ["targetAgentId"] = "alex",
             ["name"] = "   "
@@ -224,7 +224,7 @@ public sealed class SubAgentToolTests
     public async Task SpawnTool_RejectsMixing_TargetAgentId_WithSingleEmbodyField(string conflictKey, object conflictValue)
     {
         var args = new Dictionary<string, object?>
-        {
+        { ["background"] = true,
             ["task"] = "T",
             ["targetAgentId"] = "alex",
             [conflictKey] = conflictValue
@@ -242,7 +242,7 @@ public sealed class SubAgentToolTests
     public async Task SpawnTool_RejectsMixing_TargetAgentId_WithToolsArray()
     {
         var args = new Dictionary<string, object?>
-        {
+        { ["background"] = true,
             ["task"] = "T",
             ["targetAgentId"] = "alex",
             ["tools"] = new[] { "read" }
@@ -259,7 +259,7 @@ public sealed class SubAgentToolTests
     public async Task SpawnTool_RejectsMixing_ReportsAllConflictingFields_InOneMessage()
     {
         var args = new Dictionary<string, object?>
-        {
+        { ["background"] = true,
             ["task"] = "T",
             ["targetAgentId"] = "alex",
             ["model"] = "y",
@@ -283,7 +283,7 @@ public sealed class SubAgentToolTests
     public async Task SpawnTool_RejectsMixing_NamesOnlyTheFieldsActuallySupplied()
     {
         var args = new Dictionary<string, object?>
-        {
+        { ["background"] = true,
             ["task"] = "T",
             ["targetAgentId"] = "alex",
             ["name"] = "pr-review-run",
@@ -415,6 +415,11 @@ public sealed class SubAgentToolTests
                 subAgentId: "sub-123",
                 status: SubAgentStatus.Completed,
                 resultSummary: "Done"));
+        manager.Setup(m => m.WaitAsync("sub-123", SessionId.From("parent-session"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSubAgentInfo(subAgentId: "sub-123", status: SubAgentStatus.Completed, resultSummary: "Done"));
+        manager.Setup(m => m.ConsumeResultAsync(It.IsAny<SubAgentInfo>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<SubAgentInfo, string, string, string, string, CancellationToken>((_, _, _, _, payload, _) => Task.FromResult(payload));
         var tool = new SubAgentManageTool(manager.Object, SessionId.From("parent-session"));
 
         var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>

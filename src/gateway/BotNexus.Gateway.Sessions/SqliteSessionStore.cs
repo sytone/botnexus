@@ -134,6 +134,9 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     internal Func<SessionHistoryPersistenceSnapshot, CancellationToken, Task>? BeforeHistoryWriteAsync { get; set; }
     internal Func<SessionHistoryPersistenceSnapshot, CancellationToken, Task>? BeforeHistoryCommitAsync { get; set; }
     internal Func<IReadOnlyList<SessionEntry>, CancellationToken, Task>? AfterAppendHistoryCommittedAsync { get; set; }
+    // Receipt transaction boundaries for deterministic cancellation/fault tests; production leaves null.
+    internal Func<CancellationToken, Task>? BeforeSubAgentReceiptCommitAsync { get; set; }
+    internal Func<Task>? AfterSubAgentReceiptCommitAsync { get; set; }
     internal Func<CancellationToken, Task>? BeforeLegacyAgentIdMigrationTransactionAsync { get; set; }
     internal Func<CancellationToken, Task>? BeforeLegacyAgentIdColumnDropAsync { get; set; }
     internal int LastHistoryRowsMutated { get; private set; }
@@ -1579,6 +1582,18 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 subAgentDetailMigration.CommandText = "ALTER TABLE sub_agent_sessions ADD COLUMN detail_json TEXT";
                 await SqliteAdditiveMigration.ExecuteAsync(subAgentDetailMigration, cancellationToken).ConfigureAwait(false);
             }
+            await using (var receiptMigration = connection.CreateCommand())
+            {
+                receiptMigration.CommandText = "ALTER TABLE sub_agent_sessions ADD COLUMN consumed_tool_call_id TEXT";
+                await SqliteAdditiveMigration.ExecuteAsync(receiptMigration, cancellationToken).ConfigureAwait(false);
+            }
+            await using (var spawnCallMigration = connection.CreateCommand())
+            {
+                spawnCallMigration.CommandText = "ALTER TABLE sub_agent_sessions ADD COLUMN spawning_tool_call_id TEXT";
+                await SqliteAdditiveMigration.ExecuteAsync(spawnCallMigration, cancellationToken).ConfigureAwait(false);
+                spawnCallMigration.CommandText = "CREATE INDEX IF NOT EXISTS idx_subagent_spawn_call ON sub_agent_sessions(parent_session_id, spawning_tool_call_id)";
+                await spawnCallMigration.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
             await EnsureToolInvocationSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
 
             // P9-I (#674): the legacy idx_sessions_conversation_agent index referenced
@@ -2847,7 +2862,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         var insertedRowCount = 0;
         foreach (var entry in entries)
         {
-            entry.PersistenceKey ??= Guid.NewGuid().ToString("N");
+            entry.PersistenceKey = entry.Kind == MessageKind.ToolResult && (entry.ToolName is "spawn_subagent" or "manage_subagent") && entry.ToolCallId is { } callId
+                ? "tool-result:" + callId : entry.PersistenceKey ?? Guid.NewGuid().ToString("N");
             pRole.Value = entry.Role.Value;
             pContent.Value = entry.Content;
             pTimestamp.Value = entry.Timestamp.ToString("O");
@@ -3080,9 +3096,9 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT OR IGNORE INTO sub_agent_sessions
-                (id, parent_session_id, parent_agent_id, child_agent_id, archetype, started_at, ended_at, status, detail_json)
+                (id, parent_session_id, parent_agent_id, child_agent_id, archetype, started_at, ended_at, status, detail_json, spawning_tool_call_id)
             VALUES
-                (@id, @parentSessionId, @parentAgentId, @childAgentId, @archetype, @startedAt, NULL, @status, @detail)
+                (@id, @parentSessionId, @parentAgentId, @childAgentId, @archetype, @startedAt, NULL, @status, @detail, @spawnCall)
             """;
         BindSubAgent(cmd, info);
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -3103,6 +3119,90 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    public override async Task<SubAgentRunDetail?> FindSubAgentSpawnAsync(SessionId parentSessionId, string toolCallId, CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id,parent_session_id,parent_agent_id,child_agent_id,archetype,started_at,ended_at,status,detail_json FROM sub_agent_sessions WHERE parent_session_id=$parent AND spawning_tool_call_id=$call LIMIT 1";
+        command.Parameters.AddWithValue("$parent", parentSessionId.Value);
+        command.Parameters.AddWithValue("$call", toolCallId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false) ? reader.MapSubAgentSession() : null;
+    }
+
+    /// <inheritdoc />
+    public override async Task<SubAgentRunDetail?> GetSubAgentSessionAsync(string subAgentId, CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id,parent_session_id,parent_agent_id,child_agent_id,archetype,started_at,ended_at,status,detail_json FROM sub_agent_sessions WHERE id=$id";
+        command.Parameters.AddWithValue("$id", subAgentId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false) ? reader.MapSubAgentSession() : null;
+    }
+
+    /// <inheritdoc />
+    public override async Task<string?> ConsumeSubAgentResultAsync(string subAgentId, SessionId parentSessionId,
+        ConversationId? parentConversationId, SessionEntry result, CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        using var sessionLock = await AcquireSessionLockAsync(parentSessionId, cancellationToken).ConfigureAwait(false);
+        ArgumentException.ThrowIfNullOrWhiteSpace(result.ToolCallId);
+        if (result.Kind != MessageKind.ToolResult) throw new ArgumentException("A receipt requires an original ToolResult row.");
+        var entries = RedactForAppend([result]);
+        return await RetryOnTransientAsync(async () =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var transaction = connection.BeginTransaction(deferred: false);
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "SELECT status, conversation_id FROM sessions WHERE id=$parent";
+            command.Parameters.AddWithValue("$parent", parentSessionId.Value);
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+                    || SessionMutationPolicy.IsTerminal(Enum.Parse<SessionStatus>(reader.GetString(0), true))
+                    || (parentConversationId.HasValue && (reader.IsDBNull(1) || reader.GetString(1) != parentConversationId.Value.Value)))
+                    throw new InvalidOperationException("Parent session is missing, sealed or rebound; result was not consumed.");
+            }
+            command.CommandText = "SELECT consumed_tool_call_id FROM sub_agent_sessions WHERE id=$id AND parent_session_id=$parent";
+            command.Parameters.AddWithValue("$id", subAgentId);
+            var receipt = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+            if (receipt is null) throw new UnauthorizedAccessException("Sub-agent does not belong to this parent.");
+            if (receipt is string consumed)
+            {
+                if (consumed != result.ToolCallId) return null;
+                command.CommandText = "SELECT result_content FROM tool_invocations WHERE session_id=$parent AND tool_call_id=$call";
+                command.Parameters.AddWithValue("$call", consumed);
+                return (string?)await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("Receipt has no durable tool result.");
+            }
+            await WriteHistoryRowsAsync(connection, transaction, parentSessionId, entries, cancellationToken).ConfigureAwait(false);
+            command.CommandText = "SELECT result_content FROM tool_invocations WHERE session_id=$parent AND tool_call_id=$call";
+            command.Parameters.AddWithValue("$call", result.ToolCallId);
+            var retainedPayload = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
+            if (retainedPayload != entries[0].Content)
+                throw new InvalidOperationException("The original tool result differs; no consumption receipt was committed.");
+            command.CommandText = "UPDATE sub_agent_sessions SET consumed_tool_call_id=$call WHERE id=$id";
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            await TouchUpdatedAtAsync(connection, transaction, parentSessionId, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
+            if (BeforeSubAgentReceiptCommitAsync is { } beforeCommit)
+                await beforeCommit(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            _cache.Remove(parentSessionId);
+            if (AfterSubAgentReceiptCommitAsync is { } afterCommit)
+                await afterCommit().ConfigureAwait(false);
+            return entries[0].Content;
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
     private static void BindSubAgent(SqliteCommand cmd, SubAgentInfo info)
     {
         cmd.Parameters.AddWithValue("@id", info.SubAgentId);
@@ -3110,13 +3210,14 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         cmd.Parameters.AddWithValue("@parentAgentId", (object?)info.ParentAgentId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@childAgentId", (object?)info.ChildAgentId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@archetype", info.Archetype.ToString());
+        cmd.Parameters.AddWithValue("@spawnCall", (object?)info.SpawningToolCallId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@startedAt", info.StartedAt.ToString("O"));
         cmd.Parameters.AddWithValue("@status", info.Status.ToString());
         cmd.Parameters.AddWithValue("@detail", JsonSerializer.Serialize(SubAgentRunDetail.FromLive(info), JsonOptions));
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<SubAgentRunDetail>> ListSubAgentSessionsAsync(SessionId sessionId, CancellationToken cancellationToken = default)
+    public override async Task<IReadOnlyList<SubAgentRunDetail>> ListSubAgentSessionsAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         await using var connection = CreateConnection();

@@ -11,6 +11,7 @@ public record SubAgentRunDetail
     public const int MaxCollectionCount = 32;
 
     public required string SubAgentId { get; init; }
+    public string? SpawningToolCallId { get; init; }
     public string? ParentSessionId { get; init; }
     public string? ChildSessionId { get; init; }
     public string? ParentConversationId { get; init; }
@@ -52,6 +53,7 @@ public record SubAgentRunDetail
         return new SubAgentRunDetail
         {
             SubAgentId = Bound(info.SubAgentId, MaxShortTextLength)!,
+            SpawningToolCallId = info.SpawningToolCallId,
             ParentSessionId = info.ParentSessionId.Value, ChildSessionId = info.ChildSessionId.Value,
             ParentConversationId = info.ParentConversationId?.Value, ChildConversationId = info.ChildConversationId?.Value,
             ParentAgentId = Bound(info.ParentAgentId, MaxShortTextLength), ChildAgentId = Bound(info.ChildAgentId, MaxShortTextLength),

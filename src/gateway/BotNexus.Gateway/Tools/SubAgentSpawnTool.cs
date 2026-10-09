@@ -17,13 +17,17 @@ public sealed class SubAgentSpawnTool(
     public string Name => "spawn_subagent";
     public string Label => "Spawn Sub-Agent";
 
+    public TimeSpan? DefaultTimeout => TimeSpan.FromSeconds(610);
+    public ToolTimeoutArgument? TimeoutArgument => new("timeoutSeconds", ToolTimeoutUnit.Seconds);
+
     public Tool Definition => new(
         Name,
-        "Spawn a background sub-agent to work on a delegated task.",
+        "Spawn a sub-agent and await its terminal result. Set background=true to return admission immediately; use manage_subagent wait to join it.",
         JsonDocument.Parse("""
             {
               "type": "object",
               "properties": {
+                "background": { "type": "boolean", "description": "Return admission immediately only when true. Default false awaits the result." },
                 "task": { "type": "string", "description": "Task prompt for the sub-agent." },
                 "name": { "type": "string", "description": "Optional friendly label for this sub-agent RUN. Accepted in every mode, including alongside targetAgentId - it titles the run, it does not customise the agent's descriptor." },
                 "model": { "type": "string", "description": "Optional model override for the sub-agent run." },
@@ -194,6 +198,16 @@ public sealed class SubAgentSpawnTool(
             };
         }
 
+        if (!ReadBool(arguments, "background"))
+        {
+            var terminal = await subAgentManager.WaitAsync(spawned.SubAgentId, sessionId, cancellationToken).ConfigureAwait(false);
+            result["status"] = terminal.Status;
+            result["resultSummary"] = SubAgentRunDetail.FromLive(terminal).ResultSummary;
+            result["result"] = SubAgentRunDetail.FromLive(terminal).Result;
+            var payload = JsonSerializer.Serialize(result, JsonOptions);
+            return TextResult(await subAgentManager.ConsumeResultAsync(terminal, toolCallId, Name,
+                JsonSerializer.Serialize(arguments), payload, cancellationToken).ConfigureAwait(false));
+        }
         return TextResult(JsonSerializer.Serialize(result, JsonOptions));
     }
 
