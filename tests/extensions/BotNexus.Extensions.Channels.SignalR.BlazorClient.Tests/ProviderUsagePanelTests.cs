@@ -239,8 +239,8 @@ public sealed class ProviderUsagePanelTests : IDisposable
 
         Assert.Contains("No provider calls observed yet", cut.Markup, StringComparison.Ordinal);
         Assert.Contains("Copilot account quota", cut.Markup, StringComparison.Ordinal);
-        Assert.Contains("250 of 500 premium interactions remaining", cut.Markup, StringComparison.Ordinal);
-        Assert.Contains("Usage not reported by Copilot", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("250 of 500 provider quota units remaining", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("Sources and units are not interchangeable", cut.Markup, StringComparison.Ordinal);
         Assert.Equal(1, _handler.AccountQuotaRequests);
 
         var selectWindow = typeof(ProviderUsagePanel).GetMethod("SelectWindow", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -259,7 +259,7 @@ public sealed class ProviderUsagePanelTests : IDisposable
         await cut.InvokeAsync(() => cut.Instance.OpenAsync());
 
         Assert.Contains("Copilot account quota", cut.Markup, StringComparison.Ordinal);
-        Assert.Contains("250 of 500 premium interactions remaining", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("250 of 500 provider quota units remaining", cut.Markup, StringComparison.Ordinal);
         Assert.Contains("4 wire attempts", cut.Find(".usage-totals").TextContent, StringComparison.Ordinal);
         Assert.DoesNotContain("No provider calls observed yet", cut.Markup, StringComparison.Ordinal);
     }
@@ -300,7 +300,7 @@ public sealed class ProviderUsagePanelTests : IDisposable
         await cut.InvokeAsync(() => cut.Instance.OpenAsync());
 
         Assert.Contains("Premium-interaction quota data is stale", cut.Markup, StringComparison.Ordinal);
-        Assert.DoesNotContain("250 of 500 premium interactions remaining", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("250 of 500 provider quota units remaining", cut.Markup, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -414,22 +414,30 @@ public sealed class ProviderUsagePanelTests : IDisposable
             return response;
         }
 
+        private string AccountJson()
+        {
+            var stale = DateTimeOffset.Parse(QuotaObservedAtUtc, System.Globalization.CultureInfo.InvariantCulture) < DateTimeOffset.UtcNow.AddMinutes(-5);
+            var snapshots = QuotaNoData ? "[]" : $"[{{\"quotaId\":\"premium_interactions\",\"entitlement\":500,\"remaining\":250,\"percentRemaining\":50,\"isUnlimited\":{QuotaUnlimited.ToString().ToLowerInvariant()},\"resetDate\":\"2099-01-01\",\"observedAtUtc\":\"{QuotaObservedAtUtc}\"}}]";
+            return $"{{\"instance\":\"github-copilot\",\"state\":\"{(QuotaNoData ? "unavailable" : stale ? "stale" : "fresh")}\",\"isStale\":{stale.ToString().ToLowerInvariant()},\"snapshots\":{snapshots},\"attemptState\":\"{(QuotaFailure ? "error" : "success")}\",\"lastSuccessAtUtc\":\"{QuotaObservedAtUtc}\"}}";
+        }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (request.RequestUri?.AbsolutePath == "/api/copilot/quota")
+            if (request.RequestUri?.AbsolutePath == "/api/copilot/quota/refresh")
             {
                 AccountQuotaRequests++;
-                if (QuotaFailure)
-                    return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
-                    {
-                        Content = new StringContent("quota unavailable", Encoding.UTF8, "text/plain")
-                    };
-                if (QuotaNoData)
-                    return new HttpResponseMessage(HttpStatusCode.NoContent);
-
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent($"{{\"quotaId\":\"premium_interactions\",\"entitlement\":{(QuotaUnlimited ? 0 : 500)},\"remaining\":{(QuotaUnlimited ? 0 : 250)},\"percentRemaining\":50,\"isUnlimited\":{QuotaUnlimited.ToString().ToLowerInvariant()},\"resetDate\":\"2099-01-01\",\"observedAtUtc\":\"{QuotaObservedAtUtc}\"}}", Encoding.UTF8, "application/json")
+                    Content = new StringContent(AccountJson(), Encoding.UTF8, "application/json")
+                };
+            }
+            if (request.RequestUri?.AbsolutePath == "/api/providers/usage/details")
+            {
+                if (QuotaFailure) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+                var account = AccountJson();
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent($"{{\"instance\":\"github-copilot\",\"availableInstances\":[{{\"instance\":\"github-copilot\",\"type\":\"github-copilot\"}}],\"account\":{account},\"headers\":[],\"scheduled\":{{\"state\":\"unavailable\"}}}}", Encoding.UTF8, "application/json")
                 };
             }
 
