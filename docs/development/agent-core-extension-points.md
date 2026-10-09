@@ -16,7 +16,7 @@ matching file. Its namespace is `BotNexus.Agent.Core.ExtensionPoints.<Family>`.
 | --- | --- |
 | `Messages/` | `ProviderMessageTransformer`, `AgentContextTransformer`, `AgentMessageProvider`, `DefaultProviderMessageTransformer` |
 | `ProviderExecution/` | `ProviderExecutionOptionsProvider`, `CredentialInvalidationService` |
-| `ToolExecution/` | `ToolExecutionPolicy`, `ToolAuditGate`, `ToolExecutionDecisionObserver`, `ToolExecutionContext`, `ToolExecutionDecision` |
+| `ToolExecution/` | `ToolExecutionPolicy`, `ToolAuditGate`, `ToolExecutionDecisionObserver`, `ToolExecutionContext`, `ToolExecutionDecision`, `IContextAwareAgentTool` |
 | `ToolResults/` | `ToolResultTransformer`, `ToolResultTransformContext`, `ToolResultTransformResult`, `ToolProgressPolicy`, `ToolProgressContext`, `ToolProgressDecision`, `DefaultToolProgressPolicy` |
 | `RunCompletion/` | `RunCompletionPolicy`, `RunCompletionDecision`, `RunCompletionResult`, `RunCompletionStatus`, `RunStopReason` |
 
@@ -236,7 +236,7 @@ unless they qualify the behavior of a listed seam.
 | `ToolExecutionPolicy` | Policy | Tool execution decision after argument validation and audit |
 | `ToolAuditGate` | Mixed service and policy | Durable audit work that can block execution; these responsibilities are not yet separated |
 | `ToolResultTransformer` | Transformer | Optional replacement of tool-result content, details, or error status |
-| `ToolProgressPolicy` | Policy | Post-execution classification of one retained tool result as progress, non-progress, or unclassified; the loop owns sequence state and control flow |
+| `ToolProgressPolicy` | Policy | Post-execution classification of one retained tool result as `Progress`, `NoProgress`, or `Neutral`; null is also neutral. The loop owns bounded sequence state and control flow |
 | `RunCompletionPolicy` | Policy | Run completion decision; receives only a cancellation token |
 | `ProviderMessageTransformer` | Transformer | Agent messages to provider messages |
 | `AgentContextTransformer` | Transformer | Context-message transformation before provider invocation |
@@ -340,6 +340,15 @@ An **agent run** is one admitted top-level execution, not a provider turn, tool-
 ID, cron job ID, or satellite placement ID. Public admissions mint fresh IDs;
 internal steering, compaction, and completion continuation retain the admission ID.
 Core uses its own `AgentRunId`; the gateway explicitly converts it to the Domain ID.
+
+Tools that persist an atomic result before returning can opt into
+`IContextAwareAgentTool`. The executor supplies `ToolExecutionContext.AgentRunId`
+from the admitted loop configuration, never from model-supplied arguments. The
+spawn and manage sub-agent tools pass that identity to their result-consumption
+receipt, so the receipt and later transcript projection share one run-qualified
+invocation. Deduplication compares both call identity and run identity; a provider
+reusing a call ID in another run does not suppress its result. Legacy direct tool
+entrypoints retain null identity rather than inventing a run.
 
 `InProcessAgentHandle` owns an awaited lifecycle subscription. It records `Running`
 on `AgentStartEvent` before tool execution, counts actual `ToolExecutionEndEvent`

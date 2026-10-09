@@ -35,7 +35,7 @@ namespace BotNexus.Gateway.Sessions;
 /// </list>
 /// <para>Thread-safe via <see cref="SemaphoreSlim"/>. Suitable for single-instance deployments.</para>
 /// </remarks>
-public sealed class FileSessionStore : SessionStoreBase
+public sealed partial class FileSessionStore : SessionStoreBase
 {
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
     private readonly string _storePath;
@@ -945,6 +945,7 @@ public sealed class FileSessionStore : SessionStoreBase
 
     private async Task PersistSessionAsync(GatewaySession session, CancellationToken cancellationToken)
     {
+        if (await PersistWithReceiptsAsync(session, cancellationToken).ConfigureAwait(false)) return;
         var historyPath = GetHistoryPath(session.SessionId);
         var history = session.CaptureHistoryForPersistence();
         if (history.RequiresReplacement)
@@ -983,6 +984,7 @@ public sealed class FileSessionStore : SessionStoreBase
 
     private async Task WriteToFileAsync(GatewaySession session, CancellationToken cancellationToken)
     {
+        if (await PersistWithReceiptsAsync(session, cancellationToken).ConfigureAwait(false)) return;
         var historyPath = GetHistoryPath(session.SessionId);
         await SessionJsonl.WriteAllAsync(
             _fileSystem,

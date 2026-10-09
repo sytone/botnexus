@@ -195,6 +195,72 @@ public sealed class SqliteRunCorrelation4796Tests : IDisposable
         reader.GetString(2).ShouldBe("interrupted-run");
     }
 
+    [Theory]
+    [InlineData("spawn_subagent", false)]
+    [InlineData("manage_subagent", false)]
+    [InlineData("spawn_subagent", true)]
+    [InlineData("manage_subagent", true)]
+    public async Task AppendSubAgentResult_RepeatedProviderId_DeduplicatesWithinRunButNotAcrossRuns(string toolName, bool legacy)
+    {
+        const string callId = "reused-subagent-call";
+        var store = Store();
+        var session = await store.GetOrCreateAsync(SessionId.From("subagent-append"), AgentId.From("agent"));
+        await store.SaveAsync(session);
+        var sink = BotNexus.Gateway.Audit.DefaultToolAuditSink.Instance;
+        for (var run = 0; run < 2; run++)
+        {
+            // Audit and manager projections initially carry the provider-only key. The append
+            // writer must scope it to the run rather than letting a later run collide with it.
+            var result = sink.ProjectResult(callId, toolName, $"result-{run}", false, 4096, "{}");
+            result.PersistenceKey.ShouldBe("tool-result:" + callId);
+            if (!legacy) SetId(result, $"run-{run}");
+            session.AddEntry(result);
+            await store.SaveAsync(session);
+            store.LastHistoryWriteReconciled.ShouldBeFalse();
+            store.LastHistoryRowsMutated.ShouldBe(legacy && run == 1 ? 0 : 1);
+
+            // A fresh projection proves deduplication is based on logical identity, not reuse
+            // of an already-acknowledged SessionEntry or its durable row id/key.
+            var retry = sink.ProjectResult(callId, toolName, $"result-{run}", false, 4096, "{}");
+            if (!legacy) SetId(retry, $"run-{run}");
+            session.AddEntry(retry);
+            await store.SaveAsync(session);
+            store.LastHistoryWriteReconciled.ShouldBeFalse();
+            store.LastHistoryRowsMutated.ShouldBe(0);
+
+            // Cold reload checks durable rows and advances the next append from persisted state.
+            store = Store();
+            session = (await store.GetAsync(session.SessionId)).ShouldNotBeNull();
+            var rows = session.GetHistorySnapshot();
+            rows.Count.ShouldBe(legacy ? 1 : run + 1);
+            rows.ShouldAllBe(row => row.Kind == MessageKind.ToolResult
+                && row.ToolCallId == callId && row.ToolName == toolName);
+            if (legacy)
+            {
+                rows.ShouldHaveSingleItem().Content.ShouldBe("result-0");
+                rows[0].AgentRunId.ShouldBeNull();
+                rows[0].PersistenceKey.ShouldBe("tool-result:" + callId);
+            }
+            else
+            {
+                rows.Select(Id).ShouldBe(Enumerable.Range(0, run + 1).Select(i => $"run-{i}"));
+                rows.Select(row => row.Content).ShouldBe(Enumerable.Range(0, run + 1).Select(i => $"result-{i}"));
+                rows.Select(row => row.PersistenceKey).Distinct().Count().ShouldBe(run + 1);
+            }
+        }
+
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        // Legacy invocations retain the raw call ID and a null provider projection; correlated
+        // invocations use the run-qualified key and preserve the provider ID separately.
+        command.CommandText = legacy
+            ? "SELECT COUNT(*) FROM tool_invocations WHERE session_id='subagent-append' AND tool_call_id=$call AND agent_run_id IS NULL AND provider_tool_call_id IS NULL"
+            : "SELECT COUNT(*) FROM tool_invocations WHERE session_id='subagent-append' AND provider_tool_call_id=$call AND agent_run_id IS NOT NULL";
+        command.Parameters.AddWithValue("$call", callId);
+        Convert.ToInt64(await command.ExecuteScalarAsync()).ShouldBe(legacy ? 1 : 2);
+    }
+
     private async Task AssertColumnAsync()
     {
         await using var connection = new SqliteConnection(ConnectionString);

@@ -18,4 +18,8 @@ public record ToolExecutionContext(
     AssistantAgentMessage AssistantMessage,
     ToolCallContent ToolCallRequest,
     IReadOnlyDictionary<string, object?> ValidatedArgs,
-    AgentContext AgentContext);
+    AgentContext AgentContext)
+{
+    /// <summary>The admitted loop's authoritative run identity; null for legacy callers.</summary>
+    public AgentRunId? AgentRunId { get; init; }
+}

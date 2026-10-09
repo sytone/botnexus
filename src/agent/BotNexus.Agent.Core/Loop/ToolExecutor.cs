@@ -313,7 +313,8 @@ internal static class ToolExecutor
             return new ToolPreparation(null, BuildErrorResult($"Invalid arguments for '{toolCall.Name}': {ex.Message}"), true);
         }
 
-        var executionContext = new ToolExecutionContext(assistantMessage, toolCall, validatedArgs, context);
+        var executionContext = new ToolExecutionContext(assistantMessage, toolCall, validatedArgs, context)
+        { AgentRunId = config.AgentRunId };
         if (config.ToolAuditGate is not null)
         {
             ToolExecutionDecision? auditResult;
@@ -451,7 +452,7 @@ internal static class ToolExecutor
 
         config.ToolExecutionDecisionObserver?.Invoke(toolCall.Id, true);
         return new ToolPreparation(
-            new PreparedToolCall(toolCall, tool, validatedArgs),
+            new PreparedToolCall(toolCall, tool, validatedArgs, executionContext),
             null,
             false);
     }
@@ -596,11 +597,9 @@ internal static class ToolExecutor
                     effectiveTimeout,
                     effectiveToken,
                     EmitUpdate)
-                : prepared.Tool.ExecuteAsync(
-                    prepared.ToolCall.Id,
-                    prepared.ValidatedArgs,
-                    effectiveToken,
-                    EmitUpdate);
+                : prepared.Tool is IContextAwareAgentTool contextAware
+                    ? contextAware.ExecuteAsync(prepared.ExecutionContext, effectiveToken, EmitUpdate)
+                    : prepared.Tool.ExecuteAsync(prepared.ToolCall.Id, prepared.ValidatedArgs, effectiveToken, EmitUpdate);
 
             // CancelAfter only requests cooperative cancellation. WaitAsync supplies the hard
             // executor-side bound: a tool that blocks or ignores its token can no longer hold the
@@ -1069,7 +1068,8 @@ internal static class ToolExecutor
     private sealed record PreparedToolCall(
         ToolCallContent ToolCall,
         IAgentTool Tool,
-        IReadOnlyDictionary<string, object?> ValidatedArgs);
+        IReadOnlyDictionary<string, object?> ValidatedArgs,
+        ToolExecutionContext ExecutionContext);
 
     private sealed record ToolPreparation(
         PreparedToolCall? Prepared,

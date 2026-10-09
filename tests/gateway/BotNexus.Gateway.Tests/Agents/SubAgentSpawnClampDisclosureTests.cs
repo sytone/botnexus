@@ -232,7 +232,7 @@ public sealed class SubAgentSpawnClampDisclosureTests
         var result = await tool.ExecuteAsync(
             "call-1",
             new Dictionary<string, object?>
-            {
+            { ["background"] = true,
                 ["task"] = "Do background work",
                 ["maxTurns"] = maxTurns,
                 ["timeoutSeconds"] = timeoutSeconds
@@ -312,7 +312,8 @@ public sealed class SubAgentSpawnClampDisclosureTests
             Mock.Of<IActivityBroadcaster>(),
             dispatcher.Object,
             new TestOptionsMonitor<GatewayOptions>(options),
-            NullLogger<DefaultSubAgentManager>.Instance);
+            NullLogger<DefaultSubAgentManager>.Instance,
+            sessionStore: new BotNexus.Gateway.Sessions.InMemorySessionStore());
     }
 
     /// <summary>

@@ -14,9 +14,15 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy, Action<IRe
     internal const int WarningThreshold = 3;
     internal const int StopThreshold = 6;
     internal const int AbsoluteToolResultLimit = 128;
+    internal const int MaximumCyclePeriod = 4;
+    internal const int RecentOutcomeLimit = 12;
+    internal const int ObservedScopeLimit = 16;
 
     private readonly Dictionary<string, string> _observed = new(StringComparer.Ordinal);
+    private readonly Queue<string> _scopeOrder = new();
+    private readonly List<ClassifiedOutcome> _recent = [];
     private int _count;
+    private int _housekeepingCount;
     private int _totalResults;
     private bool _warned;
     private readonly List<GuardObservation> _evidence = [];
@@ -42,6 +48,10 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy, Action<IRe
         }
         evidenceObserver?.Invoke(Evidence);
     }
+    private ToolProgressDecision? _latestDecision;
+
+    internal int RecentOutcomeCount => _recent.Count;
+    internal int ObservedScopeCount => _observed.Count;
 
     internal async Task<ToolNonProgressObservation> ObserveAsync(
         IReadOnlyList<ToolCallContent> calls,
@@ -50,55 +60,66 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy, Action<IRe
     {
         var byId = calls.ToDictionary(call => call.Id, StringComparer.Ordinal);
         var warning = false;
-        ToolProgressDecision? latestDecision = null;
         foreach (var result in results)
         {
             // Control policy and the absolute fuse see every executed result, including incomplete ones.
             // Actual completed-result measurement belongs to the handle's separate event observer.
+            cancellationToken.ThrowIfCancellationRequested();
             _totalResults++;
+            // An unmatched completed result is still retained and counted, but is not evidence.
             if (!byId.TryGetValue(result.ToolCallId, out var call))
-            {
-                Reset();
                 continue;
-            }
 
             var decision = ValidateDecision(await policy(
-                    new ToolProgressContext(call, result),
-                    cancellationToken)
+                    new ToolProgressContext(call, result), cancellationToken)
                 .ConfigureAwait(false));
-            if (decision is null || decision.IsProgress)
+            if (decision is null || decision.Outcome == ToolProgressOutcome.Neutral)
+                continue;
+            if (decision.Outcome == ToolProgressOutcome.Progress)
             {
                 Reset();
+                warning = false;
                 continue;
             }
 
-            var scope = decision.ScopeIdentity!;
-            var evidence = decision.EvidenceIdentity!;
+            // ValidateDecision guarantees nonempty identities; never retain raw tool payloads.
+            var scope = decision.ScopeIdentity ?? throw new InvalidOperationException("Missing scope identity.");
+            var evidence = decision.EvidenceIdentity ?? throw new InvalidOperationException("Missing evidence identity.");
+            var kind = decision.Kind ?? throw new InvalidOperationException("Missing kind identity.");
             if (_observed.TryGetValue(scope, out var priorEvidence) && priorEvidence != evidence)
-                Reset();
-            if (!_observed.ContainsKey(scope)
-                && _observed.Count >= 2
-                && !decision.Kind!.Equals("unchanged-housekeeping", StringComparison.Ordinal))
             {
                 Reset();
+                warning = false;
+            }
+            if (!_observed.ContainsKey(scope))
+            {
+                if (_observed.Count == ObservedScopeLimit)
+                    _observed.Remove(_scopeOrder.Dequeue());
+                _scopeOrder.Enqueue(scope);
             }
             _observed[scope] = evidence;
-            _count++;
+            if (_recent.Count == RecentOutcomeLimit)
+                _recent.RemoveAt(0);
+            _recent.Add(new ClassifiedOutcome(scope, evidence, kind));
 
-            latestDecision = decision;
+            // Known status-only tools retain the existing six-result budget even across diverse
+            // scopes. Research instead requires an actually repeated classified outcome sequence.
+            _housekeepingCount = IsHousekeeping(kind) ? Math.Min(StopThreshold, _housekeepingCount + 1) : 0;
+            _count = Math.Max(_housekeepingCount, RepeatedSuffixLength());
+            _latestDecision = decision;
             if (!_warned && _count >= WarningThreshold)
             {
                 _warned = true;
                 warning = true;
             }
-            // Finish processing the entire executed batch. A sibling result is never discarded.
+            // Process the full executed batch; later progress invalidates pending warning/stop.
         }
 
         var absoluteLimitReached = _totalResults >= AbsoluteToolResultLimit;
         return new ToolNonProgressObservation(
             _count,
-            absoluteLimitReached ? "absolute-tool-result-limit" : latestDecision?.Kind,
-            latestDecision?.Guidance,
+            absoluteLimitReached ? "absolute-tool-result-limit" : _latestDecision?.Kind,
+            _latestDecision?.Guidance,
             warning,
             _count >= StopThreshold || absoluteLimitReached,
             absoluteLimitReached,
@@ -111,14 +132,41 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy, Action<IRe
             _evidence[index] = _evidence[index] with { Disposition = "recovered" };
         _episode = null;
         _observed.Clear();
+        _scopeOrder.Clear();
+        _recent.Clear();
         _count = 0;
+        _housekeepingCount = 0;
         _warned = false;
+        _latestDecision = null;
+        // External steering and progress do not extend the absolute run budget.
         evidenceObserver?.Invoke(Evidence);
     }
 
+    private int RepeatedSuffixLength()
+    {
+        var longest = 1;
+        for (var period = 1; period <= MaximumCyclePeriod; period++)
+        {
+            var length = period;
+            for (var i = _recent.Count - 1; i >= period; i--)
+            {
+                if (_recent[i] != _recent[i - period])
+                    break;
+                length++;
+            }
+            // Require two complete copies, not a threshold on distinct targets or partial cycles.
+            if (length >= 2 * period)
+                longest = Math.Max(longest, length);
+        }
+        return longest;
+    }
+
+    private static bool IsHousekeeping(string kind)
+        => kind is "unchanged-housekeeping" or "unchanged-status" or "clock-check";
+
     private static ToolProgressDecision? ValidateDecision(ToolProgressDecision? decision)
     {
-        if (decision is null || decision.IsProgress)
+        if (decision is null || decision.Outcome != ToolProgressOutcome.NoProgress)
             return decision;
 
         if (string.IsNullOrWhiteSpace(decision.ScopeIdentity)
@@ -128,9 +176,10 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy, Action<IRe
             throw new InvalidOperationException(
                 "A non-progress tool policy decision requires scope, evidence, and kind identities.");
         }
-
         return decision;
     }
+
+    private sealed record ClassifiedOutcome(string Scope, string Evidence, string Kind);
 }
 
 internal sealed record ToolNonProgressObservation(

@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Abstractions.Models;
 
 /// <summary>
@@ -57,6 +59,7 @@ public sealed class GatewaySessionRuntime
     {
         lock (_lock)
         {
+            if (IsRetainedToolResultDuplicate(entry)) return;
             Session.History.Add(entry);
             _additionVersion++;
             Session.UpdatedAt = DateTimeOffset.UtcNow;
@@ -71,11 +74,18 @@ public sealed class GatewaySessionRuntime
     {
         lock (_lock)
         {
-            Session.History.AddRange(entries);
+            foreach (var entry in entries)
+                if (!IsRetainedToolResultDuplicate(entry)) Session.History.Add(entry);
             _additionVersion++;
             Session.UpdatedAt = DateTimeOffset.UtcNow;
         }
     }
+
+    private bool IsRetainedToolResultDuplicate(SessionEntry entry)
+        => entry.Kind == MessageKind.ToolResult && entry.PersistenceKey is { } key
+            && key.StartsWith("tool-result:", StringComparison.Ordinal)
+            && Session.History.Any(existing => existing.PersistenceKey == key
+                && existing.AgentRunId == entry.AgentRunId);
 
     /// <summary>
     /// Executes replace history.

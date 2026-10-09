@@ -39,6 +39,11 @@ internal static class DefaultToolProgressPolicy
                     kind,
                     guidance));
             }
+
+            // Recognize the edit producer's successful mutation receipt, not arbitrary success
+            // strings from unrelated write tools. Repeated writes alone are never NoProgress.
+            if (!result.IsError && text.StartsWith("Successfully replaced ", StringComparison.Ordinal))
+                return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.Progress);
         }
 
         if (result.IsError)
@@ -56,7 +61,7 @@ internal static class DefaultToolProgressPolicy
         {
             return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.NoProgress(
                 "housekeeping-todo-list",
-                Hash(text),
+                Hash(ToolProgressEvidenceProjection.TodoListV1(text)),
                 "unchanged-housekeeping"));
         }
 
@@ -64,7 +69,7 @@ internal static class DefaultToolProgressPolicy
         {
             return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.NoProgress(
                 "housekeeping-subagents-list",
-                Hash(text),
+                Hash(ToolProgressEvidenceProjection.SubagentListV1(text)),
                 "unchanged-housekeeping"));
         }
 

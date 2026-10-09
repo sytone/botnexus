@@ -28,6 +28,84 @@ public static class SqliteConnectionFactory
 {
     private static readonly ActivitySource ActivitySource = new("BotNexus.Persistence.Sqlite");
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> IntegrityLocks = new(StringComparer.Ordinal);
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SqliteConnection, ConnectionObservationState> ObservedConnections = new();
+    private static readonly object ObservationGate = new();
+    private static long _observedOpen;
+    private static long _peakObservedOpen;
+    private static long _openTransitions;
+    private static long _closeTransitions;
+    private static long _poolingEnabledOpen;
+    private static long _poolingDisabledOpen;
+
+    /// <summary>
+    /// Returns one coherent process-local snapshot of logical connections explicitly created by
+    /// this factory or attached through <see cref="AttachBusyTimeout"/>. No native handles are queried.
+    /// </summary>
+    /// <remarks>
+    /// An already-open connection enters observation as one open transition at attachment. An Open
+    /// event counts before policy execution, including failed policy opens and invalid native handles;
+    /// it remains counted until an observed non-Open event, normally Close or Dispose. Provider opens
+    /// that fail before the Open event are not counted. Idle pooled native handles, unattached
+    /// connections and other processes are excluded. Abandoned open connections with no close event
+    /// cannot be reconciled by GC: these are observed transitions, not a native-resource census.
+    /// </remarks>
+    public static SqliteConnectionObservation GetConnectionObservation()
+    {
+        lock (ObservationGate)
+        {
+            return new SqliteConnectionObservation(_observedOpen, _peakObservedOpen,
+                _openTransitions, _closeTransitions, _poolingEnabledOpen, _poolingDisabledOpen);
+        }
+    }
+
+    private sealed class ConnectionObservationState
+    {
+        // Contains no connection reference. The weak table is the only process-wide ownership.
+        public readonly object Gate = new();
+        public bool Attached;
+        public bool IsOpen;
+        public bool PoolingEnabled;
+        public int BusyTimeoutMs;
+    }
+
+    private static void ObserveState(SqliteConnection connection, ConnectionObservationState state, bool isOpen)
+    {
+        // Caller holds state.Gate. Parse only at entry into Open (connection strings may change
+        // while closed), outside the aggregate lock. No provider commands or callbacks under it.
+        if (state.IsOpen == isOpen)
+        {
+            return;
+        }
+
+        var poolingEnabled = isOpen
+            ? new SqliteConnectionStringBuilder(connection.ConnectionString).Pooling
+            : state.PoolingEnabled;
+        lock (ObservationGate)
+        {
+            state.IsOpen = isOpen;
+            state.PoolingEnabled = poolingEnabled;
+            var delta = isOpen ? 1L : -1L;
+            _observedOpen += delta;
+            if (poolingEnabled)
+            {
+                _poolingEnabledOpen += delta;
+            }
+            else
+            {
+                _poolingDisabledOpen += delta;
+            }
+
+            if (isOpen)
+            {
+                _openTransitions++;
+                _peakObservedOpen = Math.Max(_peakObservedOpen, _observedOpen);
+            }
+            else
+            {
+                _closeTransitions++;
+            }
+        }
+    }
 
     /// <summary>
     /// Default <c>busy_timeout</c> in milliseconds applied to every BotNexus SQLite connection.
@@ -97,7 +175,15 @@ public static class SqliteConnectionFactory
     /// Attaches the busy-timeout <c>StateChange</c> Open-handler to an existing connection without
     /// otherwise altering it. Exposed for stores that already own connection construction (e.g. a
     /// cached, long-lived connection) but still want the single shared timeout policy.
+    /// Observation attachment is idempotent; the last supplied timeout wins. Already-open connections enter lifetime
+    /// observation immediately, but policy is still applied only on their next Open event.
     /// </summary>
+    /// <remarks>
+    /// Concurrent attachment is serialized per connection; the last supplied timeout applies on
+    /// subsequent opens. Callers must still serialize connection
+    /// Open/Close/Dispose and connection-string mutation as required by the provider; observation
+    /// synchronization does not make a connection safe for concurrent use.
+    /// </remarks>
     /// <param name="connection">The connection to attach the handler to.</param>
     /// <param name="busyTimeoutMs">
     /// The <c>busy_timeout</c> to apply on open, in milliseconds. Defaults to
@@ -112,63 +198,82 @@ public static class SqliteConnectionFactory
                 nameof(busyTimeoutMs), busyTimeoutMs, "busy_timeout must be non-negative.");
         }
 
-        connection.StateChange += BusyTimeoutOnOpen;
-
-        void BusyTimeoutOnOpen(object? sender, System.Data.StateChangeEventArgs e)
+        var state = ObservedConnections.GetValue(connection, static _ => new ConnectionObservationState());
+        lock (state.Gate)
         {
-            // NB: deliberately NOT unsubscribed on close. busy_timeout is per-connection and
-            // resets to 0 on every open, so the subscription must survive a close/reopen cycle
-            // (pinned by Create_reapplies_busy_timeout_after_reopen). Lifetime safety comes from
-            // not capturing the connection plus the handle guard below, not from detaching.
-            if (e.CurrentState != System.Data.ConnectionState.Open)
+            // Preserve the existing last-attached timeout on subsequent opens without
+            // duplicating observations or event subscriptions.
+            state.BusyTimeoutMs = busyTimeoutMs;
+            if (state.Attached)
             {
                 return;
             }
 
-            // Use the event's sender rather than a captured local: the delegate must not hold the
-            // connection it is attached to, or a stale subscription can drive a command against a
-            // connection whose native handle is already gone (#2977).
-            if (sender is not SqliteConnection opened)
-            {
-                return;
-            }
+            connection.StateChange += BusyTimeoutOnOpen;
+            state.Attached = true;
+            ObserveState(connection, state, connection.State == System.Data.ConnectionState.Open);
+        }
+    }
 
-            // The managed connection can report Open while the underlying SQLitePCL.sqlite3 handle
-            // has already been released underneath it (observed under parallel load in the core
-            // gate). Preparing a statement against that handle throws ObjectDisposedException from
-            // inside the callback and onto the caller's Open stack, so skip rather than attempt.
-            if (opened.Handle is null || opened.Handle.IsInvalid || opened.Handle.IsClosed)
-            {
-                return;
-            }
+    private static void BusyTimeoutOnOpen(object? sender, System.Data.StateChangeEventArgs e)
+    {
+        // Observation runs before policy/handle guards, so a rejected policy open remains an
+        // observed logical open until disposal. A single static handler captures no connection.
+        if (sender is not SqliteConnection opened || !ObservedConnections.TryGetValue(opened, out var state))
+        {
+            return;
+        }
 
-            try
-            {
-                using var openActivity = ActivitySource.StartActivity("sqlite.connection_open_policy");
-                openActivity?.SetTag("db.system", "sqlite");
+        int busyTimeoutMs;
+        lock (state.Gate)
+        {
+            ObserveState(opened, state, e.CurrentState == System.Data.ConnectionState.Open);
+            busyTimeoutMs = state.BusyTimeoutMs;
+        }
 
-                using var pragma = opened.CreateCommand();
-                pragma.CommandText = $"PRAGMA busy_timeout={busyTimeoutMs};";
-                pragma.ExecuteNonQuery();
+        // NB: deliberately NOT unsubscribed on close. busy_timeout is per-connection and
+        // resets to 0 on every open, so the subscription must survive a close/reopen cycle
+        // (pinned by Create_reapplies_busy_timeout_after_reopen). Lifetime safety comes from
+        // not capturing the connection plus the handle guard below, not from detaching.
+        if (e.CurrentState != System.Data.ConnectionState.Open)
+        {
+            return;
+        }
 
-                pragma.CommandText = "PRAGMA foreign_keys=ON;";
-                pragma.ExecuteNonQuery();
+        // The managed connection can report Open while the underlying SQLitePCL.sqlite3 handle
+        // has already been released underneath it (observed under parallel load in the core
+        // gate). Preparing a statement against that handle throws ObjectDisposedException from
+        // inside the callback and onto the caller's Open stack, so skip rather than attempt.
+        if (opened.Handle is null || opened.Handle.IsInvalid || opened.Handle.IsClosed)
+        {
+            return;
+        }
 
-                // Verify world ownership before the validation boundary creates or updates its
-                // durable stamp. Opening the wrong world's database must remain read-only failure.
-                StoreKinds.TryGetValue(opened, out var declaredKind);
-                opened.Verify(declaredKind);
-                EnsureForeignKeyIntegrity(opened);
-            }
-            catch (ObjectDisposedException)
-            {
-                // Lost a race with disposal between the handle check and the prepare. busy_timeout
-                // is a best-effort per-connection tuning pragma on a connection that is going away
-                // regardless; it must never throw out of a StateChange callback (#2977). Any other
-                // exception is a genuine fault and is deliberately left to propagate.
-                return;
-            }
+        try
+        {
+            using var openActivity = ActivitySource.StartActivity("sqlite.connection_open_policy");
+            openActivity?.SetTag("db.system", "sqlite");
 
+            using var pragma = opened.CreateCommand();
+            pragma.CommandText = $"PRAGMA busy_timeout={busyTimeoutMs};";
+            pragma.ExecuteNonQuery();
+
+            pragma.CommandText = "PRAGMA foreign_keys=ON;";
+            pragma.ExecuteNonQuery();
+
+            // Verify world ownership before the validation boundary creates or updates its
+            // durable stamp. Opening the wrong world's database must remain read-only failure.
+            StoreKinds.TryGetValue(opened, out var declaredKind);
+            opened.Verify(declaredKind);
+            EnsureForeignKeyIntegrity(opened);
+        }
+        catch (ObjectDisposedException)
+        {
+            // Lost a race with disposal between the handle check and the prepare. busy_timeout
+            // is a best-effort per-connection tuning pragma on a connection that is going away
+            // regardless; it must never throw out of a StateChange callback (#2977). Any other
+            // exception is a genuine fault and is deliberately left to propagate.
+            return;
         }
     }
 

@@ -12,6 +12,9 @@ public sealed record SubAgentInfo
     /// </summary>
     public required string SubAgentId { get; init; }
 
+    /// <summary>Original parent spawn call, retained for same-call retries.</summary>
+    public string? SpawningToolCallId { get; init; }
+
     /// <summary>
     /// Gets the parent session identifier that owns this sub-agent.
     /// </summary>
@@ -122,24 +125,17 @@ public sealed record SubAgentInfo
     public SubAgentWorktreeSnapshot? WorktreeSnapshot { get; init; }
 
     /// <summary>
-    /// Gets whether the completion follow-up actually reached the parent session (#3703).
-    /// <para>
-    /// <b>Why this is separate from <see cref="Status"/>.</b> A run can finish its work perfectly
-    /// and still strand its supervisor: the terminal status describes what the CHILD did, while
-    /// this describes whether the parent was ever told. Before this field existed a dispatch that
-    /// threw was caught, counted and logged, and the record still read <c>Completed</c> - the
-    /// parent waited forever for a push-based announcement that had already been dropped, and no
-    /// operator could tell the two apart without reading gateway logs. Modelled on the hardened
-    /// cron sibling, <c>CronRunStatus.DeliveryFailed</c>.
-    /// </para>
+    /// Gets the historical completion announcement disposition (#3703).
+    /// Current tool-owned results do not send announcements and leave this field Pending;
+    /// Pending is not evidence that a terminal result is unready or unconsumed. The session
+    /// store's tool-call receipt, not this compatibility field, owns result consumption.
     /// </summary>
     public SubAgentCompletionDelivery CompletionDelivery { get; init; } = SubAgentCompletionDelivery.Pending;
 
     /// <summary>
     /// Gets the failure detail when <see cref="CompletionDelivery"/> is
     /// <see cref="SubAgentCompletionDelivery.Failed"/>; otherwise <c>null</c>. Carries the
-    /// dispatch exception's message so the surfaced state answers "why did it not arrive?"
-    /// rather than only "it did not arrive".
+    /// historical dispatch exception's message. Current tool-owned results do not update it.
     /// </summary>
     public string? CompletionDeliveryError { get; init; }
 }
@@ -188,6 +184,11 @@ public sealed record SubAgentPartialResult
     public string? Summary { get; init; }
     public bool SummaryIsVerified { get; init; }
     public IReadOnlyList<SubAgentVerifiedEvidence> VerifiedEvidence { get; init; } = [];
+    /// <summary>
+    /// Verified tool names recovered from bounded retained history. These preserve the recorded
+    /// classification only; original call IDs and raw results are unavailable, not reconstructed.
+    /// </summary>
+    public IReadOnlyList<string> RetainedVerifiedTools { get; init; } = [];
     public IReadOnlyList<string> UnresolvedWork { get; init; } = [];
     public IReadOnlyList<SubAgentPartialAction> ActionsTaken { get; init; } = [];
     public IReadOnlyList<string> SideEffects { get; init; } = [];
