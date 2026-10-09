@@ -68,6 +68,8 @@
                       ReferenceOutputAssembly="false" PrivateAssets="all" ExcludeAssets="all" />
     <ProjectReference Include="../../../tools/BotNexus.ExtensionDependencyProbe/BotNexus.ExtensionDependencyProbe.csproj"
                       ReferenceOutputAssembly="false" PrivateAssets="all" ExcludeAssets="all" />
+    <ProjectReference Include="../../../tools/BotNexus.ExtensionCompatibilityProbe/BotNexus.ExtensionCompatibilityProbe.csproj"
+                      ReferenceOutputAssembly="false" PrivateAssets="all" ExcludeAssets="all" />
   </ItemGroup>
   <Target Name="RecordExtensionCompatibilityArtifacts" AfterTargets="Build" Condition="'$(SkipTests)' != 'true'">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../../../src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj"
@@ -82,9 +84,15 @@
              Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
       <Output TaskParameter="TargetOutputs" ItemName="CompatibilityProbeArtifact" />
     </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../../../tools/BotNexus.ExtensionCompatibilityProbe/BotNexus.ExtensionCompatibilityProbe.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="Agent365CompatibilityProbeArtifact" />
+    </MSBuild>
     <!-- Only the framework-only executable DLL is placed beside the host. Its deps.json is
          NEVER copied or used: host shipping/dependency resolution remains authoritative. -->
     <Copy SourceFiles="@(CompatibilityProbeArtifact)"
+          DestinationFolder="@(CompatibilityHostArtifact->'%(RootDir)%(Directory)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(Agent365CompatibilityProbeArtifact)"
           DestinationFolder="@(CompatibilityHostArtifact->'%(RootDir)%(Directory)')" SkipUnchangedFiles="true" />
     <WriteLinesToFile File="$(TargetDir)compatibility-host-artifact.txt"
                       Lines="@(CompatibilityHostArtifact)" Overwrite="true" WriteOnlyWhenDifferent="true" />
