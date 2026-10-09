@@ -1,10 +1,14 @@
 # Sub-Agent Session Viewing
 
+For users observing delegated work and reviewing its results in the BotNexus Blazor UI.
+
+**Status:** Result-delivery guidance describes the change for [#4793](https://github.com/sytone/botnexus/issues/4793). An installed gateway must include this change to use awaited spawning and explicit joining.
+
 The BotNexus Blazor UI lets you observe sub-agent sessions in real time. When an agent spawns a sub-agent to handle a task, you can watch its progress, see what tools it calls, and review its complete conversation history.
 
 ## What Are Sub-Agent Sessions?
 
-When an agent spawns a sub-agent to handle a task (using the `spawn_subagent` tool), a new session is created for that sub-agent. Sub-agent sessions run independently in the background and appear in the session sidebar beneath the parent agent.
+When an agent spawns a sub-agent to handle a task (using the `spawn_subagent` tool), a new session is created for that sub-agent. Sub-agent sessions run independently and appear in the session sidebar beneath the parent agent. By default, `spawn_subagent` awaits the terminal result in its original tool response. Explicit `background: true` returns admission immediately; the parent then joins with `manage_subagent` and `action: "wait"`. Completion does not send an automatic inbound message or start another parent turn.
 
 **Common use cases for sub-agents:**
 - **Research delegation** — A sub-agent investigates sources while the parent agent stays responsive
@@ -17,7 +21,7 @@ For detailed information about how sub-agents work, see [Sub-Agent Spawning](../
 
 ### Step 1: Spawn a Sub-Agent
 
-In your agent's chat, use the `spawn_subagent` tool:
+In your agent's chat, ask it to use `spawn_subagent`. This example requires the listed tools and a configured model. It explicitly requests background execution so the parent can continue before joining:
 
 ```json
 {
@@ -25,6 +29,7 @@ In your agent's chat, use the `spawn_subagent` tool:
   "parameters": {
     "task": "Research the top 5 vector databases. Compare pricing, performance, and .NET support.",
     "name": "vectordb-research",
+    "background": true,
     "model": "gpt-4.1",
     "tools": ["web_search", "web_fetch"],
     "maxTurns": 20,
@@ -33,11 +38,7 @@ In your agent's chat, use the `spawn_subagent` tool:
 }
 ```
 
-The agent will confirm the sub-agent has been spawned:
-```
-[Sub-agent "vectordb-research" started]
-sessionId: parent-session-id::subagent::abc123def456...
-```
+The tool returns admission information, including `subAgentId` and the child session identity. This is not completed research. Keep the returned `subAgentId` for the later join; do not wait for an automatic follow-up message.
 
 ### Step 2: Locate the Sub-Agent Session
 
@@ -86,7 +87,7 @@ Sub-agent sessions display different statuses depending on their current progres
 | Icon | Status | Description |
 |------|--------|-------------|
 | 🔄 | Running | Sub-agent is actively processing |
-| ✅ | Completed | Sub-agent finished successfully and delivered results to the parent session |
+| ✅ | Completed | Sub-agent finished successfully; this does not prove the parent has consumed its result |
 | 🤖 | Other | Sub-agent in any other state (Failed, Killed, etc.) |
 
 **Note:** The sidebar shows Running and Completed sessions with distinct icons. Sessions in other states (Failed, Killed) display a generic agent icon (🤖) and may be filtered from the session list depending on your configuration.
@@ -99,16 +100,15 @@ Sub-agent sessions render tool calls with the same fidelity as regular chat sess
 - **Syntax highlighting** is applied to code snippets and structured data
 - **Tool responses** are formatted for readability (tables, JSON, code blocks, etc.)
 
+In the parent conversation, completion output appears in an expandable normal tool result: the original `spawn_subagent` response by default, or the explicit `manage_subagent` / `wait` response for background work. A terminal `status` call may consume the result through the same path. Output is consumed once; repeated calls return identity and `alreadyConsumed` rather than duplicating child output. The child's full transcript remains separate and viewable even after its result has been consumed.
+
 ## Example: Observing a Research Sub-Agent
 
 Here's a typical workflow:
 
-1. **Parent agent spawns research sub-agent:**
-   ```
-   [Sub-agent "market-research" started]
-   Task: Analyze the top 5 AI vector database platforms...
-   sessionId: 01JM2A...::subagent::abc123...
-   ```
+1. **Parent agent spawns a research sub-agent with `background: true`:**
+   - Task: Analyze the top 5 AI vector database platforms.
+   - The admission tool result identifies the child run and session; it does not contain completed research.
 
 2. **You see the sub-agent appear in the sidebar** with a ⏳ icon
 
@@ -126,7 +126,18 @@ Here's a typical workflow:
 5. **Sub-agent finishes:**
    - Banner updates to "Status: Completed ✅"
    - Final message appears with the research summary
-   - Parent session receives a follow-up message with the results
+   - The parent retrieves the result by explicitly joining the child:
+     ```json
+     {
+       "tool": "manage_subagent",
+       "parameters": {
+         "subAgentId": "<subAgentId from admission>",
+         "action": "wait"
+       }
+     }
+     ```
+   - The research outcome appears in that tool response, not a follow-up inbound message. If the parent joins while the child is still running, the join waits for its terminal outcome.
+   - Failure, timeout, cancellation, or budget exhaustion must remain visible alongside any partial output; a completed tool call alone does not prove successful research.
 
 ## Navigation Tips
 
@@ -138,7 +149,9 @@ Here's a typical workflow:
 
 - Sub-agent sessions are **read-only** — you cannot send messages or interact with the sub-agent
 - You **cannot steer or guide** a sub-agent after it has been spawned (planned for a future phase)
-- Sessions show the **current session list** from the gateway at load time; if the gateway restarts, some completed sub-agent sessions may not appear (sessions are persisted to disk; refresh to reload)
+- Sessions show the **current session list** from the gateway at load time. Refresh after a restart to reload persisted history; sidebar visibility is separate from result consumption.
+- After a cold manager restart, the owning parent can retrieve an unconsumed persisted completed result. Previously consumed output must not be delivered again.
+- A persisted running record is not proof that the child is still executing. When no live run exists after a restart, retrieval reports `Failed` with an interruption diagnostic. Review its transcript and artifacts before requesting a separate replacement run; do not assume its external actions never happened.
 
 ## Related Documentation
 

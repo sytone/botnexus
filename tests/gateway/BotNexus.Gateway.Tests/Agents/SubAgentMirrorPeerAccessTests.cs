@@ -231,6 +231,8 @@ public sealed class SubAgentMirrorPeerAccessTests
                 .Returns<GatewaySession, CancellationToken>(_sessions.SaveAsync);
             _sessionStore.Setup(s => s.DeleteAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
                 .Returns<SessionId, CancellationToken>(_sessions.DeleteAsync);
+            _sessionStore.Setup(s => s.ListSubAgentSessionsAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<SubAgentRunDetail>());
             _sessionStore.Setup(s => s.SaveSubAgentSessionAsync(It.IsAny<SubAgentInfo>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
             _conversations.Setup(s => s.CreateAsync(It.IsAny<Conversation>(), It.IsAny<CancellationToken>()))

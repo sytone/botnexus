@@ -56,13 +56,11 @@ public sealed class SubAgentSpawnOnlyHandoffTests
         result.ResultSummary.ShouldNotBeNull();
         result.ResultSummary!.ShouldContain("child work product");
 
-        dispatcher.Verify(
-            d => d.DispatchAsync(
-                It.Is<InboundMessage>(m =>
-                    m.SenderId == $"subagent:{spawned.SubAgentId}" &&
-                    m.Content.Contains("child work product", StringComparison.Ordinal)),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+        var joined = await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId);
+        joined.Status.ShouldBe(SubAgentStatus.HandedOff);
+        joined.ResultSummary.ShouldNotBeNull();
+        joined.ResultSummary.ShouldContain("child work product");
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     /// <summary>
@@ -144,7 +142,7 @@ public sealed class SubAgentSpawnOnlyHandoffTests
             .Returns(Task.CompletedTask);
 
         var spawned = await manager.SpawnAsync(CreateRequest(SessionId.From("parent-session")));
-        var notification = await delivered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var notification = await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(TimeSpan.FromSeconds(10));
         var result = await manager.GetAsync(spawned.SubAgentId);
 
         result.ShouldNotBeNull();
@@ -152,8 +150,10 @@ public sealed class SubAgentSpawnOnlyHandoffTests
         result.ResultSummary.ShouldNotBeNull();
         result.ResultSummary.ShouldContain(providerError);
         result.ResultSummary.ShouldNotContain("empty final response");
-        notification.Content.ShouldContain(providerError);
-        notification.Content.ShouldNotContain("empty final response");
+        notification.ResultSummary.ShouldNotBeNull();
+        notification.ResultSummary.ShouldContain(providerError);
+        notification.ResultSummary.ShouldNotContain("empty final response");
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static async Task<(DefaultSubAgentManager Manager, SubAgentInfo Spawned)> RunSpawnOnlyAsync(

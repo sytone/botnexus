@@ -9,6 +9,7 @@ using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Tools;
+using BotNexus.Gateway.Sessions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -65,28 +66,17 @@ public sealed class SubAgentCompletionWakeDeliveryTests
     }
 
     [Fact]
-    public async Task OnCompleted_WhenDispatchPath_StreamEventsReachChannel()
+    public async Task OnCompleted_NoDispatch_InternalAdapterStillSupportsStreaming()
     {
         var manager = CreateManager(parentIsRunning: false, out _, out var dispatcher);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
-        InboundMessage? dispatchedMessage = null;
-        dispatcher
-            .Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<InboundMessage, CancellationToken>((message, _) => dispatchedMessage = message)
-            .Returns(Task.CompletedTask);
-
         await manager.OnCompletedAsync(spawned.SubAgentId, "complete");
-
-        dispatchedMessage.ShouldNotBeNull();
-        dispatchedMessage!.Metadata.TryGetValue("messageType", out var messageType).ShouldBeTrue();
-        messageType.ShouldBe("subagent-completion");
-
+        var terminal = await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId);
+        terminal.ResultSummary.ShouldBe("complete");
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
         var channelManager = new Mock<IChannelManager>();
         var internalAdapter = CreateInternalAdapter(channelManager.Object, Mock.Of<ISessionStore>());
-        channelManager
-            .Setup(m => m.Get(ChannelKey.From("internal")))
-            .Returns(internalAdapter);
-
+        channelManager.Setup(m => m.Get(ChannelKey.From("internal"))).Returns(internalAdapter);
         var resolvedChannel = channelManager.Object.Get(ChannelKey.From("internal"));
         resolvedChannel.ShouldNotBeNull();
         resolvedChannel.ShouldBeAssignableTo<IStreamEventChannelAdapter>();
@@ -137,7 +127,8 @@ public sealed class SubAgentCompletionWakeDeliveryTests
         await manager.OnCompletedAsync(spawned.SubAgentId, "Done");
 
         parentHandle.Verify(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()), Times.Never);
-        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        (await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId)).ResultSummary.ShouldBe("Done");
     }
 
     /// <summary>
@@ -146,7 +137,7 @@ public sealed class SubAgentCompletionWakeDeliveryTests
     /// must still be torn down.
     /// </summary>
     [Fact]
-    public async Task OnCompleted_WhenDispatchThrows_RecordIsDeliveryFailedAndChildStillTornDown()
+    public async Task OnCompleted_ThrowingUnusedDispatcher_ResultRetainedAndChildTornDown()
     {
         var manager = CreateManager(
             parentIsRunning: false,
@@ -167,20 +158,22 @@ public sealed class SubAgentCompletionWakeDeliveryTests
         info.ShouldNotBeNull();
 
         // AC1: observable state distinguishable from a delivered completion.
-        info!.CompletionDelivery.ShouldBe(SubAgentCompletionDelivery.Failed);
-        info.CompletionDeliveryError.ShouldBe("parent session is gone");
+        info!.CompletionDelivery.ShouldBe(SubAgentCompletionDelivery.Pending);
+        info.CompletionDeliveryError.ShouldBeNull();
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        (await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId)).ResultSummary.ShouldBe("work is done");
         // The run's own summary survives on the record - it is the only surviving copy.
         info.ResultSummary.ShouldBe("work is done");
 
-        // AC3: the lifecycle activity is NOT SubAgentCompleted.
+        // Completion activity reflects the child outcome, not an unused dispatcher.
         var terminal = activities
             .Where(a => a.Type is GatewayActivityType.SubAgentCompleted or GatewayActivityType.SubAgentFailed)
             .ToArray();
         terminal.ShouldNotBeEmpty();
-        terminal.ShouldAllBe(a => a.Type != GatewayActivityType.SubAgentCompleted);
-        terminal.ShouldContain(a => a.Type == GatewayActivityType.SubAgentFailed);
+        terminal.ShouldAllBe(a => a.Type == GatewayActivityType.SubAgentCompleted);
+        terminal.ShouldNotContain(a => a.Type == GatewayActivityType.SubAgentFailed);
 
-        // AC4: the teardown `finally` still ran despite the dispatch throwing.
+        // Cleanup remains once-only with an unavailable dispatcher.
         supervisor.Verify(
             s => s.StopAsync(
                 It.Is<AgentId>(id => id.Value.StartsWith("parent-agent--subagent--", StringComparison.Ordinal)),
@@ -195,7 +188,7 @@ public sealed class SubAgentCompletionWakeDeliveryTests
     /// both paths reporting the same thing.
     /// </summary>
     [Fact]
-    public async Task OnCompleted_WhenDispatchSucceeds_RecordIsDeliveredAndActivityIsCompleted()
+    public async Task OnCompleted_ResultReady_ActivityIsCompletedWithoutDispatch()
     {
         var manager = CreateManager(
             parentIsRunning: false,
@@ -214,7 +207,8 @@ public sealed class SubAgentCompletionWakeDeliveryTests
 
         var info = await manager.GetAsync(spawned.SubAgentId);
         info.ShouldNotBeNull();
-        info!.CompletionDelivery.ShouldBe(SubAgentCompletionDelivery.Delivered);
+        info!.CompletionDelivery.ShouldBe(SubAgentCompletionDelivery.Pending);
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
         info.CompletionDeliveryError.ShouldBeNull();
 
         activities.ShouldContain(a => a.Type == GatewayActivityType.SubAgentCompleted);
@@ -226,7 +220,7 @@ public sealed class SubAgentCompletionWakeDeliveryTests
     /// completion.
     /// </summary>
     [Fact]
-    public async Task DeliveryFailedRecord_IsReportedByListAndStatusTools()
+    public async Task RetainedResult_ListObserves_StatusConsumesOnce()
     {
         var manager = CreateManager(parentIsRunning: false, out _, out var dispatcher, out _, out _);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
@@ -243,8 +237,8 @@ public sealed class SubAgentCompletionWakeDeliveryTests
             .ExecuteAsync("call-1", new Dictionary<string, object?>());
         var listText = listResult.Content[0].Value;
         listText.ShouldNotBeNull();
-        listText!.ShouldContain("\"completionDelivery\":\"Failed\"");
-        listText.ShouldContain("never reached this session");
+        listText!.ShouldContain("\"status\":\"Completed\"");
+        listText.ShouldNotContain("work is done");
 
         var statusResult = await new SubAgentManageTool(manager, parentSession)
             .ExecuteAsync("call-2", new Dictionary<string, object?>
@@ -254,9 +248,13 @@ public sealed class SubAgentCompletionWakeDeliveryTests
             });
         var statusText = statusResult.Content[0].Value;
         statusText.ShouldNotBeNull();
-        statusText!.ShouldContain("\"completionDelivery\":\"Failed\"");
-        statusText.ShouldContain("parent session is gone");
-        statusText.ShouldContain("never reached this session");
+        statusText!.ShouldContain("\"status\":\"Completed\"");
+        statusText.ShouldContain("work is done");
+        statusText.ShouldNotContain("parent session is gone");
+        var again = await new SubAgentManageTool(manager, parentSession).ExecuteAsync("call-3",
+            new Dictionary<string, object?> { ["subAgentId"] = spawned.SubAgentId, ["action"] = "wait" });
+        again.Content[0].Value.ShouldNotBeNull().ShouldNotContain("work is done");
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static DefaultSubAgentManager CreateManager(
@@ -318,13 +316,16 @@ public sealed class SubAgentCompletionWakeDeliveryTests
             })
             .Returns(ValueTask.CompletedTask);
 
+        var store = new InMemorySessionStore();
+        var parent = store.GetOrCreateAsync(SessionId.From("parent-session"), AgentId.From("parent-agent")).GetAwaiter().GetResult();
+        parent.ConversationId = ConversationId.From("inherited-conv");
         return new DefaultSubAgentManager(
             supervisor.Object,
             registry.Object,
             broadcaster.Object,
             dispatcher.Object,
             new TestOptionsMonitor<GatewayOptions>(new GatewayOptions()),
-            NullLogger<DefaultSubAgentManager>.Instance);
+            NullLogger<DefaultSubAgentManager>.Instance, sessionStore: store);
     }
 
     private static InternalChannelAdapter CreateInternalAdapter(IChannelManager channelManager, ISessionStore sessionStore)
