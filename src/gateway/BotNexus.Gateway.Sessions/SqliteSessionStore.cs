@@ -3187,6 +3187,16 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             // original result rows before normalization can overwrite an earlier result payload.
             command.Parameters.AddWithValue("$call", result.ToolCallId);
             command.CommandText = """
+                SELECT EXISTS (
+                    SELECT 1 FROM session_history
+                    WHERE tool_invocation_id IS NULL AND tool_call_id IS NOT NULL
+                      AND (message_kind IN ('tool-start', 'tool-result') OR (message_kind IS NULL AND role='tool'))
+                      AND session_id=$parent AND tool_call_id=$call
+                      AND (message_kind='tool-result' OR (message_kind IS NULL AND role='tool' AND tool_args IS NULL)))
+                """;
+            if ((long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) ?? 0L) != 0)
+                throw new InvalidOperationException("The original tool result is not normalized; no consumption receipt was committed.");
+            command.CommandText = """
                 SELECT i.result_content, i.is_error, i.completed_at, h.id,
                        COALESCE(h.content, i.result_content), h.tool_is_error
                 FROM tool_invocations i

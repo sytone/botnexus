@@ -159,12 +159,13 @@ public sealed class SubAgentResultReceiptTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, "old admission error", true)]
-    [InlineData(true, "old admission error", true)]
-    [InlineData(true, "different successful result", false)]
-    [InlineData(true, "retained-result", true)]
+    [InlineData(false, "old admission error", true, false)]
+    [InlineData(true, "old admission error", true, false)]
+    [InlineData(true, "different successful result", false, false)]
+    [InlineData(true, "retained-result", true, false)]
+    [InlineData(true, "old admission error", true, true)]
     public async Task Consume_ExistingCollision_RefusesReceiptAndPreservesOriginalResult(
-        bool legacyKey, string originalContent, bool isError)
+        bool legacyKey, string originalContent, bool isError, bool unlinked)
     {
         var store = await ArrangeAsync();
         var parent = (await store.GetAsync(Parent)).ShouldNotBeNull();
@@ -181,6 +182,11 @@ public sealed class SubAgentResultReceiptTests : IDisposable
         (await command.ExecuteNonQueryAsync()).ShouldBe(1);
         command.CommandText = "SELECT id FROM session_history WHERE session_id=$parent AND tool_call_id='collision'";
         var originalId = await command.ExecuteScalarAsync();
+        if (unlinked)
+        {
+            command.CommandText = "UPDATE session_history SET tool_invocation_id=NULL WHERE session_id=$parent AND tool_call_id='collision'";
+            (await command.ExecuteNonQueryAsync()).ShouldBe(1);
+        }
 
         await Should.ThrowAsync<InvalidOperationException>(() =>
             Store().ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, Result("collision")));
@@ -203,11 +209,14 @@ public sealed class SubAgentResultReceiptTests : IDisposable
         }
         command.CommandText = "SELECT consumed_tool_call_id FROM sub_agent_sessions WHERE id='retained-run'";
         (await command.ExecuteScalarAsync()).ShouldBe(DBNull.Value);
-        var coldParent = (await Store().GetAsync(Parent)).ShouldNotBeNull();
-        var original = coldParent.GetHistorySnapshot().Single(e => e.Kind == MessageKind.ToolResult
-            && e.ToolCallId == "collision");
-        original.Content.ShouldBe(originalContent);
-        original.ToolIsError.ShouldBe(isError);
+        if (!unlinked)
+        {
+            var coldParent = (await Store().GetAsync(Parent)).ShouldNotBeNull();
+            var original = coldParent.GetHistorySnapshot().Single(e => e.Kind == MessageKind.ToolResult
+                && e.ToolCallId == "collision");
+            original.Content.ShouldBe(originalContent);
+            original.ToolIsError.ShouldBe(isError);
+        }
         (await Store().ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, Result("fresh")))
             .ShouldBe("retained-result");
     }
