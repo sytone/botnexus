@@ -90,7 +90,7 @@ public static class LegacyToolPayloadCleanup
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT i.id, i.session_id, i.tool_call_id, i.arguments_json, i.started_at,
+            SELECT i.id, i.session_id, COALESCE(i.provider_tool_call_id, i.tool_call_id), i.arguments_json, i.started_at,
                    i.completed_at, i.result_content, i.result_bytes, i.result_sha256,
                    COUNT(h.id) AS linked_count,
                    SUM(CASE WHEN h.message_kind='tool-start' THEN 1 ELSE 0 END) AS start_count,
@@ -108,7 +108,8 @@ public static class LegacyToolPayloadCleanup
                      + COALESCE(SUM(CASE WHEN h.message_kind='tool-result' THEN length(CAST(h.content AS BLOB)) ELSE 0 END),0) AS legacy_bytes,
                    EXISTS(
                        SELECT 1 FROM session_history u
-                       WHERE u.session_id=i.session_id AND u.tool_call_id=i.tool_call_id
+                       WHERE u.session_id=i.session_id AND u.tool_call_id=COALESCE(i.provider_tool_call_id, i.tool_call_id)
+                         AND u.agent_run_id IS i.agent_run_id
                          AND u.tool_invocation_id IS NULL
                          AND (u.message_kind IN ('tool-start','tool-result') OR (u.message_kind IS NULL AND u.role='tool'))
                    ) AS has_unlinked_sibling

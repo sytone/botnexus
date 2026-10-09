@@ -617,7 +617,7 @@ internal static class ToolExecutor
             ObserveAbandonedToolExecution(executionTask);
             result = BuildErrorResult(
                 $"Tool '{prepared.ToolCall.Name}' timed out after {effectiveTimeout.Value.TotalSeconds:0}s. " +
-                "The operation did not complete; an incomplete result was recorded and late output will be ignored.");
+                "The operation did not complete; an incomplete result was recorded and late output will be ignored.") with { IsIncomplete = true };
             isError = true;
         }
         catch (OperationCanceledException) when (timeoutCts is not null && timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -627,7 +627,7 @@ internal static class ToolExecutor
             // wait deadline so callers do not need to distinguish implementation details.
             result = BuildErrorResult(
                 $"Tool '{prepared.ToolCall.Name}' timed out after {effectiveTimeout!.Value.TotalSeconds:0}s. " +
-                "The operation did not complete.");
+                "The operation did not complete.") with { IsIncomplete = true };
             isError = true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

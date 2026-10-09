@@ -16,4 +16,6 @@ public record AgentToolResult(IReadOnlyList<AgentToolContent> Content, object? D
     /// Optional execution-transport metadata kept separate from tool-specific <see cref="Details"/>.
     /// </summary>
     public object? DeliveryDetails { get; init; }
+    /// <summary>True when the payload describes interruption rather than an observed final tool result.</summary>
+    public bool IsIncomplete { get; init; }
 }

@@ -106,8 +106,10 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
     /// Returns the stable persistence identity shared by write-ahead and streamed projections of
     /// one provider tool invocation. The session store owns the atomic duplicate suppression.
     /// </summary>
-    public static string? GetToolStartPersistenceKey(string? toolCallId)
-        => string.IsNullOrWhiteSpace(toolCallId) ? null : $"{ToolStartPersistenceKeyPrefix}{toolCallId}";
+    public static string? GetToolStartPersistenceKey(string? toolCallId, BotNexus.Domain.Primitives.AgentRunId? agentRunId = null)
+        => string.IsNullOrWhiteSpace(toolCallId) ? null : agentRunId is { } run
+            ? $"{ToolStartPersistenceKeyPrefix}agent-run:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{run.Value.Length}:{run.Value}:{toolCallId}"))).ToLowerInvariant()
+            : $"{ToolStartPersistenceKeyPrefix}{toolCallId}";
 
     /// <summary>
     /// The canonical serialization of "this tool was invoked with no arguments" (#2906). Persisting
@@ -176,6 +178,7 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
         => new()
         {
             Role = MessageRole.Tool,
+            ToolIsIncomplete = true,
             Content = $"Tool '{toolName}' did not complete \u2014 result synthesized for transcript consistency.",
             ToolName = toolName,
             ToolCallId = toolCallId,
@@ -199,14 +202,14 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
         foreach (var record in invocations)
         {
             rows.Add(record.IsIncomplete
-                ? ProjectIncomplete(record.ToolCallId, record.ToolName, record.Arguments)
+                ? ProjectIncomplete(record.ToolCallId, record.ToolName, record.Arguments) with { AgentRunId = record.AgentRunId }
                 : ProjectResult(
                     record.ToolCallId,
                     record.ToolName,
                     record.ResultContent,
                     record.IsError,
                     maxPersistedBytes: 0,
-                    record.Arguments));
+                    record.Arguments) with { AgentRunId = record.AgentRunId });
         }
 
         return rows;
@@ -216,6 +219,8 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
     public IReadOnlyList<ToolInvocationRecord> CaptureBlockingRun(AgentResponse response)
     {
         var records = new List<ToolInvocationRecord>(response.ToolCalls.Count);
+        var safeFallback = response.ToolCalls.All(call => call.AgentRunId is null || call.AgentRunId == response.AgentRunId)
+            ? response.AgentRunId : null;
         for (var index = 0; index < response.ToolCalls.Count; index++)
         {
             var call = response.ToolCalls[index];
@@ -228,7 +233,7 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
                 isError: call.IsError,
                 isIncomplete: call.IsIncomplete,
                 startedAt: null,
-                completedAt: null));
+                completedAt: null) with { AgentRunId = call.AgentRunId ?? safeFallback });
         }
 
         return records;

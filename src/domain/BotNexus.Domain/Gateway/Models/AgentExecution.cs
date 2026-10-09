@@ -22,6 +22,8 @@ public sealed record AgentExecutionContext
 /// </summary>
 public sealed record AgentResponse
 {
+    /// <summary>Authoritative agent execution identity; null means legacy or unmeasured.</summary>
+    public BotNexus.Domain.Primitives.AgentRunId? AgentRunId { get; init; }
     /// <summary>The full response content.</summary>
     public required string Content { get; init; }
     /// <summary>Token usage for this response, if available.</summary>
@@ -104,7 +106,11 @@ public sealed record AgentToolCallInfo(
     bool IsError,
     string? Arguments = null,
     string? ResultContent = null,
-    bool IsIncomplete = false);
+    bool IsIncomplete = false)
+{
+    /// <summary>Execution identity shared with the response.</summary>
+    public AgentRunId? AgentRunId { get; init; }
+}
 
 /// <summary>
 /// Thrown by a blocking agent prompt (<see cref="BotNexus.Gateway.Abstractions.Agents.IAgentHandle"/>'s
@@ -149,6 +155,8 @@ public sealed class AgentPromptInterruptedException : Exception
 /// </summary>
 public sealed record AgentStreamEvent
 {
+    /// <summary>Authoritative agent execution identity; null means legacy or unmeasured.</summary>
+    public BotNexus.Domain.Primitives.AgentRunId? AgentRunId { get; init; }
     /// <summary>The type of stream event.</summary>
     public required AgentStreamEventType Type { get; init; }
     /// <summary>Incremental content delta (for <see cref=`AgentStreamEventType.ContentDelta`/>).</summary>
@@ -165,6 +173,8 @@ public sealed record AgentStreamEvent
     public string? ToolResult { get; init; }
     /// <summary>Whether the tool call errored (for <see cref=`AgentStreamEventType.ToolEnd`/>).</summary>
     public bool? ToolIsError { get; init; }
+    /// <summary>True when ToolEnd is a synthetic interruption, not a proven result.</summary>
+    public bool ToolIsIncomplete { get; init; }
     /// <summary>Error message (for <see cref=`AgentStreamEventType.Error`/>).</summary>
     public string? ErrorMessage { get; init; }
     /// <summary>Token usage (for <see cref=`AgentStreamEventType.MessageEnd`/>).</summary>
@@ -299,6 +309,8 @@ public sealed record RunCompletionSignal(
     string? WakeCondition,
     int ContinuationAttempts)
 {
+    /// <summary>Bounded payload-free guard evidence projected from the core.</summary>
+    public IReadOnlyList<GuardObservation> GuardObservations { get; init; } = [];
     /// <summary>Canonical session-metadata key for the latest authoritative run completion.</summary>
     public const string MetadataKey = "runCompletion";
 
