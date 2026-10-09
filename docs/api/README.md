@@ -174,3 +174,7 @@ follow-up work under [#219](https://github.com/Sytone/botnexus/issues/219):
 - **.NET public API reference** — generated from XML doc comments (e.g. DocFX).
 - **Remaining REST controllers** - channels, models, providers, memory, reports,
   diagnostics, stats, and the rest of the `Controllers/` set.
+
+## Provider usage
+
+The [provider Usage and Copilot quota reference](provider-usage.md) documents the additive admin-only companion read, bounded account refresh, separate header observations and gateway-wide scheduled activity. Existing observed-request Usage callers remain supported.

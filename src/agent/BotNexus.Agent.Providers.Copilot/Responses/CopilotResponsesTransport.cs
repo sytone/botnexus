@@ -54,6 +54,7 @@ internal sealed record CopilotResponsesCloseFrame(int? Code, string? Reason)
 
 internal interface ICopilotResponsesWebSocketTransport : IAsyncDisposable
 {
+    IReadOnlyDictionary<string, IEnumerable<string>>? ResponseHeaders => null;
     ValueTask ConnectAsync(Uri uri, IReadOnlyDictionary<string, string> headers, CancellationToken cancellationToken);
     ValueTask SendAsync(string payload, CancellationToken cancellationToken);
     ValueTask<string?> ReceiveAsync(CancellationToken cancellationToken);
@@ -151,6 +152,8 @@ internal sealed class CopilotResponsesWebSocketTransport : ICopilotResponsesWebS
 
     /// <inheritdoc />
     public CopilotResponsesCloseFrame? LastClose { get; private set; }
+
+    public IReadOnlyDictionary<string, IEnumerable<string>>? ResponseHeaders => _socket.HttpResponseHeaders;
 
     public async ValueTask ConnectAsync(Uri uri, IReadOnlyDictionary<string, string> headers, CancellationToken cancellationToken)
     {
