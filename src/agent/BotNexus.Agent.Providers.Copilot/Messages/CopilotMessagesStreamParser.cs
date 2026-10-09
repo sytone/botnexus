@@ -383,7 +383,7 @@ internal static class CopilotMessagesStreamParser
                 // frame with no final value yields null and the assembled text stands.
                 accumulated = StreamAssemblyConformance.Reconcile(
                     accumulated,
-                    StreamBlockFinalText.TryRead(data),
+                    data.TryRead(),
                     model.Provider,
                     model.Id,
                     "github-copilot-messages",
