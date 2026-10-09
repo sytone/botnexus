@@ -480,7 +480,7 @@ public static class ResponsesStreamParser
                     if (responseEl.TryGetProperty("usage", out var usageEl) &&
                         usageEl.ValueKind == JsonValueKind.Object)
                     {
-                        usage = ResponsesStreamHelpers.ParseUsage(usageEl, model);
+                        usage = usageEl.ParseUsage(model);
                         var configuredTier = resolveConfiguredServiceTier?.Invoke(options);
                         var responseTier = GetString(responseEl, "service_tier");
                         usage = ApplyServiceTierPricing(usage, responseTier ?? configuredTier);
