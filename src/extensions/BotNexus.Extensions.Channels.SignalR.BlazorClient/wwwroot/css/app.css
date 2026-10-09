@@ -5844,13 +5844,96 @@ h3.conversation-title.editable:hover {
     overflow-y: auto;
 }
 
-/* == Skills Explorer == */
+/* == Skills Explorer and security review == */
 .skills-panel-canvas {
     padding: 0;
     overflow: hidden;
     display: flex;
     flex-direction: column;
     height: 100%;
+}
+
+.skills-security-review {
+    height: 100%;
+    overflow: auto;
+    padding: 1rem;
+}
+
+.skills-security-header,
+.skills-security-finding-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.skills-security-header {
+    margin-bottom: 1rem;
+}
+
+.skills-security-header h3,
+.skills-security-finding h4 {
+    margin: 0;
+}
+
+.skills-security-header p {
+    margin: 0.25rem 0 0;
+    color: var(--text-muted);
+}
+
+.skills-security-findings {
+    display: grid;
+    gap: 1rem;
+}
+
+.skills-security-finding {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-primary);
+    padding: 1rem;
+}
+
+.skills-security-severity {
+    border-radius: var(--radius);
+    background: var(--danger-bg, var(--bg-surface));
+    color: var(--danger, var(--text));
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+}
+
+.skills-security-evidence {
+    display: grid;
+    grid-template-columns: minmax(7rem, 10rem) minmax(0, 1fr);
+    gap: 0.35rem 0.75rem;
+    margin: 1rem 0;
+}
+
+.skills-security-evidence dt {
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.skills-security-evidence dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.skills-security-reason,
+.skills-security-confirm {
+    display: grid;
+    gap: 0.35rem;
+    margin: 0.75rem 0;
+}
+
+.skills-security-reason textarea {
+    box-sizing: border-box;
+    min-height: 5rem;
+    width: 100%;
+}
+
+.skills-security-confirm {
+    align-items: center;
+    grid-template-columns: auto 1fr;
 }
 
 /* ── Agent Detail Panel (Wave 3) ──────────────────────────────────── */
