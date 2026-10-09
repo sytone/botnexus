@@ -319,8 +319,39 @@ public sealed class GatewayAuthManager
             options = options with { StreamIdleTimeoutMs = ResolveStreamIdleTimeoutMs(provider) };
         if (apiKey is not null)
             options = options with { ApiKey = apiKey };
-        return options;
+        var metadata = options.Metadata is null ? new Dictionary<string, object>() : new Dictionary<string, object>(options.Metadata);
+        // Never retain caller attribution after resolving a different credential. Unsupported or
+        // ambiguous paths are explicitly unavailable, not legacy calls attributed to the default.
+        metadata[BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderScope.MetadataKey] =
+            (object?)ResolveHeaderScope(provider, options.ApiKey) ??
+            BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderAttribution.Unavailable;
+        return options with { Metadata = metadata };
     }
+    private BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderScope? ResolveHeaderScope(string provider, string? apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey)) return null;
+        var account = ResolveCopilotAccountCredential(provider);
+        if (account is null) return null;
+        var providers = _platformConfig.CurrentValue.Providers;
+        ProviderConfig? config = null;
+        if (providers is not null) TryGetProviderConfig(providers, provider, out config);
+        var authKey = config?.ApiKey?.StartsWith("auth:", StringComparison.OrdinalIgnoreCase) == true
+            ? config.ApiKey[5..].Trim()
+            : IsCopilotType(provider) ? "copilot" : provider;
+        lock (_sync)
+        {
+            if (!TryGetAuthEntry(authKey, out var selected) ||
+                !string.Equals(selected.Access, apiKey, StringComparison.Ordinal) ||
+                !string.Equals(selected.Refresh, account.OAuthToken, StringComparison.Ordinal)) return null;
+            // GetApiKeyAsync gives an exact auth entry precedence over a configured auth: reference.
+            // Even equal access tokens cannot prove the selected OAuth account supplied the key.
+            if (TryGetAuthEntry(provider, out var exact) && !string.IsNullOrWhiteSpace(exact.Access) &&
+                (!string.Equals(exact.Access, apiKey, StringComparison.Ordinal) ||
+                 !string.Equals(exact.Refresh, selected.Refresh, StringComparison.Ordinal))) return null;
+            return new(account.Instance, account.Generation);
+        }
+    }
+
     private int? ResolveStreamIdleTimeoutMs(string provider)
     {
         var providers = _platformConfig.CurrentValue.Providers;

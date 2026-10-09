@@ -33,7 +33,8 @@ namespace BotNexus.Agent.Providers.Copilot.Completions;
 public sealed class CopilotCompletionsProvider(
     HttpClient httpClient,
     ILogger<CopilotCompletionsProvider> logger,
-    ISecretRedactor? secretRedactor = null) : IApiProvider
+    ISecretRedactor? secretRedactor = null,
+    ICopilotHeaderSink? headerSink = null) : IApiProvider
 {
     private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
 
@@ -51,7 +52,7 @@ public sealed class CopilotCompletionsProvider(
         SystemPromptPlacement: SystemPromptPlacement.FirstMessage);
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
-        => CompletionsStreamEngine.StreamAsync(BuildProfile(secretRedactor), _httpClient, logger, model, context, options);
+        => CompletionsStreamEngine.StreamAsync(BuildProfile(secretRedactor, CopilotHeaderCapture.Begin(headerSink, model, options)), _httpClient, logger, model, context, options);
 
     public LlmStream StreamSimple(LlmModel model, Context context, SimpleStreamOptions? options = null)
     {
@@ -79,7 +80,7 @@ public sealed class CopilotCompletionsProvider(
         return Stream(model, context, completionsOptions);
     }
 
-    private static CompletionsTransportProfile BuildProfile(ISecretRedactor? secretRedactor) => new(
+    private static CompletionsTransportProfile BuildProfile(ISecretRedactor? secretRedactor, CopilotHeaderCapture capture) => new(
         Api: "github-copilot-completions",
         ActivityName: "provider.copilot-completions.stream",
         BuildPayload: static (model, systemPrompt, messages, tools, opts, compat) =>
@@ -99,7 +100,7 @@ public sealed class CopilotCompletionsProvider(
         },
         ThrowForError: static (response, providerError, redactor) =>
             ProviderHttpErrorHelper.ThrowForFailedResponse(response, providerError, "Copilot Completions", redactor),
-        OnResponseHeaders: static response => CopilotResponseHeaders.EmitToActivity(response, Activity.Current),
+        OnResponseHeaders: response => { capture.Observe(response); CopilotResponseHeaders.EmitToActivity(response, Activity.Current); },
         InspectChunk: static root => CopilotUsageActivity.TryParseAndEmit(root, Activity.Current),
         // No text-delta normalization hook: #3442 established from mitm captures (0 raw CR bytes
         // across 3,025 provider deltas) that Copilot never frames deltas with CRLF. The corruption

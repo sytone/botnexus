@@ -13,6 +13,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Extensions.Logging;
 using BotNexus.Agent.Providers.Core.Resilience;
 using BotNexus.Agent.Providers.Anthropic;
+using BotNexus.Agent.Providers.Copilot.Headers;
 using BotNexus.Agent.Providers.Copilot.Messages;
 using BotNexus.Agent.Providers.Copilot.Responses;
 using BotNexus.Agent.Providers.Copilot.Completions;
@@ -54,6 +55,7 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args
 });
+builder.Services.AddSingleton<CopilotHeaderQuotaStore>();
 
 // Enable running as an OS service (no-op when running interactively)
 builder.Host.UseSystemd();
@@ -433,12 +435,13 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     var providerSecretRedactor = serviceProvider.GetService<ISecretRedactor>();
 
     apiProviders.Register(new AnthropicProvider(httpClient, providerSecretRedactor));
-    apiProviders.Register(new CopilotMessagesProvider(httpClient, providerSecretRedactor));
+    var copilotHeaderSink = serviceProvider.GetRequiredService<CopilotHeaderQuotaStore>();
+    apiProviders.Register(new CopilotMessagesProvider(httpClient, providerSecretRedactor, copilotHeaderSink));
     apiProviders.Register(new OpenAICompletionsProvider(httpClient, loggerFactory.CreateLogger<OpenAICompletionsProvider>(), providerSecretRedactor));
     apiProviders.Register(new OpenAIResponsesProvider(httpClient, loggerFactory.CreateLogger<OpenAIResponsesProvider>(), providerSecretRedactor));
 
-    apiProviders.Register(new CopilotCompletionsProvider(httpClient, loggerFactory.CreateLogger<CopilotCompletionsProvider>(), providerSecretRedactor));
-    apiProviders.Register(new CopilotResponsesProvider(httpClient, loggerFactory.CreateLogger<CopilotResponsesProvider>(), providerSecretRedactor));
+    apiProviders.Register(new CopilotCompletionsProvider(httpClient, loggerFactory.CreateLogger<CopilotCompletionsProvider>(), providerSecretRedactor, copilotHeaderSink));
+    apiProviders.Register(new CopilotResponsesProvider(httpClient, loggerFactory.CreateLogger<CopilotResponsesProvider>(), providerSecretRedactor, copilotHeaderSink));
     apiProviders.Register(new OpenAICompatProvider(httpClient));
     apiProviders.Register(new IntegrationMockProvider());
 
