@@ -194,7 +194,7 @@ public sealed class HeartbeatTrigger(
         {
             foreach (var toolEntry in TriggerToolAuditProjector.ProjectToolEntries(response))
                 session.AddEntry(toolEntry);
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            session.AddEntry(new SessionEntry { AgentRunId = response.AgentRunId, Role = MessageRole.Assistant, Content = response.Content });
             await sessions.SaveAsync(session, ct).ConfigureAwait(false);
 
             logger.LogInformation(
@@ -243,7 +243,7 @@ public sealed class HeartbeatTrigger(
         }
         else
         {
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            session.AddEntry(new SessionEntry { AgentRunId = response.AgentRunId, Role = MessageRole.Assistant, Content = response.Content });
             await sessions.SaveAsync(session, ct).ConfigureAwait(false);
 
             logger.LogInformation(

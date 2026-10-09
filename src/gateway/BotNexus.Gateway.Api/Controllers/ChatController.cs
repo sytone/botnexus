@@ -132,7 +132,7 @@ public sealed class ChatController : ControllerBase
             // Ordered before the assistant row, matching every other blocking call site.
             foreach (var toolEntry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(response)))
                 session.AddEntry(toolEntry);
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            session.AddEntry(new SessionEntry { AgentRunId = response.AgentRunId, Role = MessageRole.Assistant, Content = response.Content });
             await _sessions.SaveAsync(session, CancellationToken.None);
 
             return Ok(new ChatResponse(

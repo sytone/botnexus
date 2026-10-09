@@ -418,8 +418,8 @@ public sealed class SubAgentToolTests
         manager.Setup(m => m.WaitAsync("sub-123", SessionId.From("parent-session"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateSubAgentInfo(subAgentId: "sub-123", status: SubAgentStatus.Completed, resultSummary: "Done"));
         manager.Setup(m => m.ConsumeResultAsync(It.IsAny<SubAgentInfo>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<SubAgentInfo, string, string, string, string, CancellationToken>((_, _, _, _, payload, _) => Task.FromResult(payload));
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<BotNexus.Domain.Primitives.AgentRunId?>()))
+            .Returns<SubAgentInfo, string, string, string, string, CancellationToken, BotNexus.Domain.Primitives.AgentRunId?>((_, _, _, _, payload, _, _) => Task.FromResult(payload));
         var tool = new SubAgentManageTool(manager.Object, SessionId.From("parent-session"));
 
         var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>

@@ -16,7 +16,7 @@ matching file. Its namespace is `BotNexus.Agent.Core.ExtensionPoints.<Family>`.
 | --- | --- |
 | `Messages/` | `ProviderMessageTransformer`, `AgentContextTransformer`, `AgentMessageProvider`, `DefaultProviderMessageTransformer` |
 | `ProviderExecution/` | `ProviderExecutionOptionsProvider`, `CredentialInvalidationService` |
-| `ToolExecution/` | `ToolExecutionPolicy`, `ToolAuditGate`, `ToolExecutionDecisionObserver`, `ToolExecutionContext`, `ToolExecutionDecision` |
+| `ToolExecution/` | `ToolExecutionPolicy`, `ToolAuditGate`, `ToolExecutionDecisionObserver`, `ToolExecutionContext`, `ToolExecutionDecision`, `IContextAwareAgentTool` |
 | `ToolResults/` | `ToolResultTransformer`, `ToolResultTransformContext`, `ToolResultTransformResult`, `ToolProgressPolicy`, `ToolProgressContext`, `ToolProgressDecision`, `DefaultToolProgressPolicy` |
 | `RunCompletion/` | `RunCompletionPolicy`, `RunCompletionDecision`, `RunCompletionResult`, `RunCompletionStatus`, `RunStopReason` |
 
@@ -332,3 +332,90 @@ dependency represents a named domain responsibility. A named interface normally
 communicates and tests that responsibility more clearly. A named delegate remains
 appropriate for a small stateless adapter when it still follows the category's
 naming and contract rules.
+
+## Durable agent-run measurement (backend only)
+
+This section is for contributors integrating run evidence into a gateway backend.
+An **agent run** is one admitted top-level execution, not a provider turn, tool-call
+ID, cron job ID, or satellite placement ID. Public admissions mint fresh IDs;
+internal steering, compaction, and completion continuation retain the admission ID.
+Core uses its own `AgentRunId`; the gateway explicitly converts it to the Domain ID.
+
+Tools that persist an atomic result before returning can opt into
+`IContextAwareAgentTool`. The executor supplies `ToolExecutionContext.AgentRunId`
+from the admitted loop configuration, never from model-supplied arguments. The
+spawn and manage sub-agent tools pass that identity to their result-consumption
+receipt, so the receipt and later transcript projection share one run-qualified
+invocation. Deduplication compares both call identity and run identity; a provider
+reusing a call ID in another run does not suppress its result. Legacy direct tool
+entrypoints retain null identity rather than inventing a run.
+
+`InProcessAgentHandle` owns an awaited lifecycle subscription. It records `Running`
+on `AgentStartEvent` before tool execution, counts actual `ToolExecutionEndEvent`
+results, and records the terminal timestamp and disposition before the prompt
+returns. Parallel result counting is atomic. `IsIncomplete` is internal result data:
+it does not bypass `ToolProgressPolicy` or the 128-result safety fuse. Measurement
+excludes incomplete results, and a failed, cancelled, or incomplete run has a null
+measured count rather than a synthetic zero. A completed zero-tool run measures zero.
+
+The optional `IAgentRunEvidenceStore` capability is separate from `ISessionStore`.
+Production in-process isolation passes the selected session store only when it
+implements that capability. Currently **only `SqliteSessionStore` supports durable
+measurement**. File and in-memory stores retain additive transcript correlation and
+incomplete flags, but do not supply run statistics or infer evidence.
+
+### Record and query from trusted backend code
+
+Establish session ownership through the existing backend access checks before
+calling this capability. A `SessionId` selects scope; it is not authorization.
+There is no new HTTP endpoint, agent tool, or UI export in this implementation.
+
+```csharp
+if (sessionStore is IAgentRunEvidenceStore evidenceStore)
+{
+    // authorizedSessionId has already passed the caller's existing ownership check.
+    var page = await evidenceStore.QueryAgentRunsAsync(
+        authorizedSessionId, limit: 100, afterSequence: 0, cancellationToken);
+    // Pass page.NextCursor on the next request; page.HasMore describes this read.
+}
+```
+
+The additive SQLite `agent_runs` ledger has a unique session/run key and an indexed
+ascending sequence cursor. Record calls do not create sessions. Deleted, sealed, or
+expired sessions reject writes by ignoring them. The initial start time and first
+terminal acknowledgement are immutable; retries and late starts cannot overwrite
+terminal evidence. Session deletion physically removes ledger rows through a trigger.
+Terminal persistence uses `CancellationToken.None`, so run cancellation does not
+cancel its evidence write. Persistence failures are logged; the existing core listener
+exception policy is unchanged. Missing or running evidence remains unknown, never
+reported as a measured success.
+
+Queries require a limit of 1 through 1000 and a non-negative exclusive cursor. The
+limit includes every selected row, including unknown/running rows. One extra row
+sets `HasMore` but is neither returned nor counted in statistics. Empty pages retain
+the supplied cursor. Query results are a read snapshot, not a watch or a promise that
+an earlier running row will appear again after its terminal update; refresh from
+cursor zero when current outcomes are needed.
+
+Percentiles are **selected-page nearest-rank** values: sort measured counts and
+select `ceil(percentile * sampleSize) - 1`. Completed runs and Parked runs with an
+observed terminal guard are eligible. Failed, Cancelled, Running, Unknown, missing
+counts, and unobserved Parked runs contribute to `UnknownRuns`. An empty measured
+sample has null P50/P95/P99. Semantic terminal stops and absolute-fuse terminal stops
+are separate counters; warning and recovered observations are not terminal stops.
+These numbers are samples, not lifetime/session totals.
+
+Legacy coverage samples at most 1000 normalized invocations with null run identity,
+plus one lookahead for `LegacySampleTruncated`. Every sampled legacy invocation is
+unknown even if its old tool result succeeded. The query reads invocation IDs only,
+not arguments/content; it performs no full-history count or transcript scan. Schema
+creation performs no run backfill or identity inference.
+
+Evidence DTOs contain only identity, times, disposition, count, and bounded guard
+evidence. Guard categories use the finite product allowlist (`edit-non-progress`,
+`unchanged-housekeeping`, `unchanged-status`, `unchanged-read`,
+`absolute-tool-result-limit`, `classified-non-progress`); custom classifier text
+becomes `classified-non-progress`. At most sixteen episodes and sixteen opaque GUID
+references per episode are retained. Raw scope/evidence identities, paths, guidance,
+tool arguments/content, and hidden reasoning are not part of this boundary.
+Display and control-policy details keep their existing behavior and protections.

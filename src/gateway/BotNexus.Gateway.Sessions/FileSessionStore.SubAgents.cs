@@ -182,7 +182,7 @@ public sealed partial class FileSessionStore
                 ?? throw new InvalidOperationException("Consumption receipt has no original result.");
             if (entry.Kind != MessageKind.ToolResult || string.IsNullOrWhiteSpace(entry.ToolCallId))
                 throw new InvalidOperationException("Invalid original consumption result.");
-            entry.PersistenceKey = "tool-result:" + entry.ToolCallId;
+            entry.PersistenceKey ??= "tool-result:" + entry.ToolCallId;
             receipts.Add(new(id, entry));
         }
         return receipts;
@@ -195,7 +195,7 @@ public sealed partial class FileSessionStore
         {
             var node = JsonSerializer.SerializeToNode(entry, JsonOptions) as JsonObject
                 ?? throw new InvalidOperationException("Invalid session entry.");
-            var receipt = receipts.SingleOrDefault(r => r.Entry.ToolCallId == entry.ToolCallId && entry.Kind == MessageKind.ToolResult);
+            var receipt = receipts.SingleOrDefault(r => r.Entry.ToolCallId == entry.ToolCallId && r.Entry.AgentRunId == entry.AgentRunId && entry.Kind == MessageKind.ToolResult);
             if (receipt is not null) node[ReceiptProperty] = receipt.SubAgentId;
             return node;
         });
@@ -232,15 +232,15 @@ public sealed partial class FileSessionStore
             var accepted = receipts.SingleOrDefault(r => r.SubAgentId == subAgentId);
             if (accepted is not null)
             {
-                if (accepted.Entry.ToolName != result.ToolName && accepted.Entry.ToolCallId == result.ToolCallId)
+                if (accepted.Entry.ToolName != result.ToolName && accepted.Entry.ToolCallId == result.ToolCallId && accepted.Entry.AgentRunId == result.AgentRunId)
                     throw new InvalidOperationException("Original receipt tool name differs.");
-                return accepted.Entry.ToolCallId == result.ToolCallId ? accepted.Entry.Content : null;
+                return accepted.Entry.ToolCallId == result.ToolCallId && accepted.Entry.AgentRunId == result.AgentRunId ? accepted.Entry.Content : null;
             }
-            if (parent.GetHistorySnapshot().Any(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == result.ToolCallId))
+            if (parent.GetHistorySnapshot().Any(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == result.ToolCallId && e.AgentRunId == result.AgentRunId))
                 throw new InvalidOperationException("An original tool result already exists without this receipt.");
             var safe = result with { Content = _redactor?.Redact(result.Content) ?? result.Content,
                 ToolArgs = result.ToolArgs is null ? null : _redactor?.Redact(result.ToolArgs) ?? result.ToolArgs };
-            safe.PersistenceKey = "tool-result:" + safe.ToolCallId;
+            safe.PersistenceKey ??= "tool-result:" + safe.ToolCallId;
             if (BeforeSubAgentReceiptCommitAsync is { } before) await before(cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             await WriteReceiptHistoryAsync(parentSessionId, parent.GetHistorySnapshot().Append(safe),
@@ -259,7 +259,7 @@ public sealed partial class FileSessionStore
         if (receipts.Count == 0) return false;
         var snapshot = session.SnapshotHistoryForCompaction();
         var entries = snapshot.Entries.Where(e => !receipts.Any(r =>
-            e.Kind == MessageKind.ToolResult && e.ToolCallId == r.Entry.ToolCallId)).ToList();
+            e.Kind == MessageKind.ToolResult && e.ToolCallId == r.Entry.ToolCallId && e.AgentRunId == r.Entry.AgentRunId)).ToList();
         entries.AddRange(receipts.Select(r => r.Entry));
         entries = entries.OrderBy(e => e.Timestamp).ToList();
         if (BeforeReceiptHistorySaveAsync is { } before) await before(ct).ConfigureAwait(false);

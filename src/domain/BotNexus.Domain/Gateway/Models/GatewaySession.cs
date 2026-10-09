@@ -316,6 +316,8 @@ public sealed class GatewaySession
 /// </summary>
 public sealed record SessionEntry
 {
+    /// <summary>Authoritative agent execution identity; null means legacy or unmeasured.</summary>
+    public BotNexus.Domain.Primitives.AgentRunId? AgentRunId { get; init; }
     /// <summary>
     /// SQLite row identity used only by aggregate persistence reconciliation. It is deliberately
     /// excluded from every wire/JSON representation; negative values are transient identities
@@ -399,6 +401,8 @@ public sealed record SessionEntry
 
     /// <summary>True if the tool call resulted in an error.</summary>
     public bool ToolIsError { get; init; }
+    /// <summary>True for a synthetic interruption row, not an observed execution result.</summary>
+    public bool ToolIsIncomplete { get; init; }
 
     /// <summary>True if this entry is a compaction summary (not a real conversation message).</summary>
     public bool IsCompactionSummary { get; init; }

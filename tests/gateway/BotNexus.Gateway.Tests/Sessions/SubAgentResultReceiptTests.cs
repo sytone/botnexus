@@ -59,6 +59,32 @@ public sealed class SubAgentResultReceiptTests : IDisposable
     }
 
     [Fact]
+    public async Task Consume_CorrelatedReceiptThenAggregate_RetainsOneInvocationAndRejectsOtherRunRetry()
+    {
+        var store = await ArrangeAsync();
+        var run = AgentRunId.From("receipt-agent-run");
+        var receipt = Result("reused-call") with { AgentRunId = run };
+        (await store.ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, receipt)).ShouldBe("retained-result");
+        (await Store().ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, receipt)).ShouldBe("retained-result");
+        (await Store().ConsumeSubAgentResultAsync("retained-run", Parent, Conversation,
+            receipt with { AgentRunId = AgentRunId.From("other-run") })).ShouldBeNull();
+
+        var parent = (await Store().GetAsync(Parent)).ShouldNotBeNull();
+        parent.AddEntry(Result("reused-call") with { AgentRunId = run });
+        parent.AddEntry(Result("reused-call") with { AgentRunId = AgentRunId.From("other-run"), Content = "other-result" });
+        await Store().SaveAsync(parent);
+        var history = (await Store().GetAsync(Parent)).ShouldNotBeNull().GetHistorySnapshot();
+        history.Count(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == "reused-call" && e.AgentRunId == run).ShouldBe(1);
+        history.Count(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == "reused-call").ShouldBe(2);
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM tool_invocations WHERE session_id=$parent AND provider_tool_call_id='reused-call'";
+        command.Parameters.AddWithValue("$parent", Parent.Value);
+        Convert.ToInt64(await command.ExecuteScalarAsync()).ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Consume_TwoWorkers_OneWinnerAndOneDurableResult()
     {
         var store = await ArrangeAsync();

@@ -1,5 +1,6 @@
 using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Agent.Core.Loop;
@@ -8,7 +9,7 @@ namespace BotNexus.Agent.Core.Loop;
 /// Bounded run-local aggregation for completed results classified by a tool-progress policy.
 /// The guard owns sequence state only; policy owns classification and the loop owns control flow.
 /// </summary>
-internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy)
+internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy, Action<IReadOnlyList<GuardObservation>>? evidenceObserver = null)
 {
     internal const int WarningThreshold = 3;
     internal const int StopThreshold = 6;
@@ -24,6 +25,29 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy)
     private int _housekeepingCount;
     private int _totalResults;
     private bool _warned;
+    private readonly List<GuardObservation> _evidence = [];
+    private int? _episode;
+    internal IReadOnlyList<GuardObservation> Evidence => _evidence.ToArray();
+    internal void Record(ToolNonProgressObservation observation, string disposition)
+    {
+        var safeKind = observation.Kind switch
+        {
+            "edit-non-progress" or "unchanged-housekeeping" or "unchanged-status" or "unchanged-read"
+                or "absolute-tool-result-limit" or "classified-non-progress" => observation.Kind,
+            _ => "classified-non-progress"
+        };
+        var value = new GuardObservation(safeKind, observation.ConsecutiveCount,
+            observation.TotalResults, WarningThreshold, observation.AbsoluteLimitReached ? AbsoluteToolResultLimit : StopThreshold,
+            observation.AbsoluteLimitReached, disposition, [Guid.NewGuid().ToString("N")]);
+        if (_episode is { } index) _evidence[index] = value with { EvidenceReferences = _evidence[index].EvidenceReferences };
+        else
+        {
+            if (_evidence.Count == 16) _evidence.RemoveAt(0);
+            _evidence.Add(value);
+            _episode = _evidence.Count - 1;
+        }
+        evidenceObserver?.Invoke(Evidence);
+    }
     private ToolProgressDecision? _latestDecision;
 
     internal int RecentOutcomeCount => _recent.Count;
@@ -38,6 +62,8 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy)
         var warning = false;
         foreach (var result in results)
         {
+            // Control policy and the absolute fuse see every executed result, including incomplete ones.
+            // Actual completed-result measurement belongs to the handle's separate event observer.
             cancellationToken.ThrowIfCancellationRequested();
             _totalResults++;
             // An unmatched completed result is still retained and counted, but is not evidence.
@@ -102,6 +128,9 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy)
 
     internal void Reset()
     {
+        if (_episode is { } index && _evidence[index].Disposition == "warning")
+            _evidence[index] = _evidence[index] with { Disposition = "recovered" };
+        _episode = null;
         _observed.Clear();
         _scopeOrder.Clear();
         _recent.Clear();
@@ -110,6 +139,7 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy)
         _warned = false;
         _latestDecision = null;
         // External steering and progress do not extend the absolute run budget.
+        evidenceObserver?.Invoke(Evidence);
     }
 
     private int RepeatedSuffixLength()

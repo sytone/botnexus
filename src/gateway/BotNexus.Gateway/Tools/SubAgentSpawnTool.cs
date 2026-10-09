@@ -12,7 +12,7 @@ public sealed class SubAgentSpawnTool(
     ISubAgentManager subAgentManager,
     AgentId agentId,
     SessionId sessionId,
-    ConversationId conversationId) : IAgentTool
+    ConversationId conversationId) : BotNexus.Agent.Core.ExtensionPoints.ToolExecution.IContextAwareAgentTool
 {
     public string Name => "spawn_subagent";
     public string Label => "Spawn Sub-Agent";
@@ -84,11 +84,23 @@ public sealed class SubAgentSpawnTool(
         return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
     }
 
-    public async Task<AgentToolResult> ExecuteAsync(
+    public Task<AgentToolResult> ExecuteAsync(
         string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken = default,
         AgentToolUpdateCallback? onUpdate = null)
+        => ExecuteCoreAsync(toolCallId, arguments, cancellationToken, null);
+
+    /// <inheritdoc />
+    public Task<AgentToolResult> ExecuteAsync(
+        BotNexus.Agent.Core.ExtensionPoints.ToolExecution.ToolExecutionContext context,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
+        => ExecuteCoreAsync(context.ToolCallRequest.Id, context.ValidatedArgs, cancellationToken,
+            context.AgentRunId is { } run ? BotNexus.Domain.Primitives.AgentRunId.From(run.Value) : null);
+
+    private async Task<AgentToolResult> ExecuteCoreAsync(string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken, BotNexus.Domain.Primitives.AgentRunId? agentRunId)
     {
         var task = ReadString(arguments, "task")
             ?? throw new ArgumentException("Missing required argument: task.");
@@ -215,7 +227,7 @@ public sealed class SubAgentSpawnTool(
             result["result"] = SubAgentRunDetail.FromLive(terminal).Result;
             var payload = JsonSerializer.Serialize(result, JsonOptions);
             return TextResult(await subAgentManager.ConsumeResultAsync(terminal, toolCallId, Name,
-                JsonSerializer.Serialize(arguments), payload, cancellationToken).ConfigureAwait(false));
+                JsonSerializer.Serialize(arguments), payload, cancellationToken, agentRunId).ConfigureAwait(false));
         }
         return TextResult(JsonSerializer.Serialize(result, JsonOptions));
     }

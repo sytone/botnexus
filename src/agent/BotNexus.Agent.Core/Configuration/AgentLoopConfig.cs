@@ -174,6 +174,12 @@ public record AgentLoopConfig(
     TimeSpan? RecoveryAdmissionTimeout = null,
     ToolProgressPolicy? ToolProgressPolicy = null)
 {
+    /// <summary>Admitted identity supplied by Agent; direct loop calls mint one when absent.</summary>
+    public AgentRunId? AgentRunId { get; init; }
+
+    // Run-owner snapshot for exceptional terminal paths; no control authority or payload.
+    internal Action<IReadOnlyList<GuardObservation>>? GuardEvidenceObserver { get; init; }
+
     /// <summary>
     /// Default cooperative cancellation budget for the tool-execution policy.
     /// </summary>
