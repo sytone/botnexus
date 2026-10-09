@@ -55,6 +55,18 @@ public sealed class CopilotQuotaService(GatewayAuthManager authManager, CopilotD
         }
     }
 
+    // Composite reads capture credential attribution outside this cache and verify it again after
+    // header reads. Read only that exact generation; never resolve a newer credential here.
+    internal CopilotQuotaState ReadForScope(BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderScope scope, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            return _entries.TryGetValue(scope.Instance, out var entry) && entry.Generation == scope.Generation
+                ? Project(entry) : new CopilotQuotaState();
+        }
+    }
+
     /// <summary>Compatibility local read; does not implicitly fetch. New callers use ReadAsync for full state.</summary>
     public async Task<CopilotQuotaDto?> GetQuotaAsync(CancellationToken cancellationToken = default)
         => (await ReadAsync(cancellationToken: cancellationToken).ConfigureAwait(false)).Snapshots.FirstOrDefault(x => x.QuotaId == "premium_interactions");

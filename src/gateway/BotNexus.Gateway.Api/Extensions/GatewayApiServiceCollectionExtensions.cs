@@ -34,6 +34,8 @@ public static class GatewayApiServiceCollectionExtensions
         services.TryAddSingleton<LocalReleaseHistoryService>();
         services.AddHttpClient<CopilotDiscoveryClient>();
         services.TryAddSingleton<CopilotQuotaService>();
+        services.TryAddSingleton<BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderQuotaStore>();
+        services.TryAddSingleton<ProviderUsageDetailsService>();
 
         // #3528: the file-per-secret store behind SecretsController. Distinct from the
         // ISecretProvider set the gateway registers - those RESOLVE a declared credential reference
