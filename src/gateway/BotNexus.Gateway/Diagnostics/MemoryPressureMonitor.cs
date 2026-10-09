@@ -93,6 +93,7 @@ public sealed class MemoryPressureMonitor
             GcFragmentedBytes = gcInfo.FragmentedBytes,
             GcCollectionIndex = gcInfo.Index,
             GcGenerations = MapGenerationInfo(gcInfo.Index, gcInfo.GenerationInfo),
+            SqliteConnections = SqliteConnectionFactory.GetConnectionObservation(),
             SqliteAllocatorAvailable = sqliteAllocator.IsAvailable,
             SqliteAllocatorCurrentBytes = sqliteAllocator.CurrentBytes,
             SqliteAllocatorPeakBytes = sqliteAllocator.PeakBytes,

@@ -53,6 +53,12 @@ public sealed class MemoryPressureSnapshot
     /// </summary>
     public long UnattributedPrivateBytesAboveLastGcCommitment { get; init; }
 
+    /// <summary>
+    /// Coherent process-local observations of attached logical SQLite connections, stored at capture.
+    /// Not a native-handle census or memory attribution. Null only for snapshots without this observation.
+    /// </summary>
+    public BotNexus.Persistence.Sqlite.SqliteConnectionObservation? SqliteConnections { get; init; }
+
     /// <summary>Whether the SQLite raw provider was available; false means allocator counters are null, not zero.</summary>
     public bool SqliteAllocatorAvailable { get; init; }
 

@@ -120,6 +120,7 @@ public sealed class DiagnosticsController(
             GcFragmentedBytes = snapshot.GcFragmentedBytes,
             GcCollectionIndex = snapshot.GcCollectionIndex,
             GcGenerations = snapshot.GcGenerations,
+            SqliteConnections = snapshot.SqliteConnections,
             SqliteAllocatorAvailable = snapshot.SqliteAllocatorAvailable,
             SqliteAllocatorCurrentBytes = snapshot.SqliteAllocatorCurrentBytes,
             SqliteAllocatorPeakBytes = snapshot.SqliteAllocatorPeakBytes,
@@ -163,6 +164,7 @@ public sealed class DiagnosticsController(
                 GcFragmentedBytes = s.GcFragmentedBytes,
                 GcCollectionIndex = s.GcCollectionIndex,
                 GcGenerations = s.GcGenerations,
+                SqliteConnections = s.SqliteConnections,
                 SqliteAllocatorAvailable = s.SqliteAllocatorAvailable,
                 SqliteAllocatorCurrentBytes = s.SqliteAllocatorCurrentBytes,
                 SqliteAllocatorPeakBytes = s.SqliteAllocatorPeakBytes,
@@ -350,6 +352,12 @@ public sealed class MemoryPressureDto
     /// The samples are non-atomic; this is not native-memory or allocation-owner attribution.
     /// </summary>
     public long UnattributedPrivateBytesAboveLastGcCommitment { get; init; }
+
+    /// <summary>
+    /// Stored process-local observations of attached logical SQLite connections, not idle pooled
+    /// native handles or allocation ownership. Null only when the stored snapshot has no observation.
+    /// </summary>
+    public BotNexus.Persistence.Sqlite.SqliteConnectionObservation? SqliteConnections { get; init; }
 
     /// <summary>Whether the SQLite raw provider was available; false means allocator counters are null, not zero.</summary>
     public bool SqliteAllocatorAvailable { get; init; }

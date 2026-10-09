@@ -3379,6 +3379,7 @@ The response also includes these diagnostic fields:
 | `gcFragmentedBytes` | Fragmentation reported by that GC. This is not a current live-object census. |
 | `gcCollectionIndex` | Index of the GC supplying these values. Zero means no GC information is available yet. |
 | `gcGenerations` | Array of up to five ordinal runtime slots from the same last GC as `gcCollectionIndex`. Empty (`[]`) when the index is zero. Each entry has `slot` (zero-based integer), `sizeBeforeBytes`, `fragmentationBeforeBytes`, `sizeAfterBytes`, and `fragmentationAfterBytes` (Int64 byte counts). |
+| `sqliteConnections` | Immutable observations of logical connections explicitly created by `SqliteConnectionFactory` or attached through its policy: `currentObservedOpenConnections`, `peakObservedOpenConnections`, `openTransitions`, `closeTransitions`, `poolingEnabledObservedOpenConnections`, and `poolingDisabledObservedOpenConnections` (Int64 counts). `null` only for a stored snapshot without this observation. |
 | `sqliteAllocatorAvailable` | Whether the SQLite raw provider was available at capture. If false, both allocator byte counters are `null`, not zero. |
 | `sqliteAllocatorCurrentBytes` | Current bytes reported by the current SQLite native library allocator, as an Int64; `null` when unavailable. An available zero is valid. |
 | `sqliteAllocatorPeakBytes` | Peak allocator bytes since the native library's last high-water reset, as an Int64, read without resetting; `null` when unavailable. |
@@ -3396,6 +3397,20 @@ for the five-slot and before/after field contract.
 Capture does not force a collection. The pressure percentage and level
 continue to use GC commitment; the extra fields do not change alert thresholds or establish a
 safe memory bound. Use repeated samples and allocation profiling to investigate a peak.
+
+`sqliteConnections` is a coherent process-local observation captured under one lock, not an
+inventory of native handles. It excludes idle pooled native connections, connections that bypass
+the shared factory/policy, and other processes. Pooling counts describe the connection-string
+setting at entry into Open, not whether a particular database is actually pooled. An already-open
+connection begins observation as one open transition when attached. Open events are counted
+before open policy runs, including a policy failure or unavailable native handle; a later observed
+close/dispose balances them. Opens failing before an Open event are excluded. An abandoned open
+connection with no observed close cannot be reconciled by garbage collection, so the current count
+means observed opens not yet balanced by observed closes, not guaranteed currently live resources.
+Peak and transition counts cover the process lifetime, not the history window. Both endpoints
+preserve stored observations; reading history does not resample connections. No path, connection
+string, provider initialization, extra database query, pool clearing, or cache-policy change is
+introduced. These counts do not attribute the process-private memory gap or establish a safe bound.
 
 SQLite allocator counters cover only the current SQLite native library's allocator, not all
 SQLite mappings or page-cache memory, connection counts, or all process-native allocations.
