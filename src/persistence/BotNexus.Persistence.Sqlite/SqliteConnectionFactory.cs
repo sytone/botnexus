@@ -175,7 +175,7 @@ public static class SqliteConnectionFactory
     /// Attaches the busy-timeout <c>StateChange</c> Open-handler to an existing connection without
     /// otherwise altering it. Exposed for stores that already own connection construction (e.g. a
     /// cached, long-lived connection) but still want the single shared timeout policy.
-    /// Attachment is idempotent; the first timeout wins. Already-open connections enter lifetime
+    /// Observation attachment is idempotent; the last supplied timeout wins. Already-open connections enter lifetime
     /// observation immediately, but policy is still applied only on their next Open event.
     /// </summary>
     /// <remarks>
