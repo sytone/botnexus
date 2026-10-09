@@ -92,6 +92,8 @@ public sealed class MemoryPressureMonitor
             GcHeapSizeBytes = gcInfo.HeapSizeBytes,
             GcFragmentedBytes = gcInfo.FragmentedBytes,
             GcCollectionIndex = gcInfo.Index,
+            LastGcCollection = MapLastGcCollection(gcInfo.Index, gcInfo.Generation,
+                gcInfo.Compacted, gcInfo.Concurrent, gcInfo.PinnedObjectsCount, gcInfo.FinalizationPendingCount),
             GcGenerations = MapGenerationInfo(gcInfo.Index, gcInfo.GenerationInfo),
             SqliteConnections = SqliteConnectionFactory.GetConnectionObservation(),
             SqliteAllocatorAvailable = sqliteAllocator.IsAvailable,
@@ -175,6 +177,13 @@ public sealed class MemoryPressureMonitor
                 snapshot.Guidance);
         }
     }
+
+    // Copy public getters from the SAME GCMemoryInfo as the collection index and slots.
+    // Index zero means no collection observation; do not turn unavailable data into zeros.
+    internal static LastGcCollectionSnapshot? MapLastGcCollection(long collectionIndex,
+        int generation, bool compacted, bool concurrent, long pinnedObjectsCount, long finalizationPendingCount) =>
+        collectionIndex == 0 ? null : new LastGcCollectionSnapshot(generation, compacted, concurrent,
+            pinnedObjectsCount, finalizationPendingCount);
 
     // .NET 10 exposes five ordinal slots. Keep storage bounded and copy only the
     // public readings from the SAME GCMemoryInfo used for the enclosing snapshot.
