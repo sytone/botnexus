@@ -128,7 +128,7 @@ Run:
 botnexus provider list
 ```
 
-Check that the intended provider is listed. This checks saved configuration, not whether a request will succeed. A running gateway normally refreshes config-defined provider models when it receives the configuration reload signal, so adding or changing one does not require a process restart. If a store-backed installation has not delivered that signal yet, the saved provider can appear in the CLI before the running gateway catalogue changes. Retry only after checking the gateway's available providers; do not treat persistence alone as a successful connection test.
+Check that the intended provider is listed. This checks saved configuration, not whether a request will succeed. A running gateway normally refreshes config-defined provider models when it receives the configuration reload signal, so adding or changing one does not require a process restart. GitHub Copilot is different: its model catalogue and discovery setup run at gateway startup, including named Copilot instances. After configuring Copilot, restart the gateway yourself, then run `botnexus provider test --name <NAME>` with your instance name before assigning an agent. The setup receipt confirms persistence, not runtime activation, and does not restart the gateway for you. If a store-backed installation has not delivered that signal yet, the saved provider can appear in the CLI before the running gateway catalogue changes. Retry only after checking the gateway's available providers; do not treat persistence alone as a successful connection test.
 
 For the canonical Copilot instance, these additional commands contact the service and may refresh the saved `github-copilot` credential:
 
