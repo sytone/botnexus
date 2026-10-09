@@ -4,6 +4,18 @@ namespace BotNexus.Cron;
 
 public interface ICronStore
 {
+    /// <summary>
+    /// Reads bounded scheduled-run activity across the gateway (or one explicitly scoped job).
+    /// A null query defaults to the last 24 hours. Unsupported implementations fail explicitly;
+    /// they must not substitute invented zero measurements for unavailable activity.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// A measured sum cannot be represented exactly as Int64. The report fails closed with a
+    /// sanitized error instead of returning zero, null, a floating-point estimate or saturation.
+    /// </exception>
+    Task<CronRunActivity> GetRunActivityAsync(CronRunActivityQuery? query = null, CancellationToken ct = default)
+        => throw new NotSupportedException("Scheduled-run activity is not supported by this cron store.");
+
     Task InitializeAsync(CancellationToken ct = default);
     Task<CronJob> CreateAsync(CronJob job, CancellationToken ct = default);
     Task<CronJob?> GetAsync(JobId jobId, CancellationToken ct = default);

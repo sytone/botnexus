@@ -162,6 +162,71 @@ public sealed class GatewayAuthManager
         return null;
     }
 
+    /// <summary>
+    /// Returns the GitHub OAuth refresh credential for the Copilot account without refreshing it
+    /// or exposing the short-lived Copilot session access token. This is for read-only account
+    /// discovery endpoints that require the original OAuth credential.
+    /// </summary>
+    public Task<string?> GetCopilotOAuthTokenAsync(CancellationToken cancellationToken = default)
+        => GetCopilotOAuthTokenAsync("github-copilot", cancellationToken);
+
+    /// <summary>Resolves only the selected configured Copilot account; unknown instances never use the default.</summary>
+    public Task<string?> GetCopilotOAuthTokenAsync(string instance, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(ResolveCopilotAccountCredential(instance)?.OAuthToken);
+    }
+
+    private readonly byte[] _quotaGenerationKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+
+    /// <summary>Reads local auth state without token exchange. Unsupported authorities are unavailable.</summary>
+    public CopilotAccountCredential? ResolveCopilotAccountCredential(string instance)
+    {
+        if (string.IsNullOrWhiteSpace(instance) || instance.Length > 128) return null;
+        var selected = instance.Trim();
+        var providers = _platformConfig.CurrentValue.Providers;
+        ProviderConfig? config = null;
+        if (providers is not null)
+        {
+            var match = providers.FirstOrDefault(p => string.Equals(p.Key, selected, StringComparison.OrdinalIgnoreCase));
+            if (match.Value is null && IsCopilotType(selected))
+            {
+                var alias = string.Equals(selected, "copilot", StringComparison.OrdinalIgnoreCase) ? "github-copilot" : "copilot";
+                match = providers.FirstOrDefault(p => string.Equals(p.Key, alias, StringComparison.OrdinalIgnoreCase));
+            }
+            if (match.Value is not null) { selected = match.Key; config = match.Value; }
+        }
+        var canonical = string.Equals(selected, "copilot", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(selected, "github-copilot", StringComparison.OrdinalIgnoreCase);
+        if (config is null && !canonical) return null;
+        if (config is not null && (!config.Enabled ||
+            !IsCopilotType(config.Type ?? selected) || !IsPublicCopilotEndpoint(config.BaseUrl))) return null;
+        var authKey = canonical ? "copilot" : selected;
+        if (config?.ApiKey is not null)
+        {
+            if (!config.ApiKey.StartsWith("auth:", StringComparison.OrdinalIgnoreCase)) return null;
+            authKey = config.ApiKey[5..].Trim();
+            if (authKey.Length == 0) return null;
+        }
+        LoadAuthEntries();
+        if (!TryGetAuthEntry(authKey, out var entry) ||
+            !string.Equals(entry.Type, "oauth", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(entry.Refresh) || !IsPublicCopilotEndpoint(entry.Endpoint)) return null;
+        var scope = canonical ? "github-copilot" : selected.ToLowerInvariant();
+        var generation = Convert.ToHexString(System.Security.Cryptography.HMACSHA256.HashData(
+            _quotaGenerationKey, System.Text.Encoding.UTF8.GetBytes(authKey + "\n" + entry.Refresh)));
+        return new CopilotAccountCredential(scope, generation, entry.Refresh);
+    }
+
+    private static bool IsCopilotType(string type) =>
+        string.Equals(type, "copilot", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(type, "github-copilot", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPublicCopilotEndpoint(string? endpoint) => string.IsNullOrWhiteSpace(endpoint) ||
+        (Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
+         (uri.Host == "api.githubcopilot.com" || uri.Host == "api.individual.githubcopilot.com") &&
+         uri.IsDefaultPort && string.IsNullOrEmpty(uri.UserInfo));
+
     // #1797: the individual/fallback GitHub Copilot MCP host. Distinct from the chat BaseUrl host
     // (api.individual.githubcopilot.com) - the MCP surface lives on api.githubcopilot.com.
     private const string CopilotMcpFallbackEndpoint = "https://api.githubcopilot.com/mcp";
@@ -254,8 +319,39 @@ public sealed class GatewayAuthManager
             options = options with { StreamIdleTimeoutMs = ResolveStreamIdleTimeoutMs(provider) };
         if (apiKey is not null)
             options = options with { ApiKey = apiKey };
-        return options;
+        var metadata = options.Metadata is null ? new Dictionary<string, object>() : new Dictionary<string, object>(options.Metadata);
+        // Never retain caller attribution after resolving a different credential. Unsupported or
+        // ambiguous paths are explicitly unavailable, not legacy calls attributed to the default.
+        metadata[BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderScope.MetadataKey] =
+            (object?)ResolveHeaderScope(provider, options.ApiKey) ??
+            BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderAttribution.Unavailable;
+        return options with { Metadata = metadata };
     }
+    private BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderScope? ResolveHeaderScope(string provider, string? apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey)) return null;
+        var account = ResolveCopilotAccountCredential(provider);
+        if (account is null) return null;
+        var providers = _platformConfig.CurrentValue.Providers;
+        ProviderConfig? config = null;
+        if (providers is not null) TryGetProviderConfig(providers, provider, out config);
+        var authKey = config?.ApiKey?.StartsWith("auth:", StringComparison.OrdinalIgnoreCase) == true
+            ? config.ApiKey[5..].Trim()
+            : IsCopilotType(provider) ? "copilot" : provider;
+        lock (_sync)
+        {
+            if (!TryGetAuthEntry(authKey, out var selected) ||
+                !string.Equals(selected.Access, apiKey, StringComparison.Ordinal) ||
+                !string.Equals(selected.Refresh, account.OAuthToken, StringComparison.Ordinal)) return null;
+            // GetApiKeyAsync gives an exact auth entry precedence over a configured auth: reference.
+            // Even equal access tokens cannot prove the selected OAuth account supplied the key.
+            if (TryGetAuthEntry(provider, out var exact) && !string.IsNullOrWhiteSpace(exact.Access) &&
+                (!string.Equals(exact.Access, apiKey, StringComparison.Ordinal) ||
+                 !string.Equals(exact.Refresh, selected.Refresh, StringComparison.Ordinal))) return null;
+            return new(account.Instance, account.Generation);
+        }
+    }
+
     private int? ResolveStreamIdleTimeoutMs(string provider)
     {
         var providers = _platformConfig.CurrentValue.Providers;

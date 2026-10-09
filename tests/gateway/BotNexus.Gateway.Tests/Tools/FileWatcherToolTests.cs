@@ -126,6 +126,120 @@ public sealed class FileWatcherToolTests : IDisposable
         ReadText(result).ShouldContain("File deleted:");
     }
 
+    [Theory]
+    [InlineData("deleted")]
+    [InlineData("any")]
+    public async Task FileWatcherTool_ReadinessDeletion_IsObservedWithoutNativeNotification(string eventType)
+    {
+        var root = CreateTempDirectory();
+        var path = Path.Combine(root, "no-notification.txt");
+        File.WriteAllText(path, "delete me");
+        // A real watcher with an unrelated filter deterministically withholds the target notification.
+        // This models the startup delivery gap without relying on OS scheduling or timing.
+        var tool = new FileWatcherTool(
+            Options.Create(new FileWatcherToolOptions { DebounceMilliseconds = 50 }),
+            (directory, _) => new FileSystemWatcher(directory, "unrelated.txt"));
+        var notices = 0;
+
+        var result = await ExecuteAsync(tool, new Dictionary<string, object?>
+        {
+            ["path"] = path,
+            ["event"] = eventType,
+            ["timeout"] = 1
+        }, onUpdate: _ =>
+        {
+            notices++;
+            File.Delete(path);
+        });
+
+        notices.ShouldBe(1);
+        File.Exists(path).ShouldBeFalse();
+        ReadText(result).ShouldContain("File deleted:");
+    }
+
+    [Theory]
+    [InlineData("created")]
+    [InlineData("any")]
+    public async Task FileWatcherTool_ReadinessCreation_IsObservedWithoutNativeNotification(string eventType)
+    {
+        var root = CreateTempDirectory();
+        var path = Path.Combine(root, "no-notification.txt");
+        var tool = new FileWatcherTool(
+            Options.Create(new FileWatcherToolOptions { DebounceMilliseconds = 50 }),
+            (directory, _) => new FileSystemWatcher(directory, "unrelated.txt"));
+
+        var result = await ExecuteAsync(tool, new Dictionary<string, object?>
+        {
+            ["path"] = path,
+            ["event"] = eventType,
+            ["timeout"] = 1
+        }, onUpdate: _ => File.WriteAllText(path, "created"));
+
+        File.Exists(path).ShouldBeTrue();
+        ReadText(result).ShouldContain("File created:");
+    }
+
+    [Theory]
+    [InlineData("deleted")]
+    [InlineData("created")]
+    [InlineData("any")]
+    public async Task FileWatcherTool_ReadinessWithoutMutation_DoesNotInventEvent(string eventType)
+    {
+        var root = CreateTempDirectory();
+        var path = Path.Combine(root, "unchanged.txt");
+        if (eventType != "created")
+            File.WriteAllText(path, "unchanged");
+
+        var result = await ExecuteAsync(CreateTool(), new Dictionary<string, object?>
+        {
+            ["path"] = path,
+            ["event"] = eventType,
+            ["timeout"] = 1
+        }, onUpdate: _ => { });
+
+        ReadText(result).ShouldContain("Timeout after 1 seconds");
+    }
+
+    [Theory]
+    [InlineData("deleted", "deleted")]
+    [InlineData("any", "deleted")]
+    [InlineData("created", "created")]
+    [InlineData("any", "created")]
+    public async Task FileWatcherTool_ImmediateReadinessMutation_ParallelWatchesObserveEvent(
+        string eventType, string mutation)
+    {
+        // Allocate cleanup paths on the test thread; each parallel watch owns a separate directory.
+        var paths = Enumerable.Range(0, 16)
+            .Select(_ => Path.Combine(CreateTempDirectory(), "parallel.txt"))
+            .ToArray();
+        var tool = CreateTool(debounceMilliseconds: 50);
+        var results = await Task.WhenAll(paths.Select(path => Task.Run(async () =>
+        {
+            if (mutation == "deleted")
+                File.WriteAllText(path, "delete me");
+            var notices = 0;
+            var result = await ExecuteAsync(tool, new Dictionary<string, object?>
+            {
+                ["path"] = path,
+                ["event"] = eventType,
+                ["timeout"] = 5
+            }, onUpdate: _ =>
+            {
+                notices++;
+                if (mutation == "deleted")
+                    File.Delete(path);
+                else
+                    File.WriteAllText(path, "created");
+            });
+            notices.ShouldBe(1);
+            return ReadText(result);
+        })));
+
+        results.Length.ShouldBe(16);
+        foreach (var result in results)
+            result.ShouldContain($"File {mutation}:");
+    }
+
     [Fact]
     public async Task FileWatcherTool_TimesOut()
     {
