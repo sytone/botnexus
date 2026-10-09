@@ -3378,6 +3378,7 @@ The response also includes these diagnostic fields:
 | `gcHeapSizeBytes` | Managed heap size reported by the last garbage collection (GC), including fragmentation. |
 | `gcFragmentedBytes` | Fragmentation reported by that GC. This is not a current live-object census. |
 | `gcCollectionIndex` | Index of the GC supplying these values. Zero means no GC information is available yet. |
+| `lastGcCollection` | Immutable characteristics of that GC: `generation` (Int32), `compacted` and `concurrent` (booleans), `pinnedObjectsCount` and `finalizationPendingCount` (Int64 object counts). `null` when the collection index is zero or a stored snapshot has no observation. |
 | `gcGenerations` | Array of up to five ordinal runtime slots from the same last GC as `gcCollectionIndex`. Empty (`[]`) when the index is zero. Each entry has `slot` (zero-based integer), `sizeBeforeBytes`, `fragmentationBeforeBytes`, `sizeAfterBytes`, and `fragmentationAfterBytes` (Int64 byte counts). |
 | `sqliteConnections` | Immutable observations of logical connections explicitly created by `SqliteConnectionFactory` or attached through its policy: `currentObservedOpenConnections`, `peakObservedOpenConnections`, `openTransitions`, `closeTransitions`, `poolingEnabledObservedOpenConnections`, and `poolingDisabledObservedOpenConnections` (Int64 counts). `null` only for a stored snapshot without this observation. |
 | `sqliteAllocatorAvailable` | Whether the SQLite raw provider was available at capture. If false, both allocator byte counters are `null`, not zero. |
@@ -3393,6 +3394,16 @@ atomic with current process-private memory. Both endpoints return this additive 
 preserves the immutable stored readings without resampling GC. No additional sampling timer or
 collection is introduced. See the [.NET 10 GC memory information source](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/GCMemoryInfo.cs)
 for the five-slot and before/after field contract.
+
+`lastGcCollection` comes from the same `GCMemoryInfo` sample as `gcCollectionIndex` and
+`gcGenerations`. `generation` identifies the collected generation, including younger generations;
+`concurrent` identifies a background GC. The pinned-object and ready-for-finalization counts are
+what that collection observed, not a current pinned-object population, live-object census, or
+finalization queue size. An available zero count is distinct from a missing (`null`) observation.
+`compacted` identifies a compacting GC but does not prove that process-private memory was reclaimed
+or returned to the operating system. Both endpoints preserve the immutable observation; history
+mapping does not resample GC. These fields help interpret collection and fragmentation readings,
+not identify the cause of retained memory. See the [.NET GC collection characteristics](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/GCMemoryInfo.cs).
 
 Capture does not force a collection. The pressure percentage and level
 continue to use GC commitment; the extra fields do not change alert thresholds or establish a

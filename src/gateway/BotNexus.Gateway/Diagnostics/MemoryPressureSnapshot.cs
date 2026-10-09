@@ -33,6 +33,13 @@ public sealed class MemoryPressureSnapshot
     /// <summary>Index identifying the GC represented by these metrics; zero when no collection has occurred.</summary>
     public long GcCollectionIndex { get; init; }
 
+    /// <summary>
+    /// Immutable characteristics from the same last GC as GcCollectionIndex and GcGenerations.
+    /// Null when no collection observation exists. Counts are not a current pinned/live census;
+    /// compaction does not prove process-memory reclamation.
+    /// </summary>
+    public LastGcCollectionSnapshot? LastGcCollection { get; init; }
+
     private IReadOnlyList<GcGenerationSnapshot> _gcGenerations = Array.AsReadOnly(Array.Empty<GcGenerationSnapshot>());
 
     /// <summary>
