@@ -158,26 +158,107 @@ public sealed class SubAgentResultReceiptTests : IDisposable
         parent.GetHistorySnapshot().ShouldContain(e => e.ToolCallId == "commit-cancel" && e.Kind == MessageKind.ToolResult);
     }
 
-    [Fact]
-    public async Task Consume_ExistingErrorForSameCall_RefusesReceiptAndPreservesOriginalError()
+    [Theory]
+    [InlineData(false, "old admission error", true)]
+    [InlineData(true, "old admission error", true)]
+    [InlineData(true, "different successful result", false)]
+    [InlineData(true, "retained-result", true)]
+    public async Task Consume_ExistingCollision_RefusesReceiptAndPreservesOriginalResult(
+        bool legacyKey, string originalContent, bool isError)
     {
         var store = await ArrangeAsync();
         var parent = (await store.GetAsync(Parent)).ShouldNotBeNull();
-        var oldError = Result("collision") with { Content = "old admission error", ToolIsError = true };
-        oldError.PersistenceKey = "tool-result:collision";
-        parent.AddEntry(oldError);
+        parent.AddEntry(Result("collision") with { Content = originalContent, ToolIsError = isError });
         await store.SaveAsync(parent);
 
-        var proposed = Result("collision");
-        proposed.PersistenceKey = "tool-result:collision";
-        await Should.ThrowAsync<InvalidOperationException>(() =>
-            store.ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, proposed));
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.Parameters.AddWithValue("$parent", Parent.Value);
+        command.Parameters.AddWithValue("$key", legacyKey ? Guid.NewGuid().ToString("N") : "tool-result:collision");
+        // Simulate pre-dedup history, including normalized payload-only storage.
+        command.CommandText = "UPDATE session_history SET persistence_key=$key, content=NULL WHERE session_id=$parent AND tool_call_id='collision'";
+        (await command.ExecuteNonQueryAsync()).ShouldBe(1);
+        command.CommandText = "SELECT id FROM session_history WHERE session_id=$parent AND tool_call_id='collision'";
+        var originalId = await command.ExecuteScalarAsync();
 
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            Store().ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, Result("collision")));
+
+        command.CommandText = "SELECT id, persistence_key, content FROM session_history WHERE session_id=$parent AND tool_call_id='collision'";
+        await using (var reader = await command.ExecuteReaderAsync())
+        {
+            (await reader.ReadAsync()).ShouldBeTrue();
+            reader.GetInt64(0).ShouldBe(originalId);
+            reader.GetString(1).ShouldBe(command.Parameters["$key"].Value);
+            reader.IsDBNull(2).ShouldBeTrue();
+            (await reader.ReadAsync()).ShouldBeFalse();
+        }
+        command.CommandText = "SELECT result_content, is_error FROM tool_invocations WHERE session_id=$parent AND tool_call_id='collision'";
+        await using (var reader = await command.ExecuteReaderAsync())
+        {
+            (await reader.ReadAsync()).ShouldBeTrue();
+            reader.GetString(0).ShouldBe(originalContent);
+            reader.GetInt64(1).ShouldBe(isError ? 1L : 0L);
+        }
+        command.CommandText = "SELECT consumed_tool_call_id FROM sub_agent_sessions WHERE id='retained-run'";
+        (await command.ExecuteScalarAsync()).ShouldBe(DBNull.Value);
         var coldParent = (await Store().GetAsync(Parent)).ShouldNotBeNull();
-        coldParent.GetHistorySnapshot().Single(e => e.Kind == MessageKind.ToolResult
-            && e.ToolCallId == "collision").Content.ShouldBe("old admission error");
+        var original = coldParent.GetHistorySnapshot().Single(e => e.Kind == MessageKind.ToolResult
+            && e.ToolCallId == "collision");
+        original.Content.ShouldBe(originalContent);
+        original.ToolIsError.ShouldBe(isError);
         (await Store().ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, Result("fresh")))
             .ShouldBe("retained-result");
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task Consume_LegacyMatchingResult_ConvergesOnlyWithOneOriginalRow(int originalRows)
+    {
+        var store = await ArrangeAsync();
+        var parent = (await store.GetAsync(Parent)).ShouldNotBeNull();
+        parent.AddEntry(Result("matching"));
+        await store.SaveAsync(parent);
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.Parameters.AddWithValue("$parent", Parent.Value);
+        var originalKey = Guid.NewGuid().ToString("N");
+        command.Parameters.AddWithValue("$key", originalKey);
+        command.CommandText = "UPDATE session_history SET persistence_key=$key, content=NULL WHERE session_id=$parent AND tool_call_id='matching'";
+        (await command.ExecuteNonQueryAsync()).ShouldBe(1);
+        if (originalRows == 2)
+        {
+            command.CommandText = """
+                INSERT INTO session_history (session_id, role, timestamp, message_kind, tool_call_id, tool_invocation_id, persistence_key, tool_is_error)
+                SELECT session_id, role, timestamp, message_kind, tool_call_id, tool_invocation_id, 'second-legacy-key', tool_is_error
+                FROM session_history WHERE session_id=$parent AND tool_call_id='matching'
+                """;
+            (await command.ExecuteNonQueryAsync()).ShouldBe(1);
+        }
+        if (originalRows == 1)
+        {
+            (await Store().ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, Result("matching")))
+                .ShouldBe("retained-result");
+            (await Store().ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, Result("matching")))
+                .ShouldBe("retained-result");
+        }
+        else
+        {
+            await Should.ThrowAsync<InvalidOperationException>(() =>
+                Store().ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, Result("matching")));
+        }
+        command.CommandText = "SELECT COUNT(*) FROM session_history WHERE session_id=$parent AND tool_call_id='matching'";
+        (await command.ExecuteScalarAsync()).ShouldBe((long)originalRows);
+        command.CommandText = "SELECT COUNT(*) FROM session_history WHERE session_id=$parent AND persistence_key=$key AND content IS NULL";
+        (await command.ExecuteScalarAsync()).ShouldBe(1L);
+        command.CommandText = "SELECT consumed_tool_call_id FROM sub_agent_sessions WHERE id='retained-run'";
+        (await command.ExecuteScalarAsync()).ShouldBe(originalRows == 1 ? "matching" : DBNull.Value);
+        if (originalRows == 2)
+            (await Store().ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, Result("fresh")))
+                .ShouldBe("retained-result");
     }
 
     [Fact]

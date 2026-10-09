@@ -3183,9 +3183,37 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 return (string?)await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)
                     ?? throw new InvalidOperationException("Receipt has no durable tool result.");
             }
-            await WriteHistoryRowsAsync(connection, transaction, parentSessionId, entries, cancellationToken).ConfigureAwait(false);
-            command.CommandText = "SELECT result_content FROM tool_invocations WHERE session_id=$parent AND tool_call_id=$call";
+            // Legacy history keys are not call identities. Check the indexed invocation and its
+            // original result rows before normalization can overwrite an earlier result payload.
             command.Parameters.AddWithValue("$call", result.ToolCallId);
+            command.CommandText = """
+                SELECT i.result_content, i.is_error, i.completed_at, h.id,
+                       COALESCE(h.content, i.result_content), h.tool_is_error
+                FROM tool_invocations i
+                LEFT JOIN session_history h ON h.tool_invocation_id=i.id AND h.session_id=i.session_id
+                    AND (h.message_kind='tool-result'
+                         OR (h.message_kind IS NULL AND h.role='tool' AND h.tool_args IS NULL))
+                WHERE i.session_id=$parent AND i.tool_call_id=$call
+                LIMIT 2
+                """;
+            var hasOriginalResult = false;
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    hasOriginalResult = !reader.IsDBNull(0) || reader.GetInt64(1) != 0
+                        || !reader.IsDBNull(2) || !reader.IsDBNull(3);
+                    if (hasOriginalResult && (reader.IsDBNull(0) || reader.GetString(0) != entries[0].Content
+                        || reader.GetInt64(1) != 0 || reader.IsDBNull(3)
+                        || reader.IsDBNull(4) || reader.GetString(4) != entries[0].Content
+                        || (!reader.IsDBNull(5) && reader.GetInt64(5) != 0)
+                        || await reader.ReadAsync(cancellationToken).ConfigureAwait(false)))
+                        throw new InvalidOperationException("The original tool result differs or is ambiguous; no consumption receipt was committed.");
+                }
+            }
+            if (!hasOriginalResult)
+                await WriteHistoryRowsAsync(connection, transaction, parentSessionId, entries, cancellationToken).ConfigureAwait(false);
+            command.CommandText = "SELECT result_content FROM tool_invocations WHERE session_id=$parent AND tool_call_id=$call";
             var retainedPayload = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
             if (retainedPayload != entries[0].Content)
                 throw new InvalidOperationException("The original tool result differs; no consumption receipt was committed.");
