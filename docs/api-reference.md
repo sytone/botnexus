@@ -3378,13 +3378,22 @@ The response also includes these diagnostic fields:
 | `gcHeapSizeBytes` | Managed heap size reported by the last garbage collection (GC), including fragmentation. |
 | `gcFragmentedBytes` | Fragmentation reported by that GC. This is not a current live-object census. |
 | `gcCollectionIndex` | Index of the GC supplying these values. Zero means no GC information is available yet. |
+| `gcGenerations` | Array of up to five ordinal runtime slots from the same last GC as `gcCollectionIndex`. Empty (`[]`) when the index is zero. Each entry has `slot` (zero-based integer), `sizeBeforeBytes`, `fragmentationBeforeBytes`, `sizeAfterBytes`, and `fragmentationAfterBytes` (Int64 byte counts). |
 | `sqliteAllocatorAvailable` | Whether the SQLite raw provider was available at capture. If false, both allocator byte counters are `null`, not zero. |
 | `sqliteAllocatorCurrentBytes` | Current bytes reported by the current SQLite native library allocator, as an Int64; `null` when unavailable. An available zero is valid. |
 | `sqliteAllocatorPeakBytes` | Peak allocator bytes since the native library's last high-water reset, as an Int64, read without resetting; `null` when unavailable. |
 | `unattributedPrivateBytesAboveLastGcCommitment` | `max(0, privateMemoryBytes - gcCommittedBytes)`. The process and last-GC measurements are not atomic or necessarily contemporaneous. This difference does not identify native allocations, SQLite caches, or retained transcripts. |
 
 `gcCommittedBytes` and the other GC memory values describe the last collection, not current
-allocation ownership. Capture does not force a collection. The pressure percentage and level
+allocation ownership. `gcGenerations` copies the runtime's `GenerationInfo` slots in their original
+order, with sizes and fragmentation on entry to and exit from that collection. Slots are ordinal
+identifiers, not generation labels. These readings are not a current live-object count and are not
+atomic with current process-private memory. Both endpoints return this additive field; history
+preserves the immutable stored readings without resampling GC. No additional sampling timer or
+collection is introduced. See the [.NET 10 GC memory information source](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/GCMemoryInfo.cs)
+for the five-slot and before/after field contract.
+
+Capture does not force a collection. The pressure percentage and level
 continue to use GC commitment; the extra fields do not change alert thresholds or establish a
 safe memory bound. Use repeated samples and allocation profiling to investigate a peak.
 

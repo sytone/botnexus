@@ -119,6 +119,7 @@ public sealed class DiagnosticsController(
             GcHeapSizeBytes = snapshot.GcHeapSizeBytes,
             GcFragmentedBytes = snapshot.GcFragmentedBytes,
             GcCollectionIndex = snapshot.GcCollectionIndex,
+            GcGenerations = snapshot.GcGenerations,
             SqliteAllocatorAvailable = snapshot.SqliteAllocatorAvailable,
             SqliteAllocatorCurrentBytes = snapshot.SqliteAllocatorCurrentBytes,
             SqliteAllocatorPeakBytes = snapshot.SqliteAllocatorPeakBytes,
@@ -161,6 +162,7 @@ public sealed class DiagnosticsController(
                 GcHeapSizeBytes = s.GcHeapSizeBytes,
                 GcFragmentedBytes = s.GcFragmentedBytes,
                 GcCollectionIndex = s.GcCollectionIndex,
+                GcGenerations = s.GcGenerations,
                 SqliteAllocatorAvailable = s.SqliteAllocatorAvailable,
                 SqliteAllocatorCurrentBytes = s.SqliteAllocatorCurrentBytes,
                 SqliteAllocatorPeakBytes = s.SqliteAllocatorPeakBytes,
@@ -329,6 +331,19 @@ public sealed class MemoryPressureDto
 
     /// <summary>Index of the GC supplying these values; zero means no collection data exists.</summary>
     public long GcCollectionIndex { get; init; }
+
+    private IReadOnlyList<GcGenerationSnapshot> _gcGenerations = Array.AsReadOnly(Array.Empty<GcGenerationSnapshot>());
+
+    /// <summary>
+    /// Up to five ordinal runtime slots with size and fragmentation before/after the
+    /// same last GC as GcCollectionIndex; empty when collection data is unavailable.
+    /// Stored readings are defensively copied, never resampled by DTO mapping.
+    /// </summary>
+    public IReadOnlyList<GcGenerationSnapshot> GcGenerations
+    {
+        get => _gcGenerations;
+        init => _gcGenerations = Array.AsReadOnly(value.Take(5).ToArray());
+    }
 
     /// <summary>
     /// Nonnegative difference between current private bytes and last-GC commitment.
