@@ -168,16 +168,64 @@ public sealed class GatewayAuthManager
     /// discovery endpoints that require the original OAuth credential.
     /// </summary>
     public Task<string?> GetCopilotOAuthTokenAsync(CancellationToken cancellationToken = default)
+        => GetCopilotOAuthTokenAsync("github-copilot", cancellationToken);
+
+    /// <summary>Resolves only the selected configured Copilot account; unknown instances never use the default.</summary>
+    public Task<string?> GetCopilotOAuthTokenAsync(string instance, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        LoadAuthEntries();
-        return Task.FromResult(
-            TryGetAuthEntry("copilot", out var entry) &&
-            string.Equals(entry.Type, "oauth", StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(entry.Refresh)
-                ? entry.Refresh
-                : null);
+        return Task.FromResult(ResolveCopilotAccountCredential(instance)?.OAuthToken);
     }
+
+    private readonly byte[] _quotaGenerationKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+
+    /// <summary>Reads local auth state without token exchange. Unsupported authorities are unavailable.</summary>
+    public CopilotAccountCredential? ResolveCopilotAccountCredential(string instance)
+    {
+        if (string.IsNullOrWhiteSpace(instance) || instance.Length > 128) return null;
+        var selected = instance.Trim();
+        var providers = _platformConfig.CurrentValue.Providers;
+        ProviderConfig? config = null;
+        if (providers is not null)
+        {
+            var match = providers.FirstOrDefault(p => string.Equals(p.Key, selected, StringComparison.OrdinalIgnoreCase));
+            if (match.Value is null && IsCopilotType(selected))
+            {
+                var alias = string.Equals(selected, "copilot", StringComparison.OrdinalIgnoreCase) ? "github-copilot" : "copilot";
+                match = providers.FirstOrDefault(p => string.Equals(p.Key, alias, StringComparison.OrdinalIgnoreCase));
+            }
+            if (match.Value is not null) { selected = match.Key; config = match.Value; }
+        }
+        var canonical = string.Equals(selected, "copilot", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(selected, "github-copilot", StringComparison.OrdinalIgnoreCase);
+        if (config is null && !canonical) return null;
+        if (config is not null && (!config.Enabled ||
+            !IsCopilotType(config.Type ?? selected) || !IsPublicCopilotEndpoint(config.BaseUrl))) return null;
+        var authKey = canonical ? "copilot" : selected;
+        if (config?.ApiKey is not null)
+        {
+            if (!config.ApiKey.StartsWith("auth:", StringComparison.OrdinalIgnoreCase)) return null;
+            authKey = config.ApiKey[5..].Trim();
+            if (authKey.Length == 0) return null;
+        }
+        LoadAuthEntries();
+        if (!TryGetAuthEntry(authKey, out var entry) ||
+            !string.Equals(entry.Type, "oauth", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(entry.Refresh) || !IsPublicCopilotEndpoint(entry.Endpoint)) return null;
+        var scope = canonical ? "github-copilot" : selected.ToLowerInvariant();
+        var generation = Convert.ToHexString(System.Security.Cryptography.HMACSHA256.HashData(
+            _quotaGenerationKey, System.Text.Encoding.UTF8.GetBytes(authKey + "\n" + entry.Refresh)));
+        return new CopilotAccountCredential(scope, generation, entry.Refresh);
+    }
+
+    private static bool IsCopilotType(string type) =>
+        string.Equals(type, "copilot", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(type, "github-copilot", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPublicCopilotEndpoint(string? endpoint) => string.IsNullOrWhiteSpace(endpoint) ||
+        (Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
+         (uri.Host == "api.githubcopilot.com" || uri.Host == "api.individual.githubcopilot.com") &&
+         uri.IsDefaultPort && string.IsNullOrEmpty(uri.UserInfo));
 
     // #1797: the individual/fallback GitHub Copilot MCP host. Distinct from the chat BaseUrl host
     // (api.individual.githubcopilot.com) - the MCP surface lives on api.githubcopilot.com.

@@ -5,159 +5,218 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace BotNexus.Gateway.Api.Controllers;
 
-/// <summary>Read-only Copilot account quota surface, separate from observed provider rate limits.</summary>
+/// <summary>Admin-only local account state and explicitly requested refresh.</summary>
 [ApiController]
 [Route("api/copilot/quota")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class CopilotQuotaController(CopilotQuotaService service) : ControllerBase
 {
-    private readonly CopilotQuotaService _service = service;
+    private bool IsAdmin => HttpContext?.Items.TryGetValue(GatewayAuthMiddleware.CallerIdentityItemKey, out var caller) == true &&
+        caller is GatewayCallerIdentity { IsAdmin: true };
 
-    /// <summary>Gets the account's premium-interaction allowance, or no content if unavailable.</summary>
+    /// <summary>Returns local cached state immediately; never fetches from GitHub.</summary>
     [HttpGet]
-    public async Task<IActionResult> GetQuota(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetQuota(CancellationToken cancellationToken, [FromQuery] string instance = "github-copilot")
     {
-        // This is an account-wide resource. Agent-scoped and satellite keys must not read it.
-        if (HttpContext?.Items.TryGetValue(GatewayAuthMiddleware.CallerIdentityItemKey, out var caller) != true ||
-            caller is not GatewayCallerIdentity { IsAdmin: true })
-            return Forbid();
+        if (!IsAdmin) return StatusCode(StatusCodes.Status403Forbidden);
+        return Ok(await service.ReadAsync(instance, cancellationToken).ConfigureAwait(false));
+    }
 
-        try
-        {
-            var quota = await _service.GetQuotaAsync(cancellationToken).ConfigureAwait(false);
-            return quota is null ? NoContent() : Ok(quota);
-        }
-        catch (CopilotQuotaUnavailableException)
-        {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { message = "Copilot account quota is temporarily unavailable." });
-        }
+    /// <summary>Requests a single bounded refresh; concurrent requests do not queue.</summary>
+    [HttpPost("refresh")]
+    public async Task<IActionResult> RefreshQuota(CancellationToken cancellationToken, [FromQuery] string instance = "github-copilot", [FromQuery] bool force = false)
+    {
+        if (!IsAdmin) return StatusCode(StatusCodes.Status403Forbidden);
+        return Ok(await service.RefreshAsync(instance, force, cancellationToken).ConfigureAwait(false));
     }
 }
 
-/// <summary>On-demand Copilot account quota retrieval with bounded caching and failure throttling.</summary>
-public sealed class CopilotQuotaService(
-    GatewayAuthManager authManager,
-    CopilotDiscoveryClient discoveryClient,
-    ILogger<CopilotQuotaService> logger,
-    TimeProvider? timeProvider = null)
+/// <summary>Bounded process-local cache isolated by configured instance and non-secret credential generation.</summary>
+public sealed class CopilotQuotaService(GatewayAuthManager authManager, CopilotDiscoveryClient discoveryClient,
+    ILogger<CopilotQuotaService> logger, TimeProvider? timeProvider = null)
 {
-    private static readonly TimeSpan SuccessCacheDuration = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan FailureCacheDuration = TimeSpan.FromMinutes(1);
-    private readonly GatewayAuthManager _authManager = authManager;
-    private readonly CopilotDiscoveryClient _discoveryClient = discoveryClient;
-    private readonly ILogger<CopilotQuotaService> _logger = logger;
-    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private CopilotQuotaDto? _cached;
-    private DateTimeOffset _cacheExpiresAt;
-    private bool _lastFetchFailed;
-    private string? _cachedCredential;
+    private readonly TimeProvider _clock = timeProvider ?? TimeProvider.System;
+    private readonly object _sync = new();
+    private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private const int MaxAccounts = 64;
+    private static readonly TimeSpan SuccessDuration = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MinimumInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan UpstreamTimeout = TimeSpan.FromSeconds(10);
 
-    /// <summary>Fetches the premium-interaction quota if configured, honoring short-lived cache entries.</summary>
-    public async Task<CopilotQuotaDto?> GetQuotaAsync(CancellationToken cancellationToken = default)
+    /// <summary>Local auth resolution also invalidates a rotated credential before exposing cached state.</summary>
+    public Task<CopilotQuotaState> ReadAsync(string instance = "github-copilot", CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            var credential = authManager.ResolveCopilotAccountCredential(instance);
+            var entry = ResolveEntry(instance, credential);
+            return Task.FromResult(entry is null ? new CopilotQuotaState() : Project(entry));
+        }
+    }
+
+    /// <summary>Compatibility local read; does not implicitly fetch. New callers use ReadAsync for full state.</summary>
+    public async Task<CopilotQuotaDto?> GetQuotaAsync(CancellationToken cancellationToken = default)
+        => (await ReadAsync(cancellationToken: cancellationToken).ConfigureAwait(false)).Snapshots.FirstOrDefault(x => x.QuotaId == "premium_interactions");
+
+    /// <summary>Starts at most one fetch per scope, rejects queues and honors success/failure cadence.</summary>
+    public async Task<CopilotQuotaState> RefreshAsync(string instance = "github-copilot", bool force = false, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        CopilotAccountCredential? credential;
+        Entry entry;
+        lock (_sync)
+        {
+            credential = authManager.ResolveCopilotAccountCredential(instance);
+            var resolved = ResolveEntry(instance, credential);
+            if (resolved is null || credential is null) return new CopilotQuotaState();
+            entry = resolved;
+            var now = _clock.GetUtcNow();
+            if (entry.Busy || now < entry.NextAttempt || (!force && entry.LastSuccess is not null && now < entry.LastSuccess + SuccessDuration && entry.AttemptState == "success"))
+                return Project(entry);
+            entry.Busy = true;
+            entry.AttemptState = "loading";
+            entry.LastAttempt = now;
+            entry.NextAttempt = now + MinimumInterval;
+        }
+        using var deadline = new CancellationTokenSource(UpstreamTimeout, _clock);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, cancellationToken);
+        Task<IReadOnlyList<CopilotQuotaDto>>? upstream = null;
         try
         {
-            try
+            upstream = discoveryClient.GetAccountQuotaAsync(credential.OAuthToken, _clock.GetUtcNow(), linked.Token);
+            var snapshots = await upstream.WaitAsync(UpstreamTimeout, _clock, cancellationToken).ConfigureAwait(false);
+            lock (_sync)
             {
-                var token = await _authManager.GetCopilotOAuthTokenAsync(cancellationToken).ConfigureAwait(false);
-                if (!string.Equals(_cachedCredential, token, StringComparison.Ordinal))
+                var current = authManager.ResolveCopilotAccountCredential(instance);
+                ResolveEntry(instance, current);
+                if (current?.Generation == credential.Generation && entry.Generation == credential.Generation)
                 {
-                    _cachedCredential = token;
-                    _cached = null;
-                    _lastFetchFailed = false;
-                    _cacheExpiresAt = default;
+                    entry.Snapshots = snapshots;
+                    entry.LastSuccess = _clock.GetUtcNow();
+                    entry.AttemptState = "success";
                 }
-                if (_cacheExpiresAt > _timeProvider.GetUtcNow())
-                {
-                    if (_lastFetchFailed) throw new CopilotQuotaUnavailableException();
-                    return _cached;
-                }
-                if (string.IsNullOrWhiteSpace(token))
-                {
-                    _cached = null;
-                    _lastFetchFailed = false;
-                    _cacheExpiresAt = _timeProvider.GetUtcNow().Add(SuccessCacheDuration);
-                    return null;
-                }
-
-                var user = await _discoveryClient.GetUserAsync(token, cancellationToken).ConfigureAwait(false);
-                var snapshot = user.QuotaSnapshots?.GetValueOrDefault("premium_interactions");
-                if (snapshot is not null && !IsValidSnapshot(snapshot))
-                    throw new InvalidOperationException("Copilot quota snapshot was malformed.");
-
-                _cached = snapshot is null ? null : new CopilotQuotaDto
-                {
-                    QuotaId = "premium_interactions",
-                    Entitlement = SafeCount(snapshot.Entitlement),
-                    Remaining = SafeCount(snapshot.QuotaRemaining),
-                    PercentRemaining = SafePercent(snapshot.PercentRemaining),
-                    IsUnlimited = snapshot.Unlimited,
-                    ResetDate = SafeDate(user.QuotaResetDate),
-                    ObservedAtUtc = _timeProvider.GetUtcNow()
-                };
-                _lastFetchFailed = false;
-                _cacheExpiresAt = _timeProvider.GetUtcNow().Add(SuccessCacheDuration);
-                return _cached;
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            lock (_sync) { if (entry.Generation == credential.Generation) entry.AttemptState = "cancelled"; }
+            throw;
+        }
+        catch (Exception)
+        {
+            // Never log exception messages, type names, bodies or credential/profile data.
+            logger.LogWarning("Copilot account quota lookup unavailable.");
+            lock (_sync)
             {
-                throw;
-            }
-            catch (CopilotQuotaUnavailableException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("Copilot account quota lookup failed ({FailureType}).", ex.GetType().Name);
-                _cached = null;
-                _lastFetchFailed = true;
-                _cacheExpiresAt = _timeProvider.GetUtcNow().Add(FailureCacheDuration);
-                throw new CopilotQuotaUnavailableException();
+                ResolveEntry(instance, authManager.ResolveCopilotAccountCredential(instance));
+                if (entry.Generation == credential.Generation) entry.AttemptState = "error";
             }
         }
         finally
         {
-            _gate.Release();
+            linked.Cancel();
+            lock (_sync)
+            {
+                if (entry.Generation == credential.Generation) entry.NextAttempt = _clock.GetUtcNow() + MinimumInterval;
+                if (upstream is null || upstream.IsCompleted) entry.Busy = false;
+                else _ = DrainAsync(upstream, entry);
+            }
+        }
+        lock (_sync)
+        {
+            var current = ResolveEntry(instance, authManager.ResolveCopilotAccountCredential(instance));
+            return current is null ? new CopilotQuotaState() : Project(current);
         }
     }
 
-    private static bool IsValidSnapshot(CopilotQuotaSnapshot snapshot) =>
-        string.Equals(snapshot.QuotaId, "premium_interactions", StringComparison.Ordinal) &&
-        double.IsFinite(snapshot.Entitlement) && snapshot.Entitlement >= 0 &&
-        double.IsFinite(snapshot.QuotaRemaining) && snapshot.QuotaRemaining >= 0 &&
-        double.IsFinite(snapshot.PercentRemaining) && snapshot.PercentRemaining is >= 0 and <= 100 &&
-        (snapshot.Unlimited || snapshot.QuotaRemaining <= snapshot.Entitlement);
+    private async Task DrainAsync(Task<IReadOnlyList<CopilotQuotaDto>> upstream, Entry entry)
+    {
+        try { await upstream.ConfigureAwait(false); }
+        catch (Exception) { /* Observe detached transport failure without leaking details. */ }
+        finally { lock (_sync) entry.Busy = false; }
+    }
 
-    private static int SafeCount(double value) => (int)Math.Clamp(Math.Floor(value), 0, int.MaxValue);
-    private static double SafePercent(double value) => Math.Clamp(value, 0, 100);
-    private static string? SafeDate(string? value) => value is { Length: <= 32 } && DateOnly.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out _) ? value : null;
+    private Entry? ResolveEntry(string requested, CopilotAccountCredential? credential)
+    {
+        var scope = credential?.Instance ?? (string.Equals(requested, "copilot", StringComparison.OrdinalIgnoreCase) ? "github-copilot" : requested.Trim().ToLowerInvariant());
+        if (credential is null)
+        {
+            if (_entries.TryGetValue(scope, out var unavailable))
+            {
+                unavailable.Snapshots = [];
+                unavailable.LastSuccess = null;
+                unavailable.Generation = string.Empty;
+                unavailable.LastAttempt = null;
+                unavailable.AttemptState = "unavailable";
+                unavailable.NextAttempt = default;
+            }
+            return null;
+        }
+        if (_entries.TryGetValue(scope, out var entry))
+        {
+            if (entry.Generation != credential.Generation)
+            {
+                // Preserve the old in-flight slot until it drains, but never its account data.
+                entry.Generation = credential.Generation;
+                entry.Snapshots = [];
+                entry.LastSuccess = null;
+                entry.LastAttempt = null;
+                entry.AttemptState = "unavailable";
+                entry.NextAttempt = default;
+            }
+            return entry;
+        }
+        // Admission fails closed instead of evicting a busy entry and permitting another flight.
+        if (_entries.Count >= MaxAccounts) return null;
+        entry = new Entry { Scope = scope, Generation = credential.Generation };
+        _entries.Add(scope, entry);
+        return entry;
+    }
+
+    private CopilotQuotaState Project(Entry entry) => new()
+    {
+        Instance = entry.Scope,
+        Snapshots = entry.Snapshots,
+        LastSuccessAtUtc = entry.LastSuccess,
+        LastAttemptAtUtc = entry.LastAttempt,
+        AttemptState = entry.AttemptState,
+        IsStale = entry.LastSuccess is not null && (entry.AttemptState != "success" || _clock.GetUtcNow() >= entry.LastSuccess + SuccessDuration),
+        NextRefreshAtUtc = entry.NextAttempt == default ? null : entry.NextAttempt
+    };
+
+    private sealed class Entry
+    {
+        public required string Scope { get; init; }
+        public required string Generation { get; set; }
+    /// <summary>Last successful allow-listed dimensions, empty when unknown.</summary>
+        public IReadOnlyList<CopilotQuotaDto> Snapshots { get; set; } = [];
+        public DateTimeOffset? LastSuccess { get; set; }
+        public DateTimeOffset? LastAttempt { get; set; }
+        public DateTimeOffset NextAttempt { get; set; }
+    /// <summary>Local attempt status without upstream details.</summary>
+        public string AttemptState { get; set; } = "unavailable";
+        public bool Busy { get; set; }
+    }
 }
 
-/// <summary>Allow-listed public account-quota data; no raw upstream fields are serialized.</summary>
-public sealed class CopilotQuotaDto
+/// <summary>Allow-listed local state; unknown accounts return unavailable without reflecting input.</summary>
+public sealed class CopilotQuotaState
 {
-    /// <summary>The Copilot quota dimension.</summary>
-    public string QuotaId { get; init; } = "premium_interactions";
-    /// <summary>The account's total premium-interaction entitlement.</summary>
-    public int Entitlement { get; init; }
-    /// <summary>The premium-interaction allowance remaining at observation time.</summary>
-    public int Remaining { get; init; }
-    /// <summary>The provider-reported percentage remaining.</summary>
-    public double PercentRemaining { get; init; }
-    /// <summary>Whether Copilot reports this quota as unlimited.</summary>
-    public bool IsUnlimited { get; init; }
-    /// <summary>The provider-reported reset date, if valid.</summary>
-    public string? ResetDate { get; init; }
-    /// <summary>When the quota was observed.</summary>
-    public DateTimeOffset ObservedAtUtc { get; init; }
-}
-
-/// <summary>Indicates that the upstream Copilot account quota could not be fetched.</summary>
-public sealed class CopilotQuotaUnavailableException : Exception
-{
-    /// <summary>Creates a generic exception that carries no upstream details or credentials.</summary>
-    public CopilotQuotaUnavailableException() : base("Copilot account quota is unavailable.") { }
+    /// <summary>The observation source, not local usage.</summary>
+    public string Source { get; init; } = "account-api";
+    /// <summary>Canonical configured instance, or null when unavailable.</summary>
+    public string? Instance { get; init; }
+    /// <summary>Last successful allow-listed dimensions, empty when unknown.</summary>
+    public IReadOnlyList<CopilotQuotaDto> Snapshots { get; init; } = [];
+    /// <summary>Last successful observation, null before success or after rotation.</summary>
+    public DateTimeOffset? LastSuccessAtUtc { get; init; }
+    /// <summary>Last attempt time, null before a refresh.</summary>
+    public DateTimeOffset? LastAttemptAtUtc { get; init; }
+    /// <summary>Earliest permitted attempt; normal successful refresh also honors five-minute caching.</summary>
+    public DateTimeOffset? NextRefreshAtUtc { get; init; }
+    /// <summary>Local attempt status without upstream details.</summary>
+    public string AttemptState { get; init; } = "unavailable";
+    /// <summary>Whether the retained success is expired or the latest attempt did not succeed.</summary>
+    public bool IsStale { get; init; }
 }
