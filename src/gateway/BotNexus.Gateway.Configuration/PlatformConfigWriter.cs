@@ -524,7 +524,7 @@ public sealed class PlatformConfigWriter
                 // Apply to a candidate first: a failure part-way through must not leave the live
                 // root half-mutated, because MutateCoreAsync's guard compares against it.
                 var candidate = root.DeepClone().AsObject();
-                var applyError = ConfigPatchApplier.Apply(candidate, operations);
+                var applyError = candidate.Apply(operations);
                 if (applyError is not null)
                     return Task.FromResult<string?>(applyError);
 
