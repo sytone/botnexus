@@ -745,6 +745,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         public bool HandleCreated { get; set; }
     }
 
+    /// <inheritdoc />
+    public int ResolveSpawnTimeoutSeconds(AgentId parentAgentId, int requestedTimeoutSeconds)
+        => _options.CurrentValue.SubAgents.ResolveBudgetPolicy(parentAgentId)
+            .ResolveTimeoutSeconds(requestedTimeoutSeconds);
+
     /// <summary>
     /// Selects a fresh policy snapshot from the current options using only the trusted parent ID.
     /// Reading <see cref="IOptionsMonitor{TOptions}.CurrentValue"/> per spawn makes configuration
@@ -1170,7 +1175,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             PartialResult = detail.Result is { } result ? new SubAgentPartialResult
             {
                 Completion = result.Completion, StopReason = result.StopReason, Summary = result.Summary,
-                TurnsUsed = result.TurnsUsed ?? 0, Usage = result.Usage, UnresolvedWork = result.UnresolvedWork
+                TurnsUsed = result.TurnsUsed ?? 0, Usage = result.Usage, UnresolvedWork = result.UnresolvedWork,
+                RetainedVerifiedTools = SubAgentRunResult.BoundVerifiedTools(result.VerifiedTools)
             } : null
         };
     }

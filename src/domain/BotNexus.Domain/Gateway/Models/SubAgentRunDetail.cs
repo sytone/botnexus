@@ -88,9 +88,14 @@ public sealed record SubAgentRunResult
     {
         Completion = value.Completion, StopReason = value.StopReason, Summary = SubAgentRunDetail.Bound(value.Summary, SubAgentRunDetail.MaxLongTextLength),
         TurnsUsed = value.TurnsUsed, Usage = value.Usage,
-        VerifiedTools = value.VerifiedEvidence.Select(x => SubAgentRunDetail.Bound(x.ToolName, SubAgentRunDetail.MaxShortTextLength)!).Where(x => x is not null).Distinct().Take(SubAgentRunDetail.MaxCollectionCount).ToArray(),
+        VerifiedTools = BoundVerifiedTools(value.VerifiedEvidence.Select(x => x.ToolName).Concat(value.RetainedVerifiedTools)),
         UnresolvedWork = value.UnresolvedWork.Select(x => SubAgentRunDetail.Bound(x, SubAgentRunDetail.MaxShortTextLength)!).Where(x => x is not null && !Path.IsPathRooted(x)).Take(SubAgentRunDetail.MaxCollectionCount).ToArray()
     };
+
+    /// <summary>Normalizes retained tool classifications using the same bounds as live evidence.</summary>
+    public static IReadOnlyList<string> BoundVerifiedTools(IEnumerable<string> names)
+        => names.Select(x => SubAgentRunDetail.Bound(x, SubAgentRunDetail.MaxShortTextLength))
+            .OfType<string>().Distinct().Take(SubAgentRunDetail.MaxCollectionCount).ToArray();
 }
 
 /// <summary>Safe references to bounded worktree recovery artifacts; host-private roots are omitted.</summary>

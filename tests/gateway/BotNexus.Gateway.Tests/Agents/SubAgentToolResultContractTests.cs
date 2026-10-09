@@ -423,6 +423,171 @@ public sealed class SubAgentToolResultContractTests
         harness.SpawnTool.TimeoutArgument.ShouldNotBeNull();
     }
 
+    [Fact]
+    public async Task ColdResult_Consumption_PreservesVerifiedNamesWithoutInventingRawEvidence()
+    {
+        await using var harness = new Harness();
+        var info = await harness.SpawnBackgroundAsync();
+        harness.CompleteChild();
+        await harness.Manager.WaitForRunCompletionForTestAsync(info.SubAgentId).WaitAsync(Deadline);
+        var terminal = (await harness.Manager.GetAsync(info.SubAgentId)).ShouldNotBeNull() with
+        {
+            PartialResult = new SubAgentPartialResult
+            {
+                Completion = SubAgentCompletion.Partial, StopReason = SubAgentStopReason.TurnLimit,
+                VerifiedEvidence = [new("original-call-id", "read", "private-raw-result")]
+            }
+        };
+        await harness.Store.UpdateSubAgentSessionAsync(terminal);
+        (await harness.Store.GetSubAgentSessionAsync(info.SubAgentId)).ShouldNotBeNull()
+            .Result.ShouldNotBeNull().VerifiedTools.ShouldBe(new[] { "read" });
+
+        var recreated = harness.CreateManager();
+        var cold = (await recreated.GetAsync(info.SubAgentId)).ShouldNotBeNull();
+        cold.PartialResult.ShouldNotBeNull().VerifiedEvidence.ShouldBeEmpty();
+        cold.PartialResult.SummaryIsVerified.ShouldBeFalse();
+        SubAgentRunDetail.FromLive(cold).Result.ShouldNotBeNull().VerifiedTools.ShouldBe(new[] { "read" });
+        var result = await new SubAgentManageTool(recreated, ParentSession)
+            .ExecuteAsync("consume-cold-evidence", ManageArgs(cold, "wait"));
+        using var json = JsonDocument.Parse(ReadText(result));
+        json.RootElement.GetProperty("result").GetProperty("verifiedTools").EnumerateArray()
+            .Select(x => x.GetString()).ShouldBe(new[] { "read" });
+        ReadText(result).ShouldNotContain("original-call-id");
+        ReadText(result).ShouldNotContain("private-raw-result");
+        (await harness.Store.GetSubAgentSessionAsync(info.SubAgentId)).ShouldNotBeNull()
+            .Result.ShouldNotBeNull().VerifiedTools.ShouldBe(new[] { "read" });
+        var parent = (await harness.Store.GetAsync(ParentSession)).ShouldNotBeNull();
+        parent.GetHistorySnapshot().ShouldContain(e => e.ToolCallId == "consume-cold-evidence"
+            && e.Kind == MessageKind.ToolResult && e.Content == ReadText(result));
+        SubAgentRunDetail.FromLive((await harness.CreateManager().GetAsync(info.SubAgentId)).ShouldNotBeNull())
+            .Result.ShouldNotBeNull().VerifiedTools.ShouldBe(new[] { "read" });
+    }
+
+    [Theory]
+    [InlineData(false, null, 2400)]
+    [InlineData(true, null, 3600)]
+    [InlineData(true, 9999, 3600)]
+    [InlineData(true, 900, 900)]
+    public async Task Spawn_PreparedTimeout_UsesAuthoritativeGlobalOrParentBudget(bool parentOverride, int? requested, int effective)
+    {
+        var options = new SubAgentOptions { DefaultTimeoutSeconds = 2400, MaxTimeoutSeconds = 2400 };
+        if (parentOverride)
+            options.ParentOverrides["parent-agent"] = new SubAgentParentOverrideOptions
+                { DefaultTimeoutSeconds = 3600, MaxTimeoutSeconds = 3600 };
+        await using var harness = new Harness(options: options);
+        var args = new Dictionary<string, object?> { ["task"] = "investigate", ["background"] = true };
+        if (requested.HasValue) args["timeoutSeconds"] = requested.Value;
+        var valid = BotNexus.Agent.Providers.Core.Validation.ToolCallValidator.Validate(
+            JsonSerializer.SerializeToElement(args), harness.SpawnTool.Definition.Parameters, out _, null);
+        valid.IsValid.ShouldBeTrue();
+        var prepared = await harness.SpawnTool.PrepareArgumentsAsync(args);
+        var declaration = harness.SpawnTool.TimeoutArgument.ShouldNotBeNull();
+        declaration.ToTimeSpan(prepared[declaration.ArgumentName]).ShouldBe(TimeSpan.FromSeconds(effective));
+        prepared.ContainsKey("timeoutSeconds").ShouldBe(requested.HasValue);
+        if (requested.HasValue) prepared["timeoutSeconds"].ShouldBe(requested.Value);
+        (await harness.Manager.ListAsync(ParentSession)).ShouldBeEmpty();
+        harness.Supervisor.Verify(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        harness.ChildStarted.Task.IsCompleted.ShouldBeFalse();
+        var executor = typeof(BotNexus.Agent.Core.Types.AgentContext).Assembly
+            .GetType("BotNexus.Agent.Core.Loop.ToolExecutor", throwOnError: true).ShouldNotBeNull();
+        var resolver = executor.GetMethod("ResolveEffectiveTimeout", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public).ShouldNotBeNull();
+        resolver.Invoke(null, [harness.SpawnTool, prepared, TimeSpan.FromSeconds(120)])
+            .ShouldBe(TimeSpan.FromSeconds(effective + 10));
+
+        var result = await harness.SpawnTool.ExecuteAsync("configured-budget", prepared);
+        var info = (await harness.Manager.ListAsync(ParentSession)).ShouldHaveSingleItem();
+        info.EffectiveTimeoutSeconds.ShouldBe(effective);
+        using var json = JsonDocument.Parse(ReadText(result));
+        if (requested.HasValue && requested.Value > effective)
+        {
+            json.RootElement.GetProperty("budgetClamp").GetProperty("requestedTimeoutSeconds").GetInt32().ShouldBe(requested.Value);
+            json.RootElement.GetProperty("budgetClamp").GetProperty("effectiveTimeoutSeconds").GetInt32().ShouldBe(effective);
+        }
+        if (effective > options.AdvisoryTimeoutSeconds && options.AdvisoryTimeoutSeconds > 0)
+            json.RootElement.GetProperty("budgetAdvisory").GetProperty("effectiveTimeoutSeconds").GetInt32().ShouldBe(effective);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Spawn_HostAuditOrPermissionDenial_PreparationDoesNotAdmitChild(bool denyAtAudit)
+    {
+        await using var harness = new Harness(timeoutSeconds: 2400);
+        var stages = new List<string>();
+        var config = new BotNexus.Agent.Core.Configuration.AgentLoopConfig(
+            new("test", "Test", "test", "test", "", false, ["text"], new(0, 0, 0, 0), 4096, 256),
+            new(new(), new()),
+            (_, _) => Task.FromResult<IReadOnlyList<BotNexus.Agent.Providers.Core.Models.Message>>([]),
+            null, (_, _) => Task.FromResult<BotNexus.Agent.Providers.Core.ProviderExecutionOptions?>(null),
+            null, null, BotNexus.Agent.Core.Types.ToolExecutionMode.Sequential,
+            (_, _) =>
+            {
+                stages.Add("permission");
+                harness.Manager.ActiveSubAgentCount.ShouldBe(0);
+                return Task.FromResult<BotNexus.Agent.Core.ExtensionPoints.ToolExecution.ToolExecutionDecision?>(new(true, "permission-denied"));
+            },
+            null, new(), ToolTimeout: TimeSpan.FromSeconds(120),
+            ToolAuditGate: (context, _) =>
+            {
+                stages.Add("audit");
+                context.ValidatedArgs[harness.SpawnTool.TimeoutArgument.ShouldNotBeNull().ArgumentName].ShouldBe(2400);
+                harness.Manager.ActiveSubAgentCount.ShouldBe(0);
+                return Task.FromResult<BotNexus.Agent.Core.ExtensionPoints.ToolExecution.ToolExecutionDecision?>(
+                    denyAtAudit ? new(true, "audit-denied") : null);
+            });
+        var assistant = new AssistantAgentMessage("", [new("blocked-spawn", "spawn_subagent",
+            new Dictionary<string, object?> { ["task"] = "investigate" })],
+            BotNexus.Agent.Providers.Core.Models.StopReason.ToolUse);
+        var executor = typeof(AgentContext).Assembly.GetType("BotNexus.Agent.Core.Loop.ToolExecutor", true).ShouldNotBeNull();
+        var method = executor.GetMethod("ExecuteAsync", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static).ShouldNotBeNull();
+        var execution = method.Invoke(null, [new AgentContext(null, [], [harness.SpawnTool]), assistant, config,
+            (Func<AgentEvent, Task>)(_ => Task.CompletedTask), CancellationToken.None])
+            .ShouldBeAssignableTo<Task<IReadOnlyList<ToolResultAgentMessage>>>();
+        var results = await execution.ShouldNotBeNull();
+        results.ShouldHaveSingleItem().IsError.ShouldBeTrue();
+        stages.ShouldBe(denyAtAudit ? new[] { "audit" } : new[] { "audit", "permission" });
+        (await harness.Manager.ListAsync(ParentSession)).ShouldBeEmpty();
+        harness.Supervisor.Verify(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        harness.ChildStarted.Task.IsCompleted.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void RetainedVerifiedTools_Projection_UnionsDeduplicatesAndBoundsNames()
+    {
+        var partial = new SubAgentPartialResult
+        {
+            Completion = SubAgentCompletion.Partial, StopReason = SubAgentStopReason.TurnLimit,
+            VerifiedEvidence = [new("call", "read", "private-result")],
+            RetainedVerifiedTools = new[] { " read ", "", new string('x', 500) }
+                .Concat(Enumerable.Range(0, 100).Select(i => "tool-" + i)).ToArray()
+        };
+        var info = new SubAgentInfo
+        {
+            SubAgentId = "bounded", ParentSessionId = ParentSession, ChildSessionId = SessionId.From("bounded-child"),
+            Task = "bounded", Status = SubAgentStatus.Completed, PartialResult = partial
+        };
+        var names = SubAgentRunDetail.FromLive(info).Result.ShouldNotBeNull().VerifiedTools;
+        names.Count.ShouldBe(SubAgentRunDetail.MaxCollectionCount);
+        names.Count(x => x == "read").ShouldBe(1);
+        names.ShouldAllBe(x => x.Length <= SubAgentRunDetail.MaxShortTextLength && !string.IsNullOrWhiteSpace(x));
+    }
+
+    [Fact]
+    public async Task Spawn_ZeroTimeout_IsRejectedByRealValidator_AndForgedHintIsReplaced()
+    {
+        await using var harness = new Harness(timeoutSeconds: 2400);
+        var args = new Dictionary<string, object?> { ["task"] = "investigate", ["timeoutSeconds"] = 0 };
+        var valid = BotNexus.Agent.Providers.Core.Validation.ToolCallValidator.Validate(
+            JsonSerializer.SerializeToElement(args), harness.SpawnTool.Definition.Parameters, out _, null);
+        valid.IsValid.ShouldBeFalse();
+        args.Remove("timeoutSeconds");
+        var declaration = harness.SpawnTool.TimeoutArgument.ShouldNotBeNull();
+        args[declaration.ArgumentName] = int.MaxValue;
+        var prepared = await harness.SpawnTool.PrepareArgumentsAsync(args);
+        prepared[declaration.ArgumentName].ShouldBe(2400);
+        (await harness.Manager.ListAsync(ParentSession)).ShouldBeEmpty();
+    }
+
     private static Dictionary<string, object?> ManageArgs(SubAgentInfo info, string action)
         => new() { ["subAgentId"] = info.SubAgentId, ["action"] = action };
 
@@ -455,11 +620,11 @@ public sealed class SubAgentToolResultContractTests
         public SubAgentSpawnTool SpawnTool { get; }
         public SubAgentManageTool ManageTool { get; }
 
-        private readonly int _timeoutSeconds;
+        private readonly SubAgentOptions _options;
 
-        public Harness(int timeoutSeconds = 600)
+        public Harness(int timeoutSeconds = 600, SubAgentOptions? options = null)
         {
-            _timeoutSeconds = timeoutSeconds;
+            _options = options ?? new SubAgentOptions { MaxTimeoutSeconds = timeoutSeconds, DefaultTimeoutSeconds = timeoutSeconds };
             // A receipt must attach to an existing, owned parent session.
             var parent = Store.GetOrCreateAsync(ParentSession, AgentId.From("parent-agent")).GetAwaiter().GetResult();
             parent.ConversationId = ConversationId.From("parent-conversation");
@@ -497,7 +662,7 @@ public sealed class SubAgentToolResultContractTests
 
         public DefaultSubAgentManager CreateManager() => new(
             Supervisor.Object, _registry.Object, _activity.Object, Dispatcher.Object,
-            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions { SubAgents = new SubAgentOptions { MaxTimeoutSeconds = _timeoutSeconds, DefaultTimeoutSeconds = _timeoutSeconds } }), NullLogger<DefaultSubAgentManager>.Instance,
+            new TestOptionsMonitor<GatewayOptions>(new GatewayOptions { SubAgents = _options }), NullLogger<DefaultSubAgentManager>.Instance,
             sessionStore: Store, conversationStore: Conversations);
 
         public async Task<SubAgentInfo> SpawnBackgroundAsync()

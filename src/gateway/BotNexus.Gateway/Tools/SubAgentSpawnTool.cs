@@ -18,7 +18,7 @@ public sealed class SubAgentSpawnTool(
     public string Label => "Spawn Sub-Agent";
 
     public TimeSpan? DefaultTimeout => TimeSpan.FromSeconds(610);
-    public ToolTimeoutArgument? TimeoutArgument => new("timeoutSeconds", ToolTimeoutUnit.Seconds);
+    public ToolTimeoutArgument? TimeoutArgument => new("subAgentSpawnTimeoutSeconds", ToolTimeoutUnit.Seconds);
 
     public Tool Definition => new(
         Name,
@@ -39,7 +39,7 @@ public sealed class SubAgentSpawnTool(
                 },
                 "systemPrompt": { "type": "string", "description": "Optional system prompt override." },
                 "maxTurns": { "type": "integer", "minimum": 1, "description": "Optional max turn budget." },
-                "timeoutSeconds": { "type": "integer", "minimum": 1, "description": "Optional timeout in seconds. Values above the configured ceiling are clamped down." }
+                "timeoutSeconds": { "type": "integer", "minimum": 1, "description": "Optional timeout in seconds. Omission uses the configured default for the spawning parent. Values above the configured ceiling are clamped down." }
                 ,
                 "archetype": {
                   "type": "string",
@@ -72,7 +72,13 @@ public sealed class SubAgentSpawnTool(
         if (string.IsNullOrWhiteSpace(task))
             throw new ArgumentException("Missing required argument: task.");
 
-        return Task.FromResult(arguments);
+        // Preparation is read-only: no child admission, tools, or persistence before audit/policy.
+        // Never trust a caller-supplied internal hint or replace the raw request: the latter must
+        // still reach admission unchanged so clamp and advisory disclosures remain truthful.
+        var prepared = new Dictionary<string, object?>(arguments);
+        prepared["subAgentSpawnTimeoutSeconds"] = subAgentManager.ResolveSpawnTimeoutSeconds(
+            agentId, ReadInt(arguments, "timeoutSeconds", 0));
+        return Task.FromResult<IReadOnlyDictionary<string, object?>>(prepared);
     }
 
     public async Task<AgentToolResult> ExecuteAsync(
@@ -118,7 +124,7 @@ public sealed class SubAgentSpawnTool(
             ParentSessionId = sessionId,
             Task = task,
             MaxTurns = ReadInt(arguments, "maxTurns", 30),
-            TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 600),
+            TimeoutSeconds = ReadInt(arguments, "timeoutSeconds", 0),
             InheritedConversationId = conversationId,
             // #2338: binds the child conversation back to the exact spawn_subagent call so a channel
             // can render the run as an expandable card in place of it, instead of guessing the

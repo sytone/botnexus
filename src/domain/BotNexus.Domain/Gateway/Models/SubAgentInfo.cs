@@ -184,6 +184,11 @@ public sealed record SubAgentPartialResult
     public string? Summary { get; init; }
     public bool SummaryIsVerified { get; init; }
     public IReadOnlyList<SubAgentVerifiedEvidence> VerifiedEvidence { get; init; } = [];
+    /// <summary>
+    /// Verified tool names recovered from bounded retained history. These preserve the recorded
+    /// classification only; original call IDs and raw results are unavailable, not reconstructed.
+    /// </summary>
+    public IReadOnlyList<string> RetainedVerifiedTools { get; init; } = [];
     public IReadOnlyList<string> UnresolvedWork { get; init; } = [];
     public IReadOnlyList<SubAgentPartialAction> ActionsTaken { get; init; } = [];
     public IReadOnlyList<string> SideEffects { get; init; } = [];

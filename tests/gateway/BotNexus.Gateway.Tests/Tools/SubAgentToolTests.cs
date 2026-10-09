@@ -48,7 +48,7 @@ public sealed class SubAgentToolTests
         captured.ParentSessionId.Value.ShouldBe("parent-session");
         captured.Task.ShouldBe("Investigate issue");
         captured.MaxTurns.ShouldBe(30);
-        captured.TimeoutSeconds.ShouldBe(600);
+        captured.TimeoutSeconds.ShouldBe(0, "omission delegates default and ceiling resolution to the manager");
         captured.InheritedConversationId.Value.ShouldBe("conv-parent");
         var embody = captured.Mode.ShouldBeOfType<Embody>();
         embody.Role.ShouldBe(SubAgentArchetype.General);

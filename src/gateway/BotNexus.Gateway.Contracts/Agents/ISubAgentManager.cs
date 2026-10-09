@@ -20,6 +20,14 @@ public interface ISubAgentManager
     int ActiveSubAgentCount => 0;
 
     /// <summary>
+    /// Resolves the timeout for a trusted parent without admitting a child or performing I/O.
+    /// Zero selects the configured default; the result must honor the parent's hard ceiling.
+    /// Used only to budget the requesting tool's wait before permission and audit gates run.
+    /// </summary>
+    int ResolveSpawnTimeoutSeconds(AgentId parentAgentId, int requestedTimeoutSeconds)
+        => throw new NotSupportedException("This manager does not support spawn timeout preparation.");
+
+    /// <summary>
     /// Spawns a background sub-agent session for the specified request.
     /// </summary>
     /// <param name="request">The spawn request describing parent context and execution overrides.</param>
