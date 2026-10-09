@@ -347,6 +347,10 @@ public static class PlatformConfigValidator
         ValidatePromptTemplates(config.PromptTemplates, errors);
         ValidateCron(config.Cron, errors);
         ValidateSecretRedaction(config.Gateway?.SecretRedaction, errors);
+        if (config.Gateway?.LocalChildEnvironmentPassThrough is { } passThrough
+            && passThrough.Any(name => string.IsNullOrWhiteSpace(name)
+                || name.Any(c => char.IsWhiteSpace(c) || c is '\0' or '=' or '*' or '?' or '[' or ']')))
+            errors.Add("gateway.localChildEnvironmentPassThrough must contain exact environment variable names, not patterns or assignments.");
 
         return errors;
     }

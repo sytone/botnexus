@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO.Abstractions;
+using BotNexus.Cron;
 
 namespace BotNexus.Gateway.Diagnostics;
 
@@ -35,10 +36,11 @@ public readonly record struct PreviousRunResult(bool WasClean, DateTimeOffset? L
 /// left no trace of.
 /// </para>
 /// </summary>
-public sealed class CleanShutdownMarker
+public sealed class CleanShutdownMarker : IPlannedShutdownState
 {
     private const string MarkerFileName = ".gateway-clean-shutdown";
     private const string LivenessFileName = ".gateway-liveness";
+    private const string PlannedFileName = ".gateway-planned-shutdown";
 
     /// <summary>
     /// How often the liveness stamp is rewritten while the gateway runs. This is the accuracy
@@ -52,7 +54,14 @@ public sealed class CleanShutdownMarker
     private readonly IFileSystem _fileSystem;
     private readonly string _markerPath;
     private readonly string _livenessPath;
+    private readonly string _plannedPath;
     private readonly string _dataDirectory;
+
+    /// <summary>Cached boot-time classification retained after MarkRunning clears on-disk evidence.</summary>
+    public bool PreviousShutdownWasPlanned { get; private set; }
+
+    /// <summary>Whether this process has durably accepted a planned shutdown request.</summary>
+    public bool CurrentShutdownIsPlanned { get; private set; }
 
     /// <summary>
     /// Creates a marker manager rooted at <paramref name="dataDirectory"/> (the writable
@@ -66,6 +75,7 @@ public sealed class CleanShutdownMarker
         _dataDirectory = dataDirectory;
         _markerPath = _fileSystem.Path.Combine(dataDirectory, MarkerFileName);
         _livenessPath = _fileSystem.Path.Combine(dataDirectory, LivenessFileName);
+        _plannedPath = _fileSystem.Path.Combine(dataDirectory, PlannedFileName);
     }
 
     /// <summary>The absolute path of the marker file, exposed for logging/diagnostics.</summary>
@@ -73,6 +83,45 @@ public sealed class CleanShutdownMarker
 
     /// <summary>The absolute path of the liveness stamp file, exposed for logging/diagnostics.</summary>
     public string LivenessPath => _livenessPath;
+
+    /// <summary>
+    /// Persists planned-shutdown intent before acknowledging the lifecycle request. A clean stop
+    /// must still occur for the next process to classify this as a planned shutdown.
+    /// </summary>
+    public bool TryMarkPlannedShutdown(DateTimeOffset requestedAtUtc)
+    {
+        try
+        {
+            if (!_fileSystem.Directory.Exists(_dataDirectory))
+                _fileSystem.Directory.CreateDirectory(_dataDirectory);
+            var stamp = requestedAtUtc.ToUniversalTime().ToString("o", CultureInfo.InvariantCulture);
+            _fileSystem.File.WriteAllText(_plannedPath, stamp);
+            return CurrentShutdownIsPlanned = _fileSystem.File.ReadAllText(_plannedPath) == stamp;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>True only when both planned intent and a clean shutdown marker survived boot.</summary>
+    public bool WasPreviousShutdownPlanned()
+    {
+        var previousRun = DetectPreviousRun();
+        if (!previousRun.WasClean || previousRun.LastKnownUtc is not { } stoppedAt)
+            return PreviousShutdownWasPlanned = false;
+        try
+        {
+            return PreviousShutdownWasPlanned = _fileSystem.File.Exists(_plannedPath)
+                && DateTimeOffset.TryParse(_fileSystem.File.ReadAllText(_plannedPath),
+                    CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var requestedAt)
+                && requestedAt <= stoppedAt;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return PreviousShutdownWasPlanned = false;
+        }
+    }
 
     /// <summary>
     /// Inspects the marker to determine how the previous run ended. Never throws; any I/O or
@@ -208,6 +257,8 @@ public sealed class CleanShutdownMarker
         {
             if (_fileSystem.File.Exists(_markerPath))
                 _fileSystem.File.Delete(_markerPath);
+            if (_fileSystem.File.Exists(_plannedPath))
+                _fileSystem.File.Delete(_plannedPath);
             // Seed the liveness stamp immediately so even a crash seconds into boot reports a
             // real instant instead of leaving the previous run's stamp in place.
             RefreshLiveness();

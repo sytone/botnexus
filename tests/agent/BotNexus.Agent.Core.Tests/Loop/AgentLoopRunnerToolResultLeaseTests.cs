@@ -34,7 +34,7 @@ public sealed class AgentLoopRunnerToolResultLeaseTests
         var followUps = 0;
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with
         {
-            GetFollowUpMessages = _ => Task.FromResult<IReadOnlyList<AgentMessage>>(
+            FollowUpMessageProvider = _ => Task.FromResult<IReadOnlyList<AgentMessage>>(
                 Interlocked.Increment(ref followUps) == 1 ? [new AgentUserMessage("continue")] : []),
         };
 
@@ -73,7 +73,7 @@ public sealed class AgentLoopRunnerToolResultLeaseTests
         var followUps = 0;
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with
         {
-            GetFollowUpMessages = _ => Task.FromResult<IReadOnlyList<AgentMessage>>(
+            FollowUpMessageProvider = _ => Task.FromResult<IReadOnlyList<AgentMessage>>(
                 Interlocked.Increment(ref followUps) == 1 ? [new AgentUserMessage("continue")] : []),
         };
 

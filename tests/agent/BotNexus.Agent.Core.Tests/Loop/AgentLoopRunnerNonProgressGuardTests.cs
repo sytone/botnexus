@@ -1,0 +1,639 @@
+using System.Text.Json;
+using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
+using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.Tests.TestUtils;
+using BotNexus.Agent.Core.Tools;
+using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Streaming;
+
+namespace BotNexus.Agent.Core.Tests.Loop;
+
+using AgentUserMessage = BotNexus.Agent.Core.Types.UserMessage;
+
+[Collection(ApiProviderRegistryCollection.Name)]
+public sealed class AgentLoopRunnerNonProgressGuardTests
+{
+    private const int GuardLimit = 6;
+
+    private sealed class ScriptedTool(string name, Func<string, string> resultFactory) : IAgentTool
+    {
+        private static readonly JsonElement Schema = JsonDocument.Parse("""{"type":"object"}""").RootElement.Clone();
+        private int _executeCount;
+
+        public int ExecuteCount => Volatile.Read(ref _executeCount);
+        public string Name => name;
+        public string Label => name;
+        public Tool Definition => new(name, "test tool", Schema);
+
+        public Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(arguments);
+
+        public Task<AgentToolResult> ExecuteAsync(
+            string toolCallId,
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken = default,
+            AgentToolUpdateCallback? onUpdate = null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _executeCount);
+            var variant = arguments.TryGetValue("variant", out var raw) || arguments.TryGetValue("oldText", out raw)
+                ? raw?.ToString() ?? "" : "";
+            return Task.FromResult(new AgentToolResult([
+                new AgentToolContent(AgentToolContentType.Text, resultFactory(variant))]));
+        }
+    }
+
+    [Fact]
+    public async Task RepeatedNoChangeEditsAcrossVariantsAndCallIds_ParksAndRetainsEveryExecutedResult()
+    {
+        const string api = "non-progress-edit-limit";
+        var tool = new ScriptedTool("edit", _ => "No changes needed - replacement text is already present.");
+        using var provider = RegisterSequencedToolUseProvider(api, "edit", ["old-a", "old-b", "old-a", "old-b", "old-a", "old-b"]);
+        var diagnostics = new List<string>();
+        var events = new List<AgentEvent>();
+
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("make the requested change")],
+            new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api), onDiagnostic: diagnostics.Add),
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(GuardLimit);
+        messages.OfType<ToolResultAgentMessage>().Select(message => message.ToolCallId).Distinct().Count().ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status
+            .ShouldBe(RunCompletionStatus.Parked);
+        var stopDetail = events.OfType<AgentEndEvent>().Single().Completion.Detail.ShouldNotBeNull();
+        stopDetail.ShouldContain("non-progress");
+        diagnostics.ShouldNotBeEmpty();
+        diagnostics.ShouldAllBe(message => !message.Contains("replacement text", StringComparison.OrdinalIgnoreCase));
+        diagnostics.ShouldAllBe(message => !message.Contains("variant", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task AlternatingFoundZeroAndNoChangeEdits_AreOneBoundedStrategy()
+    {
+        const string api = "non-progress-mixed-edits";
+        var tool = new ScriptedTool("edit", variant => variant.StartsWith("missing", StringComparison.Ordinal)
+            ? throw new InvalidOperationException("Expected exactly one match for edits[].oldText, but found 0.")
+            : "No changes needed - replacement text is already present.");
+        using var provider = RegisterSequencedToolUseProvider(api, "edit",
+            ["missing-a", "noop-a", "missing-b", "noop-b", "missing-a", "noop-a"]);
+        var events = new List<AgentEvent>();
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("edit the file")],
+            new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Parked);
+    }
+
+    [Fact]
+    public async Task RepeatedFoundZeroEditErrors_AreBoundedAndResultsRemainErrors()
+    {
+        const string api = "non-progress-edit-errors";
+        var tool = new ScriptedTool("edit", _ => throw new InvalidOperationException("must not execute"));
+        using var provider = RegisterSequencedToolUseProvider(api, "edit", ["old-a", "old-b", "old-a", "old-b", "old-a", "old-b"]);
+
+        // The tool executor's before-hook returns a deterministic found-0 error without dispatch.
+        var calls = 0;
+        var config = TestHelpers.CreateTestConfig(
+            model: TestHelpers.CreateTestModel(api),
+            beforeToolAudit: (_, _) =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult<ToolExecutionDecision?>(new ToolExecutionDecision(true, "Expected exactly one match for edits[].oldText, but found 0."));
+            });
+
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("edit the file")],
+            new AgentContext(null, [], [tool]), config,
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        calls.ShouldBe(GuardLimit);
+        tool.ExecuteCount.ShouldBe(0);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(GuardLimit);
+        messages.OfType<ToolResultAgentMessage>().ShouldAllBe(result => result.IsError);
+    }
+
+    [Fact]
+    public async Task RepeatedUnchangedReadResults_AreBoundedAndParked()
+    {
+        const string api = "non-progress-unchanged-read";
+        var tool = new ScriptedTool("get_current_time", _ => "2026-10-03T10:00:00Z");
+        using var provider = RegisterRepeatedToolUseProvider(api, "get_current_time", GuardLimit);
+        var events = new List<AgentEvent>();
+
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("inspect the file")],
+            new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Parked);
+    }
+
+    [Fact]
+    public async Task AlternatingUnchangedStatusAndClockReads_ParkWithoutTreatingTimeAsProgress()
+    {
+        const string api = "non-progress-alternating-status-clock";
+        var clockTicks = 0;
+        var status = new ScriptedTool("shell", _ => " M same-file.txt");
+        var clock = new ScriptedTool("get_datetime", _ => "tick " + Interlocked.Increment(ref clockTicks));
+        var index = -1;
+        using var provider = TestHelpers.RegisterProvider(new TestApiProvider(api, simpleStreamFactory: (_, _, _) =>
+        {
+            var next = Interlocked.Increment(ref index);
+            if (next >= GuardLimit) return TestStreamFactory.CreateTextResponse("Done.");
+            var shell = next % 2 == 0;
+            return TestStreamFactory.CreateToolCallResponse(($"call-{next}", shell ? "shell" : "get_datetime",
+                shell ? new Dictionary<string, object?> { ["command"] = "git status --short; git diff --stat" } : new Dictionary<string, object?>()));
+        }));
+        var events = new List<AgentEvent>();
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("wait for child")], new AgentContext(null, [], [status, clock]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; }, CancellationToken.None);
+        status.ExecuteCount.ShouldBe(3);
+        clock.ExecuteCount.ShouldBe(3);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Parked);
+    }
+
+    [Fact]
+    public async Task AlternatingUnchangedHousekeepingTools_ParkAndRetainEveryExecutedResult()
+    {
+        const string api = "non-progress-alternating-housekeeping";
+        var memory = new ScriptedTool("memory_save", _ => "Saved memory entry.");
+        var workers = new ScriptedTool("list_subagents", _ => "[]");
+        var todos = new ScriptedTool("todo", _ => "[{\"id\":\"done\",\"status\":\"done\"}]");
+        var tools = new IAgentTool[] { memory, workers, todos };
+        var index = -1;
+        using var provider = TestHelpers.RegisterProvider(new TestApiProvider(api, simpleStreamFactory: (_, _, _) =>
+        {
+            var next = Interlocked.Increment(ref index);
+            if (next >= GuardLimit) return TestStreamFactory.CreateTextResponse("Done.");
+            var tool = tools[next % tools.Length];
+            var arguments = tool.Name == "todo"
+                ? new Dictionary<string, object?> { ["action"] = "list" }
+                : tool.Name == "memory_save"
+                    ? new Dictionary<string, object?> { ["content"] = next % 2 == 0 ? "Done." : "Complete." }
+                    : new Dictionary<string, object?>();
+            return TestStreamFactory.CreateToolCallResponse(($"call-{next}", tool.Name, arguments));
+        }));
+        var events = new List<AgentEvent>();
+
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("finish the completed task")],
+            new AgentContext(null, [], tools),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        memory.ExecuteCount.ShouldBe(2);
+        workers.ExecuteCount.ShouldBe(2);
+        todos.ExecuteCount.ShouldBe(2);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(GuardLimit);
+        var completion = events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion;
+        completion.Status.ShouldBe(RunCompletionStatus.Parked);
+        completion.Detail.ShouldNotBeNull().ShouldContain("non-progress");
+    }
+
+    [Fact]
+    public async Task ChangedTodoSnapshotResetsTheHousekeepingSequence()
+    {
+        const string api = "non-progress-changed-todo";
+        var number = 0;
+        var tool = new ScriptedTool("todo", _ => "snapshot-" + Interlocked.Increment(ref number));
+        using var provider = RegisterSequencedToolUseProvider(api, "todo", Enumerable.Repeat("list", GuardLimit).ToArray());
+        var events = new List<AgentEvent>();
+
+        await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("inspect the checklist")],
+            new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Completed);
+    }
+
+    [Fact]
+    public async Task SubstantiveMemoryNoteDoesNotCountAsStatusOnlyHousekeeping()
+    {
+        const string api = "non-progress-substantive-memory";
+        var tool = new ScriptedTool("memory_save", _ => "Saved memory entry.");
+        using var provider = RegisterSequencedToolUseProvider(api, "memory_save", Enumerable.Repeat("evidence", GuardLimit).ToArray());
+        var events = new List<AgentEvent>();
+
+        await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("record new evidence")],
+            new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Completed);
+    }
+
+    [Fact]
+    public async Task ChangingClockOutputIsNotEvidenceOfWorkProgress()
+    {
+        const string api = "non-progress-moving-clock";
+        var number = 0;
+        var tool = new ScriptedTool("get_datetime", _ => "clock tick " + Interlocked.Increment(ref number));
+        using var provider = RegisterRepeatedToolUseProvider(api, "get_datetime", GuardLimit);
+        var events = new List<AgentEvent>();
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("check status")], new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; }, CancellationToken.None);
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Parked);
+    }
+
+    [Fact]
+    public async Task ChangingReadResultsBreakTheNonProgressSequence()
+    {
+        const string api = "non-progress-changing-read";
+        var tool = new ScriptedTool("read", variant => "contents " + variant);
+        using var provider = RegisterSequencedToolUseProvider(api, "read", ["one", "two", "three", "four", "five", "six"]);
+        var events = new List<AgentEvent>();
+
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("inspect the file")],
+            new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(6);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Completed);
+    }
+
+    [Fact]
+    public async Task ChangedReadResultAtSameTargetAndArgumentsResetsTheGuard()
+    {
+        const string api = "non-progress-changing-same-read";
+        var number = 0;
+        var tool = new ScriptedTool("read", _ => "contents " + Interlocked.Increment(ref number));
+        using var provider = RegisterSequencedToolUseProvider(api, "read", Enumerable.Repeat("same", GuardLimit).ToArray());
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("inspect")], new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            _ => Task.CompletedTask, CancellationToken.None);
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        messages.OfType<AssistantAgentMessage>().Last().FinishReason.ShouldBe(StopReason.Stop);
+    }
+
+    [Fact]
+    public async Task UserSteerAtTheStopBoundaryResumesTheLoopInsteadOfParking()
+    {
+        const string api = "non-progress-steer-resumes";
+        var tool = new ScriptedTool("get_current_time", _ => "2026-10-03T10:00:00Z");
+        using var provider = RegisterRepeatedToolUseProvider(api, "get_current_time", GuardLimit);
+        var steeringPolls = 0;
+        var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with
+        {
+            SteeringMessageProvider = _ =>
+            {
+                var poll = Interlocked.Increment(ref steeringPolls);
+                IReadOnlyList<AgentMessage> messages = poll == GuardLimit + 1
+                    ? [new AgentUserMessage("The child has completed; stop waiting and summarize.")]
+                    : [];
+                return Task.FromResult(messages);
+            }
+        };
+
+        var events = new List<AgentEvent>();
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("check the clock")],
+            new AgentContext(null, [], [tool]),
+            config,
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        messages.OfType<AgentUserMessage>().ShouldContain(message => message.Content.Contains("child has completed", StringComparison.Ordinal));
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Completed);
+        messages.OfType<AssistantAgentMessage>().Last().FinishReason.ShouldBe(StopReason.Stop);
+    }
+
+    [Fact]
+    public async Task AgentOptions_PassesConfiguredToolProgressPolicyIntoLoopRuntime()
+    {
+        const string api = "non-progress-agent-options";
+        var tool = new ScriptedTool("custom_probe", _ => "still waiting");
+        using var provider = RegisterRepeatedToolUseProvider(api, "custom_probe", GuardLimit);
+        var policyCalls = 0;
+        var initial = new AgentInitialState(
+            Model: TestHelpers.CreateTestModel(api),
+            Tools: [tool],
+            Messages: []);
+        var options = TestHelpers.CreateTestOptions(initial, initial.Model) with
+        {
+            ToolProgressPolicy = (_, _) =>
+            {
+                Interlocked.Increment(ref policyCalls);
+                return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.NoProgress(
+                    "agent-options-probe", "waiting", "custom-wait"));
+            }
+        };
+        var agent = new BotNexus.Agent.Core.Agent(options);
+
+        await agent.PromptAsync("wait for the custom operation");
+
+        policyCalls.ShouldBe(GuardLimit);
+        agent.State.LastCompletion.ShouldNotBeNull().Status.ShouldBe(RunCompletionStatus.Parked);
+    }
+
+    [Fact]
+    public async Task ConfiguredToolProgressPolicy_ClassifiesCustomToolWithoutOwningLoopState()
+    {
+        const string api = "non-progress-custom-policy";
+        var tool = new ScriptedTool("custom_probe", _ => "still waiting");
+        using var provider = RegisterRepeatedToolUseProvider(api, "custom_probe", GuardLimit);
+        var policyCalls = 0;
+        var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with
+        {
+            ToolProgressPolicy = (context, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Interlocked.Increment(ref policyCalls);
+                context.ToolCall.Name.ShouldBe("custom_probe");
+                context.ToolResult.ToolName.ShouldBe("custom_probe");
+                return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.NoProgress(
+                    "custom-probe",
+                    "waiting",
+                    "custom-wait",
+                    "Use the custom completion signal instead of probing again."));
+            }
+        };
+        var events = new List<AgentEvent>();
+
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("wait for the custom operation")],
+            new AgentContext(null, [], [tool]),
+            config,
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        policyCalls.ShouldBe(GuardLimit);
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        messages.OfType<AgentUserMessage>().ShouldContain(message =>
+            message.Content == "Use the custom completion signal instead of probing again.");
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status
+            .ShouldBe(RunCompletionStatus.Parked);
+    }
+
+    [Fact]
+    public async Task ConfiguredToolProgressPolicy_ProgressDecisionResetsTheSequence()
+    {
+        const string api = "non-progress-custom-reset";
+        var tool = new ScriptedTool("custom_probe", _ => "result");
+        using var provider = RegisterRepeatedToolUseProvider(api, "custom_probe", GuardLimit);
+        var policyCalls = 0;
+        var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with
+        {
+            ToolProgressPolicy = (_, _) =>
+            {
+                var call = Interlocked.Increment(ref policyCalls);
+                return Task.FromResult<ToolProgressDecision?>(call == 3
+                    ? ToolProgressDecision.Progress
+                    : ToolProgressDecision.NoProgress("custom-probe", "waiting", "custom-wait"));
+            }
+        };
+        var events = new List<AgentEvent>();
+
+        await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("wait")],
+            new AgentContext(null, [], [tool]),
+            config,
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        policyCalls.ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status
+            .ShouldBe(RunCompletionStatus.Completed);
+    }
+
+    [Fact]
+    public async Task ChangedToolResultBreaksTheNonProgressSequence()
+    {
+        const string api = "non-progress-changing-result";
+        var tool = new ScriptedTool("edit", variant => variant == "changed"
+            ? "Successfully replaced 1 block(s) in 'same-file.txt'."
+            : "No changes needed - replacement text is already present.");
+        using var provider = RegisterSequencedToolUseProvider(api, "edit", ["a", "b", "changed", "c", "d", "e"]);
+
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("edit the file")],
+            new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            _ => Task.CompletedTask,
+            CancellationToken.None);
+
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(6);
+        messages.OfType<AssistantAgentMessage>().Last().FinishReason.ShouldBe(StopReason.Stop);
+    }
+
+    [Fact]
+    public async Task UnknownInterleaving_DoesNotEraseKnownNoProgressEvidence()
+    {
+        const string api = "non-progress-unknown-interleaving";
+        var clock = new ScriptedTool("get_datetime", _ => "tick");
+        var unknown = new ScriptedTool("opaque_probe", _ => "unclassified receipt");
+        var index = -1;
+        using var provider = TestHelpers.RegisterProvider(new TestApiProvider(api, simpleStreamFactory: (_, _, _) =>
+        {
+            var next = Interlocked.Increment(ref index);
+            if (next >= 12) return TestStreamFactory.CreateTextResponse("Done.");
+            return TestStreamFactory.CreateToolCallResponse(($"call-{next}", next % 2 == 0 ? clock.Name : unknown.Name,
+                new Dictionary<string, object?>()));
+        }));
+        var events = new List<AgentEvent>();
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("wait")], new AgentContext(null, [], [clock, unknown]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; }, CancellationToken.None);
+
+        clock.ExecuteCount.ShouldBe(6);
+        unknown.ExecuteCount.ShouldBe(5);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(11);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Parked);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public async Task ClassifiedPeriodThreeOrFourCycle_ParksBeforeTheAbsoluteFuse(int period)
+    {
+        var api = $"non-progress-period-{period}";
+        var tool = new ScriptedTool("read", variant => "stable contents " + variant);
+        using var provider = RegisterSequencedToolUseProvider(api, "read",
+            Enumerable.Range(0, 24).Select(i => $"target-{i % period}").ToArray());
+        var events = new List<AgentEvent>();
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("inspect repeatedly")], new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; }, CancellationToken.None);
+
+        tool.ExecuteCount.ShouldBeLessThanOrEqualTo(12);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(tool.ExecuteCount);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Parked);
+    }
+
+    [Fact]
+    public async Task ProgressiveResearchAcrossUniqueTargets_CompletesWithoutARepeatStop()
+    {
+        const string api = "non-progress-unique-research";
+        var tool = new ScriptedTool("read", variant => "research evidence " + variant);
+        var index = -1;
+        using var provider = TestHelpers.RegisterProvider(new TestApiProvider(api, simpleStreamFactory: (_, _, _) =>
+        {
+            var next = Interlocked.Increment(ref index);
+            return next >= 40 ? TestStreamFactory.CreateTextResponse("Done.")
+                : TestStreamFactory.CreateToolCallResponse(($"call-{next}", tool.Name,
+                    new Dictionary<string, object?> { ["path"] = $"source-{next}.txt", ["variant"] = $"evidence-{next}" }));
+        }));
+        var events = new List<AgentEvent>();
+        var messages = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("research distinct sources")], new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)),
+            evt => { events.Add(evt); return Task.CompletedTask; }, CancellationToken.None);
+        tool.ExecuteCount.ShouldBe(40);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(40);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Completed);
+    }
+
+    [Fact]
+    public async Task WarningAndCompaction_DoNotResetKnownEvidence()
+    {
+        const string api = "non-progress-compaction";
+        var tool = new ScriptedTool("get_datetime", _ => "tick");
+        using var provider = RegisterRepeatedToolUseProvider(api, tool.Name, 12);
+        var compactCalls = 0;
+        var context = new AgentContext(null, [], [tool]);
+        var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with
+        {
+            ContextCompactionService = _ =>
+            {
+                Interlocked.Increment(ref compactCalls);
+                return Task.FromResult<AgentContext?>(context);
+            }
+        };
+        var events = new List<AgentEvent>();
+        var messages = await AgentLoopRunner.RunAsync([new AgentUserMessage("wait")], context, config,
+            evt => { events.Add(evt); return Task.CompletedTask; }, CancellationToken.None);
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        compactCalls.ShouldBeGreaterThan(1);
+        events.OfType<MessageEndEvent>().Select(evt => evt.Message).OfType<AgentUserMessage>()
+            .Count(message => message.Content.StartsWith("[Tool progress guard]", StringComparison.Ordinal)).ShouldBe(1);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Parked);
+    }
+
+    [Fact]
+    public async Task ParallelBatch_RetainsAllResultsAndLaterProgressInvalidatesPendingStop()
+    {
+        const string api = "non-progress-parallel-progress";
+        var tool = new ScriptedTool("custom_probe", variant => variant);
+        var index = 0;
+        using var provider = TestHelpers.RegisterProvider(new TestApiProvider(api, simpleStreamFactory: (_, _, _) =>
+            Interlocked.Increment(ref index) == 1
+                ? TestStreamFactory.CreateToolCallResponse(Enumerable.Range(0, 7).Select(i =>
+                    ($"call-{i}", tool.Name, new Dictionary<string, object?> { ["variant"] = i.ToString() })).ToArray())
+                : TestStreamFactory.CreateTextResponse("Done.")));
+        var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with
+        {
+            ToolExecutionMode = ToolExecutionMode.Parallel,
+            ToolProgressPolicy = (context, _) => Task.FromResult<ToolProgressDecision?>(
+                context.ToolCall.Id == "call-6" ? ToolProgressDecision.Progress
+                    : ToolProgressDecision.NoProgress("scope", "same", "wait", "pending warning"))
+        };
+        var events = new List<AgentEvent>();
+        var messages = await AgentLoopRunner.RunAsync([new AgentUserMessage("work")], new AgentContext(null, [], [tool]), config,
+            evt => { events.Add(evt); return Task.CompletedTask; }, CancellationToken.None);
+        tool.ExecuteCount.ShouldBe(7);
+        messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(7);
+        messages.OfType<AgentUserMessage>().ShouldNotContain(message => message.Content == "pending warning");
+        events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion.Status.ShouldBe(RunCompletionStatus.Completed);
+    }
+
+    [Fact]
+    public async Task CancellationAtStopBoundary_IsNotConvertedIntoParking()
+    {
+        const string api = "non-progress-cancel-boundary";
+        var tool = new ScriptedTool("get_datetime", _ => "tick");
+        using var provider = RegisterRepeatedToolUseProvider(api, tool.Name, 12);
+        using var cancellation = new CancellationTokenSource();
+        var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with
+        {
+            SteeringMessageProvider = _ =>
+            {
+                if (tool.ExecuteCount == GuardLimit) cancellation.Cancel();
+                return Task.FromResult<IReadOnlyList<AgentMessage>>([]);
+            }
+        };
+        var events = new List<AgentEvent>();
+        await Should.ThrowAsync<OperationCanceledException>(() => AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("wait")], new AgentContext(null, [], [tool]), config,
+            evt => { events.Add(evt); return Task.CompletedTask; }, cancellation.Token));
+        tool.ExecuteCount.ShouldBe(GuardLimit);
+        events.OfType<AgentEndEvent>().ShouldNotContain(evt => evt.Completion.Status == RunCompletionStatus.Parked);
+    }
+
+    private static IDisposable RegisterRepeatedToolUseProvider(string api, string toolName, int count)
+        => RegisterSequencedToolUseProvider(api, toolName, Enumerable.Range(0, count).Select(i => $"variant-{i % 2}").ToArray());
+
+    private static IDisposable RegisterSequencedToolUseProvider(string api, string toolName, IReadOnlyList<string> variants)
+    {
+        var index = -1;
+        var provider = new TestApiProvider(api, simpleStreamFactory: (_, _, _) =>
+        {
+            var callNumber = Interlocked.Increment(ref index);
+            if (callNumber >= variants.Count)
+                return TestStreamFactory.CreateTextResponse("Done.");
+
+            var arguments = string.Equals(toolName, "edit", StringComparison.OrdinalIgnoreCase)
+                ? new Dictionary<string, object?>
+                {
+                    ["path"] = "same-file.txt",
+                    ["oldText"] = variants[callNumber],
+                    ["newText"] = "replacement",
+                }
+                : toolName is "get_current_time" or "get_datetime"
+                    ? new Dictionary<string, object?>()
+                    : toolName == "todo"
+                        ? new Dictionary<string, object?> { ["action"] = variants[callNumber] }
+                        : toolName == "memory_save"
+                            ? new Dictionary<string, object?> { ["content"] = variants[callNumber] }
+                            : new Dictionary<string, object?> { ["path"] = "same-file.txt", ["variant"] = variants[callNumber] };
+            return TestStreamFactory.CreateToolCallResponse((
+                $"call-{callNumber}",
+                toolName,
+                arguments));
+        });
+        return TestHelpers.RegisterProvider(provider);
+    }
+}

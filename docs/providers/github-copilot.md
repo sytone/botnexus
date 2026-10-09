@@ -29,11 +29,9 @@ Set the provider on your agent in `config.json`:
 
 ### Accounts, provider instances and the `copilot` alias
 
-Current BotNexus supports one canonical GitHub Copilot account per gateway. The canonical provider instance and auth entry are both named `github-copilot`. `copilot` is an alias that resolves to that same model-registry provider; it is not a second provider instance, credential or subscription.
+The canonical default instance is `github-copilot`. `copilot` is an alias for that default, not a second subscription. Existing named-provider seams support configured Copilot instances for model discovery/routing and the Portal Usage selection. The Usage view isolates account and header observations by the selected instance and credential generation; unknown or unsupported identity is unavailable, never an implicit default-account fallback.
 
-BotNexus does not support two independently authenticated Copilot accounts in one gateway today. Adding `providers.copilot`, adding another name such as `providers.copilot-work`, or pointing a custom entry at `auth:<name>` does not reproduce the complete built-in contract: canonical login and diagnostics, model discovery, all three Copilot API contracts, endpoint refresh, health and quota state remain tied to `github-copilot`.
-
-First-class named built-in instances are planned in [#4191](https://github.com/sytone/botnexus/issues/4191). Until that runtime work is delivered and tested, use separate BotNexus homes and gateway processes when agents must use separate Copilot subscriptions. Do not manually craft `auth.json` entries as a workaround. There is no automatic account fallback or rotation.
+Canonical CLI login and diagnostics still use `github-copilot`; named-instance Usage support does not promise the complete provisioning/feature matrix tracked by [#4192](https://github.com/sytone/botnexus/issues/4192). Enterprise authority interoperability is separate work. Do not manually craft auth entries or assume that changing an instance name establishes another account. There is no automatic account fallback or subscription rotation.
 
 ### Authentication
 
@@ -123,3 +121,15 @@ Copilot supports prompt caching for compatible models. The `<!-- BOTNEXUS_CACHE_
 - Built-in limits are fallback metadata; inspect the effective registration after discovery rather than assuming every Claude model has the same context window
 - OAuth refresh requires a retained GitHub credential and access to the HTTP token-exchange endpoint, not an installed/authenticated `gh` CLI
 - Copilot CLI diagnostics require the BotNexus `auth.json` entry; gateway ambient fallback is not a diagnostic login substitute
+
+## Read quota and activity
+
+**CLI:** `botnexus provider copilot quota` reads quota for the canonical stored account. It does not select a named Portal instance or report gateway-wide scheduled activity.
+
+**Portal:** Open **Usage**, then choose the configured Copilot instance in **Copilot account quota**. Account API quota and response-header observations appear separately, with their units and observation times. **Refresh account** requests a throttled refresh; ordinary panel reads do not contact GitHub. Closing the panel stops its polling and cancels panel-owned requests.
+
+Fractional quota values are preserved. Unknown, partial, stale and unlimited states are explicit. The latest header may disagree with the account API; do not add those observations together. Header percentage and count fields are distinct. Neither quota nor local tokens is converted into a bill.
+
+**Observed local activity** is a bounded process-local view of requests, failures and rate-limit-counter-derived burn, not authoritative model-token usage. **Gateway-wide scheduled activity** separately shows retained scheduled-run measurements for the last 24 hours or a calendar UTC day. Its displayed UTC bounds, truncation and per-field coverage explain what is known. Totals include all matching jobs, not only the top-job list. Historical runs lack provider identity, and delegated activity can overlap. Cache-token splits and all-conversation burn are unsupported.
+
+Account-wide quota and gateway-wide activity require admin access. Missing credentials or an unsupported account scope produce unavailable observations, not zero consumption. Header observations are process-local and remain unavailable after restart until another attributed response arrives. This view does not add a polling cron or modify model execution. Developers can read the [Usage API contract](../api/provider-usage.md).

@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Extensions.Hosting;
@@ -23,14 +24,15 @@ public sealed class CronSessionStartupReconciler(
         // #2188: reconciliation runs in the host's starting phase, so an exception here
         // propagates out of Host.StartAsync and terminates the process. A single
         // unrecoverable session row (e.g. a non-null conversation_id whose conversation
-        // was deleted) must never be able to abort gateway startup. The store's bulk
-        // ListAsync already skips-and-logs unrecoverable rows, but we defend the whole
-        // reconciliation as well so no store implementation or transient fault can brick
-        // startup - this pass only needs Active cron rows to seal.
-        List<GatewaySession> staleSessions;
+        // was deleted) must never be able to abort gateway startup. Use the transcript-free
+        // projection: ListAsync hydrates every history row and made startup memory proportional
+        // to the complete session corpus (#4657). We still defend the whole reconciliation so
+        // no store implementation or transient fault can brick startup.
+        List<SessionSummary> staleSessions;
         try
         {
-            staleSessions = (await sessions.ListAsync(null, cancellationToken).ConfigureAwait(false))
+            staleSessions = (await sessions.ListSummariesAsync(
+                    DateTimeOffset.MinValue, limit: null, offset: 0, cancellationToken).ConfigureAwait(false))
                 .Where(session => session.Status == SessionStatus.Active
                     && session.ChannelType?.Value.Equals("cron", StringComparison.Ordinal) == true)
                 .ToList();
@@ -48,9 +50,13 @@ public sealed class CronSessionStartupReconciler(
         {
             try
             {
-                session.Status = SessionStatus.Sealed;
-                await sessions.SaveAsync(session, cancellationToken).ConfigureAwait(false);
-                sealedCount++;
+                var transition = await sessions.TransitionStatusAsync(
+                    SessionId.From(session.SessionId),
+                    [SessionStatus.Active],
+                    SessionStatus.Sealed,
+                    cancellationToken).ConfigureAwait(false);
+                if (transition.Outcome == SessionMutationOutcome.Applied)
+                    sealedCount++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -58,7 +64,7 @@ public sealed class CronSessionStartupReconciler(
                 logger.LogWarning(
                     ex,
                     "Failed to seal stale cron session '{SessionId}' during startup reconciliation; continuing.",
-                    session.SessionId.Value);
+                    session.SessionId);
             }
         }
 

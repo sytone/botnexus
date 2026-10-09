@@ -35,7 +35,7 @@ namespace BotNexus.Gateway.Sessions;
 /// </list>
 /// <para>Thread-safe via <see cref="SemaphoreSlim"/>. Suitable for single-instance deployments.</para>
 /// </remarks>
-public sealed class FileSessionStore : SessionStoreBase
+public sealed partial class FileSessionStore : SessionStoreBase
 {
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
     private readonly string _storePath;
@@ -191,6 +191,64 @@ public sealed class FileSessionStore : SessionStoreBase
     }
 
     /// <inheritdoc />
+    public override async Task<SessionMutationOutcome> ExpireIfMatchesAsync(
+        SessionCleanupFence fence,
+        DateTimeOffset expiresAt,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var session = _cache.GetValueOrDefault(fence.SessionId)
+                ?? await LoadFromFileAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+            if (session is null)
+                return SessionMutationOutcome.NotFound;
+            if (!MatchesCleanupFence(session, fence))
+                return SessionMutationOutcome.Conflict;
+
+            session.Status = SessionStatus.Expired;
+            session.ExpiresAt ??= expiresAt;
+            session.UpdatedAt = expiresAt;
+            _cache[fence.SessionId] = session;
+            await PersistSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            return SessionMutationOutcome.Applied;
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public override async Task<SessionMutationOutcome> DeleteIfMatchesAsync(
+        SessionCleanupFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var session = _cache.GetValueOrDefault(fence.SessionId)
+                ?? await LoadFromFileAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+            if (session is null)
+                return SessionMutationOutcome.NotFound;
+            if (!MatchesCleanupFence(session, fence))
+                return SessionMutationOutcome.Conflict;
+
+            _cache.Remove(fence.SessionId);
+            var historyPath = GetHistoryPath(fence.SessionId);
+            var metaPath = GetMetaPath(fence.SessionId);
+            if (_fileSystem.File.Exists(historyPath)) _fileSystem.File.Delete(historyPath);
+            if (_fileSystem.File.Exists(metaPath)) _fileSystem.File.Delete(metaPath);
+            return SessionMutationOutcome.Applied;
+        }
+        finally { _lock.Release(); }
+    }
+
+    private static bool MatchesCleanupFence(GatewaySession session, SessionCleanupFence fence) =>
+        session.ConversationId == fence.ConversationId
+        && session.Status == fence.ExpectedStatus
+        && session.UpdatedAt == fence.ExpectedUpdatedAt;
+
+    /// <inheritdoc />
     public override async Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("session.delete", ActivityKind.Internal);
@@ -231,6 +289,111 @@ public sealed class FileSessionStore : SessionStoreBase
         }
         finally { _lock.Release(); }
     }
+
+    /// <inheritdoc />
+    public override async Task<SessionSummaryPage> ListSummaryPageAsync(
+        SessionSummaryQuery query, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (query.ConversationIds is { Count: 0 })
+            return SessionSummaryPage.Empty;
+
+        // Keep legacy recovery for ordinary list callers. Search always supplies eligibility;
+        // that path must never run migration, hydrate replay, or rewrite orphan sidecars.
+        if (query.ConversationIds is null)
+            return await base.ListSummaryPageAsync(query, cancellationToken).ConfigureAwait(false);
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var summaries = new List<SessionSummary>();
+            var agents = new Dictionary<ConversationId, AgentId>();
+            foreach (var metaPath in _fileSystem.Directory.GetFiles(_storePath, "*.meta.json"))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                // Deliberately deserialize only summary fields, not transcript or replay data.
+                var meta = await SessionMetadataSidecar.ReadAsync<SessionSummaryMeta>(
+                    _fileSystem, metaPath, JsonOptions, cancellationToken).ConfigureAwait(false);
+                if (meta?.ConversationId is not { } conversationId
+                    || !query.ConversationIds.Contains(conversationId)
+                    || (query.ConversationIdFilter is not null
+                        && !string.Equals(conversationId.Value, query.ConversationIdFilter, StringComparison.Ordinal))
+                    || meta.UpdatedAt < query.UpdatedAfter
+                    || (!query.IncludeInactive && meta.Status is not (SessionStatus.Active or SessionStatus.Suspended)))
+                    continue;
+
+                // Ownership is canonical on the conversation, never on a legacy sidecar.
+                // Resolve only after eligibility, with no orphan resolver or global list.
+                if (!agents.TryGetValue(conversationId, out var agentId))
+                {
+                    var conversation = await _conversationStore.GetAsync(conversationId, cancellationToken).ConfigureAwait(false);
+                    if (conversation is null)
+                        continue;
+                    agentId = conversation.AgentId;
+                    agents.Add(conversationId, agentId);
+                }
+                if (query.AgentId is not null && !string.Equals(agentId.Value, query.AgentId, StringComparison.Ordinal))
+                    continue;
+
+                var encodedId = Path.GetFileName(metaPath)[..^".meta.json".Length];
+                var sessionId = SessionId.From(Uri.UnescapeDataString(encodedId));
+                var sessionType = meta.SessionType ?? InferSessionType(sessionId, meta.ChannelType);
+                var interactive = sessionType.Equals(SessionType.UserAgent)
+                    && (!meta.ChannelType.HasValue
+                        || !string.Equals(meta.ChannelType.Value.Value, "cron", StringComparison.OrdinalIgnoreCase));
+                summaries.Add(new SessionSummary(sessionId.Value, agentId.Value, meta.ChannelType,
+                    meta.Status, sessionType, interactive, 0, meta.CreatedAt, meta.UpdatedAt, conversationId.Value));
+            }
+
+            // Count matching metadata before applying the window. Only returned eligible rows
+            // need a history count, and even those are streamed without materializing history.
+            var page = SessionSummaryWindow.ApplyQuery(summaries, query);
+            var items = new List<SessionSummary>(page.Items.Count);
+            foreach (var summary in page.Items)
+            {
+                var count = await CountHistoryAsync(SessionId.From(summary.SessionId), cancellationToken).ConfigureAwait(false);
+                items.Add(summary with { MessageCount = count });
+            }
+            return page with { Items = items };
+        }
+        finally { _lock.Release(); }
+    }
+
+    private async Task<int> CountHistoryAsync(SessionId sessionId, CancellationToken cancellationToken)
+    {
+        var path = GetHistoryPath(sessionId);
+        if (!_fileSystem.File.Exists(path))
+            return 0;
+        await using var stream = _fileSystem.FileStream.New(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var reader = new StreamReader(stream);
+        var count = 0;
+        while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+            try
+            {
+                // Match SessionJsonl's non-null, valid-entry count. Compaction marks entries
+                // historical but does not remove them from Session.MessageCount.
+                if (JsonSerializer.Deserialize<SessionEntry>(line, JsonOptions) is not null)
+                    count++;
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Skipping malformed session history JSONL entry");
+            }
+        }
+        return count;
+    }
+
+    private sealed record SessionSummaryMeta(
+        ConversationId? ConversationId,
+        ChannelKey? ChannelType,
+        SessionType? SessionType,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset UpdatedAt,
+        SessionStatus Status = SessionStatus.Active);
 
     protected override async Task<IReadOnlyList<GatewaySession>> EnumerateSessionsAsync(CancellationToken cancellationToken)
     {
@@ -782,6 +945,7 @@ public sealed class FileSessionStore : SessionStoreBase
 
     private async Task PersistSessionAsync(GatewaySession session, CancellationToken cancellationToken)
     {
+        if (await PersistWithReceiptsAsync(session, cancellationToken).ConfigureAwait(false)) return;
         var historyPath = GetHistoryPath(session.SessionId);
         var history = session.CaptureHistoryForPersistence();
         if (history.RequiresReplacement)
@@ -820,6 +984,7 @@ public sealed class FileSessionStore : SessionStoreBase
 
     private async Task WriteToFileAsync(GatewaySession session, CancellationToken cancellationToken)
     {
+        if (await PersistWithReceiptsAsync(session, cancellationToken).ConfigureAwait(false)) return;
         var historyPath = GetHistoryPath(session.SessionId);
         await SessionJsonl.WriteAllAsync(
             _fileSystem,

@@ -1,5 +1,8 @@
 using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Diagnostics;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
@@ -99,15 +102,15 @@ public static class AgentLoopRunner
         messages.Add(prompt);
         await emit(new MessageEndEvent(prompt, DateTimeOffset.UtcNow)).ConfigureAwait(false);
 
-        var transformed = config.TransformContext is null
+        var transformed = config.AgentContextTransformer is null
             ? messages
-            : (await config.TransformContext(messages, cancellationToken).ConfigureAwait(false)).ToList();
+            : (await config.AgentContextTransformer(messages, cancellationToken).ConfigureAwait(false)).ToList();
         var providerContext = await ContextConverter.ToProviderContext(
                 new AgentContext(context.SystemPrompt, transformed, []),
-                config.ConvertToLlm,
+                config.ProviderMessageTransformer,
                 cancellationToken)
             .ConfigureAwait(false);
-        var executionOptions = await config.GetProviderExecutionOptions(config.Model.Provider, cancellationToken)
+        var executionOptions = await config.ProviderExecutionOptionsProvider(config.Model.Provider, cancellationToken)
             .ConfigureAwait(false);
         var generationOptions = config.GenerationSettings with { CancellationToken = cancellationToken };
         var stream = config.LlmClient.StreamSimple(config.Model, providerContext, generationOptions, executionOptions);
@@ -153,7 +156,7 @@ public static class AgentLoopRunner
     /// </para>
     /// <para>
     /// <strong>Important:</strong> The last message in context must convert to a user or tool result message
-    /// via ConvertToLlm. If it doesn't, the LLM provider will reject the request.
+    /// via ProviderMessageTransformer. If it doesn't, the LLM provider will reject the request.
     /// </para>
     /// <para>
     /// Throws InvalidOperationException if the last message is from the assistant.
@@ -203,6 +206,8 @@ public static class AgentLoopRunner
         IReadOnlyList<AgentMessage> followUpSeed = [];
         var completionContinuationAttempts = 0;
         RunCompletionDecision? lastCompletionDecision = null;
+        var nonProgressGuard = new ToolNonProgressGuard(
+            config.ToolProgressPolicy ?? DefaultToolProgressPolicy.EvaluateAsync);
 
         // #2519: taint accumulation is scoped to the whole RUN, not to each provider turn. The
         // laundering path this closes is inherently multi-turn - the model fetches a page on one
@@ -223,7 +228,7 @@ public static class AgentLoopRunner
                 ? followUpSeed.ToList()
                 : (config.SkipInitialSteeringPoll
                     ? []
-                    : (await GetMessagesAsync(config.GetSteeringMessages, cancellationToken).ConfigureAwait(false)).ToList());
+                    : (await GetMessagesAsync(config.SteeringMessageProvider, cancellationToken).ConfigureAwait(false)).ToList());
             config = config with { SkipInitialSteeringPoll = false };
             followUpSeed = [];
 
@@ -253,7 +258,7 @@ public static class AgentLoopRunner
                     NotifyContextReplaced(refreshedContext.Tools);
                     currentContext = refreshedContext;
                     messages = refreshedContext.Messages.ToList();
-                    config.OnDiagnostic?.Invoke(
+                    DiagnosticNotification.Report(config.DiagnosticObserver,
                         "Proactive durable compaction applied before the next provider turn; live context resynchronized.");
                 }
 
@@ -285,7 +290,7 @@ public static class AgentLoopRunner
                 pendingMessages.Clear();
 
                 var generationOptions = config.GenerationSettings with { CancellationToken = cancellationToken };
-                var executionOptions = await config.GetProviderExecutionOptions(config.Model.Provider, cancellationToken).ConfigureAwait(false);
+                var executionOptions = await config.ProviderExecutionOptionsProvider(config.Model.Provider, cancellationToken).ConfigureAwait(false);
                 var messageCountBeforeAssistant = messages.Count;
                 var assistantMessage = await ExecuteWithRetryAsync(
                         messages,
@@ -414,8 +419,62 @@ public static class AgentLoopRunner
                 // "back" a later no-tool fabrication turn for the whole run.
                 await AuditClaimsAsync(config, assistantMessage, turnToolNames, emit).ConfigureAwait(false);
 
-                var drained = (await GetMessagesAsync(config.GetSteeringMessages, cancellationToken).ConfigureAwait(false))
+                var nonProgress = hasMoreToolCalls
+                    ? await nonProgressGuard.ObserveAsync(
+                            assistantMessage.ToolCalls!,
+                            toolResults,
+                            cancellationToken)
+                        .ConfigureAwait(false)
+                    : null;
+                if (nonProgress is { WarningReady: true })
+                {
+                    var guidance = BuildNonProgressGuidance(nonProgress);
+                    var feedback = new BotNexus.Agent.Core.Types.UserMessage(guidance);
+                    await emit(new MessageStartEvent(feedback, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                    messages.Add(feedback);
+                    newMessages.Add(feedback);
+                    await emit(new MessageEndEvent(feedback, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                }
+
+                var drained = (await GetMessagesAsync(config.SteeringMessageProvider, cancellationToken).ConfigureAwait(false))
                     .ToList();
+                if (drained.Any(message => message is BotNexus.Agent.Core.Types.UserMessage { DeferWhileBusy: false }))
+                {
+                    nonProgressGuard.Reset();
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                var hasUserSteer = drained.Any(message => message is BotNexus.Agent.Core.Types.UserMessage { DeferWhileBusy: false });
+                if (nonProgress is { ShouldStop: true } && !hasUserSteer)
+                {
+                    // Preserve the assistant call and all of its tool results in the transcript,
+                    // then stop as incomplete instead of converting repeated no-progress into success.
+                    var detail = BuildNonProgressStopDetail(nonProgress);
+                    try
+                    {
+                        config.DiagnosticObserver?.Invoke(detail);
+                    }
+                    catch
+                    {
+                        // Diagnostics are advisory and cannot change the terminal disposition.
+                    }
+
+                    var endTime = DateTimeOffset.UtcNow;
+                    await emit(new AgentEndEvent(
+                        messages.Skip(runStartIndex).ToList(),
+                        metrics.ToMetrics(endTime),
+                        endTime,
+                        new RunCompletionResult(
+                            RunCompletionStatus.Parked,
+                            ["tool-non-progress"],
+                            RunStopReason.UserInput,
+                            Detail: detail,
+                            Evidence: $"Repeated {nonProgress.Kind} tool outcomes without observable progress.",
+                            ContinuationOwner: "user",
+                            WakeCondition: "Provide new direction or resume after changing the underlying state.")))
+                        .ConfigureAwait(false);
+                    return;
+                }
 
                 // #1845: a defer-while-busy message (memory flush) that lands mid-flight is pulled
                 // out of this turn's injection set and held until the loop reaches idle. Only the
@@ -444,17 +503,17 @@ public static class AgentLoopRunner
             // no new event type, no silent drop.
             cancellationToken.ThrowIfCancellationRequested();
 
-            var followUps = await GetMessagesAsync(config.GetFollowUpMessages, cancellationToken).ConfigureAwait(false);
+            var followUps = await GetMessagesAsync(config.FollowUpMessageProvider, cancellationToken).ConfigureAwait(false);
             if (followUps.Count > 0)
             {
                 followUpSeed = followUps;
                 continue;
             }
 
-            if (config.EvaluateRunCompletion is not null)
+            if (config.RunCompletionPolicy is not null)
             {
                 lastCompletionDecision = ValidateCompletionDecision(
-                    await config.EvaluateRunCompletion(cancellationToken).ConfigureAwait(false));
+                    await config.RunCompletionPolicy(cancellationToken).ConfigureAwait(false));
                 if (lastCompletionDecision.Status == RunCompletionStatus.Working)
                 {
                     if (completionContinuationAttempts >= config.EffectiveMaxCompletionContinuations)
@@ -479,6 +538,14 @@ public static class AgentLoopRunner
             endTime2,
             completion)).ConfigureAwait(false);
     }
+
+    private static string BuildNonProgressGuidance(ToolNonProgressObservation observation)
+        => observation.Guidance
+            ?? "[Tool progress guard] Repeated tool calls produced no observable progress. Check for new state or evidence, change the approach, or ask the user for direction instead of repeating the same operation.";
+
+    private static string BuildNonProgressStopDetail(ToolNonProgressObservation observation)
+        => $"Tool non-progress guard stopped the loop after {observation.ConsecutiveCount} consecutive {observation.Kind} outcomes. " +
+            "Executed tool results are retained. The run is incomplete; provide new direction or change the underlying state before resuming.";
 
     private static RunCompletionDecision ValidateCompletionDecision(RunCompletionDecision decision)
     {
@@ -592,7 +659,7 @@ public static class AgentLoopRunner
     }
 
     private static async Task<IReadOnlyList<AgentMessage>> GetMessagesAsync(
-        GetMessagesDelegate? getMessages,
+        AgentMessageProvider? getMessages,
         CancellationToken cancellationToken)
     {
         if (getMessages is null)
@@ -639,19 +706,19 @@ public static class AgentLoopRunner
 
     /// <summary>
     /// Mid-loop auto-compaction (#1710/#4121/#4379). Awaits
-    /// <see cref="AgentLoopConfig.MaybeCompactAsync"/> and returns a replacement context when the
+    /// <see cref="AgentLoopConfig.ContextCompactionService"/> and returns a replacement context when the
     /// persisted session changed. Required compaction failures fail closed; cancellation propagates.
     /// </summary>
     private static async Task<AgentContext?> MaybeCompactAsync(AgentLoopConfig config, CancellationToken cancellationToken)
     {
-        if (config.MaybeCompactAsync is null)
+        if (config.ContextCompactionService is null)
         {
             return null;
         }
 
         try
         {
-            return await config.MaybeCompactAsync(cancellationToken).ConfigureAwait(false);
+            return await config.ContextCompactionService(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -666,8 +733,9 @@ public static class AgentLoopRunner
             // Hosts that have not declared compaction required retain the historical best-effort
             // behavior. A host that crossed its threshold uses ProactiveCompactionException instead,
             // which is deliberately not swallowed above (#4379).
-            config.OnDiagnostic?.Invoke(
-                $"Proactive durable compaction failed before a provider turn; continuing with the existing bounded overflow recovery. {ex.Message}");
+            if (config.DiagnosticObserver is { } observer)
+                DiagnosticNotification.Report(observer,
+                    $"Proactive durable compaction failed before a provider turn; continuing with the existing bounded overflow recovery. {ex.Message}");
             return null;
         }
     }
@@ -678,7 +746,7 @@ public static class AgentLoopRunner
     /// Two defects motivated extracting this. First, the delay was <em>purely deterministic</em>, so every
     /// agent throttled by the shared provider endpoint at the same instant slept for an identical interval
     /// and woke in lockstep, re-triggering the throttle - a self-inflicted thundering herd. Bounded
-    /// one-sided jitter from <see cref="AgentLoopConfig.RetryRandomSource"/> desynchronises them.
+    /// one-sided jitter from <see cref="AgentLoopConfig.RetryRandomnessProvider"/> desynchronises them.
     /// </para>
     /// <para>
     /// Second, a server-supplied <c>Retry-After</c> was honoured <em>verbatim with no ceiling at all</em>,
@@ -706,7 +774,7 @@ public static class AgentLoopRunner
         }
         else
         {
-            var random = (config.RetryRandomSource ?? RetryJitter.DefaultRandomSource)();
+            var random = (config.RetryRandomnessProvider ?? RetryJitter.DefaultRandomSource)();
             candidate = RetryJitter.ApplyMs(backoffMs, random);
         }
 
@@ -775,13 +843,13 @@ public static class AgentLoopRunner
             // stored-result detail remains leased across retries; only a successful assistant
             // continuation commits the offered batch and makes later requests receipt-only.
             var toolResultProjection = toolResultContextLease.Project(messages);
-            var transformedMessages = config.TransformContext is null
+            var transformedMessages = config.AgentContextTransformer is null
                 ? toolResultProjection.Messages
-                : await config.TransformContext(toolResultProjection.Messages, cancellationToken).ConfigureAwait(false);
+                : await config.AgentContextTransformer(toolResultProjection.Messages, cancellationToken).ConfigureAwait(false);
             var transformedContext = new AgentContext(systemPrompt, transformedMessages, tools);
             var providerContext = await ContextConverter.ToProviderContext(
                     transformedContext,
-                    config.ConvertToLlm,
+                    config.ProviderMessageTransformer,
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -815,7 +883,7 @@ public static class AgentLoopRunner
                     recoveryLease?.ReportNonTransientFailure();
                     RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                     overflowRecovered = true;
-                    config.OnDiagnostic?.Invoke(
+                    DiagnosticNotification.Report(config.DiagnosticObserver,
                         "Reactive lossy context-overflow truncation applied after terminal provider overflow; this is not durable compaction.");
                     var compacted = CompactForOverflow(messages);
                     messages.Clear();
@@ -845,7 +913,7 @@ public static class AgentLoopRunner
                 recoveryLease?.ReportNonTransientFailure();
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 overflowRecovered = true;
-                config.OnDiagnostic?.Invoke(
+                DiagnosticNotification.Report(config.DiagnosticObserver,
                     "Reactive lossy context-overflow truncation applied after provider rejection; this is not durable compaction.");
                 var compacted = CompactForOverflow(messages);
                 messages.Clear();
@@ -853,13 +921,13 @@ public static class AgentLoopRunner
                 continue;
             }
             catch (ProviderAuthenticationException) when
-                (!authenticationRecovered && config.InvalidateProviderCredentials is not null)
+                (!authenticationRecovered && config.CredentialInvalidationService is not null)
             {
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 authenticationRecovered = true;
-                await config.InvalidateProviderCredentials(config.Model.Provider, cancellationToken)
+                await config.CredentialInvalidationService(config.Model.Provider, cancellationToken)
                     .ConfigureAwait(false);
-                executionOptions = await config.GetProviderExecutionOptions(config.Model.Provider, cancellationToken)
+                executionOptions = await config.ProviderExecutionOptionsProvider(config.Model.Provider, cancellationToken)
                     .ConfigureAwait(false);
                 continue;
             }
@@ -880,9 +948,10 @@ public static class AgentLoopRunner
                     config.AuthProfile ?? string.Empty,
                     ProviderSuspensionRegistry.DefaultDuration,
                     ex.Message);
-                config.OnDiagnostic?.Invoke(
-                    $"Provider '{config.Model.Provider}' reported non-transient exhaustion; " +
-                    $"failing after one attempt and suspending this auth profile. {ex.Message}");
+                if (config.DiagnosticObserver is { } observer)
+                    DiagnosticNotification.Report(observer,
+                        $"Provider '{config.Model.Provider}' reported non-transient exhaustion; " +
+                        $"failing after one attempt and suspending this auth profile. {ex.Message}");
                 throw;
             }
             catch (Exception ex) when (ClassifyFailure(ex) == ProviderFailureClass.Transient && attempt < maxAttempts - 1)

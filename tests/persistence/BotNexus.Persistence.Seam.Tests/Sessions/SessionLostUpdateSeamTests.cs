@@ -386,4 +386,32 @@ public sealed class SessionLostUpdateSeamTests
                 e => e.Content == "concurrent-turn",
                 "append-oriented persistence must not erase a row committed after this aggregate snapshot");
     }
+
+    [Fact]
+    public async Task CleanupMutations_RefuseAProjectionVersionMadeStaleByConcurrentSave()
+    {
+        using var fixture = new SessionSeamStoreFixture();
+        var seeded = await fixture.SeedAsync("s-cleanup-cas");
+        var cleanupStore = fixture.CreateStore();
+        var row = (await cleanupStore.ListCleanupPlanAsync(10, includeBytes: true)).Rows.ShouldHaveSingleItem();
+        var staleFence = SessionCleanupFence.Capture(row);
+
+        var concurrent = await fixture.CreateStore().GetAsync(seeded.Session.SessionId);
+        concurrent.ShouldNotBeNull();
+        concurrent.Metadata["new-work"] = true;
+        concurrent.UpdatedAt = concurrent.UpdatedAt.AddMinutes(1);
+        await fixture.CreateStore().SaveAsync(concurrent);
+
+        (await cleanupStore.ExpireIfMatchesAsync(staleFence, concurrent.UpdatedAt.AddHours(1)))
+            .ShouldBe(SessionMutationOutcome.Conflict);
+        (await cleanupStore.DeleteIfMatchesAsync(staleFence))
+            .ShouldBe(SessionMutationOutcome.Conflict);
+
+        var committed = await fixture.CreateStore().GetAsync(seeded.Session.SessionId);
+        committed.ShouldNotBeNull();
+        committed.Status.ShouldBe(SessionStatus.Active);
+        committed.Metadata.ShouldContainKey("new-work");
+        committed.GetHistorySnapshot().ShouldContain(entry => entry.Content == "seed-turn");
+    }
+
 }

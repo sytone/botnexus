@@ -1,4 +1,5 @@
 using Bunit;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -206,7 +207,7 @@ public sealed class MobileCanvasPanelTests : IDisposable
     }
 
     [Fact]
-    public void Canvas_backdrop_click_closes_sheet()
+    public async Task Canvas_backdrop_click_closes_sheet()
     {
         var agent = _store.GetAgent("test-agent")!;
         agent.CanvasHtml = "<p>canvas</p>";
@@ -216,14 +217,18 @@ public sealed class MobileCanvasPanelTests : IDisposable
         cut.Find(".overflow-btn").Click();
         cut.Find("[data-testid='canvas-toggle-btn']").Click();
 
-        // Click backdrop
-        var backdrop = cut.Find("[data-testid='canvas-sheet-backdrop']");
-        backdrop.Click();
+        var panel = cut.FindComponent<MobileCanvasPanel>();
+        panel.Instance.Open.ShouldBeTrue();
+        cut.FindAll("[data-testid='canvas-sheet']").ShouldHaveSingleItem();
 
-        // Sheet should be gone after close (but async — check immediately after click)
-        // Due to the async Task.Delay in the close, the backdrop triggers OnClose which sets _canvasOpen=false
-        // The parent Chat.razor should then re-render without the sheet
-        cut.WaitForState(() => cut.FindAll("[data-testid='canvas-sheet']").Count == 0, TimeSpan.FromSeconds(1));
+        // Await the complete close handler, including its animation and parent callback,
+        // rather than racing a wall-clock wait against the renderer under CI load.
+        await cut.Find("[data-testid='canvas-sheet-backdrop']").ClickAsync();
+
+        cut.FindAll("[data-testid='canvas-sheet']").ShouldBeEmpty();
+        cut.FindAll("[data-testid='canvas-sheet-backdrop']").ShouldBeEmpty();
+        // The child can hide itself without notifying Chat; verify the parent-owned state too.
+        panel.Instance.Open.ShouldBeFalse();
     }
 
     private static string FindRepositoryRoot()

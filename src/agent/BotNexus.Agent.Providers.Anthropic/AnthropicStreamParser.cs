@@ -352,7 +352,7 @@ internal static class AnthropicStreamParser
                 // Fail-open: a stop frame with no final value yields null and assembled stands.
                 accumulated = StreamAssemblyConformance.Reconcile(
                     accumulated,
-                    StreamBlockFinalText.TryRead(data),
+                    data.TryRead(),
                     model.Provider,
                     model.Id,
                     "anthropic-messages",

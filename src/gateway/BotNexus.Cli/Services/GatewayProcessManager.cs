@@ -47,7 +47,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         _gracefulStopTimeout = gracefulStopTimeout ?? TimeSpan.FromSeconds(10);
         _waitForExitOverride = waitForExitOverride;
         _probeClient = probeClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-        _plannedShutdownRequester = plannedShutdownRequester ?? RequestPlannedShutdownAsync;
+        _plannedShutdownRequester = plannedShutdownRequester ?? SendPlannedShutdownRequestAsync;
     }
 
     /// <summary>
@@ -248,6 +248,22 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     /// Falls back to <c>dotnet &lt;dll&gt;</c> when no apphost is found next to the DLL.
     /// </para>
     /// </summary>
+    internal static string? ResolveApphostPath(string executablePath)
+    {
+        if (!executablePath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            return executablePath;
+
+        var directory = Path.GetDirectoryName(executablePath);
+        var stem = Path.GetFileNameWithoutExtension(executablePath);
+        if (directory is null || string.IsNullOrEmpty(stem))
+            return null;
+
+        var candidate = OperatingSystem.IsWindows()
+            ? Path.Combine(directory, stem + ".exe")
+            : Path.Combine(directory, stem);
+        return File.Exists(candidate) ? candidate : null;
+    }
+
     internal (string FileName, string Arguments) ResolveLaunchTarget(GatewayStartOptions options)
     {
         var extraArgs = options.Arguments ?? string.Empty;
@@ -258,21 +274,11 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             if (!string.IsNullOrWhiteSpace(dllPath)
                 && dllPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             {
-                // The apphost sits beside the DLL with the same base name. On Windows it carries a
-                // .exe suffix; on Unix it is extension-less. Probe both so this works cross-platform.
-                var dir = Path.GetDirectoryName(dllPath) ?? string.Empty;
-                var baseName = Path.GetFileNameWithoutExtension(dllPath);
-                var candidates = OperatingSystem.IsWindows()
-                    ? new[] { Path.Combine(dir, baseName + ".exe") }
-                    : new[] { Path.Combine(dir, baseName) };
-
-                foreach (var apphost in candidates)
+                var apphost = ResolveApphostPath(dllPath);
+                if (apphost is not null)
                 {
-                    if (File.Exists(apphost))
-                    {
-                        _logger.LogDebug("Launching gateway via apphost executable {Apphost}", apphost);
-                        return (apphost, extraArgs.Trim());
-                    }
+                    _logger.LogDebug("Launching gateway via apphost executable {Apphost}", apphost);
+                    return (apphost, extraArgs.Trim());
                 }
             }
         }
@@ -321,6 +327,13 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     /// not-running — it is NEVER killed.
     /// </para>
     /// </summary>
+    /// <inheritdoc />
+    public Task<bool> RequestPlannedShutdownAsync(
+        string? homePath,
+        string gatewayUrl,
+        CancellationToken cancellationToken = default)
+        => _plannedShutdownRequester(homePath, gatewayUrl, cancellationToken);
+
     public async Task<GatewayStopResult> StopAsync(
         string? homePath = null,
         string? gatewayBinaryPath = null,
@@ -601,7 +614,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     /// <see cref="GatewayProbeResult.ReachableNoAuth"/> on 401/403,
     /// and <see cref="GatewayProbeResult.Unreachable"/> on connection failure or timeout.
     /// </summary>
-    private static async Task<bool> RequestPlannedShutdownAsync(
+    private static async Task<bool> SendPlannedShutdownRequestAsync(
         string? homePath,
         string gatewayUrl,
         CancellationToken cancellationToken)

@@ -32,7 +32,7 @@ namespace BotNexus.Gateway.Tests.Isolation;
 
 /// <summary>
 /// #2548 - the agent core emits non-fatal runtime diagnostics through
-/// <c>AgentOptions.OnDiagnostic</c>. Nothing in production assigned that callback, so every
+/// <c>AgentOptions.DiagnosticObserver</c>. Nothing in production assigned that callback, so every
 /// diagnostic the core produced was silently discarded. These tests assert the OBSERVABLE:
 /// a diagnostic produced inside <see cref="BotNexus.Agent.Core.Agent"/> is RECEIVED by the
 /// host's <see cref="ILogger"/>. Asserting the delegate is merely non-null would not prove

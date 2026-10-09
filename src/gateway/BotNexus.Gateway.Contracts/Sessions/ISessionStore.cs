@@ -281,6 +281,92 @@ public interface ISessionStore
     }
 
     /// <summary>
+    /// Returns one globally-scoped, bounded, transcript-free page of sessions that still contain crash sentinels.
+    /// Callers hydrate one selected session at a time through <see cref="GetAsync"/>.
+    /// </summary>
+    async Task<UnresolvedCrashSentinelPage> ListUnresolvedCrashSentinelsAsync(
+        int limit,
+        string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        var sessions = await ListAsync(null, cancellationToken).ConfigureAwait(false);
+        var rows = sessions
+            .Where(session => session.History.Any(static entry => entry.IsCrashSentinel))
+            .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
+            .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
+            .Take(limit + 1)
+            .Select(session => new UnresolvedCrashSentinelRow(session.SessionId, session.AgentId))
+            .ToList();
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        return new UnresolvedCrashSentinelPage(rows, hasMore ? rows[^1].SessionId.Value : null);
+    }
+
+    /// <summary>Returns one bounded page of transcript-free rows with byte accounting.</summary>
+    Task<SessionCleanupPlanPage> ListCleanupPlanAsync(
+        int limit,
+        string? cursor = null,
+        CancellationToken cancellationToken = default) =>
+        ListCleanupPlanAsync(limit, includeBytes: true, cursor, cancellationToken);
+
+    /// <summary>
+    /// Returns one bounded page of transcript-free rows sufficient for cleanup planning.
+    /// Payload-byte accounting is omitted unless <paramref name="includeBytes"/> is requested for disk-budget enforcement.
+    /// </summary>
+    async Task<SessionCleanupPlanPage> ListCleanupPlanAsync(
+        int limit,
+        bool includeBytes,
+        string? cursor = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        var sessions = await ListAsync(null, cancellationToken).ConfigureAwait(false);
+        var rows = sessions
+            .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
+            .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
+            .Take(limit + 1)
+            .Select(session => new SessionCleanupPlanRow(
+                session.SessionId, session.AgentId, session.ConversationId, session.Status, session.UpdatedAt,
+                session.MessageCount, includeBytes ? SessionDiskAccounting.Measure(session) : 0))
+            .ToList();
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        return new SessionCleanupPlanPage(rows, hasMore ? rows[^1].SessionId.Value : null);
+    }
+
+    /// <summary>Expires a session only while it still matches the cleanup planning row.</summary>
+    async Task<SessionMutationOutcome> ExpireIfMatchesAsync(
+        SessionCleanupFence fence,
+        DateTimeOffset expiresAt,
+        CancellationToken cancellationToken = default)
+    {
+        var session = await GetAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return SessionMutationOutcome.NotFound;
+        if (session.ConversationId != fence.ConversationId || session.Status != fence.ExpectedStatus
+            || session.UpdatedAt != fence.ExpectedUpdatedAt) return SessionMutationOutcome.Conflict;
+        var writeFence = SessionWriteFence.Capture(session);
+        session.Status = SessionStatus.Expired;
+        session.ExpiresAt ??= expiresAt;
+        session.UpdatedAt = expiresAt;
+        var outcome = await SaveAsync(session, writeFence, cancellationToken).ConfigureAwait(false);
+        return outcome == SessionSaveOutcome.Persisted ? SessionMutationOutcome.Applied : SessionMutationOutcome.Conflict;
+    }
+
+    /// <summary>Deletes a session only while it still matches the cleanup planning row.</summary>
+    async Task<SessionMutationOutcome> DeleteIfMatchesAsync(
+        SessionCleanupFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        var session = await GetAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return SessionMutationOutcome.NotFound;
+        if (session.ConversationId != fence.ConversationId || session.Status != fence.ExpectedStatus
+            || session.UpdatedAt != fence.ExpectedUpdatedAt) return SessionMutationOutcome.Conflict;
+        await DeleteAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        return SessionMutationOutcome.Applied;
+    }
+
+    /// <summary>
     /// Deletes a session and its history.
     /// </summary>
     Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default);
@@ -448,20 +534,20 @@ public interface ISessionStore
 
     /// <summary>
     /// Persists a new sub-agent session row when a sub-agent is spawned.
-    /// Implementations that do not support sub-agent session tracking may no-op.
+    /// Unsupported stores may no-op only for direct manager callers; tool-origin admission
+    /// requires durable retry identity and must fail closed.
     /// </summary>
     /// <param name="info">The sub-agent runtime info to persist.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
+        => info.SpawningToolCallId is null ? Task.CompletedTask
+            : throw new NotSupportedException("This store cannot durably admit tool-origin sub-agents.");
 
     /// <summary>
     /// Updates the sub-agent session row when the sub-agent completes, fails, times out, or is killed.
     /// Implementations that do not support sub-agent session tracking may no-op.
     /// </summary>
-    /// <param name="subAgentId">The sub-agent ID whose row to update.</param>
-    /// <param name="endedAt">When the sub-agent ended.</param>
-    /// <param name="status">The final status string (Completed, Failed, TimedOut, Killed).</param>
+    /// <param name="info">The retained terminal run metadata to update.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task UpdateSubAgentSessionAsync(
         SubAgentInfo info,
@@ -501,6 +587,21 @@ public interface ISessionStore
         string? childAgentId = null,
         int offset = 0)
         => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(Array.Empty<SubAgentRunDetail>());
+
+    /// <summary>Finds the retained admission for an original parent spawn tool call without consuming it.</summary>
+    Task<SubAgentRunDetail?> FindSubAgentSpawnAsync(SessionId parentSessionId, string toolCallId, CancellationToken cancellationToken = default)
+        => Task.FromResult<SubAgentRunDetail?>(null);
+
+    /// <summary>Reads one retained run by its indexed identity without consuming it.</summary>
+    Task<SubAgentRunDetail?> GetSubAgentSessionAsync(string subAgentId, CancellationToken cancellationToken = default)
+        => Task.FromResult<SubAgentRunDetail?>(null);
+
+    /// <summary>Commits a terminal result receipt and its original parent ToolResult atomically.
+    /// Same-call retries return the original payload; another call receives no result payload.
+    /// Unsupported stores fail closed, never acknowledge an unpersisted receipt.</summary>
+    Task<string?> ConsumeSubAgentResultAsync(string subAgentId, SessionId parentSessionId,
+        ConversationId? parentConversationId, SessionEntry result, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This store cannot atomically retain sub-agent tool results.");
 
     /// <summary>
     /// Gets aggregate session statistics. Default implementation returns null (not supported).

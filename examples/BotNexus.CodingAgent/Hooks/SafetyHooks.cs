@@ -1,5 +1,5 @@
 using System.Text.Json;
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
 using BotNexus.Tools.Utils;
 
 namespace BotNexus.CodingAgent.Hooks;
@@ -15,8 +15,8 @@ public sealed class SafetyHooks
 
     private const int LargeWriteThresholdBytes = 1024 * 1024;
 
-    public Task<BeforeToolCallResult?> ValidateAsync(
-        BeforeToolCallContext context,
+    public Task<ToolExecutionDecision?> ValidateAsync(
+        ToolExecutionContext context,
         CodingAgentConfig config)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -27,7 +27,7 @@ public sealed class SafetyHooks
             var pathResult = ValidatePath(context, config);
             if (pathResult is not null)
             {
-                return Task.FromResult<BeforeToolCallResult?>(pathResult);
+                return Task.FromResult<ToolExecutionDecision?>(pathResult);
             }
 
             EmitLargeWriteWarning(context);
@@ -38,11 +38,11 @@ public sealed class SafetyHooks
             var shellResult = ValidateShellCommand(context, config);
             if (shellResult is not null)
             {
-                return Task.FromResult<BeforeToolCallResult?>(shellResult);
+                return Task.FromResult<ToolExecutionDecision?>(shellResult);
             }
         }
 
-        return Task.FromResult<BeforeToolCallResult?>(null);
+        return Task.FromResult<ToolExecutionDecision?>(null);
     }
 
     private static bool IsWriteTool(string toolName)
@@ -57,7 +57,7 @@ public sealed class SafetyHooks
                || toolName.Equals("shell", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static BeforeToolCallResult? ValidatePath(BeforeToolCallContext context, CodingAgentConfig config)
+    private static ToolExecutionDecision? ValidatePath(ToolExecutionContext context, CodingAgentConfig config)
     {
         var rawPath = ReadString(context.ValidatedArgs, "path");
         if (string.IsNullOrWhiteSpace(rawPath))
@@ -70,18 +70,18 @@ public sealed class SafetyHooks
             var resolved = PathUtils.ResolvePath(rawPath, config.WorkingDirectory());
             if (IsBlockedPath(resolved, config))
             {
-                return new BeforeToolCallResult(true, $"Blocked path: '{rawPath}'.");
+                return new ToolExecutionDecision(true, $"Blocked path: '{rawPath}'.");
             }
         }
         catch (Exception ex)
         {
-            return new BeforeToolCallResult(true, $"Unsafe path '{rawPath}': {ex.Message}");
+            return new ToolExecutionDecision(true, $"Unsafe path '{rawPath}': {ex.Message}");
         }
 
         return null;
     }
 
-    private static BeforeToolCallResult? ValidateShellCommand(BeforeToolCallContext context, CodingAgentConfig config)
+    private static ToolExecutionDecision? ValidateShellCommand(ToolExecutionContext context, CodingAgentConfig config)
     {
         var command = ReadString(context.ValidatedArgs, "command");
         if (string.IsNullOrWhiteSpace(command))
@@ -94,14 +94,14 @@ public sealed class SafetyHooks
             && !config.AllowedCommands.Any(prefix =>
                 commandLower.StartsWith(prefix.ToLowerInvariant(), StringComparison.Ordinal)))
         {
-            return new BeforeToolCallResult(true, "Command is not in the allowed command list.");
+            return new ToolExecutionDecision(true, "Command is not in the allowed command list.");
         }
 
         foreach (var blocked in DefaultBlockedCommands)
         {
             if (commandLower.Contains(blocked, StringComparison.Ordinal))
             {
-                return new BeforeToolCallResult(true, $"Blocked dangerous command pattern: '{blocked}'.");
+                return new ToolExecutionDecision(true, $"Blocked dangerous command pattern: '{blocked}'.");
             }
         }
 
@@ -131,7 +131,7 @@ public sealed class SafetyHooks
         return false;
     }
 
-    private static void EmitLargeWriteWarning(BeforeToolCallContext context)
+    private static void EmitLargeWriteWarning(ToolExecutionContext context)
     {
         var payload = ReadString(context.ValidatedArgs, "content")
                       ?? ReadString(context.ValidatedArgs, "new_str")

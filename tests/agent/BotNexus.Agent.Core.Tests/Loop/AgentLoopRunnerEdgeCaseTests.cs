@@ -176,7 +176,7 @@ public class AgentLoopRunnerEdgeCaseTests
         var diagnostics = new List<string>();
         var config = CreateConfig("copilot-responses-overflow-test") with
         {
-            OnDiagnostic = diagnostics.Add
+            DiagnosticObserver = diagnostics.Add
         };
         var context = new AgentContext(
             null,
@@ -283,19 +283,19 @@ public class AgentLoopRunnerEdgeCaseTests
         return new AgentLoopConfig(
             Model: TestHelpers.CreateTestModel(apiId),
             LlmClient: TestHelpers.CreateLlmClient(),
-            ConvertToLlm: (messages, _) => Task.FromResult<IReadOnlyList<Message>>(
+            ProviderMessageTransformer: (messages, _) => Task.FromResult<IReadOnlyList<Message>>(
                 messages.OfType<AgentUserMessage>()
                     .Select(m => (Message)new BotNexus.Agent.Providers.Core.Models.UserMessage(
                         new UserMessageContent(m.Content),
                         DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
                     .ToList()),
-            TransformContext: (messages, _) => Task.FromResult(messages),
-            GetProviderExecutionOptions: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
-            GetSteeringMessages: null,
-            GetFollowUpMessages: null,
+            AgentContextTransformer: (messages, _) => Task.FromResult(messages),
+            ProviderExecutionOptionsProvider: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
+            SteeringMessageProvider: null,
+            FollowUpMessageProvider: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
-            BeforeToolCall: null,
-            AfterToolCall: null,
+            ToolExecutionPolicy: null,
+            ToolResultTransformer: null,
             GenerationSettings: new GenerationOptions(),
             MaxRetryDelayMs: 1); // Fast retries for tests
     }

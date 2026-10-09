@@ -1,6 +1,6 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Configuration;
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Tests.TestUtils;
@@ -186,7 +186,7 @@ public sealed class ToolExecutorSecurityTests
     {
         var tool = CreateTool("echo", _ => Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "ok")])));
         var assistant = CreateAssistant(("tc1", "echo", "x"));
-        var config = TestHelpers.CreateTestConfig(beforeToolCall: (_, _) => Task.FromResult<BeforeToolCallResult?>(new BeforeToolCallResult(true, "blocked by policy")));
+        var config = TestHelpers.CreateTestConfig(beforeToolCall: (_, _) => Task.FromResult<ToolExecutionDecision?>(new ToolExecutionDecision(true, "blocked by policy")));
         var context = new AgentContext(null, [], [tool]);
 
         var results = await ToolExecutor.ExecuteAsync(context, assistant, config, _ => Task.CompletedTask, CancellationToken.None);

@@ -26,6 +26,20 @@ public sealed class CronAlertTargetValidationTests
         result.Error.ShouldBeNull();
     }
 
+    [Fact]
+    public void RejectionMessages_AcceptTypedTarget_AndPreserveText()
+    {
+        var target = ConversationId.From("conv-typed");
+
+        CronAlertTarget.UnresolvableMessage(target).ShouldBe(
+            "FailureAlertConversationId 'conv-typed' does not resolve to an existing conversation. "
+            + "Alerts for this job could never be delivered, so the job was not saved.");
+        CronAlertTarget.UnverifiableMessage(target).ShouldBe(
+            "FailureAlertConversationId 'conv-typed' cannot be verified because no "
+            + "ICronAlertTargetResolver is available; failing closed rather than storing an "
+            + "alert target that may never deliver.");
+    }
+
     // Clause 1/2 core: an unresolvable target is rejected and the error NAMES the id.
     [Fact]
     public async Task Validate_UnresolvableTarget_IsRejected_AndErrorNamesTheId()

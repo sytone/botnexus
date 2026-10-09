@@ -234,7 +234,7 @@ public sealed class SteeringLoopTests
 
         var options = CreateOptions(provider.Api, tools: [new CalculateTool()]) with
         {
-            GetSteeringMessages = _ =>
+            SteeringMessageProvider = _ =>
             {
                 Interlocked.Increment(ref delegateCallCount);
                 return Task.FromResult<IReadOnlyList<AgentMessage>>([]);
@@ -272,7 +272,7 @@ public sealed class SteeringLoopTests
 
         var options = CreateOptions(provider.Api, tools: [new CalculateTool()]) with
         {
-            GetSteeringMessages = _ =>
+            SteeringMessageProvider = _ =>
             {
                 var count = Interlocked.Increment(ref delegateCallCount);
                 if (count == 2)
@@ -312,7 +312,7 @@ public sealed class SteeringLoopTests
 
         var options = CreateOptions(provider.Api) with
         {
-            GetSteeringMessages = _ =>
+            SteeringMessageProvider = _ =>
             {
                 if (!delegateCalled)
                 {
@@ -359,7 +359,7 @@ public sealed class SteeringLoopTests
 
         var options = CreateOptions(provider.Api) with
         {
-            GetSteeringMessages = _ =>
+            SteeringMessageProvider = _ =>
             {
                 Interlocked.Increment(ref delegatePollCount);
                 return Task.FromResult<IReadOnlyList<AgentMessage>>([]);
@@ -431,7 +431,7 @@ public sealed class SteeringLoopTests
         var followUpReturned = false;
         var options = CreateOptions(provider.Api) with
         {
-            GetFollowUpMessages = _ =>
+            FollowUpMessageProvider = _ =>
             {
                 if (!followUpReturned)
                 {
@@ -489,7 +489,7 @@ public sealed class SteeringLoopTests
         var followUpReturned = false;
         var options = CreateOptions(provider.Api) with
         {
-            GetFollowUpMessages = _ =>
+            FollowUpMessageProvider = _ =>
             {
                 if (!followUpReturned)
                 {
@@ -797,7 +797,7 @@ public sealed class SteeringLoopTests
 
         var options = CreateOptions(provider.Api) with
         {
-            GetSteeringMessages = _ =>
+            SteeringMessageProvider = _ =>
             {
                 Interlocked.Increment(ref delegatePollCount);
                 return Task.FromResult<IReadOnlyList<AgentMessage>>([]);
@@ -834,7 +834,7 @@ public sealed class SteeringLoopTests
 
         var options = CreateOptions(provider.Api, tools: [new CalculateTool()]) with
         {
-            GetSteeringMessages = _ =>
+            SteeringMessageProvider = _ =>
             {
                 Interlocked.Increment(ref delegatePollCount);
                 return Task.FromResult<IReadOnlyList<AgentMessage>>([]);

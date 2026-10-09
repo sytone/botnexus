@@ -1,5 +1,7 @@
 using BotNexus.Agent.Core.Configuration;
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.Diagnostics;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
@@ -14,7 +16,7 @@ namespace BotNexus.Agent.Core.Loop;
 /// Executes tool calls from assistant messages in sequential or parallel mode.
 /// </summary>
 /// <remarks>
-/// Coordinates argument validation, hook execution, and result collection.
+/// Coordinates argument validation, policy evaluation, result transformation, and result collection.
 /// Emits ToolExecutionStartEvent and ToolExecutionEndEvent for each tool.
 /// In parallel mode, events are emitted in deterministic order (all starts, then all ends).
 /// </remarks>
@@ -80,7 +82,7 @@ internal static class ToolExecutor
 
             if (preparation.Prepared is not null)
             {
-                (result, isError) = await ApplyAfterToolCallAsync(
+                (result, isError) = await TransformToolResultAsync(
                         context,
                         assistantMessage,
                         toolCall,
@@ -311,13 +313,13 @@ internal static class ToolExecutor
             return new ToolPreparation(null, BuildErrorResult($"Invalid arguments for '{toolCall.Name}': {ex.Message}"), true);
         }
 
-        var beforeContext = new BeforeToolCallContext(assistantMessage, toolCall, validatedArgs, context);
-        if (config.BeforeToolAudit is not null)
+        var executionContext = new ToolExecutionContext(assistantMessage, toolCall, validatedArgs, context);
+        if (config.ToolAuditGate is not null)
         {
-            BeforeToolCallResult? auditResult;
+            ToolExecutionDecision? auditResult;
             try
             {
-                auditResult = await config.BeforeToolAudit(beforeContext, cancellationToken).ConfigureAwait(false);
+                auditResult = await config.ToolAuditGate(executionContext, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -334,55 +336,55 @@ internal static class ToolExecutor
             }
         }
 
-        if (config.BeforeToolCall is not null)
+        if (config.ToolExecutionPolicy is not null)
         {
-            BeforeToolCallResult? beforeResult;
+            ToolExecutionDecision? executionDecision;
 
-            // #2518: the pre-tool-call hook is the pre-execution policy gate (it enforces the
+            // #2518: the tool-execution policy is the pre-execution gate (it enforces the
             // tool-approval posture shipped in #2397). An approval provider that wedges -- a stalled
             // prompt, an unreachable policy service, a deadlocked store -- would otherwise hang the
             // whole agent turn, because a cron or channel turn may carry no ambient deadline at all.
             // Bound it, and on breach fail CLOSED: block the call, exactly like the exception path
             // below. Allowing execution on a timeout would turn a liveness bug into a policy bypass.
-            var budget = config.BeforeToolCallTimeout ?? AgentLoopConfig.DefaultBeforeToolCallTimeout;
+            var budget = config.ToolExecutionPolicyTimeout ?? AgentLoopConfig.DefaultToolExecutionPolicyTimeout;
             var budgetEnabled = budget > TimeSpan.Zero && budget != Timeout.InfiniteTimeSpan;
             var suspendDetector = config.SuspendDetector ?? HostSuspendDetector.Instance;
 
             // #3356: the budget is armed with CancelAfter, which is WALL clock and therefore keeps
-            // running while the host is asleep. A hook in flight across a 4h41m workstation suspend
+            // running while the host is asleep. A policy in flight across a 4h41m workstation suspend
             // was reported as having overrun a 15s budget by 16945s and the call was denied, even
             // though nothing had executed slowly -- the process was frozen. So a breach is only
-            // believed when the ACTIVE-time clock agrees the hook really consumed its window. When
-            // it does not, the measurement is discarded (not the budget: the hook is given one
+            // believed when the ACTIVE-time clock agrees the policy really consumed its window. When
+            // it does not, the measurement is discarded (not the budget: the policy is given one
             // fresh window on the now-awake host) rather than converted into a policy denial.
-            // A genuinely slow hook has active time >= budget, so it still fails closed unchanged.
+            // A genuinely slow policy has active time >= budget, so it still fails closed unchanged.
             var suspendRetryUsed = false;
 
             while (true)
             {
-                using var hookCts = budgetEnabled
+                using var policyCts = budgetEnabled
                     ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                     : null;
-                if (hookCts is not null)
+                if (policyCts is not null)
                 {
-                    hookCts.CancelAfter(budget);
+                    policyCts.CancelAfter(budget);
                 }
 
-                var hookToken = hookCts?.Token ?? cancellationToken;
+                var policyToken = policyCts?.Token ?? cancellationToken;
                 var startedAt = Stopwatch.GetTimestamp();
                 var activeStartedAt = suspendDetector.GetTimestamp();
 
                 try
                 {
-                    beforeResult = await config.BeforeToolCall(beforeContext, hookToken).ConfigureAwait(false);
+                    executionDecision = await config.ToolExecutionPolicy(executionContext, policyToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (
-                    hookCts is not null &&
-                    hookCts.IsCancellationRequested &&
+                    policyCts is not null &&
+                    policyCts.IsCancellationRequested &&
                     !cancellationToken.IsCancellationRequested)
                 {
                     // Budget breach, not turn cancellation. The ambient token is untouched, so this
-                    // is either the hook overrunning its own deadline or a host suspend.
+                    // is either the policy overrunning its own deadline or a host suspend.
                     if (!suspendRetryUsed &&
                         IsAttributableToHostSuspend(suspendDetector, activeStartedAt, budget))
                     {
@@ -392,29 +394,29 @@ internal static class ToolExecutor
                         continue;
                     }
 
-                    config.OnToolCallDisposition?.Invoke(toolCall.Id, false);
-                    return BuildBeforeToolCallTimeout(config, toolCall, budget, startedAt);
+                    config.ToolExecutionDecisionObserver?.Invoke(toolCall.Id, false);
+                    return BuildToolExecutionPolicyTimeout(config, toolCall, budget, startedAt);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    config.OnToolCallDisposition?.Invoke(toolCall.Id, false);
+                    config.ToolExecutionDecisionObserver?.Invoke(toolCall.Id, false);
                     throw;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    config.OnToolCallDisposition?.Invoke(toolCall.Id, false);
+                    config.ToolExecutionDecisionObserver?.Invoke(toolCall.Id, false);
                     return new ToolPreparation(
                         null,
                         BuildErrorResult($"BeforeToolCall hook failed: {ex.Message}"),
                         true);
                 }
 
-                // A hook that swallows its cancellation token and returns normally after the budget
+                // A policy that swallows its cancellation token and returns normally after the budget
                 // elapsed must not be treated as a policy decision either -- it produced its answer
                 // outside the window it was given.
-                if (hookCts is not null && hookCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                if (policyCts is not null && policyCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
-                    // ...unless the window was only exceeded on the wall clock. Here the hook DID
+                    // ...unless the window was only exceeded on the wall clock. Here the policy DID
                     // produce a verdict and the active-time clock says it produced it inside its
                     // budget, so the verdict stands: there is nothing to retry and discarding a
                     // real decision would deny the call for a reason that never happened.
@@ -424,30 +426,30 @@ internal static class ToolExecutor
                     }
                     else
                     {
-                        config.OnToolCallDisposition?.Invoke(toolCall.Id, false);
-                        return BuildBeforeToolCallTimeout(config, toolCall, budget, startedAt);
+                        config.ToolExecutionDecisionObserver?.Invoke(toolCall.Id, false);
+                        return BuildToolExecutionPolicyTimeout(config, toolCall, budget, startedAt);
                     }
                 }
 
                 break;
             }
 
-            // Genuine turn cancellation still propagates as cancellation, never as a hook timeout.
+            // Genuine turn cancellation still propagates as cancellation, never as a policy timeout.
             cancellationToken.ThrowIfCancellationRequested();
 
             // #2476: execution requires a positive, unambiguous allow. A null result means the
-            // hook registered no opinion at all and preserves the historical allow. Anything the
-            // hook DID return must clear IsUnambiguousAllow to proceed: an explicit block denies,
+            // policy registered no opinion at all and preserves the historical allow. Anything the
+            // policy DID return must clear IsUnambiguousAllow to proceed: an explicit block denies,
             // and so does an indeterminate verdict, because "no decision was reached" is not an
             // approval and treating it as one is precisely the auto-approve this gate prevents.
-            if (beforeResult is not null && !beforeResult.IsUnambiguousAllow)
+            if (executionDecision is not null && !executionDecision.IsUnambiguousAllow)
             {
-                config.OnToolCallDisposition?.Invoke(toolCall.Id, false);
-                return new ToolPreparation(null, BuildErrorResult(beforeResult.EffectiveBlockReason), true);
+                config.ToolExecutionDecisionObserver?.Invoke(toolCall.Id, false);
+                return new ToolPreparation(null, BuildErrorResult(executionDecision.EffectiveBlockReason), true);
             }
         }
 
-        config.OnToolCallDisposition?.Invoke(toolCall.Id, true);
+        config.ToolExecutionDecisionObserver?.Invoke(toolCall.Id, true);
         return new ToolPreparation(
             new PreparedToolCall(toolCall, tool, validatedArgs),
             null,
@@ -457,7 +459,8 @@ internal static class ToolExecutor
     /// <summary>
     /// Computes the per-tool cancellation budget as the largest of the configured safety cap, the
     /// tool's declared <see cref="IAgentTool.DefaultTimeout"/>, and any caller-requested timeout
-    /// read from the argument the tool declares via <see cref="IAgentTool.TimeoutArgument"/>.
+    /// read from the argument the tool declares via <see cref="IAgentTool.TimeoutArgument"/>. A
+    /// durable interactive wait that omits its declared expiry is exempt from the generic deadline.
     /// </summary>
     /// <remarks>
     /// The unit of a requested timeout is taken from the tool's declaration, never inferred from the
@@ -490,6 +493,18 @@ internal static class ToolExecutor
         if (declaration is null)
         {
             return effectiveTimeout;
+        }
+
+        // A durable interactive wait owns a persisted checkpoint that remains actionable after the
+        // original turn disappears. Applying the generic safety deadline would publish a false
+        // terminal failure while leaving that checkpoint live. Omission means no caller expiry;
+        // an explicit timeout argument restores ordinary executor budgeting around the tool's own
+        // terminal expiry path.
+        if (tool is IDurableInteractiveWaitTool
+            && !args.ContainsKey(declaration.ArgumentName)
+            && (declaration.DeprecatedAliasName is not { } durableAlias || !args.ContainsKey(durableAlias)))
+        {
+            return null;
         }
 
         // Only the declared argument is consulted, and only in the declared unit. The deprecated
@@ -696,7 +711,7 @@ internal static class ToolExecutor
 
         if (outcome.ApplyAfterHook && outcome.ValidatedArgs is not null)
         {
-            (result, isError) = await ApplyAfterToolCallAsync(
+            (result, isError) = await TransformToolResultAsync(
                     context,
                     assistantMessage,
                     outcome.ToolCall,
@@ -740,7 +755,7 @@ internal static class ToolExecutor
             TaskScheduler.Default);
     }
 
-    private static async Task<(AgentToolResult Result, bool IsError)> ApplyAfterToolCallAsync(
+    private static async Task<(AgentToolResult Result, bool IsError)> TransformToolResultAsync(
         AgentContext context,
         AssistantAgentMessage assistantMessage,
         ToolCallContent toolCall,
@@ -750,9 +765,9 @@ internal static class ToolExecutor
         AgentLoopConfig config,
         CancellationToken cancellationToken)
     {
-        if (config.AfterToolCall is not null)
+        if (config.ToolResultTransformer is not null)
         {
-            var afterContext = new AfterToolCallContext(
+            var transformContext = new ToolResultTransformContext(
                 assistantMessage,
                 toolCall,
                 validatedArgs,
@@ -760,22 +775,22 @@ internal static class ToolExecutor
                 isError,
                 context);
 
-            AfterToolCallResult? afterResult;
+            ToolResultTransformResult? transformedResult;
             try
             {
-                afterResult = await config.AfterToolCall(afterContext, cancellationToken).ConfigureAwait(false);
+                transformedResult = await config.ToolResultTransformer(transformContext, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 return (result, isError);
             }
 
-            if (afterResult is not null)
+            if (transformedResult is not null)
             {
-                var content = afterResult.Content ?? result.Content;
-                var details = afterResult.Details ?? result.Details;
+                var content = transformedResult.Content ?? result.Content;
+                var details = transformedResult.Details ?? result.Details;
                 result = result with { Content = content, Details = details };
-                isError = afterResult.IsError ?? isError;
+                isError = transformedResult.IsError ?? isError;
             }
         }
 
@@ -788,7 +803,7 @@ internal static class ToolExecutor
     /// <remarks>
     /// <para>
     /// This is the ONE seam where every tool result is bounded regardless of origin. It runs after
-    /// the after-tool-call hook so a hook that substitutes a larger payload is bounded too, and
+    /// the tool-result transformer so a transformer that substitutes a larger payload is bounded too, and
     /// before the end event and the result message so the bounded projection is what the model, the
     /// event stream and the transcript all see -- a divergence there would make a truncation
     /// invisible in exactly the place an operator would look for it.
@@ -806,7 +821,7 @@ internal static class ToolExecutor
         AgentLoopConfig config,
         IAgentTool? tool)
     {
-        var sanitized = ToolResultSanitizer.Apply(result, config.SanitizeToolResultText);
+        var sanitized = ToolResultSanitizer.Apply(result, config.ToolResultTextTransformer);
         return ToolOutputBudget.Apply(sanitized, config.EffectiveMaxToolOutputBytes, tool);
     }
 
@@ -855,21 +870,21 @@ internal static class ToolExecutor
 
     /// <summary>
     /// Returns <see langword="true"/> when a wall-clock budget breach is attributable to the host
-    /// having been suspended rather than to the hook running slowly (#3356).
+    /// having been suspended rather than to the policy running slowly (#3356).
     /// </summary>
     /// <remarks>
     /// The test is deliberately the direct one: how much time did the process actually spend
-    /// <i>running</i> since the hook started? This is a measurement question, not a heuristic about
+    /// <i>running</i> since the policy started? This is a measurement question, not a heuristic about
     /// sleep events, so it needs no power-notification subscription and behaves identically for a
     /// suspend, a hibernate, or a VM pause.
     /// <para>
     /// The threshold is a <b>substantial</b> shortfall (half the budget), not a bare
     /// <c>active &lt; budget</c>. Two clocks are involved and the unbiased one is coarse (~15.6ms on
-    /// Windows), so a genuinely slow hook can read a hair under its budget on the second clock; a
+    /// Windows), so a genuinely slow policy can read a hair under its budget on the second clock; a
     /// bare comparison would then excuse it and silently weaken the fail-closed gate. The two cases
     /// are not close in reality -- a real suspend leaves active time near zero against a 15s budget,
     /// while a wedged provider consumes essentially all of it -- so a wide margin costs nothing and
-    /// removes the tie. A hook that genuinely overran is rejected here, which is what keeps the
+    /// removes the tie. A policy that genuinely overran is rejected here, which is what keeps the
     /// fail-closed path non-vacuous.
     /// </para>
     /// </remarks>
@@ -884,7 +899,7 @@ internal static class ToolExecutor
 
     /// <summary>
     /// Reports that a budget measurement was discarded because the host was suspended across it
-    /// (#3356). The text is deliberately distinct from <see cref="BuildBeforeToolCallTimeout"/> so
+    /// (#3356). The text is deliberately distinct from <see cref="BuildToolExecutionPolicyTimeout"/> so
     /// an operator reading the log is not sent to investigate a policy provider that never ran
     /// slowly, which was half the cost of the original defect.
     /// </summary>
@@ -902,14 +917,7 @@ internal static class ToolExecutor
             "hook's running time stayed within budget. This is not a hook timeout and the tool " +
             "call was not blocked.";
 
-        try
-        {
-            config.OnDiagnostic?.Invoke(message);
-        }
-        catch
-        {
-            // A misbehaving diagnostic sink must never change the outcome.
-        }
+        DiagnosticNotification.Report(config.DiagnosticObserver, message);
     }
 
     private static AgentToolResult BuildErrorResult(string message)
@@ -918,11 +926,11 @@ internal static class ToolExecutor
     }
 
     /// <summary>
-    /// Builds the fail-closed outcome for a pre-tool-call hook that exceeded its budget (#2518),
+    /// Builds the fail-closed outcome for a tool-execution policy that exceeded its budget (#2518),
     /// and reports the breach through the diagnostic sink with the elapsed time and the tool
     /// identity so a slow policy provider is nameable rather than merely mysterious.
     /// </summary>
-    private static ToolPreparation BuildBeforeToolCallTimeout(
+    private static ToolPreparation BuildToolExecutionPolicyTimeout(
         AgentLoopConfig config,
         ToolCallContent toolCall,
         TimeSpan budget,
@@ -934,14 +942,7 @@ internal static class ToolExecutor
             $"(budget {budget.TotalSeconds:F1}s) for tool '{toolCall.Name}' (call {toolCall.Id}). " +
             "Tool call blocked because no policy decision was reached.";
 
-        try
-        {
-            config.OnDiagnostic?.Invoke(message);
-        }
-        catch
-        {
-            // A misbehaving diagnostic sink must never mask the fail-closed outcome.
-        }
+        DiagnosticNotification.Report(config.DiagnosticObserver, message);
 
         return new ToolPreparation(null, BuildErrorResult(message), true);
     }

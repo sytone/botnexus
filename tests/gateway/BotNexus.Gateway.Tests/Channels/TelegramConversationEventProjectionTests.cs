@@ -80,6 +80,104 @@ public sealed class TelegramConversationEventProjectionTests
     }
 
     [Fact]
+    public async Task Publisher_ForeignPersistedUserMessage_EchoesOnceWithLiteralFormatting()
+    {
+        var telegram = new RecordingTelegramHandler();
+        var adapter = CreateAdapter(telegram);
+        await using var publisher = new ConversationEventPublisher([adapter]);
+        var telegramBinding = Binding("telegram", ChannelAddress.From("42"), BindingMode.Interactive);
+
+        (await publisher.PublishAsync(PersistedUserEvent(
+            telegramBinding,
+            originBindingId: BindingId.Create(),
+            content: "**literal** [link](https://example.com)"))).ShouldBeTrue();
+
+        await publisher.WaitForDrainAsync(TestTimeout());
+
+        var sent = telegram.Sent.ShouldHaveSingleItem();
+        sent.Method.ShouldBe("sendMessage");
+        using var payload = JsonDocument.Parse(sent.Body);
+        payload.RootElement.GetProperty("chat_id").GetInt64().ShouldBe(42);
+        payload.RootElement.GetProperty("text").GetString().ShouldBe(
+            "*User said:*\n\\*\\*literal\\*\\* \\[link\\]\\(https://example\\.com\\)");
+    }
+
+    [Fact]
+    public async Task Publisher_UnknownOriginPersistedUserMessage_EchoesOnce()
+    {
+        var telegram = new RecordingTelegramHandler();
+        var adapter = CreateAdapter(telegram);
+        await using var publisher = new ConversationEventPublisher([adapter]);
+        var telegramBinding = Binding("telegram", ChannelAddress.From("42"), BindingMode.Interactive);
+
+        (await publisher.PublishAsync(PersistedUserEvent(
+            telegramBinding,
+            originBindingId: null,
+            content: "hello"))).ShouldBeTrue();
+
+        await publisher.WaitForDrainAsync(TestTimeout());
+        telegram.Sent.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task Publisher_NativePersistedUserMessage_DoesNotEcho()
+    {
+        var telegram = new RecordingTelegramHandler();
+        var adapter = CreateAdapter(telegram);
+        await using var publisher = new ConversationEventPublisher([adapter]);
+        var telegramBinding = Binding("telegram", ChannelAddress.From("42"), BindingMode.Interactive);
+
+        (await publisher.PublishAsync(PersistedUserEvent(
+            telegramBinding,
+            originBindingId: telegramBinding.BindingId,
+            content: "native"))).ShouldBeTrue();
+
+        await publisher.WaitForDrainAsync(TestTimeout());
+        telegram.Sent.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Publisher_ForeignPersistedUserMessage_WhenDisabled_DoesNotEcho()
+    {
+        var telegram = new RecordingTelegramHandler();
+        var adapter = CreateAdapter(telegram, echoForeignUserMessages: false);
+        await using var publisher = new ConversationEventPublisher([adapter]);
+        var telegramBinding = Binding("telegram", ChannelAddress.From("42"), BindingMode.Interactive);
+
+        (await publisher.PublishAsync(PersistedUserEvent(
+            telegramBinding,
+            originBindingId: BindingId.Create(),
+            content: "disabled"))).ShouldBeTrue();
+
+        await publisher.WaitForDrainAsync(TestTimeout());
+        telegram.Sent.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Publisher_UnrelatedMutedAndNonUserPersistedItems_DoNotEcho()
+    {
+        var telegram = new RecordingTelegramHandler();
+        var adapter = CreateAdapter(telegram);
+        await using var publisher = new ConversationEventPublisher([adapter]);
+
+        (await publisher.PublishAsync(PersistedUserEvent(
+            Binding("matrix", ChannelAddress.From("42"), BindingMode.Interactive),
+            originBindingId: null,
+            content: "unrelated"))).ShouldBeTrue();
+        (await publisher.PublishAsync(PersistedUserEvent(
+            Binding("telegram", ChannelAddress.From("42"), BindingMode.Muted),
+            originBindingId: null,
+            content: "muted"))).ShouldBeTrue();
+        (await publisher.PublishAsync(PersistedItemEvent(
+            Binding("telegram", ChannelAddress.From("42"), BindingMode.Interactive),
+            MessageRole.Assistant,
+            "assistant"))).ShouldBeTrue();
+
+        await publisher.WaitForDrainAsync(TestTimeout());
+        telegram.Sent.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task Publisher_ToolThinkingAndFinalEvents_PreservesDeliveryOrderAndRenderingPolicy()
     {
         var telegram = new RecordingTelegramHandler();
@@ -110,11 +208,14 @@ public sealed class TelegramConversationEventProjectionTests
         text[3].ShouldBe("Thinking: short plan\nFinal answer.");
     }
 
-    private static TelegramChannelAdapter CreateAdapter(RecordingTelegramHandler handler)
+    private static TelegramChannelAdapter CreateAdapter(
+        RecordingTelegramHandler handler,
+        bool echoForeignUserMessages = true)
     {
         var options = new TelegramGatewayOptions
         {
             BotToken = "token",
+            EchoForeignUserMessages = echoForeignUserMessages,
             AllowedChatIds = { 42 },
         };
         return new TelegramChannelAdapter(
@@ -125,6 +226,31 @@ public sealed class TelegramConversationEventProjectionTests
 
     private static ConversationBindingSnapshot Binding(string channel, ChannelAddress address, BindingMode mode)
         => new(BindingId.Create(), ChannelKey.From(channel), AdapterId: null, address, mode, ThreadingMode.Single);
+
+    private static ConversationSessionItemPersistedEvent PersistedUserEvent(
+        ConversationBindingSnapshot binding,
+        BindingId? originBindingId,
+        string content)
+        => PersistedItemEvent(binding, MessageRole.User, content, originBindingId);
+
+    private static ConversationSessionItemPersistedEvent PersistedItemEvent(
+        ConversationBindingSnapshot binding,
+        MessageRole role,
+        string content,
+        BindingId? originBindingId = null)
+        => new()
+        {
+            AgentId = AgentId.From("farnsworth"),
+            ConversationId = ConversationId.Create(),
+            SessionId = SessionId.Create(),
+            Origin = new ConversationEventOrigin(originBindingId, UserId.From("jon")),
+            Bindings = ImmutableArray.Create(binding),
+            Item = new SessionEntry
+            {
+                Role = role,
+                Content = content,
+            },
+        };
 
     private static ConversationAgentEvent AgentEvent(
         ConversationId conversationId,

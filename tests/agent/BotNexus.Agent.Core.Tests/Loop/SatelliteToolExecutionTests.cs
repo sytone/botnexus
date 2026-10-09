@@ -1,6 +1,6 @@
 using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.Loop;
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Tests.TestUtils;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -163,7 +163,7 @@ public sealed class SatelliteToolExecutionTests
         var baseConfig = CreateConfig(CreateScope(), remote, ["read"]);
         var config = baseConfig with
         {
-            AfterToolCall = (_, _) => Task.FromResult<AfterToolCallResult?>(new AfterToolCallResult(Details: replacementDetails))
+            ToolResultTransformer = (_, _) => Task.FromResult<ToolResultTransformResult?>(new ToolResultTransformResult(Details: replacementDetails))
         };
         var context = new AgentContext(null, [], [new TrackingTool("read")]);
 

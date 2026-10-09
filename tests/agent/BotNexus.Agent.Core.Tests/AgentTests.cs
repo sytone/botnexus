@@ -1,4 +1,6 @@
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tests.TestUtils;
 using BotNexus.Agent.Core.Types;
@@ -77,7 +79,7 @@ public class AgentTests
                 }));
         var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel(api)) with
         {
-            GetProviderExecutionOptions = (_, _) => Task.FromResult<ProviderExecutionOptions?>(new ProviderExecutionOptions { ApiKey = string.Empty })
+            ProviderExecutionOptionsProvider = (_, _) => Task.FromResult<ProviderExecutionOptions?>(new ProviderExecutionOptions { ApiKey = string.Empty })
         };
         var agent = new BotNexus.Agent.Core.Agent(options);
 
@@ -112,22 +114,22 @@ public class AgentTests
             Messages: []);
         var options = TestHelpers.CreateTestOptions(initial, initial.Model) with
         {
-            GetSteeringMessages = _ =>
+            SteeringMessageProvider = _ =>
             {
                 Interlocked.Increment(ref steeringPolls);
                 return Task.FromResult<IReadOnlyList<AgentMessage>>([new UserMessage("steer")]);
             },
-            GetFollowUpMessages = _ =>
+            FollowUpMessageProvider = _ =>
             {
                 Interlocked.Increment(ref followUpPolls);
                 return Task.FromResult<IReadOnlyList<AgentMessage>>([new UserMessage("follow up")]);
             },
-            MaybeCompactAsync = _ =>
+            ContextCompactionService = _ =>
             {
                 Interlocked.Increment(ref compactions);
                 return Task.FromResult<AgentContext?>(null);
             },
-            EvaluateRunCompletion = _ =>
+            RunCompletionPolicy = _ =>
             {
                 Interlocked.Increment(ref completionEvaluations);
                 return Task.FromResult(RunCompletionDecision.Continue([], "continue"));
@@ -448,7 +450,7 @@ public class AgentTests
         var steeringPollCount = 0;
         var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api")) with
         {
-            GetSteeringMessages = _ => Task.FromResult<IReadOnlyList<AgentMessage>>(
+            SteeringMessageProvider = _ => Task.FromResult<IReadOnlyList<AgentMessage>>(
                 Interlocked.Increment(ref steeringPollCount) == 1
                     ? [new UserMessage("steer from delegate")]
                     : [])
@@ -511,7 +513,7 @@ public class AgentTests
         var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api"))
             with
             {
-                OnDiagnostic = message => diagnostics.Add(message)
+                DiagnosticObserver = message => diagnostics.Add(message)
             };
         var agent = new BotNexus.Agent.Core.Agent(options);
         using var _ = agent.Subscribe((@event, _) =>
@@ -539,7 +541,7 @@ public class AgentTests
         var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api"))
             with
             {
-                OnDiagnostic = message => diagnostics.Add(message)
+                DiagnosticObserver = message => diagnostics.Add(message)
             };
         var agent = new BotNexus.Agent.Core.Agent(options);
         using var _ = agent.Subscribe((@event, _) =>
@@ -562,13 +564,13 @@ public class AgentTests
     }
 
     [Fact]
-    public async Task PromptAsync_WhenTransformContextIsNull_DoesNotCrash()
+    public async Task PromptAsync_WhenAgentContextTransformerIsNull_DoesNotCrash()
     {
         using var provider = RegisterDefaultProvider();
         var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api"))
             with
             {
-                TransformContext = null
+                AgentContextTransformer = null
             };
         var agent = new BotNexus.Agent.Core.Agent(options);
 
@@ -578,13 +580,13 @@ public class AgentTests
     }
 
     [Fact]
-    public async Task PromptAsync_WhenConvertToLlmIsNull_UsesDefaultMessageConverter()
+    public async Task PromptAsync_WhenProviderMessageTransformerIsNull_UsesDefaultProviderMessageTransformer()
     {
         using var provider = RegisterDefaultProvider();
         var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel("test-api"))
             with
             {
-                ConvertToLlm = null
+                ProviderMessageTransformer = null
             };
         var agent = new BotNexus.Agent.Core.Agent(options);
 

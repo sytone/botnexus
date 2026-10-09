@@ -140,7 +140,8 @@ internal sealed class ResilientJsonConfigurationProvider(ResilientJsonConfigurat
         stream.CopyTo(copy);
         var bytes = copy.ToArray();
         _candidateRawDocument = ConfigDocument.Parse(System.Text.Encoding.UTF8.GetString(bytes));
-        base.Load(new MemoryStream(bytes));
+        using var bindingStream = ExactModelCapacityConfiguration.CreateBindingStream(_candidateRawDocument);
+        base.Load(bindingStream);
     }
 
     ConfigDocument? IAcceptedRawConfigDocumentProvider.GetAcceptedRawDocument()

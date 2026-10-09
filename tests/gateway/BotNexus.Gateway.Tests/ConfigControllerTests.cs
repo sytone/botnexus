@@ -294,6 +294,81 @@ public sealed class ConfigControllerTests
         });
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PatchConfig_RejectsRemovingOrDisablingAssignedProviderWithoutMutation(bool remove)
+    {
+        const string raw = """
+        {
+          "providers": {
+            "copilot-work": { "type": "github-copilot", "enabled": true },
+            "github-copilot": { "enabled": true }
+          },
+          "agents": {
+            "aurum": { "provider": "COPILOT-WORK", "model": "gpt-5.6" },
+            "quill": { "provider": "copilot-work", "model": "claude-sonnet-4.6" },
+            "nova": { "provider": "github-copilot", "model": "gpt-5.6" }
+          }
+        }
+        """;
+
+        await WithConfigFileAsync(raw, async (controller, writer) =>
+        {
+            var loader = new Mock<IExtensionLoader>();
+            loader.Setup(value => value.GetLoaded()).Returns([]);
+            var operation = remove
+                ? new ConfigPatchOperationDto("providers.copilot-work", Remove: true)
+                : new ConfigPatchOperationDto("providers.copilot-work.enabled", JsonValue.Create(false));
+
+            var result = await controller.PatchConfig(
+                new ConfigPatchRequest([operation]),
+                writer,
+                loader.Object,
+                CancellationToken.None);
+
+            var badRequest = result.Result.ShouldBeOfType<BadRequestObjectResult>();
+            var response = badRequest.Value.ShouldBeOfType<ConfigPatchResponse>();
+            var error = response.Errors.ShouldHaveSingleItem();
+            error.ShouldContain("copilot-work");
+            error.ShouldContain("2 dependent agents");
+            error.ShouldContain("aurum");
+            error.ShouldContain("quill");
+            error.ShouldContain("reassign");
+            error.ShouldNotContain("nova");
+
+            var persisted = await writer.ReadAsync();
+            persisted["providers"]!["copilot-work"]!["enabled"]!.GetValue<bool>().ShouldBeTrue();
+        });
+    }
+
+    [Fact]
+    public async Task DeleteSectionEntry_RejectsAssignedProviderWithoutMutation()
+    {
+        const string raw = """
+        {
+          "providers": {
+            "copilot-work": { "type": "github-copilot", "enabled": true },
+            "github-copilot": { "enabled": true }
+          },
+          "agents": { "quill": { "provider": "copilot-work", "model": "claude-sonnet-4.6" } }
+        }
+        """;
+
+        await WithConfigFileAsync(raw, async (controller, writer) =>
+        {
+            var loader = new Mock<IExtensionLoader>();
+            loader.Setup(value => value.GetLoaded()).Returns([]);
+
+            var result = await controller.DeleteSectionEntry(
+                "providers", "copilot-work", writer, loader.Object, CancellationToken.None);
+
+            var badRequest = result.ShouldBeOfType<BadRequestObjectResult>();
+            badRequest.Value.ShouldBeOfType<string>().ShouldContain("quill");
+            (await writer.ReadAsync())["providers"]!["copilot-work"].ShouldNotBeNull();
+        });
+    }
+
     [Fact]
     public async Task UpdateSectionEntry_AgentsSection_IsBlocked()
     {

@@ -1,6 +1,8 @@
 using System.Reflection;
 using BotNexus.Agent.Providers.Copilot.Completions;
 using BotNexus.Agent.Providers.Core.Streaming;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Copilot.Headers;
 
 namespace BotNexus.Agent.Providers.Copilot.Tests;
 
@@ -29,7 +31,11 @@ public class CopilotTransportNormalizationSeamTests
             "BuildProfile", BindingFlags.NonPublic | BindingFlags.Static);
         method.ShouldNotBeNull("CopilotCompletionsProvider must still build its transport profile.");
 
-        return (CompletionsTransportProfile)method!.Invoke(null, [null])!;
+        var model = new LlmModel("test", "test", "github-copilot-completions", "github-copilot",
+            "https://api.githubcopilot.com", false, ["text"], new ModelCost(0, 0, 0, 0), 8192, 1024);
+        var capture = CopilotHeaderCapture.Begin(null, model, null);
+        return method.Invoke(null, [null, capture]) as CompletionsTransportProfile
+            ?? throw new InvalidOperationException("Expected the actual completions transport profile.");
     }
 
     // The transport profile must carry no delta-mutation hook at all: the record member is gone,

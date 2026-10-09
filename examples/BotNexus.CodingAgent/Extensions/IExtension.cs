@@ -1,4 +1,5 @@
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.CodingAgent.Session;
 using BotNexus.Agent.Providers.Core.Models;
@@ -21,15 +22,15 @@ public interface IExtension
     /// </summary>
     IReadOnlyList<IAgentTool> GetTools();
 
-    ValueTask<BeforeToolCallResult?> OnToolCallAsync(
+    ValueTask<ToolExecutionDecision?> OnToolCallAsync(
         ToolCallLifecycleContext context,
         CancellationToken cancellationToken = default)
-        => ValueTask.FromResult<BeforeToolCallResult?>(null);
+        => ValueTask.FromResult<ToolExecutionDecision?>(null);
 
-    ValueTask<AfterToolCallResult?> OnToolResultAsync(
+    ValueTask<ToolResultTransformResult?> OnToolResultAsync(
         ToolResultLifecycleContext context,
         CancellationToken cancellationToken = default)
-        => ValueTask.FromResult<AfterToolCallResult?>(null);
+        => ValueTask.FromResult<ToolResultTransformResult?>(null);
 
     ValueTask OnSessionStartAsync(
         SessionLifecycleContext context,

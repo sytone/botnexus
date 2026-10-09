@@ -78,4 +78,47 @@ public sealed class SkillsSeederTests
         SkillsSeeder.EnsureGlobalSkillsSeed(string.Empty, fs);
         SkillsSeeder.EnsureGlobalSkillsSeed("   ", fs);
     }
+
+    [Fact]
+    public void EnsureSharedPromptSeed_CopiesBundledOptimizationPromptWhenMissing()
+    {
+        var fs = new MockFileSystem();
+        const string promptsDir = "/prompts";
+
+        SkillsPromptSeeder.EnsureSharedPromptSeed(promptsDir, fs);
+
+        var promptPath = Path.Combine(promptsDir, "optimize-shared-skills.prompt.md");
+        fs.File.Exists(promptPath).ShouldBeTrue();
+        var content = fs.File.ReadAllText(promptPath);
+        content.ShouldContain("name: optimize-shared-skills");
+        content.ShouldContain("GPT-6 Sol");
+        content.ShouldContain("GPT-6 Luna");
+        content.ShouldContain("Do not modify any skill during the audit phase");
+    }
+
+    [Fact]
+    public void EnsureSharedPromptSeed_DoesNotOverwriteExistingPrompt()
+    {
+        var fs = new MockFileSystem();
+        const string promptsDir = "/prompts";
+        var promptPath = Path.Combine(promptsDir, "optimize-shared-skills.prompt.md");
+        fs.Directory.CreateDirectory(promptsDir);
+        fs.File.WriteAllText(promptPath, "operator customization");
+
+        SkillsPromptSeeder.EnsureSharedPromptSeed(promptsDir, fs);
+
+        fs.File.ReadAllText(promptPath).ShouldBe("operator customization");
+    }
+
+    [Fact]
+    public void EnsureSharedPromptSeed_NoOpsOnNullOrEmptyPath()
+    {
+        var fs = new MockFileSystem();
+
+        SkillsPromptSeeder.EnsureSharedPromptSeed(null, fs);
+        SkillsPromptSeeder.EnsureSharedPromptSeed(string.Empty, fs);
+        SkillsPromptSeeder.EnsureSharedPromptSeed("   ", fs);
+
+        fs.AllFiles.ShouldBeEmpty();
+    }
 }

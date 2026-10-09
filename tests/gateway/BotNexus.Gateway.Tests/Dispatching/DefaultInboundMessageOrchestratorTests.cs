@@ -442,6 +442,23 @@ public sealed class DefaultInboundMessageOrchestratorTests
     }
 
     [Fact]
+    public async Task BeginQuiesce_RejectsEveryNewAdmissionWithoutStoppingExistingWork()
+    {
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor.ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(new InboundProcessingOutcome(EmptyDispatches, false));
+        var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance);
+
+        orchestrator.TryBeginQuiesce().ShouldBeTrue();
+        orchestrator.TryBeginQuiesce().ShouldBeFalse();
+        orchestrator.Post(CreateMessage("post")).ShouldBeFalse();
+        (await orchestrator.PostAsync(CreateMessage("post-async"))).ShouldBe(InboundDispatchStatus.Busy);
+        (await orchestrator.AcceptAsync(CreateMessage("accept"))).Status.ShouldBe(InboundDispatchStatus.Busy);
+        await processor.DidNotReceive().ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public void Post_ValidMessage_ReturnsTrueAndQueuesWithoutBlocking()
     {
         // Post must return synchronously (not await processor completion).

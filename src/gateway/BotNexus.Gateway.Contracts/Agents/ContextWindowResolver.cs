@@ -36,12 +36,42 @@ public static class ContextWindowResolver
     /// </param>
     /// <returns>The resolved window in tokens, or <see langword="null"/> when unresolvable.</returns>
     public static int? Resolve(int? effectiveOverride, LlmModel? model)
-    {
-        if (effectiveOverride is > 0)
-            return effectiveOverride;
+        => ResolveBudget(effectiveOverride, overrideSource: null, new ContextBudgetDiagnostics
+        {
+            ModelContextWindowTokens = model?.ContextWindow,
+            ModelContextWindowSource = model?.ContextWindowSource,
+            ModelMaxOutputTokens = model?.MaxTokens,
+            ModelMaxOutputSource = model?.MaxTokensSource
+        }).EffectiveWorkingBudgetTokens;
 
-        // A registered model carrying a non-positive window declares nothing usable; treating it as
-        // a real window would emit a divide-by-zero usage percentage or a nonsense headroom.
-        return model?.ContextWindow is > 0 ? model.ContextWindow : null;
+    /// <summary>
+    /// Resolves the same working window together with its selection origin and independent model
+    /// declarations. The caller supplies the origin of the already-selected conversation/agent
+    /// override. No clamping or output reserve is applied, including for extended-context overrides.
+    /// </summary>
+    /// <param name="effectiveOverride">The override selected by the existing precedence stack.</param>
+    /// <param name="overrideSource">Conversation or agent; null when the caller does not know.</param>
+    /// <param name="modelDeclarations">
+    /// The registered model's declarations projected into the gateway contract, or null when
+    /// unresolvable. Only model declaration fields are read; any working budget fields are ignored.
+    /// </param>
+    /// <returns>A source-backed snapshot; unknown values and their origins remain null.</returns>
+    public static ContextBudgetDiagnostics ResolveBudget(
+        int? effectiveOverride, string? overrideSource, ContextBudgetDiagnostics? modelDeclarations)
+    {
+        var modelWindow = modelDeclarations?.ModelContextWindowTokens is > 0
+            ? modelDeclarations.ModelContextWindowTokens : null;
+        var modelOutput = modelDeclarations?.ModelMaxOutputTokens is > 0
+            ? modelDeclarations.ModelMaxOutputTokens : null;
+        var hasOverride = effectiveOverride is > 0;
+        return new ContextBudgetDiagnostics
+        {
+            ModelContextWindowTokens = modelWindow,
+            ModelContextWindowSource = modelWindow.HasValue ? modelDeclarations?.ModelContextWindowSource : null,
+            ModelMaxOutputTokens = modelOutput,
+            ModelMaxOutputSource = modelOutput.HasValue ? modelDeclarations?.ModelMaxOutputSource : null,
+            EffectiveWorkingBudgetTokens = hasOverride ? effectiveOverride : modelWindow,
+            EffectiveWorkingBudgetSource = hasOverride ? overrideSource : modelWindow.HasValue ? "model" : null
+        };
     }
 }

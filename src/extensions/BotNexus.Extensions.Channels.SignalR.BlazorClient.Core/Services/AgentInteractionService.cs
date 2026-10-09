@@ -307,7 +307,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         agent.ProcessingStage = null;
 
         if (agent.Conversations.GetValueOrDefault(conversationId) is { } conv)
-            conv.StreamState.EndRun();
+            conv.StreamState.EndRun("LocalStop");
 
         // #2439: the run is being torn down, so nothing will ever inject a queued follow-up or
         // steer. Clear the pending chip alongside the run bracket rather than leaving a stale
@@ -485,7 +485,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         // actual server-side turn result rather than a perpetual in-progress spinner.
         if (conv is not null && conv.StreamState.IsTurnActive)
         {
-            conv.StreamState.EndRun();
+            conv.StreamState.EndRun("ConversationNavigationRecovery");
             conv.HistoryLoaded = false; // force reload below
         }
 

@@ -30,7 +30,7 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
     }
 
     /// <summary>
-    /// Rehydrates the already-composed configuration and applies only the raw-shape normalizations
+    /// Reads accepted provider documents and applies only the raw-shape normalizations
     /// that binding cannot express. This is shared by options and startup extension bootstrap.
     /// </summary>
     public static void ApplyAuthoritativeRawShape(IConfiguration configuration, PlatformConfig config)
@@ -42,6 +42,7 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
             return;
 
         var providers = configurationRoot.Providers.ToArray();
+        ExactModelCapacityConfiguration.Apply(providers, config);
         var rawProviderIndex = -1;
         ConfigDocument? document = null;
         for (var index = providers.Length - 1; index >= 0; index--)

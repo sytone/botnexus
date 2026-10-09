@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tests.TestUtils;
 using BotNexus.Agent.Core.Types;
@@ -23,7 +24,7 @@ public sealed class AgentLoopRunnerCompletionGateTests
         var events = new List<AgentEvent>();
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel("completion-gate-continues")) with
         {
-            EvaluateRunCompletion = _ => Task.FromResult(
+            RunCompletionPolicy = _ => Task.FromResult(
                 Interlocked.Increment(ref evaluations) == 1
                     ? RunCompletionDecision.Continue(["publish"], "Publication is still actionable.")
                     : RunCompletionDecision.Completed),
@@ -60,7 +61,7 @@ public sealed class AgentLoopRunnerCompletionGateTests
         var events = new List<AgentEvent>();
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel("completion-gate-bounded")) with
         {
-            EvaluateRunCompletion = _ => Task.FromResult(
+            RunCompletionPolicy = _ => Task.FromResult(
                 RunCompletionDecision.Continue(["implement", "validate"], "Work remains actionable.")),
             MaxCompletionContinuations = 2,
         };
@@ -93,7 +94,7 @@ public sealed class AgentLoopRunnerCompletionGateTests
         var events = new List<AgentEvent>();
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel("completion-gate-parked")) with
         {
-            EvaluateRunCompletion = _ => Task.FromResult(RunCompletionDecision.Parked(
+            RunCompletionPolicy = _ => Task.FromResult(RunCompletionDecision.Parked(
                 RunStopReason.UserInput,
                 ["decision"],
                 "ask_user request ask-1 is persisted",
@@ -138,7 +139,7 @@ public sealed class AgentLoopRunnerCompletionGateTests
         var events = new List<AgentEvent>();
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(providerName)) with
         {
-            EvaluateRunCompletion = _ => Task.FromResult(new RunCompletionDecision(
+            RunCompletionPolicy = _ => Task.FromResult(new RunCompletionDecision(
                 RunCompletionStatus.Parked,
                 ["publish"],
                 stopReason,
@@ -178,7 +179,7 @@ public sealed class AgentLoopRunnerCompletionGateTests
         var events = new List<AgentEvent>();
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(providerName)) with
         {
-            EvaluateRunCompletion = _ => Task.FromResult(RunCompletionDecision.Parked(
+            RunCompletionPolicy = _ => Task.FromResult(RunCompletionDecision.Parked(
                 stopReason,
                 ["publish"],
                 "authoritative persisted evidence",
@@ -212,7 +213,7 @@ public sealed class AgentLoopRunnerCompletionGateTests
         var events = new List<AgentEvent>();
         var config = TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel("completion-gate-error")) with
         {
-            EvaluateRunCompletion = _ => Task.FromResult(
+            RunCompletionPolicy = _ => Task.FromResult(
                 RunCompletionDecision.Continue(["publish"], "Work remains actionable.")),
         };
 

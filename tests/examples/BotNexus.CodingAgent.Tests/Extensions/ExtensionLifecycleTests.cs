@@ -1,4 +1,5 @@
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.CodingAgent.Extensions;
@@ -29,14 +30,14 @@ public sealed class ExtensionLifecycleTests
         first.Setup(item => item.GetTools()).Returns([]);
         first.Setup(item => item.OnToolCallAsync(It.IsAny<ToolCallLifecycleContext>(), It.IsAny<CancellationToken>()))
             .Callback(() => calls++)
-            .Returns(ValueTask.FromResult<BeforeToolCallResult?>(null));
+            .Returns(ValueTask.FromResult<ToolExecutionDecision?>(null));
 
         var second = new Mock<IExtension>();
         second.SetupGet(item => item.Name).Returns("second");
         second.Setup(item => item.GetTools()).Returns([]);
         second.Setup(item => item.OnToolCallAsync(It.IsAny<ToolCallLifecycleContext>(), It.IsAny<CancellationToken>()))
             .Callback(() => calls++)
-            .Returns(ValueTask.FromResult<BeforeToolCallResult?>(null));
+            .Returns(ValueTask.FromResult<ToolExecutionDecision?>(null));
 
         var runner = new ExtensionRunner([first.Object, second.Object]);
         await runner.OnToolCallAsync(new ToolCallLifecycleContext(
@@ -51,12 +52,12 @@ public sealed class ExtensionLifecycleTests
     [Fact]
     public async Task OnToolCallAsync_WhenExtensionBlocks_ReturnsBlockingResult()
     {
-        var blockResult = new BeforeToolCallResult(Block: true, Reason: "blocked");
+        var blockResult = new ToolExecutionDecision(Block: true, Reason: "blocked");
         var first = new Mock<IExtension>();
         first.SetupGet(item => item.Name).Returns("first");
         first.Setup(item => item.GetTools()).Returns([]);
         first.Setup(item => item.OnToolCallAsync(It.IsAny<ToolCallLifecycleContext>(), It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.FromResult<BeforeToolCallResult?>(blockResult));
+            .Returns(ValueTask.FromResult<ToolExecutionDecision?>(blockResult));
 
         var second = new Mock<IExtension>();
         second.SetupGet(item => item.Name).Returns("second");
@@ -79,13 +80,13 @@ public sealed class ExtensionLifecycleTests
         first.SetupGet(item => item.Name).Returns("first");
         first.Setup(item => item.GetTools()).Returns([]);
         first.Setup(item => item.OnToolResultAsync(It.IsAny<ToolResultLifecycleContext>(), It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.FromResult<AfterToolCallResult?>(new AfterToolCallResult(Details: "first")));
+            .Returns(ValueTask.FromResult<ToolResultTransformResult?>(new ToolResultTransformResult(Details: "first")));
 
         var second = new Mock<IExtension>();
         second.SetupGet(item => item.Name).Returns("second");
         second.Setup(item => item.GetTools()).Returns([]);
         second.Setup(item => item.OnToolResultAsync(It.IsAny<ToolResultLifecycleContext>(), It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.FromResult<AfterToolCallResult?>(new AfterToolCallResult(Details: "second")));
+            .Returns(ValueTask.FromResult<ToolResultTransformResult?>(new ToolResultTransformResult(Details: "second")));
 
         var runner = new ExtensionRunner([first.Object, second.Object]);
         var result = await runner.OnToolResultAsync(new ToolResultLifecycleContext(
@@ -139,7 +140,7 @@ public sealed class ExtensionLifecycleTests
         second.Setup(item => item.GetTools()).Returns([]);
         second.Setup(item => item.OnToolCallAsync(It.IsAny<ToolCallLifecycleContext>(), It.IsAny<CancellationToken>()))
             .Callback(() => calls++)
-            .Returns(ValueTask.FromResult<BeforeToolCallResult?>(null));
+            .Returns(ValueTask.FromResult<ToolExecutionDecision?>(null));
 
         var runner = new ExtensionRunner([throwing.Object, second.Object]);
         var act = () => runner.OnToolCallAsync(new ToolCallLifecycleContext(

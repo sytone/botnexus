@@ -87,8 +87,11 @@ jobs:
       - name: Build
         run: dotnet build dirs.proj --no-restore
 
+      # Canonical CORE scope consumed by Invoke-BoundedCoreTests.ps1:
+      # FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E
       - name: Test (core)
-        run: dotnet test tests/dirs.proj --no-build --filter "FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E" --logger "trx;LogFilePrefix=ci" --results-directory ${{ github.workspace }}/artifacts/test-results
+        shell: pwsh
+        run: ./scripts/repo/Invoke-BoundedCoreTests.ps1 -ResultsDirectory '${{ github.workspace }}/artifacts/test-results' -CompletionPath '${{ github.workspace }}/artifacts/test-results/completion-core.json' -TimeoutSeconds 2100 -HangTimeoutMinutes 10
 
       # Judge the run by the same fail-closed contract the remote container gate uses (#3602).
       #
@@ -105,14 +108,14 @@ jobs:
       - name: Validate test-result contract (core)
         if: always()
         shell: pwsh
-        run: ./scripts/repo/Assert-TestResultContract.ps1 -ResultsDirectory '${{ github.workspace }}/artifacts/test-results' -MinimumTotal 12000 -SummaryPath '${{ github.workspace }}/artifacts/test-results/contract-core.json'
+        run: ./scripts/repo/Assert-TestResultContract.ps1 -ResultsDirectory '${{ github.workspace }}/artifacts/test-results' -CompletionPath '${{ github.workspace }}/artifacts/test-results/completion-core.json' -MinimumTotal 12000 -SummaryPath '${{ github.workspace }}/artifacts/test-results/contract-core.json'
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: core-test-results
-          path: artifacts/test-results/*.trx
+          path: artifacts/test-results
           if-no-files-found: error
 
   # Push to main: full test suite with coverage (safety net)
@@ -120,6 +123,9 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -143,7 +149,9 @@ jobs:
         # was over-broad: those projects declare their own environmental skips with stated reasons
         # ("Dev gateway not running at localhost:5006", "GITHUB_TOKEN not set"), so the runner can
         # execute them and report honest skips rather than never running them at all.
-        run: dotnet test tests/dirs.proj --no-build --collect:"XPlat Code Coverage" --filter "FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E" --logger "trx;LogFilePrefix=ci" --results-directory ${{ github.workspace }}/artifacts/test-results
+        # FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E
+        shell: pwsh
+        run: ./scripts/repo/Invoke-BoundedCoreTests.ps1 -ResultsDirectory '${{ github.workspace }}/artifacts/test-results' -CompletionPath '${{ github.workspace }}/artifacts/test-results/completion-full.json' -TimeoutSeconds 2100 -HangTimeoutMinutes 10 -CollectCoverage
 
       # Same fail-closed contract as the PR job above (#3602). Main's push run is the safety net;
       # a safety net judged by a weaker standard than the PR gate it backstops is not one.
@@ -154,21 +162,22 @@ jobs:
       - name: Validate test-result contract (full)
         if: always()
         shell: pwsh
-        run: ./scripts/repo/Assert-TestResultContract.ps1 -ResultsDirectory '${{ github.workspace }}/artifacts/test-results' -MinimumTotal 12000 -SummaryPath '${{ github.workspace }}/artifacts/test-results/contract-full.json'
+        run: ./scripts/repo/Assert-TestResultContract.ps1 -ResultsDirectory '${{ github.workspace }}/artifacts/test-results' -CompletionPath '${{ github.workspace }}/artifacts/test-results/completion-full.json' -MinimumTotal 12000 -SummaryPath '${{ github.workspace }}/artifacts/test-results/contract-full.json'
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: full-test-results
-          path: artifacts/test-results/*.trx
+          path: artifacts/test-results
           if-no-files-found: error
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         if: always()
         with:
-          fail_ci_if_error: false
+          use_oidc: true
+          fail_ci_if_error: true
 
   # Browser-emulated E2E is quarantined from automatic CI while #3601 is reviewed.
   # The projects and explicit `Invoke-AzureBuildTest.ps1 -Mode playwright|full` diagnostic paths

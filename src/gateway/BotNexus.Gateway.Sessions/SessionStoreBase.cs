@@ -94,6 +94,75 @@ public abstract class SessionStoreBase : ISessionStore
         return SessionSaveOutcome.Persisted;
     }
 
+    /// <inheritdoc />
+    public virtual async Task<UnresolvedCrashSentinelPage> ListUnresolvedCrashSentinelsAsync(
+        int limit, string? cursor = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        var rows = (await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false))
+            .Where(session => session.History.Any(static entry => entry.IsCrashSentinel))
+            .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
+            .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
+            .Take(limit + 1)
+            .Select(session => new UnresolvedCrashSentinelRow(session.SessionId, session.AgentId))
+            .ToList();
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        return new UnresolvedCrashSentinelPage(rows, hasMore ? rows[^1].SessionId.Value : null);
+    }
+
+    /// <inheritdoc />
+    public virtual async Task<SessionCleanupPlanPage> ListCleanupPlanAsync(
+        int limit, bool includeBytes, string? cursor = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        var rows = (await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false))
+            .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
+            .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
+            .Take(limit + 1)
+            .Select(session => new SessionCleanupPlanRow(
+                session.SessionId, session.AgentId, session.ConversationId, session.Status, session.UpdatedAt,
+                session.MessageCount, includeBytes ? SessionDiskAccounting.Measure(session) : 0))
+            .ToList();
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+        return new SessionCleanupPlanPage(rows, hasMore ? rows[^1].SessionId.Value : null);
+    }
+
+    /// <inheritdoc />
+    public virtual async Task<SessionMutationOutcome> ExpireIfMatchesAsync(
+        SessionCleanupFence fence, DateTimeOffset expiresAt, CancellationToken cancellationToken = default)
+    {
+        var session = await GetAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return SessionMutationOutcome.NotFound;
+        if (!MatchesCleanupFence(session, fence)) return SessionMutationOutcome.Conflict;
+        session.Status = SessionStatus.Expired;
+        session.ExpiresAt ??= expiresAt;
+        session.UpdatedAt = expiresAt;
+        // The portable stores return their authoritative aggregate instance. Passing that same
+        // instance through the post-run fence after changing its status makes the fence observe
+        // the just-applied Expired state and reject its own write. The cleanup fence above already
+        // compared the complete cleanup version (conversation, status, updated_at), so preserve
+        // the pre-projection store semantics by committing through the ordinary save path.
+        await SaveAsync(session, cancellationToken).ConfigureAwait(false);
+        return SessionMutationOutcome.Applied;
+    }
+
+    /// <inheritdoc />
+    public virtual async Task<SessionMutationOutcome> DeleteIfMatchesAsync(
+        SessionCleanupFence fence, CancellationToken cancellationToken = default)
+    {
+        var session = await GetAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        if (session is null) return SessionMutationOutcome.NotFound;
+        if (!MatchesCleanupFence(session, fence)) return SessionMutationOutcome.Conflict;
+        await DeleteAsync(fence.SessionId, cancellationToken).ConfigureAwait(false);
+        return SessionMutationOutcome.Applied;
+    }
+
+    private static bool MatchesCleanupFence(GatewaySession session, SessionCleanupFence fence) =>
+        session.ConversationId == fence.ConversationId && session.Status == fence.ExpectedStatus
+        && session.UpdatedAt == fence.ExpectedUpdatedAt;
+
     public abstract Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -401,7 +470,8 @@ public abstract class SessionStoreBase : ISessionStore
 
     /// <inheritdoc />
     public virtual Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
+        => info.SpawningToolCallId is null ? Task.CompletedTask
+            : throw new NotSupportedException("This store cannot durably admit tool-origin sub-agents.");
 
     /// <inheritdoc />
     public virtual Task UpdateSubAgentSessionAsync(
@@ -424,6 +494,23 @@ public abstract class SessionStoreBase : ISessionStore
         string? childAgentId = null,
         int offset = 0)
         => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(Array.Empty<SubAgentRunDetail>());
+
+    /// <inheritdoc />
+    public virtual Task<IReadOnlyList<SubAgentRunDetail>> ListSubAgentSessionsAsync(SessionId sessionId, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>([]);
+
+    /// <inheritdoc />
+    public virtual Task<SubAgentRunDetail?> FindSubAgentSpawnAsync(SessionId parentSessionId, string toolCallId, CancellationToken cancellationToken = default)
+        => Task.FromResult<SubAgentRunDetail?>(null);
+
+    /// <inheritdoc />
+    public virtual Task<SubAgentRunDetail?> GetSubAgentSessionAsync(string subAgentId, CancellationToken cancellationToken = default)
+        => Task.FromResult<SubAgentRunDetail?>(null);
+
+    /// <inheritdoc />
+    public virtual Task<string?> ConsumeSubAgentResultAsync(string subAgentId, SessionId parentSessionId,
+        ConversationId? parentConversationId, SessionEntry result, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This store cannot atomically retain sub-agent tool results.");
 
     private static IEnumerable<GatewaySession> ApplyAgentFilter(IEnumerable<GatewaySession> sessions, AgentId? agentId)
         => agentId is null ? sessions : sessions.Where(session => session.AgentId == agentId);

@@ -20,18 +20,40 @@ public sealed class ToolAuditDeadlineTests
     [Fact]
     public async Task PersistStartAsync_StoreIgnoresCancellation_ReadReturnsWithinHardDeadline()
     {
-        var store = HangingStore();
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<SessionAppendMutationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new Mock<ISessionStore>();
+        store.Setup(s => s.AppendEntriesAsync(
+                It.IsAny<SessionId>(),
+                It.IsAny<IReadOnlyList<SessionEntry>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                entered.TrySetResult(true);
+                return completion.Task;
+            });
         var audit = Create(store.Object);
         var stopwatch = Stopwatch.StartNew();
 
-        await audit.PersistStartAsync("call-read", "read", Args("path", "secret-value"), CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(2));
+        try
+        {
+            await audit.PersistStartAsync("call-read", "read", Args("path", "secret-value"), CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(2));
 
-        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
-        store.Verify(s => s.AppendEntriesAsync(
-            SessionId.From("session-a"),
-            It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1),
-            It.IsAny<CancellationToken>()), Times.Once);
+            stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
+
+            // The queued append can enter the store after the hard deadline has already returned.
+            // Observe entry separately; this diagnostic guard is not part of the elapsed-time assertion.
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            store.Verify(s => s.AppendEntriesAsync(
+                SessionId.From("session-a"),
+                It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1),
+                It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            completion.TrySetResult(new SessionAppendMutationResult(SessionMutationOutcome.Applied, 1));
+        }
     }
 
     [Fact]
@@ -218,18 +240,6 @@ public sealed class ToolAuditDeadlineTests
         SessionId.From("session-a"),
         NullLogger.Instance,
         Deadline);
-
-    private static Mock<ISessionStore> HangingStore()
-    {
-        var never = new TaskCompletionSource<SessionAppendMutationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var store = new Mock<ISessionStore>();
-        store.Setup(s => s.AppendEntriesAsync(
-                It.IsAny<SessionId>(),
-                It.IsAny<IReadOnlyList<SessionEntry>>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(never.Task);
-        return store;
-    }
 
     private static IReadOnlyDictionary<string, object?> Args(string name, string value) =>
         new Dictionary<string, object?> { [name] = value };

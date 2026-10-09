@@ -56,13 +56,11 @@ public sealed class SubAgentSpawnOnlyHandoffTests
         result.ResultSummary.ShouldNotBeNull();
         result.ResultSummary!.ShouldContain("child work product");
 
-        dispatcher.Verify(
-            d => d.DispatchAsync(
-                It.Is<InboundMessage>(m =>
-                    m.SenderId == $"subagent:{spawned.SubAgentId}" &&
-                    m.Content.Contains("child work product", StringComparison.Ordinal)),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+        var joined = await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId);
+        joined.Status.ShouldBe(SubAgentStatus.HandedOff);
+        joined.ResultSummary.ShouldNotBeNull();
+        joined.ResultSummary.ShouldContain("child work product");
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     /// <summary>
@@ -125,6 +123,37 @@ public sealed class SubAgentSpawnOnlyHandoffTests
         SubAgentStatusPolicy.IsUnsuccessfulTermination(result.Status).ShouldBeTrue();
         result.ResultSummary.ShouldNotBeNull();
         result.ResultSummary!.ShouldContain("empty final response");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task EmptyRun_WithProviderError_DeliversUnderlyingErrorToParent(string content)
+    {
+        const string providerError = "Microsoft Foundry rejected prompt_cache_key";
+        var handleFactory = new SpawningHandleFactory(
+            descendantResult: null, spawnDescendant: false, ownResult: content,
+            terminalError: providerError);
+        var manager = CreateManager(handleFactory, out var dispatcher);
+        handleFactory.Manager = manager;
+        var delivered = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<InboundMessage, CancellationToken>((message, _) => delivered.TrySetResult(message))
+            .Returns(Task.CompletedTask);
+
+        var spawned = await manager.SpawnAsync(CreateRequest(SessionId.From("parent-session")));
+        var notification = await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await manager.GetAsync(spawned.SubAgentId);
+
+        result.ShouldNotBeNull();
+        result.Status.ShouldBe(SubAgentStatus.Failed);
+        result.ResultSummary.ShouldNotBeNull();
+        result.ResultSummary.ShouldContain(providerError);
+        result.ResultSummary.ShouldNotContain("empty final response");
+        notification.ResultSummary.ShouldNotBeNull();
+        notification.ResultSummary.ShouldContain(providerError);
+        notification.ResultSummary.ShouldNotContain("empty final response");
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static async Task<(DefaultSubAgentManager Manager, SubAgentInfo Spawned)> RunSpawnOnlyAsync(
@@ -240,7 +269,8 @@ public sealed class SubAgentSpawnOnlyHandoffTests
     private sealed class SpawningHandleFactory(
         string? descendantResult,
         bool spawnDescendant = true,
-        string ownResult = "")
+        string ownResult = "",
+        string? terminalError = null)
     {
         private int _created;
 
@@ -267,12 +297,13 @@ public sealed class SubAgentSpawnOnlyHandoffTests
                     }
 
                     return ownResult;
-                })
+                }, terminalError)
                 : new ScriptedHandle(sessionId, () => Task.FromResult(descendantResult ?? string.Empty));
         }
     }
 
-    private sealed class ScriptedHandle(SessionId sessionId, Func<Task<string>> script) : IAgentHandle
+    private sealed class ScriptedHandle(
+        SessionId sessionId, Func<Task<string>> script, string? terminalError = null) : IAgentHandle
     {
         public AgentId AgentId { get; } = AgentId.From("child-agent");
 
@@ -283,7 +314,7 @@ public sealed class SubAgentSpawnOnlyHandoffTests
         public IDisposable? ObserveTurns(Action onTurnCompleted) => null;
 
         public async Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default)
-            => new() { Content = await script() };
+            => new() { Content = await script(), TerminalError = terminalError };
 
         public Task<AgentResponse> PromptAsync(
             BotNexus.Gateway.Abstractions.Models.AgentUserMessage message,

@@ -18,7 +18,10 @@ public sealed class AgentSearchContributor(IAgentRegistry agentRegistry) : ISear
     public string Label => "Agents";
 
     /// <inheritdoc />
-    public bool IsAvailable => agentRegistry.GetAll().Count > 0;
+    public bool IsAvailable => IsAvailableFor(SearchScope.All);
+
+    internal bool IsAvailableFor(SearchScope scope)
+        => agentRegistry.GetAll().Any(agent => scope.Allows(agent.AgentId));
 
     /// <inheritdoc />
     public bool CanAssessProvenanceTrust => false;
@@ -33,6 +36,7 @@ public sealed class AgentSearchContributor(IAgentRegistry agentRegistry) : ISear
 
         var results = new List<SearchResult>(request.MaxResults);
         foreach (var descriptor in agentRegistry.GetAll()
+                     .Where(agent => request.Scope.Allows(agent.AgentId))
                      .OrderBy(agent => agent.AgentId.Value, StringComparer.OrdinalIgnoreCase)
                      .ThenBy(agent => agent.AgentId.Value, StringComparer.Ordinal))
         {

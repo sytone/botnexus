@@ -10,6 +10,7 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Xunit.SkippableFact" />
     <PackageReference Include="NetArchTest.Rules" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <!-- #2616: the agent-execution fence enumerates call sites from IL, not from file names. -->
     <PackageReference Include="Mono.Cecil" />
     <PackageReference Include="Vogen" />
@@ -25,6 +26,8 @@
     <None Include="ConfigPathResolutionBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
     <!-- #4567: production configuration authority debt is an exact shrink-only ceiling. -->
     <None Include="ConfigurationAuthorityBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
+    <!-- #3114: reviewed current-source classification for subject-shaped static helpers. -->
+    <None Include="StaticHelperClassification.csv" CopyToOutputDirectory="PreserveNewest" />
     <!-- Finite waits are frozen so new timing-based synchronization cannot enter the test suite. -->
     <None Include="TestDelayFlakeBaseline.baseline" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
@@ -51,6 +54,51 @@
     <ProjectReference Include="..\..\scenarios\BotNexus.Scenarios.Harness\BotNexus.Scenarios.Harness.csproj" />
     <ProjectReference Include="..\..\scenarios\BotNexus.Scenarios.Tests\BotNexus.Scenarios.Tests.csproj" />
   </ItemGroup>
+
+  <!-- #4778: build deployable extensions without importing their NuGet closure into testhost.
+       GetTargetPath records the production outputs for this configuration/TFM; no Release/Debug
+       guessing and no probing AppContext.BaseDirectory for the host's dependency versions. -->
+  <ItemGroup>
+    <ExtensionArtifactCandidate Include="$(MSBuildThisFileDirectory)../../../src/extensions/**/*.csproj"
+                                Exclude="$(MSBuildThisFileDirectory)../../../src/extensions/**/bin/**;$(MSBuildThisFileDirectory)../../../src/extensions/**/obj/**">
+      <Deployable Condition="Exists('%(RootDir)%(Directory)botnexus-extension.json')">true</Deployable>
+    </ExtensionArtifactCandidate>
+    <ExtensionArtifactProject Include="@(ExtensionArtifactCandidate->WithMetadataValue('Deployable', 'true'))" />
+    <ProjectReference Include="@(ExtensionArtifactProject)" Exclude="@(ProjectReference)"
+                      ReferenceOutputAssembly="false" PrivateAssets="all" ExcludeAssets="all" />
+    <ProjectReference Include="../../../tools/BotNexus.ExtensionDependencyProbe/BotNexus.ExtensionDependencyProbe.csproj"
+                      ReferenceOutputAssembly="false" PrivateAssets="all" ExcludeAssets="all" />
+    <ProjectReference Include="../../../tools/BotNexus.ExtensionCompatibilityProbe/BotNexus.ExtensionCompatibilityProbe.csproj"
+                      ReferenceOutputAssembly="false" PrivateAssets="all" ExcludeAssets="all" />
+  </ItemGroup>
+  <Target Name="RecordExtensionCompatibilityArtifacts" AfterTargets="Build" Condition="'$(SkipTests)' != 'true'">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../../../src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="CompatibilityHostArtifact" />
+    </MSBuild>
+    <MSBuild Projects="@(ExtensionArtifactProject)" Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="CompatibilityExtensionArtifact" />
+    </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../../../tools/BotNexus.ExtensionDependencyProbe/BotNexus.ExtensionDependencyProbe.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="CompatibilityProbeArtifact" />
+    </MSBuild>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../../../tools/BotNexus.ExtensionCompatibilityProbe/BotNexus.ExtensionCompatibilityProbe.csproj"
+             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
+      <Output TaskParameter="TargetOutputs" ItemName="Agent365CompatibilityProbeArtifact" />
+    </MSBuild>
+    <!-- Only the framework-only executable DLL is placed beside the host. Its deps.json is
+         NEVER copied or used: host shipping/dependency resolution remains authoritative. -->
+    <Copy SourceFiles="@(CompatibilityProbeArtifact)"
+          DestinationFolder="@(CompatibilityHostArtifact->'%(RootDir)%(Directory)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(Agent365CompatibilityProbeArtifact)"
+          DestinationFolder="@(CompatibilityHostArtifact->'%(RootDir)%(Directory)')" SkipUnchangedFiles="true" />
+    <WriteLinesToFile File="$(TargetDir)compatibility-host-artifact.txt"
+                      Lines="@(CompatibilityHostArtifact)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <WriteLinesToFile File="$(TargetDir)compatibility-extension-artifacts.txt"
+                      Lines="@(CompatibilityExtensionArtifact)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
 
   <ItemGroup>
     <Compile Include="..\..\BotNexus.Testing\SqlitePoolCleanup.cs" Link="Shared\SqlitePoolCleanup.cs" />

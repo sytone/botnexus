@@ -304,6 +304,20 @@ public sealed record ExtensionRepositoryRegistrationInfo(
     DateTimeOffset? LastSuccessUtc,
     string? LatestFailure);
 
+/// <summary>Provider-owned authentication settings.</summary>
+public sealed class ProviderAuthenticationConfig
+{
+    /// <summary>Required authentication mode discriminator.</summary>
+    [Display(Name = "Type", Description = "Authentication mode discriminator.", GroupName = "Provider authentication", Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "provider-authentication", Order = 0)]
+    public string? Type { get; set; }
+
+    /// <summary>User-assigned managed identity client ID when that mode is selected.</summary>
+    [Display(Name = "Client ID", Description = "Client ID of the user-assigned managed identity.", GroupName = "Provider authentication", Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "provider-authentication", Order = 1)]
+    public string? ClientId { get; set; }
+}
+
 /// <summary>Provider-specific configuration.</summary>
 public sealed class ProviderConfig
 {
@@ -337,6 +351,15 @@ public sealed class ProviderConfig
         Order = 1)]
     [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "provider", Order = 1, Secret = true)]
     public string? ApiKey { get; set; }
+
+    /// <summary>Explicit authentication mode for providers that support more than API keys.</summary>
+    [Display(
+        Name = "Authentication",
+        Description = "Explicit provider authentication mode. Microsoft Foundry supports entra-default, managed-identity, user-assigned-managed-identity, and api-key.",
+        GroupName = "Provider",
+        Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "provider", Order = 2)]
+    public ProviderAuthenticationConfig? Authentication { get; set; }
 
     /// <summary>Base URL override.</summary>
     [Display(
@@ -500,6 +523,20 @@ public sealed class ProviderConfig
     public ProviderEmbeddingsConfig? Embeddings { get; set; }
 }
 
+/// <summary>Operator-declared token capacities for one exact chat model identifier.</summary>
+public sealed class ProviderModelCapacityConfig
+{
+    /// <summary>Total context capacity in tokens; null inherits the provider default.</summary>
+    [Display(Name = "Context capacity", Description = "Operator-declared total context capacity in tokens for this exact model. Null inherits the provider default; this declaration is not provider-verified.", GroupName = "Model capacity", Order = 0)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "model-capacity", Order = 0)]
+    public int? ContextWindow { get; set; }
+
+    /// <summary>Maximum output tokens; null uses the conservative output fallback.</summary>
+    [Display(Name = "Maximum output tokens", Description = "Operator-declared output-token ceiling for this exact model, separate from context capacity and throughput quota. Null uses the conservative fallback; explicit values must be positive and less than context capacity.", GroupName = "Model capacity", Order = 1)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "model-capacity", Order = 1)]
+    public int? MaxTokens { get; set; }
+}
+
 /// <summary>
 /// Chat-capability settings nested under a provider (#2854).
 /// </summary>
@@ -510,6 +547,21 @@ public sealed class ProviderConfig
 /// </remarks>
 public sealed class ProviderChatConfig
 {
+    private Dictionary<string, ProviderModelCapacityConfig> _modelCapacities = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Operator-declared capacities keyed by exact, case-sensitive model ID. These values are not
+    /// provider-verified. Assignments are copied with ordinal keys; runtime post-configuration
+    /// materializes this map from accepted raw documents rather than case-insensitive binding.
+    /// </summary>
+    [Display(Name = "Model capacities", Description = "Operator-declared context and output token capacities keyed by exact, case-sensitive model ID. Configure the complete map with the central configuration CLI; values are declarations, not provider-verified limits.", GroupName = "Provider chat", Order = 8)]
+    [ConfigField(Group = "provider-chat", Order = 8)]
+    public Dictionary<string, ProviderModelCapacityConfig> ModelCapacities
+    {
+        get => _modelCapacities;
+        set => _modelCapacities = value is null ? new(StringComparer.Ordinal) : new(value, StringComparer.Ordinal);
+    }
+
     /// <summary>API identifier used when registering this provider's chat models.</summary>
     [Display(
         Name = "API",
@@ -892,6 +944,17 @@ public sealed class GatewaySettingsConfig
         Order = 1)]
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "execution", Order = 1)]
     public string[]? ShellCommand { get; set; }
+
+    /// <summary>
+    /// Exact ambient environment names approved for local shell/exec children, in addition to
+    /// OS essentials. Null or empty uses secure defaults. Values are never stored here.
+    /// No wildcard, prefix or inherit-all mode is supported. Changes require a gateway restart.
+    /// </summary>
+    [Display(Name = "Local child environment pass-through",
+        Description = "Exact ambient variable names allowed in shell/exec children. Names only; no wildcard or inherit-all mode. Requires restart.",
+        GroupName = "Execution", Order = 2)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "execution", Order = 2)]
+    public List<string>? LocalChildEnvironmentPassThrough { get; set; }
 
     /// <summary>Auto-update settings for self-updating the gateway via the BotNexus CLI.</summary>
     [Display(

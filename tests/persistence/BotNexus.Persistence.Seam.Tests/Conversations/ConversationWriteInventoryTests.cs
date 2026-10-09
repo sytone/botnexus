@@ -42,6 +42,11 @@ public sealed class ConversationWriteInventoryTests
             "Narrow UPDATE that bumps version; refreshes the cached revision so the next reader "
             + "can still save."),
 
+        new("conversations", nameof(IConversationStore.TryArchiveAsync), WriteClassification.CompareAndSwap,
+            "status, active_session_id and one archive audit row",
+            "Conditional UPDATE requires status=Active and bumps version. The audit insert shares "
+            + "the transaction and runs only when exactly one caller wins the transition."),
+
         new("conversations", nameof(IConversationStore.TouchAsync), WriteClassification.NarrowPatch,
             "updated_at only",
             "Deliberately does NOT bump version: it runs per message and owns no field a caller "

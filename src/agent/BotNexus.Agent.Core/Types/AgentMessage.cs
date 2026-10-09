@@ -8,7 +8,7 @@ namespace BotNexus.Agent.Core.Types;
 /// <param name="Role">The canonical message role (user, assistant, tool, system).</param>
 /// <remarks>
 /// Agent messages are stored in AgentState.Messages and are the source of truth for the conversation.
-/// They are converted to provider Message[] at the LLM call boundary via ConvertToLlmDelegate.
+/// They are converted to provider Message[] at the LLM call boundary via ProviderMessageTransformer.
 /// </remarks>
 public abstract record AgentMessage(string Role);
 

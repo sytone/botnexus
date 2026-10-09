@@ -200,6 +200,23 @@ public partial class ProviderCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteTestAsync_ActivationFailure_ReturnsPreciseReconcilerFailure()
+    {
+        using var server = new MockHttpServer();
+        server.SetResponse("/api/providers/new-instance/health", System.Net.HttpStatusCode.ServiceUnavailable,
+            """{"providerId":"new-instance","status":"activation_failed","latencyMs":0,"checkedAt":"2026-10-01T00:00:00Z","models":0,"hasCredentials":false,"error":"Provider 'new-instance' requires a base URL for openai-completions."}""");
+
+        var exit = await ProviderCommand.ExecuteTestAsync(
+            server.BaseUrl, "new-instance", CancellationToken.None);
+
+        exit.ShouldBe(1);
+        var output = NormalizeOutput(_output.ToString());
+        output.ShouldContain("Provider new-instance is not ready in the running gateway");
+        output.ShouldContain("requires a base URL for openai-completions");
+        output.ShouldNotContain("absent from the live model registry");
+    }
+
+    [Fact]
     public async Task ExecuteTestAsync_UnhealthyLiveProvider_ReturnsFailureWithGatewayRemediation()
     {
         using var server = new MockHttpServer();
@@ -249,6 +266,123 @@ public partial class ProviderCommandTests : IDisposable
             prov.GetProperty("apiKey").GetString().ShouldBe("n/a");
             prov.GetProperty("defaultModel").GetString().ShouldBe("integration-mock-echo");
             prov.GetProperty("models").EnumerateArray().Select(e => e.GetString()).ShouldContain("integration-mock-echo");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Theory]
+    [InlineData("entra-default", null)]
+    [InlineData("managed-identity", null)]
+    [InlineData("user-assigned-managed-identity", "00000000-0000-0000-0000-000000000001")]
+    [InlineData("api-key", null)]
+    public async Task ExecuteAddMicrosoftFoundryAsync_persists_explicit_provider_and_authentication(
+        string authenticationType,
+        string? clientId)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+
+            var exit = await new ProviderCommand().ExecuteAddMicrosoftFoundryAsync(
+                configPath,
+                name: "azure-foundry-test",
+                baseUrl: "https://example.services.ai.azure.com/openai/v1",
+                authenticationType,
+                clientId,
+                apiKey: authenticationType == "api-key" ? "example-secret" : null,
+                defaultModel: "example-deployment",
+                models: ["example-deployment"],
+                enabled: true,
+                verbose: false,
+                CancellationToken.None);
+
+            exit.ShouldBe(0);
+            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(configPath));
+            var provider = doc.RootElement.GetProperty("providers").GetProperty("azure-foundry-test");
+            provider.GetProperty("type").GetString().ShouldBe("microsoft-foundry");
+            provider.GetProperty("api").GetString().ShouldBe("microsoft-foundry-responses");
+            provider.GetProperty("baseUrl").GetString().ShouldBe("https://example.services.ai.azure.com/openai/v1");
+            provider.GetProperty("authentication").GetProperty("type").GetString().ShouldBe(authenticationType);
+            if (clientId is not null)
+                provider.GetProperty("authentication").GetProperty("clientId").GetString().ShouldBe(clientId);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAddMicrosoftFoundryAsync_switching_from_api_key_to_entra_clears_stale_secret()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            var command = new ProviderCommand();
+            await command.ExecuteAddMicrosoftFoundryAsync(
+                configPath, "azure-foundry-test", "https://example.services.ai.azure.com/openai/v1",
+                "api-key", null, "example-secret", "example-deployment", ["example-deployment"],
+                enabled: true, verbose: false, CancellationToken.None);
+
+            var exit = await command.ExecuteAddMicrosoftFoundryAsync(
+                configPath, "azure-foundry-test", "https://example.services.ai.azure.com/openai/v1",
+                "entra-default", null, null, "example-deployment", ["example-deployment"],
+                enabled: true, verbose: false, CancellationToken.None);
+
+            exit.ShouldBe(0);
+            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(configPath));
+            var provider = doc.RootElement.GetProperty("providers").GetProperty("azure-foundry-test");
+            provider.GetProperty("authentication").GetProperty("type").GetString().ShouldBe("entra-default");
+            provider.TryGetProperty("apiKey", out var apiKey).ShouldBeTrue();
+            apiKey.ValueKind.ShouldBe(JsonValueKind.Null);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Theory]
+    [InlineData("entra-default", null, null)]
+    [InlineData("user-assigned-managed-identity", null, null)]
+    [InlineData("api-key", null, null)]
+    [InlineData("unsupported", null, null)]
+    public async Task ExecuteAddMicrosoftFoundryAsync_rejects_incomplete_or_unsupported_authentication_without_writing(
+        string authenticationType,
+        string? clientId,
+        string? apiKey)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            var invalidBaseUrl = authenticationType == "entra-default"
+                ? "http://example.services.ai.azure.com/openai/v1"
+                : "https://example.services.ai.azure.com/openai/v1";
+
+            var exit = await new ProviderCommand().ExecuteAddMicrosoftFoundryAsync(
+                configPath,
+                "azure-foundry-test",
+                invalidBaseUrl,
+                authenticationType,
+                clientId,
+                apiKey,
+                "example-deployment",
+                ["example-deployment"],
+                enabled: true,
+                verbose: false,
+                CancellationToken.None);
+
+            exit.ShouldBe(1);
+            File.Exists(configPath).ShouldBeFalse();
         }
         finally
         {
@@ -318,6 +452,90 @@ public partial class ProviderCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAddAsync_refuses_disabling_assigned_provider_without_mutation()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            var original = """
+                {
+                  "providers": {
+                    "copilot-work": { "type": "github-copilot", "enabled": true, "defaultModel": "original" },
+                    "github-copilot": { "type": "github-copilot", "enabled": true }
+                  },
+                  "agents": {
+                    "quill": { "provider": "COPILOT-WORK", "model": "original" },
+                    "aurum": { "provider": "copilot-work", "model": "original" },
+                    "nova": { "provider": "github-copilot", "model": "original" }
+                  },
+                  "extensionState": { "keep": "untouched" }
+                }
+                """;
+            await File.WriteAllTextAsync(configPath, original);
+
+            var exit = await new ProviderCommand().ExecuteAddAsync(
+                configPath, "copilot-work", api: null, apiKey: null, baseUrl: null,
+                defaultModel: "changed", models: Array.Empty<string>(), enabled: false,
+                verbose: false, CancellationToken.None);
+
+            exit.ShouldBe(1);
+            var output = _output.ToString();
+            output.ShouldContain("2 agent(s)");
+            output.ShouldContain("aurum");
+            output.ShouldContain("quill");
+            output.ShouldContain("Reassign");
+            (await File.ReadAllTextAsync(configPath)).ShouldBe(original);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAddAsync_disables_unassigned_provider_preserving_other_sections()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "providers": {
+                    "copilot-work": { "type": "github-copilot", "enabled": true, "defaultModel": "original" },
+                    "github-copilot": { "type": "github-copilot", "enabled": true }
+                  },
+                  "agents": { "nova": { "provider": "github-copilot", "model": "original" } },
+                  "extensionState": { "keep": "untouched" }
+                }
+                """);
+
+            var exit = await new ProviderCommand().ExecuteAddAsync(
+                configPath, "copilot-work", api: null, apiKey: null, baseUrl: null,
+                defaultModel: "updated", models: Array.Empty<string>(), enabled: false,
+                verbose: false, CancellationToken.None);
+
+            exit.ShouldBe(0);
+            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(configPath));
+            doc.RootElement.GetProperty("providers").GetProperty("copilot-work")
+                .GetProperty("enabled").GetBoolean().ShouldBeFalse();
+            doc.RootElement.GetProperty("providers").GetProperty("copilot-work")
+                .GetProperty("defaultModel").GetString().ShouldBe("updated");
+            doc.RootElement.GetProperty("agents").GetProperty("nova")
+                .GetProperty("provider").GetString().ShouldBe("github-copilot");
+            doc.RootElement.GetProperty("extensionState").GetProperty("keep")
+                .GetString().ShouldBe("untouched");
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
     public async Task ExecuteRemoveAsync_removes_provider_when_present()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
@@ -334,6 +552,53 @@ public partial class ProviderCommandTests : IDisposable
             var json = await File.ReadAllTextAsync(configPath);
             using var doc = JsonDocument.Parse(json);
             doc.RootElement.GetProperty("providers").TryGetProperty("to-remove", out _).ShouldBeFalse();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteRemoveAsync_refuses_provider_assigned_to_agents_without_mutation()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            await File.WriteAllTextAsync(configPath, """
+                {
+                  "providers": {
+                    "copilot-work": {
+                      "type": "github-copilot",
+                      "enabled": true
+                    }
+                  },
+                  "agents": {
+                    "aurum": {
+                      "provider": "COPILOT-WORK",
+                      "model": "gpt-5.6"
+                    },
+                    "quill": {
+                      "provider": "copilot-work",
+                      "model": "claude-sonnet-4.6"
+                    },
+                    "nova": {
+                      "provider": "github-copilot",
+                      "model": "gpt-5.6"
+                    }
+                  }
+                }
+                """);
+
+            var exit = await new ProviderCommand().ExecuteRemoveAsync(
+                configPath, "copilot-work", verbose: false, CancellationToken.None);
+
+            exit.ShouldBe(1);
+            var json = await File.ReadAllTextAsync(configPath);
+            using var doc = JsonDocument.Parse(json);
+            doc.RootElement.GetProperty("providers").TryGetProperty("copilot-work", out _).ShouldBeTrue();
         }
         finally
         {

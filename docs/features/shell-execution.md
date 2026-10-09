@@ -9,15 +9,16 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Shell Preference Modes](#shell-preference-modes)
-3. [Custom Shell Command](#custom-shell-command)
-4. [Configuration Hierarchy](#configuration-hierarchy)
-5. [ArgumentList Execution Model](#argumentlist-execution-model)
-6. [Output Handling](#output-handling)
-7. [Script Preflight](#script-preflight)
-8. [Timeouts and Cancellation](#timeouts-and-cancellation)
-9. [Examples](#examples)
-10. [Troubleshooting](#troubleshooting)
+2. [Local child environments](#local-child-environments)
+3. [Shell Preference Modes](#shell-preference-modes)
+4. [Custom Shell Command](#custom-shell-command)
+5. [Configuration Hierarchy](#configuration-hierarchy)
+6. [ArgumentList Execution Model](#argumentlist-execution-model)
+7. [Output Handling](#output-handling)
+8. [Script Preflight](#script-preflight)
+9. [Timeouts and Cancellation](#timeouts-and-cancellation)
+10. [Examples](#examples)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -36,6 +37,67 @@ Key characteristics:
 The tool is exposed to the LLM as either `shell` (when preference is `pwsh`) or `bash` (when preference is `auto` or `bash`), with an appropriate description matching the selected shell.
 
 ---
+
+## Local child environments
+
+The local `shell`/`bash` and `exec` tools no longer inherit the gateway's full environment.
+Before every launch, BotNexus clears the child environment and copies only exact OS-essential
+names and operator-approved pass-through names. This also applies to `exec` background children
+and the shell's executable-discovery helpers. MCP, browser, and remote execution policies are unchanged.
+
+### Exact OS essentials
+
+Only these names are copied, when present and non-null:
+
+| Platform | Names | Purpose |
+| --- | --- | --- |
+| Windows | `PATH`, `PATHEXT`, `SystemRoot`, `WINDIR`, `ComSpec` | Executable lookup and Windows command/runtime paths |
+| Windows | `TEMP`, `TMP` | Temporary files |
+| Windows | `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA` | User home and application-data paths |
+| Linux/POSIX | `PATH`, `HOME` | Executable lookup and user home |
+| Linux/POSIX | `TMPDIR`, `TMP`, `TEMP` | Temporary files |
+| Linux/POSIX | `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ` | Locale, text encoding, and time zone |
+
+There is no prefix matching: for example, `PATH_SECRET`, `HOME_TOKEN`, and arbitrary provider,
+gateway, or custom credential variables are not essentials. Windows names compare without case;
+Linux/POSIX names compare with case. Missing names are omitted rather than invented.
+
+### Allow a specific ambient variable
+
+**CLI:** An operator can approve exact names through the canonical configuration command:
+
+```powershell
+botnexus config set gateway.localChildEnvironmentPassThrough '["MY_TOOL_SETTING"]'
+botnexus config get gateway.localChildEnvironmentPassThrough
+```
+
+This stores names only, not values. The child receives the value from the gateway process's
+ambient environment at launch. It does not read user/machine variables that the gateway did not
+inherit. Restart the gateway through your normal operator-controlled deployment procedure after
+changing this setting. The policy is a startup snapshot. Remove extra inheritance with:
+
+```powershell
+botnexus config set gateway.localChildEnvironmentPassThrough '[]'
+```
+
+**UI:** The generated gateway configuration schema exposes **Local child environment pass-through**
+under **Execution**. Use the normal configuration editor; do not edit the live configuration JSON
+directly. Integrators should use the [canonical configuration patch API](../api-reference.md#config-patch-atomic-dirty-path-save)
+with the same dotted path, not a separate extension configuration key. Missing configuration or
+DI policy still uses the secure default. Wildcards, prefix
+patterns, and an inherit-all switch are not supported. Approving a credential name deliberately
+exposes that credential to every authorized local shell/exec invocation, so keep this list narrow.
+
+The `exec` tool's explicit `env` values are merged last using the existing platform casing rules
+and existing override restrictions. They can deliberately supply a credential the caller already
+knows; filtering ambient inheritance does not sanitize caller-provided values. The shell tool has
+no explicit `env` argument. The builder does not copy ambient values into configuration, schema,
+logs, or receipts. A command that prints an approved value can still return it as tool output.
+
+This is an environment-inheritance boundary, **not a sandbox**. Children retain the same OS user,
+filesystem access, home directories, keyrings, and credential files. Shell startup files and
+programs can load additional credentials from those locations. Authorization, approval, and audit
+requirements still apply; do not use this change as a substitute for OS-level isolation.
 
 ## Shell Preference Modes
 

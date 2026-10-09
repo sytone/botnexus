@@ -2,6 +2,671 @@
   "schemaVersion": "1.0.0",
   "releases": [
     {
+      "version": "0.49.1",
+      "tag": "v0.49.1",
+      "commit": "d7f9ea581d6233d44d499640c3086a7d40ed8bfb",
+      "releasedAt": "2026-10-07",
+      "releaseUrl": "https://github.com/sytone/botnexus/releases/tag/v0.49.1",
+      "documentationUrl": "https://sytone.github.io/botnexus/releases/v0.49.1/",
+      "categories": [
+        {
+          "name": "Bug Fixes",
+          "changes": [
+            {
+              "summary": "**cli:** Route gateway termination through planned shutdown (#4723)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Preserve whole-run activity snapshots (#4727)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Refactor",
+          "changes": [
+            {
+              "summary": "**persistence:** Make busy-timeout attachment an extension (#4722)",
+              "documentationUrls": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.49.0",
+      "tag": "v0.49.0",
+      "commit": "eca72c95e06fe876b3504d53c3dcbc32c45a3cbf",
+      "releasedAt": "2026-10-07",
+      "releaseUrl": "https://github.com/sytone/botnexus/releases/tag/v0.49.0",
+      "documentationUrl": "https://sytone.github.io/botnexus/releases/v0.49.0/",
+      "categories": [
+        {
+          "name": "Features",
+          "changes": [
+            {
+              "summary": "**gateway:** Fence planned restart admission (#4718)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Bug Fixes",
+          "changes": [
+            {
+              "summary": "**providers:** Reject unrouteable config api (#4712)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Preserve configured reasoning state (#4713)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Bound legacy invocation backfill scans (#4716)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Protect assigned provider instances (#4719)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Performance",
+          "changes": [
+            {
+              "summary": "**sessions:** Bound summary history counts (#4717)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Refactor",
+          "changes": [
+            {
+              "summary": "**persistence:** Make store identity checks extensions (#4715)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Testing",
+          "changes": [
+            {
+              "summary": "**gateway:** Coordinate compactor cancellation assertions (#4707)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Coordinate inbound non-truncation boundary (#4708)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Await sub-agent run disposal boundary (#4714)",
+              "documentationUrls": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.48.0",
+      "tag": "v0.48.0",
+      "commit": "e0b91dc8a6de160e288231c8bf7be2e78cffe99d",
+      "releasedAt": "2026-10-07",
+      "releaseUrl": "https://github.com/sytone/botnexus/releases/tag/v0.48.0",
+      "documentationUrl": "https://sytone.github.io/botnexus/releases/v0.48.0/",
+      "categories": [
+        {
+          "name": "Features",
+          "changes": [
+            {
+              "summary": "**agents:** Coordinate transient provider recovery (#4489)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Manage named copilot provider instances (#4514)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Automate legacy invocation backfill (#4530)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**a2a:** Accept stateless message responses (#4533)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**skills:** Add containerized ui evidence workflow (#4539)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Finalize bounded sub-agent runs (#4546)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Measure tool result context leases (#4547)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Request planned host shutdown (#4536)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Unify sub-agent run detail (#4551)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Add export message range selection (#4557)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**persistence:** Version gateway-owned sqlite stores (#4561)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Add satellite connection data plane (#4562)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**memory:** Run bounded resumable re-embedding (#4563)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Report legacy backfill progress (#4571)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Validate live provider readiness (#4572)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Expose provider recovery lifecycle (#4575)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**a2a:** Enforce delegation policy boundary (#4578)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Highlight active conversation composer (#4584)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Persist run completion disposition (#4595)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Dispatch durable task flow continuations (#4549)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Manage conversation channel bindings (#4588)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Filter and page sub-agent run history (#4614)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**persistence:** Version sqlite secret store reads and writes (#4616)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Clear normalized legacy tool payloads (#4573)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Expose conversation read cursor api (#4550)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Expose bounded client run-state diagnostics (#4609)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**memory:** Converge sqlite memory schema version stamps (#4639)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Echo foreign user messages to telegram (#4675)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Expose provider instance types (#4686)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Add microsoft foundry responses authentication (#4693)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**skills:** Bundle shared skill optimization prompt (#4694)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Distinguish provider instance types (#4700)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Add microsoft foundry provider configuration (#4702)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Add configurable active-run pulse (#4704)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Bug Fixes",
+          "changes": [
+            {
+              "summary": "**portal:** Compact conversation composer controls (#4481)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Terminalize cancelled queued webhooks (#4525)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Make provider usage accounting truthful (#4527)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**mobile:** Canonicalize standalone app launch (#4535)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tools:** Preserve output drains on pid collision (#4522)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Project agent completion outcomes (#4541)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**mobile:** Isolate transcript repair from roster failure (#4552)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Define redundant read payload metric (#4553)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Corroborate activity session liveness (#4554)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Activate home world sentinel (#4558)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Fence startup config source revisions (#4568)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Reconcile missed terminal run state (#4570)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Serve local release history (#4576)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Style the home composer surface (#4585)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Enforce final-only Teams streaming replies (#4586)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Separate telegram thinking from reply content (#4611)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Isolate tui console output (#4598)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**ci:** Isolate local install fixture from release refs (#4623)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**docs:** Highlight pwsh fences as powershell",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**ci:** Bound core test host lifetime (#4590)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Initialize Tools and Messages in AgentState",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Block removal of assigned providers (#4582)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**ci:** Preserve coverage collector argument in bounded runner (#4635)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Arbitrate sub-agent kill before snapshot capture (#4629)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Reject foreign service bus binding snapshots (#4628)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Avoid hydrating transcripts during reconciliation (#4660)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Unify shared database journal policy (#4664)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Bound legacy tool payload cleanup (#4665)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Commit session aggregate atomically (#4671)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Preserve overlays with legacy copilot config (#4672)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Block disabling assigned providers (#4673)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Bound startup maintenance scans (#4674)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**conversations:** Make retention archive compare-and-set (#4676)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Center composer send glyph (#4677)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Serialize legacy agent id removal (#4678)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**persistence:** Report incomplete wal checkpoints (#4680)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**persistence:** Enforce sqlite foreign keys (#4681)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**prompts:** Share narration threshold across guidance rungs (#4643)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Ignore stale run snapshots after live events (#4647)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**signalr:** Close active-run subscription race (#4697)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Preserve durable ask-user waits (#4698)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Report rejected catalogue activation (#4690)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Isolate informational diagnostic observer failures (#4687)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Bound repeated non-progress tool turns (#4637)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Documentation",
+          "changes": [
+            {
+              "summary": "**agent:** Define extension-point naming",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Define reusable policy rule composition",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Require cross-language sqlite authority review (#4605)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Performance",
+          "changes": [
+            {
+              "summary": "**sessions:** Bound cleanup projection payload scans (#4692)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**persistence:** Avoid repeated foreign key scans (#4695)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Bound interrupted-turn hydration (#4699)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Refactor",
+          "changes": [
+            {
+              "summary": "**gateway:** Publish conversation creation facts (#4548)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Route tui steering intent through gateway (#4560)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**qmd:** Type memory backend agent ids (#4556)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Remove ambient conversation state (#4577)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Project agent365 conversation events (#4599)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Publish conversation metadata facts (#4601)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Publish conversation archive facts (#4612)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**mcp:** Carry typed agent ids through warmup cache (#4615)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Make raw json operations extensions (#4580)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Align extension contracts with responsibility names",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Align extension test names and filenames",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Organize extension contracts by responsibility",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Carry typed alert target through rejection messages (#4618)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Publish binding attachment facts (#4620)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Clarify extension contracts and runtime wiring",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Make conversation row mapping reader extensions (#4631)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Make row mappers reader extensions (#4679)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Testing",
+          "changes": [
+            {
+              "summary": "**gateway:** Signal long-turn queue phases (#4528)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Cover reset provenance projection (#4543)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Prove tui event projection (#4545)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Pin auth cache read count (#4555)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Synchronize kill cleanup assertions (#4596)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Prove lifecycle event ordering (#4597)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Ratchet production configuration authority (#4603)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Prove cross-conversation event isolation (#4610)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Prove sqlite provider add permits live agent assignment (#4617)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**prompts:** Add todo behavior evaluator (#4581)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Restore routed active-composer coverage (#4613)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Isolate interleaved lifecycle projections (#4627)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agent:** Enforce extension contract organization",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Bind latest source install to in-tree tool (#4650)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**ci:** Coordinate powershell pipe-capacity regression (#4652)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Populate main from shallow source checkout (#4653)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Prove live gateway assignment after cli provider add (#4630)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**prompts:** Summarize repeated behavior evidence (#4642)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Capture routed active composer browser matrix (#4658)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Require extension-owned event projection (#4696)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**architecture:** Classify static helper candidates (#4703)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Miscellaneous",
+          "changes": [
+            {
+              "summary": "Add dirs.sln to .gitignore",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**deps:** Bump @vue/server-renderer and vue (#4655)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**deps-dev:** Bump source-map-js from 1.2.1 to 1.2.2 (#4656)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "CI/Build",
+          "changes": [
+            {
+              "summary": "Retire redundant main health probe (#4651)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tests:** Surface bounded failure details in actions logs (#4654)",
+              "documentationUrls": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.47.0",
       "tag": "v0.47.0",
       "commit": "08342510de99c4f93bbf9cc9d2a5c524146f9610",

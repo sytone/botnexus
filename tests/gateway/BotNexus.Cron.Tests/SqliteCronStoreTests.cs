@@ -7,6 +7,40 @@ namespace BotNexus.Cron.Tests;
 public sealed class SqliteCronStoreTests
 {
     [Fact]
+    public async Task GetRunAsync_UnknownIdentity_ReturnsNull()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        (await context.Store.GetRunAsync(RunId.From("missing-run"))).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task GetRunAsync_RunningAndTerminalRows_ReturnsFullPersistedRecordBeyondRecentHistory()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1"));
+        var run = await context.Store.RecordRunStartAsync(JobId.From("job-1"));
+        (await context.Store.GetRunAsync(run.Id)).ShouldBe(run);
+        var session = SessionId.From("cron:job-1:lookup");
+        var cost = new CronRunCost
+        {
+            TurnCount = 2, ToolCallCount = 3, DurationMs = 400,
+            PromptTokens = 50, CompletionTokens = 60
+        };
+        await context.Store.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, "persisted error", session, cost);
+        var expected = (await context.Store.GetRunHistoryAsync(run.JobId)).ShouldHaveSingleItem();
+        for (var i = 0; i < 25; i++)
+            await context.Store.TryRecordMissedRunAsync(run.JobId, run.StartedAt.AddSeconds(i + 1));
+        (await context.Store.GetRunHistoryAsync(run.JobId)).ShouldNotContain(r => r.Id == run.Id);
+
+        var loaded = await context.Store.GetRunAsync(run.Id);
+        loaded.ShouldNotBeNull();
+        loaded.ShouldBe(expected);
+        loaded.CompletedAt.ShouldNotBeNull();
+        loaded.SessionId.ShouldBe(session);
+        loaded.Cost.ShouldBe(cost);
+    }
+
+    [Fact]
     public async Task InitializeAsync_CreatesSchema()
     {
         await using var context = await CronStoreTestContext.CreateAsync();

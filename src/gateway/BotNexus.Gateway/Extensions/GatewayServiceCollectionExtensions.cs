@@ -154,6 +154,8 @@ public static class GatewayServiceCollectionExtensions
         // Core services. AddPlatformConfiguration replaces this inert default with a verified home
         // rooted at the already-resolved configuration directory (#3411).
         services.TryAddSingleton<IFileSystem, FileSystem>();
+        services.TryAddSingleton(serviceProvider =>
+            new SqliteWalMaintenance(serviceProvider.GetRequiredService<IFileSystem>()));
         services.TryAddSingleton<BotNexusHome>();
 
         // Credential resolution. Providers are registered per scheme with TryAddEnumerable so a
@@ -308,6 +310,7 @@ public static class GatewayServiceCollectionExtensions
             AttachArchiveDrain(new InMemorySessionStore(), serviceProvider));
         services.TryAddSingleton<ISessionWriteLock, SessionWriteLock>();
         services.TryAddSingleton<IConversationStore, InMemoryConversationStore>();
+        services.TryAddSingleton<IConversationReadStateStore, InMemoryConversationReadStateStore>();
         services.TryAddSingleton<IConversationSectionStore, InMemoryConversationSectionStore>();
         services.TryAddSingleton<IAgentIdentityResolver, AgentIdentityResolver>();
         services.AddSingleton<IAgentCanvasNotifier, ConversationCanvasNotifier>();
@@ -500,6 +503,8 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IChannelDispatcher>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.TryAddSingleton<IInboundMessageProcessor>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.TryAddSingleton<IInboundMessageOrchestrator>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>().Orchestrator);
+        services.TryAddSingleton<IInboundAdmissionControl>(serviceProvider =>
+            (IInboundAdmissionControl)serviceProvider.GetRequiredService<GatewayHost>().Orchestrator);
         services.AddSingleton<IHostedService>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.AddSingleton<IHostedService>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionWarmupService>());
@@ -512,7 +517,8 @@ public static class GatewayServiceCollectionExtensions
             sp.GetService<IInboundMessageOrchestrator>(),
             sp.GetService<IOptions<GatewayOptions>>(),
             sp.GetService<IConversationStore>(),
-            sp.GetService<SessionLifecycleEvents>()));
+            sp.GetService<SessionLifecycleEvents>(),
+            sp.GetService<Diagnostics.CleanShutdownMarker>()));
         services.AddHostedService<SessionCleanupService>();
         // Session/conversation consistency monitor + safe auto-heal path (#2046).
         services.TryAddSingleton<Sessions.SessionConsistencyChecker>();
@@ -931,7 +937,8 @@ public static class GatewayServiceCollectionExtensions
                         connectionString,
                         serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>(),
                         serviceProvider.GetRequiredService<IConversationStore>(),
-                        storeMetrics: serviceProvider.GetService<StoreMetrics>()),
+                        storeMetrics: serviceProvider.GetService<StoreMetrics>(),
+                        journalModeMaintenance: serviceProvider.GetRequiredService<SqliteWalMaintenance>()),
                     serviceProvider);
             }));
             return;
@@ -972,6 +979,7 @@ public static class GatewayServiceCollectionExtensions
         if (resolvedType.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
         {
             services.Replace(ServiceDescriptor.Singleton<IConversationStore, InMemoryConversationStore>());
+            services.Replace(ServiceDescriptor.Singleton<IConversationReadStateStore, InMemoryConversationReadStateStore>());
             services.Replace(ServiceDescriptor.Singleton<IConversationSectionStore, InMemoryConversationSectionStore>());
             return;
         }
@@ -993,6 +1001,10 @@ public static class GatewayServiceCollectionExtensions
                     fs,
                     serviceProvider.GetService<IWorldContext>());
             }));
+            services.Replace(ServiceDescriptor.Singleton<IConversationReadStateStore>(serviceProvider =>
+                new FileConversationReadStateStore(
+                    Path.Combine(conversationsPath, "read-state"),
+                    serviceProvider.GetRequiredService<IFileSystem>())));
             services.Replace(ServiceDescriptor.Singleton<IConversationSectionStore>(serviceProvider =>
                 new SqliteConversationSectionStore(
                     $"Data Source={Path.Combine(dataDirectory, "sections.sqlite")}",
@@ -1014,11 +1026,14 @@ public static class GatewayServiceCollectionExtensions
                     connectionString,
                     serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>(),
                     serviceProvider.GetService<IWorldContext>(),
-                    storeMetrics: serviceProvider.GetService<StoreMetrics>());
+                    storeMetrics: serviceProvider.GetService<StoreMetrics>(),
+                    journalModeMaintenance: serviceProvider.GetRequiredService<SqliteWalMaintenance>());
             }));
 
             services.AddSingleton<IConversationAuditLog>(
                 new SqliteConversationAuditLog(connectionString));
+            services.Replace(ServiceDescriptor.Singleton<IConversationReadStateStore>(
+                new SqliteConversationReadStateStore(connectionString)));
             services.Replace(ServiceDescriptor.Singleton<IConversationSectionStore>(serviceProvider =>
                 new SqliteConversationSectionStore(
                     connectionString,

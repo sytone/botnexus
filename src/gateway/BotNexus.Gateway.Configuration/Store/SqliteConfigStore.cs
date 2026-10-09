@@ -422,7 +422,7 @@ public sealed class SqliteConfigStore(string connectionString) : IConfigStore
                 await EnsureColumnAsync(connection, column, ddl, cancellationToken).ConfigureAwait(false);
             }
 
-            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
+            connection.Apply( CurrentSchemaVersion, Migrations);
 
             _initialised = true;
         }

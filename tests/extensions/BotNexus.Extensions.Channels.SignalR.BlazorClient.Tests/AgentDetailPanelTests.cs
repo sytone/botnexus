@@ -101,6 +101,41 @@ public sealed class AgentDetailPanelTests : IDisposable
     }
 
     [Fact]
+    public void AgentDetailPanel_DistinguishesNamedProviderInstanceFromBackingType()
+    {
+        var agent = JsonSerializer.Serialize(new
+        {
+            agentId = "test-agent",
+            displayName = "Test Agent",
+            enabled = true,
+            apiProvider = "copilot-work",
+            modelId = "gpt-5.6"
+        });
+        var providers = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                name = "copilot-work",
+                providerId = "copilot-work",
+                id = "copilot-work",
+                type = "github-copilot"
+            }
+        });
+        _httpHandler.SetupResponse("/api/agents/test-agent", agent);
+        _httpHandler.SetupResponse("/api/agents", "[]");
+        _httpHandler.SetupResponse("/api/providers", providers);
+        _httpHandler.SetupResponse("/api/models", "[]");
+
+        var cut = _ctx.Render<AgentDetailPanel>(p => p.Add(c => c.AgentId, "test-agent"));
+
+        cut.WaitForState(() => cut.Markup.Contains("copilot-work"), TimeSpan.FromSeconds(3));
+
+        var option = cut.Find("select[value='copilot-work'] option[value='copilot-work']");
+        Assert.Equal("copilot-work (github-copilot)", option.TextContent.Trim());
+        Assert.Contains("Provider instance", cut.Markup);
+    }
+
+    [Fact]
     public void AgentDetailPanel_SaveButton_Disabled_WhenNotDirty()
     {
         _httpHandler.SetupResponse("/api/agents/test-agent", AgentJson());

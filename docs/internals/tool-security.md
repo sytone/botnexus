@@ -27,7 +27,7 @@ BotNexus enforces a defense-in-depth model with three layers:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Layer 1: BeforeToolCall hook                       │
+│  Layer 1: ToolExecutionPolicy                      │
 │  ● Policy interception before execution             │
 │  ● Can Block, or return Indeterminate (fails closed)│
 ├─────────────────────────────────────────────────────┤
@@ -38,7 +38,7 @@ BotNexus enforces a defense-in-depth model with three layers:
 │  ● Output truncation (2000 lines, 50 KB)            │
 │  ● Process timeout and tree kill                    │
 ├─────────────────────────────────────────────────────┤
-│  Layer 3: AfterToolCall hook + IToolAuditSink       │
+│  Layer 3: ToolResultTransformer + IToolAuditSink   │
 │  ● Result transformation and redaction              │
 │  ● Durable tool-audit rows in session history       │
 └─────────────────────────────────────────────────────┘
@@ -48,18 +48,18 @@ The hook contracts live in `src/agent/BotNexus.Agent.Core/Hooks/` and are invoke
 `src/agent/BotNexus.Agent.Core/Loop/ToolExecutor.cs`. A hook is a delegate on `AgentOptions`:
 
 ```csharp
-// BeforeToolCallContext / BeforeToolCallResult, verbatim shapes:
-public record BeforeToolCallContext(
+// ToolExecutionContext / ToolExecutionDecision, verbatim shapes:
+public record ToolExecutionContext(
     AssistantAgentMessage AssistantMessage,
     ToolCallContent ToolCallRequest,
     IReadOnlyDictionary<string, object?> ValidatedArgs,
     AgentContext AgentContext);
 
-public record BeforeToolCallResult(bool Block, string? Reason = null)
+public record ToolExecutionDecision(bool Block, string? Reason = null)
 {
     public bool IsIndeterminate { get; init; }
     public bool IsUnambiguousAllow => !Block && !IsIndeterminate;
-    public static BeforeToolCallResult Indeterminate(string? reason = null);
+    public static ToolExecutionDecision Indeterminate(string? reason = null);
 }
 ```
 
@@ -205,7 +205,7 @@ The platform gate above is `IPathValidator` + `FileAccessPolicy`. The **sample**
 `examples/BotNexus.CodingAgent/` layers a second, simpler policy of its own on top, driven by
 `CodingAgentConfig` (`examples/BotNexus.CodingAgent/CodingAgentConfig.cs`) and enforced by
 `SafetyHooks` (`examples/BotNexus.CodingAgent/Hooks/SafetyHooks.cs`). This is example code, not the
-gateway's production path - read it as a worked illustration of a `BeforeToolCall` hook.
+gateway's production path - read it as a worked illustration of a `ToolExecutionPolicy` delegate.
 
 ### Blocked paths
 
@@ -351,7 +351,7 @@ This is attached to the `AgentToolResult.Details` field for inspection by hooks 
 
 ### Exit code capture
 
-An `AfterToolCall` hook reads the exit code from `ShellToolDetails`, which is attached to
+A `ToolResultTransformer` delegate reads the exit code from `ShellToolDetails`, which is attached to
 `AgentToolResult.Details`:
 
 ```csharp
@@ -387,11 +387,11 @@ Write-ahead behaviour (so an interrupted invocation still leaves a record) lives
 ### Adding your own observability
 
 The audit sink is a gateway concern and should not be replaced. To add per-call logging on top,
-attach an `AfterToolCall` hook — it can observe, transform, filter or redact the result before it
+attach a `ToolResultTransformer` delegate — it can observe, transform, filter or redact the result before it
 reaches the LLM, and returning `null` leaves the result untouched:
 
 ```csharp
-AfterToolCall = async (context, ct) =>
+ToolResultTransformer = async (context, ct) =>
 {
     await myLogger.LogToolCallAsync(
         context.ToolCallRequest.Name,
@@ -450,8 +450,8 @@ public sealed class MySecurityPolicy
         _blockedPatterns = new HashSet<string>(blockedPatterns, StringComparer.OrdinalIgnoreCase);
     }
 
-    public Task<BeforeToolCallResult?> ValidateAsync(
-        BeforeToolCallContext context, CancellationToken ct)
+    public Task<ToolExecutionDecision?> ValidateAsync(
+        ToolExecutionContext context, CancellationToken ct)
     {
         switch (context.ToolCallRequest.Name)
         {
@@ -460,16 +460,16 @@ public sealed class MySecurityPolicy
             case "bash":
                 return ValidateShellCommand(context);
             default:
-                return Task.FromResult<BeforeToolCallResult?>(null);
+                return Task.FromResult<ToolExecutionDecision?>(null);
         }
     }
 
-    private Task<BeforeToolCallResult?> ValidateFileAccess(BeforeToolCallContext context)
+    private Task<ToolExecutionDecision?> ValidateFileAccess(ToolExecutionContext context)
     {
         var path = context.ValidatedArgs["path"]?.ToString();
         if (string.IsNullOrEmpty(path))
-            return Task.FromResult<BeforeToolCallResult?>(
-                new BeforeToolCallResult(Block: true, Reason: "Path is required"));
+            return Task.FromResult<ToolExecutionDecision?>(
+                new ToolExecutionDecision(Block: true, Reason: "Path is required"));
 
         try
         {
@@ -480,28 +480,28 @@ public sealed class MySecurityPolicy
             foreach (var pattern in _blockedPatterns)
             {
                 if (resolved.Contains(pattern, StringComparison.OrdinalIgnoreCase))
-                    return Task.FromResult<BeforeToolCallResult?>(
-                        new BeforeToolCallResult(Block: true, Reason: $"Blocked path: {pattern}"));
+                    return Task.FromResult<ToolExecutionDecision?>(
+                        new ToolExecutionDecision(Block: true, Reason: $"Blocked path: {pattern}"));
             }
         }
         catch (InvalidOperationException ex)
         {
-            return Task.FromResult<BeforeToolCallResult?>(
-                new BeforeToolCallResult(Block: true, Reason: ex.Message));
+            return Task.FromResult<ToolExecutionDecision?>(
+                new ToolExecutionDecision(Block: true, Reason: ex.Message));
         }
 
-        return Task.FromResult<BeforeToolCallResult?>(null);
+        return Task.FromResult<ToolExecutionDecision?>(null);
     }
 
-    private Task<BeforeToolCallResult?> ValidateShellCommand(BeforeToolCallContext context)
+    private Task<ToolExecutionDecision?> ValidateShellCommand(ToolExecutionContext context)
     {
         var command = context.ValidatedArgs["command"]?.ToString() ?? "";
 
         if (command.Contains("rm -rf", StringComparison.OrdinalIgnoreCase))
-            return Task.FromResult<BeforeToolCallResult?>(
-                new BeforeToolCallResult(Block: true, Reason: "Destructive command blocked"));
+            return Task.FromResult<ToolExecutionDecision?>(
+                new ToolExecutionDecision(Block: true, Reason: "Destructive command blocked"));
 
-        return Task.FromResult<BeforeToolCallResult?>(null);
+        return Task.FromResult<ToolExecutionDecision?>(null);
     }
 }
 ```
@@ -518,7 +518,7 @@ public sealed class MyAuditLogger
         _startTimes[toolCallId] = DateTimeOffset.UtcNow;
     }
 
-    public Task<AfterToolCallResult?> AuditAsync(AfterToolCallContext context, CancellationToken ct)
+    public Task<ToolResultTransformResult?> AuditAsync(ToolResultTransformContext context, CancellationToken ct)
     {
         var duration = _startTimes.TryRemove(context.ToolCallRequest.Id, out var start)
             ? (DateTimeOffset.UtcNow - start).TotalMilliseconds
@@ -529,7 +529,7 @@ public sealed class MyAuditLogger
             $"status={(context.IsError ? "failed" : "ok")} " +
             $"duration={duration:F0}ms");
 
-        return Task.FromResult<AfterToolCallResult?>(null);
+        return Task.FromResult<ToolResultTransformResult?>(null);
     }
 }
 ```
@@ -552,12 +552,12 @@ var agent = new Agent(new AgentOptions
     },
     GenerationSettings = new SimpleStreamOptions { MaxTokens = 8192 },
 
-    BeforeToolCall = async (context, ct) =>
+    ToolExecutionPolicy = async (context, ct) =>
     {
         return await securityPolicy.ValidateAsync(context, ct);
     },
 
-    AfterToolCall = async (context, ct) =>
+    ToolResultTransformer = async (context, ct) =>
     {
         return await auditLogger.AuditAsync(context, ct);
     }

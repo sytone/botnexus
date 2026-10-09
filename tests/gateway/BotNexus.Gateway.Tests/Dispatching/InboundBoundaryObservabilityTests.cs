@@ -216,8 +216,21 @@ public sealed class InboundBoundaryObservabilityTests
     /// </summary>
     private static async Task AssertHealthyTurnSurvivesAnElapsedBoundAsync()
     {
-        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProcessor = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runningCompletionWaitEntered = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRunningCompletion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<InboundDispatchResult> HoldRunningCompletionAtAssertionBoundary(
+            Task<InboundDispatchResult> completion,
+            CancellationToken cancellationToken)
+        {
+            runningCompletionWaitEntered.TrySetResult(true);
+            await releaseRunningCompletion.Task.WaitAsync(cancellationToken);
+            return await completion.WaitAsync(cancellationToken);
+        }
 
         var processor = Substitute.For<IInboundMessageProcessor>();
         processor
@@ -225,14 +238,15 @@ public sealed class InboundBoundaryObservabilityTests
             .Returns(async _ =>
             {
                 started.TrySetResult(true);
-                await release.Task;
+                await releaseProcessor.Task;
                 return new InboundProcessingOutcome(EmptyDispatches, false);
             });
 
         var orchestrator = new DefaultInboundMessageOrchestrator(
             processor,
             new CapturingLogger<DefaultInboundMessageOrchestrator>(),
-            queueWaitTimeout: TimeSpan.FromMilliseconds(100));
+            queueWaitTimeout: TimeSpan.FromMilliseconds(100),
+            waitForRunningCompletion: HoldRunningCompletionAtAssertionBoundary);
 
         var head = orchestrator.AcceptAsync(CreateMessage("addr-healthy-long"));
 
@@ -240,6 +254,7 @@ public sealed class InboundBoundaryObservabilityTests
         try
         {
             await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await runningCompletionWaitEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
             var behind = await orchestrator
                 .AcceptAsync(CreateMessage("addr-healthy-long"))
@@ -253,7 +268,8 @@ public sealed class InboundBoundaryObservabilityTests
             head.IsCompleted.ShouldBeFalse(
                 "the queue-wait bound has demonstrably elapsed, yet it must not truncate the running turn");
 
-            release.SetResult(true);
+            releaseProcessor.SetResult(true);
+            releaseRunningCompletion.SetResult(true);
 
             var result = await head.WaitAsync(TimeSpan.FromSeconds(30));
             result.Status.ShouldBe(
@@ -263,7 +279,8 @@ public sealed class InboundBoundaryObservabilityTests
         }
         finally
         {
-            release.TrySetResult(true);
+            releaseProcessor.TrySetResult(true);
+            releaseRunningCompletion.TrySetResult(true);
             try { await head.WaitAsync(TimeSpan.FromSeconds(30)); } catch { /* not under test */ }
             try { await orchestrator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30)); }
             catch { /* best effort */ }

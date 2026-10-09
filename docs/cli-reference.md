@@ -1470,6 +1470,8 @@ botnexus gateway start --attached
 
 Detached startup waits up to 60 seconds for the effective `--port` health endpoint to become ready. With `--verbose`, readiness diagnostics include the endpoint, timeout, elapsed duration, and whether the process became healthy, exited, or remained alive but unhealthy.
 
+For `--attached`, Ctrl+C requests authenticated planned shutdown through the gateway API and waits boundedly for the child to exit. Native signalling is used only as bounded escalation when the API is unavailable, rejects the request, or the graceful deadline expires.
+
 ### gateway stop
 
 Stop the running gateway process.
@@ -1477,6 +1479,8 @@ Stop the running gateway process.
 ```powershell
 botnexus gateway stop
 ```
+
+The CLI first requests authenticated planned shutdown through the effective configured gateway URL. It then waits boundedly for confirmed process exit and uses identity-verified native signalling only as escalation. The PID file is retained if termination cannot be confirmed.
 
 ### gateway status
 
@@ -1552,6 +1556,8 @@ Remove the OS service registration.
 ```powershell
 botnexus gateway uninstall
 ```
+
+Uninstall follows the same API-first planned-shutdown policy. It observes service exit before removing the service definition; a bounded native service stop is the final fallback, and failure to confirm termination leaves the definition intact.
 
 ---
 
@@ -1698,9 +1704,9 @@ Add or update a provider entry non-interactively. A JSON-only home updates `conf
 
 When a provider with the given `--name` already exists, only the flags you pass are updated; unspecified fields preserve their previous values. To clear a previously-set value, pass an empty string explicitly.
 
-A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated provider models then become available for agent assignment without restarting the process. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact.
+A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated config-defined provider models then become available for agent assignment without restarting the process. GitHub Copilot catalogue and discovery setup is startup-only, including named instances with `type: github-copilot`; restart the gateway after configuring one. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact.
 
-The command is an offline configuration writer, so its receipt distinguishes persistence from runtime activation: persistence succeeded, activation was not validated by the command, and no restart is required when the running gateway receives the reload. Verify activation and credential resolution with `botnexus provider test --name <NAME>` before assigning an agent. The test calls the running gateway's provider-health route, which reads the same live model registry and credential resolver used by agent setup. If an out-of-process configuration change has not reached the running gateway yet, the saved provider can still be absent from that live catalogue; persistence alone is not a readiness result.
+The command is an offline configuration writer, so its receipt distinguishes persistence from runtime activation: persistence succeeded, activation was not validated by the command, and restart guidance depends on the provider type. Config-defined providers need no restart when the running gateway receives the reload. GitHub Copilot setup requires an operator restart before checking the live catalogue; the command does not restart the gateway for you. Verify activation and credential resolution with `botnexus provider test --name <NAME>` before assigning an agent. The test calls the running gateway's provider-health route, which reads the same live model registry and credential resolver used by agent setup. If an out-of-process configuration change has not reached the running gateway yet, the saved provider can still be absent from that live catalogue; persistence alone is not a readiness result. If a reload is rejected, the gateway retains the complete last-known-good catalogue and `provider test` reports `activation_failed` with the rejected provider's validation error until a later valid revision activates.
 
 ### Usage
 
@@ -1751,7 +1757,7 @@ botnexus provider add --name local-vllm `
 
 ## provider test
 
-Validate a provider instance against the running gateway rather than the offline configuration file. The command succeeds only when the instance is present in the live model registry, has at least one registered model, and its configured credential resolves. It does not send a billable model request.
+Validate a provider instance against the running gateway rather than the offline configuration file. The command succeeds only when the instance is present in the live model registry, has at least one registered model, and its configured credential resolves. A rejected configuration reload returns the reconciler's `activation_failed` detail instead of collapsing the result into an unknown-provider message. It does not send a billable model request.
 
 ### Usage
 
