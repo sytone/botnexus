@@ -65,6 +65,11 @@ public sealed class ConversationCanvasController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> PutCanvas(string agentId, string conversationId, [FromBody] string html, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken), AgentId.From(agentId));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken).ConfigureAwait(false);
         if (conversation is null)
             return NotFound();
@@ -115,6 +120,11 @@ public sealed class ConversationCanvasController : ControllerBase
         [FromBody] JsonElement value,
         CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
             return NotFound();
@@ -133,6 +143,11 @@ public sealed class ConversationCanvasController : ControllerBase
         string key,
         CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
             return NotFound();

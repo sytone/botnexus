@@ -143,8 +143,9 @@ public sealed class ConversationsControllerResetTests
         resetService.Setup(r => r.ResetActiveSessionAsync(conversationId, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConversationResetResult(ConversationResetOutcome.Reset, sealedSessionId, TestAgent));
 
+        var conversations = await SignalRHubTests.CreateUserFacingStoreAsync(conversationId.Value, TestAgent.Value);
         var controller = new ConversationsController(
-            new Mock<IConversationStore>().Object,
+            conversations,
             new InMemorySessionStore(),
             resetService: resetService.Object);
 
@@ -165,8 +166,9 @@ public sealed class ConversationsControllerResetTests
         resetService.Setup(r => r.ResetActiveSessionAsync(conversationId, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConversationResetResult(ConversationResetOutcome.NoActiveSession, null, TestAgent));
 
+        var conversations = await SignalRHubTests.CreateUserFacingStoreAsync(conversationId.Value, TestAgent.Value);
         var controller = new ConversationsController(
-            new Mock<IConversationStore>().Object,
+            conversations,
             new InMemorySessionStore(),
             resetService: resetService.Object);
 
@@ -199,13 +201,15 @@ public sealed class ConversationsControllerResetTests
     [Fact]
     public async Task Reset_ResetServiceNotRegistered_Returns503()
     {
+        var conversations = new Mock<IConversationStore>(MockBehavior.Strict);
         var controller = new ConversationsController(
-            new Mock<IConversationStore>().Object,
+            conversations.Object,
             new InMemorySessionStore()); // resetService omitted
 
         var result = await controller.Reset("anything", CancellationToken.None);
 
         var status = result.ShouldBeOfType<ObjectResult>();
         status.StatusCode.ShouldBe(StatusCodes.Status503ServiceUnavailable);
+        conversations.VerifyNoOtherCalls();
     }
 }

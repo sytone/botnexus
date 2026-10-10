@@ -16,10 +16,10 @@ public sealed class ConversationSectionsControllerTests
 {
     private const string AgentId = "agent-sec";
 
-    private static ConversationSectionsController CreateController(out IConversationSectionStore store)
+    private static ConversationSectionsController CreateController(out IConversationSectionStore store, IConversationStore? conversations = null)
     {
         store = new InMemoryConversationSectionStore();
-        return new ConversationSectionsController(store);
+        return new ConversationSectionsController(store, conversations ?? new InMemoryConversationStore());
     }
 
     [Fact]
@@ -106,14 +106,15 @@ public sealed class ConversationSectionsControllerTests
     [Fact]
     public async Task Assign_Then_Delete_Returns_Conversation_To_System_Section()
     {
-        var controller = CreateController(out var store);
+        var conv = ConversationId.Create();
+        var conversations = await SignalRHubTests.CreateUserFacingStoreAsync(conv.Value, AgentId);
+        var controller = CreateController(out var store, conversations);
         var section = await store.CreateSectionAsync(new ConversationSection
         {
             SectionId = SectionId.Create(),
             AgentId = BotNexus.Domain.Primitives.AgentId.From(AgentId),
             Name = "Temp"
         });
-        var conv = ConversationId.Create();
 
         (await controller.Assign(AgentId, section.SectionId.Value, conv.Value, CancellationToken.None))
             .ShouldBeOfType<NoContentResult>();
@@ -128,9 +129,11 @@ public sealed class ConversationSectionsControllerTests
     [Fact]
     public async Task Assign_To_Missing_Section_Returns_NotFound()
     {
-        var controller = CreateController(out _);
+        var conv = ConversationId.Create();
+        var conversations = await SignalRHubTests.CreateUserFacingStoreAsync(conv.Value, AgentId);
+        var controller = CreateController(out _, conversations);
 
-        var result = await controller.Assign(AgentId, SectionId.Create().Value, ConversationId.Create().Value, CancellationToken.None);
+        var result = await controller.Assign(AgentId, SectionId.Create().Value, conv.Value, CancellationToken.None);
 
         result.ShouldBeOfType<NotFoundObjectResult>();
     }
@@ -153,10 +156,11 @@ public sealed class ConversationSectionsControllerTests
     [Fact]
     public async Task Unassign_Returns_NoContent()
     {
-        var controller = CreateController(out var store);
+        var conv = ConversationId.Create();
+        var conversations = await SignalRHubTests.CreateUserFacingStoreAsync(conv.Value, AgentId);
+        var controller = CreateController(out var store, conversations);
         var agent = BotNexus.Domain.Primitives.AgentId.From(AgentId);
         var section = await store.CreateSectionAsync(new ConversationSection { SectionId = SectionId.Create(), AgentId = agent, Name = "S" });
-        var conv = ConversationId.Create();
         await store.AssignConversationAsync(section.SectionId, conv);
 
         var result = await controller.Unassign(AgentId, conv.Value, CancellationToken.None);

@@ -264,6 +264,11 @@ public sealed class SessionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> KillSubAgent(string sessionId, string subAgentId, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var typedSessionId = SessionId.From(sessionId);
         var session = await _sessions.GetAsync(typedSessionId, cancellationToken);
         if (session is null)
@@ -541,6 +546,11 @@ public sealed class SessionsController : ControllerBase
         [FromBody] JsonElement metadataPatch,
         CancellationToken cancellationToken)
     {
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         if (metadataPatch.ValueKind != JsonValueKind.Object)
             return BadRequest(new { error = "Metadata patch body must be a JSON object." });
 
@@ -633,6 +643,11 @@ public sealed class SessionsController : ControllerBase
     [HttpDelete("{sessionId}")]
     public async Task<ActionResult> Delete(string sessionId, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var sid = SessionId.From(sessionId);
 
         // Per-session caller authorization (#558). Load before deleting so we can
@@ -708,6 +723,11 @@ public sealed class SessionsController : ControllerBase
     [HttpPatch("{sessionId}/suspend")]
     public async Task<ActionResult<GatewaySession>> Suspend(string sessionId, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
         if (session is null)
             return NotFound();
@@ -747,6 +767,11 @@ public sealed class SessionsController : ControllerBase
     [HttpPatch("{sessionId}/resume")]
     public async Task<ActionResult<GatewaySession>> Resume(string sessionId, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
         if (session is null)
             return NotFound();
@@ -784,6 +809,11 @@ public sealed class SessionsController : ControllerBase
     [HttpPatch("{sessionId}/seal")]
     public async Task<ActionResult> Seal(string sessionId, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var sid = SessionId.From(sessionId);
         var session = await _sessions.GetAsync(sid, cancellationToken);
         if (session is null)

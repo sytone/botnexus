@@ -40,7 +40,8 @@ public sealed class UnifiedInboundEntryPointTests
         {
             AdmissionStatus = InboundDispatchStatus.Steered
         };
-        var controller = new ChatController(supervisor.Object, sessions.Object, orchestrator: orchestrator);
+        var conversations = await SignalRHubTests.CreateUserFacingStoreAsync(Conversation.Value);
+        var controller = new ChatController(supervisor.Object, sessions.Object, orchestrator: orchestrator, conversations: conversations);
 
         var result = await controller.Steer(
             new AgentControlRequest(Agent.Value, Session.Value, "adjust"),
@@ -63,7 +64,8 @@ public sealed class UnifiedInboundEntryPointTests
         var orchestrator = new CapturingInboundMessageOrchestrator { AdmissionStatus = InboundDispatchStatus.Steered };
         var sessions = new InMemorySessionStore();
         await sessions.SaveAsync(new GatewaySession { SessionId = Session, AgentId = Agent, ConversationId = Conversation });
-        var hub = SignalRHubTests.CreateHub(orchestrator: orchestrator, sessions: sessions);
+        var conversations = await SignalRHubTests.CreateUserFacingStoreAsync(Conversation.Value);
+        var hub = SignalRHubTests.CreateHub(orchestrator: orchestrator, sessions: sessions, conversationStore: conversations);
 
         await hub.SteerWithMedia(Agent, Session, "look",
             [new MediaContentPartDto { MimeType = "text/plain", Text = "attachment" }],
@@ -86,7 +88,8 @@ public sealed class UnifiedInboundEntryPointTests
         var orchestrator = new CapturingInboundMessageOrchestrator { AdmissionStatus = InboundDispatchStatus.Steered };
         var sessions = new InMemorySessionStore();
         await sessions.SaveAsync(new GatewaySession { SessionId = Session, AgentId = Agent, ConversationId = Conversation });
-        var hub = SignalRHubTests.CreateHub(orchestrator: orchestrator, sessions: sessions);
+        var conversations = await SignalRHubTests.CreateUserFacingStoreAsync(Conversation.Value);
+        var hub = SignalRHubTests.CreateHub(orchestrator: orchestrator, sessions: sessions, conversationStore: conversations);
 
         var accepted = await hub.InterruptAndSteer(Agent, Session, "stop, do this");
 

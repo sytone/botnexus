@@ -374,6 +374,13 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
         await RegisterAgentAsync(factory, cts.Token);
 
         // Pre-create session
+        var conversations = factory.Services.GetRequiredService<IConversationStore>();
+        await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.From("explicit-target-conv"),
+            AgentId = AgentId.From(TestAgentId),
+            Visibility = ConversationVisibility.UserFacing
+        }, cts.Token);
         var sessions = factory.Services.GetRequiredService<ISessionStore>();
         await sessions.GetOrCreateAsync(SessionId.From("steer-session-2"), AgentId.From(TestAgentId), cts.Token);
 

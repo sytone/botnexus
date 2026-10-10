@@ -1,3 +1,5 @@
+using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Cron;
 using BotNexus.Domain.World;
@@ -23,6 +25,8 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/[controller]")]
 public sealed class AgentsController : ControllerBase
 {
+    private readonly ISessionStore? _sessions;
+    private readonly IConversationStore? _conversations;
     private readonly IAgentRegistry _registry;
     private readonly IAgentSupervisor _supervisor;
     private readonly IAgentConfigurationWriter _configurationWriter;
@@ -47,8 +51,12 @@ public sealed class AgentsController : ControllerBase
         ModelRegistry? modelRegistry = null,
         ILogger<AgentsController>? logger = null,
         IAgentWebhookProvisioner? webhookProvisioner = null,
-        IExtensionLoader? extensionLoader = null)
+        IExtensionLoader? extensionLoader = null,
+        ISessionStore? sessions = null,
+        IConversationStore? conversations = null)
     {
+        _sessions = sessions;
+        _conversations = conversations;
         _registry = registry;
         _supervisor = supervisor;
         _configurationWriter = configurationWriter;
@@ -540,6 +548,13 @@ public sealed class AgentsController : ControllerBase
     [HttpPost("{agentId}/sessions/{sessionId}/stop")]
     public async Task<ActionResult> StopInstance(string agentId, string sessionId, CancellationToken cancellationToken)
     {
+        if (_sessions is null)
+            return NotFound();
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), AgentId.From(agentId), cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var typedAgentId = AgentId.From(agentId);
         var typedSessionId = SessionId.From(sessionId);
         await _supervisor.StopAsync(typedAgentId, typedSessionId, cancellationToken);
