@@ -420,6 +420,11 @@ public sealed class ConversationsController : ControllerBase
         [FromBody] PatchConversationRequest request,
         CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         if (request.Title is null && request.Purpose is null && request.Instructions is null)
             return BadRequest(new { error = "title or purpose is required." });
 
@@ -514,6 +519,11 @@ public sealed class ConversationsController : ControllerBase
         [FromBody] AddBindingRequest request,
         CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         if (request is null || string.IsNullOrWhiteSpace(request.ChannelType))
             return BadRequest(new { error = "channelType is required." });
 
@@ -586,6 +596,11 @@ public sealed class ConversationsController : ControllerBase
         string bindingId,
         CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
             return NotFound();
@@ -651,6 +666,22 @@ public sealed class ConversationsController : ControllerBase
         [FromBody] MoveBindingRequest request,
         CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure is NotFoundResult
+                ? NotFound(new { error = $"Conversation {conversationId} not found." })
+                : clientWriteFailure;
+        if (request is not null && !string.IsNullOrWhiteSpace(request.TargetConversationId))
+        {
+            var targetWriteFailure = ClientConversationWriteGuard.Check(this,
+                await _conversations.GetAsync(ConversationId.From(request.TargetConversationId), cancellationToken));
+            if (targetWriteFailure is not null)
+                return targetWriteFailure is NotFoundResult
+                    ? NotFound(new { error = $"Conversation {request.TargetConversationId} not found." })
+                    : targetWriteFailure;
+        }
+
         if (request is null || string.IsNullOrWhiteSpace(request.TargetConversationId))
             return BadRequest(new { error = "targetConversationId is required." });
 
@@ -862,6 +893,11 @@ public sealed class ConversationsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult> Archive(string conversationId, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
             return NotFound();
@@ -950,6 +986,11 @@ public sealed class ConversationsController : ControllerBase
     {
         if (_resetService is null)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, "Conversation reset service is not configured.");
+
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
 
         var result = await _resetService.ResetActiveSessionAsync(ConversationId.From(conversationId), cancellationToken: cancellationToken);
 
@@ -1223,6 +1264,11 @@ public sealed class ConversationsController : ControllerBase
         [FromBody] SetConversationOverrideRequest request,
         CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
             return NotFound();
@@ -1322,6 +1368,11 @@ public sealed class ConversationsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> ClearOverride(string conversationId, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null)
             return NotFound();
@@ -1376,6 +1427,11 @@ public sealed class ConversationsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> Pin(string conversationId, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null) return NotFound();
         await _conversations.PinAsync(ConversationId.From(conversationId), true, cancellationToken);
@@ -1389,6 +1445,11 @@ public sealed class ConversationsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> Unpin(string conversationId, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null) return NotFound();
         await _conversations.PinAsync(ConversationId.From(conversationId), false, cancellationToken);

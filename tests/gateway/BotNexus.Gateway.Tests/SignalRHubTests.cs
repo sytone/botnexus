@@ -350,7 +350,8 @@ public sealed class SignalRHubTests
     public async Task GatewayHub_DeliverMessage_PreservesTheClientsDeliveryIntent(InboundDeliveryMode deliveryMode)
     {
         var orchestrator = new CapturingInboundMessageOrchestrator();
-        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1");
+        var conversations = await CreateUserFacingStoreAsync("conversation-1");
+        var hub = CreateHub(conversationStore: conversations, orchestrator: orchestrator, connectionId: "conn-1");
 
         await hub.DeliverMessage(
             AgentId.From("agent-a"),
@@ -513,7 +514,9 @@ public sealed class SignalRHubTests
                     SessionId.From(targetSessionId),
                     false,
                     false)));
+        var conversations = await CreateUserFacingStoreAsync(targetConversationId);
         var hub = CreateHub(
+            conversationStore: conversations,
             orchestrator: orchestrator,
             connectionId: "conn-1",
             conversationDispatcher: conversationDispatcher.Object);
@@ -615,7 +618,8 @@ public sealed class SignalRHubTests
                     false,
                     false)));
 
-        var hub = CreateHub(orchestrator: orchestrator, conversationDispatcher: conversationDispatcher.Object, connectionId: "conn-1");
+        var conversations = await CreateUserFacingStoreAsync(targetConversationId);
+        var hub = CreateHub(conversationStore: conversations, orchestrator: orchestrator, conversationDispatcher: conversationDispatcher.Object, connectionId: "conn-1");
 
         var result = await hub.SendMessage(AgentId.From("agent-a"), ChannelKey.From("signalr"), "hello targeted", targetConversationId);
 
@@ -693,7 +697,8 @@ public sealed class SignalRHubTests
             Mock.Of<IActivityBroadcaster>(),
             router,
             NewApp(),
-            NullLogger<GatewayHub>.Instance)
+            NullLogger<GatewayHub>.Instance,
+            conversationStore: conversationStore)
         {
             Clients = Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = Mock.Of<IGroupManager>(),
@@ -707,7 +712,8 @@ public sealed class SignalRHubTests
             Mock.Of<IActivityBroadcaster>(),
             router,
             NewApp(),
-            NullLogger<GatewayHub>.Instance)
+            NullLogger<GatewayHub>.Instance,
+            conversationStore: conversationStore)
         {
             Clients = Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = Mock.Of<IGroupManager>(),
@@ -1009,7 +1015,8 @@ public sealed class SignalRHubTests
     public async Task GatewayHub_Steer_SetsConversationIdOnDispatchedMessage()
     {
         var orchestrator = new CapturingInboundMessageOrchestrator { AdmissionStatus = InboundDispatchStatus.Steered };
-        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1");
+        var conversations = await CreateUserFacingStoreAsync("conv-42");
+        var hub = CreateHub(conversationStore: conversations, orchestrator: orchestrator, connectionId: "conn-1");
 
         await hub.Steer(AgentId.From("agent-a"), SessionId.From("sess-1"), "nudge", "conv-42");
 
@@ -1024,7 +1031,8 @@ public sealed class SignalRHubTests
         var supervisor = new Mock<IAgentSupervisor>(MockBehavior.Strict);
         var orchestrator = new CapturingInboundMessageOrchestrator { AdmissionStatus = InboundDispatchStatus.Accepted };
         var sessions = new InMemorySessionStore();
-        var hub = CreateHub(supervisor: supervisor.Object, orchestrator: orchestrator, sessions: sessions, connectionId: "conn-1");
+        var conversations = await CreateUserFacingStoreAsync("conv-1");
+        var hub = CreateHub(conversationStore: conversations, supervisor: supervisor.Object, orchestrator: orchestrator, sessions: sessions, connectionId: "conn-1");
 
         await hub.Steer(AgentId.From("agent-a"), SessionId.From("idle-sess"), "nudge", "conv-1");
 
@@ -1038,7 +1046,8 @@ public sealed class SignalRHubTests
     public async Task GatewayHub_Steer_WhenAdmissionIsRefused_ThrowsVisibleHubError()
     {
         var orchestrator = new CapturingInboundMessageOrchestrator { AdmissionStatus = InboundDispatchStatus.Busy };
-        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1");
+        var conversations = await CreateUserFacingStoreAsync("conv-1");
+        var hub = CreateHub(conversationStore: conversations, orchestrator: orchestrator, connectionId: "conn-1");
 
         Func<Task> act = () => hub.Steer(AgentId.From("agent-a"), SessionId.From("idle-sess"), "nudge", "conv-1");
 
@@ -1049,7 +1058,8 @@ public sealed class SignalRHubTests
     public async Task GatewayHub_Steer_SharedDispatchPath_UsesNormalizedAddressedIds()
     {
         var orchestrator = new CapturingInboundMessageOrchestrator { AdmissionStatus = InboundDispatchStatus.Steered };
-        var hub = CreateHub(orchestrator: orchestrator, connectionId: "conn-1");
+        var conversations = await CreateUserFacingStoreAsync("conv-shared");
+        var hub = CreateHub(conversationStore: conversations, orchestrator: orchestrator, connectionId: "conn-1");
 
         await hub.Steer(AgentId.From("  agent-a  "), SessionId.From("sess-shared"), "nudge", "conv-shared");
 
@@ -1083,7 +1093,8 @@ public sealed class SignalRHubTests
 
         var supervisor = new Mock<IAgentSupervisor>(MockBehavior.Strict);
 
-        var hub = CreateHub(clients: clients.Object, sessions: sessions.Object, supervisor: supervisor.Object, resetService: resetService.Object);
+        var conversations = await CreateUserFacingStoreAsync("conv-1");
+        var hub = CreateHub(conversationStore: conversations, clients: clients.Object, sessions: sessions.Object, supervisor: supervisor.Object, resetService: resetService.Object);
 
         await hub.ResetSession(agentId, sessionId);
 
@@ -1467,6 +1478,18 @@ public sealed class SignalRHubTests
         dispatched.Metadata["messageType"].ShouldBe("message-with-media");
     }
 
+    internal static async Task<IConversationStore> CreateUserFacingStoreAsync(string conversationId, string agentId = "agent-a")
+    {
+        var store = new InMemoryConversationStore();
+        await store.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.From(conversationId),
+            AgentId = AgentId.From(agentId),
+            Visibility = ConversationVisibility.UserFacing
+        });
+        return store;
+    }
+
     internal static GatewayHub CreateHubForTest(
         IInboundMessageOrchestrator? orchestrator = null,
         ISessionStore? sessions = null,
@@ -1533,7 +1556,8 @@ public sealed class SignalRHubTests
         string? clientQueryValue = null,
         string? clientVersionQueryValue = null,
         ILogger<GatewayHub>? logger = null,
-        string[]? userScopes = null)
+        string[]? userScopes = null,
+        bool omitConversationStore = false)
     {
         var sessionStore = sessions ?? new InMemorySessionStore();
         var convStore = conversationStore ?? new InMemoryConversationStore();
@@ -1573,7 +1597,7 @@ public sealed class SignalRHubTests
             router,
             app,
             logger ?? NullLogger<GatewayHub>.Instance,
-            convStore,
+            omitConversationStore ? null : convStore,
             askUserPromptResolver,
             askUserCheckpointService,
             activeLoopTracker: activeLoopTracker)
