@@ -55,25 +55,79 @@ public sealed class PostRunEvaluationCoordinatorTests
     [Fact]
     public async Task Enqueue_WhenQueueIsFull_ReturnsSaturated()
     {
-        var firstStarted = Signal();
-        var release = Signal();
-        var evaluator = new DelegateEvaluator("blocked", async cancellationToken =>
+        var bothEvaluated = Signal();
+        var evaluationCount = 0;
+        var evaluator = new DelegateEvaluator("queued", _ =>
         {
-            firstStarted.TrySetResult();
-            await release.Task.WaitAsync(cancellationToken);
-            return PostRunEvaluationResult.Passed();
+            if (Interlocked.Increment(ref evaluationCount) == 2)
+                bothEvaluated.TrySetResult();
+            return ValueTask.FromResult(PostRunEvaluationResult.Passed());
         });
-        using var coordinator = Create([evaluator], capacity: 1);
-        await coordinator.StartAsync(CancellationToken.None);
+        using var coordinator = Create([evaluator], capacity: 2);
 
+        // Capacity bounds buffered runs, not the in-flight run. Keep the consumer unstarted
+        // so admission assertions cannot depend on the background reader being scheduled.
         coordinator.Enqueue(Snapshot("run-first")).ShouldBe(PostRunEvaluationAdmission.Accepted);
-        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         coordinator.Enqueue(Snapshot("run-buffered")).ShouldBe(PostRunEvaluationAdmission.Accepted);
         coordinator.Enqueue(Snapshot("run-saturated")).ShouldBe(PostRunEvaluationAdmission.Saturated);
+        evaluator.InvocationCount.ShouldBe(0);
 
-        release.TrySetResult();
-        await evaluator.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await coordinator.StopAsync(CancellationToken.None);
+        await coordinator.StartAsync(CancellationToken.None);
+        await bothEvaluated.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await coordinator.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+        evaluator.EvaluatedRuns.ShouldBe(new[] { RunId.From("run-first"), RunId.From("run-buffered") });
+        evaluator.InvocationCount.ShouldBe(2);
+    }
+
+    [Fact]
+    public void Enqueue_BeforeConsumerStarts_CapacityOneKeepsFirstRunBuffered()
+    {
+        var evaluator = new DelegateEvaluator("unstarted", _ =>
+            ValueTask.FromResult(PostRunEvaluationResult.Passed()));
+        using var coordinator = Create([evaluator], capacity: 1);
+
+        // With no reader progress, the first admission occupies the only buffer slot.
+        // A second Accepted result in a capacity-one test requires the reader to dequeue it.
+        coordinator.Enqueue(Snapshot("run-first")).ShouldBe(PostRunEvaluationAdmission.Accepted);
+        coordinator.Enqueue(Snapshot("run-buffered")).ShouldBe(PostRunEvaluationAdmission.Saturated);
+        evaluator.InvocationCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Enqueue_WithRunInFlight_AdmitsOneBufferedRunThenReturnsSaturated()
+    {
+        var bothEvaluated = Signal();
+        var admissions = new System.Collections.Concurrent.ConcurrentQueue<PostRunEvaluationAdmission>();
+        var evaluationCount = 0;
+        PostRunEvaluationCoordinator? activeCoordinator = null;
+        var evaluator = new DelegateEvaluator("in-flight", _ =>
+        {
+            var coordinator = activeCoordinator
+                ?? throw new InvalidOperationException("Coordinator must exist before evaluation.");
+            if (Interlocked.Increment(ref evaluationCount) == 1)
+            {
+                // The reader has removed the first run, and cannot dequeue another until
+                // this callback returns. Pin in-flight plus buffered occupancy at that boundary.
+                admissions.Enqueue(coordinator.Enqueue(Snapshot("run-buffered")));
+                admissions.Enqueue(coordinator.Enqueue(Snapshot("run-saturated")));
+            }
+            else
+            {
+                bothEvaluated.TrySetResult();
+            }
+            return ValueTask.FromResult(PostRunEvaluationResult.Passed());
+        });
+        using var coordinator = Create([evaluator], capacity: 1);
+        activeCoordinator = coordinator;
+
+        coordinator.Enqueue(Snapshot("run-first")).ShouldBe(PostRunEvaluationAdmission.Accepted);
+        await coordinator.StartAsync(CancellationToken.None);
+        await bothEvaluated.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await coordinator.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+        admissions.ShouldBe(new[] { PostRunEvaluationAdmission.Accepted, PostRunEvaluationAdmission.Saturated });
+        evaluator.EvaluatedRuns.ShouldBe(new[] { RunId.From("run-first"), RunId.From("run-buffered") });
+        evaluator.InvocationCount.ShouldBe(2);
     }
 
     [Fact]
@@ -243,6 +297,7 @@ public sealed class PostRunEvaluationCoordinatorTests
             new PostRunEvaluatorVersion(1, 0));
 
         public int InvocationCount => Volatile.Read(ref _invocationCount);
+        public System.Collections.Concurrent.ConcurrentQueue<RunId> EvaluatedRuns { get; } = new();
         public TaskCompletionSource Completed { get; } = Signal();
 
         public async ValueTask<PostRunEvaluationResult> EvaluateAsync(
@@ -250,6 +305,7 @@ public sealed class PostRunEvaluationCoordinatorTests
             CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _invocationCount);
+            EvaluatedRuns.Enqueue(snapshot.RunId);
             try
             {
                 return await evaluate(cancellationToken);
