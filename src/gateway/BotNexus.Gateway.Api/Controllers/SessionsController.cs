@@ -546,11 +546,6 @@ public sealed class SessionsController : ControllerBase
         [FromBody] JsonElement metadataPatch,
         CancellationToken cancellationToken)
     {
-        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
-            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
-        if (clientWriteFailure is not null)
-            return clientWriteFailure;
-
         if (metadataPatch.ValueKind != JsonValueKind.Object)
             return BadRequest(new { error = "Metadata patch body must be a JSON object." });
 
@@ -561,6 +556,11 @@ public sealed class SessionsController : ControllerBase
         var authorizationFailure = AuthorizeSessionCaller(session);
         if (authorizationFailure is not null)
             return authorizationFailure;
+
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            session, cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
 
         var patch = new Dictionary<string, object?>();
         foreach (var property in metadataPatch.EnumerateObject())
@@ -643,11 +643,6 @@ public sealed class SessionsController : ControllerBase
     [HttpDelete("{sessionId}")]
     public async Task<ActionResult> Delete(string sessionId, CancellationToken cancellationToken)
     {
-        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
-            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
-        if (clientWriteFailure is not null)
-            return clientWriteFailure;
-
         var sid = SessionId.From(sessionId);
 
         // Per-session caller authorization (#558). Load before deleting so we can
@@ -662,6 +657,11 @@ public sealed class SessionsController : ControllerBase
         var authorizationFailure = AuthorizeSessionCaller(session);
         if (authorizationFailure is not null)
             return authorizationFailure;
+
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            session, cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
 
         await _sessions.DeleteAsync(sid, cancellationToken);
 
@@ -723,11 +723,6 @@ public sealed class SessionsController : ControllerBase
     [HttpPatch("{sessionId}/suspend")]
     public async Task<ActionResult<GatewaySession>> Suspend(string sessionId, CancellationToken cancellationToken)
     {
-        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
-            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
-        if (clientWriteFailure is not null)
-            return clientWriteFailure;
-
         var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
         if (session is null)
             return NotFound();
@@ -736,6 +731,11 @@ public sealed class SessionsController : ControllerBase
         var authorizationFailure = AuthorizeSessionCaller(session);
         if (authorizationFailure is not null)
             return authorizationFailure;
+
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            session, cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
 
         if (session.Status != SessionStatus.Active)
             return Conflict(new { error = $"Cannot suspend session in '{session.Status}' state." });
@@ -767,11 +767,6 @@ public sealed class SessionsController : ControllerBase
     [HttpPatch("{sessionId}/resume")]
     public async Task<ActionResult<GatewaySession>> Resume(string sessionId, CancellationToken cancellationToken)
     {
-        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
-            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
-        if (clientWriteFailure is not null)
-            return clientWriteFailure;
-
         var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
         if (session is null)
             return NotFound();
@@ -780,6 +775,11 @@ public sealed class SessionsController : ControllerBase
         var authorizationFailure = AuthorizeSessionCaller(session);
         if (authorizationFailure is not null)
             return authorizationFailure;
+
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            session, cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
 
         if (session.Status != SessionStatus.Suspended)
             return Conflict(new { error = $"Cannot resume session in '{session.Status}' state." });
@@ -809,11 +809,6 @@ public sealed class SessionsController : ControllerBase
     [HttpPatch("{sessionId}/seal")]
     public async Task<ActionResult> Seal(string sessionId, CancellationToken cancellationToken)
     {
-        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
-            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
-        if (clientWriteFailure is not null)
-            return clientWriteFailure;
-
         var sid = SessionId.From(sessionId);
         var session = await _sessions.GetAsync(sid, cancellationToken);
         if (session is null)
@@ -826,6 +821,11 @@ public sealed class SessionsController : ControllerBase
         var authorizationFailure = AuthorizeSessionCaller(session);
         if (authorizationFailure is not null)
             return authorizationFailure;
+
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            session, cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
 
         // Phase 5 / F-6 step 2b (#555): sub-agent eligibility is driven by the
         // typed SessionType discriminator (persisted on the session row by

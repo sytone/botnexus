@@ -83,8 +83,10 @@ public sealed class InspectableConversationHubWriteTests
             if (hub.LastFollowUpDispatch is { } dispatch) await dispatch;
             var inbound = orchestrator.Captured.ShouldHaveSingleItem();
             inbound.RoutingHints.ShouldNotBeNull().RequestedAgentId.ShouldBe(agentId);
-            // Session-addressed follow-up currently lets the orchestrator resolve the conversation.
             if (!operation.StartsWith("follow-up", StringComparison.Ordinal))
+                inbound.RoutingHints.RequestedConversationId.ShouldBe(conversation.ConversationId);
+            // Follow-up must pin the checked stored parent too, not route by an unrelated binding.
+            if (operation.StartsWith("follow-up", StringComparison.Ordinal))
                 inbound.RoutingHints.RequestedConversationId.ShouldBe(conversation.ConversationId);
         }
     }

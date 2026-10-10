@@ -25,6 +25,66 @@ public sealed class InspectableConversationSessionWriteTests
         (await sessions.GetAsync(session.SessionId)).ShouldNotBeNull();
     }
 
+    [Theory]
+    [MemberData(nameof(SessionWrites))]
+    public async Task SessionWrite_DifferentCallerSameAgent_DeniesWithoutVisibilityDisclosureAndEmitsTelemetry(
+        string operation, ConversationVisibility visibility)
+    {
+        var store = new InMemoryConversationStore();
+        var conversation = await store.CreateAsync(InspectableConversationHttpWriteTests.CreateConversation("c_other_caller", visibility));
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s_other_caller"), conversation.AgentId);
+        session.ConversationId = conversation.ConversationId;
+        session.CallerId = "other-client";
+        session.SessionType = SessionType.AgentSubAgent;
+        session.Status = operation == "resume" ? SessionStatus.Suspended : operation == "seal" ? SessionStatus.Expired : SessionStatus.Active;
+        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "original transcript" });
+        await sessions.SaveAsync(session);
+        var before = JsonSerializer.Serialize(await sessions.ListAsync());
+        var beforeConversation = InspectableConversationHttpWriteTests.Snapshot(await store.GetAsync(conversation.ConversationId));
+        var sink = new RecordingSecuritySink();
+        // Strict store proves the visibility lookup is not even attempted for another caller.
+        var deniedStore = new Moq.Mock<BotNexus.Gateway.Abstractions.Conversations.IConversationStore>(Moq.MockBehavior.Strict);
+        var controller = InspectableConversationHttpWriteTests.Authenticate(new SessionsController(sessions,
+            conversations: deniedStore.Object, securityEvents: sink));
+        IActionResult result = operation switch
+        {
+            "metadata" => (await controller.PatchMetadata(session.SessionId.Value, JsonSerializer.SerializeToElement(new { key = "value" }), CancellationToken.None)).Result
+                ?? throw new InvalidOperationException("Expected result"),
+            "delete" => await controller.Delete(session.SessionId.Value, CancellationToken.None),
+            "suspend" => (await controller.Suspend(session.SessionId.Value, CancellationToken.None)).Result
+                ?? throw new InvalidOperationException("Expected result"),
+            "resume" => (await controller.Resume(session.SessionId.Value, CancellationToken.None)).Result
+                ?? throw new InvalidOperationException("Expected result"),
+            "seal" => await controller.Seal(session.SessionId.Value, CancellationToken.None),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation))
+        };
+        InspectableConversationHttpWriteTests.Status(result).ShouldBe(403);
+        var payload = JsonSerializer.Serialize(result.ShouldBeOfType<ObjectResult>().Value);
+        payload.ShouldContain("Caller is not authorized for this session.");
+        payload.ShouldNotContain("read-only");
+        payload.ShouldNotContain("not found");
+        deniedStore.VerifyNoOtherCalls();
+        JsonSerializer.Serialize(await sessions.ListAsync()).ShouldBe(before);
+        InspectableConversationHttpWriteTests.Snapshot(await store.GetAsync(conversation.ConversationId)).ShouldBe(beforeConversation);
+        var evt = sink.Events.ShouldHaveSingleItem();
+        evt.Category.ShouldBe(BotNexus.Gateway.Abstractions.Security.SecurityEventCategory.Authorization);
+        evt.Outcome.ShouldBe(BotNexus.Gateway.Abstractions.Security.SecurityEventOutcome.Denied);
+        evt.Policy.ShouldBe(BotNexus.Gateway.Abstractions.Security.SecurityPolicyDecision.Deny);
+        evt.Control.ShouldBe(BotNexus.Gateway.Abstractions.Security.SecurityControlFamily.Authorization);
+        evt.Target.ShouldNotBeNull().Kind.ShouldBe(BotNexus.Gateway.Abstractions.Security.SecurityTargetKind.Session);
+        evt.Actor.ShouldNotBeNull().Id.ShouldNotContain("test-client");
+    }
+
+    private sealed class RecordingSecuritySink : BotNexus.Gateway.Abstractions.Security.ISecurityEventSink
+    {
+        public List<BotNexus.Gateway.Abstractions.Security.SecurityEvent> Events { get; } = [];
+        public int Count => Events.Count;
+        public void Record(BotNexus.Gateway.Abstractions.Security.SecurityEvent securityEvent) => Events.Add(securityEvent);
+        public IReadOnlyList<BotNexus.Gateway.Abstractions.Security.SecurityEvent> Snapshot() => Events;
+        public void Clear() => Events.Clear();
+    }
+
     public static IEnumerable<object[]> SessionWrites()
     {
         foreach (var operation in new[] { "metadata", "delete", "suspend", "resume", "seal" })
