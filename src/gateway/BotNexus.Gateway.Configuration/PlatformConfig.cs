@@ -792,6 +792,11 @@ public sealed class GatewaySettingsConfig
         Description = "Limits on how much output a single tool result may contribute before it is truncated.")]
     [ConfigField(Group = "tool-output-budget", Order = 0)]
     public ToolOutputBudgetConfig? ToolOutputBudget { get; set; }
+    /// <summary>Maximum completed tool results per run, checked after entire batches. Zero is invalid.</summary>
+    [Range(1, 1_000_000)]
+    [Display(Name = "Tool result budget", Description = "Executed results per run, not provider turns. Default 128.")]
+    [ConfigField(Group = "tool-result-budget", Order = 0)]
+    public int MaxToolResults { get; set; } = 128;
     /// <summary>Size guardrails for the <c>read</c> tool (#2689).</summary>
     [Display(
         Name = "Read tool",

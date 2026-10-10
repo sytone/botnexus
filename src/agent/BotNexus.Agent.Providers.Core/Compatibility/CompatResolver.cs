@@ -92,6 +92,7 @@ public static class CompatResolver
             SupportsStore = configured.SupportsStore ?? detected.SupportsStore,
             SupportsDeveloperRole = configured.SupportsDeveloperRole ?? detected.SupportsDeveloperRole,
             SupportsTemperature = configured.SupportsTemperature ?? detected.SupportsTemperature,
+            SupportsTools = configured.SupportsTools ?? detected.SupportsTools,
             SupportsMetadata = configured.SupportsMetadata ?? detected.SupportsMetadata,
             SupportsReasoningEffort = configured.SupportsReasoningEffort ?? detected.SupportsReasoningEffort,
             ReasoningEffortMap = configured.ReasoningEffortMap ?? detected.ReasoningEffortMap,

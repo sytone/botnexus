@@ -107,6 +107,7 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
                 var compatOptions = new OpenAICompatOptions
                 {
                     Temperature = baseOptions.Temperature,
+                    ToolChoiceMode = baseOptions.ToolChoiceMode,
                     MaxTokens = baseOptions.MaxTokens,
                     CancellationToken = baseOptions.CancellationToken,
                     ApiKey = baseOptions.ApiKey,
@@ -278,6 +279,15 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
         else if (HasToolHistory(context.Messages) && compat.SupportsTools != false)
         {
             body["tools"] = ToNode(Array.Empty<object>());
+        }
+
+        if (options?.ToolChoiceMode == BotNexus.Agent.Providers.Core.ToolChoice.None)
+        {
+            body.Remove("tools");
+            if (compat.SupportsTools != false)
+                body["tool_choice"] = "none";
+            else
+                body.Remove("tool_choice");
         }
 
         return body;

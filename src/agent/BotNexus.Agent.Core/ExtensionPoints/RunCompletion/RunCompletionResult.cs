@@ -11,7 +11,8 @@ public sealed record RunCompletionResult(
     string? Evidence = null,
     string? ContinuationOwner = null,
     string? WakeCondition = null,
-    int ContinuationAttempts = 0)
+    int ContinuationAttempts = 0,
+    ToolResultBudgetEvidence? ToolResultBudget = null)
 {
     /// <summary>Reports successful completion with no open work items or continuation attempts.</summary>
     public static RunCompletionResult Completed { get; } =

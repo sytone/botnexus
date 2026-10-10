@@ -8,7 +8,7 @@ namespace BotNexus.Agent.Core.Loop;
 /// Bounded run-local aggregation for completed results classified by a tool-progress policy.
 /// The guard owns sequence state only; policy owns classification and the loop owns control flow.
 /// </summary>
-internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy)
+internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy, int maxToolResults = ToolNonProgressGuard.AbsoluteToolResultLimit)
 {
     internal const int WarningThreshold = 3;
     internal const int StopThreshold = 6;
@@ -22,24 +22,32 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy)
     private readonly List<ClassifiedOutcome> _recent = [];
     private int _count;
     private int _housekeepingCount;
-    private int _totalResults;
+    private long _totalResults;
     private bool _warned;
     private ToolProgressDecision? _latestDecision;
 
     internal int RecentOutcomeCount => _recent.Count;
     internal int ObservedScopeCount => _observed.Count;
 
+    // The loop can secure the hard edge before boundary callbacks without moving ordinary
+    // progress-policy evaluation ahead of those callbacks or counting a batch twice.
+    internal bool WouldReachAbsoluteLimit(int completedResults)
+        => _totalResults + completedResults >= maxToolResults;
+
     internal async Task<ToolNonProgressObservation> ObserveAsync(
         IReadOnlyList<ToolCallContent> calls,
         IReadOnlyList<ToolResultAgentMessage> results,
         CancellationToken cancellationToken)
     {
+        _totalResults += results.Count;
+        if (_totalResults >= maxToolResults)
+            return new ToolNonProgressObservation(_count, "absolute-tool-result-limit", null,
+                false, true, true, _totalResults);
         var byId = calls.ToDictionary(call => call.Id, StringComparer.Ordinal);
         var warning = false;
         foreach (var result in results)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            _totalResults++;
             // An unmatched completed result is still retained and counted, but is not evidence.
             if (!byId.TryGetValue(result.ToolCallId, out var call))
                 continue;
@@ -89,7 +97,7 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy)
             // Process the full executed batch; later progress invalidates pending warning/stop.
         }
 
-        var absoluteLimitReached = _totalResults >= AbsoluteToolResultLimit;
+        var absoluteLimitReached = _totalResults >= maxToolResults;
         return new ToolNonProgressObservation(
             _count,
             absoluteLimitReached ? "absolute-tool-result-limit" : _latestDecision?.Kind,
@@ -159,4 +167,4 @@ internal sealed record ToolNonProgressObservation(
     bool WarningReady,
     bool ShouldStop,
     bool AbsoluteLimitReached,
-    int TotalResults);
+    long TotalResults);

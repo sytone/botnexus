@@ -110,6 +110,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
         var copilotOpts = new CopilotMessagesOptions
         {
             Temperature = baseOptions.Temperature,
+            ToolChoiceMode = baseOptions.ToolChoiceMode,
             MaxTokens = baseOptions.MaxTokens,
             CancellationToken = baseOptions.CancellationToken,
             ApiKey = baseOptions.ApiKey,
