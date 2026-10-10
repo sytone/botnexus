@@ -6,6 +6,7 @@ using System.IO.Abstractions.TestingHelpers;
 
 namespace BotNexus.Cron.Tests;
 
+[Collection(BotNexusHomeCollection.Name)]
 public sealed class CronOptionsPromptTemplateResolverTests
 {
 
@@ -38,6 +39,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
             SECRET BODY {{topic}} for {{audience}}
             """);
 
+        var before = Environment.GetEnvironmentVariable("BOTNEXUS_HOME");
         Environment.SetEnvironmentVariable("BOTNEXUS_HOME", homePath);
         try
         {
@@ -74,7 +76,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("BOTNEXUS_HOME", null);
+            Environment.SetEnvironmentVariable("BOTNEXUS_HOME", before);
         }
     }
 
@@ -142,6 +144,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
         fileSystem.Directory.CreateDirectory(Path.GetDirectoryName(promptPath)!);
         fileSystem.File.WriteAllText(promptPath, "{ definitely not JSON");
 
+        var before = Environment.GetEnvironmentVariable("BOTNEXUS_HOME");
         Environment.SetEnvironmentVariable("BOTNEXUS_HOME", homePath);
         try
         {
@@ -157,7 +160,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("BOTNEXUS_HOME", null);
+            Environment.SetEnvironmentVariable("BOTNEXUS_HOME", before);
         }
     }
 
@@ -171,6 +174,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
         fileSystem.Directory.CreateDirectory(Path.Combine(workspacePath, "prompts"));
         fileSystem.File.WriteAllText(Path.Combine(homePath, "prompts", "daily.prompt.json"), """{"name":"daily","prompt":"LOWER SECRET"}""");
         fileSystem.File.WriteAllText(Path.Combine(workspacePath, "prompts", "daily.prompt.json"), "{ malformed");
+        var before = Environment.GetEnvironmentVariable("BOTNEXUS_HOME");
         Environment.SetEnvironmentVariable("BOTNEXUS_HOME", homePath);
         try
         {
@@ -181,7 +185,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
             result.Error.ShouldBe("Prompt template 'daily' is malformed.");
             System.Text.Json.JsonSerializer.Serialize(result).ShouldNotContain("LOWER SECRET");
         }
-        finally { Environment.SetEnvironmentVariable("BOTNEXUS_HOME", null); }
+        finally { Environment.SetEnvironmentVariable("BOTNEXUS_HOME", before); }
     }
 
     [Fact]
@@ -254,6 +258,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
         fileSystem.File.WriteAllText(Path.Combine(homePath, "agents", "farnsworth", "prompts", "daily-status.prompt.json"), """{"name":"daily-status","prompt":"agent"}""");
         fileSystem.File.WriteAllText(Path.Combine(workspacePath, "prompts", "daily-status.prompt.json"), """{"name":"daily-status","prompt":"workspace {{owner}}"}""");
 
+        var before = Environment.GetEnvironmentVariable("BOTNEXUS_HOME");
         Environment.SetEnvironmentVariable("BOTNEXUS_HOME", homePath);
         try
         {
@@ -276,7 +281,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("BOTNEXUS_HOME", null);
+            Environment.SetEnvironmentVariable("BOTNEXUS_HOME", before);
         }
     }
 
