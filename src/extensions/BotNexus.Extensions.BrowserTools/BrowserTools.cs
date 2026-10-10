@@ -45,7 +45,10 @@ public abstract class BrowserToolBase : IAgentTool
 
     /// <inheritdoc />
     public Tool Definition => new(
-        Name, Description, JsonDocument.Parse(ParametersJson).RootElement.Clone());
+        Name, Description + " Production external-browser execution currently fails closed because "
+            + "connection-bound destination enforcement is unavailable; installing a binary or "
+            + "changing proxy settings does not enable it.",
+        JsonDocument.Parse(ParametersJson).RootElement.Clone());
 
     /// <inheritdoc />
     public virtual Task<IReadOnlyDictionary<string, object?>> PrepareArgumentsAsync(

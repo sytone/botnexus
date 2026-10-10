@@ -1,33 +1,31 @@
-using System.Diagnostics;
-using System.Text;
-
 namespace BotNexus.Extensions.BrowserTools;
 
 /// <summary>
-/// The real <see cref="IAgentBrowserProcessRunner"/>, over <see cref="Process"/> (#3031 AC4/AC5).
+/// Refuses external browser execution because this transport cannot enforce the shared
+/// public-only destination policy at connection time (#4030).
 /// </summary>
 /// <remarks>
-/// <para>
-/// Two properties of this class are security controls rather than implementation detail.
-/// </para>
-/// <para>
-/// First, <see cref="ProcessStartInfo.Environment"/> is CLEARED before the supplied variables are
-/// applied. .NET seeds that dictionary from the parent process, so merely adding the allow-list
-/// on top of it would hand the child the full operator keyring plus the allow-list - the exact
-/// opposite of the intent (GHSA-m4m8-xjp4-5rmm). The clear is what makes
-/// <see cref="AgentBrowserEnvironment.Build"/> the complete description of what the child can see.
-/// </para>
-/// <para>
-/// Second, the timeout always kills. A driver that hangs is worse than one that fails: the agent
-/// loop has no way to distinguish "still working" from "wedged", so an unbounded wait turns one
-/// bad page into a stalled session. Every exit from this method is either a completed process or
-/// a killed one.
-/// </para>
+/// Lexical URL checks and a post-load URL read cannot protect against DNS changes, redirects,
+/// subresources or network requests triggered by page interactions. A proxy flag alone also
+/// cannot prove that the browser has no direct or bypass route. Until a supported transport
+/// provides connection-bound enforcement, no command may start or attach to a browser daemon.
+/// This includes reads and close: invoking an external executable is itself outside this boundary.
+/// Test runners exercise command formatting only; they are not evidence of network enforcement.
 /// </remarks>
 public sealed class AgentBrowserProcessRunner : IAgentBrowserProcessRunner
 {
+    /// <summary>
+    /// Explains why installing a browser or changing proxy settings cannot enable this transport.
+    /// </summary>
+    public const string DestinationEnforcementGuidance =
+        "Browser execution denied: connection-bound destination enforcement is unavailable for "
+        + "the external agent-browser transport. All browser commands are refused before process "
+        + "start, including public URLs, because DNS changes, redirects, subresources and proxy "
+        + "bypass routes cannot be constrained by URL checks. Installing a binary or changing "
+        + "proxy settings does not remove this safety boundary.";
+
     /// <inheritdoc />
-    public async Task<AgentBrowserProcessResult> RunAsync(
+    public Task<AgentBrowserProcessResult> RunAsync(
         string binaryPath,
         IReadOnlyList<string> arguments,
         IReadOnlyDictionary<string, string> environment,
@@ -37,102 +35,20 @@ public sealed class AgentBrowserProcessRunner : IAgentBrowserProcessRunner
         ArgumentException.ThrowIfNullOrWhiteSpace(binaryPath);
         ArgumentNullException.ThrowIfNull(arguments);
         ArgumentNullException.ThrowIfNull(environment);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = binaryPath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = false,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-
-        foreach (var argument in arguments)
-        {
-            // ArgumentList, never a joined Arguments string: the joined form is re-parsed by the
-            // OS and a URL containing a quote or a space becomes two arguments or an injection.
-            startInfo.ArgumentList.Add(argument);
-        }
-
-        // THE control. See the class remarks - adding without clearing is the vulnerability.
-        startInfo.Environment.Clear();
-        foreach (var (name, value) in environment)
-        {
-            startInfo.Environment[name] = value;
-        }
-
-        using var process = new Process { StartInfo = startInfo };
-
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderr.AppendLine(e.Data); };
-
-        try
-        {
-            process.Start();
-        }
-        catch (Exception ex)
-        {
-            throw new AgentBrowserUnavailableException(
-                $"The agent-browser executable at '{binaryPath}' could not be started: {ex.Message}. "
-                + AgentBrowserBinaryResolver.InstallGuidance,
-                ex);
-        }
-
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout);
-
-        try
-        {
-            await process.WaitForExitAsync(timeoutSource.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            TryKill(process);
-
-            if (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-
-            return new AgentBrowserProcessResult(
-                -1, stdout.ToString(), stderr.ToString(), TimedOut: true);
-        }
-
-        return new AgentBrowserProcessResult(
-            process.ExitCode, stdout.ToString(), stderr.ToString());
-    }
-
-    private static void TryKill(Process process)
-    {
-        try
-        {
-            // entireProcessTree: agent-browser spawns Chrome. Killing only the parent orphans a
-            // browser that keeps the profile locked and the port bound, so the NEXT command fails
-            // for a reason that has nothing to do with the page being visited.
-            process.Kill(entireProcessTree: true);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException
-                                       or System.ComponentModel.Win32Exception)
-        {
-            // Already gone, or the platform refused. Either way there is nothing further to do
-            // and throwing here would replace a timeout report with an unrelated failure.
-        }
+        // There is intentionally no launch seam or configuration escape hatch here. Denying only
+        // navigate would let snapshot/click/type attach to an already-running, unguarded daemon.
+        return Task.FromException<AgentBrowserProcessResult>(
+            new AgentBrowserUnavailableException(DestinationEnforcementGuidance));
     }
 }
 
 /// <summary>
-/// Raised when the browser cannot be driven at all: no binary, no Chrome, or a dead subprocess.
+/// Raised when the browser cannot be driven, including an unavailable safety boundary.
 /// </summary>
 /// <remarks>
-/// A distinct type so the tools can turn it into an ACTIONABLE tool result (#3031 AC6) instead of
-/// a generic stack trace. The message always names what to do next; an error that only says
-/// "failed" costs the operator a support round-trip to learn what the process already knew.
+/// A distinct type lets tools return a bounded explanation rather than a launcher stack trace.
 /// </remarks>
 public sealed class AgentBrowserUnavailableException : Exception
 {
