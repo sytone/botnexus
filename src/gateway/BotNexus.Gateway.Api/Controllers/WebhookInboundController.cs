@@ -29,7 +29,8 @@ public sealed class WebhookInboundController(
     ILogger<WebhookInboundController> logger,
     WebhookInboundBodyGuard? bodyGuard = null,
     WebhookInboundQueue? inboundQueue = null,
-    IHostApplicationLifetime? applicationLifetime = null) : ControllerBase
+    IHostApplicationLifetime? applicationLifetime = null,
+    TimeProvider? timeProvider = null) : ControllerBase
 {
     private const string SignatureHeader = "X-BotNexus-Signature-256";
     private const int SyncTimeoutSeconds = 120;
@@ -328,8 +329,8 @@ public sealed class WebhookInboundController(
         {
             try
             {
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
-                cts.CancelAfter(runTimeout);
+                using var deadline = new CancellationTokenSource(runTimeout, timeProvider ?? TimeProvider.System);
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(shutdown, deadline.Token);
                 using var lease = await ticket.WaitAsync(cts.Token);
                 await ExecuteAgentAsync(run, agentId, conversationId, message, cts.Token);
             }
@@ -375,8 +376,9 @@ public sealed class WebhookInboundController(
         if (!ticket.IsImmediate)
             await MarkQueuedAsync(run, agentId);
 
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct, ShutdownToken);
-        cts.CancelAfter(TimeSpan.FromSeconds(SyncTimeoutSeconds));
+        using var deadline = new CancellationTokenSource(
+            TimeSpan.FromSeconds(SyncTimeoutSeconds), timeProvider ?? TimeProvider.System);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct, ShutdownToken, deadline.Token);
 
         try
         {
@@ -457,8 +459,8 @@ public sealed class WebhookInboundController(
         {
             try
             {
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(shutdown);
-                cts.CancelAfter(runTimeout);
+                using var deadline = new CancellationTokenSource(runTimeout, timeProvider ?? TimeProvider.System);
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(shutdown, deadline.Token);
                 using (await ticket.WaitAsync(cts.Token))
                 {
                     await ExecuteAgentAsync(run, agentId, conversationId, message, cts.Token);
