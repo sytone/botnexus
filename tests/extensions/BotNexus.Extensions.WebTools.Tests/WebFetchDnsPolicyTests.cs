@@ -445,28 +445,89 @@ public sealed class WebFetchDnsPolicyTests
             .ShouldStartWith("GET http://origin.policy.test:8087/first HTTP/1.1\r\n");
     }
 
-    [Fact]
-    public async Task ExecuteAsync_CancellationDuringDns_CancelsResolverWithoutConnector()
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(5, 1)]
+    [InlineData(5, 4)]
+    public async Task ExecuteAsync_CancellationDuringDns_CancelsResolverWithoutConnector(
+        int rounds, int concurrency)
     {
-        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        for (var round = 0; round < rounds; round++)
+        {
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseResolvers = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var entries = 0;
+            var pending = Enumerable.Range(0, concurrency).Select(_ => AssertDnsCancellationAsync(
+                () =>
+                {
+                    if (Interlocked.Increment(ref entries) == concurrency)
+                        entered.TrySetResult(true);
+                }, releaseResolvers.Task)).ToArray();
+            try
+            {
+                // Every invocation is inside DNS before any resolver may drain. These are
+                // overlapping attempts, not a scheduler-dependent series of completed calls.
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            }
+            finally
+            {
+                releaseResolvers.TrySetResult(true);
+                await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(30));
+            }
+        }
+    }
+
+    private static async Task AssertDnsCancellationAsync(Action onEntered, Task releaseResolver)
+    {
         var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var drained = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource();
         await using var harness = new Harness(async (_, token) =>
         {
-            token.CanBeCanceled.ShouldBeTrue();
-            using var registration = token.Register(() => cancelled.TrySetResult(true));
-            entered.TrySetResult(true);
-            await Task.Delay(Timeout.Infinite, token);
-            return [];
+            var observedCancellation = false;
+            try
+            {
+                token.CanBeCanceled.ShouldBeTrue();
+                token.IsCancellationRequested.ShouldBeFalse("DNS must begin before caller cancellation");
+                using var registration = token.Register(() => cancelled.TrySetResult(true));
+                onEntered();
+                // Cancel at DNS entry without scheduling a test continuation against the HTTP
+                // timeout. Immediate propagation also distinguishes request cancellation from
+                // a later pool/connect timeout cancelling an otherwise cancellable token.
+                cancellation.Cancel();
+                token.IsCancellationRequested.ShouldBeTrue("caller cancellation must reach DNS synchronously");
+                cancelled.Task.IsCompletedSuccessfully.ShouldBeTrue("the resolver registration must fire");
+                await releaseResolver;
+                await Task.Delay(Timeout.Infinite, token);
+                return [];
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                observedCancellation = true;
+                throw;
+            }
+            finally
+            {
+                // Registration disposal and the cancelled sentinel have unwound before the
+                // negative connector assertions; a returned tool result alone is not a drain.
+                drained.TrySetResult(observedCancellation);
+            }
         });
-        using var cancellation = new CancellationTokenSource();
         var pending = harness.FetchAsync(Origin, cancellation.Token);
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // Deadlines diagnose a stuck fixture only; no elapsed-time condition drives success.
+        await Task.WhenAll(drained.Task, pending).WaitAsync(TimeSpan.FromSeconds(30));
+        var resolution = harness.ResolutionTasks.ShouldHaveSingleItem();
+        await Should.ThrowAsync<OperationCanceledException>(async () => await resolution);
+        resolution.IsCanceled.ShouldBeTrue("the actual resolver task must be terminal before checking the connector");
+        (await drained.Task).ShouldBeTrue("the resolver must unwind through actual cancellation");
+        cancelled.Task.IsCompletedSuccessfully.ShouldBeTrue("DNS must observe caller cancellation before draining");
+        await cancelled.Task;
+        var text = await pending;
 
-        cancellation.Cancel();
-        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var text = await pending.WaitAsync(TimeSpan.FromSeconds(10));
-
-        text.ShouldContain("cancel", Case.Insensitive);
+        text.ShouldBe("Request cancelled.");
+        text.ShouldNotContain("timed out", Case.Insensitive);
+        text.ShouldNotContain("HTTP error", Case.Insensitive);
+        text.ShouldNotContain("DNS", Case.Insensitive);
         text.ShouldNotContain(Body);
         harness.Resolutions.ShouldBe(["origin.policy.test"]);
         harness.Fixture.Endpoints.ShouldBeEmpty();
@@ -536,6 +597,7 @@ public sealed class WebFetchDnsPolicyTests
     private sealed class Harness : IAsyncDisposable
     {
         public ConcurrentQueue<string> Resolutions { get; } = new();
+        public ConcurrentQueue<Task<IPAddress[]>> ResolutionTasks { get; } = new();
         public LoopbackFixture Fixture { get; } = new();
         public DelegatingHandler Transport { get; }
         private WebFetchTool Tool { get; }
@@ -558,7 +620,9 @@ public sealed class WebFetchDnsPolicyTests
             Func<string, CancellationToken, Task<IPAddress[]>> resolve = (host, token) =>
             {
                 Resolutions.Enqueue(host);
-                return resolver(host, token);
+                var pending = resolver(host, token);
+                ResolutionTasks.Enqueue(pending);
+                return pending;
             };
             Func<IPEndPoint, CancellationToken, ValueTask<Stream>> connect = Fixture.ConnectAsync;
             var constructor = type.GetConstructor(
