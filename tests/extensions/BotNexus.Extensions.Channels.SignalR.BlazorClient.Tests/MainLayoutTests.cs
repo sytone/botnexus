@@ -624,8 +624,10 @@ public sealed class MainLayoutTests : IDisposable
             Assert.EndsWith("/agent/a-1/conversation/c-2", nav.Uri));
     }
 
-    [Fact]
-    public void In_app_selection_url_encodes_agent_and_conversation_ids()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task In_app_selection_url_encodes_agent_and_conversation_ids(bool deferRefresh)
     {
         const string agentId = "agent/x";
         const string conversationId = "conv/1 with space";
@@ -637,12 +639,49 @@ public sealed class MainLayoutTests : IDisposable
         var nav = _ctx.Services.GetRequiredService<NavigationManager>();
         nav.NavigateTo("http://localhost/chat");
 
+        var refreshStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRefresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (deferRefresh)
+        {
+            _interaction.RefreshConversationsAsync(agentId).Returns(_ =>
+            {
+                refreshStarted.TrySetResult();
+                return releaseRefresh.Task;
+            });
+        }
+
         var cut = RenderLayout();
-        cut.Find(".agent-dropdown-select").Change(agentId);
+        // Keep lookup and dispatch on the renderer, and retain the event handler's task.
+        // InvokeAsync(Action) with synchronous Change would discard that task.
+        var selection = cut.InvokeAsync(() => cut.Find(".agent-dropdown-select")
+            .TriggerEventAsync("onchange", new ChangeEventArgs { Value = agentId }));
+        if (deferRefresh)
+        {
+            try
+            {
+                await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                // Event completion must include the refresh awaited by OnAgentSelected.
+                selection.IsCompleted.ShouldBeFalse();
+                nav.Uri.ShouldBe("http://localhost/chat");
+            }
+            finally
+            {
+                releaseRefresh.TrySetResult();
+            }
+        }
+        await selection;
 
         var expectedSuffix = $"/agent/{Uri.EscapeDataString(agentId)}";
-        cut.WaitForAssertion(() =>
-            Assert.EndsWith(expectedSuffix, nav.Uri));
+        Assert.EndsWith(expectedSuffix, nav.Uri);
+
+        var expectedConversationSuffix = $"{expectedSuffix}/conversation/{Uri.EscapeDataString(conversationId)}";
+        await cut.InvokeAsync(() =>
+        {
+            var conversation = cut.Find(".conversation-list-item-btn");
+            conversation.GetAttribute("href").ShouldBe(expectedConversationSuffix.TrimStart('/'));
+            return conversation.TriggerEventAsync("onclick", new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+        });
+        Assert.EndsWith(expectedConversationSuffix, nav.Uri);
     }
 
     [Fact]
