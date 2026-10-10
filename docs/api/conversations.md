@@ -215,7 +215,7 @@ configured), or `404 Not Found`.
 ### `PUT /api/conversations/{conversationId}/override`
 
 Sets per-conversation model / thinking / context overrides. Body fields: `model`,
-`thinking` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`), `contextWindow`
+`thinking` (see the canonical [ThinkingLevel values](../internals/07-thinking-levels.md#thinkinglevel-enum)), `contextWindow`
 (positive token count). Each null field clears that override. Overrides are
 validated against the resolved model's capabilities; an unsupported value returns
 `400 Bad Request`. Returns `200 OK` with the updated conversation, or `404 Not Found`.
