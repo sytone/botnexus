@@ -542,7 +542,7 @@ is how the portal could display one value while the gateway ran another.
 ### Agents: agent definitions and `agents.defaults`
 
 The `agents` section is a dictionary keyed by **agent id**. One reserved key, `defaults`, holds the
-world-level defaults that are field-merged into every agent; every other key defines a named agent.
+declared world-level defaults; every other key defines a named agent. Current `PlatformConfigAgentSource` uses each agent's configuration without merging that defaults block (#3515). Declaring a default does not prove it reaches the runtime descriptor; see the [heartbeat inheritance limitation](cron-and-scheduling.md#heartbeat-ownership-and-configuration).
 
 ```bash
 botnexus config set agents.defaults.toolIds '["read","write","shell"]'
@@ -556,8 +556,7 @@ botnexus config set agents.assistant.enabled true
 
 #### `agents.defaults` properties
 
-Backed by `AgentDefaultsConfig`. Only these five keys exist - a default that is not listed here is not
-merged, because there is no property to merge it into.
+Backed by `AgentDefaultsConfig`. These are the declared keys, not a guarantee of effective runtime inheritance. The source limitation described above applies.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|

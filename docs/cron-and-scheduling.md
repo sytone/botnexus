@@ -1615,8 +1615,7 @@ Configure an LLM review of recent notes every night. The [memory-dreaming persis
 ```
 
 **Behavior:**
-- **2:00 AM** (Pacific, daily): reads the agent's last 14 days of daily notes and writes distilled
-  insights back to `MEMORY.md`
+- **2:00 AM** (Pacific, daily): reads recent daily notes and dispatches a consolidation prompt. The persistence limitation above applies; dispatch does not verify an update to workspace `MEMORY.md`.
 - Skips execution if no daily notes exist in the lookback window
 - Old run records are purged automatically by the cron run retention service - no cleanup job needed
 
