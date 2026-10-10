@@ -23,6 +23,7 @@ namespace BotNexus.Cron.Tests;
 /// A single string is enough to redirect production state, and the compiler cannot see it. These
 /// tests assert the resolved path so a future assembly move fails here as well as at build time.
 /// </remarks>
+[Collection(BotNexusHomeCollection.Name)]
 public sealed class MemoryDreamingWorkspacePathTests
 {
     private static ServiceProvider BuildProvider(Action<IServiceCollection> configureHome)
