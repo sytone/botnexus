@@ -12,13 +12,22 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Cli\BotNexus.Cli.csproj" />
+    <ProjectReference Include="Fixtures\ControlledReadinessChild\ControlledReadinessChild.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Remove="Fixtures\ControlledReadinessChild\**\*.cs" />
     <Content Include="Fixtures\OutOfTreeExtensionBuild\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+  <!-- Build, do not execute, the fixture and deploy its portable dotnet-host payload. -->
+  <Target Name="CopyControlledReadinessChild" AfterTargets="Build" Condition="'$(SkipTests)' != 'true'">
+    <ItemGroup>
+      <ControlledChildPayload Include="$(MSBuildProjectDirectory)/Fixtures/ControlledReadinessChild/bin/$(Configuration)/$(TargetFramework)/ControlledReadinessChild.dll;$(MSBuildProjectDirectory)/Fixtures/ControlledReadinessChild/bin/$(Configuration)/$(TargetFramework)/ControlledReadinessChild.deps.json;$(MSBuildProjectDirectory)/Fixtures/ControlledReadinessChild/bin/$(Configuration)/$(TargetFramework)/ControlledReadinessChild.runtimeconfig.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ControlledChildPayload)" DestinationFolder="$(TargetDir)ControlledReadinessChild" SkipUnchangedFiles="true" />
+  </Target>
 </Project>
