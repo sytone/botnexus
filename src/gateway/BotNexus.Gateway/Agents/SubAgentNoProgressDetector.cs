@@ -28,7 +28,7 @@ internal sealed class SubAgentNoProgressDetector(int turnWindow, int failureThre
     {
         if (observation.Kind != AgentActivityKind.TurnCompleted)
         {
-            if (observation.Kind is not (AgentActivityKind.ToolSucceeded or AgentActivityKind.ToolFailed))
+            if (observation.Kind is not (AgentActivityKind.ToolSucceeded or AgentActivityKind.ToolFailed or AgentActivityKind.ToolProgressUnknown))
                 return null;
             if (_pending.Count < MaximumToolsPerTurn) _pending.Add(observation);
             else _overflow = true;
@@ -45,7 +45,9 @@ internal sealed class SubAgentNoProgressDetector(int turnWindow, int failureThre
             return null;
         }
 
-        var newEvidence = false;
+        // A success receipt may hide a durable mutation. Without complete progress evidence,
+        // conservatively reset after the whole batch rather than infer unchanged underlying work.
+        var newEvidence = _pending.Any(value => value.Kind == AgentActivityKind.ToolProgressUnknown);
         var hasSuccess = false;
         foreach (var success in _pending.Where(value => value.Kind == AgentActivityKind.ToolSucceeded))
         {

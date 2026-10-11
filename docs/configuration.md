@@ -1053,9 +1053,11 @@ result; split investigation, implementation, and validation into separate sub-ag
 
 To enable no-progress detection for subsequent spawns, run
 `botnexus config set gateway.subAgents.noProgressEnabled true`. Set it to `false` to disable it.
-The detector compares fixed-size digests of normalized tool names and result text, not invocation IDs,
-arguments, or model narration. New successful evidence resets the window; identical successful evidence
-does not. Repeated prose, idle turns, and changing failures alone do not establish no progress. Decisions
+The detector compares fixed-size digests of normalized tool names and result evidence, including
+non-text blocks, not invocation IDs, arguments, or model narration. New successful read evidence resets
+the window; identical read evidence does not. Successful write, edit, command, and unknown-tool receipts
+cannot prove unchanged underlying work, so they conservatively reset the window every time—even when
+their confirmation text is identical. Repeated prose, idle turns, and changing failures alone do not establish no progress. Decisions
 wait until all tool results in a turn have arrived, so a later successful result can reset a failing batch.
 Oversized tool batches are not classified from truncated evidence.
 

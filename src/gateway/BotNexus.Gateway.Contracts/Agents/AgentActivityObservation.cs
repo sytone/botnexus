@@ -20,5 +20,10 @@ public enum AgentActivityKind
     /// <summary>A completed failing tool; its digest identifies normalized failing activity.</summary>
     ToolFailed,
     /// <summary>All completed tool observations for this turn have been delivered.</summary>
-    TurnCompleted
+    TurnCompleted,
+    /// <summary>
+    /// A successful tool whose result cannot prove unchanged external progress. Every observation
+    /// resets the no-progress window, even when its identity repeats; it is not deduplicated evidence.
+    /// </summary>
+    ToolProgressUnknown
 }

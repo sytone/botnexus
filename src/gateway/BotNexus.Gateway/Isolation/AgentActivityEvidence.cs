@@ -10,6 +10,12 @@ internal static class AgentActivityEvidence
 {
     internal static AgentActivityObservation Project(ToolExecutionEndEvent completed)
     {
+        // Only the known read result represents observed source evidence. Write/edit/exec and
+        // extension success receipts can remain identical while the underlying work progresses.
+        // Their success is authoritative, but its progress is unknown: never deduplicate it.
+        if (!completed.IsError && !string.Equals(completed.ToolName.Trim(), "read", StringComparison.OrdinalIgnoreCase))
+            return new(AgentActivityKind.ToolProgressUnknown, 0, 0);
+
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         AppendNormalized(hash, completed.ToolName, foldCase: true);
         // A separator outside UTF-16 code units prevents tool/result concatenation ambiguity.
