@@ -1,0 +1,323 @@
+using System.Reflection;
+using BotNexus.Cron;
+using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Extensions;
+using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Commands;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Moq;
+
+namespace BotNexus.Gateway.Tests.Commands;
+
+public sealed class LoopCommandTests
+{
+    [Theory]
+    [InlineData("/loop check the queue", "*/5 * * * *", "check the queue")]
+    [InlineData("/loop 15m check the queue", "*/15 * * * *", "check the queue")]
+    [InlineData("/loop 2h check the queue", "0 */2 * * *", "check the queue")]
+    [InlineData("/LOOP 24h check the queue", "0 0 * * *", "check the queue")]
+    [InlineData("/loop 60m check the queue", "0 */1 * * *", "check the queue")]
+    [InlineData("/loop 3m check  the\nqueue", "*/3 * * * *", "check  the\nqueue")]
+    public async Task Dispatch_Create_PersistsEnabledAgentPromptInCurrentHumanConversation(string input, string schedule, string prompt)
+    {
+        await using var fixture = new Fixture();
+        var result = await fixture.Execute(input);
+        result.IsError.ShouldBeFalse();
+        var job = (await fixture.Store.ListAsync()).ShouldHaveSingleItem();
+        job.Schedule.ShouldBe(schedule);
+        job.Message.ShouldBe(prompt);
+        job.Enabled.ShouldBeTrue();
+        job.System.ShouldBeFalse();
+        job.ActionType.ShouldBe("agent-prompt");
+        job.AgentId.ShouldBe(Fixture.Agent);
+        job.CreatedBy.ShouldBe(Fixture.Agent.Value);
+        job.ConversationId.ShouldBe(Fixture.ConversationKey);
+        result.Body.ShouldContain(job.Name);
+        // Read the SQLite row again: identification must survive serialization/restart.
+        (await fixture.Execute("/loop status")).Body.ShouldContain(job.Name);
+    }
+
+    [Theory]
+    [InlineData("30s")]
+    [InlineData("0m")]
+    [InlineData("7m")]
+    [InlineData("90m")]
+    [InlineData("5h")]
+    [InlineData("1.5h")]
+    [InlineData("-2m")]
+    [InlineData("15minutes")]
+    [InlineData("every")]
+    [InlineData("PT5M")]
+    [InlineData("120m")]
+    [InlineData("2147483647h")]
+    [InlineData("5")]
+    [InlineData(".5h")]
+    [InlineData("+2m")]
+    public async Task Dispatch_InvalidExplicitInterval_RefusesAndNamesForms(string token)
+    {
+        await using var fixture = new Fixture();
+        var result = await fixture.Execute($"/loop {token} check queue");
+        result.IsError.ShouldBeTrue();
+        result.Body.ShouldContain("m");
+        result.Body.ShouldContain("h");
+        (await fixture.Store.ListAsync()).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("/loop")]
+    [InlineData("/loop 5m")]
+    [InlineData("/loop status extra")]
+    [InlineData("/loop stop one two")]
+    public async Task Dispatch_MissingPromptOrInvalidManagementArguments_Refuses(string input)
+    {
+        await using var fixture = new Fixture();
+        (await fixture.Execute(input)).IsError.ShouldBeTrue();
+        (await fixture.Store.ListAsync()).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("headless")]
+    [InlineData("missing-session")]
+    [InlineData("missing-conversation")]
+    [InlineData("foreign-conversation")]
+    [InlineData("foreign-session")]
+    [InlineData("archived")]
+    [InlineData("stale-session")]
+    [InlineData("ambiguous-fallback")]
+    [InlineData("foreign-unbound-session")]
+    [InlineData("wrong-id-unbound-session")]
+    public async Task Dispatch_UnresolvedOrMismatchedContext_RefusesWithoutCreating(string scenario)
+    {
+        await using var fixture = new Fixture();
+        fixture.BreakContext(scenario);
+        var result = await fixture.Execute("/loop check queue", headless: scenario == "headless");
+        result.IsError.ShouldBeTrue();
+        result.Body.ToLowerInvariant().ShouldContain("conversation");
+        (await fixture.Store.ListAsync()).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Dispatch_DurableActiveSessionFallback_BindsCurrentConversation()
+    {
+        await using var fixture = new Fixture();
+        fixture.Session = null;
+        (await fixture.Execute("/loop check queue")).IsError.ShouldBeFalse();
+        (await fixture.Store.ListAsync()).ShouldHaveSingleItem().ConversationId.ShouldBe(Fixture.ConversationKey);
+    }
+
+    [Fact]
+    public async Task Dispatch_SameAgentUnboundSession_UsesDurableFallback()
+    {
+        await using var fixture = new Fixture();
+        fixture.Session = new GatewaySession { SessionId = SessionId.From("current-session"), AgentId = Fixture.Agent };
+        (await fixture.Execute("/loop check queue")).IsError.ShouldBeFalse();
+        (await fixture.Store.ListAsync()).ShouldHaveSingleItem().ConversationId.ShouldBe(Fixture.ConversationKey);
+    }
+
+    [Theory]
+    [InlineData("prefix /loop stop")]
+    [InlineData("/loop\u00a0stop")]
+    [InlineData("/loop\u000bstop")]
+    public async Task Dispatch_RegistryRecognizedStop_NeverCreatesAnotherLoop(string input)
+    {
+        await using var fixture = new Fixture();
+        (await fixture.Execute("/loop check queue")).IsError.ShouldBeFalse();
+        (await fixture.Execute(input)).IsError.ShouldBeFalse();
+        (await fixture.Store.ListAsync()).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Dispatch_PromptWhitespace_IsPreserved()
+    {
+        await using var fixture = new Fixture();
+        (await fixture.Execute("/loop 5m check  the\nqueue")).IsError.ShouldBeFalse();
+        (await fixture.Store.ListAsync()).ShouldHaveSingleItem().Message.ShouldBe("check  the\nqueue");
+    }
+
+    [Theory]
+    [InlineData(600, 3600, "*/10 * * * *")]
+    [InlineData(60, 120, "*/2 * * * *")]
+    [InlineData(-1, -1, "*/5 * * * *")]
+    public async Task Dispatch_DefaultInterval_ConsumesExistingClamp(int floor, int ceiling, string schedule)
+    {
+        await using var fixture = new Fixture(new CronOptions { SelfPacingFloorSeconds = floor, SelfPacingCeilingSeconds = ceiling });
+        var result = await fixture.Execute("/loop check queue");
+        result.IsError.ShouldBeFalse();
+        result.Body.ShouldContain("requested 300s");
+        result.Body.ShouldContain("effective");
+        result.Body.ShouldContain("clamp");
+        (await fixture.Store.ListAsync()).ShouldHaveSingleItem().Schedule.ShouldBe(schedule);
+    }
+
+    [Fact]
+    public async Task Dispatch_UnrepresentableConfiguredDefault_RefusesRatherThanApproximates()
+    {
+        await using var fixture = new Fixture(new CronOptions { SelfPacingFloorSeconds = 301 });
+        (await fixture.Execute("/loop check queue")).IsError.ShouldBeTrue();
+        (await fixture.Store.ListAsync()).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Dispatch_StatusAndStop_FilterExactConversationAgentAndLoopMarker()
+    {
+        await using var fixture = new Fixture();
+        (await fixture.Execute("/loop check queue")).IsError.ShouldBeFalse();
+        var own = (await fixture.Store.ListAsync()).ShouldHaveSingleItem();
+        var others = new[]
+        {
+            own with { Id = JobId.From("other-conversation"), Name = "other-conversation", ConversationId = ConversationId.From("elsewhere") },
+            own with { Id = JobId.From("foreign-agent"), Name = "foreign-agent", AgentId = AgentId.From("foreign") },
+            own with { Id = JobId.From("foreign-creator"), Name = "foreign-creator", CreatedBy = "foreign" },
+            own with { Id = JobId.From("ordinary-cron"), Name = "ordinary-cron", Metadata = null },
+            own with { Id = JobId.From("command-cron"), Name = "command-cron", ActionType = "command" },
+            own with { Id = JobId.From("system-cron"), Name = "system-cron", System = true }
+        };
+        foreach (var job in others) await fixture.Store.CreateAsync(job);
+        var status = await fixture.Execute("/loop status");
+        status.IsError.ShouldBeFalse();
+        status.Body.ShouldContain(own.Name);
+        foreach (var job in others)
+        {
+            status.Body.ShouldNotContain(job.Name);
+            (await fixture.Execute($"/loop stop {job.Name}")).IsError.ShouldBeTrue();
+            (await fixture.Store.GetAsync(job.Id)).ShouldNotBeNull();
+        }
+        (await fixture.Execute("/loop stop")).IsError.ShouldBeFalse();
+        (await fixture.Store.GetAsync(own.Id)).ShouldBeNull();
+        fixture.Conversations.Verify(store => store.ArchiveAsync(It.IsAny<ConversationId>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Dispatch_Stop_ZeroOneManyAndNamedSelectionAreUnambiguous()
+    {
+        await using var fixture = new Fixture();
+        (await fixture.Execute("/loop status")).Body.ShouldContain("No loops");
+        (await fixture.Execute("/loop stop")).IsError.ShouldBeTrue();
+        (await fixture.Execute("/loop check one")).IsError.ShouldBeFalse();
+        (await fixture.Execute("/loop check two")).IsError.ShouldBeFalse();
+        var jobs = await fixture.Store.ListAsync();
+        (await fixture.Execute("/loop stop")).IsError.ShouldBeTrue();
+        (await fixture.Store.ListAsync()).Count.ShouldBe(2);
+        (await fixture.Execute($"/loop stop {jobs[0].Name}")).IsError.ShouldBeFalse();
+        (await fixture.Store.GetAsync(jobs[0].Id)).ShouldBeNull();
+        (await fixture.Store.GetAsync(jobs[1].Id)).ShouldNotBeNull();
+        (await fixture.Execute("/loop stop")).IsError.ShouldBeFalse();
+        (await fixture.Store.ListAsync()).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Dispatch_Stop_CancelsActiveRunAndReclaimsOnlyItsRunSessions()
+    {
+        var action = new BlockingAction();
+        await using var fixture = new Fixture(action: action);
+        (await fixture.Execute("/loop check queue")).IsError.ShouldBeFalse();
+        var job = (await fixture.Store.ListAsync()).ShouldHaveSingleItem();
+        var ownedSession = SessionId.From($"cron:{job.Id.Value}:run-one");
+        fixture.Sessions.Setup(store => store.ListAsync(Fixture.Agent, It.IsAny<CancellationToken>())).ReturnsAsync(
+        [new GatewaySession { SessionId = ownedSession, AgentId = Fixture.Agent },
+         new GatewaySession { SessionId = SessionId.From("human-session"), AgentId = Fixture.Agent },
+         new GatewaySession { SessionId = SessionId.From("cron:other-job:run-one"), AgentId = Fixture.Agent }]);
+        var runTask = fixture.Scheduler.RunNowAsync(job.Id);
+        await action.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        (await fixture.Execute($"/loop stop {job.Name}")).IsError.ShouldBeFalse();
+        action.Token.IsCancellationRequested.ShouldBeTrue();
+        (await runTask).Status.ShouldBe(CronRunStatus.Aborted);
+        fixture.Sessions.Verify(store => store.DeleteAsync(ownedSession, It.IsAny<CancellationToken>()), Times.Once);
+        fixture.Sessions.Verify(store => store.DeleteAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Once);
+        fixture.Conversations.Verify(store => store.ArchiveAsync(It.IsAny<ConversationId>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        (await fixture.Store.GetAsync(job.Id)).ShouldBeNull();
+    }
+
+    private sealed class BlockingAction : ICronAction
+    {
+        public string ActionType => "agent-prompt";
+        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal CancellationToken Token { get; private set; }
+        public async Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
+        {
+            Token = cancellationToken;
+            Started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class Fixture : IAsyncDisposable
+    {
+        internal static readonly AgentId Agent = AgentId.From("loop-agent");
+        internal static readonly ConversationId ConversationKey = ConversationId.From("human-conversation");
+        private static readonly SessionId SessionKey = SessionId.From("current-session");
+        private readonly string directory = Path.Combine(Path.GetTempPath(), "loop-command-tests", Guid.NewGuid().ToString("N"));
+        private readonly ServiceProvider services;
+        private readonly CommandRegistry registry;
+        internal readonly Mock<IConversationStore> Conversations = new();
+        internal readonly Mock<ISessionStore> Sessions = new();
+        internal CronScheduler Scheduler => services.GetRequiredService<CronScheduler>();
+        internal GatewaySession? Session = new() { SessionId = SessionKey, AgentId = Agent, ConversationId = ConversationKey };
+        internal Conversation? Conversation = new() { ConversationId = ConversationKey, AgentId = Agent, ActiveSessionId = SessionKey, Kind = ConversationKind.HumanAgent, IsDefault = true };
+        internal SqliteCronStore Store { get; }
+
+        internal Fixture(CronOptions? options = null, ICronAction? action = null)
+        {
+            Store = new SqliteCronStore(Path.Combine(directory, "cron.sqlite"));
+            var sessions = Sessions;
+            sessions.Setup(store => store.GetAsync(SessionKey, It.IsAny<CancellationToken>())).ReturnsAsync(() => Session);
+            sessions.Setup(store => store.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+            Conversations.Setup(store => store.GetAsync(ConversationKey, It.IsAny<CancellationToken>())).ReturnsAsync(() => Conversation);
+            Conversations.Setup(store => store.ListAsync(Agent, It.IsAny<CancellationToken>())).ReturnsAsync(() => Conversation is { } value ? new[] { value } : []);
+            var cronOptions = new Mock<IOptionsMonitor<CronOptions>>();
+            cronOptions.SetupGet(value => value.CurrentValue).Returns(options ?? new CronOptions());
+            var collection = new ServiceCollection();
+            collection.AddSingleton(Conversations.Object);
+            collection.AddSingleton(sessions.Object);
+            collection.AddSingleton<ICronStore>(Store);
+            collection.AddSingleton(cronOptions.Object);
+            collection.AddSingleton(provider => new CronScheduler(Store, action is null ? [] : [action], provider.GetRequiredService<IServiceScopeFactory>(), cronOptions.Object, NullLogger<CronScheduler>.Instance));
+            services = collection.BuildServiceProvider();
+            var type = typeof(CommandRegistry).Assembly.GetType("BotNexus.Gateway.Commands.BuiltInCommandContributor") ?? throw new InvalidOperationException("Missing built-in contributor");
+            var compaction = new Mock<IOptionsMonitor<CompactionOptions>>();
+            compaction.SetupGet(value => value.CurrentValue).Returns(new CompactionOptions());
+            var contributor = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null,
+                [new Mock<IAgentRegistry>().Object, new Mock<IAgentSupervisor>().Object, sessions.Object, compaction.Object, services, null], null) as ICommandContributor
+                ?? throw new InvalidOperationException("Cannot construct built-in contributor");
+            registry = new CommandRegistry([contributor], NullLogger<CommandRegistry>.Instance);
+        }
+
+        internal Task<CommandResult> Execute(string input, bool headless = false) => registry.ExecuteAsync(input, new CommandExecutionContext
+        {
+            RawInput = input, AgentId = Agent.Value, SessionId = headless ? null : SessionKey.Value, HomeDirectory = directory
+        });
+
+        internal void BreakContext(string scenario)
+        {
+            switch (scenario)
+            {
+                case "ambiguous-fallback":
+                    Session = null;
+                    Conversations.Setup(store => store.ListAsync(Agent, It.IsAny<CancellationToken>())).ReturnsAsync(
+                    [new Conversation { ConversationId = ConversationKey, AgentId = Agent, ActiveSessionId = SessionKey },
+                     new Conversation { ConversationId = ConversationId.From("duplicate"), AgentId = Agent, ActiveSessionId = SessionKey }]);
+                    break;
+                case "foreign-unbound-session": Session = new GatewaySession { SessionId = SessionKey, AgentId = AgentId.From("foreign") }; break;
+                case "wrong-id-unbound-session": Session = new GatewaySession { SessionId = SessionId.From("wrong-session"), AgentId = Agent }; break;
+                case "missing-session": Session = null; Conversation = null; break;
+                case "missing-conversation": Conversation = null; break;
+                case "foreign-conversation": if (Conversation is { } foreign) Conversation = foreign with { AgentId = AgentId.From("foreign") }; break;
+                case "foreign-session": Session = new GatewaySession { SessionId = SessionKey, AgentId = AgentId.From("foreign"), ConversationId = ConversationKey }; break;
+                case "archived": if (Conversation is { } archived) archived.Status = ConversationStatus.Archived; break;
+                case "stale-session": if (Conversation is { } stale) stale.ActiveSessionId = SessionId.From("newer-session"); break;
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await services.DisposeAsync();
+            SqlitePoolCleanup.ClearPoolFor(Path.Combine(directory, "cron.sqlite"));
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+}
