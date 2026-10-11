@@ -233,6 +233,166 @@ public sealed class LogDiagnosticsRingBufferTests
 
         buffer.GetPatterns(TimeSpan.FromHours(1)).Single().Count.ShouldBe(writerCount * recordsPerWriter);
     }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Record_OverlappingClockReads_PreservesCaptureOrderAndExpiry(bool crossExpiryBoundary)
+    {
+        var firstTimestamp = DateTimeOffset.Parse("2026-01-01T00:00:00Z");
+        var secondTimestamp = firstTimestamp + TimeSpan.FromDays(6);
+        using var clock = new BlockingCaptureTimeProvider(firstTimestamp, secondTimestamp);
+        var buffer = new LogDiagnosticsRingBuffer(timeProvider: clock);
+        // Observe ownership on the clock-reading thread, not an elapsed-time guess that a
+        // second writer is blocked. This also keeps the test safe after capture moves inside
+        // the lock: release writer one before waiting for writer two in that case.
+        var ringGateField = typeof(LogDiagnosticsRingBuffer).GetField("_gate",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        ringGateField.ShouldNotBeNull();
+        clock.RingGate = ringGateField.GetValue(buffer)
+            ?? throw new InvalidOperationException("The ring synchronization gate is missing.");
+
+        void Record(string agentId) => buffer.Record(LogLevel.Warning, "scanner", default,
+            "Finding {Id}", $"sample {agentId}", new Dictionary<string, string?> { ["AgentId"] = agentId });
+
+        var firstWriter = Task.Factory.StartNew(() => Record("first-agent"), CancellationToken.None,
+            TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Task secondWriter = Task.CompletedTask;
+        try
+        {
+            var firstReadOwnsRingGate = await clock.FirstReadEntered.Task.WaitAsync(BlockingCaptureTimeProvider.Deadline);
+            secondWriter = Task.Factory.StartNew(() => Record("second-agent"), CancellationToken.None,
+                TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            if (firstReadOwnsRingGate)
+            {
+                clock.ReleaseFirstRead();
+                await Task.WhenAll(firstWriter, secondWriter).WaitAsync(BlockingCaptureTimeProvider.Deadline);
+            }
+            else
+            {
+                // Original source: force the newer capture to finish insertion before the
+                // earlier capture returns its timestamp. No sleep or scheduler race involved.
+                await clock.SecondReadEntered.Task.WaitAsync(BlockingCaptureTimeProvider.Deadline);
+                await secondWriter.WaitAsync(BlockingCaptureTimeProvider.Deadline);
+                clock.ReleaseFirstRead();
+                await firstWriter.WaitAsync(BlockingCaptureTimeProvider.Deadline);
+            }
+        }
+        finally
+        {
+            clock.ReleaseFirstRead();
+            await Task.WhenAll(firstWriter, secondWriter).WaitAsync(BlockingCaptureTimeProvider.Deadline);
+        }
+
+        if (crossExpiryBoundary)
+        {
+            // Refresh LastSeen before expiry so a regressed LastSeen cannot simply remove the
+            // entire pattern and conceal the out-of-order occurrence / FirstSeen prune bypass.
+            Record("latest-agent");
+            clock.Now = firstTimestamp + TimeSpan.FromDays(8);
+            var retained = buffer.GetPatterns(LogDiagnosticsRingBuffer.Retention).Single();
+            retained.RecentOccurrences.Select(occurrence => occurrence.Properties["AgentId"])
+                .ShouldBe(["latest-agent", "second-agent"]);
+            retained.RecentOccurrences.ShouldAllBe(occurrence =>
+                occurrence.Timestamp >= clock.Now - LogDiagnosticsRingBuffer.Retention);
+            retained.Count.ShouldBe(2);
+            retained.DistinctAgentCount.ShouldBe(2);
+            retained.FirstSeen.ShouldBe(secondTimestamp);
+            retained.LastSeen.ShouldBe(secondTimestamp);
+            retained.SampleMessage.ShouldBe("sample second-agent");
+            buffer.GetSnapshots(LogDiagnosticsRingBuffer.Retention).Single().Count.ShouldBe(2);
+        }
+        else
+        {
+            var retained = buffer.GetPatterns(LogDiagnosticsRingBuffer.Retention).Single();
+            retained.Count.ShouldBe(2);
+            retained.FirstSeen.ShouldBe(firstTimestamp);
+            retained.LastSeen.ShouldBe(secondTimestamp);
+            retained.RecentOccurrences.Select(occurrence => occurrence.Timestamp)
+                .ShouldBe([secondTimestamp, firstTimestamp]);
+            retained.RecentOccurrences.Select(occurrence => occurrence.Properties["AgentId"])
+                .ShouldBe(["second-agent", "first-agent"]);
+            var snapshot = buffer.GetSnapshots(LogDiagnosticsRingBuffer.Retention).Single();
+            snapshot.FirstSeen.ShouldBe(firstTimestamp);
+            snapshot.LastSeen.ShouldBe(secondTimestamp);
+            snapshot.RecentOccurrences.Select(occurrence => occurrence.Timestamp)
+                .ShouldBe([secondTimestamp, firstTimestamp]);
+        }
+    }
+
+    private sealed class BlockingCaptureTimeProvider : TimeProvider, IDisposable
+    {
+        internal static readonly TimeSpan Deadline = TimeSpan.FromSeconds(15);
+        private readonly ManualResetEventSlim _releaseFirstRead = new(false);
+        private readonly DateTimeOffset _firstTimestamp;
+        private readonly DateTimeOffset _secondTimestamp;
+        private int _readCount;
+
+        internal BlockingCaptureTimeProvider(DateTimeOffset firstTimestamp, DateTimeOffset secondTimestamp)
+        {
+            _firstTimestamp = firstTimestamp;
+            _secondTimestamp = secondTimestamp;
+            Now = secondTimestamp;
+        }
+
+        internal object? RingGate { get; set; }
+        internal DateTimeOffset Now { get; set; }
+        internal TaskCompletionSource<bool> FirstReadEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource<bool> SecondReadEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            var readNumber = Interlocked.Increment(ref _readCount);
+            if (readNumber == 1)
+            {
+                var gate = RingGate ?? throw new InvalidOperationException("Attach the ring gate before recording.");
+                FirstReadEntered.TrySetResult(Monitor.IsEntered(gate));
+                if (!_releaseFirstRead.Wait(Deadline))
+                    throw new TimeoutException("The first capture clock read was not released.");
+                return _firstTimestamp;
+            }
+
+            if (readNumber == 2)
+            {
+                SecondReadEntered.TrySetResult(true);
+                return _secondTimestamp;
+            }
+
+            return Now;
+        }
+
+        internal void ReleaseFirstRead() => _releaseFirstRead.Set();
+        public void Dispose() => _releaseFirstRead.Dispose();
+    }
+
+    [Fact]
+    public void Retention_SevenDays_PhysicallyExpiresIdlePatterns()
+    {
+        var clock = new BotNexus.Testing.ManualTimeProvider(DateTimeOffset.Parse("2026-01-01T00:00:00Z"));
+        var buffer = new LogDiagnosticsRingBuffer(timeProvider: clock);
+        buffer.Record(LogLevel.Warning, "Old {Value}", "old secret sample");
+        clock.Advance(TimeSpan.FromDays(7) + TimeSpan.FromTicks(1));
+        buffer.PatternCount.ShouldBe(0);
+        buffer.GetPatterns(TimeSpan.FromDays(30)).ShouldBeEmpty();
+        buffer.Record(LogLevel.Warning, "New {Value}", "new sample");
+        buffer.PatternCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Retention_ActivePattern_PrunesExpiredEvidenceAndOrigins()
+    {
+        var clock = new BotNexus.Testing.ManualTimeProvider(DateTimeOffset.Parse("2026-01-01T00:00:00Z"));
+        var buffer = new LogDiagnosticsRingBuffer(timeProvider: clock);
+        buffer.Record(LogLevel.Warning, "scanner", default, "Finding {Id}", "old sample", new Dictionary<string, string?> { ["AgentId"] = "old-agent" });
+        clock.Advance(TimeSpan.FromDays(6));
+        buffer.Record(LogLevel.Warning, "scanner", default, "Finding {Id}", "new sample", new Dictionary<string, string?> { ["AgentId"] = "new-agent" });
+        clock.Advance(TimeSpan.FromDays(2));
+        var pattern = buffer.GetPatterns(TimeSpan.FromDays(7)).Single();
+        pattern.RecentOccurrences.Single().Properties["AgentId"].ShouldBe("new-agent");
+        pattern.SampleMessage.ShouldBe("new sample");
+        pattern.DistinctAgentCount.ShouldBe(1);
+        pattern.FirstSeen.ShouldBe(clock.GetUtcNow() - TimeSpan.FromDays(2));
+    }
+
     [Fact]
     public void Clear_RemovesAllPatterns()
     {
