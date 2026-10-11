@@ -251,6 +251,9 @@ public sealed class CronTickFanOutIsolationTests
         public Task<IReadOnlyList<CronJobCostRollup>> GetJobCostRollupsAsync(IReadOnlyCollection<JobId> jobIds, int windowDays = 7, CancellationToken ct = default)
             => inner.GetJobCostRollupsAsync(jobIds, windowDays, ct);
 
+        public Task<CronRun?> GetRunAsync(RunId runId, CancellationToken ct = default)
+            => inner.GetRunAsync(runId, ct);
+
         public Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default)
             => inner.GetRunHistoryAsync(jobId, limit, ct);
 

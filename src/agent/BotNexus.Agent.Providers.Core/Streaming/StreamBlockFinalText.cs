@@ -31,7 +31,7 @@ public static class StreamBlockFinalText
     /// frame carries none.
     /// </summary>
     /// <param name="contentBlockStopFrame">The parsed <c>content_block_stop</c> JSON frame.</param>
-    public static string? TryRead(JsonElement contentBlockStopFrame)
+    public static string? TryRead(this JsonElement contentBlockStopFrame)
     {
         if (contentBlockStopFrame.ValueKind != JsonValueKind.Object)
             return null;

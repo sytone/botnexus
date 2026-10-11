@@ -107,7 +107,7 @@ public static class SqliteStoreIdentityGuard
     /// <exception cref="SqliteStoreIdentityMismatchException">
     /// The store belongs to a different world, or holds a different kind than requested.
     /// </exception>
-    public static void Verify(SqliteConnection connection, string? storeKind = null)
+    public static void Verify(this SqliteConnection connection, string? storeKind = null)
     {
         ArgumentNullException.ThrowIfNull(connection);
 
@@ -249,5 +249,5 @@ public static class SqliteStoreIdentityGuard
         return command.ExecuteScalar() is not null;
     }
 
-    internal static bool IsOpen(SqliteConnection connection) => connection.State == ConnectionState.Open;
+    internal static bool IsOpen(this SqliteConnection connection) => connection.State == ConnectionState.Open;
 }

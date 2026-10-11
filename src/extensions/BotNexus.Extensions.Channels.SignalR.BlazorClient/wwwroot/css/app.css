@@ -2126,21 +2126,25 @@ html, body, #app {
     content: "";
     position: absolute;
     z-index: 2;
-    top: 0.3rem;
     left: 0.55rem;
-    width: 0.6rem;
-    height: 0.6rem;
-    border-radius: 50%;
+    right: 0.55rem;
+    bottom: 0.3rem;
+    height: 2px;
+    border-radius: 999px;
     background: var(--accent);
-    box-shadow: 0 0 0.45rem var(--color-accent-ring);
-    offset-path: inset(0.3rem 0.55rem round calc(var(--radius) + 5px));
-    offset-anchor: center;
+    opacity: 0.45;
     pointer-events: none;
-    animation: composer-perimeter-travel 3.2s linear infinite;
+    animation: composer-bottom-edge-pulse 2.4s ease-in-out infinite;
 }
 
-@keyframes composer-perimeter-travel {
-    to { offset-distance: 100%; }
+@keyframes composer-bottom-edge-pulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 0.9; }
+}
+
+.chat-input-area.composer-active.composer-motion-disabled::before {
+    animation: none;
+    opacity: 0.7;
 }
 
 .composer-active-status {
@@ -2169,26 +2173,18 @@ html, body, #app {
 
 @media (prefers-reduced-motion: reduce) {
     .chat-input-area.composer-active::before {
-        inset: 0.3rem 0.55rem;
-        width: auto;
-        height: auto;
-        border: 2px solid var(--accent);
-        border-radius: calc(var(--radius) + 5px);
-        background: none;
-        box-shadow: none;
-        offset-path: none;
         animation: none;
+        opacity: 0.7;
     }
 }
 
 @media (forced-colors: active) {
     .chat-input-area.composer-active::before {
         animation: none;
-        border: 0;
-        background: none;
-        mask: none;
-        outline: 2px solid Highlight;
-        outline-offset: -2px;
+        height: 2px;
+        background: Highlight;
+        opacity: 1;
+        forced-color-adjust: none;
     }
 
     .composer-active-status-dot {
@@ -2239,6 +2235,11 @@ html, body, #app {
 .composer-action-btn:disabled {
     opacity: 0.35;
     cursor: not-allowed;
+}
+
+.composer-action-btn > .bn-icon {
+    display: block;
+    vertical-align: 0;
 }
 
 .composer-toolbar-divider {
@@ -2376,15 +2377,18 @@ html, body, #app {
 }
 
 .send-btn {
-    padding: 0.6rem 1.25rem;
     border: none;
     border-radius: var(--radius);
     background: var(--accent);
     color: var(--color-on-accent);
-    font-weight: 600;
-    font-size: var(--text-body);
     cursor: pointer;
     transition: background 0.15s;
+}
+
+.send-btn:not(.composer-action-btn) {
+    padding: 0.6rem 1.25rem;
+    font-weight: 600;
+    font-size: var(--text-body);
     align-self: flex-end;
 }
 

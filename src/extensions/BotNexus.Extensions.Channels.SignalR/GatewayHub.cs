@@ -5,6 +5,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Abstractions.Services;
 using AgentId = BotNexus.Domain.Primitives.AgentId;
@@ -73,6 +74,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     // same UserId survives reconnects and conversation history stays keyed to a stable identity.
     private readonly IUserRegistry? _userRegistry;
     private readonly IWorldContext? _worldContext;
+    private readonly IActiveLoopTracker? _activeLoopTracker;
 
     public GatewayHub(
         IAgentSupervisor supervisor,
@@ -86,7 +88,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         IAskUserPromptResolver? askUserPromptResolver = null,
         IAskUserCheckpointService? askUserCheckpointService = null,
         IUserRegistry? userRegistry = null,
-        IWorldContext? worldContext = null)
+        IWorldContext? worldContext = null,
+        IActiveLoopTracker? activeLoopTracker = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -100,6 +103,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         _askUserCheckpointService = askUserCheckpointService;
         _userRegistry = userRegistry;
         _worldContext = worldContext;
+        _activeLoopTracker = activeLoopTracker;
     }
 
     /// <summary>
@@ -148,10 +152,22 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
             sessions.Count,
             groupKeys.Count);
 
-        var activeRuns = sessions
-            .Where(session => _supervisor.GetHandle(
-                AgentId.From(session.AgentId),
-                SessionId.From(session.SessionId))?.IsRunning == true)
+        // Refresh after group membership exists. A durable ask_user continuation can create a
+        // replacement session while SubscribeAll is in flight. If it starts after the first read
+        // but before the group join, its RunStarted edge can be missed; deriving activity from the
+        // first list would then return a false-idle snapshot. Conversation groups survive the
+        // session replacement, so after the join either the edge is observed or this second read
+        // authoritatively sees the running continuation.
+        var activitySessions = await _app.GetAvailableSessionsAsync(Context.ConnectionAborted);
+        var activeSessionIds = _activeLoopTracker?.GetSnapshot().ActiveLoops
+            .Select(loop => loop.SessionId)
+            .Where(sessionId => !string.IsNullOrWhiteSpace(sessionId))
+            .ToHashSet(StringComparer.Ordinal);
+        var activeRuns = activitySessions
+            .Where(session => activeSessionIds?.Contains(session.SessionId) ??
+                _supervisor.GetHandle(
+                    AgentId.From(session.AgentId),
+                    SessionId.From(session.SessionId))?.IsRunning == true)
             .Select(session => new RunActivitySnapshot(
                 session.SessionId,
                 session.AgentId,
@@ -331,6 +347,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         var conversation = await _conversationStore.GetAsync(normalizedConversationId, Context.ConnectionAborted);
         if (conversation is null)
             throw new HubException($"Conversation '{normalizedConversationId.Value}' not found.");
+
+        // Join before resolving either a live waiter or durable continuation. The durable path can
+        // synchronously start an internal-origin run and publish RunStarted; without this membership
+        // edge, the browser that submitted the answer can miss the continuation it just initiated.
+        await SubscribeConversationInternalAsync(normalizedConversationId);
 
         // #2654: there is deliberately NO channel-binding check here. Whether the conversation
         // carries a `signalr` binding is a ROUTING property owned by fan-out, not a statement about

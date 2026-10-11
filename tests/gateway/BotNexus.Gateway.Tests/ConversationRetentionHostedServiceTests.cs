@@ -1,10 +1,12 @@
 ﻿using BotNexus.Domain.Primitives;
+using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Conversations;
+using BotNexus.Gateway.Webhooks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -213,6 +215,48 @@ public sealed class ConversationRetentionHostedServiceTests
 
         await notifier.Received(1).NotifyConversationChangedAsync(
             "archived", "a-1", "c-1", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task CoreAndWebhookRetention_ConcurrentPasses_NotifyOnce()
+    {
+        var store = new InMemoryConversationStore();
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        var conversation = BotNexus.Gateway.Abstractions.Models.ConversationFactory.CreateForWebhook(
+            ConversationId.From("c-webhook"),
+            AgentId.From("a-1"),
+            "Webhook retention",
+            CitizenId.Of(AgentId.From("a-1")),
+            "wh-gone",
+            DateTimeOffset.UtcNow.AddDays(-40));
+        await store.CreateAsync(conversation);
+
+        var notifier = Substitute.For<IConversationChangeNotifier>();
+        var core = CreateService(
+            store,
+            registry,
+            new ConversationRetentionOptions { AutoArchiveEnabled = true, AutoArchiveAfterDays = 30 },
+            notifier);
+        var registrations = Substitute.For<IWebhookRegistrationStore>();
+        registrations.GetAsync(WebhookId.From("wh-gone"), CancellationToken.None)
+            .Returns(Task.FromResult<WebhookRegistration?>(null));
+        var webhook = new WebhookConversationRetentionHostedService(
+            store,
+            registrations,
+            [notifier],
+            Options.Create(new WebhookConversationRetentionOptions
+            {
+                Enabled = true,
+                DisabledRegistrationInactivityDays = 7,
+                OrphanInactivityDays = 1
+            }),
+            NullLogger<WebhookConversationRetentionHostedService>.Instance);
+
+        var results = await Task.WhenAll(core.RunRetentionOnceAsync(), webhook.RunRetentionOnceAsync());
+
+        results.Sum().ShouldBe(1);
+        await notifier.Received(1).NotifyConversationChangedAsync(
+            "archived", "a-1", "c-webhook", Arg.Any<CancellationToken>());
     }
 
     // ── DI resolution guard (#1360 / #1282 regression) ─────────────────────────

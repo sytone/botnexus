@@ -510,7 +510,7 @@ public static class ResponsesStreamParser
                 if (evt.Event is "response.failed")
                 {
                     var message = ProviderHttpErrorHelper.RedactDiagnosticText(
-                        GetErrorMessage(root), secretRedactor);
+                        root.GetErrorMessage(), secretRedactor);
                     emitError(stream, model, message, contentBlocks);
                     return;
                 }
@@ -580,7 +580,7 @@ public static class ResponsesStreamParser
     /// Best-effort description of a failure event. Provider payloads are untrusted input: a shape
     /// the parser did not anticipate must degrade to a worse message, never to an exception (#3130).
     /// </summary>
-    internal static string GetErrorMessage(JsonElement root)
+    internal static string GetErrorMessage(this JsonElement root)
     {
         if (TryGetObjectProperty(root, "response", out var response) &&
             TryGetObjectProperty(response, "error", out var error) &&

@@ -64,14 +64,16 @@ public sealed class ShellTool : IAgentTool
     public const int DefaultMaxTimeoutSeconds = 3600;
 
     private static readonly Lazy<string?> WindowsBashPath = new(FindBashExecutable);
+    private readonly LocalChildEnvironmentPolicy _environmentPolicy;
     private readonly string? _workingDirectory;
     private readonly int? _defaultTimeoutSeconds;
     private readonly int _maxTimeoutSeconds;
     private readonly ShellPreference _shellPreference;
     private readonly string[]? _shellCommand;
 
-    public ShellTool(string? workingDirectory = null, int? defaultTimeoutSeconds = 600, ShellPreference shellPreference = ShellPreference.Auto, string[]? shellCommand = null, int maxTimeoutSeconds = DefaultMaxTimeoutSeconds)
+    public ShellTool(string? workingDirectory = null, int? defaultTimeoutSeconds = 600, ShellPreference shellPreference = ShellPreference.Auto, string[]? shellCommand = null, int maxTimeoutSeconds = DefaultMaxTimeoutSeconds, LocalChildEnvironmentPolicy? environmentPolicy = null)
     {
+        _environmentPolicy = environmentPolicy ?? LocalChildEnvironmentPolicy.Default;
         _workingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
             ? null
             : Path.GetFullPath(workingDirectory);
@@ -280,6 +282,7 @@ public sealed class ShellTool : IAgentTool
 
         startInfo.ArgumentList.Add(invocation.Command);
 
+        LocalChildEnvironment.Apply(startInfo, _environmentPolicy);
         using var process = new Process { StartInfo = startInfo };
         if (!process.Start())
         {
@@ -474,6 +477,7 @@ public sealed class ShellTool : IAgentTool
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            LocalChildEnvironment.Apply(whereStartInfo);
             using var process = Process.Start(whereStartInfo);
             if (process is null)
             {
@@ -526,6 +530,7 @@ public sealed class ShellTool : IAgentTool
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            LocalChildEnvironment.Apply(whereStartInfo);
             using var process = Process.Start(whereStartInfo);
             if (process is null)
             {

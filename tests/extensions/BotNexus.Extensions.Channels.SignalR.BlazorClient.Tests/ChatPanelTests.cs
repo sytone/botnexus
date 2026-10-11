@@ -120,6 +120,27 @@ public sealed class ChatPanelTests : IDisposable
     }
 
     [Fact]
+    public void Idle_send_action_is_an_accessible_icon_only_control()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
+
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
+
+        var button = cut.Find("[data-testid='chat-send']");
+        button.ClassList.ShouldContain("composer-action-btn");
+        button.ClassList.ShouldContain("send-btn");
+        button.GetAttribute("aria-label").ShouldBe("Send message");
+        button.GetAttribute("title").ShouldBe("Send message");
+        button.TextContent.Trim().ShouldBeEmpty();
+
+        var icon = button.QuerySelectorAll("svg.bn-icon-send").ShouldHaveSingleItem();
+        icon.GetAttribute("width").ShouldBe("18");
+        icon.GetAttribute("height").ShouldBe("18");
+    }
+
+    [Fact]
     public void New_session_button_is_disabled_while_streaming()
     {
         CreateAndSeedAgent("agent-1", isStreaming: true);
@@ -179,12 +200,35 @@ public sealed class ChatPanelTests : IDisposable
 
         var composer = cut.Find("[data-testid='chat-composer']");
         composer.ClassList.ShouldContain("composer-active");
+        composer.ClassList.ShouldNotContain("composer-motion-disabled");
         composer.GetAttribute("aria-busy").ShouldBe("true");
         cut.Find("[data-testid='chat-composer-status']").TextContent.ShouldContain("Agent is working");
         cut.Find("[data-testid='chat-input']").GetAttribute("placeholder").ShouldNotBeNull().ShouldContain("steer");
         cut.Find("[data-testid='chat-steer-btn']");
         cut.Find("[data-testid='chat-redirect-btn']");
         cut.Find("[data-testid='chat-followup-btn']");
+        cut.Find("[data-testid='chat-abort-btn']");
+    }
+
+    [Fact]
+    public void Preference_change_stops_motion_immediately_without_hiding_active_semantics()
+    {
+        CreateAndSeedAgent("agent-1", isConnected: true);
+        _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
+        _store.GetStreamState("conv-1").IsRunActive = true;
+        var preferences = _ctx.Services.GetRequiredService<IPortalPreferencesService>();
+        var snapshot = new PortalPreferences();
+        preferences.Current.Returns(snapshot);
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
+
+        snapshot.AnimateActiveRunIndicator = false;
+        preferences.OnChanged += Raise.Event<Action>();
+
+        var composer = cut.Find("[data-testid='chat-composer']");
+        composer.ClassList.ShouldContain("composer-active");
+        composer.ClassList.ShouldContain("composer-motion-disabled");
+        composer.GetAttribute("aria-busy").ShouldBe("true");
+        cut.Find("[data-testid='chat-composer-status']").TextContent.ShouldContain("Agent is working");
         cut.Find("[data-testid='chat-abort-btn']");
     }
 
@@ -2096,6 +2140,20 @@ public sealed class ChatPanelTests : IDisposable
         Assert.NotNull(cut.Find("[data-testid=chat-send]"));
         Assert.NotNull(cut.Find(".new-chat-btn"));
         Assert.DoesNotContain("read-only-banner", cut.Markup);
+    }
+
+    [Fact]
+    public void Icon_only_send_action_keeps_shared_square_centering_geometry()
+    {
+        var css = ReadAppCss();
+
+        AssertRuleHasDeclaration(css, ".composer-action-btn", "display: grid");
+        AssertRuleHasDeclaration(css, ".composer-action-btn", "place-items: center");
+        AssertRuleHasDeclaration(css, ".composer-action-btn", "width: 2.25rem");
+        AssertRuleHasDeclaration(css, ".composer-action-btn", "height: 2.25rem");
+        AssertRuleHasDeclaration(css, ".composer-action-btn", "padding: 0");
+        AssertRuleHasDeclaration(css, ".send-btn:not(.composer-action-btn)", "padding: 0.6rem 1.25rem");
+        AssertRuleHasDeclaration(css, ".composer-action-btn > .bn-icon", "display: block");
     }
 
     [Fact]

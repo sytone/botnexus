@@ -8,9 +8,11 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace BotNexus.Gateway.Sessions;
@@ -91,6 +93,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
     private readonly GatewayOptions _options;
     private readonly IConversationStore? _conversations;
     private readonly SessionLifecycleEvents? _lifecycleEvents;
+    private readonly CleanShutdownMarker? _shutdownMarker;
     private readonly ConditionalWeakTable<GatewaySession, SemaphoreSlim> _recoveryGates = new();
 
     /// <summary>
@@ -105,7 +108,8 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         IInboundMessageOrchestrator? orchestrator,
         IOptions<GatewayOptions>? options,
         IConversationStore? conversations = null,
-        SessionLifecycleEvents? lifecycleEvents = null)
+        SessionLifecycleEvents? lifecycleEvents = null,
+        CleanShutdownMarker? shutdownMarker = null)
     {
         _sessions = sessions;
         _agentRegistry = agentRegistry;
@@ -116,6 +120,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         _options = options?.Value ?? new GatewayOptions();
         _conversations = conversations;
         _lifecycleEvents = lifecycleEvents;
+        _shutdownMarker = shutdownMarker;
     }
 
     /// <inheritdoc />
@@ -140,46 +145,53 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
     /// <inheritdoc />
     public async Task StartedAsync(CancellationToken cancellationToken)
     {
-        var agents = _agentRegistry.GetAll();
+        const int pageSize = 256;
+        var registeredAgents = _agentRegistry.GetAll().Select(static descriptor => descriptor.AgentId).ToHashSet();
         var notified = 0;
         var replayed = 0;
+        var scanned = 0;
+        string? cursor = null;
+        var started = Stopwatch.StartNew();
+        var allocatedBefore = GC.GetTotalAllocatedBytes();
 
-        foreach (var descriptor in agents)
+        try
         {
-            var agentId = descriptor.AgentId;
-            IReadOnlyList<GatewaySession> agentSessions;
-            try
+            do
             {
-                agentSessions = await _sessions.ListAsync(agentId, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to list sessions for agent {AgentId} during interrupted-turn scan", agentId.Value);
-                continue;
-            }
-
-            foreach (var session in agentSessions)
-            {
-                if (!session.History.Any(static e => e.IsCrashSentinel))
-                    continue;
-
-                _logger.LogInformation(
-                    "Session {SessionId} (agent {AgentId}) has unresolved crash sentinels — notifying user",
-                    session.SessionId.Value, agentId.Value);
-
-                var isAgentOnlyConversation = await IsAgentOnlyConversationAsync(session, cancellationToken)
+                var page = await _sessions.ListUnresolvedCrashSentinelsAsync(pageSize, cursor, cancellationToken)
                     .ConfigureAwait(false);
-                var didReplay = await RecoverSessionAsync(
-                    session, agentId, isAgentOnlyConversation, cancellationToken).ConfigureAwait(false);
-                if (didReplay)
-                    replayed++;
-                notified++;
-            }
+                scanned += page.Rows.Count;
+                foreach (var row in page.Rows)
+                {
+                    if (!registeredAgents.Contains(row.AgentId))
+                        continue;
+
+                    var session = await _sessions.GetAsync(row.SessionId, cancellationToken).ConfigureAwait(false);
+                    if (session is null || !session.History.Any(static entry => entry.IsCrashSentinel))
+                        continue;
+
+                    _logger.LogInformation(
+                        "Session {SessionId} (agent {AgentId}) has unresolved crash sentinels - notifying user",
+                        row.SessionId.Value, row.AgentId.Value);
+                    var isAgentOnlyConversation = await IsAgentOnlyConversationAsync(session, cancellationToken)
+                        .ConfigureAwait(false);
+                    var didReplay = await RecoverSessionAsync(
+                        session, row.AgentId, isAgentOnlyConversation, cancellationToken).ConfigureAwait(false);
+                    if (didReplay) replayed++;
+                    notified++;
+                }
+                cursor = page.NextCursor;
+            } while (cursor is not null);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Failed during bounded interrupted-turn scan after {ScannedRows} candidate row(s)", scanned);
         }
 
         _logger.LogInformation(
-            "Interrupted-turn scan complete: {NotifiedCount} session(s) found with crash sentinels ({ReplayedCount} auto-replayed)",
-            notified, replayed);
+            "Interrupted-turn scan complete: {ScannedRows} candidate row(s), {ElapsedMilliseconds} ms, {AllocatedBytes} allocated bytes; " +
+            "{NotifiedCount} session(s) notified ({ReplayedCount} auto-replayed)",
+            scanned, started.ElapsedMilliseconds, GC.GetTotalAllocatedBytes() - allocatedBefore, notified, replayed);
     }
 
     /// <inheritdoc />
@@ -236,6 +248,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         bool isAgentOnlyConversation,
         CancellationToken cancellationToken)
     {
+        var writeFence = SessionWriteFence.Capture(session);
         var notificationContent = isAgentOnlyConversation
             ? AgentOnlyNotificationContent
             : NotificationContent;
@@ -247,7 +260,9 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         };
         session.AddEntry(notification);
 
-        var shouldAttemptReplay = (_options.AutoReplayInterruptedTurns || isAgentOnlyConversation)
+        var shouldAttemptReplay = (_options.AutoReplayInterruptedTurns
+                || isAgentOnlyConversation
+                || _shutdownMarker?.PreviousShutdownWasPlanned == true)
             && session.IsInteractive
             && _orchestrator is not null;
         var didReplay = shouldAttemptReplay
@@ -258,7 +273,14 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
 
         try
         {
-            await _sessions.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+            var outcome = await _sessions.SaveAsync(session, writeFence, cancellationToken).ConfigureAwait(false);
+            if (outcome != SessionSaveOutcome.Persisted)
+            {
+                _logger.LogInformation(
+                    "Interrupted-turn recovery for session {SessionId} was skipped because the session was deleted, sealed, or rebound",
+                    session.SessionId.Value);
+                return false;
+            }
         }
         catch (Exception ex)
         {

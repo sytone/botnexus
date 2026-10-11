@@ -19,6 +19,9 @@ public static class ToolServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddBotNexusTools(this IServiceCollection services)
     {
+        services.AddSingleton<LocalChildEnvironmentPolicy>(sp => new LocalChildEnvironmentPolicy(
+            sp.GetService<IOptions<PlatformConfig>>()?.Value.Gateway?.LocalChildEnvironmentPassThrough));
+
         services.AddSingleton<IAgentToolFactory>(sp =>
         {
             var config = sp.GetService<IOptions<PlatformConfig>>()?.Value;
@@ -26,7 +29,8 @@ public static class ToolServiceCollectionExtensions
             var shellCommand = config?.Gateway?.ShellCommand;
             // Resolve the platform config path so file tools can deny direct writes to it (issue #633).
             var configPath = PlatformConfigLoader.GetDefaultConfigPath(new System.IO.Abstractions.FileSystem());
-            return new DefaultAgentToolFactory(preference, configPath, shellCommand, BuildReadToolOptions(config));
+            return new DefaultAgentToolFactory(preference, configPath, shellCommand, BuildReadToolOptions(config),
+                sp.GetRequiredService<LocalChildEnvironmentPolicy>());
         });
 
         // Tool registry collects extension IAgentTool registrations.

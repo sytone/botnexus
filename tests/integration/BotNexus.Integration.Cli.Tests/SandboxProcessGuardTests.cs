@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using BotNexus.Integration.Testing;
 
-namespace BotNexus.Integration.E2E.Tests;
+namespace BotNexus.Integration.Cli.Tests;
 
 /// <summary>
 /// The guard exists because a test host that is stopped rather than finished leaves its gateway
@@ -35,7 +35,8 @@ public sealed class SandboxProcessGuardTests : IDisposable
         int? ownerPid,
         long? ownerStart,
         int? gatewayPid = null,
-        DateTime? createdUtc = null)
+        DateTime? createdUtc = null,
+        long? gatewayStart = null)
     {
         var payload = new Dictionary<string, object?>
         {
@@ -46,7 +47,10 @@ public sealed class SandboxProcessGuardTests : IDisposable
             ["createdUtc"] = (createdUtc ?? DateTime.UtcNow.AddHours(-2)).ToString("O"),
         };
         if (gatewayPid is not null)
+        {
             payload["gatewayPid"] = gatewayPid;
+            payload["gatewayStartTimeUtcTicks"] = gatewayStart;
+        }
 
         File.WriteAllText(
             Path.Combine(sandbox, SandboxProcessGuard.MarkerFileName),
@@ -55,12 +59,16 @@ public sealed class SandboxProcessGuardTests : IDisposable
 
     private static Process StartSleeper()
     {
-        var psi = OperatingSystem.IsWindows()
-            ? new ProcessStartInfo("cmd.exe", "/c timeout /t 300")
-            : new ProcessStartInfo("sleep", "300");
+        // timeout.exe exits early when stdin is redirected on Windows. A noninteractive sleeper
+        // keeps these assertions about our signal, not about the child failing to start waiting.
+        var psi = new ProcessStartInfo("pwsh");
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-NonInteractive");
+        psi.ArgumentList.Add("-Command");
+        psi.ArgumentList.Add("Start-Sleep -Seconds 300");
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
-        return Process.Start(psi)!;
+        return Process.Start(psi) ?? throw new InvalidOperationException("Could not start harmless child.");
     }
 
     // ── Reaping ──────────────────────────────────────────────────────────────────────
@@ -81,12 +89,13 @@ public sealed class SandboxProcessGuardTests : IDisposable
     public void ReapStaleSandboxes_OwnerGone_DeletesTheSandbox()
     {
         var sandbox = NewSandbox("abandoned", DateTime.UtcNow.AddHours(-2));
-        // A pid that cannot be running: reaped immediately by the OS and never reused this fast.
-        var dead = StartSleeper();
+        // Record both identity fields even if the OS later recycles this owned child's PID.
+        using var dead = StartSleeper();
         var deadPid = dead.Id;
+        var deadStart = dead.StartTime.ToUniversalTime().Ticks;
         dead.Kill();
         dead.WaitForExit();
-        WriteMarker(sandbox, deadPid, ownerStart: null);
+        WriteMarker(sandbox, deadPid, ownerStart: deadStart);
 
         SandboxProcessGuard.ReapStaleSandboxes(_familyRoot).ShouldBe(1);
         Directory.Exists(sandbox).ShouldBeFalse();
@@ -133,11 +142,13 @@ public sealed class SandboxProcessGuardTests : IDisposable
         try
         {
             var sandbox = NewSandbox("with-orphan", DateTime.UtcNow.AddHours(-2));
-            var dead = StartSleeper();
+            using var dead = StartSleeper();
             var deadOwnerPid = dead.Id;
+            var deadOwnerStart = dead.StartTime.ToUniversalTime().Ticks;
             dead.Kill();
             dead.WaitForExit();
-            WriteMarker(sandbox, deadOwnerPid, ownerStart: null, gatewayPid: orphan.Id);
+            WriteMarker(sandbox, deadOwnerPid, ownerStart: deadOwnerStart, gatewayPid: orphan.Id,
+                gatewayStart: orphan.StartTime.ToUniversalTime().Ticks);
 
             SandboxProcessGuard.ReapStaleSandboxes(_familyRoot).ShouldBe(1);
 
@@ -196,14 +207,25 @@ public sealed class SandboxProcessGuardTests : IDisposable
     {
         var sandbox = NewSandbox("marker");
         SandboxProcessGuard.MarkSandboxOwner(sandbox);
-        SandboxProcessGuard.RecordSandboxGateway(sandbox, gatewayPid: 4242);
+        using var child = StartSleeper();
+        try
+        {
+            SandboxProcessGuard.RecordSandboxGateway(sandbox, child.Id);
 
-        var marker = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-            File.ReadAllText(Path.Combine(sandbox, SandboxProcessGuard.MarkerFileName)))!;
+            var marker = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+                File.ReadAllText(Path.Combine(sandbox, SandboxProcessGuard.MarkerFileName)))
+                ?? throw new InvalidOperationException("Marker was empty.");
 
-        using var self = Process.GetCurrentProcess();
-        marker["ownerPid"].GetInt32().ShouldBe(self.Id);
-        marker["gatewayPid"].GetInt32().ShouldBe(4242);
-        marker.ShouldContainKey("createdUtc");
+            using var self = Process.GetCurrentProcess();
+            marker["ownerPid"].GetInt32().ShouldBe(self.Id);
+            marker["gatewayPid"].GetInt32().ShouldBe(child.Id);
+            marker["gatewayStartTimeUtcTicks"].GetInt64().ShouldBe(child.StartTime.ToUniversalTime().Ticks);
+            marker.ShouldContainKey("createdUtc");
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill(entireProcessTree: true);
+            child.WaitForExit();
+        }
     }
 }

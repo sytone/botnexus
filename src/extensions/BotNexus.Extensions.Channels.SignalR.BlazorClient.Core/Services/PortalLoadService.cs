@@ -136,8 +136,9 @@ public sealed class PortalLoadService : IPortalLoadService
             _hub.OnReconnected += OnHubReconnected;
             _hub.OnDisconnected += OnHubClosed;
 
+            var subscribeRevision = _eventHandler.CaptureRunStateRevision();
             var subscribeResult = await _hub.SubscribeAllAsync();
-            _eventHandler.ApplyRunActivitySnapshot(subscribeResult.ActiveRuns);
+            _eventHandler.TryApplyRunActivitySnapshot(subscribeResult.ActiveRuns, subscribeRevision);
             await SubscribeAgentsForNotificationsAsync();
 
             _ = _eventHandler; // force construction so hub event subscriptions are active
@@ -329,8 +330,9 @@ public sealed class PortalLoadService : IPortalLoadService
             if (!_hub.IsConnected)
             {
                 await _hub.ConnectAsync(_hubUrl, ClientKind, Tuning);
+                var subscribeRevision = _eventHandler.CaptureRunStateRevision();
                 var subscribeResult = await _hub.SubscribeAllAsync();
-                _eventHandler.ApplyRunActivitySnapshot(subscribeResult.ActiveRuns);
+                _eventHandler.TryApplyRunActivitySnapshot(subscribeResult.ActiveRuns, subscribeRevision);
                 await SubscribeAgentsForNotificationsAsync();
             }
 
@@ -419,8 +421,9 @@ public sealed class PortalLoadService : IPortalLoadService
         _hub.OnReconnected += OnHubReconnected;
         _hub.OnDisconnected += OnHubClosed;
 
+        var subscribeRevision = _eventHandler.CaptureRunStateRevision();
         var subscribeResult = await _hub.SubscribeAllAsync();
-        _eventHandler.ApplyRunActivitySnapshot(subscribeResult.ActiveRuns);
+        _eventHandler.TryApplyRunActivitySnapshot(subscribeResult.ActiveRuns, subscribeRevision);
         await SubscribeAgentsForNotificationsAsync();
         await ReloadSessionRosterAsync();
 

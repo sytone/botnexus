@@ -6,14 +6,14 @@ using Microsoft.Data.Sqlite;
 namespace BotNexus.Gateway.Tests;
 
 /// <summary>
-/// Direct unit tests for <see cref="SessionRowMapper"/> (issue #1627). Each mapper is the single
+/// Direct unit tests for <see cref="SqliteSessionDataReaderExtensions"/> (issue #1627). Each mapper is the single
 /// source of truth for the positional ordinals of one <c>sessions</c>-family reader, so the tests
 /// drive a real in-memory <see cref="SqliteDataReader"/> whose projection mirrors the production
 /// <c>SELECT</c> column order exactly. NULL-handling paths and the now-removed <c>FieldCount</c>
 /// tolerance (a short/malformed history row must throw loudly, not silently drop a field) are
 /// asserted explicitly.
 /// </summary>
-public sealed class SessionRowMapperTests
+public sealed class SqliteSessionDataReaderExtensionsTests
 {
     private static SqliteConnection OpenMemory()
     {
@@ -49,7 +49,7 @@ public sealed class SessionRowMapperTests
                 'conv-9' AS conversation_id
             """);
 
-        var row = SessionRowMapper.MapSession(reader);
+        var row = reader.MapSession();
 
         row.Session.SessionId.ShouldBe(SessionId.From("sess-1"));
         row.Session.ChannelType.ShouldBe(ChannelKey.From("telegram"));
@@ -84,7 +84,7 @@ public sealed class SessionRowMapperTests
                 NULL AS conversation_id
             """);
 
-        var row = SessionRowMapper.MapSession(reader);
+        var row = reader.MapSession();
 
         row.Session.ChannelType.ShouldBeNull();
         row.CallerId.ShouldBeNull();
@@ -108,7 +108,7 @@ public sealed class SessionRowMapperTests
                 '2026-01-02T03:04:05.0000000+00:00' AS updated_at, NULL AS conversation_id
             """);
 
-        var row = SessionRowMapper.MapSession(reader);
+        var row = reader.MapSession();
 
         row.Session.Status.ShouldBe(SessionStatus.Sealed);
     }
@@ -138,7 +138,7 @@ public sealed class SessionRowMapperTests
                 1 AS is_replay_banner
             """);
 
-        var entry = SessionRowMapper.MapHistoryEntry(reader);
+        var entry = reader.MapHistoryEntry();
 
         entry.PersistenceId.ShouldBe(42);
         entry.PersistenceKey.ShouldBe("key-42");
@@ -178,7 +178,7 @@ public sealed class SessionRowMapperTests
                 NULL AS sender_id, 0 AS is_replay_banner
             """);
 
-        var entry = SessionRowMapper.MapHistoryEntry(reader);
+        var entry = reader.MapHistoryEntry();
 
         entry.PersistenceId.ShouldBe(43);
         entry.PersistenceKey.ShouldBeNull();
@@ -212,7 +212,7 @@ public sealed class SessionRowMapperTests
             SELECT 44 AS id, NULL AS persistence_key, 'user' AS role, 'hi' AS content, NULL AS timestamp
             """);
 
-        Should.Throw<Exception>(() => SessionRowMapper.MapHistoryEntry(reader));
+        Should.Throw<Exception>(() => reader.MapHistoryEntry());
     }
 
     [Fact]
@@ -231,7 +231,7 @@ public sealed class SessionRowMapperTests
                 5 AS message_count
             """);
 
-        var row = SessionRowMapper.MapSummaryRow(reader);
+        var row = reader.MapSummaryRow();
 
         row.Id.ShouldBe("sess-1");
         row.Channel.ShouldBe(ChannelKey.From("signal"));
@@ -255,7 +255,7 @@ public sealed class SessionRowMapperTests
                 NULL AS conversation_id, 0 AS message_count
             """);
 
-        var row = SessionRowMapper.MapSummaryRow(reader);
+        var row = reader.MapSummaryRow();
 
         row.Channel.ShouldBeNull();
         row.Status.ShouldBe(SessionStatus.Active);
@@ -279,7 +279,7 @@ public sealed class SessionRowMapperTests
                 'completed' AS status
             """);
 
-        var summary = SessionRowMapper.MapSubAgentSession(reader);
+        var summary = reader.MapSubAgentSession();
 
         summary.SubAgentId.ShouldBe("sub-1");
         summary.ParentSessionId.ShouldBe("parent-sess");
@@ -303,7 +303,7 @@ public sealed class SessionRowMapperTests
                 NULL AS ended_at, 'running' AS status
             """);
 
-        var summary = SessionRowMapper.MapSubAgentSession(reader);
+        var summary = reader.MapSubAgentSession();
 
         summary.Archetype.ShouldBeNull();
         summary.CompletedAt.ShouldBeNull();

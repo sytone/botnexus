@@ -19,6 +19,7 @@ namespace BotNexus.Cli.Commands.Provider;
 internal static class CopilotAuthLoader
 {
     private const string AuthFileName = "auth.json";
+    private const string ConfigFileName = "config." + "json";
     private const string DefaultProviderKey = "github-copilot";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -42,6 +43,7 @@ internal static class CopilotAuthLoader
         CancellationToken cancellationToken = default)
     {
         providerInstance = NormalizeProviderInstance(providerInstance);
+        await ValidateProviderTypeAsync(home, providerInstance, cancellationToken).ConfigureAwait(false);
         var authPath = Path.Combine(home, AuthFileName);
         if (!File.Exists(authPath))
         {
@@ -123,6 +125,27 @@ internal static class CopilotAuthLoader
             CopilotSessionToken: entry.Access,
             ApiEndpoint: entry.Endpoint,
             ExpiresAtUnixMs: entry.Expires);
+    }
+
+    private static async Task ValidateProviderTypeAsync(
+        string home,
+        string providerInstance,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(providerInstance, DefaultProviderKey, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var document = await CliConfigMutation.ReadAsync(
+            Path.Combine(home, ConfigFileName), cancellationToken).ConfigureAwait(false);
+        var configuredKey = document.FindEntryKey("providers", providerInstance);
+        var hasCopilotType = configuredKey is not null &&
+            document.TryGetString($"providers.{configuredKey}.type", out var providerType) &&
+            string.Equals(providerType, DefaultProviderKey, StringComparison.OrdinalIgnoreCase);
+        if (!hasCopilotType)
+        {
+            throw new InvalidOperationException(
+                $"Provider instance '{providerInstance}' is not configured with type '{DefaultProviderKey}'.");
+        }
     }
 
     internal static string NormalizeProviderInstance(string providerInstance)

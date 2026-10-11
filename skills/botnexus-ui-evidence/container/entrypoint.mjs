@@ -36,14 +36,31 @@ try {
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(data, { recursive: true });
   fs.mkdirSync(output, { recursive: true });
-  fs.writeFileSync(catalog, JSON.stringify({ scripts: { SLOW_STREAM: [
-    { type: 'text_delta', delta: 'This', delayMs: 1500 },
-    { type: 'text_delta', delta: ' is', delayMs: 1500 },
-    { type: 'text_delta', delta: ' deterministic', delayMs: 1500 },
-    { type: 'text_delta', delta: ' UI', delayMs: 1500 },
-    { type: 'text_delta', delta: ' evidence.', delayMs: 1500 },
-    { type: 'text_end' }, { type: 'done', stopReason: 'stop' }
-  ] } }, null, 2));
+  fs.writeFileSync(catalog, JSON.stringify({ scripts: {
+    SLOW_STREAM: [
+      { type: 'text_delta', delta: 'This', delayMs: 1500 },
+      { type: 'text_delta', delta: ' is', delayMs: 1500 },
+      { type: 'text_delta', delta: ' deterministic', delayMs: 1500 },
+      { type: 'text_delta', delta: ' UI', delayMs: 1500 },
+      { type: 'text_delta', delta: ' evidence.', delayMs: 1500 },
+      { type: 'text_end' }, { type: 'done', stopReason: 'stop' }
+    ],
+    MATRIX_PRE_TOKEN: [
+      { type: 'text_delta', delta: 'First token', delayMs: 10000 },
+      { type: 'text_end' }, { type: 'done', stopReason: 'stop' }
+    ],
+    MATRIX_TOOL_GAP: [
+      { type: 'text_delta', delta: 'Tool gap', delayMs: 100 },
+      { type: 'text_end' },
+      { type: 'tool_call', toolName: 'delay', toolArguments: { seconds: 30, reason: 'evidence matrix tool gap' }, toolCallId: 'evidence-matrix-gap' },
+      { type: 'done', stopReason: 'toolUse' }
+    ],
+    MATRIX_LONG_ACTIVE: [
+      { type: 'text_delta', delta: 'Long active run', delayMs: 100 },
+      { type: 'text_delta', delta: ' continues', delayMs: 30000 },
+      { type: 'text_end' }, { type: 'done', stopReason: 'stop' }
+    ]
+  } }, null, 2));
   fs.writeFileSync(`${home}/config.json`, JSON.stringify({
     gateway: { listenUrl: 'http://127.0.0.1:5000', defaultAgentId: 'evidence-agent', extensionLoader: { enabled: true }, autoUpdate: { sourcePath: '/app/source', branch: 'main' } },
     providers: { 'integration-mock': { api: 'integration-mock', baseUrl: catalog, defaultModel: 'integration-mock-echo', enabled: true } },

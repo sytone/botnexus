@@ -349,6 +349,34 @@ public sealed class GatewayEventHandlerTests
     }
 
     [Fact]
+    public void Subscribe_snapshot_cannot_resurrect_run_after_newer_RunEnded()
+    {
+        var conversation = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        var revision = _handler.CaptureRunStateRevision();
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        _handler.HandleRunEnded(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        _handler.TryApplyRunActivitySnapshot(
+            [new RunActivitySnapshot("sess-1", "agent-1", "conv-1")], revision);
+
+        Assert.False(conversation.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public void Subscribe_snapshot_cannot_clear_newer_internal_continuation()
+    {
+        var conversation = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        var revision = _handler.CaptureRunStateRevision();
+
+        // A durable ask_user answer can start a new run while the subscription is in flight.
+        // Its internal channel origin does not change the conversation-scoped event contract.
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        _handler.TryApplyRunActivitySnapshot([], revision);
+
+        Assert.True(conversation.StreamState.IsTurnActive);
+    }
+
+    [Fact]
     public async Task MissedRunEnded_after_quiescent_terminal_edge_reconciles_authoritative_idle()
     {
         var agent = _store.GetAgent("agent-1")!;
@@ -1248,6 +1276,50 @@ public sealed class GatewayEventHandlerTests
         Assert.Equal("RunStarted", snapshot.RunStateLastChangedBy);
         Assert.Equal("ReconnectRecovery", snapshot.StreamingLastChangedBy);
         Assert.True(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public async Task Reconnect_snapshot_does_not_clear_a_newer_internal_continuation()
+    {
+        var conversation = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<SubscribeAllResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _handler.RunActivitySnapshotProvider = _ =>
+        {
+            started.SetResult();
+            return release.Task;
+        };
+
+        var reconnect = _handler.HandleReconnectedAsync();
+        await started.Task;
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        release.SetResult(new SubscribeAllResult([], []));
+        await reconnect;
+
+        Assert.True(conversation.StreamState.IsRunActive);
+        Assert.True(conversation.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public async Task Reconnect_snapshot_does_not_resurrect_a_newer_completed_run()
+    {
+        var conversation = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<SubscribeAllResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _handler.RunActivitySnapshotProvider = _ =>
+        {
+            started.SetResult();
+            return release.Task;
+        };
+
+        var reconnect = _handler.HandleReconnectedAsync();
+        await started.Task;
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        _handler.HandleRunEnded(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        release.SetResult(new SubscribeAllResult([], [new RunActivitySnapshot("sess-1", "agent-1", "conv-1")]));
+        await reconnect;
+
+        Assert.False(conversation.StreamState.IsTurnActive);
     }
 
     [Fact]

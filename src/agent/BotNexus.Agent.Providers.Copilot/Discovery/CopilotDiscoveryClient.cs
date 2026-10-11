@@ -73,6 +73,21 @@ public sealed class CopilotDiscoveryClient
         return info ?? throw new InvalidOperationException("Copilot user-info response was empty.");
     }
 
+    /// <summary>Fetches only a safe quota projection with a 256 KiB payload cap. CLI behavior is unchanged.</summary>
+    public async Task<IReadOnlyList<CopilotQuotaDto>> GetAccountQuotaAsync(
+        string githubToken, DateTimeOffset observedAtUtc, CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, UserInfoUrl);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", githubToken);
+        request.Headers.TryAddWithoutValidation("Accept", "application/json");
+        request.Headers.TryAddWithoutValidation("User-Agent", "BotNexus/1.0");
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        var root = await BoundedHttpContent.ReadFromJsonWithLimitAsync<JsonElement>(
+            response.Content, JsonOptions, 256 * 1024, cancellationToken).ConfigureAwait(false);
+        return CopilotAccountQuotaParser.Parse(root, observedAtUtc);
+    }
+
     /// <summary>
     /// Lists every model the authenticated user can invoke through GitHub Copilot.
     /// <paramref name="endpointBase"/> must be the <c>endpoints.api</c> value

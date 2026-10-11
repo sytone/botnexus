@@ -9,14 +9,14 @@ using Microsoft.Extensions.Logging;
 namespace BotNexus.Gateway.Conversations.Tests;
 
 /// <summary>
-/// Direct unit tests for <see cref="ConversationRowMapper"/> (issue #1627). The mappers are the
+/// Direct unit tests for <see cref="SqliteDataReaderExtensions"/> (issue #1627). The mappers are the
 /// single source of truth for every positional ordinal each <c>conversations</c>-family reader
 /// uses, so they are exercised here against a real in-memory <see cref="SqliteDataReader"/> whose
 /// projection mirrors the production <c>SELECT</c> column order exactly. NULL-handling paths and
 /// the now-removed <c>FieldCount</c> tolerance (a short/malformed row must throw loudly rather
 /// than silently skip a field) are asserted explicitly.
 /// </summary>
-public sealed class ConversationRowMapperTests
+public sealed class SqliteDataReaderExtensionsTests
 {
     private static SqliteConnection OpenMemory()
     {
@@ -64,7 +64,7 @@ public sealed class ConversationRowMapperTests
                 200000 AS context_window_override
             """);
 
-        var conversation = ConversationRowMapper.MapConversation(reader);
+        var conversation = reader.MapConversation();
 
         conversation.ConversationId.ShouldBe(ConversationId.From("conv-1"));
         conversation.AgentId.ShouldBe(AgentId.From("agent-a"));
@@ -119,7 +119,7 @@ public sealed class ConversationRowMapperTests
                 NULL AS context_window_override
             """);
 
-        var conversation = ConversationRowMapper.MapConversation(reader);
+        var conversation = reader.MapConversation();
 
         conversation.Purpose.ShouldBeNull();
         conversation.ActiveSessionId.ShouldBeNull();
@@ -148,7 +148,7 @@ public sealed class ConversationRowMapperTests
             SELECT 'conv-3' AS id, 'agent-c' AS agent_id, 'T' AS title
             """);
 
-        Should.Throw<Exception>(() => ConversationRowMapper.MapConversation(reader));
+        Should.Throw<Exception>(() => reader.MapConversation());
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public sealed class ConversationRowMapperTests
             """);
 
         var roster = new[] { new ParticipantSummary("Agent", "agent-a", "initiator") };
-        var summary = ConversationRowMapper.MapSummary(reader, roster);
+        var summary = reader.MapSummary(roster);
 
         summary.ConversationId.ShouldBe("conv-1");
         summary.AgentId.ShouldBe("agent-a");
@@ -214,7 +214,7 @@ public sealed class ConversationRowMapperTests
                 NULL AS pinned_at
             """);
 
-        var summary = ConversationRowMapper.MapSummary(reader, roster: []);
+        var summary = reader.MapSummary(roster: []);
 
         summary.Purpose.ShouldBeNull();
         summary.ActiveSessionId.ShouldBeNull();
@@ -234,7 +234,7 @@ public sealed class ConversationRowMapperTests
             SELECT 'conv-3' AS id, 'agent-c' AS agent_id, 'T' AS title
             """);
 
-        Should.Throw<Exception>(() => ConversationRowMapper.MapSummary(reader, roster: []));
+        Should.Throw<Exception>(() => reader.MapSummary(roster: []));
     }
 
     [Fact]
@@ -254,7 +254,7 @@ public sealed class ConversationRowMapperTests
                 '2026-03-04T05:06:07.0000000+00:00' AS last_outbound_at
             """);
 
-        var binding = ConversationRowMapper.MapBinding(reader, offset: 0);
+        var binding = reader.MapBinding(offset: 0);
 
         binding.BindingId.ShouldBe(BindingId.From("bind-1"));
         binding.ChannelType.ShouldBe(ChannelKey.From("telegram"));
@@ -285,7 +285,7 @@ public sealed class ConversationRowMapperTests
                 NULL AS last_outbound_at
             """);
 
-        var binding = ConversationRowMapper.MapBinding(reader, offset: 1);
+        var binding = reader.MapBinding(offset: 1);
 
         binding.BindingId.ShouldBe(BindingId.From("bind-2"));
         binding.ChannelType.ShouldBe(ChannelKey.From("signal"));
@@ -302,7 +302,7 @@ public sealed class ConversationRowMapperTests
             SELECT 'User' AS citizen_kind, 'bob' AS citizen_id, 'peer' AS role
             """);
 
-        var participant = ConversationRowMapper.MapParticipant(reader, offset: 0);
+        var participant = reader.MapParticipant(offset: 0);
 
         participant.ShouldNotBeNull();
         participant!.Role.ShouldBe("peer");
@@ -317,7 +317,7 @@ public sealed class ConversationRowMapperTests
             SELECT 'Martian' AS citizen_kind, 'x' AS citizen_id, NULL AS role
             """);
 
-        ConversationRowMapper.MapParticipant(reader, offset: 0).ShouldBeNull();
+        reader.MapParticipant(offset: 0).ShouldBeNull();
     }
 
     [Fact]
@@ -329,7 +329,7 @@ public sealed class ConversationRowMapperTests
             SELECT 'conv-1' AS conversation_id, 'Agent' AS citizen_kind, 'agent-z' AS citizen_id, 'initiator' AS role
             """);
 
-        var summary = ConversationRowMapper.MapParticipantSummary(reader, offset: 1);
+        var summary = reader.MapParticipantSummary(offset: 1);
 
         summary.Kind.ShouldBe("Agent");
         summary.Id.ShouldBe("agent-z");
@@ -344,7 +344,7 @@ public sealed class ConversationRowMapperTests
             """);
         var logger = new CapturingLogger();
 
-        var result = ConversationRowMapper.MapParticipant(reader, offset: 0, logger);
+        var result = reader.MapParticipant(offset: 0, logger);
 
         result.ShouldBeNull();
         logger.Entries.ShouldContain(e =>
@@ -360,7 +360,7 @@ public sealed class ConversationRowMapperTests
             """);
         var logger = new CapturingLogger();
 
-        var participant = ConversationRowMapper.MapParticipant(reader, offset: 0, logger);
+        var participant = reader.MapParticipant(offset: 0, logger);
 
         participant.ShouldNotBeNull();
         participant!.CitizenId.ShouldBe(CitizenId.Of(UserId.From("bob")));

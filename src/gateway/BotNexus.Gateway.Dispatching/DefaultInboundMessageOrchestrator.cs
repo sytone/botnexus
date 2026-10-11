@@ -49,7 +49,7 @@ namespace BotNexus.Gateway.Dispatching;
 /// gateway queue cannot block a steer, and a saturated steering queue cannot block normal traffic.
 /// </para>
 /// </remarks>
-public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestrator, IChannelDispatcher, IAsyncDisposable
+public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestrator, IInboundAdmissionControl, IChannelDispatcher, IAsyncDisposable
 {
     /// <summary>Default bounded-channel capacity for per-session queues.</summary>
     public const int DefaultQueueCapacity = 64;
@@ -106,6 +106,13 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     private readonly Func<Task<InboundDispatchResult>, CancellationToken, Task<InboundDispatchResult>> _waitForRunningCompletion;
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues =
         new(StringComparer.OrdinalIgnoreCase);
+    private int _isQuiescing;
+
+    /// <inheritdoc />
+    public bool IsQuiescing => Volatile.Read(ref _isQuiescing) != 0;
+
+    /// <inheritdoc />
+    public bool TryBeginQuiesce() => Interlocked.Exchange(ref _isQuiescing, 1) == 0;
 
     /// <summary>
     /// Creates an orchestrator that uses the supplied processor to handle each
@@ -180,6 +187,9 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 nameof(message));
         }
 
+        if (IsQuiescing)
+            return false;
+
         _ = PublishInboundActivityBestEffortAsync(message);
 
         var queueKey = GetQueueKey(message);
@@ -200,6 +210,9 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 $"Channel '{message.ChannelType}' producer must populate it (see #526).",
                 nameof(message));
         }
+
+        if (IsQuiescing)
+            return InboundDispatchStatus.Busy;
 
         await PublishInboundActivityBestEffortAsync(message).ConfigureAwait(false);
 
@@ -375,6 +388,9 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 $"Channel '{message.ChannelType}' producer must populate it (see #526).",
                 nameof(message));
         }
+
+        if (IsQuiescing)
+            return InboundDispatchResult.Busy();
 
         await PublishInboundActivityBestEffortAsync(message).ConfigureAwait(false);
 

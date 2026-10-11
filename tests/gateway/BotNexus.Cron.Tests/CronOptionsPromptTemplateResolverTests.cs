@@ -13,8 +13,8 @@ public sealed class CronOptionsPromptTemplateResolverTests
     public void ListTemplates_ProjectsEffectiveMetadataAndPrecedenceWithoutBodiesOrPaths()
     {
         var fileSystem = new MockFileSystem();
-        const string homePath = @"C:\users\test\.botnexus";
-        const string workspacePath = @"C:\users\test\.botnexus\agents\farnsworth\workspace";
+        var homePath = Path.Combine(Path.GetTempPath(), "botnexus-cron-prompts", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(homePath, "agents", "farnsworth", "workspace");
         fileSystem.Directory.CreateDirectory(Path.Combine(homePath, "prompts"));
         fileSystem.Directory.CreateDirectory(Path.Combine(homePath, "agents", "farnsworth", "prompts"));
         fileSystem.Directory.CreateDirectory(Path.Combine(workspacePath, "prompts"));
@@ -137,7 +137,7 @@ public sealed class CronOptionsPromptTemplateResolverTests
     public void MalformedEffectiveTemplate_IsRedactedFromCatalogueAndRenderError()
     {
         var fileSystem = new MockFileSystem();
-        const string homePath = @"C:\users\test\.botnexus";
+        var homePath = Path.Combine(Path.GetTempPath(), "botnexus-cron-prompts", Guid.NewGuid().ToString("N"));
         var promptPath = Path.Combine(homePath, "prompts", "broken.prompt.json");
         fileSystem.Directory.CreateDirectory(Path.GetDirectoryName(promptPath)!);
         fileSystem.File.WriteAllText(promptPath, "{ definitely not JSON");
@@ -165,8 +165,8 @@ public sealed class CronOptionsPromptTemplateResolverTests
     public void Malformed_higher_precedence_template_shadows_valid_lower_definition_everywhere()
     {
         var fileSystem = new MockFileSystem();
-        const string homePath = @"C:\users\test\.botnexus";
-        const string workspacePath = @"C:\users\test\.botnexus\agents\farnsworth\workspace";
+        var homePath = Path.Combine(Path.GetTempPath(), "botnexus-cron-prompts", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(homePath, "agents", "farnsworth", "workspace");
         fileSystem.Directory.CreateDirectory(Path.Combine(homePath, "prompts"));
         fileSystem.Directory.CreateDirectory(Path.Combine(workspacePath, "prompts"));
         fileSystem.File.WriteAllText(Path.Combine(homePath, "prompts", "daily.prompt.json"), """{"name":"daily","prompt":"LOWER SECRET"}""");
@@ -244,8 +244,8 @@ public sealed class CronOptionsPromptTemplateResolverTests
     public void TryRender_WorkspaceTemplate_OverridesSharedAndOptions()
     {
         var fileSystem = new MockFileSystem();
-        const string homePath = @"C:\users\test\.botnexus";
-        const string workspacePath = @"C:\users\test\.botnexus\agents\farnsworth\workspace";
+        var homePath = Path.Combine(Path.GetTempPath(), "botnexus-cron-prompts", Guid.NewGuid().ToString("N"));
+        var workspacePath = Path.Combine(homePath, "agents", "farnsworth", "workspace");
         fileSystem.Directory.CreateDirectory(Path.Combine(homePath, "prompts"));
         fileSystem.Directory.CreateDirectory(Path.Combine(homePath, "agents", "farnsworth", "prompts"));
         fileSystem.Directory.CreateDirectory(Path.Combine(workspacePath, "prompts"));

@@ -1270,7 +1270,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
             try
             {
-                var outcome = await _compactionCoordinator.CompactAsync(session.AgentId, session, cancellationToken).ConfigureAwait(false);
+                var outcome = await _compactionCoordinator.CompactAsync(
+                    session.AgentId, session, cancellationToken,
+                    resolvedOptions: turnCompactionOptions).ConfigureAwait(false);
                 if (outcome.Applied)
                 {
                     _ = await _compactionCoordinator.TryPublishNotificationAsync(

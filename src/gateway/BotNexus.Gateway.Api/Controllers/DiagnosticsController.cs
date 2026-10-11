@@ -114,6 +114,17 @@ public sealed class DiagnosticsController(
         {
             CapturedAt = snapshot.CapturedAt,
             WorkingSetBytes = snapshot.WorkingSetBytes,
+            PrivateMemoryBytes = snapshot.PrivateMemoryBytes,
+            PrivateMemoryReadable = snapshot.PrivateMemoryReadable,
+            GcHeapSizeBytes = snapshot.GcHeapSizeBytes,
+            GcFragmentedBytes = snapshot.GcFragmentedBytes,
+            GcCollectionIndex = snapshot.GcCollectionIndex,
+            GcGenerations = snapshot.GcGenerations,
+            SqliteConnections = snapshot.SqliteConnections,
+            SqliteAllocatorAvailable = snapshot.SqliteAllocatorAvailable,
+            SqliteAllocatorCurrentBytes = snapshot.SqliteAllocatorCurrentBytes,
+            SqliteAllocatorPeakBytes = snapshot.SqliteAllocatorPeakBytes,
+            UnattributedPrivateBytesAboveLastGcCommitment = snapshot.UnattributedPrivateBytesAboveLastGcCommitment,
             GcCommittedBytes = snapshot.GcCommittedBytes,
             TotalAvailableBytes = snapshot.TotalAvailableBytes,
             Gen0Collections = snapshot.Gen0Collections,
@@ -147,6 +158,17 @@ public sealed class DiagnosticsController(
             {
                 CapturedAt = s.CapturedAt,
                 WorkingSetBytes = s.WorkingSetBytes,
+                PrivateMemoryBytes = s.PrivateMemoryBytes,
+                PrivateMemoryReadable = s.PrivateMemoryReadable,
+                GcHeapSizeBytes = s.GcHeapSizeBytes,
+                GcFragmentedBytes = s.GcFragmentedBytes,
+                GcCollectionIndex = s.GcCollectionIndex,
+                GcGenerations = s.GcGenerations,
+                SqliteConnections = s.SqliteConnections,
+                SqliteAllocatorAvailable = s.SqliteAllocatorAvailable,
+                SqliteAllocatorCurrentBytes = s.SqliteAllocatorCurrentBytes,
+                SqliteAllocatorPeakBytes = s.SqliteAllocatorPeakBytes,
+                UnattributedPrivateBytesAboveLastGcCommitment = s.UnattributedPrivateBytesAboveLastGcCommitment,
                 GcCommittedBytes = s.GcCommittedBytes,
                 TotalAvailableBytes = s.TotalAvailableBytes,
                 Gen0Collections = s.Gen0Collections,
@@ -297,7 +319,59 @@ public sealed class MemoryPressureDto
     /// <summary>Process working set (RSS) in bytes.</summary>
     public required long WorkingSetBytes { get; init; }
 
-    /// <summary>GC committed bytes (managed heap + overhead).</summary>
+    /// <summary>Process-private bytes sampled at capture time, not atomically with GC metrics.</summary>
+    public long PrivateMemoryBytes { get; init; }
+
+    /// <summary>Human-readable process-private bytes.</summary>
+    public string PrivateMemoryReadable { get; init; } = "0 B";
+
+    /// <summary>Heap size at the last GC, including fragmentation; not a current live-object census.</summary>
+    public long GcHeapSizeBytes { get; init; }
+
+    /// <summary>Fragmentation at the same last GC.</summary>
+    public long GcFragmentedBytes { get; init; }
+
+    /// <summary>Index of the GC supplying these values; zero means no collection data exists.</summary>
+    public long GcCollectionIndex { get; init; }
+
+    private IReadOnlyList<GcGenerationSnapshot> _gcGenerations = Array.AsReadOnly(Array.Empty<GcGenerationSnapshot>());
+
+    /// <summary>
+    /// Up to five ordinal runtime slots with size and fragmentation before/after the
+    /// same last GC as GcCollectionIndex; empty when collection data is unavailable.
+    /// Stored readings are defensively copied, never resampled by DTO mapping.
+    /// </summary>
+    public IReadOnlyList<GcGenerationSnapshot> GcGenerations
+    {
+        get => _gcGenerations;
+        init => _gcGenerations = Array.AsReadOnly(value.Take(5).ToArray());
+    }
+
+    /// <summary>
+    /// Nonnegative difference between current private bytes and last-GC commitment.
+    /// The samples are non-atomic; this is not native-memory or allocation-owner attribution.
+    /// </summary>
+    public long UnattributedPrivateBytesAboveLastGcCommitment { get; init; }
+
+    /// <summary>
+    /// Stored process-local observations of attached logical SQLite connections, not idle pooled
+    /// native handles or allocation ownership. Null only when the stored snapshot has no observation.
+    /// </summary>
+    public BotNexus.Persistence.Sqlite.SqliteConnectionObservation? SqliteConnections { get; init; }
+
+    /// <summary>Whether the SQLite raw provider was available; false means allocator counters are null, not zero.</summary>
+    public bool SqliteAllocatorAvailable { get; init; }
+
+    /// <summary>
+    /// Current bytes from the current SQLite native library allocator only; null when unavailable.
+    /// Does not cover all SQLite mappings/page caches, count connections, or attribute process-native memory.
+    /// </summary>
+    public long? SqliteAllocatorCurrentBytes { get; init; }
+
+    /// <summary>SQLite allocator peak bytes since the library's last reset, read without resetting; null when unavailable and non-atomic with current bytes.</summary>
+    public long? SqliteAllocatorPeakBytes { get; init; }
+
+    /// <summary>GC committed bytes (managed heap + overhead) reported for the last collection.</summary>
     public required long GcCommittedBytes { get; init; }
 
     /// <summary>Total available memory as reported by GC.</summary>

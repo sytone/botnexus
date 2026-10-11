@@ -109,6 +109,138 @@ public sealed class InMemorySessionStore : SessionStoreBase
     }
 
     /// <inheritdoc />
+    public override Task<SessionMutationOutcome> ExpireIfMatchesAsync(
+        SessionCleanupFence fence,
+        DateTimeOffset expiresAt,
+        CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (!_sessions.TryGetValue(fence.SessionId, out var session))
+                return Task.FromResult(SessionMutationOutcome.NotFound);
+            if (!MatchesCleanupFence(session, fence))
+                return Task.FromResult(SessionMutationOutcome.Conflict);
+
+            session.Status = SessionStatus.Expired;
+            session.ExpiresAt ??= expiresAt;
+            session.UpdatedAt = expiresAt;
+            return Task.FromResult(SessionMutationOutcome.Applied);
+        }
+    }
+
+    /// <inheritdoc />
+    public override Task<SessionMutationOutcome> DeleteIfMatchesAsync(
+        SessionCleanupFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (!_sessions.TryGetValue(fence.SessionId, out var session))
+                return Task.FromResult(SessionMutationOutcome.NotFound);
+            if (!MatchesCleanupFence(session, fence))
+                return Task.FromResult(SessionMutationOutcome.Conflict);
+
+            _sessions.Remove(fence.SessionId);
+            return Task.FromResult(SessionMutationOutcome.Applied);
+        }
+    }
+
+    private readonly Dictionary<string, SubAgentRunDetail> _subAgents = [];
+    private readonly Dictionary<string, string> _consumedCalls = [];
+
+    /// <inheritdoc />
+    public override Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync) _subAgents.TryAdd(info.SubAgentId, SubAgentRunDetail.FromLive(info));
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public override Task UpdateSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync) _subAgents[info.SubAgentId] = SubAgentRunDetail.FromLive(info);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public override Task<IReadOnlyList<SubAgentRunDetail>> ListSubAgentSessionsAsync(SessionId sessionId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync) return Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(_subAgents.Values
+            .Where(d => d.ParentSessionId == sessionId.Value).OrderBy(d => d.StartedAt).ToArray());
+    }
+
+    /// <inheritdoc />
+    public override Task<SubAgentRunDetail?> FindSubAgentSpawnAsync(SessionId parentSessionId, string toolCallId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync) return Task.FromResult(_subAgents.Values.FirstOrDefault(d =>
+            d.ParentSessionId == parentSessionId.Value && d.SpawningToolCallId == toolCallId));
+    }
+
+    /// <inheritdoc />
+    public override Task<SubAgentRunDetail?> GetSubAgentSessionAsync(string subAgentId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync) return Task.FromResult(_subAgents.GetValueOrDefault(subAgentId));
+    }
+
+    /// <inheritdoc />
+    public override Task<string?> ConsumeSubAgentResultAsync(string subAgentId, SessionId parentSessionId,
+        ConversationId? parentConversationId, SessionEntry result, CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ArgumentException.ThrowIfNullOrWhiteSpace(result.ToolCallId);
+            if (result.Kind != MessageKind.ToolResult) throw new ArgumentException("A receipt requires an original ToolResult row.");
+            if (!_sessions.TryGetValue(parentSessionId, out var parent)
+                || SessionMutationPolicy.IsTerminal(parent.Status)
+                || (parentConversationId.HasValue && parent.ConversationId != parentConversationId.Value))
+                throw new InvalidOperationException("Parent session is missing, sealed or rebound; result was not consumed.");
+            if (!_subAgents.TryGetValue(subAgentId, out var run) || run.ParentSessionId != parentSessionId.Value)
+                throw new UnauthorizedAccessException("Sub-agent does not belong to this parent.");
+            if (_consumedCalls.TryGetValue(subAgentId, out var consumed))
+                return Task.FromResult(consumed == result.ToolCallId
+                    ? parent.GetHistorySnapshot().Single(e => e.ToolCallId == consumed && e.Kind == MessageKind.ToolResult).Content : null);
+            var call = result.ToolCallId ?? throw new ArgumentException("Missing tool call id.");
+            if (parent.GetHistorySnapshot().Any(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == call))
+                throw new InvalidOperationException("An original tool result already exists without a receipt; consumption was refused.");
+            parent.AddEntry(result);
+            _consumedCalls.Add(subAgentId, call);
+            return Task.FromResult<string?>(parent.GetHistorySnapshot().Last(e => e.ToolCallId == call && e.Kind == MessageKind.ToolResult).Content);
+        }
+    }
+
+    /// <inheritdoc />
+    public override Task<IReadOnlyList<SubAgentRunDetail>> ListAllSubAgentSessionsAsync(
+        string? status = null, int limit = 200, CancellationToken cancellationToken = default,
+        string? parentSessionId = null, string? childAgentId = null, int offset = 0)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync) return Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(_subAgents.Values
+            .Where(d => (string.IsNullOrWhiteSpace(status) || string.Equals(d.Status.ToString(), status, StringComparison.OrdinalIgnoreCase))
+                && (parentSessionId is null || d.ParentSessionId == parentSessionId)
+                && (childAgentId is null || d.ChildAgentId == childAgentId))
+            .OrderByDescending(d => d.StartedAt).Skip(offset).Take(limit).ToArray());
+    }
+
+    private static bool MatchesCleanupFence(GatewaySession session, SessionCleanupFence fence) =>
+        ConversationIdsMatch(session.ConversationId, fence.ConversationId)
+        && session.Status == fence.ExpectedStatus
+        && session.UpdatedAt == fence.ExpectedUpdatedAt;
+
+    private static bool ConversationIdsMatch(ConversationId current, ConversationId expected)
+    {
+        var currentIsInitialized = current.IsInitialized();
+        var expectedIsInitialized = expected.IsInitialized();
+        return currentIsInitialized == expectedIsInitialized
+            && (!currentIsInitialized || current == expected);
+    }
+
+    /// <inheritdoc />
     public override Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("session.delete", ActivityKind.Internal);

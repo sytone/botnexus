@@ -12,9 +12,11 @@ public sealed class StoreMetrics
 {
     public static readonly string DurationInstrumentName = BotNexusMeters.InstrumentName("store", "duration");
     public static readonly string RowsInstrumentName = BotNexusMeters.InstrumentName("store", "rows");
+    public static readonly string AllocatedBytesInstrumentName = BotNexusMeters.InstrumentName("store", "allocated_bytes");
 
     private readonly Histogram<double>? _duration;
     private readonly Histogram<long>? _rows;
+    private readonly Histogram<long>? _allocatedBytes;
 
     public StoreMetrics(IMetrics metrics)
     {
@@ -29,6 +31,10 @@ public sealed class StoreMetrics
                 RowsInstrumentName,
                 unit: "{row}",
                 description: "Rows returned by collection-valued store read operations.");
+            _allocatedBytes = metrics.CreateHistogram<long>(
+                AllocatedBytesInstrumentName,
+                unit: "By",
+                description: "Managed bytes allocated while a store operation executes.");
         }
         catch
         {
@@ -80,8 +86,13 @@ public sealed class StoreMetrics
         }
     }
 
-    public Operation Start(string store, string operation)
-        => new(this, Bound(store), Bound(operation), Stopwatch.GetTimestamp());
+    public Operation Start(string store, string operation, bool recordAllocatedBytes = false)
+        => new(
+            this,
+            Bound(store),
+            Bound(operation),
+            Stopwatch.GetTimestamp(),
+            recordAllocatedBytes ? GC.GetTotalAllocatedBytes(precise: false) : null);
 
     private void RecordDuration(string store, string operation, string outcome, long started)
     {
@@ -121,6 +132,25 @@ public sealed class StoreMetrics
         }
     }
 
+    private void RecordAllocatedBytes(string store, string operation, string outcome, long started)
+    {
+        try
+        {
+            _allocatedBytes?.Record(
+                Math.Max(0, GC.GetTotalAllocatedBytes(precise: false) - started),
+                new TagList
+                {
+                    { "store", store },
+                    { "operation", operation },
+                    { "outcome", outcome }
+                });
+        }
+        catch
+        {
+            // Observability must not become part of store correctness.
+        }
+    }
+
     private static string Bound(string? value)
         => string.IsNullOrWhiteSpace(value) ? "unknown" : value;
 
@@ -130,14 +160,21 @@ public sealed class StoreMetrics
         private readonly string _store;
         private readonly string _operation;
         private readonly long _started;
+        private readonly long? _allocatedBytesAtStart;
         private int _completed;
 
-        internal Operation(StoreMetrics owner, string store, string operation, long started)
+        internal Operation(
+            StoreMetrics owner,
+            string store,
+            string operation,
+            long started,
+            long? allocatedBytesAtStart)
         {
             _owner = owner;
             _store = store;
             _operation = operation;
             _started = started;
+            _allocatedBytesAtStart = allocatedBytesAtStart;
         }
 
         public void Complete(int? rows = null)
@@ -147,13 +184,19 @@ public sealed class StoreMetrics
 
             if (rows.HasValue)
                 _owner.RecordRows(_store, _operation, rows.Value);
+            if (_allocatedBytesAtStart.HasValue)
+                _owner.RecordAllocatedBytes(_store, _operation, "success", _allocatedBytesAtStart.Value);
             _owner.RecordDuration(_store, _operation, "success", _started);
         }
 
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _completed, 1) == 0)
+            {
+                if (_allocatedBytesAtStart.HasValue)
+                    _owner.RecordAllocatedBytes(_store, _operation, "failure", _allocatedBytesAtStart.Value);
                 _owner.RecordDuration(_store, _operation, "failure", _started);
+            }
         }
     }
 }

@@ -22,14 +22,12 @@
   <ItemGroup>
     <!--
       Microsoft 365 Agents SDK (net8.0-targeted packages, consumed here on net10.0). These packages
-      pull in the STABLE Microsoft.Extensions.* 10.0.7 line transitively. BotNexus centrally pins the
-      10.0.0-preview.3 line for the packages it references DIRECTLY, but this project does not add a
-      direct PackageReference to any Microsoft.Extensions.* package, so Central Package Management
-      imposes no version constraint on the SDK's transitive 10.0.7 closure and there is no NU1605
-      downgrade (10.0.7 > preview.3, so nothing is downgraded). Nothing project-references this
-      extension — it is loaded dynamically via the AssemblyLoadContext extension loader into its own
-      ALC at runtime — so the newer Microsoft.Extensions.* stays isolated to this leaf and the
-      Cli/Gateway/Scenarios build graphs keep the pinned preview line untouched.
+      pull in STABLE Microsoft.Extensions.* 10.0.7 transitively. The extension has no direct
+      reference to those packages, so its restore does not downgrade them to the central preview
+      pins. Runtime isolation is different: the loader unifies host-shipped simple names regardless
+      of version. Microsoft.AspNetCore.App supplies compatible 10.0.0.0 assembly identities;
+      Azure/MSAL/data floors are selected centrally and explicitly in the production host.
+      The architecture fence scans private consumers against actual production host artifacts.
     -->
     <PackageReference Include="Microsoft.Agents.Builder" />
     <PackageReference Include="Microsoft.Agents.Connector" />

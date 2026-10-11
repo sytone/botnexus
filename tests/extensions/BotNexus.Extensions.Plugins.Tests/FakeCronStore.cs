@@ -66,6 +66,9 @@ internal sealed class FakeCronStore : ICronStore
     public Task<IReadOnlyList<CronJobCostRollup>> GetJobCostRollupsAsync(IReadOnlyCollection<JobId> jobIds, int windowDays, CancellationToken ct = default) =>
         throw new NotSupportedException("The plugin-update provisioner must not read cost rollups.");
 
+    public Task<CronRun?> GetRunAsync(RunId runId, CancellationToken ct = default) =>
+        throw new NotSupportedException("The plugin-update provisioner must not read runs.");
+
     public Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default) =>
         throw new NotSupportedException("The plugin-update provisioner must not read run history.");
 

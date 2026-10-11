@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = $PSScriptRoot | Split-Path -Parent | Split-Path -Parent
 . (Join-Path $repoRoot 'infra/buildtest/runner/RunnerTimeout.ps1')
+. (Join-Path $PSScriptRoot 'CoreTestFailureDiagnostics.ps1')
 
 New-Item -ItemType Directory -Path $ResultsDirectory -Force | Out-Null
 $completionParent = Split-Path -Parent $CompletionPath
@@ -67,7 +68,10 @@ if ($run.TimedOut) {
 }
 
 if ($run.ExitCode -ne 0) {
-    Write-Host "::error::CORE test process exited with code $($run.ExitCode). Inspect $logPath."
+    Write-Host "::error::CORE test process exited with code $($run.ExitCode). Failure details follow."
+    $diagnostics = Get-CoreTestFailureDiagnostics -TrxPaths $trxPaths -LogPath $logPath
+    Write-Host 'CORE test failure diagnostics (bounded):'
+    foreach ($line in ($diagnostics -split '\r?\n')) { Write-Host $line }
     exit $run.ExitCode
 }
 

@@ -30,12 +30,10 @@ namespace BotNexus.Gateway.Configuration.Store;
 /// <b>Known limitation, deliberately surfaced rather than hidden: a key whose own name contains a dot
 /// cannot survive the round trip.</b> The flattener joins path segments with <c>.</c>, so
 /// <c>{"a.b": 1}</c> and <c>{"a": {"b": 1}}</c> flatten to the identical path <c>a.b</c> and rehydrate
-/// to the nested form. Configuration keys are C# property names and extension identifiers, neither of
-/// which contains a dot today, and <see cref="ConfigStoreRoundTripValidator"/> would report any document
-/// that violated it as a difference rather than letting it pass silently. The alternative - escaping
-/// separators - would make every stored path unreadable in a database a human is expected to inspect,
-/// for a case that does not occur. If it ever does occur, the diff reports it loudly at startup while
-/// JSON is still authoritative.
+/// to the nested form. Provider chat model-capacity maps are an explicit exception: the flattener
+/// stores each complete map as a JSON-valued leaf, so its literal model IDs never become path
+/// segments. Other dotted identifiers still have this limitation; this exception does not introduce
+/// a general escaping scheme or recover identifiers already split by older writers.
 /// </para>
 /// </summary>
 public static class ConfigDocumentRehydrator

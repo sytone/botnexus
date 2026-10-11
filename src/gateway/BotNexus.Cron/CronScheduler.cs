@@ -18,12 +18,27 @@ public sealed class CronScheduler(
     IServiceScopeFactory scopeFactory,
     IOptionsMonitor<CronOptions> optionsMonitor,
     ILogger<CronScheduler> logger,
-    TimeProvider? timeProvider = null) : BackgroundService
+    TimeProvider? timeProvider = null,
+    IPlannedShutdownState? plannedShutdownState = null) : BackgroundService
 {
     private readonly ICronStore _cronStore = cronStore;
     private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
     private readonly IOptionsMonitor<CronOptions> _optionsMonitor = optionsMonitor;
     private readonly ILogger<CronScheduler> _logger = logger;
+    private readonly IPlannedShutdownState? _plannedShutdownState = plannedShutdownState;
+    // Serialize cohort capture with local admission, including the store-write/registry gap.
+    // Only pre-capture admissions are retained; after capture the cohort can only shrink.
+    private readonly SemaphoreSlim _runReconciliationGate = new(1, 1);
+    private readonly HashSet<RunId> _runsAdmittedBeforeCohortCapture = [];
+    private readonly Dictionary<RunId, StartupRunReconciliation> _startupRestartRuns = [];
+    private DateTimeOffset? _startupReconciliationBoundary;
+    private bool _startupCohortCaptured;
+
+    private sealed class StartupRunReconciliation(CronRun run)
+    {
+        public CronRun Run { get; } = run;
+        public bool TerminalWriteSucceeded { get; set; }
+    }
 
     // #3545: manual runs accepted from a short-lived tool call belong to the scheduler. ExecuteAsync
     // publishes the BackgroundService stopping token here, so accepted work outlives its caller
@@ -135,6 +150,15 @@ public sealed class CronScheduler(
     /// </summary>
     internal const string OrphanedRunReason = "Cron run orphaned - no terminal write was recorded by its owning process.";
 
+    /// <summary>
+    /// Durable terminal reason used when a cron occurrence is interrupted by an acknowledged
+    /// planned gateway restart. The same reason is used by graceful host cancellation and by the
+    /// next process's one-time startup reconciliation when the prior process died before its
+    /// terminal write committed.
+    /// </summary>
+    internal const string PlannedRestartReason =
+        "Cron run interrupted by a planned gateway restart; this occurrence was terminalized and was not reported as successful.";
+
     public async Task<CronRun> RunNowAsync(JobId jobId, CancellationToken cancellationToken = default)
     {
         await _cronStore.InitializeAsync(cancellationToken).ConfigureAwait(false);
@@ -167,7 +191,7 @@ public sealed class CronScheduler(
         if (IsExpired(job))
             return await RunActionAsync(job, CronTriggerType.Manual, triggeredAt, cancellationToken).ConfigureAwait(false);
 
-        var run = await _cronStore.RecordRunStartAsync(job.Id, cancellationToken).ConfigureAwait(false);
+        var run = await RecordLocallyAdmittedRunStartAsync(job.Id, cancellationToken).ConfigureAwait(false);
         var startGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var execution = ExecuteAcceptedManualRunAsync(job, run, triggeredAt, startGate.Task);
         _ownedManualRuns[run.Id.Value] = execution;
@@ -740,7 +764,7 @@ public sealed class CronScheduler(
             // A suppressed due/manual occurrence is still an observable scheduler decision. Persist
             // it instead of returning an invented in-memory row: otherwise history cannot explain
             // why the occurrence did not execute, which is the exact blind spot exposed by #4283.
-            var skipped = acceptedRun ?? await _cronStore.RecordRunStartAsync(job.Id, ct).ConfigureAwait(false);
+            var skipped = acceptedRun ?? await RecordLocallyAdmittedRunStartAsync(job.Id, ct).ConfigureAwait(false);
             await _cronStore.RecordRunCompleteAsync(
                 skipped.Id,
                 CronRunStatus.Skipped,
@@ -762,7 +786,7 @@ public sealed class CronScheduler(
             };
         }
 
-        var run = acceptedRun ?? await _cronStore.RecordRunStartAsync(job.Id, ct).ConfigureAwait(false);
+        var run = acceptedRun ?? await RecordLocallyAdmittedRunStartAsync(job.Id, ct).ConfigureAwait(false);
         var action = ResolveAction(NormalizeActionType(job.ActionType));
 
         // #3160: from here on the run executes under its OWN linked token, not the caller's. That
@@ -804,7 +828,12 @@ public sealed class CronScheduler(
             // shutdown/cancel). The run was already stamped Running by RecordRunStartAsync above,
             // so record the abort here too - otherwise it stays stuck Running. CancellationToken.None
             // for the write since `ct` is cancelled.
-            await RecordAbortedRunAsync(run.Id, job, triggeredAt).ConfigureAwait(false);
+            await RecordAbortedRunAsync(
+                    run.Id,
+                    job,
+                    triggeredAt,
+                    reason: ResolveHostAbortReason())
+                .ConfigureAwait(false);
             // #2634 (AC2): a one-shot aborted before it even acquired the lock is still terminal --
             // it will never run again on its own -- so the job is removed here too. Leaving it out
             // would rebuild exactly the bug: an early-ending turn leaving the job scheduled forever.
@@ -994,7 +1023,13 @@ public sealed class CronScheduler(
                 _logger.LogWarning(
                     "Cron job aborted (cancellation requested). JobId: {JobId}, ActionType: {ActionType}",
                     job.Id, job.ActionType);
-                await RecordAbortedRunAsync(run.Id, job, triggeredAt, cost: context.Cost).ConfigureAwait(false);
+                await RecordAbortedRunAsync(
+                        run.Id,
+                        job,
+                        triggeredAt,
+                        reason: ResolveHostAbortReason(),
+                        cost: context.Cost)
+                    .ConfigureAwait(false);
                 throw;
             }
             finally
@@ -1937,64 +1972,150 @@ public sealed class CronScheduler(
     /// <returns>The number of runs reaped.</returns>
     internal async Task<int> ReapOrphanedRunsAsync(CancellationToken ct = default)
     {
-        var options = _optionsMonitor.CurrentValue ?? new CronOptions();
-        var bound = TimeSpan.FromSeconds(Math.Max(1, options.OrphanedRunThresholdSeconds));
-
-        var running = await _cronStore.ListRunningRunsAsync(ct).ConfigureAwait(false);
-        if (running.Count == 0)
+        await _runReconciliationGate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            return 0;
-        }
+            var options = _optionsMonitor.CurrentValue ?? new CronOptions();
+            var bound = TimeSpan.FromSeconds(Math.Max(1, options.OrphanedRunThresholdSeconds));
 
-        var now = _timeProvider.GetUtcNow();
-        var reaped = 0;
-
-        foreach (var run in running)
-        {
-            var hasActiveExecutor = _activeRuns.ContainsKey(run.Id.Value);
-            var ownerState = await GetOwnerSessionStateAsync(run.SessionId, ct).ConfigureAwait(false);
-            var ownerIsTerminal = run.SessionId.HasValue
-                && ownerState is "sealed" or "expired" or "missing";
-
-            // A process-local executor is authoritative while present. Otherwise a terminal or
-            // missing owner session proves the persisted running row has lost its execution owner,
-            // so reconcile it immediately rather than waiting for the generic age threshold.
-            // Rows without a published session retain the bounded age fallback for non-session
-            // actions and the short pre-session creation window.
-            if (hasActiveExecutor
-                || (!ownerIsTerminal && (now - run.StartedAt).Duration() <= bound))
+            // Freeze the startup boundary before any fallible read. A successful retry must not
+            // classify rows created by another process during the retry window as previous runs.
+            _startupReconciliationBoundary ??= _timeProvider.GetUtcNow();
+            var running = await _cronStore.ListRunningRunsAsync(ct).ConfigureAwait(false);
+            if (!_startupCohortCaptured)
             {
-                continue;
+                // Resolve shutdown classification here, not during DI construction.
+                if (_plannedShutdownState?.PreviousShutdownWasPlanned == true)
+                {
+                    foreach (var run in running)
+                    {
+                        if (run.StartedAt <= _startupReconciliationBoundary.Value
+                            && !_runsAdmittedBeforeCohortCapture.Contains(run.Id)
+                            && !_activeRuns.ContainsKey(run.Id.Value))
+                        {
+                            _startupRestartRuns.Add(run.Id, new StartupRunReconciliation(run));
+                        }
+                    }
+                }
+                _startupCohortCaptured = true;
+                _runsAdmittedBeforeCohortCapture.Clear();
             }
 
-            var reason = ownerIsTerminal
-                ? $"Cron run orphaned - owner session is {ownerState} and no active executor owns the run."
-                : OrphanedRunReason;
-
-            await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, reason, ct: ct)
-                .ConfigureAwait(false);
-
-            // Only clear the job's bookkeeping when it is still advertising this stuck run. A newer
-            // terminal run must not be regressed by reaping an older orphan.
-            var job = await _cronStore.GetAsync(run.JobId, ct).ConfigureAwait(false);
-            if (job is not null && string.Equals(job.LastRunStatus, CronRunStatus.Running, StringComparison.Ordinal))
+            var reaped = 0;
+            var runningIds = running.Select(run => run.Id).ToHashSet();
+            var startupIds = _startupRestartRuns.Keys.ToHashSet();
+            foreach (var entry in _startupRestartRuns.Values.ToArray())
             {
-                await _cronStore.RecordRunFinalizationAsync(
-                    run.JobId,
-                    run.StartedAt,
-                    CronRunStatus.Error,
-                    reason,
-                    ct).ConfigureAwait(false);
+                var run = entry.Run;
+                // Local execution wins even if ownership appeared after the snapshot. Drop this
+                // identity permanently rather than reclassifying it when its executor leaves.
+                if (_activeRuns.ContainsKey(run.Id.Value))
+                {
+                    _startupRestartRuns.Remove(run.Id);
+                    continue;
+                }
+
+                if (!entry.TerminalWriteSucceeded && !runningIds.Contains(run.Id))
+                {
+                    // Completion may have committed before its acknowledgement threw. Read the
+                    // exact identity, not bounded history, and only acknowledge our own outcome.
+                    // A failed read leaves this entry intact for the next reconciliation attempt.
+                    var persisted = await _cronStore.GetRunAsync(run.Id, ct).ConfigureAwait(false);
+                    if (persisted is null
+                        || persisted.Id != run.Id
+                        || persisted.JobId != run.JobId
+                        || persisted.StartedAt != run.StartedAt
+                        || !string.Equals(persisted.Status, CronRunStatus.Error, StringComparison.Ordinal)
+                        || !string.Equals(persisted.Error, PlannedRestartReason, StringComparison.Ordinal)
+                        || persisted.CompletedAt is null)
+                    {
+                        _startupRestartRuns.Remove(run.Id);
+                        continue;
+                    }
+                    entry.TerminalWriteSucceeded = true;
+                }
+
+                if (!entry.TerminalWriteSucceeded)
+                {
+                    await _cronStore.RecordRunCompleteAsync(
+                        run.Id, CronRunStatus.Error, PlannedRestartReason, ct: ct).ConfigureAwait(false);
+                    entry.TerminalWriteSucceeded = true;
+                }
+
+                // A terminal row vanishes from the running query. Retain its job bookkeeping
+                // until that succeeds, without repeating a successful run-terminal write.
+                await FinalizeReapedRunAsync(run, PlannedRestartReason, ct, requireMatchingOccurrence: true)
+                    .ConfigureAwait(false);
+                _startupRestartRuns.Remove(run.Id);
+                reaped++;
+                LogReapedRun(run, bound);
             }
 
-            reaped++;
-            _logger.LogWarning(
-                "Reaped orphaned cron run '{RunId}' for job '{JobId}' (started_at {StartedAt:o}, bound {Bound}).",
-                run.Id, run.JobId, run.StartedAt, bound);
-        }
+            var now = _timeProvider.GetUtcNow();
+            foreach (var run in running)
+            {
+                if (startupIds.Contains(run.Id) || _activeRuns.ContainsKey(run.Id.Value))
+                    continue;
 
-        return reaped;
+                var ownerState = await GetOwnerSessionStateAsync(run.SessionId, ct).ConfigureAwait(false);
+                var ownerIsTerminal = run.SessionId.HasValue
+                    && ownerState is "sealed" or "expired" or "missing";
+                if (!ownerIsTerminal && (now - run.StartedAt).Duration() <= bound)
+                    continue;
+
+                var reason = ownerIsTerminal
+                    ? $"Cron run orphaned - owner session is {ownerState} and no active executor owns the run."
+                    : OrphanedRunReason;
+                await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.Error, reason, ct: ct)
+                    .ConfigureAwait(false);
+                await FinalizeReapedRunAsync(run, reason, ct).ConfigureAwait(false);
+                reaped++;
+                LogReapedRun(run, bound);
+            }
+
+            return reaped;
+        }
+        finally
+        {
+            _runReconciliationGate.Release();
+        }
     }
+
+    private async Task<CronRun> RecordLocallyAdmittedRunStartAsync(JobId jobId, CancellationToken ct)
+    {
+        await _runReconciliationGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var run = await _cronStore.RecordRunStartAsync(jobId, ct).ConfigureAwait(false);
+            if (!_startupCohortCaptured)
+                _runsAdmittedBeforeCohortCapture.Add(run.Id);
+            return run;
+        }
+        finally
+        {
+            _runReconciliationGate.Release();
+        }
+    }
+
+    private async Task FinalizeReapedRunAsync(
+        CronRun run, string reason, CancellationToken ct, bool requireMatchingOccurrence = false)
+    {
+        var job = await _cronStore.GetAsync(run.JobId, ct).ConfigureAwait(false);
+        // Startup retries must not regress a newer running occurrence. The generic age reaper
+        // keeps its existing status-only cleanup for stale/corrupt timestamp bookkeeping.
+        if (job is not null
+            && string.Equals(job.LastRunStatus, CronRunStatus.Running, StringComparison.Ordinal)
+            && (!requireMatchingOccurrence || job.LastRunAt == run.StartedAt))
+        {
+            await _cronStore.RecordRunFinalizationAsync(
+                run.JobId, run.StartedAt, CronRunStatus.Error, reason, ct).ConfigureAwait(false);
+        }
+    }
+
+    private void LogReapedRun(CronRun run, TimeSpan bound)
+        => _logger.LogWarning(
+            "Reaped orphaned cron run '{RunId}' for job '{JobId}' (started_at {StartedAt:o}, bound {Bound}).",
+            run.Id, run.JobId, run.StartedAt, bound);
 
     /// <summary>
     /// Projects liveness evidence for run-history consumers. Running rows expose their age, the
@@ -2066,6 +2187,11 @@ public sealed class CronScheduler(
     /// already cancelled - passing it would cancel the very writes that record the outcome.
     /// </para>
     /// </remarks>
+    private string ResolveHostAbortReason()
+        => _plannedShutdownState?.CurrentShutdownIsPlanned == true
+            ? PlannedRestartReason
+            : "Cron run aborted before completion.";
+
     private async Task RecordAbortedRunAsync(
         RunId runId,
         CronJob job,

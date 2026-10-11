@@ -12,9 +12,150 @@ public sealed class SqliteCronStore(
     string dbPath,
     IFileSystem? fileSystem = null,
     ILogger<SqliteCronStore>? logger = null,
-    Func<int>? retentionDaysAccessor = null) : ICronStore
+    Func<int>? retentionDaysAccessor = null,
+    TimeProvider? timeProvider = null) : ICronStore
 {
     private readonly string _dbPath = dbPath;
+    private readonly TimeProvider _activityTimeProvider = timeProvider ?? TimeProvider.System;
+
+    /// <inheritdoc />
+    public async Task<CronRunActivity> GetRunActivityAsync(CronRunActivityQuery? query = null, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        query ??= new CronRunActivityQuery();
+        var now = _activityTimeProvider.GetUtcNow().ToUniversalTime();
+        var requestedEnd = (query.EndExclusive ?? now).ToUniversalTime();
+        var requestedStart = query.StartInclusive?.ToUniversalTime() ?? SubtractActivityDays(requestedEnd, 1);
+        // At the minimum representable instant, a default 24-hour window saturates to empty.
+        if (requestedStart > requestedEnd || (requestedStart == requestedEnd &&
+            (query.StartInclusive.HasValue || query.EndExclusive.HasValue)))
+            throw new ArgumentException("The activity start must precede its exclusive end.", nameof(query));
+
+        var horizon = SubtractActivityDays(now, Math.Max(1, _retentionDaysAccessor()));
+        var start = requestedStart < horizon ? horizon : requestedStart;
+        if (start > now) start = now;
+        var end = requestedEnd > now ? now : requestedEnd;
+        if (end < start) end = start;
+        await InitializeAsync(ct).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        // Deferred BEGIN does not reserve the writer lock. The first SELECT establishes the
+        // snapshot and both aggregate reads share it, even if finalization/purge commits between.
+        using var transaction = connection.BeginTransaction(deferred: true);
+        try
+        {
+            await using var totalsCommand = CreateActivityCommand(connection, transaction, query, start, end, top: false);
+            CronRunActivityTotals totals;
+            await using (var reader = await totalsCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
+            {
+                if (!await reader.ReadAsync(ct).ConfigureAwait(false))
+                    throw new InvalidOperationException("Activity aggregate did not return its totals row.");
+                totals = ReadActivityTotals(reader, 0);
+            }
+            await using var topCommand = CreateActivityCommand(connection, transaction, query, start, end, top: true);
+            var jobs = new List<CronRunActivityJob>();
+            await using (var reader = await topCommand.ExecuteReaderAsync(ct).ConfigureAwait(false))
+            {
+                while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                    jobs.Add(new CronRunActivityJob
+                    {
+                        JobId = JobId.From(reader.GetString(0)), Totals = ReadActivityTotals(reader, 1)
+                    });
+            }
+            // Exactly two SELECTs after initialization, independent of matching runs/job count.
+            // Only one totals row and at most 50 grouped rows are materialized; no run payloads.
+            ct.ThrowIfCancellationRequested();
+            transaction.Commit();
+            return new CronRunActivity
+            {
+                RequestedStartInclusiveUtc = requestedStart, RequestedEndExclusiveUtc = requestedEnd,
+                EffectiveStartInclusiveUtc = start, EffectiveEndExclusiveUtc = end,
+                WindowTruncatedByRetention = requestedStart < horizon,
+                WindowTruncatedByNow = requestedEnd > now,
+                Totals = totals, TopJobs = jobs
+            };
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 1 &&
+            ex.Message.Contains("integer overflow", StringComparison.OrdinalIgnoreCase))
+        {
+            // Deliberately omit the provider exception: no SQL, paths or stored identifiers escape.
+            throw new InvalidOperationException(ActivityMeasurementOutOfRange);
+        }
+    }
+
+    private static DateTimeOffset SubtractActivityDays(DateTimeOffset value, int days)
+    {
+        // Compare whole days before multiplication: int.MaxValue days exceeds Int64 ticks.
+        if (days > value.Ticks / TimeSpan.TicksPerDay) return DateTimeOffset.MinValue;
+        return value.AddTicks(-(long)days * TimeSpan.TicksPerDay);
+    }
+
+    private const string ActivityMeasurementOutOfRange = "Activity measurement is out of range.";
+
+    private const string ActivityTokenSum =
+        "SUM(CASE WHEN prompt_tokens IS NOT NULL OR completion_tokens IS NOT NULL " +
+        "THEN COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0) END)";
+
+    internal static string BuildActivitySql(bool scoped, bool top)
+        => $"""
+            SELECT {(top ? "job_id, " : "")}
+                   COUNT(*), COUNT(DISTINCT job_id),
+                   COUNT(CASE WHEN prompt_tokens IS NOT NULL OR completion_tokens IS NOT NULL THEN 1 END),
+                   COUNT(CASE WHEN status = 'running' THEN 1 END),
+                   COUNT(CASE WHEN completed_at IS NULL THEN 1 END),
+                   SUM(prompt_tokens), SUM(completion_tokens), {ActivityTokenSum},
+                   SUM(turn_count), SUM(tool_call_count), SUM(duration_ms),
+                   COUNT(prompt_tokens), COUNT(completion_tokens), COUNT(turn_count),
+                   COUNT(tool_call_count), COUNT(duration_ms),
+                   typeof(SUM(prompt_tokens)), typeof(SUM(completion_tokens)), typeof({ActivityTokenSum}),
+                   typeof(SUM(turn_count)), typeof(SUM(tool_call_count)), typeof(SUM(duration_ms)),
+                   MAX(CASE WHEN typeof(COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)) <> 'integer'
+                            THEN 1 ELSE 0 END)
+            FROM cron_runs
+            WHERE started_at >= $start AND started_at < $end
+            {(scoped ? "AND job_id = $job" : "")}
+            {(top ? $"GROUP BY job_id ORDER BY {ActivityTokenSum} DESC, job_id COLLATE BINARY ASC LIMIT $limit" : "")}
+            """;
+
+    private static SqliteCommand CreateActivityCommand(SqliteConnection connection, SqliteTransaction transaction,
+        CronRunActivityQuery query, DateTimeOffset start, DateTimeOffset end, bool top)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = BuildActivitySql(query.JobId.HasValue, top);
+        command.Parameters.AddWithValue("$start", start.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$end", end.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+        if (query.JobId is { } jobId) command.Parameters.AddWithValue("$job", jobId.Value);
+        if (top) command.Parameters.AddWithValue("$limit", Math.Clamp(query.TopJobLimit, 1, 50));
+        return command;
+    }
+
+    private static CronRunActivityTotals ReadActivityTotals(SqliteDataReader reader, int offset)
+    {
+        // Exact Int64 totals only. SQLite promotes overflowing per-row addition to REAL,
+        // and GetInt64 can coerce that lossy value. Reject it before reading any measurement.
+        // NULL still means unmeasured; overflow is never converted to NULL, zero or saturation.
+        for (var ordinal = 16; ordinal < 22; ordinal++)
+        {
+            var storageType = reader.GetString(offset + ordinal);
+            if (storageType != "integer" && storageType != "null")
+                throw new InvalidOperationException(ActivityMeasurementOutOfRange);
+        }
+        if (!reader.IsDBNull(offset + 22) && reader.GetInt64(offset + 22) != 0)
+            throw new InvalidOperationException(ActivityMeasurementOutOfRange);
+        long? NullableSum(int ordinal) => reader.IsDBNull(offset + ordinal) ? null : reader.GetInt64(offset + ordinal);
+        return new CronRunActivityTotals
+        {
+            RunCount = reader.GetInt64(offset), JobCount = reader.GetInt64(offset + 1),
+            MeasuredRunCount = reader.GetInt64(offset + 2), RunningRunCount = reader.GetInt64(offset + 3),
+            UnfinalizedRunCount = reader.GetInt64(offset + 4),
+            TotalPromptTokens = NullableSum(5), TotalCompletionTokens = NullableSum(6), TotalTokens = NullableSum(7),
+            TotalTurns = NullableSum(8), TotalToolCalls = NullableSum(9), TotalDurationMs = NullableSum(10),
+            PromptTokenRunCount = reader.GetInt64(offset + 11), CompletionTokenRunCount = reader.GetInt64(offset + 12),
+            TurnRunCount = reader.GetInt64(offset + 13), ToolCallRunCount = reader.GetInt64(offset + 14),
+            DurationRunCount = reader.GetInt64(offset + 15)
+        };
+    }
 
     // #2641 AC6: the cost rollup window can never exceed the retention horizon, because the
     // retention service has already deleted everything older. Read through an accessor rather than
@@ -138,6 +279,11 @@ public sealed class SqliteCronStore(
 
                 CREATE INDEX IF NOT EXISTS idx_cron_runs_job_id_started_at
                 ON cron_runs(job_id, started_at DESC);
+
+                -- #4626: synthetic 10k-row EXPLAIN shows global interval aggregates scan
+                -- without a time-leading index; this additive index bounds both SQL reads.
+                CREATE INDEX IF NOT EXISTS idx_cron_runs_started_at
+                ON cron_runs(started_at);
 
                 -- #2838: the cross-job recent-run query filters on status and orders by
                 -- started_at across many job ids, so the (job_id, started_at) index alone cannot
@@ -297,7 +443,7 @@ public sealed class SqliteCronStore(
                 await SqliteAdditiveMigration.ExecuteAsync(migrateCost, ct).ConfigureAwait(false);
             }
 
-            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
+            connection.Apply( CurrentSchemaVersion, Migrations);
 
             _initialized = true;
         }
@@ -997,6 +1143,23 @@ public sealed class SqliteCronStore(
             .ThenByDescending(r => r.TotalTokens ?? 0)
             .ThenByDescending(r => r.TotalToolCalls ?? 0)
             .ThenBy(r => r.JobId.Value, StringComparer.Ordinal)];
+    }
+
+    /// <inheritdoc />
+    public async Task<CronRun?> GetRunAsync(RunId runId, CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT {RunColumns}
+            FROM cron_runs
+            WHERE id = $runId
+            """;
+        command.Parameters.AddWithValue("$runId", runId.Value);
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        return await reader.ReadAsync(ct).ConfigureAwait(false) ? ReadRun(reader) : null;
     }
 
     public async Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default)

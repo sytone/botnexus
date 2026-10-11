@@ -39,6 +39,21 @@ public sealed class WebhookConversationRetentionHostedServiceTests
         public Task ArchiveAsync(ConversationId conversationId, string source, string? correlationId, string actor, CancellationToken ct = default)
             => ArchiveAsync(conversationId, ct);
 
+        public Task<bool> TryArchiveAsync(ConversationId conversationId, string source, string? correlationId, string actor, CancellationToken ct = default)
+        {
+            lock (_store)
+            {
+                if (!_store.TryGetValue(conversationId.Value, out var conversation)
+                    || conversation.Status != ConversationStatus.Active)
+                {
+                    return Task.FromResult(false);
+                }
+
+                conversation.Status = ConversationStatus.Archived;
+                return Task.FromResult(true);
+            }
+        }
+
         // Unused members.
         public Task<IReadOnlyList<Conversation>> ListForCitizenAsync(CitizenId citizen, CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<Conversation>>([]);
@@ -64,6 +79,18 @@ public sealed class WebhookConversationRetentionHostedServiceTests
             => throw new NotSupportedException();
         public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<ConversationSummary>>([]);
+        public Task<IReadOnlyList<ConversationRetentionCandidate>> GetRetentionCandidatesAsync(
+            ConversationSource? source = null,
+            CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<ConversationRetentionCandidate>>([.. _store.Values
+                .Where(c => c.Status == ConversationStatus.Active && (!source.HasValue || c.Source == source.Value))
+                .Select(c => new ConversationRetentionCandidate(
+                    c.ConversationId,
+                    c.AgentId,
+                    c.UpdatedAt,
+                    c.IsPinned,
+                    c.Source,
+                    c.SourceId))]);
         public Task<IReadOnlyList<PendingAskUserCheckpoint>> GetPendingAskUserCheckpointsAsync(CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<PendingAskUserCheckpoint>>([]);
         public Task<Dictionary<string, JsonElement>?> GetCanvasStateAsync(ConversationId conversationId, CancellationToken ct = default)
@@ -125,6 +152,8 @@ public sealed class WebhookConversationRetentionHostedServiceTests
             UpdatedAt = DateTimeOffset.UtcNow.AddDays(-inactiveDays),
             Status = status,
             IsPinned = pinnedByUser,
+            Source = ConversationSource.Webhook,
+            SourceId = webhookId,
         };
         WebhookConversationProvenance.Stamp(conv.Metadata, WebhookId.From(webhookId));
         return conv;

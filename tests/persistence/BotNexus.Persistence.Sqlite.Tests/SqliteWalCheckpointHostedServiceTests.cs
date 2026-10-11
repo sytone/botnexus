@@ -137,6 +137,30 @@ public sealed class SqliteWalCheckpointHostedServiceTests : IDisposable
         Assert.Equal(0, new FileInfo(walPath).Length);
     }
 
+
+    [Theory]
+    [InlineData(SqliteCheckpointMode.Passive)]
+    [InlineData(SqliteCheckpointMode.Truncate)]
+    public async Task ActiveReader_ReportsIncompleteCheckpoint(SqliteCheckpointMode mode)
+    {
+        var dbPath = await CreateDatabaseWithGrownWalAsync();
+        await using var readerConnection = SqliteConnectionFactory.Create(Cs(dbPath));
+        await readerConnection.OpenAsync();
+        await using var readCommand = readerConnection.CreateCommand();
+        readCommand.CommandText = "SELECT * FROM t;";
+        await using var reader = await readCommand.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+
+        await Exec(_holders[0], "INSERT INTO t(blob) VALUES('blocked-frame');");
+        await using var checkpointConnection = SqliteConnectionFactory.Create(Cs(dbPath));
+        await checkpointConnection.OpenAsync();
+
+        var result = await SqliteWalMaintenance.CheckpointAsync(checkpointConnection, mode);
+
+        Assert.False(result.ReclamationCompleted);
+        Assert.True(result.Busy > 0 || result.CheckpointedFrames < result.LogFrames);
+    }
+
     [Fact]
     public async Task NetworkPathDatabase_IsSkipped()
     {

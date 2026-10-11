@@ -58,8 +58,11 @@ public sealed class MemorySessionReconciler(
         HashSet<string> liveSessionIds;
         try
         {
-            var live = await _sessions.ListAsync(null, cancellationToken).ConfigureAwait(false);
-            liveSessionIds = [.. live.Select(session => session.SessionId.Value)];
+            // The reconciliation needs identity only. ListAsync hydrates each transcript and made
+            // startup memory proportional to the entire multi-gigabyte session corpus (#4657).
+            var live = await _sessions.ListSummariesAsync(
+                DateTimeOffset.MinValue, limit: null, offset: 0, cancellationToken).ConfigureAwait(false);
+            liveSessionIds = [.. live.Select(session => session.SessionId)];
         }
         catch (OperationCanceledException)
         {

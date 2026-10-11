@@ -25,8 +25,21 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         await using var connection = await OpenAsync();
         var columns = await ReadStringsAsync(connection, "SELECT name FROM pragma_table_info('tool_invocations') ORDER BY cid");
         columns.ShouldBe(["id", "session_id", "tool_call_id", "tool_name", "arguments_json", "started_at", "completed_at", "status", "is_error", "result_content", "result_bytes", "result_sha256", "retention_state"]);
-        var indexes = await ReadStringsAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%tool_invocation%' ORDER BY name");
-        indexes.ShouldBe(["idx_session_history_tool_invocation_id", "idx_tool_invocations_retention_completed", "idx_tool_invocations_session_started"]);
+        var indexes = await ReadStringsAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_%tool_invocation%' OR name = 'idx_session_history_unlinked_tool_rows') ORDER BY name");
+        indexes.ShouldBe(["idx_session_history_tool_invocation_id", "idx_session_history_unlinked_tool_rows", "idx_tool_invocations_retention_completed", "idx_tool_invocations_session_started"]);
+
+        var plan = await ReadStringsAsync(connection, """
+            EXPLAIN QUERY PLAN
+            SELECT id
+            FROM session_history
+            WHERE tool_invocation_id IS NULL
+              AND tool_call_id IS NOT NULL
+              AND (message_kind IN ('tool-start', 'tool-result')
+                   OR (message_kind IS NULL AND role = 'tool'))
+            ORDER BY id
+            LIMIT 100
+            """, ordinal: 3);
+        plan.ShouldContain(detail => detail.Contains("USING INDEX idx_session_history_unlinked_tool_rows", StringComparison.Ordinal));
 
         foreach (var sql in new[]
         {
@@ -92,6 +105,8 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         first.CleanedInvocations.ShouldBe(1);
         first.CleanedRows.ShouldBe(2);
         first.ClearedBytes.ShouldBe(Encoding.UTF8.GetByteCount(arguments) + Encoding.UTF8.GetByteCount(result) + Encoding.UTF8.GetByteCount("duplicate"));
+        first.ProtectedInvocations.ShouldBe(-1);
+        first.RemainingInvocations.ShouldBe(-1);
         second.CleanedInvocations.ShouldBe(0);
         second.ClearedBytes.ShouldBe(0);
         await using (var connection = await OpenAsync())
@@ -110,6 +125,71 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         reloaded.ReplaceHistory(reloaded.GetHistorySnapshot());
         await reloadedStore.SaveAsync(reloaded);
         (await ReadInvocationAsync("cleanup", "safe")).ResultContent.ShouldBe(result);
+    }
+
+    [Theory]
+    [InlineData("tool-start", false, 1)]
+    [InlineData("tool-start", false, 10)]
+    [InlineData(null, false, 1)]
+    [InlineData(null, false, 10)]
+    [InlineData("tool-start", true, 1)]
+    [InlineData("tool-start", true, 10)]
+    public async Task CleanupLegacyToolPayloads_MissingResultEvidencePreservesHistoryAndAdvancesPastCandidate(string? messageKind, bool addLegacySibling, int batchSize)
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("missing-result"), AgentId.From("agent"));
+        await store.SaveAsync(session);
+        await using var connection = await OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO tool_invocations(session_id,tool_call_id,tool_name,arguments_json,started_at,completed_at,status,is_error,result_content,result_bytes,result_sha256,retention_state)
+            VALUES
+              ('missing-result','protected','x','{}','a','b','success',0,'r',1,'454349e422f05297191ead13e21d3db520e5abef52055e4964b82fb213f593a1','hot'),
+              ('missing-result','safe','x','{}','a','b','success',0,'r',1,'454349e422f05297191ead13e21d3db520e5abef52055e4964b82fb213f593a1','hot');
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id)
+            SELECT 'missing-result','tool','start','a','x','protected','{}',0,$kind,id FROM tool_invocations WHERE tool_call_id='protected';
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id)
+            SELECT 'missing-result','tool','legacy result','b','x','protected','legacy args',0,NULL,id FROM tool_invocations WHERE tool_call_id='protected' AND $addSibling=1;
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id)
+            SELECT 'missing-result','tool','start','a','x','safe','{}',0,'tool-start',id FROM tool_invocations WHERE tool_call_id='safe';
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id)
+            SELECT 'missing-result','tool','r','b','x','safe',NULL,0,'tool-result',id FROM tool_invocations WHERE tool_call_id='safe';
+            """;
+        command.Parameters.AddWithValue("$kind", (object?)messageKind ?? DBNull.Value);
+        command.Parameters.AddWithValue("$addSibling", addLegacySibling ? 1 : 0);
+        await command.ExecuteNonQueryAsync();
+        var protectedId = await ScalarLongAsync(connection, "SELECT id FROM tool_invocations WHERE tool_call_id='protected'");
+        var safeId = await ScalarLongAsync(connection, "SELECT id FROM tool_invocations WHERE tool_call_id='safe'");
+        var protectedInvocation = await ReadInvocationAsync("missing-result", "protected");
+        const string protectedHistorySql = "SELECT json_array(id,session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id) FROM session_history WHERE tool_call_id='protected' ORDER BY id";
+        var protectedHistory = await ReadStringsAsync(connection, protectedHistorySql);
+
+        var first = store.CleanupLegacyToolPayloads(batchSize);
+        first.ScannedInvocations.ShouldBe(batchSize == 1 ? 1 : 2);
+        first.CleanedInvocations.ShouldBe(batchSize == 1 ? 0 : 1);
+        first.CleanedRows.ShouldBe(batchSize == 1 ? 0 : 2);
+        first.ClearedBytes.ShouldBe(batchSize == 1 ? 0 : 3);
+        first.LastScannedInvocationId.ShouldBe(batchSize == 1 ? protectedId : safeId);
+        first.HasMore.ShouldBe(batchSize == 1);
+        if (batchSize == 1)
+        {
+            var next = store.CleanupLegacyToolPayloads(batchSize, first.LastScannedInvocationId);
+            next.ScannedInvocations.ShouldBe(1);
+            next.CleanedInvocations.ShouldBe(1);
+            next.CleanedRows.ShouldBe(2);
+            next.ClearedBytes.ShouldBe(3);
+            next.LastScannedInvocationId.ShouldBe(safeId);
+            next.HasMore.ShouldBeFalse();
+        }
+
+        var finished = store.CleanupLegacyToolPayloads(batchSize, safeId);
+        finished.ScannedInvocations.ShouldBe(0);
+        finished.CleanedInvocations.ShouldBe(0);
+        finished.LastScannedInvocationId.ShouldBe(safeId);
+        finished.HasMore.ShouldBeFalse();
+        (await ReadStringsAsync(connection, protectedHistorySql)).ShouldBe(protectedHistory);
+        (await ReadInvocationAsync("missing-result", "protected")).ShouldBe(protectedInvocation);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_call_id='safe' AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))")).ShouldBe(0);
     }
 
     [Fact]
@@ -142,9 +222,94 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         var report = store.CleanupLegacyToolPayloads(20);
 
         report.CleanedInvocations.ShouldBe(0);
-        report.ProtectedInvocations.ShouldBe(5);
-        report.RemainingInvocations.ShouldBe(5);
+        report.ProtectedInvocations.ShouldBe(-1);
+        report.RemainingInvocations.ShouldBe(-1);
         (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_args IS NOT NULL OR content='r'")).ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task CleanupLegacyToolPayloads_LargeProtectedPopulationScansOnlyBatchBound()
+    {
+        const int protectedCount = 250;
+        const int batchSize = 17;
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("cursor"), AgentId.From("agent"));
+        await store.SaveAsync(session);
+        await using var connection = await OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            WITH RECURSIVE sequence(value) AS (
+                SELECT 1
+                UNION ALL SELECT value + 1 FROM sequence WHERE value < $protectedCount)
+            INSERT INTO tool_invocations(session_id,tool_call_id,tool_name,arguments_json,started_at,completed_at,status,is_error,result_content,result_bytes,result_sha256,retention_state)
+            SELECT 'cursor','protected-' || value,'x','{}','a','b','success',0,'different',9,'bad','hot' FROM sequence;
+            INSERT INTO tool_invocations(session_id,tool_call_id,tool_name,arguments_json,started_at,completed_at,status,is_error,result_content,result_bytes,result_sha256,retention_state)
+            VALUES ('cursor','safe','x','{}','a','b','success',0,'r',1,'454349e422f05297191ead13e21d3db520e5abef52055e4964b82fb213f593a1','hot');
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id)
+            SELECT 'cursor','tool','start','a','x',tool_call_id,'{}',0,'tool-start',id FROM tool_invocations WHERE session_id='cursor';
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id)
+            SELECT 'cursor','tool','r','b','x',tool_call_id,NULL,0,'tool-result',id FROM tool_invocations WHERE session_id='cursor';
+            """;
+        command.Parameters.AddWithValue("$protectedCount", protectedCount);
+        await command.ExecuteNonQueryAsync();
+
+        long cursor = 0;
+        var calls = 0;
+        LegacyToolPayloadCleanupReport report;
+        do
+        {
+            report = store.CleanupLegacyToolPayloads(batchSize, cursor);
+            report.ScannedInvocations.ShouldBeLessThanOrEqualTo(batchSize);
+            report.LastScannedInvocationId.ShouldBeGreaterThanOrEqualTo(cursor);
+            cursor = report.LastScannedInvocationId;
+            calls++;
+        } while (report.HasMore);
+
+        calls.ShouldBe((int)Math.Ceiling((protectedCount + 1d) / batchSize));
+        report.CleanedInvocations.ShouldBe(1);
+        report.ScannedInvocations.ShouldBe((protectedCount + 1) % batchSize);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_call_id='safe' AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))")).ShouldBe(0);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_call_id LIKE 'protected-%' AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))")).ShouldBe(protectedCount * 2L);
+    }
+
+    [Fact]
+    public async Task CleanupLegacyToolPayloads_RemovesOrphanedInvocationsInBoundedBatches()
+    {
+        var store = CreateStore();
+        _ = await store.GetAsync(SessionId.From("probe"));
+        await using var connection = await OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO tool_invocations(session_id,tool_call_id,status) VALUES
+              ('missing-1','a','unknown'),
+              ('missing-2','b','unknown');
+            """;
+        await command.ExecuteNonQueryAsync();
+
+        var first = store.CleanupLegacyToolPayloads(1);
+        var second = store.CleanupLegacyToolPayloads(1, first.LastScannedInvocationId);
+
+        first.OrphanedInvocationsDeleted.ShouldBe(1);
+        first.HasMore.ShouldBeTrue();
+        second.OrphanedInvocationsDeleted.ShouldBe(1);
+        second.HasMore.ShouldBeFalse();
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM tool_invocations WHERE session_id LIKE 'missing-%'")).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_RemovesHistoryInvocationAndSessionAtomically()
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("delete-all"), AgentId.From("agent"));
+        session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "result", ToolName = "read", ToolCallId = "call", Kind = MessageKind.ToolResult });
+        await store.SaveAsync(session);
+
+        await store.DeleteAsync(SessionId.From("delete-all"));
+
+        await using var connection = await OpenAsync();
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM sessions WHERE id='delete-all'")).ShouldBe(0);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE session_id='delete-all'")).ShouldBe(0);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM tool_invocations WHERE session_id='delete-all'")).ShouldBe(0);
     }
 
     [Fact]
@@ -275,7 +440,7 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         (await reader.ReadAsync()).ShouldBeTrue();
         return new InvocationRow(ReadNullable(reader,0),ReadNullable(reader,1),ReadNullable(reader,2),ReadNullable(reader,3),reader.GetString(4),ReadNullable(reader,5),reader.GetInt64(6),ReadNullable(reader,7),reader.GetInt64(8));
     }
-    private static async Task<List<string>> ReadStringsAsync(SqliteConnection connection,string sql) { await using var command=connection.CreateCommand(); command.CommandText=sql; await using var reader=await command.ExecuteReaderAsync(); var values=new List<string>(); while(await reader.ReadAsync()) values.Add(reader.GetString(0)); return values; }
+    private static async Task<List<string>> ReadStringsAsync(SqliteConnection connection,string sql,int ordinal=0) { await using var command=connection.CreateCommand(); command.CommandText=sql; await using var reader=await command.ExecuteReaderAsync(); var values=new List<string>(); while(await reader.ReadAsync()) values.Add(reader.GetString(ordinal)); return values; }
     private static async Task<long> ScalarLongAsync(SqliteConnection connection,string sql) { await using var command=connection.CreateCommand(); command.CommandText=sql; return Convert.ToInt64(await command.ExecuteScalarAsync()); }
     private static string? ReadNullable(SqliteDataReader reader,int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     public void Dispose() { SqlitePoolCleanup.ClearPoolForConnectionString(ConnectionString); if(Directory.Exists(_directoryPath)) Directory.Delete(_directoryPath,true); }

@@ -28,7 +28,7 @@ namespace BotNexus.Gateway.Conversations;
 /// from the reader rather than being silently tolerated as a skipped field.
 /// </para>
 /// </remarks>
-internal static class ConversationRowMapper
+internal static class SqliteDataReaderExtensions
 {
     /// <summary>
     /// Maps the current row of a <c>conversations</c> reader to a <see cref="Conversation"/>. The
@@ -37,7 +37,7 @@ internal static class ConversationRowMapper
     /// paths hydrate identically. Child collections (bindings / participants) are NOT populated
     /// here - the caller attaches them.
     /// </summary>
-    internal static Conversation MapConversation(SqliteDataReader reader, ILogger? logger = null)
+    internal static Conversation MapConversation(this SqliteDataReader reader, ILogger? logger = null)
     {
         var conversationId = ConversationId.From(reader.GetString(reader.GetOrdinal("id")));
         var conversation = new Conversation
@@ -91,7 +91,7 @@ internal static class ConversationRowMapper
     /// <paramref name="roster"/> is the participant list resolved by the caller's batch query and
     /// is attached verbatim, mirroring the prior inline shape.
     /// </summary>
-    internal static ConversationSummary MapSummary(SqliteDataReader reader, IReadOnlyList<ParticipantSummary> roster)
+    internal static ConversationSummary MapSummary(this SqliteDataReader reader, IReadOnlyList<ParticipantSummary> roster)
         => new(
             reader.GetString(reader.GetOrdinal("id")),
             reader.GetString(reader.GetOrdinal("agent_id")),
@@ -120,7 +120,7 @@ internal static class ConversationRowMapper
     /// shifts the ordinals so the batched loader's <c>conversation_id</c>-prefixed projection can
     /// share this mapper.
     /// </summary>
-    internal static SessionParticipant? MapParticipant(SqliteDataReader reader, int offset, ILogger? logger = null)
+    internal static SessionParticipant? MapParticipant(this SqliteDataReader reader, int offset, ILogger? logger = null)
     {
         var kindRaw = reader.GetString(offset + 0);
         var idValue = reader.GetString(offset + 1);
@@ -139,7 +139,7 @@ internal static class ConversationRowMapper
     /// <see cref="ParticipantSummary"/>. <paramref name="offset"/> shifts the ordinals past the
     /// leading <c>conversation_id</c> grouping column projected by that query.
     /// </summary>
-    internal static ParticipantSummary MapParticipantSummary(SqliteDataReader reader, int offset)
+    internal static ParticipantSummary MapParticipantSummary(this SqliteDataReader reader, int offset)
         => new(
             reader.GetString(offset + 0),
             reader.GetString(offset + 1),
@@ -151,7 +151,7 @@ internal static class ConversationRowMapper
     /// loader) can reuse the same mapper as the per-conversation projection. The trailing column
     /// order must stay identical to the per-conversation bindings <c>SELECT</c>.
     /// </summary>
-    internal static ChannelBinding MapBinding(SqliteDataReader reader, int offset) => new()
+    internal static ChannelBinding MapBinding(this SqliteDataReader reader, int offset) => new()
     {
         BindingId = BindingId.From(reader.GetString(offset + 0)),
         ChannelType = ChannelKey.From(reader.GetString(offset + 1)),

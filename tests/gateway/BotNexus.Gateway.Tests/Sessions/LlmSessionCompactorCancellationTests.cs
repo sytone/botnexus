@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO.Abstractions.TestingHelpers;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -60,29 +59,31 @@ public sealed class LlmSessionCompactorCancellationTests
     public async Task CompactAsync_TimeoutWithAuthManager_CancelsProviderAcrossBoundedRetryBudget()
     {
         var observedTokens = new List<CancellationToken>();
-        var callCount = 0;
+        var secondAttemptStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var providerCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var compactor = CreateCompactor(
             CreateAuthManagerWithToken(PrimaryModel.Provider, "credential"),
             (PrimaryModel, options =>
             {
                 observedTokens.Add(options!.CancellationToken);
-                callCount++;
-                if (callCount == 1)
+                if (observedTokens.Count == 1)
                     throw new ProviderAuthenticationException("rejected", 401, PrimaryModel.Provider);
 
-                return CancellationAwarePendingStream(options, _ => { });
+                secondAttemptStarted.TrySetResult();
+                return CancellationAwarePendingStream(options, _ => providerCancelled.TrySetResult());
             }));
 
-        var stopwatch = Stopwatch.StartNew();
-        var result = await compactor.CompactAsync(CreateLargeSession(), TimeoutOptions());
-        stopwatch.Stop();
+        var compactionTask = compactor.CompactAsync(CreateLargeSession(), TimeoutOptions());
+
+        await secondAttemptStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await providerCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var result = await compactionTask.WaitAsync(TimeSpan.FromSeconds(5));
 
         result.Succeeded.ShouldBeFalse();
         observedTokens.Count.ShouldBe(2);
         observedTokens.ShouldAllBe(token => token.CanBeCanceled);
         observedTokens.ShouldAllBe(token => token.IsCancellationRequested);
-        observedTokens[0].ShouldBe(observedTokens[1]);
-        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(1800),
+        observedTokens[0].ShouldBe(observedTokens[1],
             "the configured timeout is one budget for the model candidate, not one budget per auth attempt");
     }
 
@@ -90,21 +91,26 @@ public sealed class LlmSessionCompactorCancellationTests
     public async Task CompactAsync_CallerCancellation_RemainsCallerCancellationAndReachesProvider()
     {
         CancellationToken providerToken = default;
+        var providerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var providerCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var compactor = CreateCompactor(
             authManager: null,
             (PrimaryModel, options =>
             {
                 providerToken = options!.CancellationToken;
+                providerStarted.TrySetResult();
                 return CancellationAwarePendingStream(options, _ => providerCancelled.TrySetResult());
             }));
         using var callerCts = new CancellationTokenSource();
-        callerCts.CancelAfter(TimeSpan.FromMilliseconds(100));
+
+        var compactionTask = compactor.CompactAsync(
+            CreateLargeSession(), TimeoutOptions(timeoutSeconds: 30), callerCts.Token);
+        await providerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        callerCts.Cancel();
 
         await Should.ThrowAsync<OperationCanceledException>(() =>
-            compactor.CompactAsync(CreateLargeSession(), TimeoutOptions(timeoutSeconds: 30), callerCts.Token));
-
-        await providerCancelled.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            compactionTask.WaitAsync(TimeSpan.FromSeconds(5)));
+        await providerCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
         providerToken.IsCancellationRequested.ShouldBeTrue();
     }
 

@@ -110,7 +110,7 @@ public sealed class GitHubWorkflowRunsTool : GitHubToolBase
         if (!response.IsSuccess || response.Body is not { } body)
             return ErrorResult(Name, repository, response);
 
-        var runs = Runs(body).Select(GitHubProjections.WorkflowRun).ToArray();
+        var runs = Runs(body).Select(run => run.WorkflowRun()).ToArray();
         var totalCount = TotalCount(body);
 
         return StructuredResult(new

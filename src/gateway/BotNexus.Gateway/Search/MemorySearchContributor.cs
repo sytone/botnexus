@@ -22,7 +22,10 @@ public sealed class MemorySearchContributor(
     public string Label => "Memory";
 
     /// <inheritdoc />
-    public bool IsAvailable => MemoryAgents().Count > 0;
+    public bool IsAvailable => IsAvailableFor(SearchScope.All);
+
+    internal bool IsAvailableFor(SearchScope scope)
+        => MemoryAgents(scope).Count > 0;
 
     /// <inheritdoc />
     public bool CanAssessProvenanceTrust => true;
@@ -42,7 +45,7 @@ public sealed class MemorySearchContributor(
 
         var remaining = request.MaxResults;
         var results = new List<SearchResult>(remaining);
-        foreach (var descriptor in MemoryAgents())
+        foreach (var descriptor in MemoryAgents(request.Scope))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var agentId = descriptor.AgentId.Value;
@@ -74,8 +77,9 @@ public sealed class MemorySearchContributor(
         return results;
     }
 
-    private IReadOnlyList<BotNexus.Gateway.Abstractions.Models.AgentDescriptor> MemoryAgents()
+    private IReadOnlyList<BotNexus.Gateway.Abstractions.Models.AgentDescriptor> MemoryAgents(SearchScope scope)
         => agentRegistry.GetAll()
+            .Where(descriptor => scope.Allows(descriptor.AgentId))
             .Where(descriptor => descriptor.Memory is { Enabled: true })
             .OrderBy(descriptor => descriptor.AgentId.Value, StringComparer.OrdinalIgnoreCase)
             .ToList();

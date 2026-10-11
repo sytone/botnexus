@@ -704,6 +704,9 @@ public sealed partial class CronControllerTests
             return Task.FromResult<IReadOnlyList<CronJobCostRollup>>(rollups);
         }
 
+        public Task<CronRun?> GetRunAsync(RunId runId, CancellationToken ct = default)
+            => Task.FromResult(_runs.GetValueOrDefault(runId.Value));
+
         public Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default)
         {
             var runs = _runs.Values

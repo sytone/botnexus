@@ -167,7 +167,9 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
             // #2906 AC1/AC2: the result row is self-describing. The caller re-supplies the same
             // arguments the start row carried, so no consumer needs a self-join on tool_call_id.
             ToolArgs = NormalizeArguments(serializedArguments),
-            Kind = MessageKind.ToolResult
+            Kind = MessageKind.ToolResult,
+            PersistenceKey = toolName is "spawn_subagent" or "manage_subagent" && !string.IsNullOrWhiteSpace(toolCallId)
+                ? "tool-result:" + toolCallId : null
         };
     }
 

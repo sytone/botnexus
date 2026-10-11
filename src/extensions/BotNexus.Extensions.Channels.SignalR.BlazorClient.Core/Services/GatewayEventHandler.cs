@@ -147,6 +147,20 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         _store.NotifyChanged();
     }
 
+    /// <summary>Captures the live event revision before starting a subscribe RPC.</summary>
+    public long CaptureRunStateRevision() => Volatile.Read(ref _runStateRevision);
+
+    /// <summary>
+    /// Applies a subscribe snapshot only if no later live event changed the projection while the
+    /// RPC was in flight. A stale active snapshot must not resurrect an ended run, and a stale
+    /// empty snapshot must not clear a newly resumed continuation.
+    /// </summary>
+    public void TryApplyRunActivitySnapshot(IReadOnlyList<RunActivitySnapshot> activeRuns, long expectedRevision)
+    {
+        if (Volatile.Read(ref _runStateRevision) == expectedRevision)
+            ApplyRunActivitySnapshot(activeRuns);
+    }
+
     /// <summary>
     /// Reconciles whole-run activity from the server-owned subscribe snapshot. REST remains the
     /// only session-roster writer; this applies only the live run bracket that persistence cannot
@@ -222,8 +236,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             {
                 var snapshot = await snapshotProvider(cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
-                if (Volatile.Read(ref _runStateRevision) == expectedRevision)
-                    ApplyRunActivitySnapshot(snapshot.ActiveRuns);
+                TryApplyRunActivitySnapshot(snapshot.ActiveRuns, expectedRevision);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -928,6 +941,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
             agent.IsConnected = true;
 
         SubscribeAllResult? subscribeResult = null;
+        var subscribeRevision = CaptureRunStateRevision();
         try
         {
             // Re-join the hub groups. Session roster loading remains REST-owned (#2541); the
@@ -976,7 +990,7 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         // Apply the server snapshot AFTER clearing stale buffers. Otherwise this reconnect's
         // legacy false-active repair would immediately overwrite an authoritative active result.
         if (subscribeResult is not null)
-            ApplyRunActivitySnapshot(subscribeResult.ActiveRuns);
+            TryApplyRunActivitySnapshot(subscribeResult.ActiveRuns, subscribeRevision);
 
         // #2439: pending steering/follow-up entries are purely client-side optimism. After a
         // reconnect the client cannot confirm whether the gateway still holds them, and there is

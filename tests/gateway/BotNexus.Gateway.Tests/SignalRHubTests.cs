@@ -9,6 +9,7 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Abstractions.Services;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Diagnostics;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tests.Dispatching;
 using BotNexus.Gateway.Tests.Diagnostics;
@@ -135,6 +136,173 @@ public sealed class SignalRHubTests
         activeRun.SessionId.ShouldBe("session-1");
         activeRun.AgentId.ShouldBe("agent-1");
         activeRun.ConversationId.ShouldBe("conversation-1");
+    }
+
+    [Fact]
+    public async Task GatewayHub_SubscribeAll_PrefersWholeRunTrackerWhenHandleIsIdle()
+    {
+        var summary = new SessionSummary(
+            "session-1",
+            "agent-1",
+            ChannelKey.From("signalr"),
+            SessionStatus.Active,
+            SessionType.UserAgent,
+            true,
+            3,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            "conversation-1");
+        var warmup = new Mock<ISessionWarmupService>();
+        warmup.Setup(service => service.GetAvailableSessionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([summary]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(value => value.IsRunning).Returns(false);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.GetHandle(AgentId.From("agent-1"), SessionId.From("session-1")))
+            .Returns(handle.Object);
+
+        var tracker = new Mock<IActiveLoopTracker>();
+        tracker.Setup(value => value.GetSnapshot()).Returns(new ActiveLoopSnapshot
+        {
+            ActiveCount = 1,
+            PeakCount = 1,
+            TotalCompleted = 0,
+            ActiveLoops =
+            [
+                new ActiveLoopDetail
+                {
+                    LoopId = "loop-1",
+                    AgentId = "agent-1",
+                    SessionId = "session-1",
+                    ConversationId = "conversation-1",
+                    StartedAtUtc = DateTimeOffset.UtcNow
+                }
+            ]
+        });
+
+        var groups = new Mock<IGroupManager>();
+        groups.Setup(value => value.AddToGroupAsync(
+                "conn-1",
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHub(
+            groups: groups.Object,
+            warmup: warmup.Object,
+            supervisor: supervisor.Object,
+            activeLoopTracker: tracker.Object,
+            connectionId: "conn-1");
+
+        var result = await hub.SubscribeAll();
+
+        var activeRun = result.ActiveRuns.ShouldHaveSingleItem();
+        activeRun.SessionId.ShouldBe("session-1");
+        activeRun.AgentId.ShouldBe("agent-1");
+        activeRun.ConversationId.ShouldBe("conversation-1");
+    }
+
+    [Fact]
+    public async Task GatewayHub_SubscribeAll_UsesTrackerAsAuthoritativeWhenRunCompleted()
+    {
+        var summary = new SessionSummary(
+            "session-1",
+            "agent-1",
+            ChannelKey.From("signalr"),
+            SessionStatus.Active,
+            SessionType.UserAgent,
+            true,
+            3,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            "conversation-1");
+        var warmup = new Mock<ISessionWarmupService>();
+        warmup.Setup(service => service.GetAvailableSessionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([summary]);
+
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(value => value.IsRunning).Returns(true);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.GetHandle(AgentId.From("agent-1"), SessionId.From("session-1")))
+            .Returns(handle.Object);
+
+        var tracker = new Mock<IActiveLoopTracker>();
+        tracker.Setup(value => value.GetSnapshot()).Returns(new ActiveLoopSnapshot
+        {
+            ActiveCount = 0,
+            PeakCount = 1,
+            TotalCompleted = 1,
+            ActiveLoops = []
+        });
+
+        var groups = new Mock<IGroupManager>();
+        groups.Setup(value => value.AddToGroupAsync(
+                "conn-1",
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHub(
+            groups: groups.Object,
+            warmup: warmup.Object,
+            supervisor: supervisor.Object,
+            activeLoopTracker: tracker.Object,
+            connectionId: "conn-1");
+
+        var result = await hub.SubscribeAll();
+
+        result.ActiveRuns.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task GatewayHub_SubscribeAll_RefreshesSessionsAfterJoiningGroupsBeforeSnapshot()
+    {
+        var conversationId = "conversation-1";
+        var oldSession = new SessionSummary(
+            "session-old",
+            "agent-1",
+            ChannelKey.From("signalr"),
+            SessionStatus.Active,
+            SessionType.UserAgent,
+            true,
+            3,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            conversationId);
+        var continuationSession = oldSession with { SessionId = "session-continuation" };
+        var warmup = new Mock<ISessionWarmupService>();
+        warmup.SetupSequence(service => service.GetAvailableSessionsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([oldSession])
+            .ReturnsAsync([oldSession, continuationSession]);
+
+        var continuationHandle = new Mock<IAgentHandle>();
+        continuationHandle.SetupGet(value => value.IsRunning).Returns(true);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.GetHandle(
+                AgentId.From("agent-1"),
+                BotNexus.Domain.Primitives.SessionId.From("session-continuation")))
+            .Returns(continuationHandle.Object);
+
+        var groups = new Mock<IGroupManager>();
+        groups.Setup(value => value.AddToGroupAsync(
+                "conn-1",
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHub(
+            groups: groups.Object,
+            warmup: warmup.Object,
+            supervisor: supervisor.Object,
+            connectionId: "conn-1");
+
+        var result = await hub.SubscribeAll();
+
+        result.ActiveRuns.ShouldHaveSingleItem().SessionId.ShouldBe("session-continuation");
+        warmup.Verify(
+            service => service.GetAvailableSessionsAsync(It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
     }
 
     [Fact]
@@ -650,7 +818,20 @@ public sealed class SignalRHubTests
         });
 
         var resumed = new List<AskUserRequest>();
-        var resumer = new DelegatingResumer((req, _) => { resumed.Add(req); return Task.CompletedTask; });
+        var groups = new Mock<IGroupManager>();
+        var joinedBeforeResume = false;
+        groups.Setup(value => value.AddToGroupAsync(
+                "conn-1",
+                SignalRChannelAdapter.GetConversationGroup(conversation.ConversationId.Value),
+                It.IsAny<CancellationToken>()))
+            .Callback(() => joinedBeforeResume = true)
+            .Returns(Task.CompletedTask);
+        var resumer = new DelegatingResumer((req, _) =>
+        {
+            joinedBeforeResume.ShouldBeTrue("the answering connection must join before the continuation can publish RunStarted");
+            resumed.Add(req);
+            return Task.CompletedTask;
+        });
 
         // The #2322 resolver is the front door for every channel; with no live waiter it reports
         // NoPendingPrompt, which is precisely what makes the hub fall through to the durable
@@ -660,9 +841,11 @@ public sealed class SignalRHubTests
             resolver, conversationStore, NullLogger<AskUserCheckpointService>.Instance, resumer);
 
         var hub = CreateHub(
+            groups: groups.Object,
             conversationStore: conversationStore,
             askUserPromptResolver: resolver,
-            askUserCheckpointService: checkpointService);
+            askUserCheckpointService: checkpointService,
+            connectionId: "conn-1");
 
         await hub.RespondToAskUser(conversation.ConversationId.Value, "req-restart", "resumed answer", null, cancelled: false);
 
@@ -1336,6 +1519,7 @@ public sealed class SignalRHubTests
         IActivityBroadcaster? activity = null,
         IAgentRegistry? registry = null,
         IAgentSupervisor? supervisor = null,
+        IActiveLoopTracker? activeLoopTracker = null,
         ISessionCompactor? compactor = null,
         ISessionWarmupService? warmup = null,
         IOptionsMonitor<CompactionOptions>? compactionOptions = null,
@@ -1391,7 +1575,8 @@ public sealed class SignalRHubTests
             logger ?? NullLogger<GatewayHub>.Instance,
             convStore,
             askUserPromptResolver,
-            askUserCheckpointService)
+            askUserCheckpointService,
+            activeLoopTracker: activeLoopTracker)
         {
             Clients = clients ?? Mock.Of<IHubCallerClients<IGatewayHubClient>>(),
             Groups = groups ?? Mock.Of<IGroupManager>(),

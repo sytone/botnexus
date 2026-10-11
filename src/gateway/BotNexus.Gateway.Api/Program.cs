@@ -13,6 +13,7 @@ using BotNexus.Gateway.Abstractions.Security;
 using Microsoft.Extensions.Logging;
 using BotNexus.Agent.Providers.Core.Resilience;
 using BotNexus.Agent.Providers.Anthropic;
+using BotNexus.Agent.Providers.Copilot.Headers;
 using BotNexus.Agent.Providers.Copilot.Messages;
 using BotNexus.Agent.Providers.Copilot.Responses;
 using BotNexus.Agent.Providers.Copilot.Completions;
@@ -54,6 +55,7 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args
 });
+builder.Services.AddSingleton<CopilotHeaderQuotaStore>();
 
 // Enable running as an OS service (no-op when running interactively)
 builder.Host.UseSystemd();
@@ -304,6 +306,11 @@ static string? ResolveCronModel(CronJobConfig config)
 builder.Services.AddExtensionLoading();
 builder.Services.AddSignalR(options =>
     SignalRHubLimits.Apply(options, startupPlatformConfig.Gateway?.SignalR));
+builder.Services.AddSingleton(_ => new BotNexus.Gateway.Diagnostics.CleanShutdownMarker(
+    new System.IO.Abstractions.FileSystem(),
+    BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath()));
+builder.Services.AddSingleton<BotNexus.Cron.IPlannedShutdownState>(services =>
+    services.GetRequiredService<BotNexus.Gateway.Diagnostics.CleanShutdownMarker>());
 builder.Services.AddBotNexusGatewayApi();
 builder.Services.AddCors(options =>
 {
@@ -428,14 +435,23 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     var providerSecretRedactor = serviceProvider.GetService<ISecretRedactor>();
 
     apiProviders.Register(new AnthropicProvider(httpClient, providerSecretRedactor));
-    apiProviders.Register(new CopilotMessagesProvider(httpClient, providerSecretRedactor));
+    var copilotHeaderSink = serviceProvider.GetRequiredService<CopilotHeaderQuotaStore>();
+    apiProviders.Register(new CopilotMessagesProvider(httpClient, providerSecretRedactor, copilotHeaderSink));
     apiProviders.Register(new OpenAICompletionsProvider(httpClient, loggerFactory.CreateLogger<OpenAICompletionsProvider>(), providerSecretRedactor));
     apiProviders.Register(new OpenAIResponsesProvider(httpClient, loggerFactory.CreateLogger<OpenAIResponsesProvider>(), providerSecretRedactor));
 
-    apiProviders.Register(new CopilotCompletionsProvider(httpClient, loggerFactory.CreateLogger<CopilotCompletionsProvider>(), providerSecretRedactor));
-    apiProviders.Register(new CopilotResponsesProvider(httpClient, loggerFactory.CreateLogger<CopilotResponsesProvider>(), providerSecretRedactor));
+    apiProviders.Register(new CopilotCompletionsProvider(httpClient, loggerFactory.CreateLogger<CopilotCompletionsProvider>(), providerSecretRedactor, copilotHeaderSink));
+    apiProviders.Register(new CopilotResponsesProvider(httpClient, loggerFactory.CreateLogger<CopilotResponsesProvider>(), providerSecretRedactor, copilotHeaderSink));
     apiProviders.Register(new OpenAICompatProvider(httpClient));
     apiProviders.Register(new IntegrationMockProvider());
+
+    var platformConfig = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
+    MicrosoftFoundryProviderComposition.Register(
+        platformConfig,
+        apiProviders,
+        models,
+        loggerFactory,
+        providerSecretRedactor);
 
     // #2855: register the OPTIONAL embeddings capability for the configured backend. This is a
     // separate registry from apiProviders on purpose - embeddings and chat are different
@@ -465,7 +481,6 @@ builder.Services.AddSingleton<LlmClient>(serviceProvider =>
     new IntegrationMockModels().RegisterAll(models);
     GitHubModelsProvider.RegisterModels(models);
 
-    var platformConfig = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
     var copilotInstances = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "github-copilot" };
     if (platformConfig.Providers is not null)
     {
@@ -682,8 +697,6 @@ void InstallCrashObservability(WebApplication application)
 {
     try
     {
-        var dataDirectory = BotNexusHome.ResolveDataPath() ?? BotNexusHome.ResolveHomePath();
-
         // 1. Last-chance fault handler: flush a structured [FTL] breadcrumb the instant the
         //    process is about to die (unhandled exception / unobserved task / abrupt exit), so
         //    even a dump-less hard exit leaves an investigable trail.
@@ -696,10 +709,10 @@ void InstallCrashObservability(WebApplication application)
 
         // 2. Detect how the previous run ended using the clean-shutdown marker, then clear it for
         //    this run so any subsequent hard exit is detectable as unclean on the next boot.
-        var marker = new BotNexus.Gateway.Diagnostics.CleanShutdownMarker(
-            new System.IO.Abstractions.FileSystem(),
-            dataDirectory);
+        var marker = application.Services.GetRequiredService<BotNexus.Gateway.Diagnostics.CleanShutdownMarker>();
         var previousRun = marker.DetectPreviousRun();
+        if (marker.WasPreviousShutdownPlanned())
+            application.Logger.LogInformation("Previous gateway shutdown was requested through the planned lifecycle endpoint");
         // Clause 3 of #3680: with no stamp of any kind there is nothing useful to say about when
         // the gateway was last alive, so the builder omits the timestamp clause entirely rather
         // than printing a placeholder that reads like a transient lookup failure.
