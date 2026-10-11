@@ -1,6 +1,8 @@
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Extensions;
+using BotNexus.Gateway.Abstractions.Security;
+using Microsoft.AspNetCore.Http;
 using BotNexus.Gateway.Commands;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Domain.Primitives;
@@ -47,6 +49,12 @@ public sealed class CommandsController : ControllerBase
     [HttpPost("execute")]
     public async Task<ActionResult<CommandResult>> Execute([FromBody] CommandExecuteRequest request, CancellationToken cancellationToken)
     {
+        // Authorize the body value actually passed to commands, independently of any query
+        // selector. The middleware supplies an identity even in keyless development mode.
+        if (HttpContext?.Items[GatewayAuthHttpContext.CallerIdentityItemKey] is not GatewayCallerIdentity caller ||
+            !GatewayAuthMiddleware.IsAgentAuthorized(caller, request.AgentId))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Caller is not authorized for this agent." });
+
         if (string.IsNullOrWhiteSpace(request.Input))
             return BadRequest(new { error = "input is required." });
 

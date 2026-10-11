@@ -1,4 +1,14 @@
 using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using BotNexus.Gateway.Abstractions.Security;
+using BotNexus.Gateway.Api;
+using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Configuration;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.FileProviders;
 using BotNexus.Cron;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -233,6 +243,55 @@ public sealed class LoopCommandTests
         (await fixture.Store.GetAsync(job.Id)).ShouldBeNull();
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("?agent=allowed-agent")]
+    [InlineData("?agentId=allowed-agent")]
+    public async Task Execute_ScopedCallerWithValidForbiddenSession_DeniesBeforeWritesOrTools(string query)
+    {
+        await using var fixture = new Fixture();
+        var caller = new GatewayCallerIdentity { CallerId = "scoped", AllowedAgents = ["allowed-agent"] };
+        var response = await fixture.ExecuteHttp(caller, query);
+        response.ShouldBe(StatusCodes.Status403Forbidden);
+        (await fixture.Store.ListAsync()).ShouldBeEmpty();
+        fixture.Supervisor.VerifyNoOtherCalls();
+        fixture.Inspector.VerifyNoOtherCalls();
+        fixture.Sessions.Verify(store => store.GetAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Execute_MissingAuthenticatedIdentity_DeniesBeforeWritesOrTools()
+    {
+        await using var fixture = new Fixture();
+        var response = await fixture.ExecuteHttp(new GatewayCallerIdentity { CallerId = "admin", IsAdmin = true }, removeIdentity: true);
+        response.ShouldBe(StatusCodes.Status403Forbidden);
+        (await fixture.Store.ListAsync()).ShouldBeEmpty();
+        fixture.Supervisor.VerifyNoOtherCalls();
+        fixture.Inspector.VerifyNoOtherCalls();
+        fixture.Sessions.Verify(store => store.GetAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("authorized")]
+    [InlineData("admin")]
+    [InlineData("unrestricted")]
+    [InlineData("development")]
+    public async Task Execute_AuthorizedCaller_CreatesLoopThroughMiddlewareControllerAndRegistry(string mode)
+    {
+        await using var fixture = new Fixture();
+        var caller = mode switch
+        {
+            "authorized" => new GatewayCallerIdentity { CallerId = mode, AllowedAgents = [Fixture.Agent.Value.ToUpperInvariant()] },
+            "admin" => new GatewayCallerIdentity { CallerId = mode, IsAdmin = true, AllowedAgents = ["other-agent"] },
+            "development" => new GatewayCallerIdentity { CallerId = "gateway-dev", IsAdmin = true, Permissions = ["*"] },
+            _ => new GatewayCallerIdentity { CallerId = mode }
+        };
+        (await fixture.ExecuteHttp(caller)).ShouldBe(StatusCodes.Status200OK);
+        var job = (await fixture.Store.ListAsync()).ShouldHaveSingleItem();
+        job.AgentId.ShouldBe(Fixture.Agent);
+        job.ConversationId.ShouldBe(Fixture.ConversationKey);
+    }
+
     private sealed class BlockingAction : ICronAction
     {
         public string ActionType => "agent-prompt";
@@ -254,6 +313,8 @@ public sealed class LoopCommandTests
         private readonly string directory = Path.Combine(Path.GetTempPath(), "loop-command-tests", Guid.NewGuid().ToString("N"));
         private readonly ServiceProvider services;
         private readonly CommandRegistry registry;
+        internal readonly Mock<IAgentSupervisor> Supervisor = new();
+        internal readonly Mock<IAgentHandleInspector> Inspector;
         internal readonly Mock<IConversationStore> Conversations = new();
         internal readonly Mock<ISessionStore> Sessions = new();
         internal CronScheduler Scheduler => services.GetRequiredService<CronScheduler>();
@@ -263,6 +324,8 @@ public sealed class LoopCommandTests
 
         internal Fixture(CronOptions? options = null, ICronAction? action = null)
         {
+            Inspector = Supervisor.As<IAgentHandleInspector>();
+            Inspector.Setup(value => value.GetHandle(Agent, SessionKey)).Returns(new Mock<IAgentHandle>().Object);
             Store = new SqliteCronStore(Path.Combine(directory, "cron.sqlite"));
             var sessions = Sessions;
             sessions.Setup(store => store.GetAsync(SessionKey, It.IsAny<CancellationToken>())).ReturnsAsync(() => Session);
@@ -285,6 +348,50 @@ public sealed class LoopCommandTests
                 [new Mock<IAgentRegistry>().Object, new Mock<IAgentSupervisor>().Object, sessions.Object, compaction.Object, services, null], null) as ICommandContributor
                 ?? throw new InvalidOperationException("Cannot construct built-in contributor");
             registry = new CommandRegistry([contributor], NullLogger<CommandRegistry>.Instance);
+        }
+
+        internal async Task<int> ExecuteHttp(GatewayCallerIdentity caller, string query = "", bool removeIdentity = false)
+        {
+            var http = new DefaultHttpContext();
+            http.Request.Path = "/api/commands/execute";
+            http.Request.Method = HttpMethods.Post;
+            http.Request.QueryString = new QueryString(query);
+            http.Request.ContentType = "application/json";
+            http.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+            {
+                input = "/loop check queue", agentId = Agent.Value, sessionId = SessionKey.Value
+            })));
+            http.Request.ContentLength = http.Request.Body.Length;
+            http.Response.Body = new MemoryStream();
+            var auth = new Mock<IGatewayAuthHandler>();
+            auth.Setup(value => value.AuthenticateAsync(It.IsAny<GatewayAuthContext>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(GatewayAuthResult.Success(caller));
+            var environment = new Mock<IWebHostEnvironment>();
+            environment.SetupGet(value => value.WebRootFileProvider).Returns(new NullFileProvider());
+            var middleware = new GatewayAuthMiddleware(async context =>
+            {
+                if (removeIdentity) context.Items.Remove(GatewayAuthHttpContext.CallerIdentityItemKey);
+                var request = await JsonSerializer.DeserializeAsync<CommandExecuteRequest>(context.Request.Body, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                    ?? throw new InvalidOperationException("Missing command body");
+                var controller = new CommandsController(registry, Supervisor.Object, new BotNexusHome(directory))
+                {
+                    ControllerContext = new ControllerContext { HttpContext = context }
+                };
+                var result = await controller.Execute(request, CancellationToken.None);
+                if (result.Result is ObjectResult objectResult)
+                {
+                    context.Response.StatusCode = objectResult.StatusCode ?? StatusCodes.Status200OK;
+                    if (objectResult.Value is CommandResult command) command.IsError.ShouldBeFalse();
+                }
+                else if (result.Result is StatusCodeResult status)
+                    context.Response.StatusCode = status.StatusCode;
+                else
+                    throw new InvalidOperationException("Unexpected command result");
+            }, auth.Object, environment.Object, NullLogger<GatewayAuthMiddleware>.Instance);
+            await middleware.InvokeAsync(http);
+            await http.Request.Body.DisposeAsync();
+            await http.Response.Body.DisposeAsync();
+            return http.Response.StatusCode;
         }
 
         internal Task<CommandResult> Execute(string input, bool headless = false) => registry.ExecuteAsync(input, new CommandExecutionContext

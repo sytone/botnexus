@@ -1,6 +1,8 @@
 using System.Reflection;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Extensions;
+using BotNexus.Gateway.Abstractions.Security;
+using Microsoft.AspNetCore.Http;
 using BotNexus.Gateway.Commands;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
@@ -85,12 +87,22 @@ public sealed class CommandsControllerTests
         var supervisor = new Mock<IAgentSupervisor>();
         var home = new BotNexusHome(@"Q:\repos\botnexus\.botnexus");
 
-        return CreateInstance(controllerType, new Dictionary<Type, object>
+        var controller = CreateInstance(controllerType, new Dictionary<Type, object>
         {
             [typeof(CommandRegistry)] = commandRegistry,
             [typeof(IAgentSupervisor)] = supervisor.Object,
             [typeof(BotNexusHome)] = home
         });
+        var mvcController = controller as ControllerBase
+            ?? throw new InvalidOperationException("Expected an MVC controller.");
+        var httpContext = new DefaultHttpContext();
+        // Every real API request has an authenticated identity, including keyless development.
+        httpContext.Items[GatewayAuthHttpContext.CallerIdentityItemKey] = new GatewayCallerIdentity
+        {
+            CallerId = "command-test", AllowedAgents = ["test-agent"]
+        };
+        mvcController.ControllerContext = new ControllerContext { HttpContext = httpContext };
+        return controller;
     }
 
     private static object CreateExecuteRequest(MethodInfo executeMethod, string? input)
