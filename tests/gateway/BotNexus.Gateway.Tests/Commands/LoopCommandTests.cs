@@ -292,6 +292,93 @@ public sealed class LoopCommandTests
         job.ConversationId.ShouldBe(Fixture.ConversationKey);
     }
 
+    [Theory]
+    [InlineData("?agent=allowed-agent")]
+    [InlineData("?agentId=allowed-agent")]
+    [InlineData("?agent=loop-agent&agentId=allowed-agent")]
+    public async Task Execute_BothAgentsAllowedButSelectorsDisagree_RejectsBeforeLookupOrWrites(string query)
+    {
+        await using var fixture = new Fixture();
+        var caller = new GatewayCallerIdentity { CallerId = "scoped", AllowedAgents = ["allowed-agent", Fixture.Agent.Value] };
+        (await fixture.ExecuteHttp(caller, query)).ShouldBe(StatusCodes.Status400BadRequest);
+        fixture.Inspector.VerifyNoOtherCalls();
+        fixture.Sessions.Verify(store => store.GetAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.AssertNoSessionOrConversationWrites();
+        (await fixture.Store.ListAsync()).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("/loop status")]
+    [InlineData("/loop stop")]
+    public async Task Execute_ForbiddenManagement_DeniesAndPreservesExistingLoop(string input)
+    {
+        await using var fixture = new Fixture();
+        (await fixture.Execute("/loop check queue")).IsError.ShouldBeFalse();
+        var job = (await fixture.Store.ListAsync()).ShouldHaveSingleItem();
+        fixture.Sessions.Invocations.Clear();
+        var caller = new GatewayCallerIdentity { CallerId = "scoped", AllowedAgents = ["allowed-agent"] };
+        (await fixture.ExecuteHttp(caller, "?agent=allowed-agent", input: input)).ShouldBe(StatusCodes.Status403Forbidden);
+        // Metadata dictionaries are materialized anew by SQLite; compare persisted bytes,
+        // not their CLR reference identity, while checking the complete row is unchanged.
+        JsonSerializer.Serialize((await fixture.Store.ListAsync()).ShouldHaveSingleItem())
+            .ShouldBe(JsonSerializer.Serialize(job));
+        fixture.Inspector.VerifyNoOtherCalls();
+        fixture.Sessions.Verify(store => store.GetAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.AssertNoSessionOrConversationWrites();
+    }
+
+    [Theory]
+    [InlineData("/new", "foreign-session")]
+    [InlineData("/new", "missing-session")]
+    [InlineData("/new", "wrong-id-unbound-session")]
+    [InlineData("/model clear", "foreign-session")]
+    [InlineData("/reasoning high", "foreign-conversation")]
+    [InlineData("/tools clear", "stale-session")]
+    [InlineData("/new", "missing-conversation")]
+    [InlineData("/model clear", "wrong-conversation-id")]
+    [InlineData("/new", "archived")]
+    public async Task Execute_InconsistentSessionOrDurableParent_RejectsBeforeToolsAndWrites(string input, string scenario)
+    {
+        await using var fixture = new Fixture();
+        fixture.BreakContext(scenario);
+        var caller = new GatewayCallerIdentity { CallerId = "scoped", AllowedAgents = [Fixture.Agent.Value] };
+        (await fixture.ExecuteHttp(caller, input: input)).ShouldBe(StatusCodes.Status400BadRequest);
+        fixture.Inspector.VerifyNoOtherCalls();
+        fixture.AssertNoSessionOrConversationWrites();
+        (await fixture.Store.ListAsync()).ShouldBeEmpty();
+        if (fixture.Session is { } session) session.Status.ShouldNotBe(SessionStatus.Sealed);
+    }
+
+    [Theory]
+    [InlineData(null, "current-session")]
+    [InlineData(" ", "current-session")]
+    [InlineData("loop-agent", " ")]
+    [InlineData("loop-agent", "")]
+    public async Task Execute_MissingAgentOrMalformedContext_RejectsWithoutWrites(string? agent, string? session)
+    {
+        await using var fixture = new Fixture();
+        var caller = new GatewayCallerIdentity { CallerId = "scoped", AllowedAgents = [Fixture.Agent.Value] };
+        (await fixture.ExecuteHttp(caller, input: "/new", agentId: agent, sessionId: session, useDefaultContext: false))
+            .ShouldBe(StatusCodes.Status400BadRequest);
+        fixture.Inspector.VerifyNoOtherCalls();
+        fixture.AssertNoSessionOrConversationWrites();
+        (await fixture.Store.ListAsync()).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("/help", null)]
+    [InlineData("/new", "loop-agent")]
+    public async Task Execute_IntentionalNoSessionContext_RemainsAvailable(string input, string? agent)
+    {
+        await using var fixture = new Fixture();
+        var caller = new GatewayCallerIdentity { CallerId = "scoped", AllowedAgents = [Fixture.Agent.Value] };
+        (await fixture.ExecuteHttp(caller, input: input, agentId: agent, useDefaultContext: false)).ShouldBe(StatusCodes.Status200OK);
+        fixture.Inspector.VerifyNoOtherCalls();
+        fixture.Sessions.Verify(store => store.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Sessions.Verify(store => store.GetOrCreateAsync(It.IsAny<SessionId>(), Fixture.Agent, It.IsAny<CancellationToken>()),
+            input == "/new" ? Times.Once : Times.Never);
+    }
+
     private sealed class BlockingAction : ICronAction
     {
         public string ActionType => "agent-prompt";
@@ -340,6 +427,7 @@ public sealed class LoopCommandTests
             collection.AddSingleton<ICronStore>(Store);
             collection.AddSingleton(cronOptions.Object);
             collection.AddSingleton(provider => new CronScheduler(Store, action is null ? [] : [action], provider.GetRequiredService<IServiceScopeFactory>(), cronOptions.Object, NullLogger<CronScheduler>.Instance));
+            collection.AddSingleton<CommandRegistry>(_ => registry ?? throw new InvalidOperationException("Registry has not been initialized."));
             services = collection.BuildServiceProvider();
             var type = typeof(CommandRegistry).Assembly.GetType("BotNexus.Gateway.Commands.BuiltInCommandContributor") ?? throw new InvalidOperationException("Missing built-in contributor");
             var compaction = new Mock<IOptionsMonitor<CompactionOptions>>();
@@ -350,7 +438,8 @@ public sealed class LoopCommandTests
             registry = new CommandRegistry([contributor], NullLogger<CommandRegistry>.Instance);
         }
 
-        internal async Task<int> ExecuteHttp(GatewayCallerIdentity caller, string query = "", bool removeIdentity = false)
+        internal async Task<int> ExecuteHttp(GatewayCallerIdentity caller, string query = "", bool removeIdentity = false,
+            string input = "/loop check queue", string? agentId = null, string? sessionId = null, bool useDefaultContext = true)
         {
             var http = new DefaultHttpContext();
             http.Request.Path = "/api/commands/execute";
@@ -359,7 +448,7 @@ public sealed class LoopCommandTests
             http.Request.ContentType = "application/json";
             http.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
             {
-                input = "/loop check queue", agentId = Agent.Value, sessionId = SessionKey.Value
+                input, agentId = useDefaultContext ? Agent.Value : agentId, sessionId = useDefaultContext ? SessionKey.Value : sessionId
             })));
             http.Request.ContentLength = http.Request.Body.Length;
             http.Response.Body = new MemoryStream();
@@ -373,10 +462,8 @@ public sealed class LoopCommandTests
                 if (removeIdentity) context.Items.Remove(GatewayAuthHttpContext.CallerIdentityItemKey);
                 var request = await JsonSerializer.DeserializeAsync<CommandExecuteRequest>(context.Request.Body, new JsonSerializerOptions(JsonSerializerDefaults.Web))
                     ?? throw new InvalidOperationException("Missing command body");
-                var controller = new CommandsController(registry, Supervisor.Object, new BotNexusHome(directory))
-                {
-                    ControllerContext = new ControllerContext { HttpContext = context }
-                };
+                var controller = ActivatorUtilities.CreateInstance<CommandsController>(services, registry, Supervisor.Object, new BotNexusHome(directory));
+                controller.ControllerContext = new ControllerContext { HttpContext = context };
                 var result = await controller.Execute(request, CancellationToken.None);
                 if (result.Result is ObjectResult objectResult)
                 {
@@ -399,6 +486,13 @@ public sealed class LoopCommandTests
             RawInput = input, AgentId = Agent.Value, SessionId = headless ? null : SessionKey.Value, HomeDirectory = directory
         });
 
+        internal void AssertNoSessionOrConversationWrites()
+        {
+            Sessions.Verify(store => store.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()), Times.Never);
+            Sessions.Verify(store => store.GetOrCreateAsync(It.IsAny<SessionId>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()), Times.Never);
+            Conversations.Verify(store => store.PatchOverrideAsync(It.IsAny<ConversationId>(), It.IsAny<ConversationOverridePatch>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+
         internal void BreakContext(string scenario)
         {
             switch (scenario)
@@ -409,6 +503,7 @@ public sealed class LoopCommandTests
                     [new Conversation { ConversationId = ConversationKey, AgentId = Agent, ActiveSessionId = SessionKey },
                      new Conversation { ConversationId = ConversationId.From("duplicate"), AgentId = Agent, ActiveSessionId = SessionKey }]);
                     break;
+                case "wrong-conversation-id": if (Conversation is { } wrong) Conversation = wrong with { ConversationId = ConversationId.From("wrong-parent") }; break;
                 case "foreign-unbound-session": Session = new GatewaySession { SessionId = SessionKey, AgentId = AgentId.From("foreign") }; break;
                 case "wrong-id-unbound-session": Session = new GatewaySession { SessionId = SessionId.From("wrong-session"), AgentId = Agent }; break;
                 case "missing-session": Session = null; Conversation = null; break;
