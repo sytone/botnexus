@@ -197,6 +197,8 @@ public sealed class ToolAuditDeadlineTests
     [Fact]
     public async Task PersistStartAsync_EmitsCorrelatedStageTelemetryWithoutArguments()
     {
+        // Activity listeners are process-wide; isolate this invocation without serializing tests.
+        var toolCallId = $"call-telemetry-{Guid.NewGuid():N}";
         var stopped = new ConcurrentQueue<System.Diagnostics.Activity>();
         using var listener = new ActivityListener
         {
@@ -205,28 +207,42 @@ public sealed class ToolAuditDeadlineTests
             ActivityStopped = activity =>
             {
                 if (activity.OperationName.StartsWith("audit.", StringComparison.Ordinal)
-                    && Equals(activity.GetTagItem("botnexus.tool.call_id"), "call-telemetry"))
+                    && Equals(activity.GetTagItem("botnexus.tool.call_id"), toolCallId))
                     stopped.Enqueue(activity);
             }
         };
         ActivitySource.AddActivityListener(listener);
 
-        var store = new Mock<ISessionStore>();
-        store.Setup(s => s.AppendEntriesAsync(
+        using var callerCts = new CancellationTokenSource();
+        // A successful bounded append avoids making telemetry success depend on the queued fallback.
+        // Strict behavior and explicit verification prevent that fallback from silently passing.
+        var store = new Mock<ISessionStore>(MockBehavior.Strict);
+        var bounded = store.As<IBoundedSessionAppendStore>();
+        bounded.Setup(s => s.AppendEntriesWithinAsync(
                 SessionId.From("session-a"),
-                It.IsAny<IReadOnlyList<SessionEntry>>(),
-                It.IsAny<CancellationToken>()))
+                It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1),
+                Deadline,
+                callerCts.Token))
             .ReturnsAsync(new SessionAppendMutationResult(SessionMutationOutcome.Applied, 1));
 
         await Create(store.Object).PersistStartAsync(
-            "call-telemetry", "read", Args("path", "do-not-emit-this-argument"), CancellationToken.None);
+            toolCallId, "read", Args("path", "do-not-emit-this-argument"), callerCts.Token);
+
+        bounded.Verify(s => s.AppendEntriesWithinAsync(
+            SessionId.From("session-a"),
+            It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1),
+            Deadline,
+            callerCts.Token), Times.Once);
+        store.Verify(s => s.AppendEntriesAsync(
+            It.IsAny<SessionId>(), It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
 
         var stages = stopped.ToArray();
         stages.Select(activity => activity.OperationName).ShouldBe(["audit.serialize", "audit.persist"], ignoreOrder: true);
         stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.agent.id"), "agent-a"));
         stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.session.id"), "session-a"));
         stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.tool.name"), "read"));
-        stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.tool.call_id"), "call-telemetry"));
+        stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.tool.call_id"), toolCallId));
         stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.audit.outcome"), "success"));
         string.Join(" ", stages.SelectMany(activity => activity.TagObjects).Select(tag => $"{tag.Key}={tag.Value}"))
             .ShouldNotContain("do-not-emit-this-argument");
