@@ -139,6 +139,105 @@ public sealed class InProcessAgentHandleUsageTests
         AssertUsage(end.Usage, 17, 13, 211, 31);
     }
 
+    [Fact]
+    public async Task ObserveActivity_RealToolAndTurnEvents_ProjectsOnlyCompletedEvidenceAndDisposes()
+    {
+        var (_, handle) = CreateHandle(new ScriptedProvider(
+            new Turn("checking", FirstUsage, StopReason.ToolUse, Call: true), new Turn("answer", LastUsage),
+            new Turn("later", LastUsage)));
+        await using var lifetime = handle;
+        var observed = new List<BotNexus.Gateway.Abstractions.Agents.AgentActivityObservation>();
+        var subscription = handle.ObserveActivity(observed.Add).ShouldNotBeNull();
+
+        await handle.PromptAsync("hello");
+        observed.Select(value => value.Kind).ShouldBe(new[] {
+            BotNexus.Gateway.Abstractions.Agents.AgentActivityKind.ToolSucceeded,
+            BotNexus.Gateway.Abstractions.Agents.AgentActivityKind.TurnCompleted,
+            BotNexus.Gateway.Abstractions.Agents.AgentActivityKind.TurnCompleted });
+        observed[0].ShouldBe(AgentActivityEvidence.Project(new ToolExecutionEndEvent(
+            "different-call", "read", new AgentToolResult([new(AgentToolContentType.Text, "file body")]),
+            false, DateTimeOffset.UtcNow)));
+        observed[1].IdentityHigh.ShouldBe(0UL);
+        observed[1].IdentityLow.ShouldBe(0UL);
+        subscription.Dispose();
+        await handle.PromptAsync("later");
+        observed.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task ObserveActivity_RealFailingTool_ProjectsFailureBeforeTurnBoundary()
+    {
+        var (_, handle) = CreateHandle(new ScriptedProvider(
+            new Turn("checking", FirstUsage, StopReason.ToolUse, Call: true), new Turn("answer", LastUsage)),
+            toolThrows: true);
+        await using var lifetime = handle;
+        var observed = new List<BotNexus.Gateway.Abstractions.Agents.AgentActivityObservation>();
+        using var subscription = handle.ObserveActivity(observed.Add);
+
+        await handle.PromptAsync("hello");
+
+        observed.Select(value => value.Kind).ShouldBe(new[] {
+            BotNexus.Gateway.Abstractions.Agents.AgentActivityKind.ToolFailed,
+            BotNexus.Gateway.Abstractions.Agents.AgentActivityKind.TurnCompleted,
+            BotNexus.Gateway.Abstractions.Agents.AgentActivityKind.TurnCompleted });
+    }
+
+    [Fact]
+    public void Project_MultipleTextBlocks_NormalizesLikeExtractedText()
+    {
+        var blocks = AgentActivityEvidence.Project(new ToolExecutionEndEvent("a", "read",
+            new AgentToolResult([new(AgentToolContentType.Text, "one"),
+                new(AgentToolContentType.Text, "two")]),
+            false, DateTimeOffset.UtcNow));
+        var text = AgentActivityEvidence.Project(new ToolExecutionEndEvent("b", "read",
+            new AgentToolResult([new(AgentToolContentType.Text, "one two")]), false, DateTimeOffset.UtcNow));
+        blocks.ShouldBe(text);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Project_NormalizedEvidence_ExcludesInvocationAndPrivateMetadata(bool error)
+    {
+        var first = AgentActivityEvidence.Project(new ToolExecutionEndEvent("call-a", " READ ",
+            new AgentToolResult([new(AgentToolContentType.Text, " private\r\n result ")], "secret-a"), error, DateTimeOffset.UtcNow));
+        var second = AgentActivityEvidence.Project(new ToolExecutionEndEvent("call-b", "read",
+            new AgentToolResult([new(AgentToolContentType.Text, "private result")], "secret-b"), error, DateTimeOffset.UtcNow));
+        first.ShouldBe(second);
+        first.ToString().ShouldNotContain("private");
+        first.ToString().ShouldNotContain("secret");
+        var changed = AgentActivityEvidence.Project(new ToolExecutionEndEvent("call-c", "read",
+            new AgentToolResult([new(AgentToolContentType.Text, "different result")]), error, DateTimeOffset.UtcNow));
+        changed.ShouldNotBe(first);
+    }
+
+    [Fact]
+    public void Project_LargeResult_DistinguishesChangesBeyondPrefix()
+    {
+        var prefix = new string('x', 100000);
+        var first = AgentActivityEvidence.Project(new ToolExecutionEndEvent("a", "read",
+            new AgentToolResult([new(AgentToolContentType.Text, prefix + "a")]), false, DateTimeOffset.UtcNow));
+        var second = AgentActivityEvidence.Project(new ToolExecutionEndEvent("b", "read",
+            new AgentToolResult([new(AgentToolContentType.Text, prefix + "b")]), false, DateTimeOffset.UtcNow));
+        first.ShouldNotBe(second);
+    }
+
+    [Fact]
+    public void Project_ChangedImageEvidence_IsNotClassifiedAsUnchangedText()
+    {
+        var first = AgentActivityEvidence.Project(new ToolExecutionEndEvent("a", "read",
+            new AgentToolResult([new(AgentToolContentType.Image, "private-image-a")]), false, DateTimeOffset.UtcNow));
+        var second = AgentActivityEvidence.Project(new ToolExecutionEndEvent("b", "read",
+            new AgentToolResult([new(AgentToolContentType.Image, "private-image-b")]), false, DateTimeOffset.UtcNow));
+        var mixed = AgentActivityEvidence.Project(new ToolExecutionEndEvent("c", "read",
+            new AgentToolResult([new(AgentToolContentType.Text, "same"), new(AgentToolContentType.Image, "private-image-a")]), false, DateTimeOffset.UtcNow));
+        var changedMixed = AgentActivityEvidence.Project(new ToolExecutionEndEvent("d", "read",
+            new AgentToolResult([new(AgentToolContentType.Text, "same"), new(AgentToolContentType.Image, "private-image-b")]), false, DateTimeOffset.UtcNow));
+        first.ShouldNotBe(second);
+        mixed.ShouldNotBe(changedMixed);
+        first.ToString().ShouldNotContain("private-image");
+    }
+
     private static void AssertUsage(AgentResponseUsage? usage, int input, int output, int? read, int? write)
     {
         var measured = usage.ShouldNotBeNull();
@@ -170,7 +269,7 @@ public sealed class InProcessAgentHandleUsageTests
         row.ToolIsError.ShouldBeFalse();
     }
 
-    private static (BotNexus.Agent.Core.Agent Agent, InProcessAgentHandle Handle) CreateHandle(ScriptedProvider provider)
+    private static (BotNexus.Agent.Core.Agent Agent, InProcessAgentHandle Handle) CreateHandle(ScriptedProvider provider, bool toolThrows = false)
     {
         var model = new LlmModel("test-model", "test-model", "test-api", "test-provider", "http://localhost",
             false, ["text"], new ModelCost(0, 0, 0, 0), 8192, 1024);
@@ -194,7 +293,7 @@ public sealed class InProcessAgentHandleUsageTests
             });
         var audit = new ToolAuditWriteAhead(store.Object, DefaultToolAuditSink.Instance, new SecretRedactor(),
             session.AgentId, session.SessionId, NullLogger.Instance);
-        IAgentTool[] tools = [new ReadTool()];
+        IAgentTool[] tools = [new ReadTool(toolThrows)];
         var options = new AgentOptions(
             new AgentInitialState(SystemPrompt: "test", Model: model, Tools: tools), model,
             new LlmClient(providers, models), null, null,
@@ -241,7 +340,7 @@ public sealed class InProcessAgentHandleUsageTests
         }
     }
 
-    private sealed class ReadTool : IAgentTool
+    private sealed class ReadTool(bool throws = false) : IAgentTool
     {
         public string Name => "read";
         public string Label => "read";
@@ -252,6 +351,7 @@ public sealed class InProcessAgentHandleUsageTests
             => Task.FromResult(arguments);
         public Task<AgentToolResult> ExecuteAsync(string toolCallId, IReadOnlyDictionary<string, object?> arguments,
             CancellationToken cancellationToken = default, AgentToolUpdateCallback? onUpdate = null)
-            => Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "file body")]));
+            => throws ? Task.FromException<AgentToolResult>(new IOException("private-tool-error"))
+                : Task.FromResult(new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, "file body")]));
     }
 }
