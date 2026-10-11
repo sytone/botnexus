@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk" /><PackageReference Include="xunit" /><PackageReference Include="xunit.runner.visualstudio" /><Using Include="Xunit" /><ProjectReference Include="../../../tools/BotNexus.Satellite.Client.SignalR/BotNexus.Satellite.Client.SignalR.csproj" /></ItemGroup></Project>

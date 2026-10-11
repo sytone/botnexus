@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Portable session contracts for the isolated Windows satellite tray client.</Description>
+  </PropertyGroup>
+</Project>
