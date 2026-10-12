@@ -14,9 +14,8 @@ namespace BotNexus.Agent.Providers.Copilot.Messages;
 
 /// <summary>
 /// Parses GitHub Copilot Anthropic-Messages SSE streams into content blocks and
-/// streaming events. Owned by the Copilot provider; behaviour is byte-identical
-/// to the Anthropic parser for the Copilot transport (which never used the
-/// claude-cli OAuth tool-name reverse-lookup).
+/// streaming events. Completion requires an explicit message_stop; transport EOF
+/// alone leaves the message incomplete.
 /// </summary>
 internal static class CopilotMessagesStreamParser
 {
@@ -40,7 +39,10 @@ internal static class CopilotMessagesStreamParser
     /// </summary>
     private const string LoggerCategory = "CopilotMessagesStreamParser";
 
-    internal static async Task<(Usage Usage, string? ResponseId, StopReason StopReason)> ProcessStreamAsync(
+    internal readonly record struct StreamResult(
+        Usage Usage, string? ResponseId, StopReason StopReason, bool MessageStopped);
+
+    internal static async Task<StreamResult> ProcessStreamAsync(
         Stream responseStream,
         LlmModel model,
         LlmStream stream,
@@ -81,6 +83,7 @@ internal static class CopilotMessagesStreamParser
         var argumentBudgets = new Dictionary<int, StreamToolArgumentBudget>();
         string? responseId = null;
         var stopReason = StopReason.Stop;
+        var messageStopped = false;
         string? currentEvent = null;
         var firstTokenFired = false;
 
@@ -138,13 +141,27 @@ internal static class CopilotMessagesStreamParser
                     secretRedactor,
                     ref responseId,
                     ref stopReason,
+                    ref messageStopped,
                     out usage);
             }
 
             currentEvent = null;
         }
 
-        return (usage, responseId, stopReason);
+        ct.ThrowIfCancellationRequested();
+
+        if (!messageStopped)
+        {
+            // Retain text already delivered to the caller without claiming that an open block
+            // completed. Tool arguments remain unfinished and must not become executable calls.
+            foreach (var (index, blockType) in blockTypes.OrderBy(pair => pair.Key))
+            {
+                if (blockType == "text" && textAccumulators.TryGetValue(index, out var text) && text.Length > 0)
+                    contentBlocks.Add(new TextContent(text.ToString()));
+            }
+        }
+
+        return new StreamResult(usage, responseId, stopReason, messageStopped);
     }
 
     private static void ProcessSseEvent(
@@ -167,6 +184,7 @@ internal static class CopilotMessagesStreamParser
         ISecretRedactor? secretRedactor,
         ref string? responseId,
         ref StopReason stopReason,
+        ref bool messageStopped,
         out Usage updatedUsage)
     {
         updatedUsage = usage;
@@ -203,6 +221,7 @@ internal static class CopilotMessagesStreamParser
             case "content_block_stop":
                 HandleContentBlockStop(data, model, stream, contentBlocks, blockTypes,
                     textAccumulators, textDeltaCounts, signatureAccumulators, toolCallIds, toolCallNames, usage, logger, responseId, buildMessage);
+                blockTypes.Remove(data.GetProperty("index").GetInt32());
                 break;
 
             case "message_delta":
@@ -216,6 +235,7 @@ internal static class CopilotMessagesStreamParser
                 break;
 
             case "message_stop":
+                messageStopped = true;
                 break;
 
             case "error":
