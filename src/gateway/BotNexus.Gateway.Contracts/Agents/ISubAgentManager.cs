@@ -57,7 +57,7 @@ public interface ISubAgentManager
 
     /// <summary>Retains a terminal result on the owning parent tool call before returning it.</summary>
     Task<string> ConsumeResultAsync(SubAgentInfo info, string toolCallId, string toolName,
-        string argumentsJson, string payload, CancellationToken ct = default)
+        string argumentsJson, string payload, CancellationToken ct = default, AgentRunId? agentRunId = null)
         => throw new NotSupportedException("This manager does not support durable result consumption.");
 
     /// <summary>

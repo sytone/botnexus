@@ -2,6 +2,237 @@
   "schemaVersion": "1.0.0",
   "releases": [
     {
+      "version": "0.50.0",
+      "tag": "v0.50.0",
+      "commit": "e3381fad932ec73570e269192687fe2af0785fad",
+      "releasedAt": "2026-10-12",
+      "releaseUrl": "https://github.com/sytone/botnexus/releases/tag/v0.50.0",
+      "documentationUrl": "https://sytone.github.io/botnexus/releases/v0.50.0/",
+      "categories": [
+        {
+          "name": "Features",
+          "changes": [
+            {
+              "summary": "**cron:** Record planned restart dispositions (#4776)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Preserve neutral evidence and detect outcome cycles (#4806)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Correlate tool evidence with durable agent runs (#4807)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Bug Fixes",
+          "changes": [
+            {
+              "summary": "**agents:** Bound alternating housekeeping loops (#4734)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Expose unattributed private memory diagnostics (#4750)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Support configured per-model capacity metadata (#4751)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Preserve missing legacy result evidence (#4752)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Converge host-shared extension dependencies (#4784)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**search:** Enforce caller scope and hidden-record visibility (#4755)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Enforce peer grants before mirror admission (#4757)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**security:** Isolate local child process environments (#4760)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**testing:** Require positive sandbox child identity (#4761)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Enforce the anthropic request cache budget (#4762)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Coordinate mobile markdown render regression (#4764)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Await mobile canvas close event completion (#4766)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Preserve blocking response cache usage (#4767)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Expose sqlite allocator memory diagnostics (#4769)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Expose scoped context budget provenance (#4772)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Keep compaction budgets scoped and failures visible (#4773)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Bound response cache keys and preserve sub-agent errors (#4775)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Retire subagents after owned cleanup finishes (#4771)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Expose last-gc generation diagnostics (#4791)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Reject incomplete anthropic model discovery (#4765)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Validate named copilot provider types (#4724)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Report copilot catalogue activation restart requirement (#4799)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**ci:** Authenticate coverage uploads and fail closed (#4800)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Converge agent365 host-shared dependencies (#4785)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sqlite:** Expose logical connection lifetime observations (#4801)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Return subagent completion through tool results (#4805)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Reconcile immediate file watcher readiness changes (#4809)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Show separated copilot quota and bounded local usage (#4810)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Preserve workspace navigation during refresh (#4790)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**diagnostics:** Expose last-gc collection characteristics (#4812)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Sanitize malformed auth-file diagnostics (#4819)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Make agent exec the sole timeout owner (#4823)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Pin checked follow-up conversation destinations (#4825)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Refactor",
+          "changes": [
+            {
+              "summary": "**persistence:** Make schema migration methods extensions (#4735)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**github:** Make json projections extension methods (#4754)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Make secret merge operations extension methods (#4770)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Make patch operations extension methods (#4792)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**streaming:** Make responses error extraction an extension (#4802)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**streaming:** Make final block text reading an extension (#4808)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**streaming:** Make responses usage parsing an extension (#4814)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Testing",
+          "changes": [
+            {
+              "summary": "**cron:** Make prompt template fixture paths portable (#4758)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Coordinate audit deadline store-entry observation (#4774)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Control readiness child lifetime (#4821)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Await encoded selection event completion (#4822)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Isolate ambient home fixtures (#4826)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "CI/Build",
+          "changes": [
+            {
+              "summary": "**docs:** Validate the documentation site on pull requests (#4768)",
+              "documentationUrls": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.49.1",
       "tag": "v0.49.1",
       "commit": "d7f9ea581d6233d44d499640c3086a7d40ed8bfb",

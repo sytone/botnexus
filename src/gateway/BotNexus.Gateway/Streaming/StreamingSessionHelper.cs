@@ -84,6 +84,7 @@ public static class StreamingSessionHelper
         RunCompletionSignal? runCompletion = null;
         AgentResponseUsage? runUsage = null;
         var turnCount = 0;
+        AgentRunId? agentRunId = null;
 
         // Apply stall watchdog if configured — wraps the stream with inactivity timeout.
         var effectiveStream = options.StallWatchdog is not null
@@ -92,6 +93,7 @@ public static class StreamingSessionHelper
 
         await foreach (var evt in effectiveStream.WithCancellation(cancellationToken))
         {
+            agentRunId = evt.AgentRunId ?? agentRunId;
             switch (evt.Type)
             {
                 case AgentStreamEventType.ContentDelta when evt.ContentDelta is not null:
@@ -149,13 +151,13 @@ public static class StreamingSessionHelper
                         evt.ToolName,
                         evt.ToolArgs is { Count: > 0 }
                             ? System.Text.Json.JsonSerializer.Serialize(evt.ToolArgs)
-                            : null);
+                            : null) with { AgentRunId = evt.AgentRunId, PersistenceKey = DefaultToolAuditSink.GetToolStartPersistenceKey(evt.ToolCallId, evt.AgentRunId) };
                     // The write-ahead can append directly through ISessionStore, so this aggregate
                     // may be stale. The stable persistence key on ProjectStart is the authoritative
                     // idempotency contract; this snapshot check is only a cheap in-memory guard.
                     var alreadyPersisted = evt.ToolCallId is not null
                         && session.GetHistorySnapshot().Any(entry =>
-                            entry.ToolCallId == evt.ToolCallId && entry.IsToolStartRow());
+                            entry.ToolCallId == evt.ToolCallId && entry.AgentRunId == evt.AgentRunId && entry.IsToolStartRow());
                     if (!alreadyPersisted)
                         streamedHistory.Add(startEntry);
                     allHistoryEntries.Add(startEntry);
@@ -217,7 +219,7 @@ public static class StreamingSessionHelper
                         evt.ToolResult,
                         evt.ToolIsError == true,
                         options.MaxPersistedToolResultBytes,
-                        resultArgs));
+                        resultArgs) with { AgentRunId = evt.AgentRunId, ToolIsIncomplete = evt.ToolIsIncomplete });
                     allHistoryEntries.Add(streamedHistory[^1]);
                     if (evt.ToolCallId is not null)
                         toolEndIds.Add(evt.ToolCallId);
@@ -231,7 +233,7 @@ public static class StreamingSessionHelper
                         endBuilder.ResultContent = evt.ToolResult;
                         endBuilder.IsError = evt.ToolIsError == true;
                         endBuilder.CompletedAt = evt.Timestamp;
-                        endBuilder.Completed = true;
+                        endBuilder.Completed = !evt.ToolIsIncomplete;
                     }
                     else
                     {
@@ -244,8 +246,8 @@ public static class StreamingSessionHelper
                             ResultContent = evt.ToolResult,
                             IsError = evt.ToolIsError == true,
                             StartedAt = evt.Timestamp,
-                            CompletedAt = evt.Timestamp,
-                            Completed = true
+                            CompletedAt = evt.ToolIsIncomplete ? null : evt.Timestamp,
+                            Completed = !evt.ToolIsIncomplete
                         };
                         toolInvocationBuilders.Add(orphan);
                         toolInvocationIndex[endKey] = orphan;
@@ -255,6 +257,7 @@ public static class StreamingSessionHelper
                 case AgentStreamEventType.Error when options.IncludeErrorsInHistory && !string.IsNullOrWhiteSpace(evt.ErrorMessage):
                     streamedHistory.Add(new SessionEntry
                     {
+                        AgentRunId = agentRunId,
                         Role = MessageRole.System,
                         Content = $"Agent stream error: {evt.ErrorMessage}"
                     });
@@ -273,7 +276,7 @@ public static class StreamingSessionHelper
                         if (runAssistantContent.Length > 0)
                             runAssistantContent.AppendLine();
                         runAssistantContent.Append(streamedContent);
-                        turnSnapshot.Add(new SessionEntry { Role = MessageRole.Assistant, Content = streamedContent.ToString(), ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null, Kind = assistantKind });
+                        turnSnapshot.Add(new SessionEntry { AgentRunId = agentRunId, Role = MessageRole.Assistant, Content = streamedContent.ToString(), ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null, Kind = assistantKind });
                         emittedAssistantContent = true;
                         thinkingBuffer.Clear();
                         streamedContent.Clear();
@@ -317,7 +320,7 @@ public static class StreamingSessionHelper
             var toolName = hasStart ? entry!.ToolName ?? "unknown" : "unknown";
             // #2906: an interrupted call is exactly the case forensics needs the arguments for, so
             // the synthesized row carries them too.
-            var orphanEntry = auditSink.ProjectIncomplete(orphanId, toolName, hasStart ? entry!.ToolArgs : null);
+            var orphanEntry = auditSink.ProjectIncomplete(orphanId, toolName, hasStart ? entry!.ToolArgs : null) with { AgentRunId = hasStart ? entry?.AgentRunId : agentRunId };
             streamedHistory.Add(orphanEntry);
             allHistoryEntries.Add(orphanEntry);
         }
@@ -328,7 +331,7 @@ public static class StreamingSessionHelper
         var finalContent = streamedContent.ToString();
         if (!string.IsNullOrWhiteSpace(finalContent))
         {
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = finalContent, ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null, Kind = assistantKind });
+            session.AddEntry(new SessionEntry { AgentRunId = agentRunId, Role = MessageRole.Assistant, Content = finalContent, ThinkingContent = thinkingBuffer.Length > 0 ? thinkingBuffer.ToString() : null, Kind = assistantKind });
             emittedAssistantContent = true;
         }
         else if (streamedHistory.Count == 0 && hadThinkingContent && hadMessageEnd && !emittedAssistantContent)
@@ -339,6 +342,7 @@ public static class StreamingSessionHelper
             // thinking-only responses are a normal model behaviour, not an error (#1198).
             session.AddEntry(new SessionEntry
             {
+                AgentRunId = agentRunId,
                 Role = MessageRole.Assistant,
                 Content = string.Empty,
                 Kind = assistantKind
@@ -473,7 +477,7 @@ public static class StreamingSessionHelper
                 isError: builder.Completed ? builder.IsError : true,
                 isIncomplete: !builder.Completed,
                 startedAt: builder.StartedAt,
-                completedAt: builder.Completed ? builder.CompletedAt : null))
+                completedAt: builder.Completed ? builder.CompletedAt : null) with { AgentRunId = agentRunId })
             .ToList();
 
         if (streamedContent.Length > 0)

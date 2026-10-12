@@ -146,7 +146,7 @@ public sealed class InMemorySessionStore : SessionStoreBase
     }
 
     private readonly Dictionary<string, SubAgentRunDetail> _subAgents = [];
-    private readonly Dictionary<string, string> _consumedCalls = [];
+    private readonly Dictionary<string, (string Call, AgentRunId? Run)> _consumedCalls = [];
 
     /// <inheritdoc />
     public override Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
@@ -203,14 +203,14 @@ public sealed class InMemorySessionStore : SessionStoreBase
             if (!_subAgents.TryGetValue(subAgentId, out var run) || run.ParentSessionId != parentSessionId.Value)
                 throw new UnauthorizedAccessException("Sub-agent does not belong to this parent.");
             if (_consumedCalls.TryGetValue(subAgentId, out var consumed))
-                return Task.FromResult(consumed == result.ToolCallId
-                    ? parent.GetHistorySnapshot().Single(e => e.ToolCallId == consumed && e.Kind == MessageKind.ToolResult).Content : null);
+                return Task.FromResult(consumed == (result.ToolCallId, result.AgentRunId)
+                    ? parent.GetHistorySnapshot().Single(e => e.ToolCallId == consumed.Call && e.AgentRunId == consumed.Run && e.Kind == MessageKind.ToolResult).Content : null);
             var call = result.ToolCallId ?? throw new ArgumentException("Missing tool call id.");
-            if (parent.GetHistorySnapshot().Any(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == call))
+            if (parent.GetHistorySnapshot().Any(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == call && e.AgentRunId == result.AgentRunId))
                 throw new InvalidOperationException("An original tool result already exists without a receipt; consumption was refused.");
             parent.AddEntry(result);
-            _consumedCalls.Add(subAgentId, call);
-            return Task.FromResult<string?>(parent.GetHistorySnapshot().Last(e => e.ToolCallId == call && e.Kind == MessageKind.ToolResult).Content);
+            _consumedCalls.Add(subAgentId, (call, result.AgentRunId));
+            return Task.FromResult<string?>(parent.GetHistorySnapshot().Last(e => e.ToolCallId == call && e.AgentRunId == result.AgentRunId && e.Kind == MessageKind.ToolResult).Content);
         }
     }
 
