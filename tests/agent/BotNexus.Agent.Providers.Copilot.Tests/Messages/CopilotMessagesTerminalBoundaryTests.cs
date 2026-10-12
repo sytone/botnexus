@@ -112,6 +112,49 @@ public sealed class CopilotMessagesTerminalBoundaryTests
         events.OfType<ToolCallEndEvent>().ShouldHaveSingleItem().ToolCall.ShouldBe(tool);
     }
 
+    [Fact]
+    public async Task Stream_EofWithEarlierOpenAndLaterClosedText_PreservesWireOrderWithoutSyntheticEnd()
+    {
+        const string first = "first-open-block";
+        const string second = "second-closed-block";
+        var body = MessageStart() + TextStart() + TextDelta(first)
+            + Frame("content_block_start", new
+            {
+                type = "content_block_start", index = 1, content_block = new { type = "text", text = "" }
+            })
+            + Frame("content_block_delta", new
+            {
+                type = "content_block_delta", index = 1, delta = new { type = "text_delta", text = second }
+            })
+            + BlockStop(1);
+
+        var (events, result) = await RunProviderAsync(body);
+
+        events.OfType<DoneEvent>().ShouldBeEmpty();
+        var error = events.OfType<ErrorEvent>().ShouldHaveSingleItem();
+        events.Last().ShouldBeSameAs(error);
+        error.Reason.ShouldBe(StopReason.Error);
+        error.Error.ShouldBeSameAs(result);
+        result.StopReason.ShouldBe(StopReason.Error);
+        result.ErrorMessage.ShouldBe(IncompleteDiagnostic);
+        result.ResponseId.ShouldBe("msg_terminal_4621");
+
+        // Streaming order and persisted order must agree even when only the later block closed.
+        events.OfType<TextStartEvent>().Select(e => e.ContentIndex).ShouldBe(new[] { 0, 1 });
+        events.OfType<TextDeltaEvent>().Select(e => e.ContentIndex).ShouldBe(new[] { 0, 1 });
+        events.OfType<TextDeltaEvent>().Select(e => e.Delta).ShouldBe(new[] { first, second });
+        result.Content.Count.ShouldBe(2);
+        result.Content.OfType<TextContent>().Select(c => c.Text).ShouldBe(new[] { first, second });
+        string.Concat(result.Content.OfType<TextContent>().Select(c => c.Text)).ShouldBe(first + second);
+
+        // EOF preserves block zero's accumulated text but must not invent its content_block_stop.
+        var closed = events.OfType<TextEndEvent>().ShouldHaveSingleItem();
+        closed.ContentIndex.ShouldBe(1);
+        closed.Content.ShouldBe(second);
+        events.OfType<ThinkingEndEvent>().ShouldBeEmpty();
+        events.OfType<ToolCallEndEvent>().ShouldBeEmpty();
+    }
+
     private static void AssertCompleted(
         List<AssistantMessageEvent> events, AssistantMessage result, StopReason expectedReason)
     {
