@@ -24,9 +24,9 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         _ = await CreateStore().GetAsync(SessionId.From("probe"));
         await using var connection = await OpenAsync();
         var columns = await ReadStringsAsync(connection, "SELECT name FROM pragma_table_info('tool_invocations') ORDER BY cid");
-        columns.ShouldBe(["id", "session_id", "tool_call_id", "tool_name", "arguments_json", "started_at", "completed_at", "status", "is_error", "result_content", "result_bytes", "result_sha256", "retention_state"]);
+        columns.ShouldBe(["id", "session_id", "tool_call_id", "tool_name", "arguments_json", "started_at", "completed_at", "status", "is_error", "result_content", "result_bytes", "result_sha256", "retention_state", "agent_run_id", "provider_tool_call_id"]);
         var indexes = await ReadStringsAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_%tool_invocation%' OR name = 'idx_session_history_unlinked_tool_rows') ORDER BY name");
-        indexes.ShouldBe(["idx_session_history_tool_invocation_id", "idx_session_history_unlinked_tool_rows", "idx_tool_invocations_retention_completed", "idx_tool_invocations_session_started"]);
+        indexes.ShouldBe(["idx_session_history_tool_invocation_id", "idx_session_history_unlinked_tool_rows", "idx_tool_invocations_retention_completed", "idx_tool_invocations_session_run", "idx_tool_invocations_session_started"]);
 
         var plan = await ReadStringsAsync(connection, """
             EXPLAIN QUERY PLAN

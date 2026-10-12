@@ -84,7 +84,8 @@ public sealed class GatewaySessionRuntime
     private bool IsRetainedToolResultDuplicate(SessionEntry entry)
         => entry.Kind == MessageKind.ToolResult && entry.PersistenceKey is { } key
             && key.StartsWith("tool-result:", StringComparison.Ordinal)
-            && Session.History.Any(existing => existing.PersistenceKey == key);
+            && Session.History.Any(existing => existing.PersistenceKey == key
+                && existing.AgentRunId == entry.AgentRunId);
 
     /// <summary>
     /// Executes replace history.
