@@ -187,7 +187,7 @@ internal sealed class DebugLogsCommand
         // Read files from most recent backwards until we have enough lines
         for (var i = files.Count - 1; i >= 0 && result.Count < limit; i--)
         {
-            var fileLines = File.ReadAllLines(files[i]);
+            var fileLines = ReadLogLines(files[i]).ToArray();
             for (var j = fileLines.Length - 1; j >= 0 && result.Count < limit; j--)
             {
                 var entry = ParseLogLine(fileLines[j], files[i]);
@@ -220,7 +220,7 @@ internal sealed class DebugLogsCommand
                     continue;
             }
 
-            foreach (var line in File.ReadLines(file))
+            foreach (var line in ReadLogLines(file))
             {
                 if (result.Count >= limit) break;
                 if (line.Contains(term, StringComparison.OrdinalIgnoreCase))
@@ -234,6 +234,52 @@ internal sealed class DebugLogsCommand
         }
 
         return result;
+    }
+
+    // Readers must permit the logger to append and rotate while inspection is in progress.
+    internal static StreamReader OpenLogReader(string path) => new(new FileStream(
+        path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
+
+    private static IEnumerable<string> ReadLogLines(string path)
+    {
+        StreamReader reader;
+        try
+        {
+            reader = OpenLogReader(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ReportUnreadableLog(path);
+            yield break;
+        }
+
+        using (reader)
+        {
+            while (true)
+            {
+                string? line;
+                try
+                {
+                    line = reader.ReadLine();
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    ReportUnreadableLog(path);
+                    yield break;
+                }
+                if (line is null) yield break;
+                yield return line;
+            }
+        }
+    }
+
+    private static void ReportUnreadableLog(string path)
+    {
+        // Plain stderr keeps JSON stdout parseable. Avoid exception text, control characters,
+        // and unbounded paths; one diagnostic per file, with no retry during rotation.
+        var name = new string(Path.GetFileName(path).Take(180)
+            .Select(c => char.IsControl(c) ? '?' : c).ToArray());
+        Console.Error.WriteLine($"Could not read log '{name}': file unavailable or access denied. Check permissions or retry after rotation.");
     }
 
     internal static List<string> GetLogFilesSorted(string logsDir)
