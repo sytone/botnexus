@@ -10,7 +10,7 @@ namespace BotNexus.Gateway.Tools;
 
 public sealed class SubAgentManageTool(
     ISubAgentManager subAgentManager,
-    SessionId sessionId) : IAgentTool
+    SessionId sessionId) : BotNexus.Agent.Core.ExtensionPoints.ToolExecution.IContextAwareAgentTool
 {
     public string Name => "manage_subagent";
     public string Label => "Manage Sub-Agent";
@@ -72,11 +72,23 @@ public sealed class SubAgentManageTool(
         return prepared;
     }
 
-    public async Task<AgentToolResult> ExecuteAsync(
+    public Task<AgentToolResult> ExecuteAsync(
         string toolCallId,
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken = default,
         AgentToolUpdateCallback? onUpdate = null)
+        => ExecuteCoreAsync(toolCallId, arguments, cancellationToken, null);
+
+    /// <inheritdoc />
+    public Task<AgentToolResult> ExecuteAsync(
+        BotNexus.Agent.Core.ExtensionPoints.ToolExecution.ToolExecutionContext context,
+        CancellationToken cancellationToken = default,
+        AgentToolUpdateCallback? onUpdate = null)
+        => ExecuteCoreAsync(context.ToolCallRequest.Id, context.ValidatedArgs, cancellationToken,
+            context.AgentRunId is { } run ? BotNexus.Domain.Primitives.AgentRunId.From(run.Value) : null);
+
+    private async Task<AgentToolResult> ExecuteCoreAsync(string toolCallId,
+        IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken, BotNexus.Domain.Primitives.AgentRunId? agentRunId)
     {
         var subAgentId = ReadString(arguments, "subAgentId")
             ?? throw new ArgumentException("Missing required argument: subAgentId.");
@@ -103,7 +115,7 @@ public sealed class SubAgentManageTool(
         var result = JsonSerializer.Serialize(SubAgentRunDetail.FromLive(info), JsonOptions);
         if (SubAgentStatusPolicy.IsTerminal(info.Status))
             result = await subAgentManager.ConsumeResultAsync(info, toolCallId, Name,
-                JsonSerializer.Serialize(arguments), result, cancellationToken).ConfigureAwait(false);
+                JsonSerializer.Serialize(arguments), result, cancellationToken, agentRunId).ConfigureAwait(false);
 
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, result)]);
     }

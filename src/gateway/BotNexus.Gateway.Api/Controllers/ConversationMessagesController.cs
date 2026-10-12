@@ -115,6 +115,10 @@ public sealed class ConversationMessagesController(
         if (conversation is null || conversation.AgentId != typedAgentId)
             return NotFound(new { error = $"Conversation '{conversationId}' not found for agent '{agentId}'." });
 
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this, conversation, typedAgentId);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var content = request.Message!.Trim();
         var senderId = BuildSenderId(request.Sender);
         var inbound = BuildInboundMessage(typedAgentId, typedConversationId, content, senderId, request.Delivery);
