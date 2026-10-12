@@ -1205,7 +1205,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
     /// <inheritdoc />
     public async Task<string> ConsumeResultAsync(SubAgentInfo info, string toolCallId, string toolName,
-        string argumentsJson, string payload, CancellationToken ct = default)
+        string argumentsJson, string payload, CancellationToken ct = default, BotNexus.Domain.Primitives.AgentRunId? agentRunId = null)
     {
         if (!SubAgentStatusPolicy.IsTerminal(info.Status)) return payload;
         if (_sessionStore is null) throw new InvalidOperationException("Durable parent result storage is required.");
@@ -1214,8 +1214,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         // cold read would still look Running (or be misclassified as restart interruption).
         await _sessionStore.UpdateSubAgentSessionAsync(info, ct).ConfigureAwait(false);
         var entry = DefaultToolAuditSink.Instance.ProjectResult(toolCallId, toolName, payload,
-            isError: false, maxPersistedBytes: 0, serializedArguments: argumentsJson);
-        entry.PersistenceKey = "tool-result:" + toolCallId;
+            isError: false, maxPersistedBytes: 0, serializedArguments: argumentsJson) with { AgentRunId = agentRunId };
+        // The store derives the same run-qualified identity used by streamed/aggregate results.
         var accepted = await _sessionStore.ConsumeSubAgentResultAsync(info.SubAgentId, info.ParentSessionId,
             info.ParentConversationId, entry, ct).ConfigureAwait(false);
         return accepted ?? System.Text.Json.JsonSerializer.Serialize(new
@@ -1637,7 +1637,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         return final with
         {
-            ToolCalls = [.. exploration.ToolCalls, .. final.ToolCalls],
+            // A merged response has no single admission identity. Attribute missing per-call IDs
+            // within each original response before combining, never to the final response afterward.
+            AgentRunId = exploration.AgentRunId == final.AgentRunId ? final.AgentRunId : null,
+            ToolCalls = [.. exploration.ToolCalls.Select(call => call with { AgentRunId = call.AgentRunId ?? exploration.AgentRunId }),
+                .. final.ToolCalls.Select(call => call with { AgentRunId = call.AgentRunId ?? final.AgentRunId })],
             TerminalError = exploration.TerminalError ?? final.TerminalError,
             RunUsage = exploration.RunUsage ?? final.RunUsage
         };

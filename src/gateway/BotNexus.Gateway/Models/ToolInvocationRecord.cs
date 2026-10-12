@@ -22,6 +22,8 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// </remarks>
 public sealed record ToolInvocationRecord
 {
+    /// <summary>Authoritative agent execution identity; null means legacy or unmeasured.</summary>
+    public BotNexus.Domain.Primitives.AgentRunId? AgentRunId { get; init; }
     /// <summary>
     /// Non-public so the policy is the only production route to a record (AC4). See
     /// <see cref="ToolInvocationRecordPolicy.Create"/>.

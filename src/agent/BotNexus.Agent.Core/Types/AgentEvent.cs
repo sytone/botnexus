@@ -14,7 +14,11 @@ namespace BotNexus.Agent.Core.Types;
 /// Events are emitted via Agent.Subscribe listeners during agent runs.
 /// All events are awaited in listener order before the run proceeds.
 /// </remarks>
-public abstract record AgentEvent(AgentEventType Type, DateTimeOffset Timestamp);
+public abstract record AgentEvent(AgentEventType Type, DateTimeOffset Timestamp)
+{
+    /// <summary>Authoritative execution identity; null for legacy externally constructed events.</summary>
+    public AgentRunId? AgentRunId { get; init; }
+}
 
 /// <summary>
 /// Raised when an agent run starts.
