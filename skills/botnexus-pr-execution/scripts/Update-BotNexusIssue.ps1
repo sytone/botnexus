@@ -33,7 +33,7 @@ if ($PSCmdlet.ShouldProcess("issue #$Issue", $operation)) {
     @{ labels = $targetLabels } |
       ConvertTo-Json -Depth 3 |
       Set-Content -LiteralPath $payloadPath -Encoding utf8
-    $tokenScript = 'C:/Users/jobullen/.botnexus/scripts/get-farnsworth-token.ps1'
+    $tokenScript = Join-Path $HOME '.botnexus/scripts/get-farnsworth-token.ps1'
     if (Test-Path -LiteralPath $tokenScript) {
       $token = @(& $tokenScript | Where-Object { $_ -match '^ghs_' })
       if ($token.Count -ne 1) { throw 'Could not resolve one Farnsworth GitHub App token.' }

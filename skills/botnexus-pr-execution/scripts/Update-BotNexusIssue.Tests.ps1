@@ -13,7 +13,7 @@ $env:TEMP = $root
 
 function Test-Path {
     param([string]$LiteralPath)
-    if ($LiteralPath -eq 'C:/Users/jobullen/.botnexus/scripts/get-farnsworth-token.ps1') { return $false }
+    if ($LiteralPath -eq (Join-Path $HOME '.botnexus/scripts/get-farnsworth-token.ps1')) { return $false }
     Microsoft.PowerShell.Management\Test-Path -LiteralPath $LiteralPath
 }
 
