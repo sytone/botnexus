@@ -70,6 +70,12 @@ internal sealed class ToolAuditWriteAhead(
     private readonly ConcurrentDictionary<string, InFlightCall> _inFlight = new(StringComparer.Ordinal);
 
     private int _interruptionRecorded;
+    private AgentRunId? _runId;
+    public void BeginRun(AgentRunId? runId)
+    {
+        _runId = runId;
+        Interlocked.Exchange(ref _interruptionRecorded, 0);
+    }
 
     /// <summary>
     /// Persists the redacted invocation before the tool is invoked, and does not return until the
@@ -105,7 +111,7 @@ internal sealed class ToolAuditWriteAhead(
             }
         }
 
-        _inFlight[toolCallId] = new InFlightCall(toolName, serializedArguments);
+        _inFlight[toolCallId] = new InFlightCall(toolName, serializedArguments, _runId);
         var deadline = persistenceDeadline ?? DefaultPersistenceDeadline;
         using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadlineCts.CancelAfter(deadline);
@@ -114,7 +120,7 @@ internal sealed class ToolAuditWriteAhead(
         {
             var store = sessionStore
                 ?? throw new InvalidOperationException("Session persistence is unavailable.");
-            var entry = auditSink.ProjectStart(toolCallId, toolName, serializedArguments);
+            var entry = auditSink.ProjectStart(toolCallId, toolName, serializedArguments) with { AgentRunId = _runId, PersistenceKey = DefaultToolAuditSink.GetToolStartPersistenceKey(toolCallId, _runId) };
             SessionAppendMutationResult result;
             using (var persist = StartStage("audit.persist", toolCallId, toolName))
             {
@@ -318,7 +324,7 @@ internal sealed class ToolAuditWriteAhead(
                 if (!_inFlight.TryRemove(toolCallId, out _))
                     continue;
 
-                session.AddEntry(auditSink.ProjectIncomplete(toolCallId, call.ToolName, call.SerializedArguments));
+                session.AddEntry(auditSink.ProjectIncomplete(toolCallId, call.ToolName, call.SerializedArguments) with { AgentRunId = call.RunId });
             }
 
             await sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
@@ -334,5 +340,5 @@ internal sealed class ToolAuditWriteAhead(
         }
     }
 
-    private sealed record InFlightCall(string ToolName, string SerializedArguments);
+    private sealed record InFlightCall(string ToolName, string SerializedArguments, AgentRunId? RunId);
 }
