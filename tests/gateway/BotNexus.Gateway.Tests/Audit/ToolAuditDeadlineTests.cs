@@ -118,7 +118,7 @@ public sealed class ToolAuditDeadlineTests
     [InlineData("exec")]
     [InlineData("shell")]
     [InlineData("process")]
-    public async Task PersistStartAsync_LockedSqlite_SideEffectingToolFailsWithinDeadlineWithoutLateAuditRow(
+    public async Task PersistStartAsync_LockedSqlite_SideEffectingToolFailsClosedWithoutLateAuditRow(
         string toolName)
     {
         var directory = Path.Combine(AppContext.BaseDirectory, nameof(ToolAuditDeadlineTests), Guid.NewGuid().ToString("N"));
@@ -144,13 +144,16 @@ public sealed class ToolAuditDeadlineTests
             lockCommand.CommandText = "BEGIN EXCLUSIVE;";
             await lockCommand.ExecuteNonQueryAsync();
 
-            var stopwatch = Stopwatch.StartNew();
             var error = await Should.ThrowAsync<InvalidOperationException>(() =>
                 Create(store).PersistStartAsync(
                     $"call-{toolName}", toolName, Args("command", "danger"), CancellationToken.None));
-            stopwatch.Stop();
 
-            stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+            // The bounded store returns only after its write attempt has definitively failed.
+            // Runner scheduling is not part of the persistence deadline contract.
+            var boundedFailure = error.InnerException.ShouldBeOfType<BoundedSessionAppendException>();
+            boundedFailure.Reason.ShouldBe(BoundedSessionAppendFailureReason.Locked);
+            boundedFailure.InnerException.ShouldBeOfType<SqliteException>().SqliteErrorCode.ShouldBeOneOf(5, 6);
+            error.Message.ShouldContain(toolName);
             error.Message.ShouldContain("audit unavailable", Case.Insensitive);
             error.Message.ShouldContain("lock", Case.Insensitive);
 
@@ -167,6 +170,46 @@ public sealed class ToolAuditDeadlineTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Theory]
+    [InlineData("exec")]
+    [InlineData("shell")]
+    [InlineData("process")]
+    public async Task PersistStartAsync_BoundedStore_SideEffectingToolPassesDeadlineAndAwaitsDefinitiveFailure(
+        string toolName)
+    {
+        var completion = new TaskCompletionSource<SessionAppendMutationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new Mock<ISessionStore>();
+        var bounded = store.As<IBoundedSessionAppendStore>();
+        bounded.Setup(s => s.AppendEntriesWithinAsync(
+                SessionId.From("session-a"),
+                It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1 && entries[0].ToolCallId == "call-bounded"),
+                Deadline,
+                CancellationToken.None))
+            .Returns(completion.Task);
+        var persistence = Create(store.Object).PersistStartAsync(
+            "call-bounded", toolName, Args("command", "danger"), CancellationToken.None);
+
+        bounded.Verify(s => s.AppendEntriesWithinAsync(
+            SessionId.From("session-a"),
+            It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1 && entries[0].ToolCallId == "call-bounded"),
+            Deadline,
+            CancellationToken.None), Times.Once);
+        using (var probe = new CancellationTokenSource(Deadline * 2))
+        {
+            await Should.ThrowAsync<OperationCanceledException>(() => persistence.WaitAsync(probe.Token));
+        }
+        persistence.IsCompleted.ShouldBeFalse("the audit must await the bounded store's definitive outcome even after its deadline");
+
+        var failure = new BoundedSessionAppendException(BoundedSessionAppendFailureReason.Locked, "database is locked");
+        completion.SetException(failure);
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => persistence);
+        error.InnerException.ShouldBeSameAs(failure);
+        error.Message.ShouldContain("audit unavailable", Case.Insensitive);
+        error.Message.ShouldContain(toolName);
+        store.Verify(s => s.AppendEntriesAsync(
+            It.IsAny<SessionId>(), It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

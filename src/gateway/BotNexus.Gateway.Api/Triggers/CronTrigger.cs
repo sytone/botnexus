@@ -214,7 +214,7 @@ public sealed class CronTrigger(
             foreach (var toolEntry in ProjectToolEntries(response))
                 session.AddEntry(toolEntry);
 
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            session.AddEntry(new SessionEntry { AgentRunId = response.AgentRunId, Role = MessageRole.Assistant, Content = response.Content });
         }
         finally
         {

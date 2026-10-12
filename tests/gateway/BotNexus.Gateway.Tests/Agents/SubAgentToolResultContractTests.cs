@@ -204,6 +204,27 @@ public sealed class SubAgentToolResultContractTests
     }
 
     [Fact]
+    public async Task ManageTool_RuntimeContext_RetainsAuthoritativeParentRunOnReceipt()
+    {
+        await using var harness = new Harness();
+        var info = await harness.SpawnBackgroundAsync();
+        harness.CompleteChild();
+        await harness.Manager.WaitForRunCompletionForTestAsync(info.SubAgentId).WaitAsync(Deadline);
+        var args = ManageArgs(info, "wait");
+        var run = BotNexus.Agent.Core.Types.AgentRunId.From("parent-consumer-run");
+        var call = new BotNexus.Agent.Providers.Core.Models.ToolCallContent("context-call", "manage_subagent", args);
+        var context = new BotNexus.Agent.Core.ExtensionPoints.ToolExecution.ToolExecutionContext(
+            new AssistantAgentMessage(string.Empty), call, args, new AgentContext(null, [], [harness.ManageTool]))
+            { AgentRunId = run };
+        ReadText(await harness.ManageTool.ExecuteAsync(context)).ShouldContain(Summary);
+        var parent = (await harness.Store.GetAsync(ParentSession)).ShouldNotBeNull();
+        parent.GetHistorySnapshot().Single(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == "context-call")
+            .AgentRunId.ShouldBe(BotNexus.Domain.Primitives.AgentRunId.From(run.Value));
+        ReadText(await harness.ManageTool.ExecuteAsync(context with { AgentRunId = BotNexus.Agent.Core.Types.AgentRunId.From("different-run") }))
+            .ShouldNotContain(Summary);
+    }
+
+    [Fact]
     public async Task SpawnTool_AwaitedResult_IsNotRedeliveredByStatus()
     {
         await using var harness = new Harness();
