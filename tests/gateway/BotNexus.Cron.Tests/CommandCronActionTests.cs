@@ -301,20 +301,94 @@ public sealed class CommandCronActionTests
         return process;
     }
 
+    [Theory]
+    [InlineData("file")]
+    [InlineData("directory")]
+    [InlineData("esrch")]
+    public void HasStopped_ProcStatDisappears_ReturnsTrue(string failure)
+    {
+        Exception exception = failure switch
+        {
+            "file" => new FileNotFoundException(),
+            "directory" => new DirectoryNotFoundException(),
+            _ => new IOException("arbitrary localized message", 3)
+        };
+        HasStoppedCore(hasExited: false, isLinux: true, () => throw exception).ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(5)] // EIO
+    [InlineData(1)] // EPERM
+    [InlineData(13)] // EACCES
+    [InlineData(unchecked((int)0x80070003))] // Windows path-not-found HRESULT, not Linux ESRCH
+    [InlineData(unchecked((int)0x80131620))] // Default IOException HRESULT
+    public void HasStopped_OtherIoFailure_Propagates(int errorCode)
+    {
+        var exception = new IOException("No such process", errorCode);
+        Should.Throw<IOException>(() => HasStoppedCore(false, true, () => throw exception))
+            .ShouldBeSameAs(exception);
+    }
+
+    [Fact]
+    public void HasStopped_PermissionFailure_Propagates()
+    {
+        var exception = new UnauthorizedAccessException("No such process");
+        Should.Throw<UnauthorizedAccessException>(() => HasStoppedCore(false, true, () => throw exception))
+            .ShouldBeSameAs(exception);
+    }
+
+    [Theory]
+    [InlineData("123 (fixture) Z 1 2", true)]
+    [InlineData("123 (fixture with ) parentheses) Z 1 2", true)]
+    [InlineData("123 (fixture) R 1 2", false)]
+    [InlineData("123 (fixture) S 1 2", false)]
+    [InlineData("", false)]
+    [InlineData("malformed", false)]
+    [InlineData("123 (fixture)", false)]
+    [InlineData("123 (fixture) ", false)]
+    public void HasStopped_ProcStatState_OnlyZombieIsStopped(string stat, bool expected)
+    {
+        HasStoppedCore(false, true, () => stat).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, false, false)]
+    public void HasStopped_ExitedOrNonLinux_DoesNotReadProcStat(bool hasExited, bool isLinux, bool expected)
+    {
+        HasStoppedCore(hasExited, isLinux,
+            () => throw new InvalidOperationException("proc stat must not be read")).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void HasStopped_CurrentProcess_IsStillExecuting()
+    {
+        using var process = Process.GetCurrentProcess();
+        HasStopped(process).ShouldBeFalse();
+    }
+
     private static bool HasStopped(Process process)
     {
         process.Refresh();
-        if (process.HasExited)
+        return HasStoppedCore(process.HasExited, OperatingSystem.IsLinux(),
+            () => File.ReadAllText($"/proc/{process.Id}/stat"));
+    }
+
+    // A per-call read seam makes the post-refresh disappearance race deterministic in tests.
+    // Only HasStopped supplies real process observations; identity verification stays separate.
+    private static bool HasStoppedCore(bool hasExited, bool isLinux, Func<string> readStat)
+    {
+        if (hasExited)
             return true;
-        if (!OperatingSystem.IsLinux())
+        if (!isLinux)
             return false;
 
         // Container PID 1 may not reap an orphan. A zombie cannot execute, but is not proof
         // of OS reaping. Keep that distinction explicit; restart ownership is outside this slice.
-        var statPath = $"/proc/{process.Id}/stat";
         try
         {
-            var stat = File.ReadAllText(statPath);
+            var stat = readStat();
             var stateOffset = stat.LastIndexOf(')') + 2;
             return stateOffset > 1 && stateOffset < stat.Length && stat[stateOffset] == 'Z';
         }
@@ -324,6 +398,13 @@ public sealed class CommandCronActionTests
         }
         catch (DirectoryNotFoundException)
         {
+            return true;
+        }
+        catch (IOException ex) when (ex.HResult == 3) // Linux ESRCH (no such process)
+        {
+            // The task can disappear after Refresh, including during an open proc stat read.
+            // .NET's Unix IOErrors preserves raw errno in HResult; do not match localized text
+            // or treat unrelated I/O/permission failures as evidence that execution stopped.
             return true;
         }
     }
