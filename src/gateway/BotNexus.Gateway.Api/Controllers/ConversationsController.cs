@@ -1172,6 +1172,7 @@ public sealed class ConversationsController : ControllerBase
         ModelOverride: c.ModelOverride,
         ThinkingOverride: c.ThinkingOverride,
         ContextWindowOverride: c.ContextWindowOverride,
+        CompactionTokenCeiling: c.CompactionTokenCeiling,
         ToolOverrideJson: c.ToolOverrideJson,
         Kind: c.Kind.ToString(),
         Source: c.Source.ToString(),
@@ -1252,7 +1253,9 @@ public sealed class ConversationsController : ControllerBase
     /// <c>ModelOverrideResolver</c> when the next session in this conversation starts.
     /// </summary>
     /// <param name="conversationId">The conversation identifier.</param>
-    /// <param name="request">The override request body. Fields left null clear that override.</param>
+    /// <param name="request">The override request body. Omitted/null Model, Thinking and ContextWindow
+    /// clear those overrides, including on ceiling writes. Resend them to preserve them. Tool and
+    /// ceiling fields are changed only when their corresponding Apply flag is true.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>200 with the updated conversation, 400 when an override is invalid, or 404 if not found.</returns>
     [HttpPut("{conversationId}/override")]
@@ -1319,6 +1322,9 @@ public sealed class ConversationsController : ControllerBase
 
         var prevModel = conversation.ModelOverride;
         var prevThinking = conversation.ThinkingOverride;
+        if (request.ApplyCompactionTokenCeiling && request.CompactionTokenCeiling is <= 0)
+            return BadRequest(new { error = "Compaction token ceiling must be positive or null." });
+
         var prevContext = conversation.ContextWindowOverride;
         var prevTools = conversation.ToolOverrideJson;
 
@@ -1340,6 +1346,7 @@ public sealed class ConversationsController : ControllerBase
             Model = FieldUpdate<string?>.Set(NormalizeOverrideString(request.Model)),
             Thinking = FieldUpdate<string?>.Set(NormalizeOverrideString(request.Thinking)),
             ContextWindow = FieldUpdate<int?>.Set(request.ContextWindow),
+            CompactionTokenCeiling = request.ApplyCompactionTokenCeiling ? FieldUpdate<int?>.Set(request.CompactionTokenCeiling) : default,
             // Written only on explicit opt-in, so an existing model-only caller cannot clear an
             // overlay it never mentioned (#3271).
             ToolOverrideJson = request.ApplyToolOverride
@@ -1384,6 +1391,7 @@ public sealed class ConversationsController : ControllerBase
             Model = FieldUpdate<string?>.Set(null),
             Thinking = FieldUpdate<string?>.Set(null),
             ContextWindow = FieldUpdate<int?>.Set(null),
+            CompactionTokenCeiling = FieldUpdate<int?>.Set(null),
             ToolOverrideJson = FieldUpdate<string?>.Set(null)
         };
         var updated = await _conversations.PatchOverrideAsync(ConversationId.From(conversationId), clearPatch, cancellationToken);

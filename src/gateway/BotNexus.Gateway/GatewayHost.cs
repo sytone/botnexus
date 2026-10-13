@@ -56,6 +56,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     private readonly ISessionCompactor _compactor;
     private readonly IOptionsMonitor<CompactionOptions> _compactionOptions;
     private readonly ISessionContextWindowResolver? _contextWindowResolver;
+    private readonly ISessionCompactionCeilingResolver? _compactionCeilingResolver;
     private readonly Sessions.IContextExhaustionNotifier _contextExhaustionNotifier;
     private readonly ILogger<GatewayHost> _logger;
     private readonly IAgentRegistry? _registry;
@@ -118,12 +119,14 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         Audit.IToolAuditSink? toolAudit = null,
         Sessions.IContextExhaustionNotifier? contextExhaustionNotifier = null,
         IConversationEventPublisher? conversationEventPublisher = null,
-        PostRunEvaluationDispatcher? postRunEvaluationDispatcher = null)
+        PostRunEvaluationDispatcher? postRunEvaluationDispatcher = null,
+        ISessionCompactionCeilingResolver? compactionCeilingResolver = null)
     {
         _toolAudit = toolAudit ?? Audit.DefaultToolAuditSink.Instance;
         _conversationEventPublisher = conversationEventPublisher;
         _postRunEvaluationDispatcher = postRunEvaluationDispatcher;
         _contextWindowResolver = contextWindowResolver;
+        _compactionCeilingResolver = compactionCeilingResolver;
         // #3535: a run that ends on an empty assistant completion because the context window is
         // exhausted must say so instead of presenting as a blank turn. Built from the collaborators
         // already in hand when DI did not supply one, so a directly-constructed host behaves the
@@ -1214,11 +1217,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         DispatchResult? Dispatch);
 
     /// <summary>
-    /// #2896: resolves the compaction options for one turn, with ContextWindowTokens narrowed to
-    /// the scoped context window for this agent/conversation (conversation override, then agent
-    /// descriptor, then resolved model window). When no resolver is registered, or no layer supplies
-    /// a window, the configured global options are returned unchanged so behaviour is byte-identical
-    /// to the pre-#2896 path.
+    /// Resolves the context window (#2896) and current trigger ceiling (#4888) for one pre-turn
+    /// check. Capacity resolution remains independent of ceiling policy. An absent resolver retains
+    /// the supplied options for direct construction; production DI registers the fresh scoped resolver.
+    /// Policy read/validation failures propagate before provider execution rather than relaxing policy.
     /// </summary>
     private async Task<CompactionOptions> ResolveScopedCompactionOptionsAsync(
         AgentId agentId,
@@ -1226,15 +1228,24 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         CancellationToken cancellationToken)
     {
         var options = _compactionOptions.CurrentValue;
-        if (_contextWindowResolver is null)
+        if (_contextWindowResolver is not null)
         {
-            return options;
+            var scoped = await _contextWindowResolver
+                .ResolveAsync(agentId, conversationId, cancellationToken)
+                .ConfigureAwait(false);
+            options = ScopedCompactionWindow.Apply(options, scoped);
         }
 
-        var scoped = await _contextWindowResolver
-            .ResolveAsync(agentId, conversationId, cancellationToken)
-            .ConfigureAwait(false);
-        return ScopedCompactionWindow.Apply(options, scoped);
+        // Policy read failures propagate to the existing dispatch error path, BEFORE any provider
+        // call. They must not be swallowed as best-effort summarization failures or relax policy.
+        if (_compactionCeilingResolver is not null)
+        {
+            var ceiling = await _compactionCeilingResolver
+                .ResolveAsync(agentId, conversationId, cancellationToken).ConfigureAwait(false);
+            options = options with { CompactionTokenCeiling = ceiling.Tokens };
+        }
+        _ = CompactionThreshold.Resolve(options);
+        return options;
     }
 
     /// <summary>
@@ -1256,10 +1267,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         string sessionId,
         CancellationToken cancellationToken)
     {
-        // #2896: narrow the compaction budget to this agent/conversation's own context window
-        // before asking ShouldCompact. The compactor's arithmetic is unchanged - only the base
-        // window it multiplies TokenThresholdRatio against becomes scope-aware, so an agent with
-        // no scoped window behaves exactly as before.
+        // Resolve a fresh scoped window and trigger ceiling before asking ShouldCompact. The same
+        // immutable options snapshot goes to the coordinator; the ceiling never changes capacity.
         var turnCompactionOptions = await ResolveScopedCompactionOptionsAsync(
             session.AgentId,
             session.ConversationId,

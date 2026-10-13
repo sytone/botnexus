@@ -554,6 +554,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var compactor = _serviceProvider.GetService<ISessionCompactor>();
         var compactionCoordinator = _serviceProvider.GetService<ISessionCompactionCoordinator>();
         var compactionOptions = _serviceProvider.GetService<IOptionsMonitor<CompactionOptions>>();
+        var compactionCeilingResolver = _serviceProvider.GetService<ISessionCompactionCeilingResolver>();
         if (compactor is not null && compactionCoordinator is not null && compactionOptions is not null && sessionStore is not null)
         {
             var compactSessionId = context.SessionId;
@@ -565,21 +566,46 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             var scopedContextWindow = contextBudget.EffectiveWorkingBudgetTokens;
             maybeCompactAsync = async cancellationToken =>
             {
-                var scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
                 GatewaySession? liveSession = null;
                 for (var attempt = 0; attempt < 2; attempt++)
                 {
-                    liveSession = await sessionStore.GetAsync(compactSessionId, cancellationToken).ConfigureAwait(false);
-                    if (liveSession is null)
+                    // The live session supplies policy identity, so its lookup is part of the
+                    // fail-closed policy boundary, including conflict retries. Ordinary store
+                    // failures must not escape as best-effort compaction errors in AgentLoopRunner.
+                    CompactionOptions scopedOptions;
+                    try
                     {
-                        if (attempt == 0)
+                        liveSession = await sessionStore.GetAsync(compactSessionId, cancellationToken).ConfigureAwait(false);
+                        if (liveSession is null)
                         {
-                            return null;
+                            // Preserve the legacy no-op only for directly constructed callers
+                            // without the production ceiling resolver.
+                            if (attempt == 0 && compactionCeilingResolver is null)
+                                return null;
+
+                            throw new InvalidOperationException(attempt == 0
+                                ? "Required proactive compaction session state is missing."
+                                : "Required proactive compaction could not refresh the session after a conflict.");
                         }
 
+                        // Resolve EVERY check from the live conversation; never cache a ceiling.
+                        scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
+                        if (compactionCeilingResolver is not null)
+                        {
+                            var ceiling = await compactionCeilingResolver.ResolveAsync(
+                                compactAgentId, liveSession.ConversationId, cancellationToken).ConfigureAwait(false);
+                            scopedOptions = scopedOptions with { CompactionTokenCeiling = ceiling.Tokens };
+                        }
+                        _ = CompactionThreshold.Resolve(scopedOptions);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
                         throw new ProactiveCompactionException(
-                            "Required proactive compaction could not refresh the session after a conflict.",
-                            retryable: true);
+                            "Required proactive compaction policy could not be resolved.", retryable: true, ex);
                     }
 
                     if (!compactor.ShouldCompact(liveSession.Session, scopedOptions))

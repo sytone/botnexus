@@ -676,6 +676,14 @@ public sealed class ProviderEmbeddingsConfig
 /// <summary>Configuration owned by the singular BotNexus world.</summary>
 public sealed class WorldSettingsConfig
 {
+    /// <summary>Optional positive compaction trigger ceiling in tokens; null inherits the enclosing scope. Not model capacity.</summary>
+    [Range(1, int.MaxValue)]
+    [Display(Name = "Compaction token ceiling", Description = "Optional positive compaction trigger ceiling, not model capacity. Null inherits.")]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 0)]
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
+    public int? CompactionTokenCeiling { get; set; }
+
+
     /// <summary>World-scoped extension-owned runtime configuration, keyed by extension ID.</summary>
     [Display(
         Name = "World extensions",
@@ -2041,6 +2049,14 @@ public sealed class ExtensionLoaderConfig
 /// <summary>Agent definition in platform config.</summary>
 public sealed class AgentDefinitionConfig
 {
+    /// <summary>Optional positive compaction trigger ceiling in tokens; null inherits the enclosing scope. Not model capacity.</summary>
+    [Range(1, int.MaxValue)]
+    [Display(Name = "Compaction token ceiling", Description = "Optional positive compaction trigger ceiling, not model capacity. Null inherits.")]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 0)]
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
+    public int? CompactionTokenCeiling { get; set; }
+
+
     /// <summary>Provider name (e.g. 'copilot').</summary>
     [Display(
         Name = "Provider",

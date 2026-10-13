@@ -335,6 +335,10 @@ public sealed record Conversation
     /// </summary>
     public int? ContextWindowOverride { get; set; }
 
+    /// <summary>Optional positive compaction trigger ceiling in tokens; null inherits the enclosing scope. Not model capacity.</summary>
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
+    public int? CompactionTokenCeiling { get; set; }
+
     /// <summary>
     /// Gets or sets the per-conversation tool-availability overlay as an opaque JSON string
     /// (issue #2523). <c>null</c> means no overlay, so every session in this conversation gets the

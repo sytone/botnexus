@@ -301,6 +301,9 @@ public static class PlatformConfigValidator
 
         List<string> errors = [];
 
+        if (config.World?.CompactionTokenCeiling is <= 0)
+            errors.Add("world.compactionTokenCeiling must be positive or null.");
+
         var listenUrl = config.Gateway?.ListenUrl;
         if (!string.IsNullOrWhiteSpace(listenUrl))
         {
@@ -672,6 +675,9 @@ public static class PlatformConfigValidator
                     "Use spawn_subagent(archetype: ...) to delegate work to it.");
                 continue;
             }
+
+            if (agentConfig.CompactionTokenCeiling is <= 0)
+                errors.Add($"agents.{agentId}.compactionTokenCeiling must be positive or null.");
 
             if (string.IsNullOrWhiteSpace(agentConfig.Provider))
                 errors.Add($"agents.{agentId}.provider is required (example: 'copilot').");

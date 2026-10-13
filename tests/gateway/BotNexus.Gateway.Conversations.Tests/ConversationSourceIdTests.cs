@@ -282,7 +282,8 @@ public sealed class ConversationSourceIdTests
                 NULL AS pending_ask_user_json,
                 NULL AS model_override,
                 NULL AS thinking_override,
-                NULL AS context_window_override
+                NULL AS context_window_override,
+                NULL AS compaction_token_ceiling
             """;
 
         using var reader = command.ExecuteReader();
@@ -326,7 +327,8 @@ public sealed class ConversationSourceIdTests
                 NULL AS pending_ask_user_json,
                 NULL AS model_override,
                 NULL AS thinking_override,
-                NULL AS context_window_override
+                NULL AS context_window_override,
+                NULL AS compaction_token_ceiling
             """;
 
         using var reader = command.ExecuteReader();
