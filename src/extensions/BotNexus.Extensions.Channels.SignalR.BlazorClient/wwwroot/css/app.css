@@ -5229,8 +5229,8 @@ h3.conversation-title.editable:hover {
     font-style: italic;
 }
 
-/* #2898: the cost table REUSES .activity-table for its type treatment but carries SIX columns
-   with different meanings, so it must declare its own allocation. The generic rules above are
+/* #2898: the conversation cost table reuses .activity-table for its type treatment but carries
+   six columns with different meanings, so it declares its own allocation. The generic rules are
    positional (nth-child) and tuned for the overview's five columns: applied unchanged they hand
    50% to Agent, collapse Conversation, and leave the sixth column with no declared width at all -
    which under `table-layout: fixed` clips it off the visible table. Declared here, scoped to
@@ -5252,6 +5252,38 @@ h3.conversation-title.editable:hover {
    magnitudes down a column is the whole task this table exists for. */
 .activity-cost .activity-table th:nth-child(n+3),
 .activity-cost .activity-table td:nth-child(n+3) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* #4882: cron cost has nine columns, independent of the six-column conversation cost table.
+   Reserve readable space for job names and enough width for all eight numeric columns;
+   narrower viewports use the existing accessible horizontal scroller. */
+.activity-cron-cost .activity-table {
+    min-width: 1200px;
+}
+
+.activity-cron-cost .activity-table th:nth-child(1),
+.activity-cron-cost .activity-table td:nth-child(1) { width: 30%; }
+.activity-cron-cost .activity-table th:nth-child(2),
+.activity-cron-cost .activity-table td:nth-child(2) { width: 6%; }
+.activity-cron-cost .activity-table th:nth-child(3),
+.activity-cron-cost .activity-table td:nth-child(3) { width: 7%; }
+.activity-cron-cost .activity-table th:nth-child(4),
+.activity-cron-cost .activity-table td:nth-child(4) { width: 10%; }
+.activity-cron-cost .activity-table th:nth-child(5),
+.activity-cron-cost .activity-table td:nth-child(5) { width: 10%; }
+.activity-cron-cost .activity-table th:nth-child(6),
+.activity-cron-cost .activity-table td:nth-child(6) { width: 8%; }
+.activity-cron-cost .activity-table th:nth-child(7),
+.activity-cron-cost .activity-table td:nth-child(7) { width: 10%; }
+.activity-cron-cost .activity-table th:nth-child(8),
+.activity-cron-cost .activity-table td:nth-child(8) { width: 9%; }
+.activity-cron-cost .activity-table th:nth-child(9),
+.activity-cron-cost .activity-table td:nth-child(9) { width: 10%; }
+
+.activity-cron-cost .activity-table th:nth-child(n+2),
+.activity-cron-cost .activity-table td:nth-child(n+2) {
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
@@ -6254,15 +6286,15 @@ h3.conversation-title.editable:hover {
 
 .activity-table {
     width: 100%;
-    /* #2528: fixed layout stops one long unbroken token from forcing the table wider than its
-       container; the declared column widths below then hold every column visible. */
+    /* Fixed layout preserves the declared column allocation; title text wraps within it.
+       The scroller keeps all columns reachable when the minimum width exceeds the viewport. */
     table-layout: fixed;
     min-width: 640px;
     border-collapse: collapse;
     font-size: var(--text-body);
 }
 
-/* #2528: explicit column allocation - the title column gives way, the signal columns do not.
+/* #2528: explicit overview column allocation - titles wrap within their share of the table.
    #2788: column 1 declares its width explicitly rather than `auto`. Under `table-layout: fixed`
    the first row's declared widths determine the columns outright, so an `auto` column is only as
    wide as whatever else lets it be - and the `max-width: 0` that used to sit on
@@ -6280,6 +6312,7 @@ h3.conversation-title.editable:hover {
     border-bottom: 1px solid var(--border-color);
     color: var(--text-muted);
     font-weight: 600;
+    overflow-wrap: anywhere;
 }
 
 .activity-row {
@@ -6297,36 +6330,39 @@ h3.conversation-title.editable:hover {
     padding: 0.6rem 0.75rem;
     border-bottom: 1px solid var(--border-color-subtle);
     vertical-align: middle;
-    /* #2528: every row is exactly one line tall regardless of title length. */
+    /* Compact signal cells stay single-line; title cells override this to show full text. */
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-/* #2528: the title cell is a flex line so the fixed-width origin badge (#2496) survives while the
-   title itself is what gives way to the ellipsis.
-   #2788: deliberately declares NO `max-width`. The shrink constraint belongs on the flex CHILD -
-   `.activity-conversation-title { min-width: 0 }` below is sufficient and is what actually lets the
-   title ellipsise. A `max-width` here constrains the COLUMN under `table-layout: fixed`, not just
-   the flex line, which is what collapsed the Conversation column. Do not reintroduce it. */
-.activity-cell-title {
+/* #4882: keep the real table cell in the column grid. Flex belongs on its inner wrapper,
+   not the td: changing the cell's display breaks header/body alignment. Do not constrain the
+   column with max-width (#2788); full titles wrap inside the allocated width instead. */
+.activity-cell-title,
+.activity-row .activity-cell-title {
+    display: table-cell;
+    white-space: normal;
+    overflow: visible;
+}
+
+.activity-title-content {
     display: flex;
     align-items: center;
     gap: 0.25rem;
-    /* #3204: wrapping enabled so the purpose line can claim a full-width row of its own beneath the
-       title and badges. Existing children are unaffected - the title is the only flex-shrinkable
-       item and every badge is flex: 0 0 auto, so nothing wraps unless the purpose forces it. */
     flex-wrap: wrap;
+    min-width: 0;
+    width: 100%;
 }
 
 .activity-conversation-title {
     font-weight: 500;
-    /* #2528: the title is the only shrinkable part of the cell. */
-    flex: 1 1 auto;
+    /* Full-width title row leaves badges below it and keeps even unbroken identifiers readable. */
+    flex: 1 1 100%;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .activity-agent-chip {
@@ -6413,7 +6449,7 @@ h3.conversation-title.editable:hover {
    compete horizontally with the title, and is bounded by BOTH the projection's character cap and a
    CSS ellipsis, so a long purpose can grow neither the row nor the DOM. */
 .activity-purpose {
-    /* Full-width basis forces the wrap onto a second line within the cell. */
+    /* Full-width basis puts the purpose on its own line after the title and badges. */
     flex: 1 0 100%;
     margin-top: 0.15rem;
     font-size: var(--text-caption);

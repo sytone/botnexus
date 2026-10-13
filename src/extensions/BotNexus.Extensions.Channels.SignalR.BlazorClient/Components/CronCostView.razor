@@ -5,7 +5,7 @@
 @* #3289: the cron cost subsection. Every number is read off GET /api/cron/costs as served; the one
    value this view DERIVES rather than transcribes is tool calls per turn, and it is deliberately
    absent - not zero - whenever it is undefined. *@
-<div class="activity-cost" data-testid="cron-cost">
+<div class="activity-cron-cost" data-testid="cron-cost">
     <div class="activity-dashboard-header">
         <h2 class="activity-dashboard-title">Cron cost</h2>
         <span class="activity-dashboard-subtitle">Scheduled jobs ranked by total spend</span>
@@ -76,7 +76,9 @@
                         @onclick="() => NavigateToJob(row)"
                         @onkeydown="e => OnRowKeyDown(e, row)">
                         <td class="activity-cell-title">
-                            <span class="activity-conversation-title" data-testid="cron-cost-job" title="@row.JobId">@row.JobName</span>
+                            <div class="activity-title-content">
+                                <span class="activity-conversation-title" data-testid="cron-cost-job" title="@row.JobId">@row.JobName</span>
+                            </div>
                         </td>
                         <td class="activity-cell-channels" data-testid="cron-cost-runs">@cost.RunCount</td>
                         <td class="activity-cell-channels" data-testid="cron-cost-measured-runs">@cost.MeasuredRunCount</td>
