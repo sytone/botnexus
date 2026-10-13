@@ -25,8 +25,8 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         await using var connection = await OpenAsync();
         var columns = await ReadStringsAsync(connection, "SELECT name FROM pragma_table_info('tool_invocations') ORDER BY cid");
         columns.ShouldBe(["id", "session_id", "tool_call_id", "tool_name", "arguments_json", "started_at", "completed_at", "status", "is_error", "result_content", "result_bytes", "result_sha256", "retention_state", "agent_run_id", "provider_tool_call_id"]);
-        var indexes = await ReadStringsAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_%tool_invocation%' OR name = 'idx_session_history_unlinked_tool_rows') ORDER BY name");
-        indexes.ShouldBe(["idx_session_history_tool_invocation_id", "idx_session_history_unlinked_tool_rows", "idx_tool_invocations_retention_completed", "idx_tool_invocations_session_run", "idx_tool_invocations_session_started"]);
+        var indexes = await ReadStringsAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_%tool_invocation%' OR name LIKE 'idx_session_history_unlinked_tool_%') ORDER BY name");
+        indexes.ShouldBe(["idx_session_history_tool_invocation_id", "idx_session_history_unlinked_tool_rows", "idx_session_history_unlinked_tool_sibling", "idx_tool_invocations_retention_completed", "idx_tool_invocations_session_run", "idx_tool_invocations_session_started"]);
 
         var plan = await ReadStringsAsync(connection, """
             EXPLAIN QUERY PLAN
@@ -53,6 +53,73 @@ public sealed class ToolInvocationSchemaTests : IDisposable
             command.CommandText = sql;
             await Should.ThrowAsync<SqliteException>(() => command.ExecuteNonQueryAsync());
         }
+    }
+
+    [Fact]
+    public async Task ExistingStore_AddsSeekableSiblingIndexIdempotently()
+    {
+        _ = await CreateStore().GetAsync(SessionId.From("probe"));
+        await using var connection = await OpenAsync();
+        await using var drop = connection.CreateCommand();
+        drop.CommandText = "DROP INDEX idx_session_history_unlinked_tool_sibling";
+        await drop.ExecuteNonQueryAsync();
+
+        _ = await CreateStore().GetAsync(SessionId.From("probe"));
+        _ = await CreateStore().GetAsync(SessionId.From("probe"));
+
+        // Reopen after another connection changes the schema; inspect the migrated schema,
+        // not this connection's cached schema/plan from before the index was restored.
+        await using var migrated = await OpenAsync();
+        (await ReadStringsAsync(migrated, "SELECT name FROM sqlite_master WHERE name='idx_session_history_unlinked_tool_sibling'")).ShouldBe(["idx_session_history_unlinked_tool_sibling"]);
+        var plan = await ReadStringsAsync(migrated, """
+            EXPLAIN QUERY PLAN SELECT 1 FROM session_history
+            WHERE session_id='s' AND tool_call_id='call' AND agent_run_id IS NULL
+              AND tool_invocation_id IS NULL
+              AND (message_kind IN ('tool-start','tool-result') OR (message_kind IS NULL AND role='tool'))
+            """, ordinal: 3);
+        plan.ShouldContain(detail => detail.Contains("idx_session_history_unlinked_tool_sibling (session_id=? AND tool_call_id=? AND agent_run_id=?)", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(null, null, "tool-start", true)]
+    [InlineData(null, null, null, true)]
+    [InlineData("run", "run", "tool-result", true)]
+    [InlineData("run", "other-run", "tool-result", false)]
+    [InlineData("run", null, "tool-result", false)]
+    [InlineData(null, "run", "tool-result", false)]
+    [InlineData("run", "run", "text", false)]
+    public async Task CleanupLegacyToolPayloads_SiblingProbePreservesProviderCallAndRunProtection(string? run, string? siblingRun, string? kind, bool protects)
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("sibling"), AgentId.From("agent"));
+        await store.SaveAsync(session);
+        await using var connection = await OpenAsync();
+        await using var seed = connection.CreateCommand();
+        seed.CommandText = """
+            INSERT INTO tool_invocations(session_id,tool_call_id,provider_tool_call_id,agent_run_id,arguments_json,started_at,completed_at,status,result_content,result_bytes,result_sha256)
+            VALUES('sibling','normalized-call','provider-call',$run,'{}','a','b','success','r',1,'454349e422f05297191ead13e21d3db520e5abef52055e4964b82fb213f593a1');
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,tool_args,message_kind,tool_invocation_id)
+            SELECT 'sibling','tool','start','a','provider-call','{}','tool-start',id FROM tool_invocations;
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,message_kind,tool_invocation_id)
+            SELECT 'sibling','tool','r','b','provider-call','tool-result',id FROM tool_invocations;
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,message_kind,agent_run_id)
+            VALUES('sibling','tool','unlinked','b','provider-call',$kind,$siblingRun);
+            """;
+        seed.Parameters.AddWithValue("$run", (object?)run ?? DBNull.Value);
+        seed.Parameters.AddWithValue("$siblingRun", (object?)siblingRun ?? DBNull.Value);
+        seed.Parameters.AddWithValue("$kind", (object?)kind ?? DBNull.Value);
+        await seed.ExecuteNonQueryAsync();
+
+        var report = store.CleanupLegacyToolPayloads(1);
+
+        report.ScannedInvocations.ShouldBe(1);
+        report.LastScannedInvocationId.ShouldBe(await ScalarLongAsync(connection, "SELECT id FROM tool_invocations"));
+        report.HasMore.ShouldBeFalse();
+        report.CleanedInvocations.ShouldBe(protects ? 0 : 1);
+        report.CleanedRows.ShouldBe(protects ? 0 : 2);
+        report.ClearedBytes.ShouldBe(protects ? 0 : 3);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_invocation_id IS NOT NULL AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))")).ShouldBe(protects ? 2 : 0);
+        (await ReadStringsAsync(connection, "SELECT content FROM session_history WHERE tool_invocation_id IS NULL")).ShouldBe(["unlinked"]);
     }
 
     [Fact]
@@ -270,6 +337,103 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         report.ScannedInvocations.ShouldBe((protectedCount + 1) % batchSize);
         (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_call_id='safe' AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))")).ShouldBe(0);
         (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_call_id LIKE 'protected-%' AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))")).ShouldBe(protectedCount * 2L);
+    }
+
+    [Theory]
+    [InlineData(512)]
+    [InlineData(4096)]
+    public async Task CleanupLegacyToolPayloads_CandidateReaderDoesNotAggregatePayloadsBeyondWindow(int invocationCount)
+    {
+        const int batchSize = 17;
+        const int payloadBytes = 8192;
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("discovery-cost"), AgentId.From("agent"));
+        await store.SaveAsync(session);
+        await using var connection = await OpenAsync();
+        await using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                WITH RECURSIVE sequence(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < $count)
+                INSERT INTO tool_invocations(session_id,tool_call_id,arguments_json,status,is_error,result_content,retention_state)
+                SELECT 'discovery-cost','call-' || value,'{}','success',0,$payload,'hot' FROM sequence;
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,tool_args,message_kind,tool_invocation_id)
+                SELECT session_id,'tool','start','a',tool_call_id,'{}','tool-start',id
+                FROM tool_invocations ORDER BY id DESC;
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,message_kind,tool_invocation_id)
+                SELECT session_id,'tool',$payload,'b',tool_call_id,'tool-result',id
+                FROM tool_invocations ORDER BY id DESC;
+                """;
+            seed.Parameters.AddWithValue("$count", invocationCount);
+            seed.Parameters.AddWithValue("$payload", new string('x', payloadBytes));
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        // Count actual payload aggregate work, not elapsed time or merely returned rows.
+        // Override only this connection's length(BLOB), preserving its SQLite semantics.
+        long measuredBytes = 0;
+        connection.CreateFunction<byte[]?, long?>("length", value =>
+        {
+            if (value is null) return null;
+            measuredBytes += value.Length;
+            return value.LongLength;
+        });
+        var readWindow = typeof(LegacyToolPayloadCleanup).GetMethod("ReadCandidateWindow",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        readWindow.ShouldNotBeNull();
+        // length(BLOB) observes only emitted aggregates: a GROUP BY sorter can already have
+        // copied the entire payload corpus. Count VM work on the real production command.
+        // Neither native callback re-enters SQLite or enumerates statement handles.
+        long vmSteps = 0;
+        var statements = new List<string>();
+        var handle = connection.Handle ?? throw new InvalidOperationException("SQLite connection must be open.");
+        SQLitePCL.raw.sqlite3_trace(handle,
+            new SQLitePCL.strdelegate_trace((_, sql) => statements.Add(sql)), null);
+        SQLitePCL.raw.sqlite3_progress_handler(handle, 1, _ => { vmSteps++; return 0; }, null);
+        object? window;
+        try
+        {
+            window = readWindow.Invoke(null, [connection, batchSize, 0L]);
+        }
+        finally
+        {
+            SQLitePCL.raw.sqlite3_progress_handler(handle, 0, null, null);
+            SQLitePCL.raw.sqlite3_trace(handle, (SQLitePCL.strdelegate_trace?)null, null);
+        }
+        var firstWindowSteps = vmSteps;
+        var candidates = window as System.Collections.ICollection
+            ?? throw new InvalidOperationException("Candidate reader must return a collection.");
+        candidates.Count.ShouldBe(batchSize);
+        measuredBytes.ShouldBe(batchSize * (payloadBytes + 2L),
+            "payload aggregate work must stop at the ID window even when the corpus grows");
+
+        measuredBytes = 0;
+        vmSteps = 0;
+        SQLitePCL.raw.sqlite3_progress_handler(handle, 1, _ => { vmSteps++; return 0; }, null);
+        try
+        {
+            window = readWindow.Invoke(null, [connection, batchSize, (long)invocationCount - 1]);
+        }
+        finally
+        {
+            SQLitePCL.raw.sqlite3_progress_handler(handle, 0, null, null);
+        }
+        var finalCandidates = window as System.Collections.ICollection
+            ?? throw new InvalidOperationException("Candidate reader must return a collection.");
+        finalCandidates.Count.ShouldBe(1);
+        measuredBytes.ShouldBe(payloadBytes + 2L, "the cursor must seek rather than reaggregate prior payloads");
+
+        // Explain the exact traced production statement, not a copied SQL approximation.
+        statements.Count.ShouldBe(1);
+        var plan = await ReadStringsAsync(connection, "EXPLAIN QUERY PLAN " + statements[0], ordinal: 3);
+        var diagnostic = $"corpus={invocationCount}, window={batchSize}, first-window VM steps={firstWindowSteps}, "
+            + $"cursor VM steps={vmSteps}; actual production plan: {string.Join("; ", plan)}";
+        // A generous per-candidate instruction budget tolerates planner/version differences,
+        // but rejects the whole-corpus payload sorter (about 195k/1.5m steps for these seeds).
+        // The budget depends only on the requested window, never on invocationCount.
+        firstWindowSteps.ShouldBeLessThanOrEqualTo(batchSize * 2000L,
+            "candidate discovery must bound payload-bearing work before aggregation; " + diagnostic);
+        vmSteps.ShouldBeLessThanOrEqualTo(2000L, "the cursor must seek with bounded VM work; " + diagnostic);
     }
 
     [Fact]

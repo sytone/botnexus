@@ -89,7 +89,21 @@ public static class LegacyToolPayloadCleanup
     private static List<Candidate> ReadCandidateWindow(SqliteConnection connection, int limit, long afterInvocationId)
     {
         using var command = connection.CreateCommand();
+        // Materialize IDs only: LIMIT must run before payload-bearing joins/aggregation.
+        // CROSS JOIN keeps the bounded window outermost even without planner statistics.
         command.CommandText = """
+            WITH candidate_ids AS MATERIALIZED (
+                SELECT i.id
+                FROM tool_invocations i
+                WHERE i.id > $afterInvocationId
+                  AND i.status='success' AND i.is_error=0 AND i.retention_state='hot'
+                  AND i.arguments_json IS NOT NULL AND i.result_content IS NOT NULL
+                  AND EXISTS(
+                      SELECT 1 FROM session_history payload
+                      WHERE payload.tool_invocation_id=i.id
+                        AND (payload.tool_args IS NOT NULL OR (payload.message_kind='tool-result' AND payload.content IS NOT NULL)))
+                ORDER BY i.id
+                LIMIT $limit)
             SELECT i.id, i.session_id, COALESCE(i.provider_tool_call_id, i.tool_call_id), i.arguments_json, i.started_at,
                    i.completed_at, i.result_content, i.result_bytes, i.result_sha256,
                    COUNT(h.id) AS linked_count,
@@ -113,18 +127,11 @@ public static class LegacyToolPayloadCleanup
                          AND u.tool_invocation_id IS NULL
                          AND (u.message_kind IN ('tool-start','tool-result') OR (u.message_kind IS NULL AND u.role='tool'))
                    ) AS has_unlinked_sibling
-            FROM tool_invocations i
-            JOIN session_history h ON h.tool_invocation_id=i.id
-            WHERE i.id > $afterInvocationId
-              AND i.status='success' AND i.is_error=0 AND i.retention_state='hot'
-              AND i.arguments_json IS NOT NULL AND i.result_content IS NOT NULL
-              AND EXISTS(
-                  SELECT 1 FROM session_history payload
-                  WHERE payload.tool_invocation_id=i.id
-                    AND (payload.tool_args IS NOT NULL OR (payload.message_kind='tool-result' AND payload.content IS NOT NULL)))
+            FROM candidate_ids c
+            CROSS JOIN tool_invocations i ON i.id=c.id
+            CROSS JOIN session_history h ON h.tool_invocation_id=i.id
             GROUP BY i.id
             ORDER BY i.id
-            LIMIT $limit
             """;
         command.Parameters.AddWithValue("$afterInvocationId", afterInvocationId);
         command.Parameters.AddWithValue("$limit", limit);
