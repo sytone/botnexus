@@ -168,7 +168,7 @@ public sealed class ActivityCostTableColumnGeometryTests
 
         var overview = Regex.Match(
             css,
-            @"(?<!\.activity-cost\s)\.activity-table\s+td:nth-child\(1\)\s*\{[^}]*?width:\s*([^;}]+)",
+            @"(?m)^\.activity-table\s+th:nth-child\(1\),\s*\.activity-table\s+td:nth-child\(1\)\s*\{[^}]*?width:\s*([^;}]+)",
             RegexOptions.Singleline);
 
         Assert.True(overview.Success, "The overview table's column-1 width rule has gone missing.");

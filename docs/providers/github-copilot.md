@@ -101,6 +101,10 @@ For Responses models, discovery also records the endpoints advertised for each m
 
 Transport selection is capability-driven and has no user-facing configuration setting.
 
+### Messages stream completion
+
+A Messages response completes only when the stream includes `message_stop`. If the connection ends before that event, BotNexus reports `Copilot streaming error: stream ended before message_stop.` instead of successful completion, even if a stop reason has already arrived. Text already received and the response ID are retained; an unfinished text block does not receive a synthetic end event.
+
 ### Context Window
 
 Context and output limits are model-specific; use the named registration rather than a fixed 200K assumption. The table above shows built-in values. Runtime discovery or custom registration may replace those values. The Copilot built-ins do not opt into `SupportsExtendedContextWindow`; do not infer an Anthropic-direct 1M tier from a Claude model name.

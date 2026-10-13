@@ -53,12 +53,23 @@ public sealed class ReportsController : ControllerBase
     [HttpGet]
     [ProducesResponseType(typeof(ReportsListResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public ActionResult<ReportsListResponse> GetReports(string agentId)
     {
         if (!_agentRegistry.Contains(AgentId.From(agentId)))
             return NotFound();
 
-        var workspaceRoot = WorkspacePathSecurity.NormalizePath(_fileSystem, _workspaceManager.GetWorkspacePath(agentId));
+        string workspacePath;
+        try
+        {
+            workspacePath = _workspaceManager.GetWorkspacePath(agentId);
+        }
+        catch (TrailguideRefreshException)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        var workspaceRoot = WorkspacePathSecurity.NormalizePath(_fileSystem, workspacePath);
         var validator = new DefaultPathValidator(policy: null, workspaceRoot);
         var reportsRoot = ResolveReportsRoot(validator);
         if (reportsRoot is null || !_fileSystem.Directory.Exists(reportsRoot.Value.ReportsPath))
@@ -114,6 +125,7 @@ public sealed class ReportsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public ActionResult<ReportContentResponse> GetReport(string agentId, string name)
     {
         if (!_agentRegistry.Contains(AgentId.From(agentId)))
@@ -122,7 +134,17 @@ public sealed class ReportsController : ControllerBase
         if (!IsSafeReportName(name))
             return BadRequest(new { error = "name must be a markdown file name in the reports directory." });
 
-        var workspaceRoot = WorkspacePathSecurity.NormalizePath(_fileSystem, _workspaceManager.GetWorkspacePath(agentId));
+        string workspacePath;
+        try
+        {
+            workspacePath = _workspaceManager.GetWorkspacePath(agentId);
+        }
+        catch (TrailguideRefreshException)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        var workspaceRoot = WorkspacePathSecurity.NormalizePath(_fileSystem, workspacePath);
         var validator = new DefaultPathValidator(policy: null, workspaceRoot);
         var reportsRoot = ResolveReportsRoot(validator);
         if (reportsRoot is null)
