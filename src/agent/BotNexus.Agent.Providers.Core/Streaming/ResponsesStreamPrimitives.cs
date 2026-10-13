@@ -71,7 +71,7 @@ public static class ResponsesStreamHelpers
     /// <see langword="null"/> when the provider reported no breakdown: absent is never coerced to a
     /// measured zero, because that would rank a thinking-heavy model as free.
     /// </remarks>
-    public static Usage ParseUsage(JsonElement usageElement, LlmModel model)
+    public static Usage ParseUsage(this JsonElement usageElement, LlmModel model)
     {
         var inputTokens = usageElement.TryGetProperty("input_tokens", out var input) ? input.GetInt32() : 0;
         var outputTokens = usageElement.TryGetProperty("output_tokens", out var output) ? output.GetInt32() : 0;

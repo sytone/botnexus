@@ -118,7 +118,7 @@ public sealed class ToolAuditDeadlineTests
     [InlineData("exec")]
     [InlineData("shell")]
     [InlineData("process")]
-    public async Task PersistStartAsync_LockedSqlite_SideEffectingToolFailsWithinDeadlineWithoutLateAuditRow(
+    public async Task PersistStartAsync_LockedSqlite_SideEffectingToolFailsClosedWithoutLateAuditRow(
         string toolName)
     {
         var directory = Path.Combine(AppContext.BaseDirectory, nameof(ToolAuditDeadlineTests), Guid.NewGuid().ToString("N"));
@@ -144,13 +144,16 @@ public sealed class ToolAuditDeadlineTests
             lockCommand.CommandText = "BEGIN EXCLUSIVE;";
             await lockCommand.ExecuteNonQueryAsync();
 
-            var stopwatch = Stopwatch.StartNew();
             var error = await Should.ThrowAsync<InvalidOperationException>(() =>
                 Create(store).PersistStartAsync(
                     $"call-{toolName}", toolName, Args("command", "danger"), CancellationToken.None));
-            stopwatch.Stop();
 
-            stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+            // The bounded store returns only after its write attempt has definitively failed.
+            // Runner scheduling is not part of the persistence deadline contract.
+            var boundedFailure = error.InnerException.ShouldBeOfType<BoundedSessionAppendException>();
+            boundedFailure.Reason.ShouldBe(BoundedSessionAppendFailureReason.Locked);
+            boundedFailure.InnerException.ShouldBeOfType<SqliteException>().SqliteErrorCode.ShouldBeOneOf(5, 6);
+            error.Message.ShouldContain(toolName);
             error.Message.ShouldContain("audit unavailable", Case.Insensitive);
             error.Message.ShouldContain("lock", Case.Insensitive);
 
@@ -167,6 +170,46 @@ public sealed class ToolAuditDeadlineTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Theory]
+    [InlineData("exec")]
+    [InlineData("shell")]
+    [InlineData("process")]
+    public async Task PersistStartAsync_BoundedStore_SideEffectingToolPassesDeadlineAndAwaitsDefinitiveFailure(
+        string toolName)
+    {
+        var completion = new TaskCompletionSource<SessionAppendMutationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new Mock<ISessionStore>();
+        var bounded = store.As<IBoundedSessionAppendStore>();
+        bounded.Setup(s => s.AppendEntriesWithinAsync(
+                SessionId.From("session-a"),
+                It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1 && entries[0].ToolCallId == "call-bounded"),
+                Deadline,
+                CancellationToken.None))
+            .Returns(completion.Task);
+        var persistence = Create(store.Object).PersistStartAsync(
+            "call-bounded", toolName, Args("command", "danger"), CancellationToken.None);
+
+        bounded.Verify(s => s.AppendEntriesWithinAsync(
+            SessionId.From("session-a"),
+            It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1 && entries[0].ToolCallId == "call-bounded"),
+            Deadline,
+            CancellationToken.None), Times.Once);
+        using (var probe = new CancellationTokenSource(Deadline * 2))
+        {
+            await Should.ThrowAsync<OperationCanceledException>(() => persistence.WaitAsync(probe.Token));
+        }
+        persistence.IsCompleted.ShouldBeFalse("the audit must await the bounded store's definitive outcome even after its deadline");
+
+        var failure = new BoundedSessionAppendException(BoundedSessionAppendFailureReason.Locked, "database is locked");
+        completion.SetException(failure);
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => persistence);
+        error.InnerException.ShouldBeSameAs(failure);
+        error.Message.ShouldContain("audit unavailable", Case.Insensitive);
+        error.Message.ShouldContain(toolName);
+        store.Verify(s => s.AppendEntriesAsync(
+            It.IsAny<SessionId>(), It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -197,6 +240,8 @@ public sealed class ToolAuditDeadlineTests
     [Fact]
     public async Task PersistStartAsync_EmitsCorrelatedStageTelemetryWithoutArguments()
     {
+        // Activity listeners are process-wide; isolate this invocation without serializing tests.
+        var toolCallId = $"call-telemetry-{Guid.NewGuid():N}";
         var stopped = new ConcurrentQueue<System.Diagnostics.Activity>();
         using var listener = new ActivityListener
         {
@@ -205,28 +250,42 @@ public sealed class ToolAuditDeadlineTests
             ActivityStopped = activity =>
             {
                 if (activity.OperationName.StartsWith("audit.", StringComparison.Ordinal)
-                    && Equals(activity.GetTagItem("botnexus.tool.call_id"), "call-telemetry"))
+                    && Equals(activity.GetTagItem("botnexus.tool.call_id"), toolCallId))
                     stopped.Enqueue(activity);
             }
         };
         ActivitySource.AddActivityListener(listener);
 
-        var store = new Mock<ISessionStore>();
-        store.Setup(s => s.AppendEntriesAsync(
+        using var callerCts = new CancellationTokenSource();
+        // A successful bounded append avoids making telemetry success depend on the queued fallback.
+        // Strict behavior and explicit verification prevent that fallback from silently passing.
+        var store = new Mock<ISessionStore>(MockBehavior.Strict);
+        var bounded = store.As<IBoundedSessionAppendStore>();
+        bounded.Setup(s => s.AppendEntriesWithinAsync(
                 SessionId.From("session-a"),
-                It.IsAny<IReadOnlyList<SessionEntry>>(),
-                It.IsAny<CancellationToken>()))
+                It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1),
+                Deadline,
+                callerCts.Token))
             .ReturnsAsync(new SessionAppendMutationResult(SessionMutationOutcome.Applied, 1));
 
         await Create(store.Object).PersistStartAsync(
-            "call-telemetry", "read", Args("path", "do-not-emit-this-argument"), CancellationToken.None);
+            toolCallId, "read", Args("path", "do-not-emit-this-argument"), callerCts.Token);
+
+        bounded.Verify(s => s.AppendEntriesWithinAsync(
+            SessionId.From("session-a"),
+            It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1),
+            Deadline,
+            callerCts.Token), Times.Once);
+        store.Verify(s => s.AppendEntriesAsync(
+            It.IsAny<SessionId>(), It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
 
         var stages = stopped.ToArray();
         stages.Select(activity => activity.OperationName).ShouldBe(["audit.serialize", "audit.persist"], ignoreOrder: true);
         stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.agent.id"), "agent-a"));
         stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.session.id"), "session-a"));
         stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.tool.name"), "read"));
-        stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.tool.call_id"), "call-telemetry"));
+        stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.tool.call_id"), toolCallId));
         stages.ShouldAllBe(activity => Equals(activity.GetTagItem("botnexus.audit.outcome"), "success"));
         string.Join(" ", stages.SelectMany(activity => activity.TagObjects).Select(tag => $"{tag.Key}={tag.Value}"))
             .ShouldNotContain("do-not-emit-this-argument");

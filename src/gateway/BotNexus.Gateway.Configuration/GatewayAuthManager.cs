@@ -721,9 +721,10 @@ public sealed class GatewayAuthManager
                         _entries[key] = value;
                     }
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    _logger.LogWarning(ex, "Failed to parse auth file '{AuthPath}'.", candidatePath);
+                    // Auth paths and parser diagnostics can contain private data; log neither.
+                    _logger.LogWarning("Failed to parse auth file.");
                 }
             }
 
