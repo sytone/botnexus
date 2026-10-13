@@ -22,7 +22,7 @@ public sealed class ActivityTableLayoutTests
 {
     /// <summary>
     /// The Conversation column must render at a readable width and be wider than the
-    /// fixed-width Status column, with the title laid out on a single line.
+    /// fixed-width Status column, with the complete long title visible and wrapping.
     /// </summary>
     [SkippableFact]
     public async Task ActivityTable_ConversationColumn_IsWiderThanStatusColumn()
@@ -61,15 +61,50 @@ public sealed class ActivityTableLayoutTests
             $"#2788: the Conversation column measured {titleBox.Width}px, not wider than the Status " +
             $"column at {statusBox.Width}px.");
 
-        // #2528: the row stays exactly one line tall - the title ellipsises, it does not wrap.
+        // #4882 supersedes the one-line ellipsis contract. Exercise a deterministic long title
+        // in the real layout without changing server data; restore it after measurement.
         var titleSpan = page.Locator("[data-testid='activity-row'] .activity-conversation-title").First;
-        var spanBox = await titleSpan.BoundingBoxAsync()
-            ?? throw new InvalidOperationException("Conversation title span has no layout box.");
-        var lineHeight = await titleSpan.EvaluateAsync<double>(
-            "el => parseFloat(getComputedStyle(el).lineHeight) || parseFloat(getComputedStyle(el).fontSize) * 1.5");
-
-        Assert.True(
-            spanBox.Height <= lineHeight * 1.6,
-            $"#2788/#2528: the title rendered {spanBox.Height}px tall against a {lineHeight}px line box - it wrapped.");
+        var originalTitle = await titleSpan.TextContentAsync();
+        const string longTitle = "Review the complete rendering regression and preserve every identifying word " +
+            "across scheduled automation and conversation activity abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz " +
+            "including the final readable suffix rather than hiding it behind an ellipsis.";
+        try
+        {
+            await titleSpan.EvaluateAsync("(el, title) => el.textContent = title", longTitle);
+            var fullTextVisible = await titleSpan.EvaluateAsync<bool>("""
+                el => {
+                    const cell = el.closest('td');
+                    const wrapper = el.parentElement;
+                    const style = getComputedStyle(el);
+                    const cellStyle = getComputedStyle(cell);
+                    const box = el.getBoundingClientRect();
+                    const cellBox = cell.getBoundingClientRect();
+                    const headerBox = cell.closest('table').querySelector('th').getBoundingClientRect();
+                    const range = document.createRange();
+                    range.selectNodeContents(el);
+                    const textBox = range.getBoundingClientRect();
+                    const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5;
+                    const usableWidth = cellBox.width - parseFloat(cellStyle.paddingLeft) - parseFloat(cellStyle.paddingRight);
+                    return cellStyle.display === 'table-cell'
+                        && wrapper.classList.contains('activity-title-content')
+                        && getComputedStyle(wrapper).display === 'flex'
+                        && style.whiteSpace === 'normal' && style.overflowWrap === 'anywhere'
+                        && style.overflow === 'visible' && style.textOverflow !== 'ellipsis'
+                        && Math.abs(cellBox.width - headerBox.width) <= 1
+                        && Math.abs(box.width - usableWidth) <= 1
+                        && box.height > lineHeight * 1.6
+                        && el.scrollWidth <= el.clientWidth + 1
+                        && el.scrollHeight <= el.clientHeight + 1
+                        && textBox.left >= box.left - 1 && textBox.right <= box.right + 1
+                        && textBox.bottom <= box.bottom + 1;
+                }
+                """);
+            Assert.Equal(longTitle, await titleSpan.TextContentAsync());
+            Assert.True(fullTextVisible, "#4882: the complete title must wrap within the full allocated table cell without clipping.");
+        }
+        finally
+        {
+            await titleSpan.EvaluateAsync("(el, title) => el.textContent = title", originalTitle);
+        }
     }
 }
