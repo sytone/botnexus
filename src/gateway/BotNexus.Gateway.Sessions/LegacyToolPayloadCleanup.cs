@@ -14,41 +14,48 @@ public static class LegacyToolPayloadCleanup
             throw new ArgumentOutOfRangeException(nameof(batchSize), "Batch size must be positive.");
 
         using var connection = SqliteConnectionFactory.Create(connectionString);
-        connection.Open();
-
-        var orphanedInvocationsDeleted = DeleteOrphanedInvocations(connection, batchSize);
-
-        // Candidate selection is deliberately read-only and bounded. The old query registered a
-        // managed sha256 SQLite function and reran it across the complete corpus while a write
-        // transaction was held after every 100-row batch. Read only the next bounded window here;
-        // parity hashing below is then proportional to batchSize, never database size.
-        var candidates = ReadCandidateWindow(connection, batchSize, afterInvocationId);
-        var eligible = candidates.Where(IsEligible).ToArray();
-
-        long bytes = 0;
-        var rows = 0;
-        if (eligible.Length > 0)
+        try
         {
-            using var transaction = connection.BeginTransaction();
-            foreach (var candidate in eligible)
+            connection.Open();
+
+            var orphanedInvocationsDeleted = DeleteOrphanedInvocations(connection, batchSize);
+
+            // Candidate selection is deliberately read-only and bounded. The old query registered a
+            // managed sha256 SQLite function and reran it across the complete corpus while a write
+            // transaction was held after every 100-row batch. Read only the next bounded window here;
+            // parity hashing below is then proportional to batchSize, never database size.
+            var candidates = ReadCandidateWindow(connection, batchSize, afterInvocationId);
+            var eligible = candidates.Where(IsEligible).ToArray();
+
+            long bytes = 0;
+            var rows = 0;
+            if (eligible.Length > 0)
             {
-                using var update = connection.CreateCommand();
-                update.Transaction = transaction;
-                update.CommandText = "UPDATE session_history SET tool_args=NULL, content=CASE WHEN message_kind='tool-result' THEN NULL ELSE content END WHERE tool_invocation_id=$id AND message_kind IN ('tool-start','tool-result')";
-                update.Parameters.AddWithValue("$id", candidate.Id);
-                rows += update.ExecuteNonQuery();
-                bytes += candidate.LegacyBytes;
+                using var transaction = connection.BeginTransaction();
+                foreach (var candidate in eligible)
+                {
+                    using var update = connection.CreateCommand();
+                    update.Transaction = transaction;
+                    update.CommandText = "UPDATE session_history SET tool_args=NULL, content=CASE WHEN message_kind='tool-result' THEN NULL ELSE content END WHERE tool_invocation_id=$id AND message_kind IN ('tool-start','tool-result')";
+                    update.Parameters.AddWithValue("$id", candidate.Id);
+                    rows += update.ExecuteNonQuery();
+                    bytes += candidate.LegacyBytes;
+                }
+
+                transaction.Commit();
             }
 
-            transaction.Commit();
+            // Progress is a bounded existence probe, not an exact whole-corpus count. Protected and
+            // remaining counts were telemetry conveniences whose exact computation caused the defect;
+            // -1 explicitly reports "not counted" rather than disguising an estimate as a fact.
+            var lastScannedId = candidates.Count == 0 ? afterInvocationId : candidates[^1].Id;
+            var hasMore = HasAnotherCandidate(connection, lastScannedId) || HasOrphanedInvocation(connection);
+            return new(eligible.Length, rows, bytes, -1, -1, hasMore, lastScannedId, candidates.Count, orphanedInvocationsDeleted);
         }
-
-        // Progress is a bounded existence probe, not an exact whole-corpus count. Protected and
-        // remaining counts were telemetry conveniences whose exact computation caused the defect;
-        // -1 explicitly reports "not counted" rather than disguising an estimate as a fact.
-        var lastScannedId = candidates.Count == 0 ? afterInvocationId : candidates[^1].Id;
-        var hasMore = HasAnotherCandidate(connection, lastScannedId) || HasOrphanedInvocation(connection);
-        return new(eligible.Length, rows, bytes, -1, -1, hasMore, lastScannedId, candidates.Count, orphanedInvocationsDeleted);
+        catch (SqliteException ex) when (SqliteCapacityDiagnostics.ObserveFailure(connection, ex))
+        {
+            throw;
+        }
     }
 
     private static int DeleteOrphanedInvocations(SqliteConnection connection, int limit)

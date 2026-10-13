@@ -30,9 +30,16 @@ public static class LegacyToolInvocationBackfill
         bool hasMore;
         using (var readConnection = SqliteConnectionFactory.Create(connectionString))
         {
-            readConnection.Open();
-            rows = ReadBatch(readConnection, transaction: null, batchSize);
-            hasMore = HasMore(readConnection, transaction: null, rows.Count == 0 ? null : rows[^1].Id);
+            try
+            {
+                readConnection.Open();
+                rows = ReadBatch(readConnection, transaction: null, batchSize);
+                hasMore = HasMore(readConnection, transaction: null, rows.Count == 0 ? null : rows[^1].Id);
+            }
+            catch (SqliteException ex) when (SqliteCapacityDiagnostics.ObserveFailure(readConnection, ex))
+            {
+                throw;
+            }
         }
 
         var invocationCount = rows.Select(row => (row.SessionId, row.ToolCallId)).Distinct().Count();
@@ -40,16 +47,23 @@ public static class LegacyToolInvocationBackfill
             return new LegacyToolInvocationBackfillReport(rows.Count, 0, invocationCount, hasMore, false);
 
         using var writeConnection = SqliteConnectionFactory.Create(connectionString);
-        writeConnection.Open();
-        using var transaction = writeConnection.BeginTransaction();
-        foreach (var group in rows.GroupBy(row => (row.SessionId, row.ToolCallId)))
+        try
         {
-            UpsertInvocation(writeConnection, transaction, group);
-            LinkRows(writeConnection, transaction, group);
-        }
+            writeConnection.Open();
+            using var transaction = writeConnection.BeginTransaction();
+            foreach (var group in rows.GroupBy(row => (row.SessionId, row.ToolCallId)))
+            {
+                UpsertInvocation(writeConnection, transaction, group);
+                LinkRows(writeConnection, transaction, group);
+            }
 
-        transaction.Commit();
-        return new LegacyToolInvocationBackfillReport(rows.Count, rows.Count, invocationCount, hasMore, true);
+            transaction.Commit();
+            return new LegacyToolInvocationBackfillReport(rows.Count, rows.Count, invocationCount, hasMore, true);
+        }
+        catch (SqliteException ex) when (SqliteCapacityDiagnostics.ObserveFailure(writeConnection, ex))
+        {
+            throw;
+        }
     }
 
     private static string LegacyCorrelationPredicate(SqliteConnection connection, SqliteTransaction? transaction)
