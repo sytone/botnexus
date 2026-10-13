@@ -886,7 +886,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     // NO_REPLY responses are intentional silences — do not persist them
                     // in the session store. Channel adapters already suppress delivery (#1237).
                     if (!IsNoReply(response.Content))
-                        session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content, Kind = StampKind(responseKind) });
+                        session.AddEntry(new SessionEntry { AgentRunId = response.AgentRunId, Role = MessageRole.Assistant, Content = response.Content, Kind = StampKind(responseKind) });
                 }
 
                 // Remove crash sentinel on clean turn completion (#363).
@@ -1270,7 +1270,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             _logger.LogInformation("Auto-compacting session {SessionId}", sessionId);
             try
             {
-                var outcome = await _compactionCoordinator.CompactAsync(session.AgentId, session, cancellationToken).ConfigureAwait(false);
+                var outcome = await _compactionCoordinator.CompactAsync(
+                    session.AgentId, session, cancellationToken,
+                    resolvedOptions: turnCompactionOptions).ConfigureAwait(false);
                 if (outcome.Applied)
                 {
                     _ = await _compactionCoordinator.TryPublishNotificationAsync(

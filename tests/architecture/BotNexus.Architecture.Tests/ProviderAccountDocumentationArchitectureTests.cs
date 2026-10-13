@@ -2,7 +2,7 @@ namespace BotNexus.Architecture.Tests;
 
 /// <summary>
 /// Keeps the provider documentation honest about the distinction between a provider instance,
-/// its wire contract, and the one canonical GitHub Copilot credential/catalogue path (#4191).
+/// its wire contract, canonical CLI authentication, and selected-instance Portal quota scope (#4626).
 /// </summary>
 public sealed class ProviderAccountDocumentationArchitectureTests : ArchitectureTest
 {
@@ -20,18 +20,23 @@ public sealed class ProviderAccountDocumentationArchitectureTests : Architecture
         overview.ShouldContain("botnexus validate");
         overview.ShouldContain("Reply with only: Copilot connection works");
         overview.ShouldContain("Reply with only: OpenAI connection works");
-        overview.ShouldContain("one canonical GitHub Copilot account");
+        overview.ShouldContain("canonical CLI login and diagnostics still use `github-copilot`");
+        overview.ShouldContain("Copilot instances can be selected in Portal Usage");
+        overview.ShouldContain("does not imply that every built-in provisioning or enterprise scenario supports named accounts");
     }
 
     [Fact]
-    public void CopilotGuide_ExplainsAliasAndRejectsUnsupportedNamedBuiltInInstances()
+    public void CopilotGuide_ExplainsAliasAndBoundsNamedInstanceUsage()
     {
         var guide = File.ReadAllText(Repository.Path("docs", "providers", "github-copilot.md"));
 
         guide.ShouldContain("`copilot` is an alias");
-        guide.ShouldContain("not a second provider instance");
-        guide.ShouldContain("does not support two independently authenticated Copilot accounts");
-        guide.ShouldContain("#4191");
+        guide.ShouldContain("not a second subscription");
+        guide.ShouldContain("Canonical CLI login and diagnostics still use `github-copilot`");
+        guide.ShouldContain("does not promise the complete provisioning/feature matrix");
+        guide.ShouldContain("#4192");
+        guide.ShouldContain("never an implicit default-account fallback");
+        guide.ShouldContain("Historical runs lack provider identity");
         guide.ShouldContain("overwrites the existing `github-copilot` auth entry");
     }
 

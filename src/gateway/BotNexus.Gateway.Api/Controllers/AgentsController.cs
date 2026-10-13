@@ -1,3 +1,5 @@
+using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Cron;
 using BotNexus.Domain.World;
@@ -23,6 +25,8 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/[controller]")]
 public sealed class AgentsController : ControllerBase
 {
+    private readonly ISessionStore? _sessions;
+    private readonly IConversationStore? _conversations;
     private readonly IAgentRegistry _registry;
     private readonly IAgentSupervisor _supervisor;
     private readonly IAgentConfigurationWriter _configurationWriter;
@@ -47,8 +51,12 @@ public sealed class AgentsController : ControllerBase
         ModelRegistry? modelRegistry = null,
         ILogger<AgentsController>? logger = null,
         IAgentWebhookProvisioner? webhookProvisioner = null,
-        IExtensionLoader? extensionLoader = null)
+        IExtensionLoader? extensionLoader = null,
+        ISessionStore? sessions = null,
+        IConversationStore? conversations = null)
     {
+        _sessions = sessions;
+        _conversations = conversations;
         _registry = registry;
         _supervisor = supervisor;
         _configurationWriter = configurationWriter;
@@ -540,6 +548,13 @@ public sealed class AgentsController : ControllerBase
     [HttpPost("{agentId}/sessions/{sessionId}/stop")]
     public async Task<ActionResult> StopInstance(string agentId, string sessionId, CancellationToken cancellationToken)
     {
+        if (_sessions is null)
+            return NotFound();
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), AgentId.From(agentId), cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var typedAgentId = AgentId.From(agentId);
         var typedSessionId = SessionId.From(sessionId);
         await _supervisor.StopAsync(typedAgentId, typedSessionId, cancellationToken);
@@ -576,7 +591,8 @@ public sealed class AgentsController : ControllerBase
         var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
         if (diag is null) return NotFound("Handle does not support diagnostics.");
         var window = (handle as IAgentHandleInspector)?.GetContextWindowTokens();
-        return Ok(BuildContextResponse(agentId, sessionId, diag, window));
+        var budget = (handle as IAgentHandleInspector)?.GetContextBudgetDiagnostics();
+        return Ok(BuildContextResponse(agentId, sessionId, diag, window, budget));
     }
 
     /// <summary>
@@ -630,18 +646,26 @@ public sealed class AgentsController : ControllerBase
     /// <param name="contextWindowTokens">
     /// The resolved context window in tokens, or <see langword="null"/> when unresolvable.
     /// </param>
+    /// <param name="contextBudget">
+    /// The handle's source-backed binding snapshot, when available. Its working budget is the
+    /// denominator; the legacy window remains supported for inspectors without provenance.
+    /// </param>
     public static object BuildContextResponse(
         string agentId,
         string sessionId,
         ContextDiagnostics diag,
-        int? contextWindowTokens = null)
+        int? contextWindowTokens = null,
+        ContextBudgetDiagnostics? contextBudget = null)
     {
+        if (contextBudget is not null)
+            contextWindowTokens = contextBudget.EffectiveWorkingBudgetTokens;
         return new
         {
             agentId,
             sessionId,
             totalEstimatedTokens = diag.TotalEstimatedTokens,
             contextWindowTokens,
+            contextBudget,
             usagePercent = contextWindowTokens is > 0
                 ? Math.Round((double)diag.TotalEstimatedTokens / contextWindowTokens.Value * 100, 1)
                 : (double?)null,

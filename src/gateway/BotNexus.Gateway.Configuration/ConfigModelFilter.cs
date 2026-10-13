@@ -56,7 +56,11 @@ public sealed class ConfigModelFilter : IModelFilter
                 // #1705: surface the model's capability set so the agent editor offers only
                 // valid thinking/context choices.
                 ModelRegistry.GetSupportedThinkingLevels(model).Select(ThinkingToWire).ToList(),
-                ModelRegistry.GetSupportedContextSizes(model).ToList()))
+                ModelRegistry.GetSupportedContextSizes(model).ToList(),
+                model.ContextWindow,
+                model.MaxTokens,
+                model.ContextWindowSource,
+                model.MaxTokensSource))
             .OrderBy(model => model.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }

@@ -602,8 +602,12 @@ public sealed class Agent
             await priorRun.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        var agentRunId = AgentRunId.Create();
+        IReadOnlyList<GuardObservation> observedGuards = [];
         lock (_stateLock)
         {
+            _state.AgentRunId = agentRunId;
+            _state.RunStartIndex = _state.Messages.Count;
             _state.SetErrorMessage(null);
             _state.SetLastCompletion(null);
         }
@@ -617,8 +621,8 @@ public sealed class Agent
 
             return await runner(
                     BuildContextSnapshot(),
-                    BuildLoopConfig(),
-                    @event => HandleEventAsync(@event, linkedCts.Token),
+                    BuildLoopConfig() with { AgentRunId = agentRunId, GuardEvidenceObserver = guards => observedGuards = guards },
+                    @event => HandleEventAsync(@event with { AgentRunId = agentRunId }, linkedCts.Token),
                     linkedCts.Token)
                 .ConfigureAwait(false);
         }
@@ -649,7 +653,7 @@ public sealed class Agent
                                 RunCompletionStatus.Cancelled,
                                 [],
                                 RunStopReason.Cancellation,
-                                "The run was cancelled.")),
+                                "The run was cancelled.") { GuardObservations = observedGuards }) { AgentRunId = agentRunId },
                         CancellationToken.None)
                     .ConfigureAwait(false);
             }
@@ -687,7 +691,7 @@ public sealed class Agent
                             new RunCompletionResult(
                                 RunCompletionStatus.Failed,
                                 [],
-                                Detail: ex.Message)),
+                                Detail: ex.Message) { GuardObservations = observedGuards }) { AgentRunId = agentRunId },
                         CancellationToken.None)
                     .ConfigureAwait(false);
             }

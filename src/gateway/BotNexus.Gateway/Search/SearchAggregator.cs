@@ -34,6 +34,26 @@ public sealed class SearchAggregator
         int maxResultsPerSource,
         IReadOnlySet<string>? sourceIds = null,
         CancellationToken cancellationToken = default)
+        => await SearchCoreAsync(query, maxResultsPerSource, null, sourceIds, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Searches only core-reviewed exact contributor types with explicit authorization, including for all-agent callers.
+    /// Unreviewed extensions are excluded before any contributor property or method is accessed.
+    /// </summary>
+    public Task<IReadOnlyList<AggregatedSearchGroup>> SearchAsync(
+        string query,
+        int maxResultsPerSource,
+        SearchScope scope,
+        IReadOnlySet<string>? sourceIds = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+        return SearchCoreAsync(query, maxResultsPerSource, scope, sourceIds, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<AggregatedSearchGroup>> SearchCoreAsync(
+        string query, int maxResultsPerSource, SearchScope? scope,
+        IReadOnlySet<string>? sourceIds, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(query))
             return [];
@@ -41,11 +61,15 @@ public sealed class SearchAggregator
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxResultsPerSource);
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (scope is { IsAll: false, Agents.Count: 0 })
+            return [];
+
         var selected = _contributors
+            .Where(contributor => scope is null || IsReviewed(contributor.GetType()))
             .Where(contributor => sourceIds is null || sourceIds.Contains(contributor.SourceId))
             .ToArray();
         var tasks = selected
-            .Select(contributor => SearchSourceAsync(contributor, query, maxResultsPerSource, cancellationToken))
+            .Select(contributor => SearchSourceAsync(contributor, query, maxResultsPerSource, scope, cancellationToken))
             .ToArray();
 
         return await Task.WhenAll(tasks).ConfigureAwait(false);
@@ -55,9 +79,18 @@ public sealed class SearchAggregator
         ISearchContributor contributor,
         string query,
         int maxResults,
+        SearchScope? scope,
         CancellationToken callerCancellation)
     {
-        if (!contributor.IsAvailable)
+        // Scoped availability is core-owned and never probes unauthorized workspaces.
+        var available = scope is null ? contributor.IsAvailable : contributor switch
+        {
+            AgentSearchContributor agents => agents.IsAvailableFor(scope),
+            MemorySearchContributor memory => memory.IsAvailableFor(scope),
+            FileSearchContributor files => files.IsAvailableFor(scope),
+            _ => true
+        };
+        if (!available)
             return Group(contributor, false, [], null);
 
         var timeout = ResolveTimeout(contributor.SourceId);
@@ -66,7 +99,7 @@ public sealed class SearchAggregator
 
         try
         {
-            var request = new SearchRequest(query, maxResults);
+            var request = new SearchRequest(query, maxResults, scope ?? SearchScope.All);
             var results = await contributor.SearchAsync(request, sourceCancellation.Token)
                 .WaitAsync(sourceCancellation.Token)
                 .ConfigureAwait(false);
@@ -87,6 +120,13 @@ public sealed class SearchAggregator
             return Group(contributor, true, [], "Source search failed.");
         }
     }
+
+    private static bool IsReviewed(Type type)
+        => type == typeof(AgentSearchContributor)
+            || type == typeof(ConversationSearchContributor)
+            || type == typeof(SessionSearchContributor)
+            || type == typeof(MemorySearchContributor)
+            || type == typeof(FileSearchContributor);
 
     private TimeSpan ResolveTimeout(string sourceId)
     {

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace BotNexus.Cli.Services;
@@ -13,12 +12,40 @@ internal sealed class LaunchdServiceManager : IOsServiceManager
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         "Library", "LaunchAgents", $"{ServiceLabel}.plist");
 
+    private readonly IServiceProcessRunner _runner;
+    private readonly string _plistPath;
+
+    public LaunchdServiceManager()
+        : this(SystemServiceProcessRunner.Instance, PlistPath)
+    {
+    }
+
+    internal LaunchdServiceManager(IServiceProcessRunner runner, string plistPath)
+    {
+        _runner = runner;
+        _plistPath = plistPath;
+    }
+
     public bool IsSupported => RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
     public string ServiceManagerName => "launchd";
 
     public Task<bool> IsInstalledAsync(CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(File.Exists(PlistPath));
+        return Task.FromResult(File.Exists(_plistPath));
+    }
+
+    public async Task<bool> IsRunningAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync("launchctl", ["list", ServiceLabel], cancellationToken);
+        return result.ExitCode == 0;
+    }
+
+    public async Task<ServiceOperationResult> StopAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync("launchctl", ["unload", _plistPath], cancellationToken);
+        return result.ExitCode == 0
+            ? new ServiceOperationResult(true, $"Stop requested for service '{ServiceLabel}'.")
+            : new ServiceOperationResult(false, $"Failed to stop service: {result.Output}");
     }
 
     public async Task<ServiceOperationResult> InstallAsync(string executablePath, string homePath, int port, CancellationToken cancellationToken = default)
@@ -63,11 +90,11 @@ internal sealed class LaunchdServiceManager : IOsServiceManager
             </plist>
             """;
 
-        var dir = Path.GetDirectoryName(PlistPath)!;
+        var dir = Path.GetDirectoryName(_plistPath)!;
         Directory.CreateDirectory(dir);
-        await File.WriteAllTextAsync(PlistPath, plistContent, cancellationToken);
+        await File.WriteAllTextAsync(_plistPath, plistContent, cancellationToken);
 
-        var (loadExit, loadOutput) = await RunAsync("launchctl", $"load \"{PlistPath}\"", cancellationToken);
+        var (loadExit, loadOutput) = await RunAsync("launchctl", ["load", _plistPath], cancellationToken);
         if (loadExit != 0)
             return new ServiceOperationResult(false, $"Plist written but launchctl load failed: {loadOutput}");
 
@@ -79,35 +106,15 @@ internal sealed class LaunchdServiceManager : IOsServiceManager
         if (!await IsInstalledAsync(cancellationToken))
             return new ServiceOperationResult(true, $"Service '{ServiceLabel}' is not installed.");
 
-        await RunAsync("launchctl", $"unload \"{PlistPath}\"", cancellationToken);
-
-        if (File.Exists(PlistPath))
-            File.Delete(PlistPath);
+        // The lifecycle coordinator has already confirmed the job is down.
+        if (File.Exists(_plistPath))
+            File.Delete(_plistPath);
 
         return new ServiceOperationResult(true, $"Service '{ServiceLabel}' unloaded and removed.");
     }
 
-    private static async Task<(int ExitCode, string Output)> RunAsync(string command, string arguments, CancellationToken cancellationToken)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = command,
-            Arguments = arguments,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Failed to start {command}");
-
-        var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-
-        return (process.ExitCode, string.IsNullOrWhiteSpace(output) ? error : output);
-    }
+    private Task<ProcessRunResult> RunAsync(string command, IReadOnlyList<string> arguments, CancellationToken cancellationToken)
+        => _runner.RunAsync(command, arguments, cancellationToken);
 
     private static string EscapeXml(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");

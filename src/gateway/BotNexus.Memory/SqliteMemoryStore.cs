@@ -80,7 +80,7 @@ public sealed class SqliteMemoryStore(
                 await connection.OpenAsync(token).ConfigureAwait(false);
                 // Refuse a newer stamped schema before the legacy initializer can write to it.
                 // SqliteConnectionFactory has already checked this store's world identity.
-                SqliteSchemaMigrator.ValidateReadOnly(connection, CurrentSchemaVersion);
+                connection.ValidateReadOnly( CurrentSchemaVersion);
 
                 // Journal mode must be selected outside a transaction. The schema transaction
                 // then takes SQLite's cross-connection write lock before inspecting or changing
@@ -174,7 +174,7 @@ public sealed class SqliteMemoryStore(
                 // The shared runner owns store_meta and PRAGMA user_version. Its transaction
                 // cannot nest in the legacy schema transaction above; that transition must
                 // finish before a pre-existing unversioned database adopts version two.
-                SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
+                connection.Apply( CurrentSchemaVersion, Migrations);
 
                 // #3244: report the scan ceiling being exceeded once per store open.
                 await WarnIfEmbeddedRowsExceedScanCeilingAsync(connection, token).ConfigureAwait(false);

@@ -250,7 +250,15 @@ internal sealed class ProviderCommand
             ? $"[green]✓[/] Provider [green]{name}[/] updated."
             : $"[green]✓[/] Provider [green]{name}[/] added.");
         exitCode.PrintReceipt();
-        PrintProviderActivationReceipt();
+        var effectiveDocument = await CliConfigMutation.ReadAsync(configPath, cancellationToken);
+        var effectiveKey = effectiveDocument.FindEntryKey(ProvidersPath, name);
+        string? effectiveType = null;
+        if (effectiveKey is not null)
+            effectiveDocument.TryGetString($"providers.{effectiveKey}.type", out effectiveType);
+        if (string.IsNullOrWhiteSpace(effectiveType) &&
+            string.Equals(name, "github-copilot", StringComparison.OrdinalIgnoreCase))
+            effectiveType = "github-copilot";
+        PrintProviderActivationReceipt(effectiveType);
 
         if (verbose)
         {
@@ -357,13 +365,22 @@ internal sealed class ProviderCommand
         return 1;
     }
 
-    internal static void PrintProviderActivationReceipt()
+    internal static void PrintProviderActivationReceipt(string? providerType = null)
     {
         AnsiConsole.MarkupLine("  Persistence: [green]succeeded[/].");
         AnsiConsole.MarkupLine("  Runtime activation: [yellow]not validated[/] by this offline command.");
-        AnsiConsole.MarkupLine(
-            "  Restart required: [green]no[/] when the running gateway receives the configuration reload; " +
-            "verify the provider appears in its live model catalogue before assigning an agent.");
+        if (string.Equals(providerType, "github-copilot", StringComparison.OrdinalIgnoreCase))
+        {
+            AnsiConsole.MarkupLine(
+                "  Restart required: [yellow]yes[/] for GitHub Copilot catalogue and discovery setup; " +
+                "restart the gateway, then verify the provider appears in its live model catalogue before assigning an agent.");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine(
+                "  Restart required: [green]no[/] when the running gateway receives the configuration reload; " +
+                "verify the provider appears in its live model catalogue before assigning an agent.");
+        }
     }
 
     internal static async Task<int> ExecuteTestAsync(
@@ -729,7 +746,9 @@ internal sealed class ProviderCommand
 
                 AnsiConsole.MarkupLine($"[green]✓[/] Provider [green]{providerName}[/] configured successfully.");
                 wizardExit.PrintReceipt();
-                PrintProviderActivationReceipt();
+                PrintProviderActivationReceipt(c.TryGet<string>("providerType", out var effectiveType)
+                    ? effectiveType
+                    : providerName);
 
                 if (c.Get<bool>("verbose"))
                 {

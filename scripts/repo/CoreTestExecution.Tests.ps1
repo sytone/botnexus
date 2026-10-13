@@ -77,6 +77,29 @@ $workflow = Get-Content -LiteralPath $workflowPath -Raw
 Assert-True ($workflow -match 'Invoke-BoundedCoreTests\.ps1') 'GitHub CORE must use the bounded runner.'
 Assert-True ($workflow -notmatch 'run: dotnet test tests/dirs\.proj --no-build --filter') 'GitHub CORE must not invoke an unbounded aggregate test host.'
 Assert-True ($workflow -match "CompletionPath.*completion-core\.json") 'GitHub CORE contract validation must require the completion receipt.'
+function Test-CoverageOidcContract([string]$WorkflowText) {
+    $fullJob = [regex]::Match($WorkflowText, '(?ms)^  full-tests:\r?\n(?:(?!^  [a-zA-Z0-9_-]+:).)*').Value
+    if ([string]::IsNullOrWhiteSpace($fullJob)) { return $false }
+    $outsideJob = $WorkflowText.Replace($fullJob, '')
+    if ($outsideJob -match 'id-token\s*:') { return $false }
+    $permissions = [regex]::Match($fullJob, '(?ms)^    permissions:\r?\n(?:(?!^    \S).)*').Value
+    $steps = [regex]::Match($fullJob, '(?ms)^    steps:\r?\n.*').Value
+    $coverageStep = [regex]::Match($steps, '(?ms)^      - name: Upload coverage\r?\n(?:(?!^      - ).)*').Value
+    return ($fullJob -match "(?m)^    if: github\.event_name == 'push'\s*$" -and
+        $permissions -match '(?m)^      contents: read\s*$' -and
+        $permissions -match '(?m)^      id-token: write\s*$' -and
+        ([regex]::Matches($fullJob, 'id-token\s*:').Count -eq 1) -and
+        $coverageStep -match '(?m)^        uses: codecov/codecov-action@v4\s*$' -and
+        $coverageStep -match '(?m)^          use_oidc: true\s*$' -and
+        $coverageStep -match '(?m)^          fail_ci_if_error: true\s*$')
+}
+
+Assert-True (Test-CoverageOidcContract $workflow) 'Only push-only full-tests may request OIDC, and its Codecov step must authenticate and fail closed.'
+Assert-True (-not (Test-CoverageOidcContract ("permissions:`n  id-token: write`n" + $workflow))) 'The coverage contract must reject global OIDC permission.'
+Assert-True (-not (Test-CoverageOidcContract ($workflow -replace '(?m)^  core-tests:', "  core-tests:`n    permissions:`n      id-token: write"))) 'The coverage contract must reject PR-job OIDC permission.'
+Assert-True (-not (Test-CoverageOidcContract ($workflow -replace 'use_oidc: true', 'use_oidc: false'))) 'The coverage contract must reject unauthenticated coverage.'
+Assert-True (-not (Test-CoverageOidcContract ($workflow -replace 'fail_ci_if_error: true', 'fail_ci_if_error: false'))) 'The coverage contract must reject masked upload failure.'
+Assert-True (-not (Test-CoverageOidcContract ($workflow -replace '- name: Upload coverage', '- name: Unrelated step'))) 'The coverage contract must reject inputs outside the named Codecov step.'
 
 $contract = Get-Content -LiteralPath $contractPath -Raw
 Assert-True ($contract -match '\[Parameter\(Mandatory\)\]\[string\] \$CompletionPath') 'The result contract must require a completion receipt.'

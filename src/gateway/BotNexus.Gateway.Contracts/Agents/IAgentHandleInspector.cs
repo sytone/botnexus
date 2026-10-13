@@ -35,4 +35,11 @@ public interface IAgentHandleInspector
     /// one is not.
     /// </remarks>
     int? GetContextWindowTokens() => null;
+
+    /// <summary>
+    /// Returns the handle's working-budget selection and independent model declarations, or null
+    /// when this inspector cannot establish their origins. Declaration provenance is not provider
+    /// verification. Implementations without this snapshot retain their legacy window diagnostics.
+    /// </summary>
+    ContextBudgetDiagnostics? GetContextBudgetDiagnostics() => null;
 }

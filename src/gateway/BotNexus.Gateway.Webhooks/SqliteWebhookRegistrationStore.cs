@@ -63,7 +63,7 @@ public sealed class SqliteWebhookRegistrationStore(
                 """;
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
-            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, WebhookSqliteSchema.Migrations);
+            connection.Apply( CurrentSchemaVersion, WebhookSqliteSchema.Migrations);
 
             _initialized = true;
         }

@@ -126,6 +126,12 @@ public static class ConfigDocumentFlattener
                     sink[path] = new ConfigEntry(path, ConfigValueState.ExplicitNull, Value: null);
                     break;
 
+                case JsonObject capacityMap when ExactModelCapacityConfiguration.IsMapPath(path):
+                    // Model IDs are opaque, ordinal identifiers, not dotted configuration paths.
+                    // Keeping the complete map as a leaf also preserves case-only siblings.
+                    sink[path] = new ConfigEntry(path, ConfigValueState.Value, Canonicalise(capacityMap));
+                    break;
+
                 case JsonObject nested when nested.Count == 0:
                     // An empty object is a leaf with a value, not a branch with no children. Treating it
                     // as a branch would make it vanish from the flattened form entirely, so a store that

@@ -39,6 +39,11 @@ internal static class DefaultToolProgressPolicy
                     kind,
                     guidance));
             }
+
+            // Recognize the edit producer's successful mutation receipt, not arbitrary success
+            // strings from unrelated write tools. Repeated writes alone are never NoProgress.
+            if (!result.IsError && text.StartsWith("Successfully replaced ", StringComparison.Ordinal))
+                return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.Progress);
         }
 
         if (result.IsError)
@@ -50,6 +55,30 @@ internal static class DefaultToolProgressPolicy
                 Hash(name + "\n" + CanonicalArguments(call.Arguments)),
                 "clock-check",
                 "clock-check"));
+        }
+
+        if (name == "todo" && HasStringArgument(call.Arguments, "action", "list"))
+        {
+            return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.NoProgress(
+                "housekeeping-todo-list",
+                Hash(ToolProgressEvidenceProjection.TodoListV1(text)),
+                "unchanged-housekeeping"));
+        }
+
+        if (name == "list_subagents")
+        {
+            return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.NoProgress(
+                "housekeeping-subagents-list",
+                Hash(ToolProgressEvidenceProjection.SubagentListV1(text)),
+                "unchanged-housekeeping"));
+        }
+
+        if (name == "memory_save" && IsStatusOnlyMemory(call.Arguments))
+        {
+            return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.NoProgress(
+                "housekeeping-status-memory",
+                "status-only",
+                "unchanged-housekeeping"));
         }
 
         if (name is "shell" or "exec" && IsReadOnlyGitStatus(call.Arguments, out var command))
@@ -69,6 +98,34 @@ internal static class DefaultToolProgressPolicy
         }
 
         return Task.FromResult<ToolProgressDecision?>(null);
+    }
+
+    private static bool IsStatusOnlyMemory(IReadOnlyDictionary<string, object?> arguments)
+    {
+        if (!TryGetStringArgument(arguments, "content", out var content))
+            return false;
+
+        var normalized = content.Trim().TrimEnd('.').ToLowerInvariant();
+        return normalized is "done" or "complete" or "completed" or "end" or "status unchanged" or "no active workers";
+    }
+
+    private static bool HasStringArgument(
+        IReadOnlyDictionary<string, object?> arguments,
+        string key,
+        string expected)
+        => TryGetStringArgument(arguments, key, out var value)
+            && value.Equals(expected, StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryGetStringArgument(
+        IReadOnlyDictionary<string, object?> arguments,
+        string key,
+        out string value)
+    {
+        var pair = arguments.FirstOrDefault(item => item.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
+        value = pair.Value is JsonElement { ValueKind: JsonValueKind.String } element
+            ? element.GetString() ?? string.Empty
+            : pair.Value as string ?? string.Empty;
+        return pair.Key is not null && value.Length > 0;
     }
 
     private static bool IsReadOnlyGitStatus(IReadOnlyDictionary<string, object?> arguments, out string command)

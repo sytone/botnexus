@@ -633,7 +633,7 @@ public sealed class ConfigController : ControllerBase
     }
 
     private static void RedactSecrets(JsonObject config)
-        => ConfigSecretMerge.Redact(config);
+        => config.Redact();
 }
 
 /// <summary>

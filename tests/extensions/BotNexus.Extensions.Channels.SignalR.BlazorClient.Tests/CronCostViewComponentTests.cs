@@ -90,6 +90,32 @@ public sealed class CronCostViewComponentTests : IDisposable
         return cut;
     }
 
+    [Fact]
+    public void Long_job_name_is_preserved_in_inner_wrapper_with_all_nine_columns()
+    {
+        const string name = "Review scheduled automation cost and investigate every expensive recurring workflow " +
+            "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz";
+        SeedCosts(Rollup("long-job", 192, 192, totalTokens: 4_800_000, totalToolCalls: 3_840, totalTurns: 1_920));
+        _handler.SetupResponse("/api/cron", JsonSerializer.Serialize(new[] { new { id = "long-job", name } }));
+
+        var cut = RenderView();
+        var root = cut.Find("[data-testid='cron-cost']");
+        root.ClassList.ShouldContain("activity-cron-cost");
+        root.ClassList.ShouldNotContain("activity-cost");
+        var cell = cut.Find("[data-testid='cron-cost-row'] td.activity-cell-title");
+        cell.Children.ShouldHaveSingleItem().ClassList.ShouldContain("activity-title-content");
+        var title = cut.Find(".activity-title-content > [data-testid='cron-cost-job']");
+        title.TextContent.ShouldBe(name);
+        title.GetAttribute("title").ShouldBe("long-job");
+        cut.FindAll("[data-testid='cron-cost-table'] th").Count.ShouldBe(9);
+        cut.FindAll("[data-testid='cron-cost-row'] td").Count.ShouldBe(9);
+        cut.Find("[data-testid='cron-cost-runs']").TextContent.ShouldBe("192");
+        cut.Find("[data-testid='cron-cost-tool-calls-per-turn']").TextContent.ShouldBe("2.00");
+        var scroller = cut.Find("[data-testid='cron-cost-table-scroll']");
+        scroller.GetAttribute("tabindex").ShouldBe("0");
+        scroller.GetAttribute("role").ShouldBe("region");
+    }
+
     // ── AC1: routing ───────────────────────────────────────────────────────
 
     /// <summary>

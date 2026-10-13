@@ -354,6 +354,81 @@ public sealed class SessionListPaginationTests : IDisposable
         tail.HasMore.ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ListSummaryPageAsync_EligibleConversationsIntersectBeforeCountAndWindow(bool managedTimeFilter)
+    {
+        var now = DateTimeOffset.UtcNow;
+        await SeedSessionAsync("eligible-old", now.AddMinutes(-3), "agent-a");
+        await SeedSessionAsync("excluded-new", now, "agent-a");
+        await SeedSessionAsync("eligible-other", now.AddMinutes(-1), "agent-b");
+        var conversations = await _conversations.ListAsync();
+        var excluded = (await CreateStore().ListSummaryPageAsync(new SessionSummaryQuery(DateTimeOffset.MinValue)))
+            .Items.Single(summary => summary.SessionId == "excluded-new").ConversationId;
+        var eligible = conversations.Select(conversation => conversation.ConversationId)
+            .Where(id => id.Value != excluded).ToHashSet();
+        var query = new SessionSummaryQuery(managedTimeFilter ? now.AddDays(-1) : DateTimeOffset.MinValue,
+            AgentId: "agent-a", Limit: 1, ConversationIds: eligible);
+        var page = await CreateStore().ListSummaryPageAsync(query);
+        page.Items.ShouldHaveSingleItem().SessionId.ShouldBe("eligible-old");
+        page.TotalCount.ShouldBe(1);
+        page.HasMore.ShouldBeFalse();
+        var selected = page.Items[0].ConversationId;
+        var conflict = await CreateStore().ListSummaryPageAsync(query with { ConversationIdFilter = excluded });
+        conflict.Items.ShouldBeEmpty();
+        conflict.TotalCount.ShouldBe(0);
+        var matching = await CreateStore().ListSummaryPageAsync(query with { ConversationIdFilter = selected });
+        matching.TotalCount.ShouldBe(1);
+        var empty = await CreateStore().ListSummaryPageAsync(query with { ConversationIds = new HashSet<ConversationId>() });
+        empty.Items.ShouldBeEmpty();
+        empty.TotalCount.ShouldBe(0);
+        empty.HasMore.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ListSummaryPageAsync_EligibleSetAcrossAgentsFiltersBeforeSqlLimit()
+    {
+        var now = DateTimeOffset.UtcNow;
+        await SeedSessionAsync("kept-a", now.AddMinutes(-3), "agent-a");
+        await SeedSessionAsync("kept-b", now.AddMinutes(-2), "agent-b");
+        await SeedSessionAsync("excluded", now, "agent-c");
+        var eligible = (await _conversations.ListAsync()).Where(conversation => conversation.AgentId.Value != "agent-c")
+            .Select(conversation => conversation.ConversationId).ToHashSet();
+        var page = await CreateStore().ListSummaryPageAsync(new SessionSummaryQuery(DateTimeOffset.MinValue,
+            Limit: 1, ConversationIds: eligible));
+        page.Items.ShouldHaveSingleItem().SessionId.ShouldBe("kept-b");
+        page.TotalCount.ShouldBe(2);
+        page.HasMore.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task InMemoryStore_EligibleSetIntersectsOtherPredicatesAndEmptyMeansNoRows()
+    {
+        var store = new InMemorySessionStore();
+        foreach (var id in new[] { "set-a", "set-b" })
+        {
+            var session = await store.GetOrCreateAsync(SessionId.From(id), AgentId.From("agent-a"));
+            session.ConversationId = ConversationId.From($"conversation-{id}");
+            await store.SaveAsync(session);
+        }
+        var all = await store.ListSummaryPageAsync(new SessionSummaryQuery(DateTimeOffset.MinValue));
+        all.TotalCount.ShouldBe(2);
+        var selected = all.Items[1];
+        var query = new SessionSummaryQuery(DateTimeOffset.MinValue, Limit: 1,
+            ConversationIds: new HashSet<ConversationId> { ConversationId.From(selected.ConversationId ?? throw new InvalidOperationException("Expected conversation ID.")) });
+        var page = await store.ListSummaryPageAsync(query);
+        page.Items.ShouldHaveSingleItem().SessionId.ShouldBe(selected.SessionId);
+        page.TotalCount.ShouldBe(1);
+        page.HasMore.ShouldBeFalse();
+        (await store.ListSummaryPageAsync(query with { AgentId = "agent-b" })).Items.ShouldBeEmpty();
+        (await store.ListSummaryPageAsync(query with { ConversationIdFilter = "not-eligible" })).Items.ShouldBeEmpty();
+        var empty = await store.ListSummaryPageAsync(query with { ConversationIds = new HashSet<ConversationId>() });
+        empty.Items.ShouldBeEmpty();
+        empty.TotalCount.ShouldBe(0);
+        empty.HasMore.ShouldBeFalse();
+    }
+
     // SQLite store: real LIMIT/OFFSET.
 
     [Fact]

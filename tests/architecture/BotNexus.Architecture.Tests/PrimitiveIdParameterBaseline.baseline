@@ -22,6 +22,7 @@ src/domain/BotNexus.Domain/Gateway/Models/InboundMessageRoutingHints.cs|2
 src/extensions/BotNexus.Extensions.DebugTool/DebugTool.cs|3
 src/extensions/BotNexus.Extensions.Skills/SkillsCommandContributor.cs|1
 src/gateway/BotNexus.Cron/Actions/MemoryDreamingCronAction.cs|1
+src/gateway/BotNexus.Gateway.Abstractions/Diagnostics/IActiveLoopTracker.cs|3
 src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentCanvasNotifier.cs|3
 src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentChangeNotifier.cs|1
 src/gateway/BotNexus.Gateway.Contracts/Agents/IAgentTodoNotifier.cs|2
@@ -41,7 +42,6 @@ src/gateway/BotNexus.Gateway.Sessions/UnrecoverableSessionException.cs|1
 src/gateway/BotNexus.Gateway/Channels/InternalChannelAdapter.cs|1
 src/gateway/BotNexus.Gateway/Conversations/NullConversationChangeNotifier.cs|2
 src/gateway/BotNexus.Gateway/Diagnostics/ActiveLoopTracker.cs|3
-src/gateway/BotNexus.Gateway/Diagnostics/IActiveLoopTracker.cs|3
 src/gateway/BotNexus.Gateway/Events/IEventDeliveryHandler.cs|1
 src/gateway/BotNexus.Gateway/Events/InMemoryWorldEventBus.cs|2
 src/gateway/BotNexus.Gateway/Events/LoggingEventDeliveryHandler.cs|1

@@ -72,7 +72,7 @@ public sealed class SqliteSecretProvider : ISecretProvider
             await using var connection = SqliteConnectionFactory.Create(
                 new SqliteConnectionStringBuilder { DataSource = storePath, Mode = SqliteOpenMode.ReadOnly }.ToString());
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-            SqliteSchemaMigrator.ValidateReadOnly(connection, CurrentSchemaVersion);
+            connection.ValidateReadOnly( CurrentSchemaVersion);
 
             await using var command = connection.CreateCommand();
             command.CommandText = "SELECT value FROM secrets WHERE name = $name LIMIT 1;";

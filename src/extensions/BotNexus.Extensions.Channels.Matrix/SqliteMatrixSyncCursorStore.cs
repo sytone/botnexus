@@ -136,7 +136,7 @@ public sealed class SqliteMatrixSyncCursorStore : IMatrixSyncCursorStore, IDispo
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
+            connection.Apply(CurrentSchemaVersion, Migrations);
 
             _initialized = true;
         }
