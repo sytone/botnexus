@@ -23,11 +23,17 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/agents/{agentId}/sections")]
 public sealed class ConversationSectionsController : ControllerBase
 {
+    private readonly IConversationStore? _conversations;
     private readonly IConversationSectionStore _sections;
 
     /// <summary>Initialises a new instance of the <see cref="ConversationSectionsController"/> class.</summary>
     /// <param name="sections">The user-defined section store.</param>
-    public ConversationSectionsController(IConversationSectionStore sections) => _sections = sections;
+    /// <param name="conversations">Stored conversation visibility authority for assignment writes.</param>
+    public ConversationSectionsController(IConversationSectionStore sections, IConversationStore? conversations = null)
+    {
+        _sections = sections;
+        _conversations = conversations;
+    }
 
     /// <summary>Lists the agent's user-defined sections in display order, with conversation assignments.</summary>
     [HttpGet]
@@ -110,6 +116,11 @@ public sealed class ConversationSectionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> Assign(string agentId, string sectionId, string conversationId, CancellationToken ct)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            _conversations is null ? null : await _conversations.GetAsync(ConversationId.From(conversationId), ct), AgentId.From(agentId));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         try
         {
             await _sections.AssignConversationAsync(SectionId.From(sectionId), ConversationId.From(conversationId), ct);
@@ -126,6 +137,11 @@ public sealed class ConversationSectionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<ActionResult> Unassign(string agentId, string conversationId, CancellationToken ct)
     {
+        var clientWriteFailure = ClientConversationWriteGuard.Check(this,
+            _conversations is null ? null : await _conversations.GetAsync(ConversationId.From(conversationId), ct), AgentId.From(agentId));
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         await _sections.RemoveConversationAsync(ConversationId.From(conversationId), ct);
         return NoContent();
     }

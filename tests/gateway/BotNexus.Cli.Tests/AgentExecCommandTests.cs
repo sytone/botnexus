@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using BotNexus.Cli.Commands;
+using Microsoft.Extensions.Time.Testing;
 
 namespace BotNexus.Cli.Tests;
 
@@ -124,17 +125,85 @@ public sealed class AgentExecCommandTests
     [Fact]
     public async Task Exec_WhenRunExceedsTimeout_ReturnsTimeoutCodeDistinctFromGenericFailure()
     {
+        var clock = new FakeTimeProvider();
         var handler = StubHandler.Hangs();
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exit = await AgentExecCommand.ExecuteAsync(
-            Request(timeoutSeconds: 1), CancellationToken.None, stdout, stderr, handler);
+        var execution = AgentExecCommand.ExecuteAsync(
+            Request(timeoutSeconds: 1), CancellationToken.None, stdout, stderr, handler, clock);
+        await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var exit = await execution.WaitAsync(TimeSpan.FromSeconds(10));
 
         exit.ShouldBe(AgentExecExitCode.Timeout);
         exit.ShouldNotBe(AgentExecExitCode.Failure);
         stdout.ToString().ShouldBeEmpty();
         stderr.ToString().ShouldContain("timeout");
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(30)]
+    [InlineData(300)]
+    public void Exec_ResolvedClient_HasNoCompetingRealDeadline(int timeoutSeconds)
+    {
+        var resolution = AgentExecCommand.ResolveClient(Request(timeoutSeconds: timeoutSeconds), StubHandler.Hangs());
+        resolution.IsRefused.ShouldBeFalse();
+        var client = resolution.Client;
+        client.ShouldNotBeNull();
+        using (client)
+            client.Timeout.ShouldBe(Timeout.InfiniteTimeSpan);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Exec_ParallelRuns_CommandTimeoutAndCallerCancellationRemainDistinct(bool callerCancels)
+    {
+        // Each run owns its clock, readiness signal and output sinks. All requests reach the
+        // transport before any deadline advances, independent of runner speed or test ordering.
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var enteredCount = 0;
+        var runs = Enumerable.Range(0, 16).Select(async _ =>
+        {
+            var clock = new FakeTimeProvider();
+            using var caller = new CancellationTokenSource();
+            var handler = StubHandler.Hangs();
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var execution = AgentExecCommand.ExecuteAsync(
+                Request(timeoutSeconds: 30), caller.Token, stdout, stderr, handler, clock);
+            await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            if (Interlocked.Increment(ref enteredCount) == 16)
+                allEntered.TrySetResult(true);
+            await release.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            clock.Advance(TimeSpan.FromSeconds(29));
+            execution.IsCompleted.ShouldBeFalse();
+            handler.TransportToken.IsCancellationRequested.ShouldBeFalse();
+            if (callerCancels)
+                caller.Cancel();
+            else
+                clock.Advance(TimeSpan.FromSeconds(1));
+
+            var exit = await execution.WaitAsync(TimeSpan.FromSeconds(10));
+            exit.ShouldBe(callerCancels ? AgentExecExitCode.Failure : AgentExecExitCode.Timeout);
+            exit.ShouldNotBe(callerCancels ? AgentExecExitCode.Timeout : AgentExecExitCode.Failure);
+            stdout.ToString().ShouldBeEmpty();
+            stderr.ToString().ShouldBe(callerCancels
+                ? $"Error: the run was cancelled.{Environment.NewLine}"
+                : $"Error: the run exceeded the 30s timeout and was abandoned.{Environment.NewLine}");
+            handler.TransportToken.IsCancellationRequested.ShouldBeTrue();
+            // Advancing an already-finished run cannot change its classification or output.
+            var diagnostic = stderr.ToString();
+            clock.Advance(TimeSpan.FromSeconds(30));
+            stderr.ToString().ShouldBe(diagnostic);
+        }).ToArray();
+        await allEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        release.TrySetResult(true);
+        await Task.WhenAll(runs);
     }
 
     [Fact]
@@ -314,6 +383,10 @@ public sealed class AgentExecCommandTests
         private StubHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond)
             => _respond = respond;
 
+        public TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public CancellationToken TransportToken { get; private set; }
+
         public int CallCount { get; private set; }
 
         public Uri? LastRequestUri { get; private set; }
@@ -344,7 +417,10 @@ public sealed class AgentExecCommandTests
             if (request.Content is not null)
                 LastRequestBody = await request.Content.ReadAsStringAsync(CancellationToken.None);
 
-            return await _respond(request, cancellationToken);
+            TransportToken = cancellationToken;
+            var response = _respond(request, cancellationToken);
+            Entered.TrySetResult(true);
+            return await response;
         }
 
         private sealed class UnreachableException : Exception;

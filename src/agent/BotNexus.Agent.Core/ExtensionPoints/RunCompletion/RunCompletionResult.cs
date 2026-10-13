@@ -13,6 +13,8 @@ public sealed record RunCompletionResult(
     string? WakeCondition = null,
     int ContinuationAttempts = 0)
 {
+    /// <summary>Bounded payload-free guard decisions; empty when no guard was observed.</summary>
+    public IReadOnlyList<GuardObservation> GuardObservations { get; init; } = [];
     /// <summary>Reports successful completion with no open work items or continuation attempts.</summary>
     public static RunCompletionResult Completed { get; } =
         new(RunCompletionStatus.Completed, []);

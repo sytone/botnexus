@@ -108,6 +108,8 @@ internal static class SqliteDataReaderExtensions
             Timestamp = ParseTimestamp(GetNullableString(reader, "timestamp")),
             ToolName = GetNullableString(reader, "tool_name"),
             ToolCallId = GetNullableString(reader, "tool_call_id"),
+            AgentRunId = GetNullableString(reader, "agent_run_id") is { } run ? BotNexus.Domain.Primitives.AgentRunId.From(run) : null,
+            ToolIsIncomplete = GetBool(reader, "tool_is_incomplete"),
             IsCompactionSummary = GetBool(reader, "is_compaction_summary"),
             // #3046: gateway-authored restart-replay banner. False for every pre-#3046 row.
             IsReplayBanner = GetBool(reader, "is_replay_banner"),

@@ -26,7 +26,8 @@ job's output out from under the reader. To get a fresh thread, delete the job an
 
 | Creator | Action type | Conversation context | Resulting target |
 | --- | --- | --- | --- |
-| Agent (via the `cron` tool, mid-conversation) | `agent-prompt` | Durable conversation resolved | **the creating conversation** |
+| Agent (via the `cron` tool, mid-conversation) | `agent-prompt` | Durable non-human, non-default conversation resolved | **the creating conversation** (implicit adoption excludes human/default threads) |
+| Agent (via `/loop`, mid-conversation) | `agent-prompt` | Durable current conversation explicitly selected | **the creating conversation**, including a human/default thread |
 | Agent (via the `cron` tool) | `command` | any | isolated — pinned on first run |
 | CLI (`botnexus cron …`, headless `agent exec`) | any | none | isolated — pinned on first run |
 | REST API (`POST /api/cron`) | any | none | isolated — pinned on first run |
@@ -77,9 +78,58 @@ The default is deliberately narrow. It applies **only** when all of the followin
 3. the caller did not supply an explicit conversation (an explicit choice is a decision, never a
    gap for a default to fill);
 4. a durable conversation actually resolved (a CLI, REST or headless caller has none, and keeps
-   the isolated default).
+   the isolated default);
+5. the conversation is neither human-facing (`HumanAgent`) nor the agent's default home thread.
+   This guard prevents implicit adoption; an explicit caller-selected binding still wins.
 
 Any of those failing yields `null`, which is byte-identical to the pre-#2412 behaviour.
+
+## `/loop`: recurring turns in your current conversation
+
+Use `/loop` in an active chat to schedule recurring prompts for that chat's agent. Each run
+uses the configured agent tools and provider and may incur model costs. The gateway must have
+cron scheduling enabled. There is no headless CLI equivalent for this conversation-bound command;
+CLI cron jobs retain the separate semantics in the table above.
+
+Examples to type in chat:
+
+```text
+/loop 15m check the queue and report changes
+/loop check the queue and report changes
+/loop status
+/loop stop loop-<id-shown-by-status>
+```
+
+Creation returns the generated loop name. `/loop status` lists only marked `/loop` jobs in the
+exact current conversation that both target and were created by its agent. Other cron jobs are
+not loops, even when they share the conversation. `/loop stop <name>` deletes only a matching
+loop. Without a name, zero matches is an error, one is stopped, and more than one is refused:
+use `/loop status` to choose a name. Names match exactly.
+
+Accepted explicit intervals are `1m`, `2m`, `3m`, `4m`, `5m`, `6m`, `10m`, `12m`, `15m`, `20m`,
+`30m`, `60m`, and `1h`, `2h`, `3h`, `4h`, `6h`, `8h`, `12h`, `24h`. These are whole-minute/hour
+periods representable without uneven boundary gaps in a five-field cron schedule. Schedules use
+UTC clock boundaries, not a delay measured from creation. Seconds, fractions, unsupported periods
+such as `7m`, signed numbers, ISO durations such as `PT5M`, and `every ...` are refused with the
+accepted forms; they are not silently treated as prompt text or a default interval.
+
+Without an interval, the command proposes five minutes and consumes `CronSelfPacingBound.Clamp`
+with the existing configured floor/ceiling. Creation reports requested and effective seconds,
+bounds and clamp reason. If the effective default cannot be represented exactly by a five-field
+schedule, creation is refused; supply an accepted explicit interval instead. Explicit intervals
+are not clamped. The existing `next_check` tool remains available for subsequent self-pacing.
+
+`/loop` explicitly asks to use the current conversation. It resolves the durable row from the
+session/conversation stores and passes that id to the explicit branch of
+`CronConversationDefault.Resolve`. This permits human/default conversations without weakening
+the implicit-adoption guard. Missing, ambiguous, archived, foreign-agent or stale active-session
+bindings are refused rather than creating an invisible unbound job.
+
+Stopping goes through `CronScheduler.DeleteJobAsync`: it cancels in-flight runs and reclaims the
+job's own cron-scoped run sessions. The scheduler archives only conversations with that job's
+cron-owned provenance. A loop bound to your existing human conversation does not own it, so
+stopping the loop leaves your conversation active. Loop identification uses the existing persisted
+job metadata (`chatCommand: /loop`); no new cron schema or general command framework is involved.
 
 ## Self-pacing: the `next_check` bound
 

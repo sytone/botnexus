@@ -16,6 +16,23 @@ canvas concern was extracted into its own controller (#1688) but deliberately ke
 
 ---
 
+## Client write visibility
+
+Conversation visibility is stamped by the server when the conversation is created.
+API credentials and agent scope do not override it.
+
+- `UserFacing` conversations retain normal client interactions.
+- `InspectableReadOnly` conversations remain readable, but client mutations return
+  `403 Forbidden`.
+- `InternalHidden` conversations are not disclosed through client mutation endpoints;
+  these requests return `404 Not Found`.
+
+Client message, metadata, binding, lifecycle, override, pin, and canvas writes check
+stored visibility before dispatch or persistence. Session-addressed operations check
+the session's stored parent conversation, not a caller-supplied conversation hint.
+Trusted runtime persistence and lifecycle operations remain separate from client
+write permission. Per-reader read-state is observer state and remains available.
+
 ## Endpoints
 
 | Verb | Route | Purpose |

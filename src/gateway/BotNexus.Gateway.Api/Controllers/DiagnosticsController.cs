@@ -119,6 +119,7 @@ public sealed class DiagnosticsController(
             GcHeapSizeBytes = snapshot.GcHeapSizeBytes,
             GcFragmentedBytes = snapshot.GcFragmentedBytes,
             GcCollectionIndex = snapshot.GcCollectionIndex,
+            LastGcCollection = snapshot.LastGcCollection,
             GcGenerations = snapshot.GcGenerations,
             SqliteConnections = snapshot.SqliteConnections,
             SqliteAllocatorAvailable = snapshot.SqliteAllocatorAvailable,
@@ -163,6 +164,7 @@ public sealed class DiagnosticsController(
                 GcHeapSizeBytes = s.GcHeapSizeBytes,
                 GcFragmentedBytes = s.GcFragmentedBytes,
                 GcCollectionIndex = s.GcCollectionIndex,
+                LastGcCollection = s.LastGcCollection,
                 GcGenerations = s.GcGenerations,
                 SqliteConnections = s.SqliteConnections,
                 SqliteAllocatorAvailable = s.SqliteAllocatorAvailable,
@@ -333,6 +335,13 @@ public sealed class MemoryPressureDto
 
     /// <summary>Index of the GC supplying these values; zero means no collection data exists.</summary>
     public long GcCollectionIndex { get; init; }
+
+    /// <summary>
+    /// Stored immutable characteristics of the same last GC as GcCollectionIndex and GcGenerations;
+    /// null when no collection observation exists. Counts are not a current census, and compaction
+    /// is not proof of reclamation. DTO mapping does not resample GC.
+    /// </summary>
+    public LastGcCollectionSnapshot? LastGcCollection { get; init; }
 
     private IReadOnlyList<GcGenerationSnapshot> _gcGenerations = Array.AsReadOnly(Array.Empty<GcGenerationSnapshot>());
 
