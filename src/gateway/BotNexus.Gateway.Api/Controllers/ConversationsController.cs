@@ -626,7 +626,12 @@ public sealed class ConversationsController : ControllerBase
             existing is null ? bindingId : DescribeBinding(existing),
             null,
             cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
+        // The detached binding comes from the pre-mutation aggregate; reload the committed
+        // binding set before publishing so sinks observe the post-removal state.
+        var updated = await _conversations.GetAsync(conversation.ConversationId, cancellationToken);
+        if (existing is not null && updated is not null &&
+            updated.ChannelBindings.All(b => b.BindingId != existing.BindingId))
+            await PublishConversationBindingRemovedBestEffortAsync(updated, existing, cancellationToken);
         return NoContent();
     }
 
@@ -1130,6 +1135,31 @@ public sealed class ConversationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to publish binding attachment for conversation {ConversationId}; clients must reconcile from durable conversation state.", updated.ConversationId);
+        }
+    }
+
+    private async Task PublishConversationBindingRemovedBestEffortAsync(Conversation updated, ChannelBinding removed, CancellationToken cancellationToken)
+    {
+        if (_conversationEventPublisher is null)
+            return;
+
+        try
+        {
+            var accepted = await _conversationEventPublisher.PublishAsync(new ConversationBindingRemovedEvent
+            {
+                AgentId = updated.AgentId,
+                ConversationId = updated.ConversationId,
+                Binding = ConversationBindingSnapshot.From(removed),
+                Bindings = ConversationBindingSnapshot.FromMany(updated.ChannelBindings),
+                OccurredAt = updated.UpdatedAt
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (!accepted)
+                _logger.LogWarning("Conversation event publisher rejected binding removal for conversation {ConversationId}; clients must reconcile from durable conversation state.", updated.ConversationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to publish binding removal for conversation {ConversationId}; clients must reconcile from durable conversation state.", updated.ConversationId);
         }
     }
 
