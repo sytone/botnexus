@@ -7,8 +7,14 @@ page assembled client-side. Browser Tools drives a headless Chrome through the s
 safety layer in front of every call.
 
 ::: warning Delivery status
-The guard layer, binary resolution and the five tools below are **implemented and tested**
-(`src/extensions/BotNexus.Extensions.BrowserTools/`).
+**Production browser execution is disabled (#4030).** All commands fail closed before starting
+or attaching to `agent-browser`, including navigation to public URLs. The external transport has
+no connection-bound destination enforcement. Installing Chrome, selecting another binary, or
+changing proxy settings does not enable it.
+
+The lexical guards, binary resolution and tool formatting are implemented and tested
+(`src/extensions/BotNexus.Extensions.BrowserTools/`). Fake-runner tests do not prove browser
+network isolation. The following setup reference does not override this execution boundary.
 
 One operator-facing gap remains: the pinned release catalogue **ships empty**, so
 `browser.autoProvision` cannot yet download a binary and fails closed with an actionable message.
@@ -110,6 +116,26 @@ disk where a later run could resolve it through channel 2 and execute it.
 The guard layer additionally accepts `additionalBlockedHosts`: extra hostnames blocked on top of
 the shared SSRF policy, matched exactly and case-insensitively. It is passed straight through to
 the shared validator; the browser extension defines no address rules of its own.
+
+## External browser transport boundary
+
+For developers and operators: URL admission is not a network isolation mechanism. A hostname
+that looks public can resolve to a forbidden address. Even an initially public connection can
+lead to private destinations through redirects, subresources, page scripts or form submission.
+Checking the current URL after load is too late to prevent those requests.
+
+`AgentBrowserProcessRunner` therefore refuses every command before process start. This also
+prevents read, click, type and screenshot commands from attaching to an existing daemon. There
+is no configuration bypass or operator assertion that enables this runner. BotNexus does not
+terminate browser processes started outside this runner.
+
+The child environment allow-list excludes proxy and `NO_PROXY` variables. That limits environment
+inheritance; it does not constrain the browser's actual connections or exclude alternate routes.
+A future enabled transport must enforce the shared `SsrfValidator` address policy on actual
+connections, including changed or mixed DNS answers, redirects, subresources and proxy bypass,
+and prove both forbidden-request rejection and permitted-public requests in isolated tests.
+The current fail-closed tests instead prove transport denial through the production runner;
+public positive controls cover lexical admission and fake-driver content handling only.
 
 ## Guards
 
