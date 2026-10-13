@@ -75,6 +75,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient, ISecretReda
 
             try
             {
+                ct.ThrowIfCancellationRequested();
                 await StreamCoreAsync(model, context, options, stream,
                     contentBlocks, usage,
                     updatedUsage => usage = updatedUsage,
@@ -104,7 +105,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient, ISecretReda
                 stream.End(msg);
                 activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             }
-        }, ct);
+        }); // The producer must run even when cancelled so it can emit and complete the aborted stream.
 
         return stream;
     }
