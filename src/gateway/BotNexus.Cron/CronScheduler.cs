@@ -1723,6 +1723,10 @@ public sealed class CronScheduler(
             waits.Add(queued.WaitFinishedAsync());
         var observed = Task.WhenAll(waits);
 
+        // Test-only seam: the queued cancel has been issued and the observation below is about to be
+        // awaited, so a test can check synchronously what the sweep is waiting on (#4731 review r4).
+        BeforeObservationWaitForTest?.Invoke(jobId, observed);
+
         if (graceSeconds <= 0)
         {
             // No grace configured means no opportunity to observe. Report that honestly rather than
@@ -1755,6 +1759,9 @@ public sealed class CronScheduler(
 
     /// <summary>Test-only: invoked between the active-run snapshot and the queued cancel.</summary>
     internal Func<JobId, Task>? AfterActiveSnapshotForTest { get; set; }
+
+    /// <summary>Test-only: invoked after the queued cancel, with the observation task the sweep is about to await.</summary>
+    internal Action<JobId, Task>? BeforeObservationWaitForTest { get; set; }
 
     /// <summary>
     /// Whether <paramref name="job"/> is past its <see cref="CronJob.ExpiresAt"/> instant (#2634).

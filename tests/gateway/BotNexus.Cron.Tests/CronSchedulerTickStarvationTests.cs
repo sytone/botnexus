@@ -592,7 +592,8 @@ public sealed class CronSchedulerTickStarvationTests
         await using var context = await CronStoreTestContext.CreateAsync();
         using var releaseA = new ManualResetEventSlim(false);
         var gatedA = new GatedAction("a-action", releaseA);
-        var stubborn = new StubbornAction("b-action");
+        var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var stubborn = new StubbornAction("b-action", order);
         var jobB = JobId.From("job-b");
 
         await context.Store.CreateAsync(DueJob("job-a", "a-action"));
@@ -603,26 +604,54 @@ public sealed class CronSchedulerTickStarvationTests
         await context.Store.CreateAsync(DueJob("job-b", "b-action"));
         await InvokeProcessTickAsync(scheduler);
 
+        var snapshotHookRan = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         scheduler.AfterActiveSnapshotForTest = async id =>
         {
             if (id != jobB) return;
             releaseA.Set();
-            (await ReturnsWithinAsync(stubborn.Started.Task, Settle)).ShouldBeTrue("B's action must start");
+            // B's release gate is still CLOSED here, so B is promoted, started, and parked.
+            await stubborn.Started.Task.WaitAsync(Settle);
+            snapshotHookRan.TrySetResult();
         };
 
-        var delete = scheduler.DeleteJobAsync(jobB);
-        (await ReturnsWithinAsync(delete, TimeSpan.FromMilliseconds(500))).ShouldBeFalse(
-            "delete must not tear down while the promoted action is still executing");
+        // #4731 review r4: checkpoint AFTER the queued cancel is issued and BEFORE the sweep awaits
+        // observation. Captured synchronously at the seam, so the assertion below cannot be satisfied
+        // merely because delete is still slow in store init/read (no elapsed-time negative).
+        var observationCheckpoint = new TaskCompletionSource<(bool ObservedComplete, bool ActionStarted, bool ActionExited)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        scheduler.BeforeObservationWaitForTest = (id, observed) =>
+        {
+            if (id != jobB) return;
+            observationCheckpoint.TrySetResult(
+                (observed.IsCompleted, stubborn.Started.Task.IsCompleted, stubborn.Exited.Task.IsCompleted));
+        };
+
+        async Task DeleteAndRecordAsync()
+        {
+            await scheduler.DeleteJobAsync(jobB);
+            order.Enqueue("delete-completed");
+        }
+
+        var delete = DeleteAndRecordAsync();
+
+        (await ReturnsWithinAsync(snapshotHookRan.Task, Settle)).ShouldBeTrue("the sweep's snapshot hook must run and B must start");
+        (await ReturnsWithinAsync(observationCheckpoint.Task, Settle)).ShouldBeTrue("the sweep must reach its post-cancel observation checkpoint");
+        var checkpoint = await observationCheckpoint.Task;
+        checkpoint.ActionStarted.ShouldBeTrue("B must have started before the queued cancel was issued");
+        checkpoint.ActionExited.ShouldBeFalse("B's release gate is still closed");
+        checkpoint.ObservedComplete.ShouldBeFalse(
+            "the sweep must be waiting on the promoted action, which is still executing behind its closed gate");
+        delete.IsCompleted.ShouldBeFalse("delete must not tear down while the promoted action is still executing");
         stubborn.Exited.Task.IsCompleted.ShouldBeFalse();
 
         stubborn.Release.Set();
         (await ReturnsWithinAsync(delete, Settle)).ShouldBeTrue();
-        stubborn.Exited.Task.IsCompleted.ShouldBeTrue("delete may only complete after the action has exited");
+        order.ToArray().ShouldBe(["action-exited", "delete-completed"], "delete may only complete after the action has exited");
         await DrainAsync(scheduler);
     }
 
     /// <summary>An action that ignores cancellation until explicitly released.</summary>
-    private sealed class StubbornAction(string actionType) : ICronAction
+    private sealed class StubbornAction(string actionType, System.Collections.Concurrent.ConcurrentQueue<string> order) : ICronAction
     {
         public string ActionType => actionType;
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -633,6 +662,7 @@ public sealed class CronSchedulerTickStarvationTests
         {
             Started.TrySetResult();
             await Task.Run(() => Release.Wait());
+            order.Enqueue("action-exited");
             Exited.TrySetResult();
         }
     }
