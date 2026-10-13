@@ -394,8 +394,9 @@ public static class AgentLoopRunner
                 // assistant turn -- and, worse, risked having genuine prose containing well-formed
                 // invoke markup rewritten into an executed tool call -- to compensate for one
                 // transport's defect. Providers that declare RecoversLeakedToolCallMarkup keep the
-                // exact previous behaviour; everyone else gets their text left alone.
-                if (assistantMessage.FinishReason != StopReason.ToolUse
+                // recovery behaviour for successful Stop turns; everyone else gets their text
+                // left alone. Never promote an unsuccessful terminal into executable tool calls.
+                if (assistantMessage.FinishReason == StopReason.Stop
                     && assistantMessage.ToolCalls is not { Count: > 0 }
                     && config.LlmClient.GetCapabilities(config.Model).RecoversLeakedToolCallMarkup)
                 {
