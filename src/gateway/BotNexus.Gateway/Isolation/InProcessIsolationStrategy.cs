@@ -2368,6 +2368,31 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <inheritdoc />
+    public IDisposable? ObserveActivity(Action<AgentActivityObservation> onActivity)
+    {
+        ArgumentNullException.ThrowIfNull(onActivity);
+        return _agent.Subscribe((agentEvent, _) =>
+        {
+            var observation = agentEvent switch
+            {
+                ToolExecutionEndEvent completed => AgentActivityEvidence.Project(completed),
+                TurnEndEvent => new AgentActivityObservation(AgentActivityKind.TurnCompleted, 0, 0),
+                _ => null
+            };
+            if (observation is not null)
+            {
+                try { onActivity(observation); }
+                catch (Exception)
+                {
+                    // Do not leak tool payloads through observer exception messages.
+                    _logger.LogWarning("Agent activity observer threw.");
+                }
+            }
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <inheritdoc />
     public IDisposable? ObserveTurns(Action onTurnCompleted)
     {
         ArgumentNullException.ThrowIfNull(onTurnCompleted);

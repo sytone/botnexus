@@ -15,7 +15,7 @@ namespace BotNexus.Gateway.Commands;
 /// <summary>
 /// Provides built-in slash commands through the shared command contributor extension contract.
 /// </summary>
-internal sealed class BuiltInCommandContributor(
+internal sealed partial class BuiltInCommandContributor(
     IAgentRegistry agentRegistry,
     IAgentSupervisor agentSupervisor,
     ISessionStore sessionStore,
@@ -32,6 +32,12 @@ internal sealed class BuiltInCommandContributor(
 
     private static readonly IReadOnlyList<CommandDescriptor> BuiltInCommands =
     [
+        new CommandDescriptor
+        {
+            Name = "/loop",
+            Description = "Create (/loop [interval] <prompt>), list (/loop status), or stop (/loop stop [name]) loops in this conversation.",
+            Category = "Session"
+        },
         new CommandDescriptor
         {
             Name = "/help",
@@ -113,6 +119,7 @@ internal sealed class BuiltInCommandContributor(
             "/model" => ExecuteModelOverrideAsync(context, cancellationToken),
             "/reasoning" => ExecuteReasoningOverrideAsync(context, cancellationToken),
             "/tools" => ExecuteToolOverrideAsync(context, cancellationToken),
+            "/loop" => ExecuteLoopAsync(context, cancellationToken),
             _ => Task.FromResult(new CommandResult
             {
                 Title = "Command Not Found",
