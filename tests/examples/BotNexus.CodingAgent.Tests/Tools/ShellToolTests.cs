@@ -37,11 +37,14 @@ public sealed class ShellToolTests
     [Fact]
     public async Task ExecuteAsync_WhenTimeoutReached_ThrowsTimeoutException()
     {
+        await using var child = new CancellationBoundChild(_tool);
+        using var safety = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var result = await _tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
-            ["command"] = "sleep 2",
+            ["command"] = CancellationBoundChild.Command,
             ["timeout"] = 1
-        });
+        }, safety.Token);
+        await child.AssertExitedAsync();
 
         result.Content[0].Value.ShouldContain("timed out");
         var details = result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>();
@@ -51,14 +54,16 @@ public sealed class ShellToolTests
     [Fact]
     public async Task ExecuteAsync_WhenCallerCancels_ReturnsCancelledResult()
     {
+        await using var child = new CancellationBoundChild(_tool);
         using var cancellationSource = new CancellationTokenSource(millisecondsDelay: 200);
         var result = await _tool.ExecuteAsync(
             "test-call",
             new Dictionary<string, object?>
             {
-                ["command"] = "sleep 2"
+                ["command"] = CancellationBoundChild.Command
             },
             cancellationSource.Token);
+        await child.AssertExitedAsync();
 
         result.Content[0].Value.ShouldContain("cancelled");
         var details = result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>();
@@ -112,10 +117,13 @@ public sealed class ShellToolTests
     public async Task ExecuteAsync_WhenNoTimeoutArgument_UsesConfiguredDefaultTimeout()
     {
         var tool = new ShellTool(defaultTimeoutSeconds: 1);
+        await using var child = new CancellationBoundChild(tool);
+        using var safety = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
-            ["command"] = "sleep 2"
-        });
+            ["command"] = CancellationBoundChild.Command
+        }, safety.Token);
+        await child.AssertExitedAsync();
 
         result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>()
             .TimedOut.ShouldBeTrue();
@@ -125,11 +133,14 @@ public sealed class ShellToolTests
     public async Task ExecuteAsync_WhenPerCallTimeoutProvided_OverridesConfiguredTimeout()
     {
         var tool = new ShellTool(defaultTimeoutSeconds: 10);
+        await using var child = new CancellationBoundChild(tool);
+        using var safety = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var result = await tool.ExecuteAsync("test-call", new Dictionary<string, object?>
         {
-            ["command"] = "sleep 2",
+            ["command"] = CancellationBoundChild.Command,
             ["timeout"] = 1
-        });
+        }, safety.Token);
+        await child.AssertExitedAsync();
 
         result.Details.ShouldBeOfType<ShellTool.ShellToolDetails>()
             .TimedOut.ShouldBeTrue();
@@ -259,6 +270,56 @@ public sealed class ShellToolTests
 
         field.ShouldNotBeNull();
         field!.GetRawConstantValue().ShouldBe(expectedBytes);
+    }
+
+    // A finite sleep can exit and drain before ShellTool arms its timer. Timeout/caller
+    // tests need work that remains alive until cancellation, not a longer sleep. This
+    // corrects the fixture precondition; the cause of historical failures remains unknown.
+    // Auto still selects Bash on both OSes. Its pwsh child uses the same non-spinning .NET
+    // infinite-delay sentinel as PowerShellStartupIsolationTests; kill-tree owns both.
+    private sealed class CancellationBoundChild : IAsyncDisposable
+    {
+        public const string Command = "pwsh -NoLogo -NoProfile -NonInteractive -Command '[Threading.Tasks.Task]::Delay(-1).GetAwaiter().GetResult()'";
+        private Process? _tracked;
+
+        public CancellationBoundChild(ShellTool tool)
+        {
+            // Reuse the existing per-instance observation seam without widening public API
+            // or adding a friend assembly solely for this test fixture.
+            var property = typeof(ShellTool).GetProperty("BeforeTimeoutArmAsync", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new InvalidOperationException("Missing shell process observation seam.");
+            property.SetValue(tool, (Func<Process, Task>)(process =>
+            {
+                _tracked = Process.GetProcessById(process.Id);
+                return Task.CompletedTask;
+            }));
+        }
+
+        public async Task AssertExitedAsync()
+        {
+            var process = _tracked ?? throw new InvalidOperationException("Shell child was not started.");
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            process.HasExited.ShouldBeTrue();
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (_tracked is { } process)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+        }
     }
 
     private static string? FindOnPath(string executable)

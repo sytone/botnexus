@@ -71,6 +71,14 @@ public sealed class ShellTool : IAgentTool
     private readonly ShellPreference _shellPreference;
     private readonly string[]? _shellCommand;
 
+    // Per-instance diagnostic seams order timer arm, child readiness, and exit observation.
+    // Defaults preserve the existing execution ordering and system clock.
+    internal Func<Process, Task> BeforeTimeoutArmAsync { get; init; }
+        = static _ => Task.CompletedTask;
+    internal TimeProvider ExecutionTimeProvider { get; init; } = TimeProvider.System;
+    internal Func<Process, CancellationToken, Task> WaitForProcessExitAsync { get; init; }
+        = static (process, token) => process.WaitForExitAsync(token);
+
     public ShellTool(string? workingDirectory = null, int? defaultTimeoutSeconds = 600, ShellPreference shellPreference = ShellPreference.Auto, string[]? shellCommand = null, int maxTimeoutSeconds = DefaultMaxTimeoutSeconds, LocalChildEnvironmentPolicy? environmentPolicy = null)
     {
         _environmentPolicy = environmentPolicy ?? LocalChildEnvironmentPolicy.Default;
@@ -321,8 +329,18 @@ public sealed class ShellTool : IAgentTool
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
+        try
+        {
+            await BeforeTimeoutArmAsync(process).ConfigureAwait(false);
+        }
+        catch
+        {
+            TryKill(process);
+            throw;
+        }
+
         using var timeoutCts = timeoutSeconds.HasValue
-            ? new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds.Value))
+            ? new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds.Value), ExecutionTimeProvider)
             : null;
         using var linkedCts = timeoutCts is null
             ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
@@ -330,7 +348,7 @@ public sealed class ShellTool : IAgentTool
 
         try
         {
-            await process.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
+            await WaitForProcessExitAsync(process, linkedCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested != true)
         {

@@ -1493,6 +1493,15 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         AgentResponse? exploration = null;
         IDisposable? turnSubscription = null;
+        IDisposable? activitySubscription = null;
+        SubAgentNoProgressDecision? noProgress = null;
+        var activityGate = new object();
+        var activityTurns = 0;
+        var noProgressOptions = _options.CurrentValue.SubAgents;
+        var detector = noProgressOptions.NoProgressEnabled
+            ? new SubAgentNoProgressDetector(noProgressOptions.NoProgressTurnWindow,
+                noProgressOptions.NoProgressRepeatedFailureThreshold)
+            : null;
         if (exploratoryTurns > 0)
         {
             turnSubscription = handle.ObserveTurns(() =>
@@ -1516,6 +1525,31 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
 
         try
         {
+            if (exploratoryTurns > 0 && detector is not null)
+            {
+                activitySubscription = handle.ObserveActivity(observation =>
+                {
+                    lock (activityGate)
+                    {
+                        if (record.FinalizationRequested || timeoutCts.IsCancellationRequested
+                            || record.Info.Status != SubAgentStatus.Running)
+                            return;
+                        if (observation.Kind == AgentActivityKind.TurnCompleted)
+                            activityTurns++;
+                        var decision = detector.Observe(observation);
+                        // The hard exploratory-turn cutoff owns its boundary regardless of which
+                        // of the independent turn/activity observers receives TurnEnd first.
+                        if (decision is null || activityTurns >= exploratoryTurns)
+                            return;
+                        if (record.TryRequestFinalization())
+                        {
+                            noProgress = decision;
+                            explorationCts.Cancel();
+                        }
+                    }
+                });
+            }
+
             if (exploratoryTurns > 0)
             {
                 try
@@ -1541,6 +1575,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                 }
             }
 
+            lock (activityGate)
+            {
+                activitySubscription?.Dispose();
+                activitySubscription = null;
+            }
             turnSubscription?.Dispose();
             turnSubscription = null;
             if (timeoutCts.IsCancellationRequested)
@@ -1578,6 +1617,23 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             if (final is not null)
                 await PersistToolAuditAsync(final, record).ConfigureAwait(false);
 
+            if (noProgress is not null)
+            {
+                var evidence = final is not null && !string.IsNullOrWhiteSpace(final.Content)
+                    ? MergeFinalizationOutcome(exploration, final)
+                    : exploration ?? new AgentResponse { Content = string.Empty };
+                _logger.LogInformation(
+                    "Sub-agent no-progress finalization: {Reason}, {MatchedTurns} matching turns.",
+                    noProgress.Reason, noProgress.MatchedTurns);
+                // Count the reserved final turn without replacing exploration's measured evidence.
+                evidence = evidence with { TurnCount = record.Info.TurnsUsed };
+                await CompleteInterruptedAsync(subAgentId, record, evidence, SubAgentStatus.Failed,
+                    SubAgentStopReason.NoProgress,
+                    $"Sub-agent stopped for no progress: {noProgress.Reason} ({noProgress.MatchedTurns} matching turns; supporting turns: {string.Join(",", noProgress.SupportingTurnIds)}).")
+                    .ConfigureAwait(false);
+                return;
+            }
+
             if (final is not null && !string.IsNullOrWhiteSpace(final.Content))
             {
                 var measured = MergeFinalizationOutcome(exploration, final);
@@ -1613,6 +1669,11 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         }
         finally
         {
+            lock (activityGate)
+            {
+                activitySubscription?.Dispose();
+                activitySubscription = null;
+            }
             turnSubscription?.Dispose();
             record.DisposeTimeout();
         }
@@ -1838,10 +1899,15 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
                         call.ToolName,
                         call.ResultContent))
             ],
-            UnresolvedWork = response.ToolCalls
-                .Where(call => call.IsError || call.IsIncomplete)
-                .Select(call => $"{call.ToolName} ({call.ToolCallId}) did not complete successfully.")
-                .ToArray(),
+            UnresolvedWork =
+            [
+                .. response.ToolCalls
+                    .Where(call => call.IsError || call.IsIncomplete)
+                    .Select(call => $"{call.ToolName} ({call.ToolCallId}) did not complete successfully."),
+                .. stopReason == SubAgentStopReason.NoProgress
+                    ? new[] { "Exploration stopped at the no-progress boundary; remaining work and final summary are unverified." }
+                    : Array.Empty<string>()
+            ],
             ActionsTaken =
             [
                 .. response.ToolCalls.Select(call => new SubAgentPartialAction(
