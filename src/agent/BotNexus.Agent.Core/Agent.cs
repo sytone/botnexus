@@ -124,6 +124,35 @@ public sealed class Agent
     }
 
     /// <summary>
+    /// Gets a value indicating whether the agent will refuse to start a new run right now.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the predicate callers must use to decide "queue vs. send". It is defined as
+    /// <c>Status != AgentStatus.Idle</c> so that it agrees EXACTLY with the run guard in
+    /// <see cref="RunAsync"/>, which rejects any non-Idle status.
+    /// </para>
+    /// <para>
+    /// Testing <c>Status == AgentStatus.Running</c> instead leaves a hole: during
+    /// <see cref="AgentStatus.Aborting"/> such a test answers "not running" while the run guard
+    /// still throws <c>InvalidOperationException: Agent is already running.</c> Callers then take
+    /// the direct-send branch and the turn is lost. Because every soul/cron job for an agent shares
+    /// one Agent instance, a dropped turn there silently starves all of that agent's scheduled work
+    /// (upstream sytone/botnexus#4688).
+    /// </para>
+    /// </remarks>
+    public bool IsBusy
+    {
+        get
+        {
+            lock (_lifecycleLock)
+            {
+                return _status != AgentStatus.Idle;
+            }
+        }
+    }
+
+    /// <summary>
     /// Gets a value indicating whether steering or follow-up messages are queued.
     /// </summary>
     public bool HasQueuedMessages => _steeringQueue.HasItems || _followUpQueue.HasItems;

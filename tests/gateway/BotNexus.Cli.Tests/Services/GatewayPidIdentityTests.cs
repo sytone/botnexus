@@ -327,22 +327,75 @@ public sealed class GatewayPidIdentityTests : IDisposable
     [Fact]
     public async Task StartAsync_WritesIdentityBearingPidFile()
     {
+        await using var child = new ControlledReadinessChild();
         _healthChecker
             .WaitForHealthyAsync(Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
-            .Returns(true);
+            .Returns(async call =>
+            {
+                _ = await child.Ready.WaitAsync(TimeSpan.FromMinutes(2), call.Arg<CancellationToken>());
+                return true;
+            });
 
-        var options = new GatewayStartOptions(
-            ExecutablePath: "BotNexus.Gateway.Api.dll",
-            Arguments: null,
-            HomePath: _home,
-            HealthUrl: "http://localhost:6199/health");
-
-        var result = await _manager.StartAsync(options);
+        var result = await child.StartAsync(_healthChecker, child.Options(_home))
+            .WaitAsync(TimeSpan.FromMinutes(2));
         result.Success.ShouldBeTrue();
+
+        var pid = await child.Ready;
+        result.Pid.ShouldBe(pid);
+        using var process = Process.GetProcessById(pid);
+        process.HasExited.ShouldBeFalse();
+        var live = GatewayPidFile.Capture(process);
+        live.HasIdentity.ShouldBeTrue("the controlled child must expose a live process generation");
 
         var written = ParseOrFail(await File.ReadAllTextAsync(PidFilePath));
         written.HasIdentity.ShouldBeTrue("StartAsync must persist process identity, not a bare PID");
         ((int?)written.Pid).ShouldBe(result.Pid);
+        written.Pid.ShouldBe(pid);
+        written.StartTimeUtc.ShouldBe(live.StartTimeUtc);
+        written.ProcessName.ShouldBe(live.ProcessName);
+        GatewayPidFile.Verify(written, process).ShouldBe(GatewayIdentityMatch.Match);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenReadinessThrows_ReapsIdentityBearingChildOnDisposal()
+    {
+        using var process = await ExerciseReadinessFailureAsync();
+        process.HasExited.ShouldBeTrue("fixture disposal must reap the exact child even when StartAsync throws");
+
+        async Task<Process> ExerciseReadinessFailureAsync()
+        {
+            // Launch ownership is captured before any PID-file/readiness assertion can fail.
+            await using var child = new ControlledReadinessChild();
+            _healthChecker
+                .WaitForHealthyAsync(Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+                .Returns(call => FailReadinessAsync(call.Arg<CancellationToken>()));
+
+            async Task<bool> FailReadinessAsync(CancellationToken cancellationToken)
+            {
+                _ = await child.Ready.WaitAsync(TimeSpan.FromMinutes(2), cancellationToken);
+                throw new InvalidOperationException("Injected PID-identity readiness failure.");
+            }
+            var startTask = child.StartAsync(_healthChecker, child.Options(_home));
+            var pid = await child.Ready.WaitAsync(TimeSpan.FromMinutes(2));
+            var ownedProcess = Process.GetProcessById(pid);
+            try
+            {
+                var exception = await Should.ThrowAsync<InvalidOperationException>(
+                    () => startTask.WaitAsync(TimeSpan.FromMinutes(2)));
+                exception.Message.ShouldBe("Injected PID-identity readiness failure.");
+                ownedProcess.HasExited.ShouldBeFalse();
+                var written = ParseOrFail(await File.ReadAllTextAsync(PidFilePath));
+                written.HasIdentity.ShouldBeTrue();
+                written.Pid.ShouldBe(pid);
+                GatewayPidFile.Verify(written, ownedProcess).ShouldBe(GatewayIdentityMatch.Match);
+                return ownedProcess;
+            }
+            catch
+            {
+                ownedProcess.Dispose();
+                throw;
+            }
+        }
     }
 
     // ---------------------------------------------------------------------

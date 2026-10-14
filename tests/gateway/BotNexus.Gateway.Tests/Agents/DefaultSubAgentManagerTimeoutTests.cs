@@ -11,7 +11,7 @@ using Moq;
 
 namespace BotNexus.Gateway.Tests.Agents;
 
-public sealed class DefaultSubAgentManagerTimeoutTests
+public sealed partial class DefaultSubAgentManagerTimeoutTests
 {
     /// <summary>
     /// The run's deadline is scheduled on a virtual clock and fires ONLY because the test advances
@@ -867,7 +867,8 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         TimeProvider? timeProvider = null,
         int timeoutSecondsBudget = 1,
         ISubAgentWorktreeSnapshotService? snapshotService = null,
-        int maxTurnsBudget = 30)
+        int maxTurnsBudget = 30,
+        Action<SubAgentOptions>? configureSubAgents = null)
     {
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(
@@ -905,6 +906,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         options.SubAgents.DefaultTimeoutSeconds = timeoutSecondsBudget;
         options.SubAgents.MaxTurnsCeiling = maxTurnsBudget;
         options.SubAgents.DefaultMaxTurns = maxTurnsBudget;
+        configureSubAgents?.Invoke(options.SubAgents);
 
         return (new DefaultSubAgentManager(
             supervisor.Object,

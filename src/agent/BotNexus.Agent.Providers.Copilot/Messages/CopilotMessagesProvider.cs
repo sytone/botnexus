@@ -274,7 +274,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
                 }
                 : null;
 
-            var (usage, responseId, stopReason) = await CopilotMessagesStreamParser.ProcessStreamAsync(
+            var result = await CopilotMessagesStreamParser.ProcessStreamAsync(
                 responseStream,
                 model,
                 stream,
@@ -287,9 +287,13 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
                 StreamIdleTimeout.Resolve(options),
                 secretRedactor);
 
-            setUsage(usage);
-            setResponseId(responseId);
-            setStopReason(stopReason);
+            // Publish parsed metadata before reporting incomplete EOF so the terminal error
+            // retains the response identity and usage, rather than losing parser-local state.
+            setUsage(result.Usage);
+            setResponseId(result.ResponseId);
+            setStopReason(result.StopReason);
+            if (!result.MessageStopped)
+                throw new InvalidOperationException("Copilot streaming error: stream ended before message_stop.");
         }
         finally
         {

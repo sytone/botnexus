@@ -789,18 +789,11 @@ public sealed class SqliteConversationStore : IConversationStore
         activity?.SetTag("botnexus.binding.id", bindingId.Value);
 
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
-        // Acquire both conversation locks in a deterministic (ordinal) order so a concurrent
-        // inverse move cannot deadlock via lock-ordering inversion.
-        var idA = fromConversationId.Value;
-        var idB = toConversationId.Value;
-        var (first, second) = string.CompareOrdinal(idA, idB) <= 0 ? (idA, idB) : (idB, idA);
-        var firstLock = await AcquireConversationLockAsync(first, ct).ConfigureAwait(false);
-        IDisposable? secondLock = null;
-        try
+        // Distinct IDs can share a stripe. Acquire physical stripes once, in a global
+        // stripe order rather than ID order, avoiding self-deadlock and inversion.
+        using var conversationLocks = await _conversationLocks.AcquirePairAsync(
+            fromConversationId.Value, toConversationId.Value, ct).ConfigureAwait(false);
         {
-            if (!string.Equals(first, second, StringComparison.Ordinal))
-                secondLock = await AcquireConversationLockAsync(second, ct).ConfigureAwait(false);
-
             var now = DateTimeOffset.UtcNow;
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
@@ -829,11 +822,6 @@ public sealed class SqliteConversationStore : IConversationStore
             _cache.Remove(fromConversationId.Value);
             _cache.Remove(toConversationId.Value);
             return true;
-        }
-        finally
-        {
-            secondLock?.Dispose();
-            firstLock.Dispose();
         }
     }
 
