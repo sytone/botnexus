@@ -303,13 +303,13 @@ public sealed class ConversationManagementTests
         var row = page.Locator(".conversation-list-item:has(.conversation-list-item-btn.active)").First;
         await row.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
 
-        var sidebarBox = await sidebar.BoundingBoxAsync();
-        var rowBox = await row.BoundingBoxAsync();
-        Assert.NotNull(sidebarBox);
-        Assert.NotNull(rowBox);
+        var sidebarBox = await sidebar.BoundingBoxAsync()
+            ?? throw new InvalidOperationException("Sidebar bounding box is missing.");
+        var rowBox = await row.BoundingBoxAsync()
+            ?? throw new InvalidOperationException("Conversation row bounding box is missing.");
         await page.Mouse.ClickAsync(
-            sidebarBox!.X + sidebarBox.Width - 4,
-            rowBox!.Y + rowBox.Height / 2,
+            sidebarBox.X + sidebarBox.Width - 4,
+            rowBox.Y + rowBox.Height / 2,
             new MouseClickOptions { Button = MouseButton.Right });
 
         var overlay = page.Locator("[data-testid='conversation-action-overlay']");
@@ -319,9 +319,9 @@ public sealed class ConversationManagementTests
             "element => element.matches(':popover-open')",
             await overlay.ElementHandleAsync());
 
-        var menuBox = await menu.BoundingBoxAsync();
-        Assert.NotNull(menuBox);
-        Assert.True(menuBox!.X < sidebarBox.X + sidebarBox.Width,
+        var menuBox = await menu.BoundingBoxAsync()
+            ?? throw new InvalidOperationException("Conversation menu bounding box is missing.");
+        Assert.True(menuBox.X < sidebarBox.X + sidebarBox.Width,
             $"{label}: menu did not start inside the sidebar boundary.");
         Assert.True(menuBox.X + menuBox.Width > sidebarBox.X + sidebarBox.Width,
             $"{label}: menu did not cross the sidebar boundary.");
@@ -331,7 +331,7 @@ public sealed class ConversationManagementTests
         var hitX = Math.Min(menuBox.X + menuBox.Width - 2, sidebarBox.X + sidebarBox.Width + 20);
         var hitY = menuBox.Y + menuBox.Height / 2;
         Assert.True(await page.EvaluateAsync<bool>(
-            "point => document.elementFromPoint(point.x, point.y)?.closest('[data-testid=conversation-action-menu]') !== null",
+            "point => { const menu = document.querySelector('[data-testid=conversation-action-menu]'); const hit = document.elementFromPoint(point.x, point.y); return menu !== null && hit !== null && hit.closest('[data-testid=conversation-action-menu]') === menu; }",
             new { x = hitX, y = hitY }), $"{label}: menu was not the topmost hit target beyond the sidebar.");
 
         var runId = Environment.GetEnvironmentVariable("RUN_ID");
