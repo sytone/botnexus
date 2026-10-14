@@ -39,6 +39,10 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
     private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
     private readonly CopilotEffortCapabilityCache _effortCapabilities = new();
 
+    // Instance-local seam lets tests control queued dispatch without thread-pool timing.
+    internal Func<Func<Task>, CancellationToken, Task> ScheduleProducer { get; init; }
+        = static (producer, token) => Task.Run(producer, token);
+
     public string Api => ApiId;
 
     /// <summary>
@@ -58,7 +62,9 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
         var stream = new LlmStream();
         var ct = options?.CancellationToken ?? CancellationToken.None;
 
-        _ = Task.Run(async () =>
+        // The producer owns terminal completion even when cancellation precedes dispatch.
+        // Never let scheduling cancellation prevent its protected cancellation handler from running.
+        _ = ScheduleProducer(async () =>
         {
             var usage = Usage.Empty();
             string? responseId = null;
@@ -71,6 +77,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
 
             try
             {
+                ct.ThrowIfCancellationRequested();
                 await StreamCoreAsync(model, context, options, capture, stream,
                     contentBlocks, usage,
                     updatedUsage => usage = updatedUsage,
@@ -96,7 +103,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
                 stream.End(msg);
                 activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             }
-        }, ct);
+        }, CancellationToken.None);
 
         return stream;
     }
