@@ -16,6 +16,8 @@
       parser-only surface (Parser.ParseInput); it does not start a runspace or execute anything.
     -->
     <PackageReference Include="System.Management.Automation" />
+    <!-- Remove when the parser's dependency floor includes the patched PKCS package. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
   </ItemGroup>
 
 </Project>
