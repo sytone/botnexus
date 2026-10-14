@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Configuration;
 using System.Diagnostics;
 using BotNexus.Cli.Commands;
 
@@ -153,7 +154,7 @@ public sealed class ExtensionProjectBuildServiceTests
         var sentinel = Path.Combine(liveDeployment, "sentinel.txt");
         await File.WriteAllTextAsync(sentinel, "unchanged");
         var service = new ExtensionProjectBuildService(
-            new BuildOutputExtensionProjectRunner(verbose: false), () => fixture.Root, _ => { });
+            new DotNetExtensionProjectBuildRunner(verbose: false), () => fixture.Root, _ => { });
 
         var result = await service.BuildAsync(
             fixture.ProjectPath, fixture.StagingDirectory, fixture.BotNexusRepoRoot, CancellationToken.None);

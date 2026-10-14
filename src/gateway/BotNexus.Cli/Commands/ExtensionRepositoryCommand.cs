@@ -18,7 +18,7 @@ public sealed class ExtensionRepositoryCommand
         command.AddCommand(BuildSetEnabled("enable", true, targetOption));
         command.AddCommand(BuildSetEnabled("disable", false, targetOption));
         command.AddCommand(BuildRemove(targetOption));
-        command.AddCommand(BuildReconcile(targetOption));
+        command.AddCommand(BuildSync(targetOption));
         return command;
     }
 
@@ -118,24 +118,31 @@ public sealed class ExtensionRepositoryCommand
         return command;
     }
 
-    private static Command BuildReconcile(Option<string?> targetOption)
+    private static Command BuildSync(Option<string?> targetOption)
     {
-        var command = new Command("reconcile", "Clone or safely update enabled extension repositories.");
+        var command = new Command("sync", "Clone or safely update enabled extension repositories.");
+        command.AddAlias("reconcile");
         command.SetHandler(async context =>
         {
             var home = CliPaths.ResolveTarget(context.ParseResult.GetValueForOption(targetOption));
-            var service = new ExtensionRepositoryRegistryService(Path.Combine(home, "config.json"), new FileSystem());
-            var results = await new ExtensionRepositoryCloneReconciler(home, service).ReconcileEnabledAsync();
-            foreach (var result in results)
-            {
-                if (result.Succeeded)
-                    AnsiConsole.MarkupLine($"[green]{CliText.SafeDisplay(result.Id)}[/] {CliText.SafeDisplay(result.ResolvedCommit!)}");
-                else
-                    AnsiConsole.MarkupLine($"[red]{CliText.SafeDisplay(result.Id)}: {CliText.SafeDisplay(result.FailureName!)}[/] {CliText.SafeDisplay(result.Diagnostic!)}");
-            }
-            context.ExitCode = results.Any(result => !result.Succeeded) ? 1 : 0;
+            var repoRoot = CliPaths.ResolveSource(explicitSource: null);
+            var result = await ExtensionLifecycleReconciler.CreateDefault(home, repoRoot).ReconcileAsync(cancellationToken: context.GetCancellationToken(), purpose: ExtensionLifecyclePurpose.RepositoryMaintenance);
+            Report(result, "sync");
+            context.ExitCode = result.Succeeded ? 0 : 1;
         });
         return command;
+    }
+
+
+    internal static void Report(ExtensionLifecycleResult result, string operation)
+    {
+        foreach (var repository in result.Repositories)
+        {
+            if (repository.Succeeded)
+                AnsiConsole.MarkupLine($"[green]{CliText.SafeDisplay(repository.Id)}[/] {CliText.SafeDisplay(repository.ResolvedCommit!)}");
+            else
+                AnsiConsole.MarkupLine($"[yellow][[{CliText.SafeDisplay(operation)}]] {CliText.SafeDisplay(repository.Id)}: {CliText.SafeDisplay(repository.FailureName!)}[/] {CliText.SafeDisplay(repository.Diagnostic!)}");
+        }
     }
 
     private static Option<string> RequiredOption(string name, string description)

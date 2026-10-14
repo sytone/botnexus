@@ -63,6 +63,8 @@ The following models are registered by `BuiltInModels.RegisterAnthropicModels`. 
 
 Use an exact registered identifier in the agent's `model` field. An ID absent from this table requires dynamic discovery or custom registration before use; absence from the built-ins does not establish upstream unavailability.
 
+Discovery applies an overlay only after reaching a terminal page. A missing or repeated continuation cursor, a failed page, or more pages remaining after the ten-request limit makes discovery unavailable; partial results are not applied. Existing registry entries remain unchanged in that case.
+
 ## Features
 
 ### Extended Thinking
@@ -96,7 +98,9 @@ This is the Anthropic-direct path only. Claude registrations reached through Git
 
 ### Prompt Caching
 
-BotNexus automatically uses Anthropic's prompt caching. The system prompt is split at the `<!-- BOTNEXUS_CACHE_BOUNDARY -->` marker — content before the boundary is cached across turns, reducing latency and cost.
+BotNexus automatically requests Anthropic's prompt caching. The system prompt is split at the `<!-- BOTNEXUS_CACHE_BOUNDARY -->` marker: the stable prefix receives a cache marker, while the dynamic tail does not. Cache reuse depends on Anthropic's token thresholds and matching-prefix rules.
+
+Each request uses at most four cache markers in total. System blocks, including the OAuth preamble, share that budget with the newest eligible messages. Tool definitions are preserved without separate markers. `cacheRetention: None` disables the markers; `Short` uses the default retention, and `Long` requests a one-hour lifetime on the direct Anthropic endpoint.
 
 ### Tool Use
 

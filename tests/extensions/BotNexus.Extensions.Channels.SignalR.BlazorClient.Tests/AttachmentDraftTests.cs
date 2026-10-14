@@ -27,7 +27,7 @@ public sealed class AttachmentDraftTests : IDisposable
         // real one. A ChatPanel with no conversation was never a state a citizen could send from.
         _store.SeedConversations("agent-1", [new ConversationSummaryDto(
             "conv-1", "agent-1", "Test", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
     }
 
     public void Dispose() => _ctx.Dispose();
@@ -90,5 +90,5 @@ public sealed class AttachmentDraftTests : IDisposable
         cut.FindAll("[data-testid='attachment-chip']").ShouldBeEmpty();
     }
 
-    private IRenderedComponent<ChatPanel> Render() => _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+    private IRenderedComponent<ChatPanel> Render() => _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 }

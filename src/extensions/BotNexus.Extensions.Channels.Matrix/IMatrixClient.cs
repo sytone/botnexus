@@ -7,8 +7,8 @@ namespace BotNexus.Extensions.Channels.Matrix;
 /// <remarks>
 /// Kept deliberately narrow: every member here corresponds to exactly one Client-Server endpoint
 /// the first vertical slice needs. Capabilities deferred by #1201 (encryption, media upload,
-/// receipts) are absent rather than stubbed, so an unimplemented feature is a compile error at the
-/// call site rather than a silent no-op at runtime.
+/// Spaces mapping) are absent rather than stubbed, so an unimplemented feature is a compile error
+/// at the call site rather than a silent no-op at runtime.
 /// </remarks>
 public interface IMatrixClient
 {
@@ -67,6 +67,15 @@ public interface IMatrixClient
     /// <param name="roomId">Room ID to join.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task JoinRoomAsync(string roomId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Marks an event as read via
+    /// <c>POST /_matrix/client/v3/rooms/{roomId}/receipt/m.read/{eventId}</c>.
+    /// </summary>
+    /// <param name="roomId">Room containing the handled event.</param>
+    /// <param name="eventId">Handled event to acknowledge.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task SendReadReceiptAsync(string roomId, string eventId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Sets the account's typing state via

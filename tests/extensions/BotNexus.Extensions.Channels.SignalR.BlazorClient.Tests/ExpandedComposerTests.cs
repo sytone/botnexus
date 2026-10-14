@@ -32,7 +32,7 @@ public sealed class ExpandedComposerTests : IDisposable
             Conversation("conv-1", isDefault: true),
             Conversation("conv-2", isDefault: false)
         ]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
     }
 
     public void Dispose() => _ctx.Dispose();
@@ -89,7 +89,7 @@ public sealed class ExpandedComposerTests : IDisposable
     [Fact]
     public void Ambient_conversation_keeps_inline_draft_when_expanded()
     {
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
         cut.Find("[data-testid=chat-input]").Input("ambient draft");
 
         cut.Find("[data-testid=chat-expand]").Click();

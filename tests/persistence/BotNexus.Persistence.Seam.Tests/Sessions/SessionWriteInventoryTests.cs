@@ -57,6 +57,18 @@ public sealed class SessionWriteInventoryTests
             + "re-read and reported as Conflict with the authoritative status rather than claimed "
             + "as a write."),
 
+        new("sessions", nameof(ISessionStore.ExpireIfMatchesAsync), WriteClassification.CompareAndSwap,
+            "status, expires_at (only when absent), and updated_at for one cleanup candidate",
+            "SQLite uses one conditional UPDATE whose WHERE clause matches session id, conversation "
+            + "id, status, and the projected updated_at version. A concurrent save changes that "
+            + "version, so cleanup reports Conflict instead of expiring newer work."),
+
+        new("sessions", nameof(ISessionStore.DeleteIfMatchesAsync), WriteClassification.CompareAndSwap,
+            "removal of one sessions row and its history for the exact cleanup projection version",
+            "The sessions-row DELETE matches session id, conversation id, status, and updated_at "
+            + "inside the striped lock and transaction. History is removed only when that exact row "
+            + "was deleted, so a stale cleanup plan cannot erase a concurrent save."),
+
         new("sessions", nameof(ISessionStore.RebindSessionsAsync), WriteClassification.NarrowPatch,
             "the conversation_id column of sessions owned by one agent whose ids match an exact prefix",
             "SQLite resolves the agent's authoritative conversation ids first, then applies one "
@@ -81,6 +93,13 @@ public sealed class SessionWriteInventoryTests
             "one sub_agent_sessions row at spawn time",
             "Insert of a row keyed by sub-agent id in a side table the session aggregate never "
             + "rewrites; no session column is touched."),
+
+        new("sessions", nameof(ISessionStore.ConsumeSubAgentResultAsync), WriteClassification.NarrowPatch,
+            "one original parent ToolResult row, parent updated_at, and consumed_tool_call_id on the retained run",
+            "Parent ownership/status/conversation probe, insert-only tool history and the receipt update "
+            + "share the striped parent lock and one SQLite transaction. A competing consumer sees "
+            + "the committed call id; SaveAsync never rewrites that side-table column and its history "
+            + "delta cannot erase or duplicate the original tool row."),
 
         new("sessions", nameof(ISessionStore.UpdateSubAgentSessionAsync), WriteClassification.NarrowPatch,
             "ended_at and status of one sub_agent_sessions row",
@@ -115,7 +134,7 @@ public sealed class SessionWriteInventoryTests
         var mutating = typeof(ISessionStore)
             .GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Select(m => m.Name)
-            .Where(n => !readOnlyPrefixes.Any(p => n.StartsWith(p, StringComparison.Ordinal)))
+            .Where(n => !IsReadOnlyEntryPoint(n, readOnlyPrefixes))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
@@ -130,6 +149,20 @@ public sealed class SessionWriteInventoryTests
             + ". Add a row to SessionWriteInventoryTests.Inventory stating what the write owns and "
             + "what stops it losing a concurrent update, and add a seam test if it can interleave "
             + "with SaveAsync.");
+    }
+
+    private static bool IsReadOnlyEntryPoint(string name, string[] prefixes)
+        => name == nameof(ISessionStore.FindSubAgentSpawnAsync)
+            || prefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal));
+
+    [Fact]
+    public void SubAgentEntryPoints_HaveExactReadAndMutationClassifications()
+    {
+        IsReadOnlyEntryPoint(nameof(ISessionStore.FindSubAgentSpawnAsync), []).ShouldBeTrue();
+        IsReadOnlyEntryPoint(nameof(ISessionStore.ConsumeSubAgentResultAsync), []).ShouldBeFalse();
+        IsReadOnlyEntryPoint("FindFutureMutationAsync", []).ShouldBeFalse();
+        Inventory.Single(e => e.EntryPoint == nameof(ISessionStore.ConsumeSubAgentResultAsync))
+            .Classification.ShouldBe(WriteClassification.NarrowPatch);
     }
 
     [Fact]

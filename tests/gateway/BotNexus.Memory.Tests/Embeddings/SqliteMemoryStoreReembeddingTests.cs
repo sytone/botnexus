@@ -122,7 +122,8 @@ public sealed class SqliteMemoryStoreReembeddingTests : IAsyncLifetime
             var job = await store.EnsureReembeddingJobAsync(CurrentIdentity);
             var claimed = await store.ClaimReembeddingBatchAsync(job.JobId, batchSize: 1);
 
-            await store.CompleteReembeddingItemAsync(job.JobId, claimed[0].MemoryId, claimed[0].Revision, replacement);
+            await store.CompleteReembeddingItemAsync(
+                job.JobId, claimed[0].MemoryId, claimed[0].Revision, claimed[0].ClaimToken, replacement);
 
             var actual = await store.GetByIdAsync(original.Id);
             actual.ShouldNotBeNull();
@@ -163,7 +164,8 @@ public sealed class SqliteMemoryStoreReembeddingTests : IAsyncLifetime
             claim.Revision.ShouldBe(1);
             _ = await store.UpdateAsync("changed", 1, new MemoryUpdate { Content = "new content" });
 
-            await store.CompleteReembeddingItemAsync(job.JobId, claim.MemoryId, claim.Revision, replacement);
+            await store.CompleteReembeddingItemAsync(
+                job.JobId, claim.MemoryId, claim.Revision, claim.ClaimToken, replacement);
 
             var actual = await store.GetByIdAsync("changed");
             actual.ShouldNotBeNull();
@@ -174,30 +176,98 @@ public sealed class SqliteMemoryStoreReembeddingTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task FailReembeddingItem_PersistsFailureAndMakesRowRetryableAfterRestart()
+    public async Task CompleteReembeddingItem_ExpiredClaimReclaimed_StaleWorkerCannotCompleteNewClaim()
     {
-        string jobId = string.Empty;
+        var replacement = EmbeddingBlob.Encode(CurrentIdentity, [0f, 0f, 1f, 0f]);
         await WithStoreAsync(async store =>
         {
-            await store.InsertAsync(Entry("retry-me", AtMinute(1)));
+            await store.InsertAsync(Entry("reclaimed"));
             var job = await store.EnsureReembeddingJobAsync(CurrentIdentity);
-            jobId = job.JobId;
-            var claimed = await store.ClaimReembeddingBatchAsync(job.JobId, batchSize: 1);
+            var stale = (await store.ClaimReembeddingBatchAsync(job.JobId, 1)).ShouldHaveSingleItem();
+            await MakeClaimsAvailableAsync(job.JobId);
+            var current = (await store.ClaimReembeddingBatchAsync(job.JobId, 1)).ShouldHaveSingleItem();
+            current.ClaimToken.ShouldNotBe(stale.ClaimToken);
 
-            await store.FailReembeddingItemAsync(job.JobId, claimed[0].MemoryId, "provider unavailable");
+            await store.CompleteReembeddingItemAsync(
+                job.JobId, stale.MemoryId, stale.Revision, stale.ClaimToken, replacement);
+            (await store.GetByIdAsync("reclaimed")).ShouldNotBeNull().Embedding.ShouldBeNull();
+
+            await store.CompleteReembeddingItemAsync(
+                job.JobId, current.MemoryId, current.Revision, current.ClaimToken, replacement);
+            (await store.GetByIdAsync("reclaimed")).ShouldNotBeNull().Embedding.ShouldBe(replacement);
         });
+    }
 
+    [Fact]
+    public async Task FailReembeddingItem_ExpiredClaimReclaimed_StaleWorkerCannotFailNewClaim()
+    {
         await WithStoreAsync(async store =>
         {
-            var persisted = await store.GetReembeddingJobAsync();
-            persisted.ShouldNotBeNull();
-            persisted.JobId.ShouldBe(jobId);
-            persisted.FailedCount.ShouldBe(1);
-            persisted.LastError.ShouldBe("provider unavailable");
+            await store.InsertAsync(Entry("reclaimed"));
+            var job = await store.EnsureReembeddingJobAsync(CurrentIdentity);
+            var stale = (await store.ClaimReembeddingBatchAsync(job.JobId, 1)).ShouldHaveSingleItem();
+            await MakeClaimsAvailableAsync(job.JobId);
+            var current = (await store.ClaimReembeddingBatchAsync(job.JobId, 1)).ShouldHaveSingleItem();
 
-            var retry = await store.ClaimReembeddingBatchAsync(jobId, batchSize: 1);
-            retry.ShouldHaveSingleItem().MemoryId.ShouldBe("retry-me");
-            retry[0].FailureCount.ShouldBe(1);
+            await store.FailReembeddingItemAsync(
+                job.JobId, stale.MemoryId, stale.Revision, stale.ClaimToken, "stale failure");
+            await store.FailReembeddingItemAsync(
+                job.JobId, current.MemoryId, current.Revision, current.ClaimToken, "current failure");
+            await MakeClaimsAvailableAsync(job.JobId);
+            var reclaimedAgain = (await store.ClaimReembeddingBatchAsync(job.JobId, 1)).ShouldHaveSingleItem();
+            reclaimedAgain.FailureCount.ShouldBe(1);
+        });
+    }
+
+    [Fact]
+    public async Task FailReembeddingItem_BackoffAllowsYoungerWorkAndTerminalizesAtAttemptLimit()
+    {
+        await WithStoreAsync(async store =>
+        {
+            await store.InsertAsync(Entry("oldest", AtMinute(1)));
+            await store.InsertAsync(Entry("younger", AtMinute(2)));
+            var job = await store.EnsureReembeddingJobAsync(CurrentIdentity);
+            var claim = (await store.ClaimReembeddingBatchAsync(job.JobId, 1)).ShouldHaveSingleItem();
+
+            await store.FailReembeddingItemAsync(
+                job.JobId, claim.MemoryId, claim.Revision, claim.ClaimToken, "attempt one");
+            var fair = (await store.ClaimReembeddingBatchAsync(job.JobId, 1)).ShouldHaveSingleItem();
+            fair.MemoryId.ShouldBe("younger");
+
+            for (var attempt = 2; attempt <= 3; attempt++)
+            {
+                await MakeClaimsAvailableAsync(job.JobId, "oldest");
+                claim = (await store.ClaimReembeddingBatchAsync(job.JobId, 1)).ShouldHaveSingleItem();
+                claim.MemoryId.ShouldBe("oldest");
+                await store.FailReembeddingItemAsync(
+                    job.JobId, claim.MemoryId, claim.Revision, claim.ClaimToken, $"attempt {attempt}");
+            }
+
+            await MakeClaimsAvailableAsync(job.JobId, "oldest");
+            (await store.ClaimReembeddingBatchAsync(job.JobId, 10)).ShouldBeEmpty();
+            var progress = await store.GetReembeddingJobAsync();
+            progress.ShouldNotBeNull();
+            progress.FailedCount.ShouldBe(1);
+            progress.PendingCount.ShouldBe(1);
+            progress.LastError.ShouldBe("attempt 3");
+        });
+    }
+
+    [Fact]
+    public async Task ClaimReembeddingBatch_DoesNotReconcileBeyondBoundedEnsureBatch()
+    {
+        await WithStoreAsync(async store =>
+        {
+            for (var index = 0; index < 200; index++)
+                await store.InsertAsync(Entry($"item-{index:D3}", AtMinute(index % 60)));
+
+            var job = await store.EnsureReembeddingJobAsync(CurrentIdentity);
+            _ = await store.EnsureReembeddingJobAsync(CurrentIdentity);
+
+            var first = await store.ClaimReembeddingBatchAsync(job.JobId, 200);
+            first.Count.ShouldBe(128);
+            var second = await store.ClaimReembeddingBatchAsync(job.JobId, 200);
+            second.Count.ShouldBe(72);
         });
     }
 
@@ -235,6 +305,20 @@ public sealed class SqliteMemoryStoreReembeddingTests : IAsyncLifetime
         var cancelled = await WithStoreAsync(store => store.GetReembeddingJobAsync());
         cancelled.ShouldNotBeNull();
         cancelled.State.ShouldBe(ReembeddingJobState.Cancelled);
+    }
+
+    private async Task MakeClaimsAvailableAsync(string jobId, string? memoryId = null)
+    {
+        await using var connection = new SqliteConnection($"Data Source={_dbPath}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = memoryId is null
+            ? "UPDATE memory_reembedding_items SET next_attempt_at = '2000-01-01T00:00:00Z' WHERE job_id = $jobId"
+            : "UPDATE memory_reembedding_items SET next_attempt_at = '2000-01-01T00:00:00Z' WHERE job_id = $jobId AND memory_id = $memoryId";
+        command.Parameters.AddWithValue("$jobId", jobId);
+        if (memoryId is not null)
+            command.Parameters.AddWithValue("$memoryId", memoryId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private async Task<T> WithStoreAsync<T>(Func<SqliteMemoryStore, Task<T>> action)

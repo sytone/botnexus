@@ -16,6 +16,75 @@ namespace BotNexus.Gateway.Configuration.Tests;
 public sealed class SqliteConfigurationProviderTests
 {
     /// <summary>
+    /// Deterministic timer source for the provider's background detector. Advancing it invokes due
+    /// callbacks directly, so the regression proves automatic detection without sleeping.
+    /// </summary>
+    private sealed class TestTimeProvider : TimeProvider
+    {
+        private readonly List<TestTimer> _timers = [];
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            var timer = new TestTimer(callback, state, dueTime, period);
+            _timers.Add(timer);
+            return timer;
+        }
+
+        public void Advance(TimeSpan elapsed)
+        {
+            foreach (var timer in _timers.ToArray())
+            {
+                timer.Advance(elapsed);
+            }
+        }
+
+        private sealed class TestTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period) : ITimer
+        {
+            private TimeSpan _remaining = dueTime;
+            private bool _disposed;
+
+            public void Advance(TimeSpan elapsed)
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _remaining -= elapsed;
+                while (_remaining <= TimeSpan.Zero && !_disposed)
+                {
+                    callback(state);
+                    if (period == Timeout.InfiniteTimeSpan)
+                    {
+                        _disposed = true;
+                        return;
+                    }
+
+                    _remaining += period;
+                }
+            }
+
+            public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
+
+            public void Dispose() => _disposed = true;
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
+        }
+    }
+
+    /// <summary>
     /// In-memory store so the tests exercise the provider rather than SQLite. Failure injection is
     /// explicit because the fail-safe path is otherwise unreachable from a healthy store.
     /// </summary>
@@ -231,6 +300,62 @@ public sealed class SqliteConfigurationProviderTests
 
             (await provider.CheckForChangesAsync()).ShouldBeFalse();
             notifications.ShouldBe(1, "the same committed revision must not produce a reload storm");
+        }
+        finally
+        {
+            SqlitePoolCleanup.ClearPoolFor(dbPath);
+            foreach (var suffix in new[] { "", "-wal", "-shm" })
+            {
+                var path = dbPath + suffix;
+                if (File.Exists(path))
+                {
+                    try { File.Delete(path); } catch (IOException) { /* best effort in temp */ }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// #4329 AC1/6/13: the provider-owned detector observes an out-of-process write on its configured
+    /// interval and publishes the options callback. The clock is advanced explicitly; calling
+    /// <see cref="SqliteConfigurationProvider.CheckForChangesAsync"/> would only prove the read path.
+    /// </summary>
+    [Fact]
+    public async Task DetectionInterval_AutomaticallyReloadsExternalWrite_WithoutSleep()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"botnexus-config-detector-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            var readerStore = new SqliteConfigStore($"Data Source={dbPath}");
+            var writerStore = new SqliteConfigStore($"Data Source={dbPath}");
+            await writerStore.WriteDocumentAsync(Document("""{ "gateway": { "defaultAgentId": "before" } }"""));
+
+            var time = new TestTimeProvider();
+            using var provider = new SqliteConfigurationProvider(
+                readerStore,
+                detectionInterval: TimeSpan.FromSeconds(1),
+                timeProvider: time);
+            provider.Load();
+
+            var config = new ConfigurationRoot([provider]);
+            var services = new ServiceCollection();
+            services.AddSingleton<IConfiguration>(config);
+            services.AddOptions<GatewayOptions>().Bind(config.GetSection("gateway"));
+            using var sp = services.BuildServiceProvider();
+
+            var monitor = sp.GetRequiredService<IOptionsMonitor<GatewayOptions>>();
+            var changed = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var subscription = monitor.OnChange(options => changed.TrySetResult(options.DefaultAgentId));
+
+            await writerStore.ApplyChangesAsync(new ConfigChangeSet(
+                [new ConfigEntry("gateway.defaultAgentId", ConfigValueState.Value, "\"after\"")],
+                []));
+
+            time.Advance(TimeSpan.FromSeconds(1));
+
+            (await changed.Task.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBe("after");
+            monitor.CurrentValue.DefaultAgentId.ShouldBe("after");
         }
         finally
         {

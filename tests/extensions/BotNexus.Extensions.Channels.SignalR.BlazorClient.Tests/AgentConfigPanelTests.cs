@@ -69,12 +69,17 @@ public sealed class AgentConfigPanelTests : IDisposable
         _store.SeedConversations(AgentId, [new ConversationSummaryDto(
             conversationId, AgentId, "Chat", true, "Active", sessionId, 1,
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)]);
-        _store.SetActiveConversation(AgentId, conversationId);
+        _store.SelectView(AgentId, conversationId, SelectionSource.RouteNavigation);
     }
+
+    private string? StoreConversationId() =>
+        (_store as IDisplayedConversation).DisplayedConversationIdFor(AgentId);
 
     private async Task<IRenderedComponent<AgentConfigPanel>> OpenAsync()
     {
-        var cut = _ctx.Render<AgentConfigPanel>(p => p.Add(c => c.AgentId, AgentId));
+        var cut = _ctx.Render<AgentConfigPanel>(p => p
+            .Add(c => c.AgentId, AgentId)
+            .Add(c => c.ConversationId, (StoreConversationId())));
         await cut.InvokeAsync(() => cut.Instance.Open());
         return cut;
     }
@@ -230,6 +235,22 @@ public sealed class AgentConfigPanelTests : IDisposable
             copied.GetProperty(key).GetString().ShouldBe(value, $"copied '{key}' must equal the rendered value");
         copied.EnumerateObject().Select(p => p.Name).ToHashSet(StringComparer.Ordinal)
             .ShouldBe(rendered.Keys.ToHashSet(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task Panel_includes_binding_management_for_the_active_conversation()
+    {
+        _http.Setup("/api/agents/farnsworth", DescriptorJson);
+        SeedAgentWithConversation("conv-abc");
+        _rest.GetConversationAsync("conv-abc", Arg.Any<CancellationToken>())
+            .Returns(new ConversationResponseDto(
+                "conv-abc", AgentId, "Chat", true, "Active", "sess-1", [],
+                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
+
+        var cut = await OpenAsync();
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='binding-add-open']"));
+        await _rest.Received().GetConversationAsync("conv-abc", Arg.Any<CancellationToken>());
     }
 
     [Fact]

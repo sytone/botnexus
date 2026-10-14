@@ -19,12 +19,12 @@ public sealed class ExtensionRepositoryCloneReconcilerTests : IDisposable
 
         result.ResolvedCommit.ShouldBe(commit);
         var persisted = (await registry.ListAsync()).ShouldHaveSingleItem();
-        persisted.ReconciliationStatus.ShouldBe("succeeded");
-        persisted.ResolvedCommit.ShouldBe(commit);
+        persisted.ReconciliationStatus.ShouldBe("reconciling");
+        persisted.ResolvedCommit.ShouldBeNull();
         persisted.ClonePath.ShouldNotBeNull();
         Directory.Exists(persisted.ClonePath).ShouldBeTrue();
         persisted.LastAttemptUtc.ShouldNotBeNull();
-        persisted.LastSuccessUtc.ShouldNotBeNull();
+        persisted.LastSuccessUtc.ShouldBeNull();
         persisted.LatestFailure.ShouldBeNull();
     }
 
@@ -68,7 +68,7 @@ public sealed class ExtensionRepositoryCloneReconcilerTests : IDisposable
 
         result.Succeeded.ShouldBeTrue();
         result.ResolvedCommit.ShouldBe(next);
-        (await registry.ListAsync()).Single().ResolvedCommit.ShouldBe(next);
+        (await registry.ListAsync()).Single().ResolvedCommit.ShouldBeNull();
     }
 
     [Fact]

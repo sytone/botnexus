@@ -117,7 +117,9 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
               "customRootField": "preserve-me",
               "agents": {
                 "test-agent": {
-                  "customAgentField": "keep"
+                  "customAgentField": "keep",
+                  "systemPromptFile": "legacy.md",
+                  "systemPromptFiles": ["legacy.md"]
                 }
               }
             }
@@ -127,7 +129,6 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
         await writer.SaveAsync(CreateDescriptor("test-agent") with
         {
             Description = null,
-            SystemPromptFile = null,
             AllowedModelIds = [],
             ToolIds = [],
             SubAgentIds = [],
@@ -141,6 +142,7 @@ public sealed class PlatformConfigAgentWriterTests : IDisposable
         agent["customAgentField"]!.GetValue<string>().ShouldBe("keep");
         agent["description"].ShouldBeNull();
         agent["systemPromptFile"].ShouldBeNull();
+        agent["systemPromptFiles"].ShouldBeNull();
         agent["allowedModels"].ShouldBeNull();
         agent["toolIds"].ShouldBeNull();
         agent["subAgents"].ShouldBeNull();

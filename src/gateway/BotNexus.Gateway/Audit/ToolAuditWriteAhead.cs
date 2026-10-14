@@ -70,6 +70,12 @@ internal sealed class ToolAuditWriteAhead(
     private readonly ConcurrentDictionary<string, InFlightCall> _inFlight = new(StringComparer.Ordinal);
 
     private int _interruptionRecorded;
+    private AgentRunId? _runId;
+    public void BeginRun(AgentRunId? runId)
+    {
+        _runId = runId;
+        Interlocked.Exchange(ref _interruptionRecorded, 0);
+    }
 
     /// <summary>
     /// Persists the redacted invocation before the tool is invoked, and does not return until the
@@ -105,7 +111,7 @@ internal sealed class ToolAuditWriteAhead(
             }
         }
 
-        _inFlight[toolCallId] = new InFlightCall(toolName, serializedArguments);
+        _inFlight[toolCallId] = new InFlightCall(toolName, serializedArguments, _runId);
         var deadline = persistenceDeadline ?? DefaultPersistenceDeadline;
         using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadlineCts.CancelAfter(deadline);
@@ -114,25 +120,34 @@ internal sealed class ToolAuditWriteAhead(
         {
             var store = sessionStore
                 ?? throw new InvalidOperationException("Session persistence is unavailable.");
-            var entry = auditSink.ProjectStart(toolCallId, toolName, serializedArguments);
+            var entry = auditSink.ProjectStart(toolCallId, toolName, serializedArguments) with { AgentRunId = _runId, PersistenceKey = DefaultToolAuditSink.GetToolStartPersistenceKey(toolCallId, _runId) };
             SessionAppendMutationResult result;
             using (var persist = StartStage("audit.persist", toolCallId, toolName))
             {
                 try
                 {
-                    if (FailClosedTools.Contains(toolName))
+                    if (store is IBoundedSessionAppendStore boundedStore)
                     {
-                        // Security-sensitive tools do not abandon a potentially successful write:
-                        // execution remains blocked until durability is known. A truly hard store
-                        // deadline is deliberately left to the store contract in the remaining
-                        // #3896 scope; pretending WaitAsync cancels SQLite would be unsafe.
+                        // The store owns the deadline and returns only after a definitive commit or
+                        // rollback. Tool classification controls the failure disposition below; it
+                        // must not select a weaker persistence mechanism.
+                        result = await boundedStore.AppendEntriesWithinAsync(
+                                sessionId, [entry], deadline, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    else if (FailClosedTools.Contains(toolName))
+                    {
+                        // A store that has not opted into the definitive bounded contract may still
+                        // commit after cancellation. Preserve the conservative behaviour: await its
+                        // actual outcome rather than releasing a destructive tool on an uncertain write.
                         result = await store.AppendEntriesAsync(sessionId, [entry], deadlineCts.Token)
                             .ConfigureAwait(false);
                     }
                     else
                     {
-                        // Read-only tools preserve #2615 best-effort availability. Task.Run also
-                        // bounds a store implementation that blocks before returning its Task.
+                        // Read-only tools preserve #2615 best-effort availability for stores that do
+                        // not provide a definitive bounded append. Task.Run also bounds a store
+                        // implementation that blocks before returning its Task.
                         var appendTask = Task.Run(
                             () => store.AppendEntriesAsync(sessionId, [entry], deadlineCts.Token),
                             CancellationToken.None);
@@ -239,6 +254,10 @@ internal sealed class ToolAuditWriteAhead(
     {
         for (var current = exception; current is not null; current = current.InnerException)
         {
+            if (current is BoundedSessionAppendException boundedFailure)
+                return boundedFailure.Reason == BoundedSessionAppendFailureReason.Locked
+                    ? "lock"
+                    : "deadline";
             if (current is AuditDeadlineException or TimeoutException)
                 return "deadline";
             if (current.Message.Contains("locked", StringComparison.OrdinalIgnoreCase) ||
@@ -305,7 +324,7 @@ internal sealed class ToolAuditWriteAhead(
                 if (!_inFlight.TryRemove(toolCallId, out _))
                     continue;
 
-                session.AddEntry(auditSink.ProjectIncomplete(toolCallId, call.ToolName, call.SerializedArguments));
+                session.AddEntry(auditSink.ProjectIncomplete(toolCallId, call.ToolName, call.SerializedArguments) with { AgentRunId = call.RunId });
             }
 
             await sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
@@ -321,5 +340,5 @@ internal sealed class ToolAuditWriteAhead(
         }
     }
 
-    private sealed record InFlightCall(string ToolName, string SerializedArguments);
+    private sealed record InFlightCall(string ToolName, string SerializedArguments, AgentRunId? RunId);
 }

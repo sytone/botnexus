@@ -84,6 +84,18 @@ public sealed record ConversationBindingDto(
     [property: JsonPropertyName("displayPrefix")] string? DisplayPrefix,
     [property: JsonPropertyName("boundAt")] DateTimeOffset BoundAt);
 
+public sealed record AddConversationBindingRequestDto(
+    [property: JsonPropertyName("channelType")] string ChannelType,
+    [property: JsonPropertyName("channelAddress")] string ChannelAddress,
+    [property: JsonPropertyName("mode")] string Mode = "Interactive",
+    [property: JsonPropertyName("threadingMode")] string ThreadingMode = "Single",
+    [property: JsonPropertyName("displayPrefix")] string? DisplayPrefix = null);
+
+public sealed record MoveConversationBindingRequestDto(
+    [property: JsonPropertyName("targetConversationId")] string TargetConversationId);
+
+public sealed record ConversationBindingTargetDto(string ConversationId, string Title);
+
 public sealed record ConversationHistoryResponseDto(
     [property: JsonPropertyName("conversationId")] string ConversationId,
     [property: JsonPropertyName("totalCount")] int TotalCount,
@@ -113,6 +125,9 @@ public sealed class ConversationHistoryEntryDto
 
     [JsonPropertyName("content")]
     public string? Content { get; init; }
+
+    [JsonPropertyName("attachments")]
+    public IReadOnlyList<HistoryAttachmentDto>? Attachments { get; init; }
 
     [JsonPropertyName("toolName")]
     public string? ToolName { get; init; }
@@ -149,6 +164,12 @@ public sealed class ConversationHistoryEntryDto
     [JsonPropertyName("messageKind")]
     public string? MessageKind { get; init; }
 }
+
+public sealed record HistoryAttachmentDto(
+    [property: JsonPropertyName("fileName")] string FileName,
+    [property: JsonPropertyName("mimeType")] string MimeType,
+    [property: JsonPropertyName("size")] long? Size,
+    [property: JsonPropertyName("base64Data")] string Base64Data);
 
 public sealed record SessionHistoryResponseDto(
     [property: JsonPropertyName("offset")] int Offset,

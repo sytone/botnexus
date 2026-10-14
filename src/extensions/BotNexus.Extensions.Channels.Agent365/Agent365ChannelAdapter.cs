@@ -1,5 +1,9 @@
+using System.Collections.Concurrent;
+using System.Text;
+using BotNexus.Domain.Gateway.Models;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
 using Microsoft.Agents.Core.Models;
@@ -26,10 +30,11 @@ namespace BotNexus.Extensions.Channels.Agent365;
 /// out of scope. The SDK is a pure channel abstraction — no response generation happens here.
 /// </para>
 /// </remarks>
-public sealed class Agent365ChannelAdapter : ChannelAdapterBase
+public sealed class Agent365ChannelAdapter : ChannelAdapterBase, IStreamEventChannelAdapter, IConversationEventSink
 {
     private readonly LateBoundChannelOptions<Agent365GatewayOptions> _optionsHolder;
     private readonly IAgent365ConnectorSender _connectorSender;
+    private readonly ConcurrentDictionary<StreamKey, StringBuilder> _streamContent = new();
 
     // Read at point of use so a runtime config.json edit is reflected without a gateway restart (#2010).
     private Agent365GatewayOptions _options => _optionsHolder.Current;
@@ -75,10 +80,10 @@ public sealed class Agent365ChannelAdapter : ChannelAdapterBase
     public override string DisplayName => "Agent 365";
 
     /// <summary>
-    /// The Register tier delivers complete replies only; Activity streaming is wired in a later PBI,
-    /// so streaming is reported unsupported and the BotNexus loop buffers the full response.
+    /// The adapter consumes structured stream events but consolidates them into one complete Agents
+    /// SDK reply at message completion; it does not expose partial Activities to the channel.
     /// </summary>
-    public override bool SupportsStreaming => false;
+    public override bool SupportsStreaming => true;
 
     /// <inheritdoc />
     public override bool SupportsSteering => false;
@@ -154,6 +159,74 @@ public sealed class Agent365ChannelAdapter : ChannelAdapterBase
         await _connectorSender.SendReplyAsync(serviceUrl, conversationId, activity, cancellationToken);
     }
 
+    /// <inheritdoc />
+    public override Task SendStreamDeltaAsync(
+        ChannelStreamTarget target,
+        string delta,
+        CancellationToken cancellationToken = default)
+        => SendStreamEventAsync(
+            target,
+            new AgentStreamEvent { Type = AgentStreamEventType.ContentDelta, ContentDelta = delta },
+            cancellationToken);
+
+    /// <inheritdoc />
+    public async Task SendStreamEventAsync(
+        ChannelStreamTarget target,
+        AgentStreamEvent streamEvent,
+        CancellationToken cancellationToken = default)
+    {
+        var key = new StreamKey(target.SessionId, target.BindingId, target.ChannelAddress);
+        switch (streamEvent.Type)
+        {
+            case AgentStreamEventType.ContentDelta when streamEvent.ContentDelta is { } delta:
+                _streamContent.GetOrAdd(key, static _ => new StringBuilder()).Append(delta);
+                break;
+
+            case AgentStreamEventType.MessageEnd:
+                _streamContent.TryRemove(key, out var buffered);
+                var content = streamEvent.FinalContent ?? buffered?.ToString();
+                if (string.IsNullOrEmpty(content))
+                    break;
+
+                await SendAsync(new OutboundMessage
+                {
+                    ChannelType = ChannelType,
+                    ChannelAddress = target.ChannelAddress,
+                    Content = content,
+                    SessionId = target.SessionId.Value,
+                    ConversationId = target.ConversationId.Value,
+                    BindingId = target.BindingId,
+                    ChannelRequestId = target.ChannelRequestId,
+                }, cancellationToken).ConfigureAwait(false);
+                break;
+
+            case AgentStreamEventType.RunEnded:
+                _streamContent.TryRemove(key, out _);
+                break;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task OnConversationEventAsync(
+        ConversationEvent conversationEvent,
+        CancellationToken cancellationToken = default)
+    {
+        if (conversationEvent is not ConversationAgentEvent agentEvent)
+            return;
+
+        foreach (var target in ConversationEventStreamRouting.GetTargets(
+                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
+        {
+            await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
     private static string? TryGetMetadataString(IReadOnlyDictionary<string, object?> metadata, string key)
         => metadata.TryGetValue(key, out var raw) && raw?.ToString() is { Length: > 0 } value ? value : null;
+
+    private readonly record struct StreamKey(
+        SessionId SessionId,
+        BindingId? BindingId,
+        ChannelAddress ChannelAddress);
 }

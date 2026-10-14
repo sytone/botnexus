@@ -1,3 +1,5 @@
+using BotNexus.Gateway.Abstractions.Text;
+
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
@@ -96,12 +98,6 @@ public interface IClientStateStore
 
     /// <summary>Get a conversation state by conversation ID (searches all agents).</summary>
     ConversationState? GetConversation(string conversationId);
-
-    /// <summary>Set active conversation for an agent, updating both agent and global selection.</summary>
-    void SetActiveConversation(string agentId, string conversationId);
-
-    /// <summary>The active conversation ID for the active agent.</summary>
-    string? ActiveConversationId { get; }
 
     // ── Message operations ───────────────────────────────────────────────────
 
@@ -233,16 +229,6 @@ public sealed class AgentState
     /// <summary>Active session ID (last established).</summary>
     public string? SessionId { get; set; }
 
-    /// <summary>
-    /// The session ID for the currently active conversation.
-    /// Prefers the active conversation's ActiveSessionId over the agent-level SessionId.
-    /// Use this for actions that target the current conversation (Steer, Abort, Reset, Compact).
-    /// </summary>
-    public string? ActiveConversationSessionId =>
-        ActiveConversationId is not null && Conversations.TryGetValue(ActiveConversationId, out var conv)
-            ? conv.ActiveSessionId ?? SessionId
-            : SessionId;
-
     /// <summary>Channel type for this session.</summary>
     public string? ChannelType { get; set; }
 
@@ -285,9 +271,6 @@ public sealed class AgentState
 
     /// <summary>Whether thinking blocks are visible in the chat panel.</summary>
     public bool ShowThinking { get; set; } = true;
-
-    /// <summary>The currently selected conversation ID for this agent.</summary>
-    public string? ActiveConversationId { get; set; }
 
     /// <summary>Whether the conversation list has been loaded from REST.</summary>
     public bool ConversationsLoaded { get; set; }
@@ -581,7 +564,8 @@ public sealed class ConversationState
                 .Select(message => message.ToolCallId)
                 .OfType<string>())
             {
-                StreamState.ActiveToolCalls.Remove(completedToolCallId);
+                if (StreamState.ActiveToolCalls.Remove(completedToolCallId))
+                    StreamState.RecordActiveToolCallsChanged("MessageReconciliation");
             }
 
             if (reconciled.SequenceEqual(local))
@@ -657,6 +641,15 @@ public sealed class ConversationState
 /// <summary>Stream-buffer state for an active or recently active conversation.</summary>
 public sealed class ConversationStreamState
 {
+    /// <summary>Maximum number of active tool-call IDs included in a diagnostic snapshot.</summary>
+    public const int DiagnosticToolIdLimit = 32;
+    /// <summary>Maximum number of characters exposed for each diagnostic tool-call ID.</summary>
+    public const int DiagnosticToolCallIdLengthLimit = 128;
+
+    private string? _runStateLastChangedBy;
+    private string? _streamingLastChangedBy;
+    private string? _activeToolCallsLastChangedBy;
+
     /// <summary>Whether the conversation is currently receiving a streaming response.</summary>
     public bool IsStreaming { get; set; }
 
@@ -744,6 +737,64 @@ public sealed class ConversationStreamState
     public bool IsTurnActive => IsRunActive || IsStreaming || ActiveToolCalls.Count > 0;
 
     /// <summary>
+    /// Copies bounded run-state diagnostics without exposing message buffers, tool names, or tool payloads.
+    /// </summary>
+    public ConversationStreamDiagnosticSnapshot GetDiagnosticSnapshot()
+    {
+        var toolCallIds = ActiveToolCalls.Keys
+            .Take(DiagnosticToolIdLimit)
+            .Select(id => GraphemeSafeTruncation.Truncate(id, DiagnosticToolCallIdLengthLimit, string.Empty) ?? string.Empty)
+            .ToArray();
+
+        var toolCallIdsTruncated = ActiveToolCalls.Count > toolCallIds.Length
+            || ActiveToolCalls.Keys.Take(DiagnosticToolIdLimit)
+                .Any(id => id.Length > DiagnosticToolCallIdLengthLimit);
+
+        return new ConversationStreamDiagnosticSnapshot(
+            IsRunActive,
+            IsStreaming,
+            ActiveToolCalls.Count,
+            toolCallIds,
+            toolCallIdsTruncated,
+            _runStateLastChangedBy,
+            _streamingLastChangedBy,
+            _activeToolCallsLastChangedBy);
+    }
+
+    /// <summary>Records a real transition of the authoritative run-active signal.</summary>
+    public void SetRunActive(bool active, string eventName)
+    {
+        if (IsRunActive == active)
+            return;
+        IsRunActive = active;
+        _runStateLastChangedBy = eventName;
+    }
+
+    /// <summary>Records a real transition of the per-conversation streaming signal.</summary>
+    public void SetStreaming(bool streaming, string eventName)
+    {
+        if (IsStreaming == streaming)
+            return;
+        IsStreaming = streaming;
+        _streamingLastChangedBy = eventName;
+    }
+
+    /// <summary>Records which event last changed the active tool-call set.</summary>
+    public void RecordActiveToolCallsChanged(string eventName) => _activeToolCallsLastChangedBy = eventName;
+
+    /// <summary>Applies authoritative run activity while clearing stale per-turn state.</summary>
+    public void ApplyRunActivitySnapshot(bool isRunActive, string eventName)
+    {
+        Reset(eventName);
+        SetRunActive(isRunActive, eventName);
+        if (ActiveToolCalls.Count > 0)
+        {
+            ActiveToolCalls.Clear();
+            _activeToolCallsLastChangedBy = eventName;
+        }
+    }
+
+    /// <summary>
     /// Clears the streaming buffers and the <see cref="IsStreaming"/> flag atomically.
     /// Every terminal handler (message-end, error, turn-interrupted, turn-end, session-reset,
     /// reconnect) MUST call this rather than clearing the three fields by hand -- the portal
@@ -752,9 +803,9 @@ public sealed class ConversationStreamState
     /// invariant a single method a future handler cannot half-apply. Active tool calls are
     /// intentionally left untouched so <see cref="IsTurnActive"/> stays accurate while tools run.
     /// </summary>
-    public void Reset()
+    public void Reset(string eventName = "Reset")
     {
-        IsStreaming = false;
+        SetStreaming(false, eventName);
         _buffer.Clear();
         _thinkingBuffer.Clear();
         PendingRole = null;
@@ -768,11 +819,26 @@ public sealed class ConversationStreamState
     /// events (message-end, turn-end) must call <see cref="Reset"/> instead, because the loop may
     /// continue with more turns/tools and <see cref="IsRunActive"/> must stay asserted across them.
     /// </summary>
-    public void EndRun()
+    public void EndRun(string eventName = "EndRun")
     {
-        Reset();
-        IsRunActive = false;
-        ActiveToolCalls.Clear();
+        Reset(eventName);
+        SetRunActive(false, eventName);
+        if (ActiveToolCalls.Count > 0)
+        {
+            ActiveToolCalls.Clear();
+            _activeToolCallsLastChangedBy = eventName;
+        }
     }
 }
+
+/// <summary>Bounded, payload-free diagnostic view of one conversation's client run state.</summary>
+public sealed record ConversationStreamDiagnosticSnapshot(
+    bool IsRunActive,
+    bool IsStreaming,
+    int ActiveToolCallCount,
+    IReadOnlyList<string> ActiveToolCallIds,
+    bool ActiveToolCallIdsTruncated,
+    string? RunStateLastChangedBy,
+    string? StreamingLastChangedBy,
+    string? ActiveToolCallsLastChangedBy);
 

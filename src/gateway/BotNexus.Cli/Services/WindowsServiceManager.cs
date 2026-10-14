@@ -44,6 +44,20 @@ internal sealed class WindowsServiceManager : IOsServiceManager
         return result.ExitCode == 0;
     }
 
+    public async Task<bool> IsRunningAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await RunScAsync($"query {ServiceName}", cancellationToken);
+        return result.ExitCode == 0 && result.Output.Contains("RUNNING", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public async Task<ServiceOperationResult> StopAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await RunScAsync($"stop {ServiceName}", cancellationToken);
+        return result.ExitCode == 0
+            ? new ServiceOperationResult(true, $"Stop requested for service '{ServiceName}'.")
+            : new ServiceOperationResult(false, $"Failed to stop service: {result.Output}");
+    }
+
     public async Task<ServiceOperationResult> InstallAsync(string executablePath, string homePath, int port, CancellationToken cancellationToken = default)
     {
         if (await IsInstalledAsync(cancellationToken))
@@ -88,11 +102,7 @@ internal sealed class WindowsServiceManager : IOsServiceManager
         if (!await IsInstalledAsync(cancellationToken))
             return new ServiceOperationResult(true, $"Service '{ServiceName}' is not installed.");
 
-        // Stop first (ignore errors -- may already be stopped)
-        await RunScAsync($"stop {ServiceName}", cancellationToken);
-        await Task.Delay(2000, cancellationToken); // give it time to stop
-
-        // Delete the service
+        // GatewayCommand confirms process termination before definition removal.
         var delete = await RunScAsync($"delete {ServiceName}", cancellationToken);
         if (delete.ExitCode != 0)
             return new ServiceOperationResult(false, $"Failed to delete service: {delete.Output}");

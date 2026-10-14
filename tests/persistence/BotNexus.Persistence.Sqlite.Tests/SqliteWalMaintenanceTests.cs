@@ -144,8 +144,12 @@ public sealed class SqliteWalMaintenanceTests : IDisposable
         await helper.ApplyJournalModeAsync(connection, dbPath);
         await WriteSomeDataAsync(connection);
 
-        await Should.NotThrowAsync(() =>
-            SqliteWalMaintenance.CheckpointAsync(connection, SqliteCheckpointMode.Passive));
+        var result = await SqliteWalMaintenance.CheckpointAsync(connection, SqliteCheckpointMode.Passive);
+
+        result.Busy.ShouldBe(0);
+        result.LogFrames.ShouldBeGreaterThanOrEqualTo(0);
+        result.CheckpointedFrames.ShouldBe(result.LogFrames);
+        result.ReclamationCompleted.ShouldBeTrue();
     }
 
     [Fact]
@@ -157,8 +161,12 @@ public sealed class SqliteWalMaintenanceTests : IDisposable
         await helper.ApplyJournalModeAsync(connection, dbPath);
         await WriteSomeDataAsync(connection);
 
-        await Should.NotThrowAsync(() =>
-            SqliteWalMaintenance.CheckpointAsync(connection, SqliteCheckpointMode.Truncate));
+        var result = await SqliteWalMaintenance.CheckpointAsync(connection, SqliteCheckpointMode.Truncate);
+
+        result.Busy.ShouldBe(0);
+        result.LogFrames.ShouldBe(0);
+        result.CheckpointedFrames.ShouldBe(0);
+        result.ReclamationCompleted.ShouldBeTrue();
     }
 
     private static async Task WriteSomeDataAsync(SqliteConnection connection)

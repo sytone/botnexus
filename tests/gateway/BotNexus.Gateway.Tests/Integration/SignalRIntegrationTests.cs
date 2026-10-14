@@ -431,6 +431,13 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
         const string conversationId = "conv-42";
 
         // Pre-create the session so GetOrCreateAsync can resolve it
+        var conversations = factory.Services.GetRequiredService<IConversationStore>();
+        await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.From("conv-42"),
+            AgentId = AgentId.From(TestAgentId),
+            Visibility = ConversationVisibility.UserFacing
+        }, cts.Token);
         var sessions = factory.Services.GetRequiredService<ISessionStore>();
         await sessions.GetOrCreateAsync(SessionId.From(sessionId), AgentId.From(TestAgentId), cts.Token);
 
@@ -636,11 +643,12 @@ public sealed class SignalRIntegrationTests : IAsyncDisposable
                 AgentStreamEventType.TurnInterrupted => "TurnInterrupted",
                 AgentStreamEventType.TurnEnd => null, // internal persistence signal -- not forwarded to Hub clients
                 AgentStreamEventType.ClaimAudit => null, // internal anti-fabrication diagnostic signal -- not forwarded to Hub clients (#1600)
+                AgentStreamEventType.ProviderRecovery => null, // internal bounded provider-recovery lifecycle signal
                 AgentStreamEventType.RunEnded => "RunEnded",
                 _ => throw new ArgumentOutOfRangeException()
             };
 
-            if (method is null) continue; // TurnEnd/ClaimAudit are internal-only, not forwarded to Hub clients
+            if (method is null) continue; // Internal persistence/diagnostic signals are not forwarded to Hub clients.
             var payload = await handlers[method].Task.WaitAsync(cts.Token);
             payload.Type.ShouldBe(expected);
         }

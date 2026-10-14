@@ -14,10 +14,24 @@ public sealed class ExtensionRepositoriesControllerTests : IDisposable
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
     }
 
-    private ExtensionRepositoriesController Create()
+    private ExtensionRepositoriesController Create(ExtensionCloneOutcome? cloneOutcome = null)
     {
         Directory.CreateDirectory(_root);
-        return new ExtensionRepositoriesController(new ExtensionRepositoryRegistryService(Path.Combine(_root, "config.json"), new FileSystem()));
+        var registry = new ExtensionRepositoryRegistryService(Path.Combine(_root, "config.json"), new FileSystem());
+        var source = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
+        if (cloneOutcome is null)
+            return new ExtensionRepositoriesController(registry, ExtensionLifecycleReconciler.CreateDefault(_root, source));
+
+        var reconciler = new ExtensionLifecycleReconciler(
+            _root,
+            source,
+            registry,
+            (_, _) => Task.FromResult(cloneOutcome),
+            _ => [],
+            (_, _, _, _) => Task.FromResult(ExtensionBuildOutcome.Success()),
+            _ => new ExtensionDeploymentResult(0, [], []),
+            new ExtensionReconciliationFileLock(_root));
+        return new ExtensionRepositoriesController(registry, reconciler);
     }
 
     [Fact]
@@ -39,7 +53,7 @@ public sealed class ExtensionRepositoriesControllerTests : IDisposable
         item.LastSuccessUtc.ShouldBeNull();
         item.DeployedVersion.ShouldBeNull();
         item.LatestFailure.ShouldBeNull();
-        item.SyncAvailable.ShouldBeFalse();
+        item.SyncAvailable.ShouldBeTrue();
     }
 
     [Fact]
@@ -50,16 +64,33 @@ public sealed class ExtensionRepositoriesControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task Management_actions_update_toggle_remove_and_sync_is_not_implemented()
+    public async Task Management_actions_update_toggle_sync_and_remove()
     {
         var controller = Create();
         await controller.Add(new("tools", "https://example.test/tools.git", "main", true, true));
         (await controller.Update("tools", new("https://example.test/tools-v2.git", "release", false))).Result.ShouldBeOfType<OkObjectResult>();
         (await controller.SetEnabled("tools", new(false))).ShouldBeOfType<NoContentResult>();
-        (await controller.SyncNow("tools")).ShouldBeOfType<ObjectResult>().StatusCode.ShouldBe(501);
+        var disabled = (((await controller.List()).Result as OkObjectResult)?.Value as IReadOnlyList<ExtensionRepositoryResponse>).ShouldHaveSingleItem();
+        disabled.Enabled.ShouldBeFalse();
+        disabled.SyncAvailable.ShouldBeFalse();
+        (await controller.SyncNow("tools")).ShouldBeOfType<ConflictObjectResult>();
         (await controller.Remove("tools")).ShouldBeOfType<NoContentResult>();
         var items = ((await controller.List()).Result as OkObjectResult)?.Value as IReadOnlyList<ExtensionRepositoryResponse>;
         items.ShouldNotBeNull();
         items.ShouldBeEmpty();
     }
+    [Fact]
+    public async Task SyncNow_repository_failure_returns_unprocessable_entity_with_named_repository()
+    {
+        var controller = Create(ExtensionCloneOutcome.Failed("broken-tools", "clone-failed", "repository unavailable"));
+        await controller.Add(new("broken-tools", "https://example.test/broken-tools.git", "main", true, true));
+
+        var result = await controller.SyncNow("broken-tools");
+
+        var failure = result.ShouldBeOfType<UnprocessableEntityObjectResult>();
+        var body = failure.Value.ShouldNotBeNull().ToString().ShouldNotBeNull();
+        body.ShouldContain("broken-tools");
+        body.ShouldContain("clone-failed");
+    }
+
 }

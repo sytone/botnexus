@@ -66,6 +66,14 @@ After the agent produces a response, BotNexus sends a Service Bus message to the
 | `timestamp` | ISO 8601 | When the reply was produced. |
 | `metadata` | object | Optional additional metadata. |
 
+> [!WARNING]
+> `delta` envelopes are transport chunks, not user-visible chat messages. A Teams-facing consumer
+> must not post each `delta` as a separate activity: doing so exposes provider chunk boundaries as
+> blank, punctuation-only, or token-sized messages. For pseudo-streaming, complete every non-final
+> envelope without posting it and send exactly one activity from the final `done` envelope. A true
+> live-streaming consumer must enforce `sequence` ordering and update one provisional activity
+> rather than creating a new activity per delta. Never post whitespace-only content.
+
 ### Outbound example
 
 ```json

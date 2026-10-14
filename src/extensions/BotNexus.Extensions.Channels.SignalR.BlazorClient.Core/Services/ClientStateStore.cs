@@ -101,15 +101,21 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
             return;
         }
 
+        var conversationBeingLeft = _selection.ConversationId;
+        if (conversationBeingLeft.Length > 0
+            && !string.Equals(conversationBeingLeft, conversationId, StringComparison.Ordinal))
+        {
+            ClearSteeringQueue(conversationBeingLeft);
+        }
+
         _selection = new ViewSelection(agentId, conversationId, source);
         _pendingSelectionInvalid = false;
 
-        // When the caller carries an explicit conversation, bind it on the agent so the derived
-        // ActiveConversationId projection and session routing follow immediately.
+        // An explicit conversation belongs to this one view selection; no per-agent ambient
+        // conversation marker is maintained.
         if (agentId.Length > 0 && conversationId.Length > 0
             && _agents.TryGetValue(agentId, out var agent))
         {
-            agent.ActiveConversationId = conversationId;
             if (agent.Conversations.TryGetValue(conversationId, out var conv))
             {
                 // #3212: unread clears precisely when the conversation BECOMES DISPLAYED, which is
@@ -171,8 +177,8 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
     {
         if (_agents.TryGetValue(agent.AgentId, out var existing))
         {
-            // Merge metadata without destroying local-only state (Conversations,
-            // ActiveConversationId, SessionId, Messages, StreamState, etc.).
+            // Merge metadata without destroying local-only state (conversations, session,
+            // messages, stream state, etc.).
             existing.DisplayName = agent.DisplayName;
             existing.Emoji = agent.Emoji;
             existing.Description = agent.Description;
@@ -265,16 +271,6 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
             agent.Conversations.Remove(id);
         }
 
-        // Auto-select a conversation if none is selected
-        if (agent.ActiveConversationId is null && agent.Conversations.Count > 0)
-        {
-            var defaultConv = agent.Conversations.Values.FirstOrDefault(c => c.IsDefault)
-                ?? agent.Conversations.Values.OrderByDescending(c => c.UpdatedAt).First();
-            agent.ActiveConversationId = defaultConv.ConversationId;
-            if (defaultConv.ActiveSessionId is not null)
-                agent.SessionId = defaultConv.ActiveSessionId;
-        }
-
         agent.ConversationsLoaded = true;
         agent.IsLoadingConversations = false;
 
@@ -293,62 +289,12 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
         return null;
     }
 
-    /// <inheritdoc />
-    public void SetActiveConversation(string agentId, string conversationId)
-    {
-        if (!_agents.TryGetValue(agentId, out var agent))
-            return;
-
-        var previousConversationId = agent.ActiveConversationId;
-        agent.ActiveConversationId = conversationId;
-
-        // #2439: a pending Steer/Follow-up chip belongs to the conversation the user is leaving
-        // and is purely client-side optimism. Once the view moves away nothing will report its
-        // fate back, so a chip that cannot be verified must not survive the switch.
-        if (previousConversationId is { Length: > 0 } leaving
-            && !string.Equals(leaving, conversationId, StringComparison.Ordinal))
-        {
-            ClearSteeringQueue(leaving);
-        }
-
-        // Keep the single view-selection value's conversation projection in step when this is the
-        // active agent, so ActiveConversationId (derived) and the stored selection never disagree.
-        // #3212: this MUST happen before the unread clear below, because the unread clear now asks
-        // the route-derived predicate whether the conversation is displayed, and the predicate reads
-        // _selection.
-        if (string.Equals(_selection.AgentId, agentId, StringComparison.Ordinal))
-            _selection = _selection with { ConversationId = conversationId };
-
-        if (agent.Conversations.TryGetValue(conversationId, out var conv))
-        {
-            // #3212: single visibility source. Selecting a conversation on an agent whose pane is
-            // NOT the displayed one no longer silently zeroes its unread badge -- the user has not
-            // seen those messages, so the badge survives until the conversation is actually shown.
-            if (IsConversationDisplayed(agentId, conversationId))
-                conv.UnreadCount = 0;
-            agent.SessionId = conv.ActiveSessionId;
-        }
-
-        NotifyChanged();
-    }
-
-    /// <inheritdoc />
-    public string? ActiveConversationId =>
-        ActiveAgentId is not null && _agents.TryGetValue(ActiveAgentId, out var a)
-            ? a.ActiveConversationId
-            : null;
-
     // ── #3212: route-derived visibility (IDisplayedConversation) ─────────────
 
     /// <inheritdoc />
     /// <remarks>
-    /// Answered from the single <see cref="ViewSelection"/> this store holds, which is exactly the
-    /// value the route application path writes through <see cref="SelectView"/> with
-    /// <see cref="SelectionSource.RouteNavigation"/>. It deliberately does NOT consult
-    /// <see cref="AgentState.ActiveConversationId"/>: that is a per-agent last-selected marker, so
-    /// every agent has one simultaneously while the browser renders exactly one pane. Requiring the
-    /// AGENT to match as well as the conversation is what makes this a real visibility answer rather
-    /// than a "was this ever selected" answer.
+    /// Answered from the single <see cref="ViewSelection"/> written by the route application path.
+    /// Both agent and conversation must match the rendered pane.
     /// </remarks>
     public bool IsConversationDisplayed(string? agentId, string? conversationId)
     {
@@ -429,7 +375,7 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
         if (conv is null)
             return;
 
-        conv.StreamState.IsStreaming = streaming;
+        conv.StreamState.SetStreaming(streaming, "ClientStateStore.SetStreaming");
 
         // Only update agent-level IsStreaming if this is the active conversation
         // — prevents streaming state from bleeding into inactive conversations
@@ -437,7 +383,7 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
         {
             if (agent.Conversations.ContainsKey(conversationId))
             {
-                if (agent.ActiveConversationId == conversationId)
+                if (IsConversationDisplayed(agent.AgentId, conversationId))
                     agent.IsStreaming = streaming;
                 else if (streaming == false)
                     agent.IsStreaming = agent.Conversations.Values.Any(c => c.StreamState.IsStreaming);
@@ -485,7 +431,7 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
             });
         }
 
-        conv.StreamState.Reset();
+        conv.StreamState.Reset("ClientStateStore.ResetStreaming");
 
         // Keep agent-level state in sync
         foreach (var agent in _agents.Values)
@@ -616,22 +562,21 @@ public sealed class ClientStateStore : IClientStateStore, IDisplayedConversation
             if (agent.Conversations.TryGetValue(conversationId, out var ownerConv) && !ownerConv.IsLocallySynthesised)
                 ownerConv.ActiveSessionId = sessionId;
 
-            // Only the active conversation's session should drive the agent-global fallback.
-            if (string.Equals(conversationId, agent.ActiveConversationId, StringComparison.Ordinal))
+            // Only the displayed conversation's session should drive the agent-global fallback.
+            if (IsConversationDisplayed(agentId, conversationId))
                 agent.SessionId = sessionId;
 
             return;
         }
 
-        // Legacy single-establish path (conversationId unknown): bind to the active conversation.
-        // This is the #314 race fix — a freshly established session (e.g. from a SendMessage
-        // result) is immediately bound so MessageStart can resolve it before the REST refresh.
+        // Legacy single-establish path (conversationId unknown): bind only when the displayed
+        // route supplies an unambiguous conversation for this agent.
         agent.SessionId = sessionId;
-        if (agent.ActiveConversationId is not null &&
-            agent.Conversations.TryGetValue(agent.ActiveConversationId, out var activeConv) &&
-            !activeConv.IsLocallySynthesised)
+        if (DisplayedConversationIdFor(agentId) is { } displayedConversationId &&
+            agent.Conversations.TryGetValue(displayedConversationId, out var displayedConversation) &&
+            !displayedConversation.IsLocallySynthesised)
         {
-            activeConv.ActiveSessionId = sessionId;
+            displayedConversation.ActiveSessionId = sessionId;
         }
     }
 

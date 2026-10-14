@@ -158,79 +158,83 @@
                     <tr class="activity-row @(row.IsCron ? "activity-row-cron" : "") @(row.IsPinned ? "activity-row-pinned" : "") @(row.IsLive ? "activity-row-live" : "")"
                         data-testid="activity-row"
                         data-conversation-id="@row.ConversationId"
+                        data-session-id="@row.ActiveSessionId"
+                        title="@SessionPointerTooltip(row)"
                         tabindex="0"
                         role="link"
                         @onclick="() => NavigateToConversation(row)"
                         @onkeydown="e => OnRowKeyDown(e, row)">
                         <td class="activity-cell-title">
-                            <span class="activity-conversation-title" title="@row.Title">@DisplayTitle(row)</span>
-                            @if (row.IsLive)
-                            {
-                                @* #1888: the row's only present-tense signal. Rendered FIRST so the
-                                   "is anything happening?" answer reads before the historical badges. *@
-                                <span class="activity-badge activity-badge-live"
-                                      data-testid="activity-live-badge"
-                                      title="@LiveTooltip(row)"
-                                      aria-label="Live">Live</span>
-                            }
-                            @if (row.IsPinned)
-                            {
-                                <span class="activity-badge activity-badge-pinned"
-                                      data-testid="activity-pin-badge"
-                                      title="@PinTooltip(row)"
-                                      aria-label="Pinned"><Icon Name="pin" Size="13" /> Pinned</span>
-                            }
-                            @if (ActivityDashboardProjection.ReadOnlyLabel(row) is { } readOnlyLabel)
-                            {
-                                @* #2692: InspectableReadOnly rows are kept but marked, so the reader can
-                                   tell an observer/audit row from one they own. Reuses .activity-badge. *@
-                                <span class="activity-badge activity-badge-readonly"
-                                      data-testid="activity-readonly-badge"
-                                      title="Read-only: you can inspect this conversation but not participate in it."
-                                      aria-label="Read-only">@readOnlyLabel</span>
-                            }
-                            @if (ActivityDashboardProjection.OriginLabel(row) is { } originLabel)
-                            {
-                                <span class="activity-badge activity-badge-@ActivityDashboardProjection.OriginModifier(row)"
-                                      data-testid="activity-origin-badge"
-                                      data-origin="@ActivityDashboardProjection.OriginModifier(row)"
-                                      title="@OriginTooltip(row)">@originLabel</span>
-                            }
-                            @if (ActivityDashboardProjection.SourceLabel(row) is { } sourceLabel)
-                            {
-                                @* #3105: WHICH job or registration minted this row, as opposed to the
-                                   origin badge's WHAT KIND. Rendered immediately after the origin badge
-                                   it qualifies, and only ever when that badge is present.
-                                   #3421: when the cron registry resolves the id to a job NAME, the name
-                                   is shown instead - the id is not lost, it moves to the tooltip. *@
-                                var cronName = ActivityDashboardProjection.CronHealthLabel(row);
-                                <span class="activity-source-id"
-                                      data-testid="activity-source-id"
-                                      data-source-id="@row.SourceId"
-                                      title="@OriginTooltip(row)">@(cronName ?? sourceLabel)</span>
-                            }
-                            @if (ActivityDashboardProjection.CronHealthModifier(row) is { } cronHealthModifier)
-                            {
-                                var cronLiveness = ActivityDashboardProjection.CronLiveness(row.CronHealth!, _projectionNow);
-                                var cronModifier = cronLiveness ?? cronHealthModifier;
-                                @* #3421/#3563: last outcome and future liveness are independent. Liveness
-                                   wins the glanceable colour while the tooltip preserves both facts. *@
-                                <span class="activity-cron-health activity-cron-health--@cronModifier"
-                                      data-testid="activity-cron-health"
-                                      data-health="@cronModifier"
-                                      title="@CronHealthTooltip(row, cronLiveness)"
-                                      aria-label="@CronHealthTooltip(row, cronLiveness)"></span>
-                            }
-                            @if (ActivityDashboardProjection.PurposeLabel(row) is { } purposeLabel)
-                            {
-                                @* #3204: the author's own words for why this conversation exists.
-                                   Its own block-level line BELOW the title and badges, deliberately
-                                   NOT a badge - badges are one-glance classifiers drawn from bounded
-                                   value sets, and prose in that idiom would swamp the badge row. *@
-                                <span class="activity-purpose"
-                                      data-testid="activity-purpose"
-                                      title="@row.Purpose">@purposeLabel</span>
-                            }
+                            <div class="activity-title-content">
+                                <span class="activity-conversation-title" title="@row.Title">@DisplayTitle(row)</span>
+                                @if (row.IsLive)
+                                {
+                                    @* #1888: the row's only present-tense signal. Rendered FIRST so the
+                                       "is anything happening?" answer reads before the historical badges. *@
+                                    <span class="activity-badge activity-badge-live"
+                                          data-testid="activity-live-badge"
+                                          title="@LiveTooltip(row)"
+                                          aria-label="Live">Live</span>
+                                }
+                                @if (row.IsPinned)
+                                {
+                                    <span class="activity-badge activity-badge-pinned"
+                                          data-testid="activity-pin-badge"
+                                          title="@PinTooltip(row)"
+                                          aria-label="Pinned"><Icon Name="pin" Size="13" /> Pinned</span>
+                                }
+                                @if (ActivityDashboardProjection.ReadOnlyLabel(row) is { } readOnlyLabel)
+                                {
+                                    @* #2692: InspectableReadOnly rows are kept but marked, so the reader can
+                                       tell an observer/audit row from one they own. Reuses .activity-badge. *@
+                                    <span class="activity-badge activity-badge-readonly"
+                                          data-testid="activity-readonly-badge"
+                                          title="Read-only: you can inspect this conversation but not participate in it."
+                                          aria-label="Read-only">@readOnlyLabel</span>
+                                }
+                                @if (ActivityDashboardProjection.OriginLabel(row) is { } originLabel)
+                                {
+                                    <span class="activity-badge activity-badge-@ActivityDashboardProjection.OriginModifier(row)"
+                                          data-testid="activity-origin-badge"
+                                          data-origin="@ActivityDashboardProjection.OriginModifier(row)"
+                                          title="@OriginTooltip(row)">@originLabel</span>
+                                }
+                                @if (ActivityDashboardProjection.SourceLabel(row) is { } sourceLabel)
+                                {
+                                    @* #3105: WHICH job or registration minted this row, as opposed to the
+                                       origin badge's WHAT KIND. Rendered immediately after the origin badge
+                                       it qualifies, and only ever when that badge is present.
+                                       #3421: when the cron registry resolves the id to a job NAME, the name
+                                       is shown instead - the id is not lost, it moves to the tooltip. *@
+                                    var cronName = ActivityDashboardProjection.CronHealthLabel(row);
+                                    <span class="activity-source-id"
+                                          data-testid="activity-source-id"
+                                          data-source-id="@row.SourceId"
+                                          title="@OriginTooltip(row)">@(cronName ?? sourceLabel)</span>
+                                }
+                                @if (ActivityDashboardProjection.CronHealthModifier(row) is { } cronHealthModifier)
+                                {
+                                    var cronLiveness = ActivityDashboardProjection.CronLiveness(row.CronHealth!, _projectionNow);
+                                    var cronModifier = cronLiveness ?? cronHealthModifier;
+                                    @* #3421/#3563: last outcome and future liveness are independent. Liveness
+                                       wins the glanceable colour while the tooltip preserves both facts. *@
+                                    <span class="activity-cron-health activity-cron-health--@cronModifier"
+                                          data-testid="activity-cron-health"
+                                          data-health="@cronModifier"
+                                          title="@CronHealthTooltip(row, cronLiveness)"
+                                          aria-label="@CronHealthTooltip(row, cronLiveness)"></span>
+                                }
+                                @if (ActivityDashboardProjection.PurposeLabel(row) is { } purposeLabel)
+                                {
+                                    @* #3204: the author's own words for why this conversation exists.
+                                       Its own block-level line BELOW the title and badges, deliberately
+                                       NOT a badge - badges are one-glance classifiers drawn from bounded
+                                       value sets, and prose in that idiom would swamp the badge row. *@
+                                    <span class="activity-purpose"
+                                          data-testid="activity-purpose"
+                                          title="@row.Purpose">@purposeLabel</span>
+                                }
+                            </div>
                         </td>
                         <td class="activity-cell-agents">
                             @foreach (var agent in row.InvolvedAgents)
@@ -314,8 +318,27 @@
                 cronHealth = ActivityDashboardProjection.CronHealthById(null);
             }
 
+            // #3713: session liveness is another separate, non-fatal fetch. A successful roster,
+            // including an empty one, is authoritative. A failed fetch remains null so the
+            // projection deliberately preserves its compatibility fallback.
+            IReadOnlyDictionary<string, string?>? sessionStatus = null;
+            try
+            {
+                var sessions = await SessionRosterLoader.LoadAllAsync(Rest);
+                sessionStatus = ActivityDashboardProjection.SessionStatusById(sessions);
+            }
+            catch
+            {
+                // Conversation data is the page contract; unavailable corroboration must not hide it.
+            }
+
             _projectionNow = DateTimeOffset.UtcNow;
-            _rows = ActivityDashboardProjection.Project(conversations, _filter, _projectionNow, cronHealth);
+            _rows = ActivityDashboardProjection.Project(
+                conversations,
+                _filter,
+                _projectionNow,
+                cronHealth,
+                sessionStatus);
             _summary = ActivityDashboardProjection.Summarize(_rows);
             _loadError = false;
         }
@@ -469,6 +492,15 @@
             : "Session running";
 
     /// <summary>
+    /// Keeps the routing pointer inspectable even when its session is stopped and therefore has no
+    /// Live badge. The row owns this neutral diagnostic metadata; it does not imply liveness.
+    /// </summary>
+    private static string? SessionPointerTooltip(ActivityRow row) =>
+        row.ActiveSessionId is { Length: > 0 } sessionId
+            ? $"Session pointer: {sessionId}"
+            : null;
+
+    /// <summary>
     /// Hover detail behind the pin badge: when the pin was stamped, so the badge stays a one-glance
     /// mark while the underlying server value remains inspectable without lengthening the row.
     /// </summary>
@@ -495,7 +527,7 @@
     /// last-activity pattern.
     /// </summary>
     private static string DisplayTitle(ActivityRow row) =>
-        ConversationLabel.DisplayTitle(row.Title, row.ConversationId, row.OwningAgentId);
+        ConversationLabel.FullDisplayTitle(row.Title, row.ConversationId, row.OwningAgentId);
 
     /// <summary>
     /// Resolve an agent id to the same normalized emoji/name label used by the portal shell.

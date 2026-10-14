@@ -42,7 +42,6 @@ public sealed class MobileToolPillRenderTests : IDisposable
         {
             AgentId = "agent-1",
             DisplayName = "Alpha",
-            ActiveConversationId = "conv-1",
             IsConnected = true
         };
         agent.Conversations["conv-1"] = new ConversationState { ConversationId = "conv-1", Title = "C" };
@@ -52,6 +51,10 @@ public sealed class MobileToolPillRenderTests : IDisposable
         _store.GetStreamState(Arg.Any<string>()).Returns(new ConversationStreamState());
 
         _ctx.Services.AddSingleton(_store);
+        var displayedConversation = Substitute.For<IDisplayedConversation>();
+        displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
+            .Returns(call => call.Arg<string?>() is { } agentId ? (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agentId) : null);
+        _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(_portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.Services.AddSingleton(_interaction);
@@ -75,7 +78,7 @@ public sealed class MobileToolPillRenderTests : IDisposable
         };
         _store.GetMessages("conv-1").Returns(messages.AsReadOnly());
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // The tool pill renders...
         var pill = cut.Find(".tool-pill");
@@ -98,7 +101,7 @@ public sealed class MobileToolPillRenderTests : IDisposable
         };
         _store.GetMessages("conv-1").Returns(initial.AsReadOnly());
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
         Assert.Contains("Let me check", cut.Markup);
 
         // Mid-stream mutation: a tool-call is inserted at the front and the text bubble
@@ -143,7 +146,7 @@ public sealed class MobileToolPillRenderTests : IDisposable
         };
         _store.GetMessages("conv-1").Returns(messages.AsReadOnly());
 
-        var ex = Record.Exception(() => _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1")));
+        var ex = Record.Exception(() => _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1")));
         Assert.Null(ex);
     }
 }

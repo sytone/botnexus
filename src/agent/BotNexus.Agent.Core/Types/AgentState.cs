@@ -1,4 +1,4 @@
-using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Providers.Core.Models;
 
@@ -14,6 +14,10 @@ namespace BotNexus.Agent.Core.Types;
 /// </remarks>
 public class AgentState
 {
+    /// <summary>Identity of the current or most recently admitted execution.</summary>
+    public AgentRunId? AgentRunId { get; internal set; }
+    /// <summary>Timeline boundary of the admitted execution.</summary>
+    public int RunStartIndex { get; internal set; }
     private List<IAgentTool> _tools = [];
     private List<AgentMessage> _messages = [];
     private readonly HashSet<string> _pendingToolCalls = [];

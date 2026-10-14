@@ -1,0 +1,3378 @@
+{
+  "schemaVersion": "1.0",
+  "source": {
+    "commit": "81ab8c6a385992488bb9ae66b21ee0f7e197f9f7",
+    "tree": "bb35a4e5bd8de326d400684ec314f4d3fd4ef87d7be060cdd056ffb5764965c5",
+    "buildDigest": "adaa65b44b123157e0213dc86f2347651f72a87edc35b9943027090a07a6d736",
+    "buildDigestAlgorithm": "sha256(sorted relative published-file path NUL file sha256 records)"
+  },
+  "scenario": {
+    "name": "copilot-quota-real-provider-active-conversation",
+    "promptKey": "SLOW_STREAM",
+    "network": "none",
+    "mockBrowserRoutes": false
+  },
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "screenshot": {
+    "path": "quota-populated.png",
+    "sha256": "78101802ac1e025f56a4b4d2abf4e68bcd2009e9e75e2b1b92f1f3a728cd2cbf"
+  },
+  "assertions": [
+    {
+      "kind": "browserState",
+      "target": "entry:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "entry:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "entry:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "entry:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "entry:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "entry:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "entry:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "entry:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "entry:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-entry-active:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-entry-active:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-entry-active:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-entry-active:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-entry-active:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-entry-active:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-entry-active:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-entry-active:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-entry-active:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-entry-active:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "api",
+      "target": "scheduled-job-created",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "api",
+      "target": "scheduled-manual-run-returned",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "api",
+      "target": "scheduled-run-terminal",
+      "passed": true,
+      "detail": "actual scheduler result; no forged run/token data"
+    },
+    {
+      "kind": "api",
+      "target": "scheduled-sql-populated",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "populated:three-account-dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "populated:Chat:",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "populated:Completions:",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "populated:Premium interactions:",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "populated:800.5 of 1000.5",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "populated:80.01% remaining",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "populated:200 provider quota units used",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "populated:Account API",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "populated:Last success",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "populated:Last attempt",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "populated:Next refresh",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "refresh:accessible-name",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-populated:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-populated:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-populated:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-populated:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-populated:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-populated:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-populated:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-populated:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-populated:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-populated:section-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-populated:dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "privacy",
+      "target": "quota-populated:public-panel",
+      "passed": true,
+      "detail": "no profile, credential or endpoint fields displayed"
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-populated:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "headers:three-dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "headers:percent-vs-count",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "headers:attribution",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-response-headers:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-response-headers:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-response-headers:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-response-headers:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-response-headers:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-response-headers:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-response-headers:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-response-headers:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-response-headers:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-response-headers:section-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-response-headers:dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "privacy",
+      "target": "quota-response-headers:public-panel",
+      "passed": true,
+      "detail": "no profile, credential or endpoint fields displayed"
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-response-headers:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "api",
+      "target": "manual-refresh:actual-post",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "api",
+      "target": "manual-refresh:legitimate-cooldown",
+      "passed": true,
+      "detail": "same-generation forced refresh still respects service minimum cooldown"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-manual-refresh-throttled:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-manual-refresh-throttled:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-manual-refresh-throttled:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-manual-refresh-throttled:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-manual-refresh-throttled:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-manual-refresh-throttled:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-manual-refresh-throttled:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-manual-refresh-throttled:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-manual-refresh-throttled:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-manual-refresh-throttled:section-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-manual-refresh-throttled:dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "privacy",
+      "target": "quota-manual-refresh-throttled:public-panel",
+      "passed": true,
+      "detail": "no profile, credential or endpoint fields displayed"
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-manual-refresh-throttled:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "scheduled:real-top-job",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "scheduled:separate-source",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-scheduled-24h:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-scheduled-24h:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-scheduled-24h:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-scheduled-24h:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-scheduled-24h:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-scheduled-24h:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-scheduled-24h:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-scheduled-24h:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-scheduled-24h:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-scheduled-24h:section-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-scheduled-24h:dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "privacy",
+      "target": "quota-scheduled-24h:public-panel",
+      "passed": true,
+      "detail": "no profile, credential or endpoint fields displayed"
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-scheduled-24h:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "scheduled:utc-day-selected",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "scheduled:utc-day-clamped",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-scheduled-utc-day:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-scheduled-utc-day:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-scheduled-utc-day:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-scheduled-utc-day:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-scheduled-utc-day:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-scheduled-utc-day:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-scheduled-utc-day:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-scheduled-utc-day:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-scheduled-utc-day:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-scheduled-utc-day:section-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-scheduled-utc-day:dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "privacy",
+      "target": "quota-scheduled-utc-day:public-panel",
+      "passed": true,
+      "detail": "no profile, credential or endpoint fields displayed"
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-scheduled-utc-day:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-populated:focus-restored",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-populated-active:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-populated-active:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-populated-active:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-populated-active:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-populated-active:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-populated-active:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-populated-active:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-populated-active:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-populated-active:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-populated-active:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "api",
+      "target": "cached-reopen:no-account-upstream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-cached-reopen:focus-restored",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-cached-reopen-active:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-cached-reopen-active:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-cached-reopen-active:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-cached-reopen-active:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-cached-reopen-active:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-cached-reopen-active:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-cached-reopen-active:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-cached-reopen-active:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-cached-reopen-active:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-cached-reopen-active:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "fixture",
+      "target": "mode-empty",
+      "passed": true,
+      "detail": "isolated TLS upstream only; no UI response interception"
+    },
+    {
+      "kind": "api",
+      "target": "empty:rotation-clears-cache",
+      "passed": true,
+      "detail": "fresh synthetic credential generation; not a retained-old-account state"
+    },
+    {
+      "kind": "browserState",
+      "target": "empty:no-dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-empty:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-empty:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-empty:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-empty:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-empty:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-empty:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-empty:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-empty:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-empty:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-empty:section-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-empty:dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "privacy",
+      "target": "quota-empty:public-panel",
+      "passed": true,
+      "detail": "no profile, credential or endpoint fields displayed"
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-empty:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-empty:focus-restored",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-empty-active:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-empty-active:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-empty-active:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-empty-active:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-empty-active:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-empty-active:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-empty-active:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-empty-active:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-empty-active:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-empty-active:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "fixture",
+      "target": "mode-populated",
+      "passed": true,
+      "detail": "isolated TLS upstream only; no UI response interception"
+    },
+    {
+      "kind": "api",
+      "target": "populated:rotation-clears-cache",
+      "passed": true,
+      "detail": "fresh synthetic credential generation; not a retained-old-account state"
+    },
+    {
+      "kind": "browserState",
+      "target": "loading:disabled-refresh",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-loading:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading:section-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading:dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "privacy",
+      "target": "quota-loading:public-panel",
+      "passed": true,
+      "detail": "no profile, credential or endpoint fields displayed"
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-loading:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "loading:refresh-reenabled",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading-to-populated:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading-to-populated:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading-to-populated:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading-to-populated:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading-to-populated:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading-to-populated:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading-to-populated:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading-to-populated:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-loading-to-populated:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading-to-populated:section-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading-to-populated:dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "privacy",
+      "target": "quota-loading-to-populated:public-panel",
+      "passed": true,
+      "detail": "no profile, credential or endpoint fields displayed"
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-loading-to-populated:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading-to-populated:focus-restored",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading-to-populated-active:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading-to-populated-active:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading-to-populated-active:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-loading-to-populated-active:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading-to-populated-active:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading-to-populated-active:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading-to-populated-active:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-loading-to-populated-active:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-loading-to-populated-active:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-loading-to-populated-active:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "fixture",
+      "target": "mode-error",
+      "passed": true,
+      "detail": "isolated TLS upstream only; no UI response interception"
+    },
+    {
+      "kind": "api",
+      "target": "error:rotation-clears-cache",
+      "passed": true,
+      "detail": "fresh synthetic credential generation; not a retained-old-account state"
+    },
+    {
+      "kind": "browserState",
+      "target": "error:no-old-account-dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-error-new-generation:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-error-new-generation:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-error-new-generation:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-error-new-generation:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-error-new-generation:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-error-new-generation:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-error-new-generation:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-error-new-generation:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-error-new-generation:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-error-new-generation:section-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-error-new-generation:dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "privacy",
+      "target": "quota-error-new-generation:public-panel",
+      "passed": true,
+      "detail": "no profile, credential or endpoint fields displayed"
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-error-new-generation:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-error-new-generation:focus-restored",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-error-new-generation-active:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-error-new-generation-active:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-error-new-generation-active:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-error-new-generation-active:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-error-new-generation-active:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-error-new-generation-active:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-error-new-generation-active:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-error-new-generation-active:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-error-new-generation-active:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-error-new-generation-active:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "fixture",
+      "target": "mode-partial",
+      "passed": true,
+      "detail": "isolated TLS upstream only; no UI response interception"
+    },
+    {
+      "kind": "api",
+      "target": "partial:rotation-clears-cache",
+      "passed": true,
+      "detail": "fresh synthetic credential generation; not a retained-old-account state"
+    },
+    {
+      "kind": "browserState",
+      "target": "partial:unknown-fields-not-zero",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-partial:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-partial:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-partial:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-partial:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-partial:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-partial:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-partial:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-partial:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-partial:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-partial:section-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-partial:dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "privacy",
+      "target": "quota-partial:public-panel",
+      "passed": true,
+      "detail": "no profile, credential or endpoint fields displayed"
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-partial:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-partial:focus-restored",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-partial-active:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-partial-active:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-partial-active:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-partial-active:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-partial-active:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-partial-active:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-partial-active:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-partial-active:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-partial-active:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-partial-active:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "fixture",
+      "target": "mode-unlimited",
+      "passed": true,
+      "detail": "isolated TLS upstream only; no UI response interception"
+    },
+    {
+      "kind": "api",
+      "target": "unlimited:rotation-clears-cache",
+      "passed": true,
+      "detail": "fresh synthetic credential generation; not a retained-old-account state"
+    },
+    {
+      "kind": "browserState",
+      "target": "unlimited:three-dimensions",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-unlimited:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-unlimited:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-unlimited:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-unlimited:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-unlimited:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-unlimited:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-unlimited:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-unlimited:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-unlimited:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-unlimited:section-visible",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-unlimited:dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "privacy",
+      "target": "quota-unlimited:public-panel",
+      "passed": true,
+      "detail": "no profile, credential or endpoint fields displayed"
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-unlimited:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-unlimited:focus-restored",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-unlimited-active:canonical-active-route",
+      "passed": true,
+      "detail": "canonical conversation route verified; identifier omitted"
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-unlimited-active:composer-busy",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-unlimited-active:streaming-badge",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "quota-unlimited-active:rendered-stream",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-unlimited-active:chat-steer-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-unlimited-active:chat-redirect-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-unlimited-active:chat-followup-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "quota-unlimited-active:chat-abort-btn",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "quota-unlimited-active:no-pageerrors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "screenshot",
+      "target": "quota-unlimited-active:nonempty",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "fixture",
+      "target": "mode-populated",
+      "passed": true,
+      "detail": "isolated TLS upstream only; no UI response interception"
+    },
+    {
+      "kind": "browserState",
+      "target": "actual-stop-returns-idle",
+      "passed": true,
+      "detail": "actual routed Stop control; verified by harness after capture adapter returns"
+    }
+  ],
+  "accessibility": {
+    "activeRunControls": {
+      "chat-steer-btn": "Steer at next turn boundary",
+      "chat-redirect-btn": "Redirect immediately",
+      "chat-followup-btn": "Queue follow-up after completion",
+      "chat-abort-btn": "Stop agent"
+    }
+  },
+  "uiCaptures": [
+    {
+      "name": "quota-entry-active",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:09.708Z",
+      "view": "unobscured-active-conversation",
+      "screenshot": {
+        "path": "quota-entry-active.png",
+        "sha256": "8c9854df509f52a27ccb2ec13c6c121b8f1291871fc63ca397bbf8c4fd31c514"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-entry-active:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-entry-active:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-entry-active:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-entry-active:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-entry-active:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-entry-active:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-entry-active:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-entry-active:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-entry-active:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-entry-active:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-populated",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:12.104Z",
+      "view": "real-modal-over-active-conversation",
+      "screenshot": {
+        "path": "quota-populated.png",
+        "sha256": "78101802ac1e025f56a4b4d2abf4e68bcd2009e9e75e2b1b92f1f3a728cd2cbf"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-populated:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-populated:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-populated:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-populated:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-populated:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-populated:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-populated:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-populated:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-populated:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-populated:section-visible",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-populated:dialog",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "privacy",
+          "target": "quota-populated:public-panel",
+          "passed": true,
+          "detail": "no profile, credential or endpoint fields displayed"
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-populated:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-response-headers",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:12.429Z",
+      "view": "real-modal-over-active-conversation",
+      "screenshot": {
+        "path": "quota-response-headers.png",
+        "sha256": "32292622a92c3ca49806fb2c42c18de4b16fafd6fd74d8441658a9ae6c423296"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-response-headers:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-response-headers:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-response-headers:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-response-headers:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-response-headers:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-response-headers:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-response-headers:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-response-headers:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-response-headers:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-response-headers:section-visible",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-response-headers:dialog",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "privacy",
+          "target": "quota-response-headers:public-panel",
+          "passed": true,
+          "detail": "no profile, credential or endpoint fields displayed"
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-response-headers:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-manual-refresh-throttled",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:12.847Z",
+      "view": "real-modal-over-active-conversation",
+      "screenshot": {
+        "path": "quota-manual-refresh-throttled.png",
+        "sha256": "1c4d31c0d53d85c1f24b33ca20a8d7b24675ddd35a7a7a2386ea07a226332055"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-manual-refresh-throttled:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-manual-refresh-throttled:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-manual-refresh-throttled:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-manual-refresh-throttled:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-manual-refresh-throttled:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-manual-refresh-throttled:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-manual-refresh-throttled:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-manual-refresh-throttled:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-manual-refresh-throttled:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-manual-refresh-throttled:section-visible",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-manual-refresh-throttled:dialog",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "privacy",
+          "target": "quota-manual-refresh-throttled:public-panel",
+          "passed": true,
+          "detail": "no profile, credential or endpoint fields displayed"
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-manual-refresh-throttled:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-scheduled-24h",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:13.162Z",
+      "view": "real-modal-over-active-conversation",
+      "screenshot": {
+        "path": "quota-scheduled-24h.png",
+        "sha256": "699056148787b7815df61e8ecb1a02abdd8110032dcb5bd20426390380bbeaa9"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-scheduled-24h:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-scheduled-24h:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-scheduled-24h:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-scheduled-24h:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-scheduled-24h:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-scheduled-24h:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-scheduled-24h:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-scheduled-24h:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-scheduled-24h:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-scheduled-24h:section-visible",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-scheduled-24h:dialog",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "privacy",
+          "target": "quota-scheduled-24h:public-panel",
+          "passed": true,
+          "detail": "no profile, credential or endpoint fields displayed"
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-scheduled-24h:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-scheduled-utc-day",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:13.589Z",
+      "view": "real-modal-over-active-conversation",
+      "screenshot": {
+        "path": "quota-scheduled-utc-day.png",
+        "sha256": "ebcd4bba09c0c159706ecb943d7c80283fadfa3c8e882bf4e2ef1a03f3e2ae10"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-scheduled-utc-day:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-scheduled-utc-day:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-scheduled-utc-day:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-scheduled-utc-day:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-scheduled-utc-day:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-scheduled-utc-day:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-scheduled-utc-day:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-scheduled-utc-day:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-scheduled-utc-day:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-scheduled-utc-day:section-visible",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-scheduled-utc-day:dialog",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "privacy",
+          "target": "quota-scheduled-utc-day:public-panel",
+          "passed": true,
+          "detail": "no profile, credential or endpoint fields displayed"
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-scheduled-utc-day:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-populated-active",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:13.889Z",
+      "view": "unobscured-active-conversation",
+      "screenshot": {
+        "path": "quota-populated-active.png",
+        "sha256": "ef85715465a6aa3fa7c5f5a2e59aeb73e49cf3164552aa1a39d732a34b849069"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-populated-active:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-populated-active:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-populated-active:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-populated-active:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-populated-active:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-populated-active:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-populated-active:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-populated-active:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-populated-active:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-populated-active:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-cached-reopen-active",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:14.291Z",
+      "view": "unobscured-active-conversation",
+      "screenshot": {
+        "path": "quota-cached-reopen-active.png",
+        "sha256": "8bb95b82ab615c224c91477b842cfe72acd377a74e1f8bbd74421ebfea909adf"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-cached-reopen-active:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-cached-reopen-active:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-cached-reopen-active:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-cached-reopen-active:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-cached-reopen-active:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-cached-reopen-active:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-cached-reopen-active:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-cached-reopen-active:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-cached-reopen-active:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-cached-reopen-active:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-empty",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:14.739Z",
+      "view": "real-modal-over-active-conversation",
+      "screenshot": {
+        "path": "quota-empty.png",
+        "sha256": "4018ee2443077a21eb99c5d6843d8e75e009b0db716e81205c96c3608af99a2f"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-empty:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-empty:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-empty:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-empty:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-empty:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-empty:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-empty:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-empty:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-empty:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-empty:section-visible",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-empty:dialog",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "privacy",
+          "target": "quota-empty:public-panel",
+          "passed": true,
+          "detail": "no profile, credential or endpoint fields displayed"
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-empty:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-empty-active",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:15.006Z",
+      "view": "unobscured-active-conversation",
+      "screenshot": {
+        "path": "quota-empty-active.png",
+        "sha256": "df2b43ec197f1e058456e5a613b1a087e60c0b6286ae1a920130ed3e8d78ed16"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-empty-active:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-empty-active:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-empty-active:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-empty-active:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-empty-active:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-empty-active:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-empty-active:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-empty-active:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-empty-active:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-empty-active:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-loading",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:15.457Z",
+      "view": "real-modal-over-active-conversation",
+      "screenshot": {
+        "path": "quota-loading.png",
+        "sha256": "a3f0173a00561f28548dc8fd1294fbffbc8cdab48b01a3dfb1ad9c58c789b1af"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-loading:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-loading:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-loading:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-loading:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-loading:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-loading:section-visible",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading:dialog",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "privacy",
+          "target": "quota-loading:public-panel",
+          "passed": true,
+          "detail": "no profile, credential or endpoint fields displayed"
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-loading:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-loading-to-populated",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:19.127Z",
+      "view": "real-modal-over-active-conversation",
+      "screenshot": {
+        "path": "quota-loading-to-populated.png",
+        "sha256": "5e67f7a4280f72a86dd8f1779f175136b58568432306f5fc78765e78c4fbde0d"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-loading-to-populated:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-loading-to-populated:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-loading-to-populated:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-loading-to-populated:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading-to-populated:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading-to-populated:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading-to-populated:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading-to-populated:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-loading-to-populated:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-loading-to-populated:section-visible",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading-to-populated:dialog",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "privacy",
+          "target": "quota-loading-to-populated:public-panel",
+          "passed": true,
+          "detail": "no profile, credential or endpoint fields displayed"
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-loading-to-populated:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-loading-to-populated-active",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:19.39Z",
+      "view": "unobscured-active-conversation",
+      "screenshot": {
+        "path": "quota-loading-to-populated-active.png",
+        "sha256": "c08bc849df3e5058006f859801b8e2afa389923f82eb9c2e520f5bb9f30a795b"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-loading-to-populated-active:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-loading-to-populated-active:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-loading-to-populated-active:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-loading-to-populated-active:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading-to-populated-active:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading-to-populated-active:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading-to-populated-active:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-loading-to-populated-active:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-loading-to-populated-active:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-loading-to-populated-active:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-error-new-generation",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:19.82Z",
+      "view": "real-modal-over-active-conversation",
+      "screenshot": {
+        "path": "quota-error-new-generation.png",
+        "sha256": "2761d3fea7ae8b45fccaec4d46ef01b8f1092ba857dea1fd197b5f72439d832a"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-error-new-generation:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-error-new-generation:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-error-new-generation:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-error-new-generation:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-error-new-generation:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-error-new-generation:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-error-new-generation:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-error-new-generation:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-error-new-generation:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-error-new-generation:section-visible",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-error-new-generation:dialog",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "privacy",
+          "target": "quota-error-new-generation:public-panel",
+          "passed": true,
+          "detail": "no profile, credential or endpoint fields displayed"
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-error-new-generation:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-error-new-generation-active",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:20.091Z",
+      "view": "unobscured-active-conversation",
+      "screenshot": {
+        "path": "quota-error-new-generation-active.png",
+        "sha256": "7664d91a038023f7b6fb4f312cca93e6a2ce772603abc25e2e31c6699005190d"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-error-new-generation-active:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-error-new-generation-active:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-error-new-generation-active:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-error-new-generation-active:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-error-new-generation-active:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-error-new-generation-active:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-error-new-generation-active:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-error-new-generation-active:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-error-new-generation-active:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-error-new-generation-active:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-partial",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:20.544Z",
+      "view": "real-modal-over-active-conversation",
+      "screenshot": {
+        "path": "quota-partial.png",
+        "sha256": "4896bfce5489d3dce7c7b82a0b5e34b6198ebf8644c1c0aeff0850665387029d"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-partial:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-partial:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-partial:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-partial:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-partial:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-partial:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-partial:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-partial:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-partial:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-partial:section-visible",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-partial:dialog",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "privacy",
+          "target": "quota-partial:public-panel",
+          "passed": true,
+          "detail": "no profile, credential or endpoint fields displayed"
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-partial:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-partial-active",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:20.806Z",
+      "view": "unobscured-active-conversation",
+      "screenshot": {
+        "path": "quota-partial-active.png",
+        "sha256": "363cd4d6a384700091b477fa1d11ec9292691fa5293ae8906d1e9dc73fd549a7"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-partial-active:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-partial-active:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-partial-active:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-partial-active:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-partial-active:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-partial-active:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-partial-active:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-partial-active:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-partial-active:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-partial-active:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-unlimited",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:21.233Z",
+      "view": "real-modal-over-active-conversation",
+      "screenshot": {
+        "path": "quota-unlimited.png",
+        "sha256": "46e3cc30296d8deac980f9f154339f1e331acf724b751b6455979f3d2f6ca45f"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-unlimited:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-unlimited:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-unlimited:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-unlimited:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-unlimited:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-unlimited:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-unlimited:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-unlimited:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-unlimited:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-unlimited:section-visible",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-unlimited:dialog",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "privacy",
+          "target": "quota-unlimited:public-panel",
+          "passed": true,
+          "detail": "no profile, credential or endpoint fields displayed"
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-unlimited:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "quota-unlimited-active",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "capturedUtc": "2026-10-09T12:13:21.491Z",
+      "view": "unobscured-active-conversation",
+      "screenshot": {
+        "path": "quota-unlimited-active.png",
+        "sha256": "bbb43478907c2031111e1be449b7026cf3bc44c1a28e91511df0cf3c9d2a7991"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "quota-unlimited-active:canonical-active-route",
+          "passed": true,
+          "detail": "canonical conversation route verified; identifier omitted"
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-unlimited-active:composer-busy",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-unlimited-active:streaming-badge",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "quota-unlimited-active:rendered-stream",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-unlimited-active:chat-steer-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-unlimited-active:chat-redirect-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-unlimited-active:chat-followup-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "accessibility",
+          "target": "quota-unlimited-active:chat-abort-btn",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserErrors",
+          "target": "quota-unlimited-active:no-pageerrors",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "screenshot",
+          "target": "quota-unlimited-active:nonempty",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "staleRetainedSuccess": false,
+    "retainedSuccessAfterError": false,
+    "mobile": false,
+    "explanation": "Not captured: real stale threshold exceeds this bounded active stream; new-generation error must not retain old account facts. Desktop only.",
+    "scheduled": {
+      "seedType": "disabled-command-job-manual-run",
+      "terminalStatus": "ok",
+      "tokenMeasurementsInjected": false
+    }
+  },
+  "timestamps": {
+    "startedUtc": "2026-10-09T12:13:09.48Z",
+    "capturedUtc": "2026-10-09T12:13:09.708Z",
+    "completedUtc": "2026-10-09T12:13:22.217Z"
+  },
+  "cleanup": {
+    "gatewayStopped": true,
+    "browserClosed": true,
+    "temporaryDataRemoved": true,
+    "containerRemoved": true
+  }
+}

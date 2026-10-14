@@ -91,6 +91,20 @@ public sealed record ConversationUpdatedEvent : ConversationEvent
 public sealed record ConversationArchivedEvent : ConversationEvent;
 
 /// <summary>
+/// Raised after the conversation's durable active-session pointer changes. The inherited
+/// <see cref="ConversationEvent.SessionId"/> identifies the session that caused the transition;
+/// the explicit previous/new values let clients distinguish replacement from reset.
+/// </summary>
+public sealed record ConversationActiveSessionChangedEvent : ConversationEvent
+{
+    /// <summary>Active session before the committed conversation mutation.</summary>
+    public SessionId? PreviousSessionId { get; init; }
+
+    /// <summary>Active session after the committed conversation mutation.</summary>
+    public SessionId? ActiveSessionId { get; init; }
+}
+
+/// <summary>
 /// Raised after a session item appended outside the live agent loop has been durably committed.
 /// The item is the exact persisted session fact; consumers that need the surrounding transcript
 /// hydrate it from the session store rather than treating this event as a second source of truth.

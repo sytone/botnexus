@@ -132,7 +132,7 @@ public sealed class GitHubIssueListTool : GitHubToolBase
             return ErrorResult(Name, repository, response);
 
         var items = array.EnumerateArray()
-            .Select(item => GitHubProjections.IssueListItem(item, fields))
+            .Select(item => item.IssueListItem(fields))
             .ToArray();
         var projectedBytes = Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(items, GitHubJson.ResultOptions));
 

@@ -8,9 +8,12 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Dispatching;
+using BotNexus.Gateway.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace BotNexus.Gateway.Sessions;
 
@@ -89,6 +92,9 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
     private readonly IInboundMessageOrchestrator? _orchestrator;
     private readonly GatewayOptions _options;
     private readonly IConversationStore? _conversations;
+    private readonly SessionLifecycleEvents? _lifecycleEvents;
+    private readonly CleanShutdownMarker? _shutdownMarker;
+    private readonly ConditionalWeakTable<GatewaySession, SemaphoreSlim> _recoveryGates = new();
 
     /// <summary>
     /// Initializes the startup recovery scan and its post-commit conversation-event projection.
@@ -101,7 +107,9 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         ILogger<InterruptedTurnNotificationService> logger,
         IInboundMessageOrchestrator? orchestrator,
         IOptions<GatewayOptions>? options,
-        IConversationStore? conversations = null)
+        IConversationStore? conversations = null,
+        SessionLifecycleEvents? lifecycleEvents = null,
+        CleanShutdownMarker? shutdownMarker = null)
     {
         _sessions = sessions;
         _agentRegistry = agentRegistry;
@@ -111,6 +119,8 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         _orchestrator = orchestrator;
         _options = options?.Value ?? new GatewayOptions();
         _conversations = conversations;
+        _lifecycleEvents = lifecycleEvents;
+        _shutdownMarker = shutdownMarker;
     }
 
     /// <inheritdoc />
@@ -125,116 +135,173 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
     /// survived every restart (#2030). StartedAsync runs only after every hosted service's
     /// StartAsync has completed, so the registry is fully populated by then.
     /// </summary>
-    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        if (_lifecycleEvents is not null)
+            _lifecycleEvents.SessionChanged += OnSessionLifecycleChangedAsync;
+        return Task.CompletedTask;
+    }
 
     /// <inheritdoc />
     public async Task StartedAsync(CancellationToken cancellationToken)
     {
-        var agents = _agentRegistry.GetAll();
+        const int pageSize = 256;
+        var registeredAgents = _agentRegistry.GetAll().Select(static descriptor => descriptor.AgentId).ToHashSet();
         var notified = 0;
         var replayed = 0;
+        var scanned = 0;
+        string? cursor = null;
+        var started = Stopwatch.StartNew();
+        var allocatedBefore = GC.GetTotalAllocatedBytes();
 
-        foreach (var descriptor in agents)
+        try
         {
-            var agentId = descriptor.AgentId;
-            IReadOnlyList<GatewaySession> agentSessions;
-            try
+            do
             {
-                agentSessions = await _sessions.ListAsync(agentId, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to list sessions for agent {AgentId} during interrupted-turn scan", agentId.Value);
-                continue;
-            }
-
-            foreach (var session in agentSessions)
-            {
-                if (!session.History.Any(static e => e.IsCrashSentinel))
-                    continue;
-
-                _logger.LogInformation(
-                    "Session {SessionId} (agent {AgentId}) has unresolved crash sentinels — notifying user",
-                    session.SessionId.Value, agentId.Value);
-
-                var isAgentOnlyConversation = await IsAgentOnlyConversationAsync(session, cancellationToken)
+                var page = await _sessions.ListUnresolvedCrashSentinelsAsync(pageSize, cursor, cancellationToken)
                     .ConfigureAwait(false);
-                var notificationContent = isAgentOnlyConversation
-                    ? AgentOnlyNotificationContent
-                    : NotificationContent;
-                var notification = new SessionEntry
+                scanned += page.Rows.Count;
+                foreach (var row in page.Rows)
                 {
-                    Role = MessageRole.Notification,
-                    Content = notificationContent,
-                    Timestamp = DateTimeOffset.UtcNow
-                };
+                    if (!registeredAgents.Contains(row.AgentId))
+                        continue;
 
-                session.AddEntry(notification);
+                    var session = await _sessions.GetAsync(row.SessionId, cancellationToken).ConfigureAwait(false);
+                    if (session is null || !session.History.Any(static entry => entry.IsCrashSentinel))
+                        continue;
 
-                // Agent-only conversations have nobody who can act on a resend instruction, so
-                // replay them independently of the human-facing opt-in. The same interactive and
-                // attempt-cap guards still apply. Missing conversation data is conservative: it
-                // does not prove the absence of a human.
-                var shouldAttemptReplay = (_options.AutoReplayInterruptedTurns || isAgentOnlyConversation)
-                    && session.IsInteractive
-                    && _orchestrator is not null;
-                var didReplay = false;
-                if (shouldAttemptReplay)
-                {
-                    didReplay = await TryAutoReplayAsync(session, agentId, cancellationToken).ConfigureAwait(false);
-                    if (didReplay)
-                        replayed++;
+                    _logger.LogInformation(
+                        "Session {SessionId} (agent {AgentId}) has unresolved crash sentinels - notifying user",
+                        row.SessionId.Value, row.AgentId.Value);
+                    var isAgentOnlyConversation = await IsAgentOnlyConversationAsync(session, cancellationToken)
+                        .ConfigureAwait(false);
+                    var didReplay = await RecoverSessionAsync(
+                        session, row.AgentId, isAgentOnlyConversation, cancellationToken).ConfigureAwait(false);
+                    if (didReplay) replayed++;
+                    notified++;
                 }
-
-                // The sentinel is the durable recovery marker. A refused or impossible replay must
-                // leave it in place so a later startup can try again. Notify-only sessions retain
-                // the historical behaviour because there is deliberately no replacement turn.
-                if (didReplay || !shouldAttemptReplay)
-                    session.RemoveCrashSentinels();
-
-                try
-                {
-                    await _sessions.SaveAsync(session, cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to save session {SessionId} after removing crash sentinels", session.SessionId.Value);
-                    continue;
-                }
-
-                await PublishPersistedNotificationAsync(session, agentId, notification, cancellationToken)
-                    .ConfigureAwait(false);
-
-                // GatewayActivity is operational telemetry only. Client delivery is exclusively the
-                // strongly typed conversation event published above.
-                await _broadcaster.PublishAsync(new GatewayActivity
-                {
-                    Type = GatewayActivityType.System,
-                    AgentId = agentId.Value,
-                    SessionId = session.SessionId.Value,
-                    ConversationId = session.ConversationId.IsInitialized() ? session.ConversationId.Value : null,
-                    Message = didReplay
-                        ? $"{notificationContent} (auto-replaying)"
-                        : notificationContent
-                }, cancellationToken).ConfigureAwait(false);
-
-                notified++;
-            }
+                cursor = page.NextCursor;
+            } while (cursor is not null);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Failed during bounded interrupted-turn scan after {ScannedRows} candidate row(s)", scanned);
         }
 
         _logger.LogInformation(
-            "Interrupted-turn scan complete: {NotifiedCount} session(s) found with crash sentinels ({ReplayedCount} auto-replayed)",
-            notified, replayed);
+            "Interrupted-turn scan complete: {ScannedRows} candidate row(s), {ElapsedMilliseconds} ms, {AllocatedBytes} allocated bytes; " +
+            "{NotifiedCount} session(s) notified ({ReplayedCount} auto-replayed)",
+            scanned, started.ElapsedMilliseconds, GC.GetTotalAllocatedBytes() - allocatedBefore, notified, replayed);
     }
 
     /// <inheritdoc />
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        if (_lifecycleEvents is not null)
+            _lifecycleEvents.SessionChanged -= OnSessionLifecycleChangedAsync;
+        return Task.CompletedTask;
+    }
 
     /// <inheritdoc />
     public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     /// <inheritdoc />
     public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private async Task OnSessionLifecycleChangedAsync(
+        SessionLifecycleEvent lifecycleEvent,
+        CancellationToken cancellationToken)
+    {
+        if (lifecycleEvent.Type != SessionLifecycleEventType.TerminalFailure
+            || lifecycleEvent.Session is not { } session
+            || session.ChannelType != ChannelKey.From("api")
+            || !session.History.Any(static entry => entry.IsCrashSentinel))
+        {
+            return;
+        }
+
+        if (!session.IsInteractive
+            || !await IsAgentOnlyConversationAsync(session, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var gate = _recoveryGates.GetValue(session, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!session.History.Any(static entry => entry.IsCrashSentinel))
+                return;
+
+            await RecoverSessionAsync(session, session.AgentId, isAgentOnlyConversation: true, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<bool> RecoverSessionAsync(
+        GatewaySession session,
+        AgentId agentId,
+        bool isAgentOnlyConversation,
+        CancellationToken cancellationToken)
+    {
+        var writeFence = SessionWriteFence.Capture(session);
+        var notificationContent = isAgentOnlyConversation
+            ? AgentOnlyNotificationContent
+            : NotificationContent;
+        var notification = new SessionEntry
+        {
+            Role = MessageRole.Notification,
+            Content = notificationContent,
+            Timestamp = DateTimeOffset.UtcNow
+        };
+        session.AddEntry(notification);
+
+        var shouldAttemptReplay = (_options.AutoReplayInterruptedTurns
+                || isAgentOnlyConversation
+                || _shutdownMarker?.PreviousShutdownWasPlanned == true)
+            && session.IsInteractive
+            && _orchestrator is not null;
+        var didReplay = shouldAttemptReplay
+            && await TryAutoReplayAsync(session, agentId, cancellationToken).ConfigureAwait(false);
+
+        if (didReplay || !shouldAttemptReplay)
+            session.RemoveCrashSentinels();
+
+        try
+        {
+            var outcome = await _sessions.SaveAsync(session, writeFence, cancellationToken).ConfigureAwait(false);
+            if (outcome != SessionSaveOutcome.Persisted)
+            {
+                _logger.LogInformation(
+                    "Interrupted-turn recovery for session {SessionId} was skipped because the session was deleted, sealed, or rebound",
+                    session.SessionId.Value);
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to save session {SessionId} after interrupted-turn recovery", session.SessionId.Value);
+            return false;
+        }
+
+        await PublishPersistedNotificationAsync(session, agentId, notification, cancellationToken)
+            .ConfigureAwait(false);
+
+        await _broadcaster.PublishAsync(new GatewayActivity
+        {
+            Type = GatewayActivityType.System,
+            AgentId = agentId.Value,
+            SessionId = session.SessionId.Value,
+            ConversationId = session.ConversationId.IsInitialized() ? session.ConversationId.Value : null,
+            Message = didReplay ? $"{notificationContent} (auto-replaying)" : notificationContent
+        }, cancellationToken).ConfigureAwait(false);
+
+        return didReplay;
+    }
 
     private async Task PublishPersistedNotificationAsync(
         GatewaySession session,
@@ -431,10 +498,17 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         return Task.FromResult(true);
     }
 
+    private static bool IsSynthesizedIncompleteResult(SessionEntry entry)
+        => entry.ToolIsError == true
+            && entry.Content?.Contains("did not complete", StringComparison.Ordinal) == true
+            && entry.Content.Contains("result synthesized for transcript consistency.", StringComparison.Ordinal);
+
     private static string[] FindOutcomeUnknownToolCallIds(IEnumerable<SessionEntry> history)
     {
         var completed = history
-            .Where(static entry => entry.IsToolResultRow() && !string.IsNullOrWhiteSpace(entry.ToolCallId))
+            .Where(static entry => entry.IsToolResultRow()
+                && !string.IsNullOrWhiteSpace(entry.ToolCallId)
+                && !IsSynthesizedIncompleteResult(entry))
             .Select(static entry => entry.ToolCallId!)
             .ToHashSet(StringComparer.Ordinal);
 

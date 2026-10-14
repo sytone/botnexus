@@ -51,6 +51,8 @@ public sealed class TestChannelAdapter : ChannelAdapterBase, IStreamEventChannel
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ConcurrentQueue<TestChannelConversationEventRecord>> _conversationEvents =
         new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ConcurrentQueue<TestChannelLifecycleEventRecord>> _lifecycleEvents =
+        new(StringComparer.Ordinal);
 
     private long _sequence;
 
@@ -170,17 +172,33 @@ public sealed class TestChannelAdapter : ChannelAdapterBase, IStreamEventChannel
         ConversationEvent conversationEvent,
         CancellationToken cancellationToken = default)
     {
-        if (conversationEvent is not ConversationAgentEvent agentEvent)
-            return;
+        var targets = ConversationEventStreamRouting.GetTargets(
+            conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId);
 
-        foreach (var target in ConversationEventStreamRouting.GetTargets(
-                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
+        if (conversationEvent is ConversationAgentEvent agentEvent)
         {
-            if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
+            foreach (var target in targets)
             {
-                await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
-                    .ConfigureAwait(false);
+                if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
+                {
+                    await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
+
+            return;
+        }
+
+        foreach (var target in targets)
+        {
+            _lifecycleEvents
+                .GetOrAdd(target.ChannelAddress.Value, _ => new ConcurrentQueue<TestChannelLifecycleEventRecord>())
+                .Enqueue(new TestChannelLifecycleEventRecord(
+                    target.ChannelAddress.Value,
+                    target.BindingId,
+                    conversationEvent,
+                    Interlocked.Increment(ref _sequence),
+                    DateTimeOffset.UtcNow));
         }
     }
 
@@ -267,6 +285,10 @@ public sealed class TestChannelAdapter : ChannelAdapterBase, IStreamEventChannel
     /// <summary>Returns structured conversation events across all addresses in capture order.</summary>
     public IReadOnlyList<TestChannelConversationEventRecord> GetAllConversationEvents()
         => [.. _conversationEvents.Values.SelectMany(queue => queue).OrderBy(record => record.Sequence)];
+
+    /// <summary>Returns typed lifecycle conversation events for one address in capture order.</summary>
+    public IReadOnlyList<TestChannelLifecycleEventRecord> GetLifecycleEvents(string address)
+        => _lifecycleEvents.TryGetValue(address, out var queue) ? [.. queue] : [];
 
     private void Record(
         string address,

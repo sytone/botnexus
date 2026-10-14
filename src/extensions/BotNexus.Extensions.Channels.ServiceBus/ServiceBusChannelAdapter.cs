@@ -1138,11 +1138,20 @@ public sealed class ServiceBusChannelAdapter : ChannelAdapterBase, IStreamEventC
         foreach (var target in ConversationEventStreamRouting.GetTargets(
                      conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
         {
-            if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
-            {
-                await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
-                    .ConfigureAwait(false);
-            }
+            if (target.ChannelRequestId is not { } requestKey ||
+                !((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
+                continue;
+
+            // The request key is channel-native but supplied by the event origin. An unrelated
+            // binding snapshot can carry the same key; do not send to (or retire) its pending
+            // request unless the binding still names the pending external conversation.
+            if (!_pendingReplies.TryGetValue(requestKey, out var pending) ||
+                (pending.ConversationId is { Length: > 0 } externalConversationId &&
+                 !string.Equals(target.ChannelAddress.Value, externalConversationId, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            await SendStreamEventAsync(target, agentEvent.StreamEvent, cancellationToken)
+                .ConfigureAwait(false);
         }
     }
 

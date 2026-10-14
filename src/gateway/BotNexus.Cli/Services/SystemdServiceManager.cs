@@ -40,6 +40,20 @@ internal sealed class SystemdServiceManager : IOsServiceManager
         return result.ExitCode == 0;
     }
 
+    public async Task<bool> IsRunningAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync("systemctl", $"is-active {ServiceName}", cancellationToken);
+        return result.ExitCode == 0;
+    }
+
+    public async Task<ServiceOperationResult> StopAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync("systemctl", $"stop {ServiceName}", cancellationToken);
+        return result.ExitCode == 0
+            ? new ServiceOperationResult(true, $"Stop requested for service '{ServiceName}'.")
+            : new ServiceOperationResult(false, $"Failed to stop service: {result.Output}");
+    }
+
     public async Task<ServiceOperationResult> InstallAsync(string executablePath, string homePath, int port, CancellationToken cancellationToken = default)
     {
         if (await IsInstalledAsync(cancellationToken))
@@ -108,8 +122,7 @@ internal sealed class SystemdServiceManager : IOsServiceManager
         if (!await IsInstalledAsync(cancellationToken))
             return new ServiceOperationResult(true, $"Service '{ServiceName}' is not installed.");
 
-        // Stop and disable
-        await RunAsync("systemctl", $"stop {ServiceName}", cancellationToken);
+        // GatewayCommand confirms process termination before definition removal.
         await RunAsync("systemctl", $"disable {ServiceName}", cancellationToken);
 
         // Remove unit file

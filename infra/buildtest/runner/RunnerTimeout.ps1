@@ -198,8 +198,8 @@ function Get-UnfinishedTestProjects {
 .DESCRIPTION
     `& dotnet test ... | Tee-Object` cannot be bounded: the pipeline blocks until the child
     exits, so there is no moment at which the runner can notice its own deadline. Starting the
-    process explicitly and polling WaitForExit gives the runner a point of control, which is
-    the whole mechanism by which artifacts survive an overrun.
+    process explicitly with an argument list and polling it gives the runner a point of
+    control, while preserving collector names containing spaces as one child argument.
 
     The child is killed with its entire tree. `dotnet test` spawns testhost processes that do
     not die with their parent -- exactly the orphan-leak shape documented for local validation
@@ -223,23 +223,52 @@ function Invoke-BoundedProcess {
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $stdout = "$LogPath.stdout"
     $stderr = "$LogPath.stderr"
-    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new($FilePath)
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in $ArgumentList) { [void]$startInfo.ArgumentList.Add($argument) }
 
-    $timedOut = $false
-    while (-not $process.HasExited) {
-        if ($stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
-            $timedOut = $true
-            try { $process.Kill($true) } catch { }
-            try { $process.WaitForExit(30000) | Out-Null } catch { }
-            break
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    $stdoutStream = $null
+    $stderrStream = $null
+    try {
+        if (-not $process.Start()) { throw "Could not start $FilePath." }
+        $stdoutStream = [System.IO.File]::Create($stdout)
+        $stderrStream = [System.IO.File]::Create($stderr)
+        # Drain both pipes while the child runs: synchronous reads can deadlock a verbose test host.
+        $stdoutCopy = $process.StandardOutput.BaseStream.CopyToAsync($stdoutStream)
+        $stderrCopy = $process.StandardError.BaseStream.CopyToAsync($stderrStream)
+
+        $timedOut = $false
+        while (-not $process.HasExited) {
+            if ($stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+                $timedOut = $true
+                try { $process.Kill($true) } catch { }
+                try { $process.WaitForExit(30000) | Out-Null } catch { }
+                break
+            }
+            Start-Sleep -Milliseconds $PollMilliseconds
         }
-        Start-Sleep -Milliseconds $PollMilliseconds
+        $drain = [System.Threading.Tasks.Task]::WhenAll($stdoutCopy, $stderrCopy)
+        if ($timedOut) {
+            # A surviving descendant may retain an inherited pipe; do not undo the deadline
+            # by waiting forever for its EOF after the process tree has been killed.
+            try { [void]$drain.Wait(30000) } catch { }
+        }
+        else { [void]$drain.GetAwaiter().GetResult() }
+        $exitCode = if ($timedOut) { 1 } else { $process.ExitCode }
     }
-    $stopwatch.Stop()
+    finally {
+        if ($null -ne $stdoutStream) { $stdoutStream.Dispose() }
+        if ($null -ne $stderrStream) { $stderrStream.Dispose() }
+        $process.Dispose()
+        $stopwatch.Stop()
+    }
 
-    # Merge the redirected streams into the log the rest of the runner expects. Done after the
-    # fact rather than streamed, because the point of this function is to survive a kill and a
-    # half-written interleave would be less readable than two complete sections.
+    # Merge the drained streams into the log the rest of the runner expects. Done after the
+    # fact so a timeout still leaves two readable sections rather than a half-written interleave.
     $merged = @()
     foreach ($part in @($stdout, $stderr)) {
         if (Test-Path -LiteralPath $part) {
@@ -248,8 +277,6 @@ function Invoke-BoundedProcess {
         }
     }
     Set-Content -Path $LogPath -Value ($merged -join [Environment]::NewLine) -ErrorAction SilentlyContinue
-
-    $exitCode = if ($timedOut) { 1 } else { try { $process.ExitCode } catch { 1 } }
 
     return [pscustomobject]@{
         ExitCode = $exitCode

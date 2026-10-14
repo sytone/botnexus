@@ -16,6 +16,9 @@ are source-aligned excerpts, not replacement interface definitions or a benchmar
 | `AgentLoopRunner` / `ToolExecutor` | Run model turns and execute requested tools |
 
 For the finalization contract that distinguishes completed, continuing, parked, and incomplete runs, see [Agent run completion](agent-run-completion.md).
+For the naming and responsibility rules for policies, transformers, providers,
+services, observers, events, and configuration, see
+[Agent core extension-point naming](agent-core-extension-points.md).
 
 ## Agent Descriptor Loading
 

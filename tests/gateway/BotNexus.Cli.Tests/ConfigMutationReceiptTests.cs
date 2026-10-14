@@ -55,7 +55,12 @@ public sealed partial class ConfigMutationReceiptTests : IDisposable
 
         exitCode.ShouldBe(0);
         var output = Normalize(_output.ToString());
-        output.ShouldContain($"✓ Provider receipt-test added.{Environment.NewLine}  Config saved to: {_configPath}");
+        output.ShouldContain(
+            $"✓ Provider receipt-test added.{Environment.NewLine}" +
+            $"  Config saved to: {_configPath}{Environment.NewLine}" +
+            $"  Persistence: succeeded.{Environment.NewLine}" +
+            $"  Runtime activation: not validated by this offline command.{Environment.NewLine}" +
+            $"  Restart required: no when the running gateway receives the configuration reload; verify the provider appears in its live model catalogue before assigning an agent.");
         output.ShouldNotContain("SQLite:");
         output.ShouldNotContain(Secret);
 
@@ -76,7 +81,10 @@ public sealed partial class ConfigMutationReceiptTests : IDisposable
             $"✓ Provider receipt-test added.{Environment.NewLine}" +
             $"  Updated configuration backends:{Environment.NewLine}" +
             $"    JSON:   {_configPath}{Environment.NewLine}" +
-            $"    SQLite: {_storePath} (wins on read)");
+            $"    SQLite: {_storePath} (wins on read){Environment.NewLine}" +
+            $"  Persistence: succeeded.{Environment.NewLine}" +
+            $"  Runtime activation: not validated by this offline command.{Environment.NewLine}" +
+            $"  Restart required: no when the running gateway receives the configuration reload; verify the provider appears in its live model catalogue before assigning an agent.");
         output.ShouldNotContain(Secret);
 
         var json = JsonNode.Parse(await File.ReadAllTextAsync(_configPath))!.AsObject();
@@ -84,6 +92,82 @@ public sealed partial class ConfigMutationReceiptTests : IDisposable
 
         var entries = await new SqliteConfigStore($"Data Source={_storePath}").ReadEntriesAsync();
         entries["providers.receipt-test.apiKey"].Value.ShouldBe(System.Text.Json.JsonSerializer.Serialize(Secret));
+    }
+
+    [Fact]
+    public void ProviderActivationReceipt_StatesPersistenceActivationAndRestartBoundaries()
+    {
+        ProviderCommand.PrintProviderActivationReceipt();
+
+        var output = Normalize(_output.ToString());
+        output.ShouldBe(
+            $"  Persistence: succeeded.{Environment.NewLine}" +
+            $"  Runtime activation: not validated by this offline command.{Environment.NewLine}" +
+            $"  Restart required: no when the running gateway receives the configuration reload; verify the provider appears in its live model catalogue before assigning an agent.{Environment.NewLine}");
+    }
+
+    [Theory]
+    [InlineData("github-copilot")]
+    [InlineData("GITHUB-COPILOT")]
+    public void ProviderActivationReceipt_CopilotType_RequiresRestart(string providerType)
+    {
+        ProviderCommand.PrintProviderActivationReceipt(providerType);
+
+        var output = Normalize(_output.ToString());
+        output.ShouldBe(
+            $"  Persistence: succeeded.{Environment.NewLine}" +
+            $"  Runtime activation: not validated by this offline command.{Environment.NewLine}" +
+            $"  Restart required: yes for GitHub Copilot catalogue and discovery setup; restart the gateway, then verify the provider appears in its live model catalogue before assigning an agent.{Environment.NewLine}");
+        output.ShouldNotContain("Restart required: no");
+    }
+
+    [Theory]
+    [InlineData("openai")]
+    [InlineData("microsoft-foundry")]
+    [InlineData("ollama")]
+    public void ProviderActivationReceipt_ConfigDefinedType_DoesNotRequireRestart(string providerType)
+    {
+        ProviderCommand.PrintProviderActivationReceipt(providerType);
+
+        var output = Normalize(_output.ToString());
+        output.ShouldContain("Runtime activation: not validated by this offline command.");
+        output.ShouldContain("Restart required: no when the running gateway receives the configuration reload");
+        output.ShouldNotContain("Restart required: yes");
+    }
+
+    [Theory]
+    [InlineData("work-account", "github-copilot", true, false)]
+    [InlineData("github-copilot", null, true, false)]
+    [InlineData("work-account", "github-copilot", true, true)]
+    [InlineData("github-copilot-compatible", "openai", false, false)]
+    [InlineData("github-copilot", "openai", false, false)]
+    public async Task ProviderAdd_ExistingEntry_UsesEffectiveTypeNotInstancePrefix(
+        string name, string? providerType, bool requiresRestart, bool withStore)
+    {
+        var provider = new JsonObject { ["enabled"] = true };
+        if (providerType is not null)
+            provider["type"] = providerType;
+        var seed = new JsonObject { ["providers"] = new JsonObject { [name] = provider } };
+        await File.WriteAllTextAsync(_configPath, seed.ToJsonString());
+        if (withStore)
+        {
+            await ConfigStoreBootstrap.PopulateAsync(_storePath, seed);
+            // The saved effective type comes from SQLite, not this stale JSON entry.
+            provider["type"] = "openai";
+            await File.WriteAllTextAsync(_configPath, seed.ToJsonString());
+        }
+
+        var exitCode = await new ProviderCommand().ExecuteAddAsync(
+            _configPath, name, api: null, apiKey: Secret, baseUrl: null,
+            defaultModel: null, models: [], enabled: true, verbose: false, CancellationToken.None);
+
+        exitCode.ShouldBe(0);
+        var output = Normalize(_output.ToString());
+        output.ShouldContain("Runtime activation: not validated by this offline command.");
+        output.ShouldContain(requiresRestart ? "Restart required: yes for GitHub Copilot catalogue and discovery setup" :
+            "Restart required: no when the running gateway receives the configuration reload");
+        output.ShouldNotContain(requiresRestart ? "Restart required: no" : "Restart required: yes");
+        output.ShouldNotContain(Secret);
     }
 
     [Fact]

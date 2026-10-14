@@ -149,6 +149,10 @@ public enum ManagedTaskEventType
     AttemptAdmitted,
     AttemptCommitted,
     RunCancelled,
+    WaitParked,
+    WaitWoken,
+    WaitExpired,
+    ContinuationIntentChanged,
     ResultRecorded,
     CompletionDeliveryChanged,
     ResultCleanupCompleted,
@@ -160,15 +164,20 @@ public enum ManagedTaskLedgerWriteOutcome
     Applied,
     Duplicate,
     RevisionConflict,
+    EvidenceConflict,
     EpochConflict,
     AttemptNotFound,
     Cancelled,
     Terminal,
     RunNotFound,
     StepNotFound,
+    WaitNotFound,
     ResultAlreadyRecorded,
     CompletionDeliveryNotFound,
     DeliveryGenerationConflict,
+    ContinuationIntentNotFound,
+    ContinuationGenerationConflict,
+    PendingWaitConflict,
     Expired,
     ReconciliationRequired,
     LedgerConflict,
@@ -391,6 +400,152 @@ public sealed record ManagedTaskEventRecord(
     string CommandId,
     ManagedTaskEventType Type,
     DateTimeOffset OccurredAt);
+
+/// <summary>Why managed execution is durably parked.</summary>
+public enum ManagedTaskWaitReason
+{
+    AskUser,
+    Approval,
+    Timer,
+    Event,
+}
+
+/// <summary>The external evidence shape that may wake a parked task.</summary>
+public enum ManagedTaskWaitWakeKind
+{
+    Answer,
+    Approval,
+    Timer,
+    Event,
+}
+
+/// <summary>Lifecycle of a durable managed-task wait.</summary>
+public enum ManagedTaskWaitStatus
+{
+    Pending,
+    Woken,
+    Cancelled,
+    Expired,
+}
+
+/// <summary>Lifecycle of a durable continuation outbox intent.</summary>
+public enum ManagedTaskContinuationStatus
+{
+    Pending,
+    InProgress,
+    Completed,
+    Cancelled,
+}
+
+/// <summary>Public metadata bounds enforced before a wait is persisted.</summary>
+public static class ManagedTaskWaitLimits
+{
+    public const int MaxReasonDetailLength = 256;
+    public const int MaxDetailLength = 8192;
+    public const int MaxEvidenceLength = 4096;
+    public const int MaxContinuationOwnerLength = 512;
+    public const int MaxWakeConditionLength = 4096;
+    public const int MaxResponseLength = 8192;
+    public const int MaxContinuationIntentIdLength = 256;
+}
+
+/// <summary>Parks one step under its current revision fence.</summary>
+public sealed record ParkManagedTaskWaitCommand(
+    string CommandId,
+    string RunId,
+    string StepId,
+    string WaitId,
+    ManagedTaskWaitReason Reason,
+    string ReasonDetail,
+    string Detail,
+    string Evidence,
+    string ContinuationOwner,
+    ManagedTaskWaitWakeKind WakeKind,
+    string WakeCondition,
+    long ExpectedStepRevision,
+    DateTimeOffset Deadline);
+
+/// <summary>Wakes one wait under revision, evidence, and wake-kind fences.</summary>
+public sealed record WakeManagedTaskWaitCommand(
+    string CommandId,
+    string RunId,
+    string WaitId,
+    long ExpectedWaitRevision,
+    long ExpectedStepRevision,
+    string ExpectedEvidence,
+    ManagedTaskWaitWakeKind WakeKind,
+    string Response,
+    string ContinuationIntentId);
+
+/// <summary>Claims one pending continuation under its current generation fence.</summary>
+public sealed record ClaimManagedTaskContinuationIntentCommand(
+    string CommandId,
+    string RunId,
+    string IntentId,
+    long ExpectedGeneration);
+
+/// <summary>Returns an interrupted continuation claim to replay under a new generation.</summary>
+public sealed record RecoverManagedTaskContinuationIntentCommand(
+    string CommandId,
+    string RunId,
+    string IntentId,
+    long ExpectedGeneration);
+
+/// <summary>Completes one continuation under the generation owned by its consumer.</summary>
+public sealed record CompleteManagedTaskContinuationIntentCommand(
+    string CommandId,
+    string RunId,
+    string IntentId,
+    long ExpectedGeneration);
+
+/// <summary>Expires due waits in one bounded recovery batch.</summary>
+public sealed record ExpireManagedTaskWaitsCommand(
+    string CommandId,
+    int MaxWaits);
+
+/// <summary>Durable projection of a parked managed-task step.</summary>
+public sealed record ManagedTaskWaitRecord(
+    string RunId,
+    string StepId,
+    string WaitId,
+    ManagedTaskWaitReason Reason,
+    string ReasonDetail,
+    string Detail,
+    string Evidence,
+    string ContinuationOwner,
+    ManagedTaskWaitWakeKind WakeKind,
+    string WakeCondition,
+    ManagedTaskWaitStatus Status,
+    long Revision,
+    long StepRevision,
+    DateTimeOffset Deadline,
+    string? Response,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+/// <summary>Transactional outbox row that hands a woken task back to its owner.</summary>
+public sealed record ManagedTaskContinuationIntentRecord(
+    string RunId,
+    string StepId,
+    string WaitId,
+    string IntentId,
+    string Owner,
+    string Response,
+    ManagedTaskContinuationStatus Status,
+    long Generation,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
+
+/// <summary>Result of a park or wake write and its directly affected durable rows.</summary>
+public sealed record ManagedTaskWaitWriteResult(
+    ManagedTaskLedgerWriteOutcome Outcome,
+    ManagedTaskWaitRecord? Wait,
+    ManagedTaskContinuationIntentRecord? ContinuationIntent);
+
+/// <summary>Result of a generation-fenced continuation lifecycle write.</summary>
+public sealed record ManagedTaskContinuationWriteResult(
+    ManagedTaskLedgerWriteOutcome Outcome,
+    ManagedTaskContinuationIntentRecord? ContinuationIntent);
 
 /// <summary>Signals command identity reuse or an immutable run specification conflict.</summary>
 public sealed class ManagedTaskLedgerConflictException(string message) : InvalidOperationException(message);

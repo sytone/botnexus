@@ -90,6 +90,17 @@ public sealed class SignalRBlazorDeepLinkMiddlewareTests : IAsyncLifetime
         conditional.Content.Headers.ContentEncoding.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task MobileRootWithoutTrailingSlash_RedirectsToCanonicalRoot()
+    {
+        using var response = await SendAsync("/mobile", null);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.PermanentRedirect);
+        response.Headers.Location?.ToString().ShouldBe("/mobile/");
+        response.Headers.CacheControl.ShouldBeNull();
+        (await response.Content.ReadAsByteArrayAsync()).ShouldBeEmpty();
+    }
+
     [Theory]
     [InlineData("/api/agents")]
     [InlineData("/hub/gateway")]

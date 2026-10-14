@@ -36,17 +36,17 @@ var options = new AgentOptions(
     ),
     Model: new LlmModel("claude-3-5-sonnet", "anthropic"),
     LlmClient: llmClient,
-    ConvertToLlm: async (messages, ct) =>
+    ProviderMessageTransformer: async (messages, ct) =>
     {
         // Convert AgentMessage timeline to provider Message[] for the LLM
         return await MessageConverter.ConvertAsync(messages, ct);
     },
-    TransformContext: async (messages, ct) =>
+    AgentContextTransformer: async (messages, ct) =>
     {
         // Optional: filter, summarize, or rewrite messages
         return messages;
     },
-    GetProviderExecutionOptions: async (provider, ct) =>
+    ProviderExecutionOptionsProvider: async (provider, ct) =>
     {
         // Resolve provider-owned execution policy without mixing it into generation settings.
         return new ProviderExecutionOptions
@@ -54,11 +54,11 @@ var options = new AgentOptions(
             ApiKey = Environment.GetEnvironmentVariable($"{provider.ToUpper()}_API_KEY")
         };
     },
-    GetSteeringMessages: null,
-    GetFollowUpMessages: null,
+    SteeringMessageProvider: null,
+    FollowUpMessageProvider: null,
     ToolExecutionMode: ToolExecutionMode.Sequential,
-    BeforeToolCall: null,
-    AfterToolCall: null,
+    ToolExecutionPolicy: null,
+    ToolResultTransformer: null,
     GenerationSettings: new GenerationOptions
     {
         Temperature = 0.7,
@@ -102,7 +102,7 @@ The agent maintains an internal timeline of **AgentMessages** that represent the
 - **ToolResultAgentMessage**: Results from executed tools.
 - **SystemAgentMessage**: System-level prompts (usually prepended to context).
 
-These AgentMessages are **converted to provider Messages** at the LLM call boundary via the `ConvertToLlmDelegate`. This separation allows:
+These AgentMessages are **converted to provider Messages** at the LLM call boundary via the `ProviderMessageTransformer` delegate. This separation allows:
 - Storing UI-only metadata in the timeline without confusing the LLM.
 - Filtering, summarizing, or rewriting messages before they reach the provider.
 - Supporting custom message types by extending the AgentMessage hierarchy.
@@ -116,7 +116,7 @@ Add to Timeline
     ↓
 Drain Steering Messages (mid-run corrections)
     ↓
-Convert to Provider Messages (ConvertToLlm)
+Convert to Provider Messages (ProviderMessageTransformer)
     ↓
 Transform Context (filter/summarize)
     ↓
@@ -176,11 +176,11 @@ MessageEndEvent (assistant message with tool calls)
 [For each tool, in parallel if ToolExecutionMode.Parallel]
   ToolExecutionStartEvent (arguments validated)
     ↓
-  BeforeToolCallDelegate (hook for validation/blocking)
+    ToolExecutionPolicy (delegate for validation/blocking)
     ↓
   ExecuteAsync (tool implementation)
     ↓
-  AfterToolCallDelegate (hook for result transformation)
+    ToolResultTransformer (delegate for result transformation)
     ↓
   ToolExecutionEndEvent (result finalized)
     ↓
@@ -210,14 +210,14 @@ Create an `AgentOptions` record to configure the agent:
 public record AgentOptions(
     AgentInitialState? InitialState,                    // Initial state seed
     LlmModel Model,                                     // Model to use
-    ConvertToLlmDelegate ConvertToLlm,                 // Message conversion (required)
-    TransformContextDelegate TransformContext,          // Context transformation (required)
-    GetProviderExecutionOptionsDelegate GetProviderExecutionOptions, // Provider execution policy (required)
-    GetMessagesDelegate? GetSteeringMessages,           // Steering message producer
-    GetMessagesDelegate? GetFollowUpMessages,           // Follow-up message producer
+    ProviderMessageTransformer? ProviderMessageTransformer, // Message conversion (built-in default)
+    AgentContextTransformer? AgentContextTransformer,   // Context transformation (optional)
+    ProviderExecutionOptionsProvider ProviderExecutionOptionsProvider, // Provider execution policy (required)
+    AgentMessageProvider? SteeringMessageProvider,      // Steering message producer
+    AgentMessageProvider? FollowUpMessageProvider,      // Follow-up message producer
     ToolExecutionMode ToolExecutionMode,                // Sequential or Parallel
-    BeforeToolCallDelegate? BeforeToolCall,             // Pre-execution hook
-    AfterToolCallDelegate? AfterToolCall,               // Post-execution hook
+    ToolExecutionPolicy? ToolExecutionPolicy,            // Pre-execution policy
+    ToolResultTransformer? ToolResultTransformer,        // Post-execution transformation
     GenerationOptions GenerationSettings,               // Semantic generation controls
     QueueMode SteeringMode,                             // All or OneAtATime
     QueueMode FollowUpMode,                             // All or OneAtATime
@@ -228,9 +228,9 @@ public record AgentOptions(
 
 - **InitialState**: Seeds the agent with system prompt, model, tools, and messages. Copies are made at construction time — changes to InitialState after construction have no effect.
 - **Model**: The LLM model to use (e.g., `new LlmModel("claude-3-5-sonnet", "anthropic")`).
-- **ConvertToLlm**: Must convert `IReadOnlyList<AgentMessage>` to provider `Message[]`. Called before each LLM invocation.
-- **TransformContext**: Optional message filtering/summarization. Called after ConvertToLlm.
-- **GetProviderExecutionOptions**: Resolves provider credentials and wire execution policy on demand. Return `null` when provider defaults apply.
+- **ProviderMessageTransformer**: Must convert `IReadOnlyList<AgentMessage>` to provider `Message[]`. Called before each LLM invocation.
+- **AgentContextTransformer**: Optional message filtering/summarization before provider-message conversion.
+- **ProviderExecutionOptionsProvider**: Resolves provider credentials and wire execution policy on demand. Return `null` when provider defaults apply.
 - **ToolExecutionMode**: Controls whether tools run sequentially or in parallel:
   - `Sequential`: Tools execute one after another.
   - `Parallel`: Tools execute concurrently (ensure thread safety).
@@ -468,7 +468,7 @@ public sealed record CustomUIMessage(string Content, string UIHint)
 // Add to timeline
 agent.State.Messages = [..agent.State.Messages, new CustomUIMessage("Status: busy", "spinner")];
 
-// In ConvertToLlm, filter out custom messages so they don't reach the LLM
+// In the ProviderMessageTransformer callback, filter out custom messages so they don't reach the LLM
 public async Task<IReadOnlyList<Message>> ConvertToLlm(
     IReadOnlyList<AgentMessage> messages,
     CancellationToken ct)
@@ -577,38 +577,38 @@ When an exception is thrown:
 
 ### Hooks
 
-#### Before Tool Call (`BeforeToolCallDelegate`)
+#### Tool execution policy (`ToolExecutionPolicy`)
 
 Validate, log, or block tool calls before execution:
 
 ```csharp
 var options = new AgentOptions(
     // ... other options ...
-    BeforeToolCall: async (context, ct) =>
+    ToolExecutionPolicy: async (context, ct) =>
     {
         // Access context.ToolName, context.Args, context.Message
         if (context.ToolName == "dangerous_tool" && !IsAuthorized())
         {
-            return new BeforeToolCallResult(Block: true, BlockReason: "Unauthorized");
+            return new ToolExecutionDecision(Block: true, Reason: "Unauthorized");
         }
         return null; // Allow execution
     }
 );
 ```
 
-#### After Tool Call (`AfterToolCallDelegate`)
+#### Tool result transformer (`ToolResultTransformer`)
 
 Transform or override tool results:
 
 ```csharp
-AfterToolCall: async (context, ct) =>
+ToolResultTransformer: async (context, ct) =>
 {
     // Access context.ToolName, context.Args, context.Result, context.IsError
     if (context.ToolName == "price_lookup" && context.Result.Content.Count > 0)
     {
         // Transform result before LLM sees it
         var transformed = FilterSensitiveData(context.Result);
-        return new AfterToolCallResult(Content: transformed.Content);
+        return new ToolResultTransformResult(Content: transformed.Content);
     }
     return null; // Use original result
 }
@@ -624,14 +624,14 @@ using BotNexus.Agent.Core.Loop;
 // Build configuration
 var loopConfig = new AgentLoopConfig(
     Model: agent.State.Model,
-    ConvertToLlm: options.ConvertToLlm,
-    TransformContext: options.TransformContext,
-    GetProviderExecutionOptions: options.GetProviderExecutionOptions,
-    GetSteeringMessages: options.GetSteeringMessages,
-    GetFollowUpMessages: options.GetFollowUpMessages,
+    ProviderMessageTransformer: options.ProviderMessageTransformer,
+    AgentContextTransformer: options.AgentContextTransformer,
+    ProviderExecutionOptionsProvider: options.ProviderExecutionOptionsProvider,
+    SteeringMessageProvider: options.SteeringMessageProvider,
+    FollowUpMessageProvider: options.FollowUpMessageProvider,
     ToolExecutionMode: options.ToolExecutionMode,
-    BeforeToolCall: options.BeforeToolCall,
-    AfterToolCall: options.AfterToolCall,
+    ToolExecutionPolicy: options.ToolExecutionPolicy,
+    ToolResultTransformer: options.ToolResultTransformer,
     GenerationSettings: options.GenerationSettings
 );
 

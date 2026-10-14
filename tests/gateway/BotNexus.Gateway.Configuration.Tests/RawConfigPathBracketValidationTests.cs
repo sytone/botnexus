@@ -22,7 +22,7 @@ public sealed class RawConfigPathBracketValidationTests
         var root = JsonNode.Parse("""{"gateway":{"listenUrl":"http://localhost:5005"}}""")!.AsObject();
         var before = root.ToJsonString();
 
-        var ok = RawConfigPath.TrySet(root, path, JsonValue.Create("x"), out var error);
+        var ok = root.TrySet(path, JsonValue.Create("x"), out var error);
 
         ok.ShouldBeFalse();
         error.ShouldContain(expected);
@@ -36,7 +36,7 @@ public sealed class RawConfigPathBracketValidationTests
     {
         var root = JsonNode.Parse("""{"agents":{}}""")!.AsObject();
 
-        var ok = RawConfigPath.TrySet(root, "agents.my]agent.model", JsonValue.Create("gpt-4"), out _);
+        var ok = root.TrySet("agents.my]agent.model", JsonValue.Create("gpt-4"), out _);
 
         ok.ShouldBeFalse();
         root["agents"]!.AsObject().ContainsKey("my]agent").ShouldBeFalse();
@@ -53,7 +53,7 @@ public sealed class RawConfigPathBracketValidationTests
     {
         var root = JsonNode.Parse("{}")!.AsObject();
 
-        var ok = RawConfigPath.TrySet(root, path, JsonValue.Create("v"), out var error);
+        var ok = root.TrySet(path, JsonValue.Create("v"), out var error);
 
         ok.ShouldBeTrue(error);
         error.ShouldBeEmpty();

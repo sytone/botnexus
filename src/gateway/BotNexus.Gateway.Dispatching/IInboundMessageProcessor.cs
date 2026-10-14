@@ -33,4 +33,18 @@ public interface IInboundMessageProcessor
     /// telling the orchestrator whether to close the per-session queue.
     /// </returns>
     Task<InboundProcessingOutcome> ProcessAsync(InboundMessage message, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Processes a message with producer-owned execution lifetime and actual-start notification.
+    /// Implementations with a more precise execution boundary should override this method.
+    /// </summary>
+    async Task<InboundProcessingOutcome> ProcessAsync(
+        InboundMessage message,
+        InboundExecutionControl executionControl)
+    {
+        ArgumentNullException.ThrowIfNull(executionControl);
+        executionControl.CancellationToken.ThrowIfCancellationRequested();
+        await executionControl.NotifyStartedAsync().ConfigureAwait(false);
+        return await ProcessAsync(message, executionControl.CancellationToken).ConfigureAwait(false);
+    }
 }

@@ -41,7 +41,7 @@ public sealed class RetryDelayCapTests
     [InlineData(1d)]
     public void ComputeRetryDelayMs_WhenCapConfigured_EveryDelayInTheBackoffSequenceIsAtOrUnderTheCap(double random)
     {
-        var config = CreateConfig("retry-cap-api", CapMs) with { RetryRandomSource = () => random };
+        var config = CreateConfig("retry-cap-api", CapMs) with { RetryRandomnessProvider = () => random };
 
         foreach (var backoffMs in BackoffSequenceMs)
         {
@@ -59,11 +59,11 @@ public sealed class RetryDelayCapTests
     [Fact]
     public void ComputeRetryDelayMs_WithoutTheCap_ProducesDelaysStrictlyLargerThanTheCappedSchedule()
     {
-        var capped = CreateConfig("retry-cap-capped", CapMs) with { RetryRandomSource = () => 0d };
+        var capped = CreateConfig("retry-cap-capped", CapMs) with { RetryRandomnessProvider = () => 0d };
         var uncapped = CreateConfig("retry-cap-uncapped", AgentLoopConfig.DefaultMaxRetryDelayMs)
             with
             {
-                RetryRandomSource = () => 0d
+                RetryRandomnessProvider = () => 0d
             };
 
         foreach (var backoffMs in BackoffSequenceMs)
@@ -129,19 +129,19 @@ public sealed class RetryDelayCapTests
         return new AgentLoopConfig(
             Model: TestHelpers.CreateTestModel(apiId),
             LlmClient: TestHelpers.CreateLlmClient(),
-            ConvertToLlm: (messages, _) => Task.FromResult<IReadOnlyList<Message>>(
+            ProviderMessageTransformer: (messages, _) => Task.FromResult<IReadOnlyList<Message>>(
                 messages.OfType<AgentUserMessage>()
                     .Select(m => (Message)new BotNexus.Agent.Providers.Core.Models.UserMessage(
                         new UserMessageContent(m.Content),
                         DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
                     .ToList()),
-            TransformContext: (messages, _) => Task.FromResult(messages),
-            GetProviderExecutionOptions: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
-            GetSteeringMessages: null,
-            GetFollowUpMessages: null,
+            AgentContextTransformer: (messages, _) => Task.FromResult(messages),
+            ProviderExecutionOptionsProvider: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
+            SteeringMessageProvider: null,
+            FollowUpMessageProvider: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
-            BeforeToolCall: null,
-            AfterToolCall: null,
+            ToolExecutionPolicy: null,
+            ToolResultTransformer: null,
             GenerationSettings: new GenerationOptions(),
             MaxRetryDelayMs: maxRetryDelayMs);
     }

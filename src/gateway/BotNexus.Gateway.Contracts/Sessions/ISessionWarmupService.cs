@@ -1,3 +1,5 @@
+using BotNexus.Domain.Primitives;
+
 namespace BotNexus.Gateway.Abstractions.Sessions;
 
 /// <summary>
@@ -6,5 +8,5 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 public interface ISessionWarmupService
 {
     Task<IReadOnlyList<SessionSummary>> GetAvailableSessionsAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<SessionSummary>> GetAvailableSessionsAsync(string agentId, CancellationToken ct = default);
+    Task<IReadOnlyList<SessionSummary>> GetAvailableSessionsAsync(AgentId agentId, CancellationToken ct = default);
 }

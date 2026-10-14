@@ -84,8 +84,30 @@ public sealed class SkillResolverTests
 
         var result = SkillResolver.Resolve(skills, config);
 
-        result.Loaded.Count().ShouldBe(3);
-        result.Available.Count().ShouldBe(2);
+        result.Loaded.Count.ShouldBe(3);
+        result.Available.Count.ShouldBe(2);
+        result.Rejections.Count.ShouldBe(2);
+        result.Rejections.ShouldAllBe(rejection =>
+            rejection.Reason == SkillLoadRejectionReason.CountLimit
+            && rejection.ConfiguredLimit == 3
+            && rejection.Current == 3
+            && rejection.Requested == 1);
+    }
+
+    [Fact]
+    public void Resolve_ZeroMaxLoadedSkills_ReportsCountLimitMeasurements()
+    {
+        var skills = new[] { MakeSkill("calendar") };
+        var config = new SkillsConfig { AutoLoad = ["calendar"], MaxLoadedSkills = 0 };
+
+        var result = SkillResolver.Resolve(skills, config);
+
+        var rejection = result.Rejections.ShouldHaveSingleItem();
+        rejection.Skill.Name.ShouldBe("calendar");
+        rejection.Reason.ShouldBe(SkillLoadRejectionReason.CountLimit);
+        rejection.ConfiguredLimit.ShouldBe(0);
+        rejection.Current.ShouldBe(0);
+        rejection.Requested.ShouldBe(1);
     }
 
     [Fact]
@@ -103,6 +125,27 @@ public sealed class SkillResolverTests
         // big exceeds budget, small fits
         result.Loaded.Select(s => s.Name).ShouldContain("small");
         result.Loaded.Select(s => s.Name).ShouldNotContain("big");
+        var rejection = result.Rejections.ShouldHaveSingleItem();
+        rejection.Skill.Name.ShouldBe("big");
+        rejection.Reason.ShouldBe(SkillLoadRejectionReason.ContentLimit);
+        rejection.ConfiguredLimit.ShouldBe(500);
+        rejection.Current.ShouldBe(0);
+        rejection.Requested.ShouldBe(1000);
+    }
+
+    [Fact]
+    public void Resolve_ZeroMaxContentChars_ReportsContentLimitMeasurements()
+    {
+        var skills = new[] { MakeSkill("calendar") };
+        var config = new SkillsConfig { AutoLoad = ["calendar"], MaxSkillContentChars = 0 };
+
+        var result = SkillResolver.Resolve(skills, config);
+
+        var rejection = result.Rejections.ShouldHaveSingleItem();
+        rejection.Reason.ShouldBe(SkillLoadRejectionReason.ContentLimit);
+        rejection.ConfiguredLimit.ShouldBe(0);
+        rejection.Current.ShouldBe(0);
+        rejection.Requested.ShouldBe(skills[0].Content.Length);
     }
 
     [Fact]
@@ -152,8 +195,9 @@ public sealed class SkillResolverTests
 
         var result = SkillResolver.Resolve(skills, config);
 
-        result.Loaded.Count().ShouldBe(30);
+        result.Loaded.Count.ShouldBe(30);
         result.Available.ShouldBeEmpty();
+        result.Rejections.ShouldBeEmpty();
     }
 
     [Fact]
@@ -174,5 +218,6 @@ public sealed class SkillResolverTests
 
         result.Loaded.Select(s => s.Name).ShouldBe(new[] { "huge", "small" });
         result.Available.ShouldBeEmpty();
+        result.Rejections.ShouldBeEmpty();
     }
 }

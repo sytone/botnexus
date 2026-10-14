@@ -208,13 +208,25 @@ public sealed class SkillTool(
             return TextResult($"Skill '{skill.Name}' is already loaded in the current context.");
         }
 
-        // Delegate access checks to the resolver - it handles deny, allow, and limits
-        var resolution = SkillResolver.Resolve(currentSkills, config, explicitlyLoaded: [skill.Name]);
+        // Delegate access checks to the resolver - it handles deny, allow, and limits. Include
+        // skills already loaded in the current context so the next load is measured against real
+        // usage. Put them first so discovery order cannot let a new request displace prior usage.
+        var requestedSkills = _contextLoaded.Keys.Append(skill.Name).ToList();
+        var loadOrder = currentSkills
+            .OrderByDescending(candidate => _contextLoaded.ContainsKey(candidate.Name))
+            .ToList();
+        var resolution = SkillResolver.Resolve(loadOrder, config, explicitlyLoaded: requestedSkills);
         if (resolution.Denied.Any(s => string.Equals(s.Name, skillName, StringComparison.OrdinalIgnoreCase)))
             return TextResult($"Skill '{skillName}' is not available for this agent.");
 
         if (!resolution.Loaded.Any(s => string.Equals(s.Name, skillName, StringComparison.OrdinalIgnoreCase)))
-            return TextResult($"Skill '{skillName}' cannot be loaded (budget exceeded).");
+        {
+            var rejection = resolution.Rejections.FirstOrDefault(r =>
+                string.Equals(r.Skill.Name, skillName, StringComparison.OrdinalIgnoreCase));
+            return TextResult(rejection is null
+                ? $"Skill '{skillName}' cannot be loaded."
+                : RenderBudgetRejection(rejection));
+        }
 
         if (!TryMarkContextLoaded(skill.Name, fingerprint))
         {
@@ -284,6 +296,31 @@ public sealed class SkillTool(
     /// pointing at the <c>view_file</c> action. Returns an empty string when the skill has
     /// no bundled support files so plain skills render unchanged.
     /// </summary>
+    private static string RenderBudgetRejection(SkillLoadRejection rejection)
+    {
+        var reason = rejection.Reason switch
+        {
+            SkillLoadRejectionReason.CountLimit => "count_limit",
+            SkillLoadRejectionReason.ContentLimit => "content_limit",
+            _ => throw new ArgumentOutOfRangeException(nameof(rejection))
+        };
+        var skill = rejection.Skill;
+        var recovery = skill.LinkedFiles.Count == 0
+            ? "No authorized linked support files were discovered for bounded recovery."
+            : $"""
+              Authorized bounded recovery:
+              **Path:** {skill.SourcePath}
+              **Resolved from:** {DescribeRoot(skill.Source)} skill root
+              {RenderLinkedFiles(skill).TrimStart()}
+              """;
+
+        return $"""
+            Skill '{skill.Name}' cannot be loaded because its configured skill budget was exceeded.
+            reason={reason}; configured={rejection.ConfiguredLimit}; current={rejection.Current}; requested={rejection.Requested}
+            {recovery}
+            """;
+    }
+
     private static string RenderLinkedFiles(SkillDefinition skill)
     {
         if (skill.LinkedFiles.Count == 0)

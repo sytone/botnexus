@@ -72,7 +72,7 @@ public sealed class ClientStateStoreTests
         var store = new ClientStateStore();
         store.SeedAgents([new AgentSummary("a-1", "Alpha")]);
         store.SeedConversations("a-1", [CreateConversation("c-1", "a-1", "General")]);
-        store.SetActiveConversation("a-1", "c-1");
+        store.SelectView("a-1", "c-1", SelectionSource.RouteNavigation);
 
         // Simulate a refresh that upserts with updated metadata
         store.UpsertAgent(new AgentState { AgentId = "a-1", DisplayName = "Alpha Updated", Emoji = "\ud83d\ude80", IsConnected = true });
@@ -84,7 +84,7 @@ public sealed class ClientStateStoreTests
         Assert.True(agent.IsConnected);
         // Critical: conversations and active selection must be preserved
         Assert.Single(agent.Conversations);
-        Assert.Equal("c-1", agent.ActiveConversationId);
+        Assert.Equal("c-1", (store as IDisplayedConversation)?.DisplayedConversationIdFor(agent.AgentId));
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public sealed class ClientStateStoreTests
     }
 
     [Fact]
-    public void SeedConversations_populates_agent_conversations_and_selects_default()
+    public void SeedConversations_populates_agent_conversations_without_selecting_a_default()
     {
         var store = CreateSeededStore();
 
@@ -131,7 +131,7 @@ public sealed class ClientStateStoreTests
         var agent = store.GetAgent("a-1");
         Assert.NotNull(agent);
         Assert.Equal(2, agent.Conversations.Count);
-        Assert.Equal("c-2", agent.ActiveConversationId);
+        Assert.Null((store as IDisplayedConversation)?.DisplayedConversationIdFor(agent.AgentId));
     }
 
     [Fact]
@@ -146,9 +146,9 @@ public sealed class ClientStateStoreTests
         // unread reaches 0 is unchanged.
         store.SelectView("a-1", string.Empty, SelectionSource.RouteNavigation);
 
-        store.SetActiveConversation("a-1", "c-1");
+        store.SelectView("a-1", "c-1", SelectionSource.RouteNavigation);
 
-        Assert.Equal("c-1", store.GetAgent("a-1")?.ActiveConversationId);
+        Assert.Equal("c-1", (store as IDisplayedConversation)?.DisplayedConversationIdFor("a-1"));
         Assert.Equal(0, store.GetConversation("c-1")?.UnreadCount);
     }
 
@@ -207,6 +207,7 @@ public sealed class ClientStateStoreTests
     public void SetStreaming_updates_conversation_and_agent_state()
     {
         var store = CreateConversationStore();
+        store.SelectView("a-1", "c-1", SelectionSource.RouteNavigation);
 
         store.SetStreaming("c-1", true);
 
@@ -304,9 +305,9 @@ public sealed class ClientStateStoreTests
         var store = CreateSeededStore();
         store.SeedConversations("a-1", [CreateConversation("c-1", "a-1", "One")]);
         store.SelectView("a-1", string.Empty, SelectionSource.UserClick);
-        store.SetActiveConversation("a-1", "c-1");
+        store.SelectView("a-1", "c-1", SelectionSource.RouteNavigation);
 
-        Assert.Equal("c-1", store.ActiveConversationId);
+        Assert.Equal("c-1", (store as IDisplayedConversation)?.DisplayedConversationIdFor(store.ActiveAgentId));
     }
 
     [Fact]
@@ -358,7 +359,7 @@ public sealed class ClientStateStoreTests
             CreateConversation("conv-active", "a-1", "Active", activeSessionId: "sess-active"),
             CreateConversation("conv-other", "a-1", "Other", activeSessionId: "sess-other")
         ]);
-        store.SetActiveConversation("a-1", "conv-active");
+        store.SelectView("a-1", "conv-active", SelectionSource.RouteNavigation);
 
         // A bulk refresh registers the OTHER conversation's session while conv-active is displayed.
         store.RegisterSession("a-1", "sess-other", "signalr", "user-agent", conversationId: "conv-other");
@@ -379,7 +380,7 @@ public sealed class ClientStateStoreTests
             CreateConversation("conv-active", "a-1", "Active", activeSessionId: "sess-active"),
             CreateConversation("conv-other", "a-1", "Other", activeSessionId: "sess-other")
         ]);
-        store.SetActiveConversation("a-1", "conv-active"); // sets agent.SessionId = sess-active
+        store.SelectView("a-1", "conv-active", SelectionSource.RouteNavigation); // sets agent.SessionId = sess-active
 
         // Registering a non-active conversation's session must NOT move the agent-global SessionId.
         store.RegisterSession("a-1", "sess-other", "signalr", "user-agent", conversationId: "conv-other");
@@ -403,7 +404,7 @@ public sealed class ClientStateStoreTests
             CreateConversation("conv-active", "a-1", "Active", activeSessionId: "sess-active"),
             CreateConversation("conv-idle", "a-1", "Idle", activeSessionId: "sess-idle")
         ]);
-        store.SetActiveConversation("a-1", "conv-active");
+        store.SelectView("a-1", "conv-active", SelectionSource.RouteNavigation);
 
         // Simulate RefreshConversationsForAgentAsync's loop. Order matters: the idle session is
         // iterated LAST (this is what poisoned agent.SessionId in production).
@@ -416,7 +417,7 @@ public sealed class ClientStateStoreTests
             customMessage: "After a full refresh, the agent-global session must still point at the " +
                 "DISPLAYED conversation's session, not the last-iterated one.");
         // The displayed conversation's resolved session (used by steer/abort/compact) is correct.
-        store.GetAgent("a-1")!.ActiveConversationSessionId.ShouldBe("sess-active");
+        store.GetConversation("conv-active")!.ActiveSessionId.ShouldBe("sess-active");
     }
 
     [Fact]
@@ -426,7 +427,7 @@ public sealed class ClientStateStoreTests
         store.SeedConversations("a-1", [
             CreateConversation("conv-active", "a-1", "Active", activeSessionId: "sess-active")
         ]);
-        store.SetActiveConversation("a-1", "conv-active");
+        store.SelectView("a-1", "conv-active", SelectionSource.RouteNavigation);
 
         // A cron session must never poison the user-facing session/binding.
         store.RegisterSession("a-1", "cron:job-1:run-1", "internal", "cron", conversationId: "conv-active");
@@ -445,7 +446,7 @@ public sealed class ClientStateStoreTests
         store.SeedConversations("a-1", [
             CreateConversation("conv-new", "a-1", "New", activeSessionId: null)
         ]);
-        store.SetActiveConversation("a-1", "conv-new");
+        store.SelectView("a-1", "conv-new", SelectionSource.RouteNavigation);
 
         store.RegisterSession("a-1", "sess-new");
 
@@ -580,7 +581,7 @@ public sealed class ClientStateStoreTests
         store.SelectView("a-1", "c-1", SelectionSource.UserClick);
 
         store.ActiveAgentId.ShouldBe("a-1");
-        store.ActiveConversationId.ShouldBe("c-1",
+        (store as IDisplayedConversation)?.DisplayedConversationIdFor(store.ActiveAgentId).ShouldBe("c-1",
             customMessage: "SelectView must set the active agent and its conversation in one atomic step.");
         store.GetAgent("a-1")!.SessionId.ShouldBe("sess-1");
     }
@@ -619,7 +620,7 @@ public sealed class ClientStateStoreTests
         store.SelectView("a-1", "c-1", SelectionSource.UserClick);
 
         var agentBefore = store.ActiveAgentId;
-        var convBefore = store.ActiveConversationId;
+        var convBefore = (store as IDisplayedConversation)?.DisplayedConversationIdFor(store.ActiveAgentId);
 
         // Simulate the data-only mutations an inbound SubAgentSpawned handler performs.
         store.UpsertAgent(new AgentState
@@ -635,7 +636,7 @@ public sealed class ClientStateStoreTests
 
         store.ActiveAgentId.ShouldBe(agentBefore,
             customMessage: "An inbound event must not change the active agent.");
-        store.ActiveConversationId.ShouldBe(convBefore,
+        (store as IDisplayedConversation)?.DisplayedConversationIdFor(store.ActiveAgentId).ShouldBe(convBefore,
             customMessage: "An inbound event must not change the active conversation.");
     }
 
@@ -651,7 +652,7 @@ public sealed class ClientStateStoreTests
         store.SelectView("a-1", "c-1", SelectionSource.RouteNavigation);
 
         var agentBefore = store.ActiveAgentId;
-        var convBefore = store.ActiveConversationId;
+        var convBefore = (store as IDisplayedConversation)?.DisplayedConversationIdFor(store.ActiveAgentId);
 
         // A storm of purely inbound, data-only churn - none of it a navigation call.
         store.MarkSubAgent("sub-9");
@@ -672,14 +673,14 @@ public sealed class ClientStateStoreTests
 
         store.ActiveAgentId.ShouldBe(agentBefore,
             customMessage: "Inbound event storm must not change the route-owned active agent.");
-        store.ActiveConversationId.ShouldBe(convBefore,
+        (store as IDisplayedConversation)?.DisplayedConversationIdFor(store.ActiveAgentId).ShouldBe(convBefore,
             customMessage: "Inbound event storm must not change the route-owned active conversation.");
 
         // A real navigation (SelectView) is the only thing that can move it.
         store.SeedConversations("a-2", [CreateConversation("c-2", "a-2", "Two")]);
         store.SelectView("a-2", "c-2", SelectionSource.RouteNavigation);
         store.ActiveAgentId.ShouldBe("a-2");
-        store.ActiveConversationId.ShouldBe("c-2");
+        (store as IDisplayedConversation)?.DisplayedConversationIdFor(store.ActiveAgentId).ShouldBe("c-2");
     }
 
     [Fact]
@@ -834,9 +835,8 @@ public sealed class ClientStateStoreTests
         agent.Conversations.ShouldNotContainKey("sa-1",
             customMessage: "AgentSubAgent supervision sessions are internal and must not appear in " +
                 "the portal's conversation drawer.");
-        agent.ActiveConversationId.ShouldBe("user-1",
-            customMessage: "Active tab must be the HumanAgent conversation -- not the more-recently " +
-                "updated AgentAgent conversation. Auto-hijack guard.");
+        (store as IDisplayedConversation)?.DisplayedConversationIdFor(agent.AgentId).ShouldBeNull(
+            customMessage: "Seeding filters the roster but must not select any conversation; the route owns selection.");
     }
 
     private static ClientStateStore CreateConversationStore()

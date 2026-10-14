@@ -43,6 +43,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string] $ResultsDirectory,
+    [Parameter(Mandatory)][string] $CompletionPath,
     [int] $MinimumTotal = 0,
     [string] $SummaryPath
 )
@@ -56,6 +57,24 @@ if (-not (Test-Path -LiteralPath $contractScript -PathType Leaf)) {
     throw "Test-result contract not found at $contractScript. CI cannot validate a run it cannot judge."
 }
 . $contractScript
+
+if (-not (Test-Path -LiteralPath $CompletionPath -PathType Leaf)) {
+    Write-Host "::error::No CORE completion receipt at $CompletionPath -- the test process did not prove it exited."
+    exit 1
+}
+try {
+    $completion = Get-Content -LiteralPath $CompletionPath -Raw | ConvertFrom-Json
+}
+catch {
+    Write-Host "::error::CORE completion receipt is invalid: $($_.Exception.Message)"
+    exit 1
+}
+$unfinishedProjects = @($completion.unfinishedProjects)
+if ($completion.processExited -ne $true -or $completion.timedOut -eq $true -or $completion.exitCode -ne 0 -or $unfinishedProjects.Count -gt 0) {
+    $unfinishedText = if ($unfinishedProjects.Count -gt 0) { $unfinishedProjects -join ', ' } else { '<none identified>' }
+    Write-Host "::error::CORE execution did not terminate cleanly: processExited=$($completion.processExited) timedOut=$($completion.timedOut) exitCode=$($completion.exitCode) unfinishedProjects=$unfinishedText."
+    exit 1
+}
 
 if (-not (Test-Path -LiteralPath $ResultsDirectory -PathType Container)) {
     # An absent results directory is itself a finding: the test step either never ran or never

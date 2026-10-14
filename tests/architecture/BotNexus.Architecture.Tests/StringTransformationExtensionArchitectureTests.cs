@@ -102,8 +102,6 @@ public sealed class StringTransformationExtensionArchitectureTests : Architectur
         "extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Core/Services/SurrogateSafeText.cs::SurrogateSafeTruncate",
         "extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient/Components/ToolDescriptionFormatter.cs::FormatDescription",
         "extensions/BotNexus.Extensions.Mcp/Plugins/PluginScopedServerName.cs::Scope",
-        "gateway/BotNexus.Cron/CronAlertTarget.cs::UnresolvableMessage",
-        "gateway/BotNexus.Cron/CronAlertTarget.cs::UnverifiableMessage",
         "gateway/BotNexus.Cron/CronModelPreflight.cs::Summarize",
         "gateway/BotNexus.Gateway.Abstractions/Extensions/ExtensionMeters.cs::InstrumentName",
         "gateway/BotNexus.Gateway.Abstractions/Extensions/ExtensionMeters.cs::ValidateExtensionId",

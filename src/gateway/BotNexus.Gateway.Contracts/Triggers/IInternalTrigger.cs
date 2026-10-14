@@ -1,4 +1,5 @@
 using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Gateway.Abstractions.Triggers;
 
@@ -115,6 +116,13 @@ public sealed record InternalTriggerRequest
     /// </para>
     /// </summary>
     public string? DeliveryError { get; set; }
+
+    /// <summary>
+    /// Authoritative completion disposition written back by the trigger after the agent run settles.
+    /// Cron uses this to prevent an execution-class run with unfinished checklist work from being
+    /// persisted as successful merely because the action returned normally.
+    /// </summary>
+    public RunCompletionSignal? Completion { get; set; }
 
     /// <summary>
     /// Identifier (raw string from <see cref="BotNexus.Cron.CronJob.CreatedBy"/>) of the

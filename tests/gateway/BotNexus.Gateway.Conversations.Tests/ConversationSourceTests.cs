@@ -260,7 +260,7 @@ public sealed class ConversationSourceTests
         using var reader = command.ExecuteReader();
         reader.Read().ShouldBeTrue();
 
-        ConversationRowMapper.MapConversation(reader).Source.ShouldBe(expected);
+        reader.MapConversation().Source.ShouldBe(expected);
     }
 
     [Fact]
@@ -299,6 +299,6 @@ public sealed class ConversationSourceTests
         using var reader = command.ExecuteReader();
         reader.Read().ShouldBeTrue();
 
-        ConversationRowMapper.MapConversation(reader).Source.ShouldBe(ConversationSource.Channel);
+        reader.MapConversation().Source.ShouldBe(ConversationSource.Channel);
     }
 }

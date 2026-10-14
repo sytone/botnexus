@@ -1,7 +1,9 @@
 using System.Text.Json;
 using BotNexus.Agent.Core;
 using BotNexus.Agent.Core.Configuration;
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.CodingAgent.Auth;
@@ -88,9 +90,9 @@ public static class CodingAgent
                 Tools: tools),
             Model: model,
             LlmClient: llmClient,
-            ConvertToLlm: DefaultMessageConverter.Create(),
-            TransformContext: (messages, _) => Task.FromResult(messages),
-            GetProviderExecutionOptions: async (provider, ct) => new ProviderExecutionOptions
+            ProviderMessageTransformer: DefaultProviderMessageTransformer.Create(),
+            AgentContextTransformer: (messages, _) => Task.FromResult(messages),
+            ProviderExecutionOptionsProvider: async (provider, ct) => new ProviderExecutionOptions
             {
                 ApiKey = await capturedAuthManager.GetApiKeyAsync(capturedConfig, provider, ct),
                 OnPayload = async (payload, payloadModel) =>
@@ -98,11 +100,11 @@ public static class CodingAgent
                         ? payload
                         : await extensionRunner.OnModelRequestAsync(payload, payloadModel).ConfigureAwait(false)
             },
-            GetSteeringMessages: null,
-            GetFollowUpMessages: null,
+            SteeringMessageProvider: null,
+            FollowUpMessageProvider: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
-            BeforeToolCall: (context, ct) => ExecuteBeforeHookAsync(context, safetyHooks, auditHooks, extensionRunner, config, ct),
-            AfterToolCall: (context, ct) => ExecuteAfterHookAsync(context, auditHooks, extensionRunner, ct),
+            ToolExecutionPolicy: (context, ct) => ExecuteBeforeHookAsync(context, safetyHooks, auditHooks, extensionRunner, config, ct),
+            ToolResultTransformer: (context, ct) => ExecuteAfterHookAsync(context, auditHooks, extensionRunner, ct),
             GenerationSettings: new GenerationOptions
             {
                 MaxTokens = model.MaxTokens,
@@ -164,8 +166,8 @@ public static class CodingAgent
         });
     }
 
-    private static Task<BeforeToolCallResult?> ExecuteBeforeHookAsync(
-        BeforeToolCallContext context,
+    private static Task<ToolExecutionDecision?> ExecuteBeforeHookAsync(
+        ToolExecutionContext context,
         SafetyHooks safetyHooks,
         AuditHooks auditHooks,
         ExtensionRunner? extensionRunner,
@@ -176,8 +178,8 @@ public static class CodingAgent
         return ExecuteBeforeHookCoreAsync(context, safetyHooks, extensionRunner, config, cancellationToken);
     }
 
-    private static async Task<BeforeToolCallResult?> ExecuteBeforeHookCoreAsync(
-        BeforeToolCallContext context,
+    private static async Task<ToolExecutionDecision?> ExecuteBeforeHookCoreAsync(
+        ToolExecutionContext context,
         SafetyHooks safetyHooks,
         ExtensionRunner? extensionRunner,
         CodingAgentConfig config,
@@ -204,8 +206,8 @@ public static class CodingAgent
             .ConfigureAwait(false);
     }
 
-    private static async Task<AfterToolCallResult?> ExecuteAfterHookAsync(
-        AfterToolCallContext context,
+    private static async Task<ToolResultTransformResult?> ExecuteAfterHookAsync(
+        ToolResultTransformContext context,
         AuditHooks auditHooks,
         ExtensionRunner? extensionRunner,
         CancellationToken cancellationToken)
@@ -239,7 +241,7 @@ public static class CodingAgent
         return MergeAfterResults(auditResult, extensionResult);
     }
 
-    private static AfterToolCallResult? MergeAfterResults(AfterToolCallResult? first, AfterToolCallResult? second)
+    private static ToolResultTransformResult? MergeAfterResults(ToolResultTransformResult? first, ToolResultTransformResult? second)
     {
         if (first is null)
         {
@@ -251,7 +253,7 @@ public static class CodingAgent
             return first;
         }
 
-        return new AfterToolCallResult(
+        return new ToolResultTransformResult(
             Content: second.Content ?? first.Content,
             Details: second.Details ?? first.Details,
             IsError: second.IsError ?? first.IsError);

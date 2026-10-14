@@ -47,7 +47,7 @@ public sealed class DraftAttachmentSendFamilyTests : IDisposable
         _store.UpsertAgent(new AgentState { AgentId = "agent-1", DisplayName = "Agent", IsConnected = true });
         _store.SeedConversations("agent-1", [new ConversationSummaryDto(
             "conv-1", "agent-1", "T", false, "Active", null, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
         // The steer/redirect/follow-up controls only render while a run is active.
         _store.GetStreamState("conv-1").IsRunActive = true;
@@ -60,7 +60,7 @@ public sealed class DraftAttachmentSendFamilyTests : IDisposable
 
     private async Task<IRenderedComponent<ChatPanel>> RenderWithDraftAsync(string text)
     {
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
         await cut.InvokeAsync(() => cut.Instance.AddDraftAttachmentsAsync([Draft()]));
         var textarea = cut.Find(".chat-input");
         await cut.InvokeAsync(() => textarea.Input(text));

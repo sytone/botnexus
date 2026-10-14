@@ -720,12 +720,6 @@
             "type": "string",
             "nullable": true
           },
-          "systemPromptFile": {
-            "type": "string",
-            "nullable": true,
-            "deprecated": true,
-            "description": "Deprecated custom prompt file retained for compatibility. Use standard workspace instruction files, WORLD.md, inline prompts, conversation instructions, or model-specific variants."
-          },
           "toolIds": {
             "type": "array",
             "items": {

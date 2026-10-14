@@ -189,8 +189,7 @@ public sealed class PlatformAgentReconciliationServiceTests : IDisposable
             ["provider"] = "openai",
             ["model"] = "gpt-4.1",
             ["description"] = "user edited",
-            ["toolIds"] = new JsonArray("read", "write"),
-            ["systemPromptFiles"] = new JsonArray("custom/PROMPT.md")
+            ["toolIds"] = new JsonArray("read", "write")
         };
         await WriteConfigAsync(new JsonObject
         {

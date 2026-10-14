@@ -31,7 +31,7 @@ public enum SelectionSource
 /// Immutable description of the portal's active view: which agent (and, when known, which
 /// conversation) is selected, together with the <see cref="SelectionSource"/> that requested it.
 /// This is the single value the store mutates through <c>SelectView</c>; the public
-/// <c>ActiveAgentId</c> / <c>ActiveConversationId</c> members are read-only projections of it,
+/// <c>ActiveAgentId</c> / <c>ambient conversation state</c> members are read-only projections of it,
 /// so there is exactly one writer for the active view (#2246).
 /// </summary>
 /// <param name="AgentId">The selected agent ID, or empty when nothing is selected.</param>

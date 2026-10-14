@@ -90,6 +90,54 @@
         (function() {
             var _pending = {};
             var _nextId = 1;
+            var _submitInFlight = null;
+            var _nextSubmitStatusId = 1;
+
+            function findSubmitTrigger() {
+                var eventTarget = window.event && window.event.target;
+                var candidate = eventTarget && eventTarget.closest
+                    ? eventTarget.closest('button, input[type="button"], input[type="submit"], [role="button"]')
+                    : document.activeElement;
+                if (!candidate || !candidate.matches ||
+                    !candidate.matches('button, input[type="button"], input[type="submit"], [role="button"]')) {
+                    return null;
+                }
+                return candidate;
+            }
+
+            function getSubmitStatus(trigger) {
+                var statusId = trigger && trigger.getAttribute('data-canvas-submit-status-id');
+                var status = statusId ? document.getElementById(statusId) : null;
+                if (status) return status;
+
+                status = document.createElement('span');
+                status.id = 'canvas-submit-status-' + (_nextSubmitStatusId++);
+                status.className = 'canvas-submit-status';
+                status.setAttribute('aria-live', 'polite');
+                status.style.display = 'block';
+                status.style.marginTop = '0.5rem';
+
+                if (trigger) {
+                    trigger.setAttribute('data-canvas-submit-status-id', status.id);
+                    var describedBy = trigger.getAttribute('aria-describedby');
+                    var ids = describedBy ? describedBy.split(/\s+/) : [];
+                    if (ids.indexOf(status.id) < 0) ids.push(status.id);
+                    trigger.setAttribute('aria-describedby', ids.join(' ').trim());
+                    trigger.insertAdjacentElement('afterend', status);
+                } else {
+                    document.body.appendChild(status);
+                }
+                return status;
+            }
+
+            function showSubmitStatus(trigger, state, message) {
+                var status = getSubmitStatus(trigger);
+                status.setAttribute('role', state === 'error' ? 'alert' : 'status');
+                status.setAttribute('aria-live', state === 'error' ? 'assertive' : 'polite');
+                status.textContent = message;
+                if (trigger) trigger.dataset.canvasSubmitState = state;
+            }
+
             function request(type, payload) {
                 return new Promise(function(resolve, reject) {
                     var id = 'req_' + (_nextId++);
@@ -120,7 +168,7 @@
              *
              * USER-INITIATED ONLY. Call it from a tap or an explicit user action. Do NOT call it
              * from setTimeout/setInterval, from a render or reactive path, or automatically on
-             * load. There is no throttle: a loop here is a loop the user pays for.
+             * load. Only one submission may be in flight at a time.
              *
              * The prompt is INSTRUCTION TEXT ONLY - it must not carry canvas data. Put data in
              * canvas state with set() and tell the agent which keys to read back. The length bound
@@ -137,10 +185,42 @@
                 clear: function() { return request('canvas-state-clear', {}); },
                 submitToAgent: function(options) {
                     options = options || {};
-                    return request('canvas-state-submit', {
+                    var trigger = findSubmitTrigger();
+                    if (_submitInFlight) {
+                        if (trigger && trigger.dataset.canvasSubmitState !== 'pending') {
+                            showSubmitStatus(trigger, 'error', 'Submission failed: Canvas submission already in progress');
+                        }
+                        return Promise.reject(new Error('Canvas submission already in progress'));
+                    }
+
+                    var wasDisabled = trigger ? trigger.disabled : false;
+                    var previousBusy = trigger ? trigger.getAttribute('aria-busy') : null;
+                    if (trigger) {
+                        trigger.disabled = true;
+                        trigger.setAttribute('aria-busy', 'true');
+                    }
+                    showSubmitStatus(trigger, 'pending', 'Submitting...');
+
+                    var submission = request('canvas-state-submit', {
                         prompt: options.prompt,
                         instructions: options.instructions
+                    }).then(function(value) {
+                        showSubmitStatus(trigger, 'success', 'Submitted');
+                        return value;
+                    }, function(error) {
+                        var message = error && error.message ? error.message : String(error);
+                        showSubmitStatus(trigger, 'error', 'Submission failed: ' + message);
+                        throw error;
+                    }).finally(function() {
+                        if (trigger) {
+                            trigger.disabled = wasDisabled;
+                            if (previousBusy === null) trigger.removeAttribute('aria-busy');
+                            else trigger.setAttribute('aria-busy', previousBusy);
+                        }
+                        _submitInFlight = null;
                     });
+                    _submitInFlight = submission;
+                    return submission;
                 }
             };
             window.dispatchEvent(new Event('canvasStateReady'));

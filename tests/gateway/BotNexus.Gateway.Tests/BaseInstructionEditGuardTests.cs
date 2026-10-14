@@ -52,16 +52,6 @@ public sealed class BaseInstructionEditGuardTests
         calls.ShouldBe(1);
     }
 
-    [Fact]
-    public void Evaluate_ConfiguredCustomBaseFile_TriggersButSameStemElsewhereDoesNot()
-    {
-        var descriptor = Descriptor() with { SystemPromptFiles = ["prompts/reviewer.md"] };
-        var guard = new BaseInstructionEditGuard(descriptor, WorkspacePath);
-
-        guard.Evaluate("edit", Arguments("prompts/reviewer.md")).ShouldNotBeNull();
-        guard.Evaluate("edit", Arguments("notes/reviewer.md")).ShouldBeNull();
-    }
-
     [Theory]
     [InlineData("read")]
     [InlineData("grep")]

@@ -37,9 +37,10 @@ public sealed record ExtensionRepositoryResponse(string Id, string RepositoryUrl
 /// <summary>Manages extension repository registrations without materializing or executing their contents.</summary>
 [ApiController]
 [Route("api/extension-repositories")]
-public sealed class ExtensionRepositoriesController(ExtensionRepositoryRegistryService registry) : ControllerBase
+public sealed class ExtensionRepositoriesController(ExtensionRepositoryRegistryService registry, ExtensionLifecycleReconciler reconciler) : ControllerBase
 {
     private readonly ExtensionRepositoryRegistryService _registry = registry;
+    private readonly ExtensionLifecycleReconciler _reconciler = reconciler;
 
     /// <summary>Lists registrations without claiming unavailable runtime state.</summary>
     [HttpGet]
@@ -91,16 +92,24 @@ public sealed class ExtensionRepositoriesController(ExtensionRepositoryRegistryS
         catch (KeyNotFoundException ex) { return NotFound(new { error = ex.Message }); }
     }
 
-    /// <summary>Reports that synchronization is unavailable until the reconciler is implemented.</summary>
+    /// <summary>Runs the shared extension lifecycle pipeline for one registered repository.</summary>
     [HttpPost("{id}/sync")]
     public async Task<IActionResult> SyncNow(string id, CancellationToken ct = default)
     {
-        if (!(await _registry.ListAsync(ct)).Any(x => x.Id == id)) return NotFound(new { error = $"Extension repository '{id}' was not found." });
-        return StatusCode(StatusCodes.Status501NotImplemented, new { error = "Sync is unavailable until extension repository reconciliation is implemented." });
+        var registration = (await _registry.ListAsync(ct)).SingleOrDefault(x => x.Id == id);
+        if (registration is null) return NotFound(new { error = $"Extension repository '{id}' was not found." });
+        if (!registration.Enabled) return Conflict(new { error = $"Extension repository '{id}' is disabled and cannot be synchronized." });
+        var result = await _reconciler.ReconcileAsync(id, ct);
+        var repository = result.Repositories.SingleOrDefault();
+        if (repository is null)
+            return Conflict(new { error = $"Extension repository '{id}' is not enabled for synchronization." });
+        if (!repository.Succeeded)
+            return UnprocessableEntity(new { error = $"Extension repository '{repository.Id}' failed: {repository.FailureName}: {repository.Diagnostic}" });
+        return Ok(repository);
     }
 
     private static ExtensionRepositoryResponse Project(ExtensionRepositoryRegistrationInfo item) => new(
         item.Id, item.RepositoryUrl, item.RequestedRef, item.Enabled, item.UpdatesEnabled,
         item.ReconciliationStatus ?? "not-yet-reconciled", item.ResolvedCommit, item.ClonePath,
-        item.LastAttemptUtc, item.LastSuccessUtc, null, item.LatestFailure, false);
+        item.LastAttemptUtc, item.LastSuccessUtc, null, item.LatestFailure, item.Enabled);
 }

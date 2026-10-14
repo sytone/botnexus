@@ -44,7 +44,7 @@ public sealed class SendMessageRequiresConversationTests
 
         // The AMBIENT selection points at `Other`, deliberately NOT at the conversation the tests
         // send into. Any test that lands rows in `Other` has caught an ambient re-read.
-        agent.ActiveConversationId = Other;
+        _store.SelectView(agent.AgentId, Other ?? string.Empty, SelectionSource.RouteNavigation);
         agent.Conversations[Other] = new ConversationState { ConversationId = Other, Title = "Other", HistoryLoaded = true };
         agent.Conversations[Target] = new ConversationState { ConversationId = Target, Title = "Target", HistoryLoaded = true };
     }
@@ -102,7 +102,7 @@ public sealed class SendMessageRequiresConversationTests
     [Fact]
     public async Task Send_never_creates_a_conversation_as_a_side_effect()
     {
-        _store.GetAgent(AgentId)!.ActiveConversationId = null;
+        _store.SelectView(AgentId, string.Empty, SelectionSource.RouteNavigation);
 
         await _service.SendMessageAsync(AgentId, Target, "hello");
 

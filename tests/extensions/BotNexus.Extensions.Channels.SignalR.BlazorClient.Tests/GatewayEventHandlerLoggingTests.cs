@@ -26,7 +26,6 @@ public sealed class GatewayEventHandlerLoggingTests
             AgentId = "agent-1",
             DisplayName = "Agent 1",
             IsConnected = true,
-            ActiveConversationId = "conv-1"
         });
         var agent = _store.GetAgent("agent-1")!;
         agent.Conversations["conv-1"] = new ConversationState

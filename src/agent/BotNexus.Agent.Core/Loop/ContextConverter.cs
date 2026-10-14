@@ -1,4 +1,4 @@
-using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
@@ -9,7 +9,7 @@ namespace BotNexus.Agent.Core.Loop;
 /// Converts AgentContext to provider Context for LLM invocation.
 /// </summary>
 /// <remarks>
-/// Calls ConvertToLlmDelegate to transform AgentMessage[] to provider Message[].
+/// Calls ProviderMessageTransformer to transform AgentMessage[] to provider Message[].
 /// Maps IAgentTool[] to provider Tool[] schemas.
 /// </remarks>
 internal static class ContextConverter
@@ -23,7 +23,7 @@ internal static class ContextConverter
     /// <returns>A provider Context ready for LLM invocation.</returns>
     public static async Task<Context> ToProviderContext(
         AgentContext agentContext,
-        ConvertToLlmDelegate convertToLlm,
+        ProviderMessageTransformer convertToLlm,
         CancellationToken ct)
     {
         var providerMessages = await convertToLlm(agentContext.Messages, ct).ConfigureAwait(false);

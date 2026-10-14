@@ -78,6 +78,7 @@ You should see the root command help listing all available subcommands.
 26. [provider setup](#provider-setup) — Interactive provider setup wizard
 27. [provider list](#provider-list) — List configured providers
 28. [provider add](#provider-add) — Add or update a provider non-interactively (scripts and CI)
+    - [provider test](#provider-test) — Validate a provider through the running gateway
 29. [provider remove](#provider-remove) — Remove a provider non-interactively
 30. [provider copilot](#provider-copilot) — GitHub Copilot diagnostics and auth helpers
 31. [provider ollama](#provider-ollama) — Ollama local model diagnostics
@@ -122,7 +123,7 @@ botnexus --target D:\my-botnexus agent list
 botnexus --target /opt/botnexus-prod validate
 ```
 
-### `--verbose` (or `-v`)
+### `--verbose`
 
 Show additional command output, including file paths and full JSON responses.
 
@@ -237,20 +238,34 @@ If the process exits or crashes, serve waits 5 seconds and restarts automaticall
 
 ```powershell
 botnexus serve [OPTIONS]
-botnexus serve gateway [OPTIONS]
 botnexus serve probe [OPTIONS]
+botnexus serve gateway <COMMAND> [OPTIONS]
 ```
 
-### serve / serve gateway
+### serve
 
-Start the BotNexus Gateway.
+Start the BotNexus Gateway in the foreground with automatic restart after an unexpected exit.
 
 | Option | Default | Description |
 |---|---|---|
 | `--port <PORT>` | `5005` | Port to listen on. |
-| `--path <DIR>` | Install location | Path to the repository root. |
-| `--dev` | off | Use the current working directory as the repo root. |
+| `--source <DIR>` | `~/botnexus` | Path to the repository root. |
 | `--verbose` | — | Show detailed output. |
+
+### serve gateway
+
+Manage the same gateway lifecycle exposed by the top-level [`gateway`](#gateway) group. This is a command group, not a foreground-start alias.
+
+| Child command | Purpose |
+|---|---|
+| `start` | Start the gateway as a detached process. |
+| `stop` | Stop the gateway process. |
+| `status` | Show whether the gateway is running. |
+| `restart` | Stop and start the gateway. |
+| `install` | Install gateway service files for the current operating system. |
+| `uninstall` | Remove installed gateway service files. |
+
+Use the child-specific options documented under [`gateway`](#gateway), for example `botnexus serve gateway start --port 8080`.
 
 ### serve probe
 
@@ -259,9 +274,7 @@ Start the BotNexus Probe diagnostic tool. Probe binds its UI, APIs, static files
 | Option | Default | Description |
 |---|---|---|
 | `--port <PORT>` | `5050` | Port for the Probe web UI. |
-| `--listen-any` | off | Bind every Probe surface to all network interfaces. This explicitly exposes unauthenticated diagnostic data and OTLP ingestion to the network. |
-| `--path <DIR>` | Install location | Path to the repository root. |
-| `--dev` | off | Use the current working directory as the repo root. |
+| `--source <DIR>` | `~/botnexus` | Path to the repository root. |
 | `--gateway-url <URL>` | `http://localhost:5005` | URL of a running BotNexus Gateway. |
 | `--verbose` | — | Show detailed output. |
 
@@ -273,17 +286,16 @@ Start the BotNexus Probe diagnostic tool. Probe binds its UI, APIs, static files
 botnexus serve
 ```
 
-**Start the gateway from a dev clone:**
+**Start the gateway from a different source clone:**
 
 ```powershell
-cd D:\repos\botnexus
-botnexus serve --dev
+botnexus serve --source D:\repos\botnexus
 ```
 
 **Start the gateway on a custom port:**
 
 ```powershell
-botnexus serve gateway --port 8080
+botnexus serve --port 8080
 ```
 
 **Start the probe connected to a running gateway:**
@@ -297,8 +309,8 @@ botnexus serve probe --gateway-url http://localhost:5005
 | Scenario | Command |
 |---|---|
 | Run from the default install clone | `botnexus serve` |
-| Run from your active dev repo | `botnexus serve --dev` |
-| Build and serve in one flow | `botnexus build --dev && botnexus serve --dev` |
+| Run from another source clone | `botnexus serve --source <DIR>` |
+| Build and serve in one flow | `botnexus build --path <DIR> && botnexus serve --source <DIR>` |
 
 Both modes produce Release builds so the gateway DLLs don't collide with Debug builds from your IDE or test runner.
 
@@ -422,6 +434,8 @@ botnexus init --force
 
 ## agent list
 
+The `agent` command group also accepts the alias `agents`.
+
 List all configured agents from `config.json`.
 
 ### Usage
@@ -490,6 +504,10 @@ botnexus agent add <ID> [OPTIONS]
 | `--provider` | `github-copilot` | Agent provider name (must match a configured provider; e.g. `github-copilot`, `openai`, `anthropic`, or any provider added via `botnexus provider add`). |
 | `--model` | `gpt-4.1` | Model name for this agent (e.g., `gpt-4o`, `claude-3-sonnet`). |
 | `--enabled` | `true` | Whether the agent is enabled (`true` or `false`). |
+| `--display-name <NAME>` | Agent ID | Human-readable name shown in clients. |
+| `--description <TEXT>` | — | Description of the agent's purpose. |
+| `--emoji <EMOJI>` | — | Emoji shown with the agent name. |
+| `--disabled` | off | Disable the agent. This takes precedence over `--enabled`. |
 | `--verbose` | — | Show the updated configuration. |
 
 ### Examples
@@ -1452,6 +1470,8 @@ botnexus gateway start --attached
 
 Detached startup waits up to 60 seconds for the effective `--port` health endpoint to become ready. With `--verbose`, readiness diagnostics include the endpoint, timeout, elapsed duration, and whether the process became healthy, exited, or remained alive but unhealthy.
 
+For `--attached`, Ctrl+C requests authenticated planned shutdown through the gateway API and waits boundedly for the child to exit. Native signalling is used only as bounded escalation when the API is unavailable, rejects the request, or the graceful deadline expires.
+
 ### gateway stop
 
 Stop the running gateway process.
@@ -1459,6 +1479,8 @@ Stop the running gateway process.
 ```powershell
 botnexus gateway stop
 ```
+
+The CLI first requests authenticated planned shutdown through the effective configured gateway URL. It then waits boundedly for confirmed process exit and uses identity-verified native signalling only as escalation. The PID file is retained if termination cannot be confirmed.
 
 ### gateway status
 
@@ -1534,6 +1556,8 @@ Remove the OS service registration.
 ```powershell
 botnexus gateway uninstall
 ```
+
+Uninstall follows the same API-first planned-shutdown policy. It observes service exit before removing the service definition; a bounded native service stop is the final fallback, and failure to confirm termination leaves the definition intact.
 
 ---
 
@@ -1680,7 +1704,9 @@ Add or update a provider entry non-interactively. A JSON-only home updates `conf
 
 When a provider with the given `--name` already exists, only the flags you pass are updated; unspecified fields preserve their previous values. To clear a previously-set value, pass an empty string explicitly.
 
-A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated provider models then become available for agent assignment without restarting the process. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact. If the canonical SQLite configuration provider has not yet delivered an out-of-process reload signal, the saved configuration remains persisted but the running gateway can still show its previous catalogue until that separate reload defect is resolved.
+A running gateway watches the effective configuration and atomically refreshes its config-defined model catalogue after the configuration reload signal. New and updated config-defined provider models then become available for agent assignment without restarting the process. GitHub Copilot catalogue and discovery setup is startup-only, including named instances with `type: github-copilot`; restart the gateway after configuring one. Disabling or removing a provider removes only that configuration-owned catalogue overlay; built-in and discovered models remain intact.
+
+The command is an offline configuration writer, so its receipt distinguishes persistence from runtime activation: persistence succeeded, activation was not validated by the command, and restart guidance depends on the provider type. Config-defined providers need no restart when the running gateway receives the reload. GitHub Copilot setup requires an operator restart before checking the live catalogue; the command does not restart the gateway for you. Verify activation and credential resolution with `botnexus provider test --name <NAME>` before assigning an agent. The test calls the running gateway's provider-health route, which reads the same live model registry and credential resolver used by agent setup. If an out-of-process configuration change has not reached the running gateway yet, the saved provider can still be absent from that live catalogue; persistence alone is not a readiness result. If a reload is rejected, the gateway retains the complete last-known-good catalogue and `provider test` reports `activation_failed` with the rejected provider's validation error until a later valid revision activates.
 
 ### Usage
 
@@ -1726,6 +1752,20 @@ botnexus provider add --name local-vllm `
     --model llama-3-8b --model llama-3-70b `
     --default-model llama-3-8b
 ```
+
+---
+
+## provider test
+
+Validate a provider instance against the running gateway rather than the offline configuration file. The command succeeds only when the instance is present in the live model registry, has at least one registered model, and its configured credential resolves. A rejected configuration reload returns the reconciler's `activation_failed` detail instead of collapsing the result into an unknown-provider message. It does not send a billable model request.
+
+### Usage
+
+```powershell
+botnexus provider test --name <NAME> [--url <GATEWAY_URL>] [--token <CREDENTIAL>]
+```
+
+Local gateway credentials follow the shared CLI credential policy. A non-local `--url` requires an explicit `--token`.
 
 ---
 
@@ -1871,13 +1911,15 @@ botnexus provider ollama models
 Send a simple chat completion request to verify end-to-end inference.
 
 ```powershell
-botnexus provider ollama test --model llama3
+botnexus provider ollama test
+botnexus provider ollama test --model llama3 --prompt "Reply with ok."
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--url <URL>` | `http://localhost:11434` | Ollama server URL |
-| `--model <ID>` | (required) | Model to test |
+| `--model <ID>` | First available model | Model to test |
+| `--prompt <TEXT>` | `Respond with the single word: ok.` | Prompt to send |
 
 See [Ollama Provider](providers/ollama.md) for full setup and configuration details.
 
@@ -1906,6 +1948,17 @@ botnexus prompt [COMMAND] [OPTIONS]
 - `render` — Render a template to stdout (substitute parameters)
 - `run` — Render and execute a template against the gateway
 - `create samples` — Copy bundled sample templates into `~/.botnexus/prompts/`
+
+### prompt create samples
+
+```powershell
+botnexus prompt create samples [--config <PATH>] [--target <DIR>]
+```
+
+| Option | Description |
+|---|---|
+| `--config <PATH>` | Explicit path to `config.json`. Overrides `--target`; samples are copied to the corresponding BotNexus home. |
+| `--target <DIR>` | BotNexus home directory. Defaults to `~/.botnexus/`. |
 
 ---
 
@@ -2082,7 +2135,7 @@ Output:
 
 ```text
 [Agent response...]
-Engineering team is on track with all Q1 deliverables. 
+Engineering team is on track with all Q1 deliverables.
 Three items in progress, two completed this week.
 ```
 
@@ -2138,6 +2191,8 @@ Output includes:
 ---
 
 ## satellite
+
+The `satellite` command group also accepts the alias `satellites`. The `satellite remove` command also accepts the alias `delete`.
 
 Manage satellite nodes — remote presence points that extend BotNexus to additional machines (desktop notifications, canvas windows, remote command execution).
 
@@ -2654,16 +2709,21 @@ botnexus debug sessions <COMMAND> [OPTIONS]
 | Command | Description |
 |---------|-------------|
 | `list` | List all sessions with summary info |
-| `get` | Show details for a specific session |
-| `compaction` | Show compaction history for a session |
+| `get <session-id>` | Show details for a specific session |
+| `compaction <session-id>` | Show compaction history for a session |
+| `read-payload-audit` | Measure repeated full `read` response bodies in a bounded window |
+| `retention-preview` | Preview historical tool payload retention candidates |
 | `stats` | Database-wide statistics |
 
 ### Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
-| `--format` | `table` | Output format: `table` or `json` |
+| Option | Applies to | Default | Description |
+|--------|------------|---------|-------------|
+| `--target <DIR>` | all | `~/.botnexus` | BotNexus home directory |
+| `--format` | all | `table` | Output format: `table` or `json` |
+| `--agent <ID>` | `list` | (all) | Filter by agent ID |
+| `--status <STATUS>` | `list` | (all) | Filter by `active`, `sealed`, `expired`, or `all` |
+| `--limit <N>` | `list` | 20 | Maximum sessions to return |
 
 ### Examples
 
@@ -2672,17 +2732,31 @@ botnexus debug sessions <COMMAND> [OPTIONS]
 botnexus debug sessions list
 
 # Get session details
-botnexus debug sessions get --id "session-abc123"
+botnexus debug sessions get "session-abc123"
 
 # Show compaction history
-botnexus debug sessions compaction --id "session-abc123"
+botnexus debug sessions compaction "session-abc123"
+
+# Measure repeated full read payloads for a complete half-open window
+botnexus debug sessions --format json read-payload-audit --from 2026-08-01T00:00:00Z --to 2026-09-01T00:00:00Z
 
 # Database statistics
 botnexus debug sessions stats
 
 # JSON output for scripting
-botnexus debug sessions list --format json
+botnexus debug sessions --format json list
 ```
+
+### Read payload metric
+
+`read-payload-audit` defines the repeated-payload rate as follows:
+
+- **Numerator:** a successful `read` tool-result whose complete response body is byte-equivalent to the immediately preceding complete body for the same normalized `(session, path, offset, limit)` slice. A result containing the persisted truncation marker is not treated as a complete body.
+- **Denominator:** every successful `read` tool-result in the half-open `[--from, --to)` window.
+- **Excluded from the numerator:** short unchanged markers, errors, changed-file responses, and responses for different slices. These are reported separately so a cheap marker or a legitimate paged read cannot masquerade as repeated payload delivery.
+- **Threshold:** at most **5 repeated full payloads per 1,000 successful read results**. The first complete calendar-month baseline (August 2026) measured 2.88 per 1,000 (54 of 18,748), so 5 retains measured headroom without copying the legacy path-only target of 100 per 1,000 calls.
+
+The command is read-only and emits both the repeated-response count and repeated UTF-8 bytes. JSON output is intended for storing a dated baseline alongside the exact window boundaries. The August 2026 baseline also recorded 168,765 repeated UTF-8 bytes, 106 unchanged markers, 146 changed same-slice responses, 15,970 additional distinct slices, 2 unclassifiable successful rows, and 659 excluded error results.
 
 ---
 
@@ -2808,12 +2882,12 @@ botnexus debug db <COMMAND> [OPTIONS]
 
 ### Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
-| `--db <NAME>` | (all) | Filter to a specific database by name — `sessions`, `cron`, `webhooks`, `skill-usage` (extension optional) |
-| `--include-agents` | off | Also include per-agent memory databases (`agents/<id>/data/memory.sqlite`) |
-| `--format` | `table` | Output format: `table` or `json` |
+| Option | Applies to | Default | Description |
+|--------|------------|---------|-------------|
+| `--target <DIR>` | all | `~/.botnexus` | BotNexus home directory |
+| `--db <NAME>` | `tables`, `schema` | (all) | Filter to a specific database by name — `sessions`, `cron`, `webhooks`, `skill-usage` (extension optional) |
+| `--include-agents` | `tables`, `schema`, `size` | off | Also include per-agent memory databases (`agents/<id>/data/memory.sqlite`) |
+| `--format` | all | `table` | Output format: `table` or `json` |
 
 > `--format` is a `debug db` group option, so it goes **before** the subcommand: `botnexus debug db --format json tables`.
 
@@ -2916,12 +2990,12 @@ botnexus debug cron <COMMAND> [OPTIONS]
 
 ### Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--target <DIR>` | `~/.botnexus` | BotNexus home directory |
-| `--job <ID>` | (all) | Filter to a specific job |
-| `--limit <N>` | 20 | Maximum history entries |
-| `--format` | `table` | Output format: `table` or `json` |
+| Option | Applies to | Default | Description |
+|--------|------------|---------|-------------|
+| `--target <DIR>` | all | `~/.botnexus` | BotNexus home directory |
+| `--job <ID>` | `history` | (all) | Filter to a specific job |
+| `--limit <N>` | `history` | 20 | Maximum history entries |
+| `--format` | all | `table` | Output format: `table` or `json` |
 
 ### Examples
 

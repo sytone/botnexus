@@ -6,15 +6,6 @@ Quick reference for all key terms used in the BotNexus codebase. Terms are organ
 
 ---
 
-### AfterToolCallDelegate
-
-Hook invoked after tool execution completes. Can transform the result by returning an `AfterToolCallResult` with overridden `Content`, `Details`, or `IsError` fields.
-
-**Source:** `BotNexus.Agent.Core` — Agent hook delegates
-**Internals:** [Agent Core — Hooks](02-agent-core.md)
-
----
-
 ### Agent
 
 Stateful wrapper that manages a conversation loop — prompt → LLM → tools → repeat. Enforces single-run concurrency via `SemaphoreSlim`. Exposes `PromptAsync`, `ContinueAsync`, `Steer`, and `FollowUp` APIs for controlling the conversation.
@@ -30,6 +21,15 @@ Immutable snapshot (`record`) of the current agent state: system prompt, message
 
 **Source:** `BotNexus.Agent.Core`
 **Internals:** [Agent Core — State Management](02-agent-core.md)
+
+---
+
+### AgentContextTransformer
+
+Delegate for pre-LLM context transformation such as compaction or message filtering. Invoked just before the context is sent to the provider.
+
+**Source:** `BotNexus.Agent.Core`
+**Internals:** [Agent Core](02-agent-core.md)
 
 ---
 
@@ -114,15 +114,6 @@ CodingAgent hook that logs tool call timing and results to the session log for d
 
 ---
 
-### BeforeToolCallDelegate
-
-Hook invoked before tool execution. Can block a tool call by returning `BeforeToolCallResult(Block: true)`, preventing the tool from running.
-
-**Source:** `BotNexus.Agent.Core` — Agent hook delegates
-**Internals:** [Agent Core — Hooks](02-agent-core.md)
-
----
-
 ### CacheRetention
 
 Enum controlling provider-side prompt caching behavior. Values: `Short` and `Long`.
@@ -177,15 +168,6 @@ Transforms an `AgentContext` to a provider `Context` at the LLM call boundary. B
 
 ---
 
-### ConvertToLlmDelegate
-
-Delegate that maps `AgentMessage[]` to provider `Message[]` for the LLM call, enabling custom message transformation before requests are sent.
-
-**Source:** `BotNexus.Agent.Core`
-**Internals:** [Agent Core](02-agent-core.md)
-
----
-
 ### Extension
 
 An `IExtension` plugin that hooks into the agent lifecycle — tool calls, sessions, compaction, and model requests. Extensions are loaded from DLL assemblies at runtime.
@@ -224,7 +206,7 @@ Delegate for runtime API key resolution. Signature: `(provider, CancellationToke
 
 ### Hook
 
-A callback invoked before or after tool execution for validation, logging, or result transformation. See [BeforeToolCallDelegate](#beforetoolcalldelegate) and [AfterToolCallDelegate](#aftertoolcalldelegate).
+A callback invoked before or after tool execution for validation, logging, or result transformation. See [ToolExecutionPolicy](#toolexecutionpolicy) and [ToolResultTransformer](#toolresulttransformer).
 
 **Source:** `BotNexus.Agent.Core`
 **Internals:** [Agent Core — Hooks](02-agent-core.md)
@@ -336,6 +318,15 @@ An `IApiProvider` implementation that communicates with a specific LLM API (Anth
 
 **Source:** `BotNexus.Agent.Providers.*`
 **Internals:** [Provider System](01-providers.md)
+
+---
+
+### ProviderMessageTransformer
+
+Delegate that maps `AgentMessage[]` to provider `Message[]` for the LLM call, enabling custom message transformation before requests are sent.
+
+**Source:** `BotNexus.Agent.Core`
+**Internals:** [Agent Core](02-agent-core.md)
 
 ---
 
@@ -456,6 +447,15 @@ Enum controlling tool execution strategy: `Sequential` (one tool at a time) or `
 
 ---
 
+### ToolExecutionPolicy {#toolexecutionpolicy}
+
+Named delegate invoked before tool execution. Can block a tool call by returning `ToolExecutionDecision(Block: true)`, preventing the tool from running.
+
+**Source:** `BotNexus.Agent.Core` — Agent hook delegates
+**Internals:** [Agent Core — Hooks](02-agent-core.md)
+
+---
+
 ### ToolExecutor
 
 Runs tool calls through the full pipeline: lookup → prepare arguments → before hook → execute → after hook → result. Supports both sequential and parallel execution modes.
@@ -474,12 +474,12 @@ Provider-level record for tool execution results. Contains `ToolCallId`, `ToolNa
 
 ---
 
-### TransformContextDelegate
+### ToolResultTransformer {#toolresulttransformer}
 
-Delegate for pre-LLM context transformation such as compaction or message filtering. Invoked just before the context is sent to the provider.
+Named delegate invoked after tool execution completes. Can transform the result by returning a `ToolResultTransformResult` with overridden `Content`, `Details`, or `IsError` fields.
 
-**Source:** `BotNexus.Agent.Core`
-**Internals:** [Agent Core](02-agent-core.md)
+**Source:** `BotNexus.Agent.Core` — Agent hook delegates
+**Internals:** [Agent Core — Hooks](02-agent-core.md)
 
 ---
 

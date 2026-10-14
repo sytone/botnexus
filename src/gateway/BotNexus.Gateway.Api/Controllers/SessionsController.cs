@@ -214,16 +214,16 @@ public sealed class SessionsController : ControllerBase
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The list sub agents result.</returns>
     [HttpGet("{sessionId}/subagents")]
-    [ProducesResponseType(typeof(IReadOnlyList<SubAgentInfo>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(IReadOnlyList<SubAgentRunDetail>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<IReadOnlyList<SubAgentInfo>>> ListSubAgents(string sessionId, CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyList<SubAgentRunDetail>>> ListSubAgents(string sessionId, CancellationToken cancellationToken)
     {
         var session = await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken);
         if (session is null)
             return NotFound();
 
         var subAgents = await _subAgentManager.ListAsync(SessionId.From(sessionId), cancellationToken);
-        return Ok(subAgents);
+        return Ok(subAgents.Select(info => SubAgentRunDetail.FromLive(info)).ToArray());
     }
 
     /// <summary>
@@ -236,9 +236,9 @@ public sealed class SessionsController : ControllerBase
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>List of sub-agent session summaries.</returns>
     [HttpGet("{sessionId}/subagents/history")]
-    [ProducesResponseType(typeof(IReadOnlyList<SubAgentSessionSummary>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(IReadOnlyList<SubAgentRunDetail>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<IReadOnlyList<SubAgentSessionSummary>>> GetSubAgentHistory(
+    public async Task<ActionResult<IReadOnlyList<SubAgentRunDetail>>> GetSubAgentHistory(
         string sessionId,
         CancellationToken cancellationToken)
     {
@@ -264,6 +264,11 @@ public sealed class SessionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult> KillSubAgent(string sessionId, string subAgentId, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var typedSessionId = SessionId.From(sessionId);
         var session = await _sessions.GetAsync(typedSessionId, cancellationToken);
         if (session is null)
@@ -320,7 +325,7 @@ public sealed class SessionsController : ControllerBase
 
         var totalCount = session.History.Count;
         var entries = session.GetHistorySnapshot(offset, boundedLimit);
-        return Ok(new SessionHistoryResponse(offset, boundedLimit, totalCount, entries));
+        return Ok(new SessionHistoryResponse(offset, boundedLimit, totalCount, entries, session.RunCompletion));
     }
 
     /// <summary>
@@ -372,6 +377,10 @@ public sealed class SessionsController : ControllerBase
     /// with <paramref name="lastEntryId"/>; supplying one without the other is a 400.
     /// </param>
     /// <param name="lastEntryId">Optional partial-range end: the entry id of the last included entry.</param>
+    /// <param name="includeTools">Whether tool calls and results are included.</param>
+    /// <param name="includeThinking">Whether assistant reasoning is included.</param>
+    /// <param name="includeSystemMessages">Whether system messages and conversation instructions are included.</param>
+    /// <param name="redactSecrets">Whether recognised secrets are redacted before rendering.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The rendered transcript as a UTF-8 file download, 400 for an unknown format or an invalid range, or 404.</returns>
     [HttpGet("{sessionId}/export/{format}")]
@@ -383,6 +392,10 @@ public sealed class SessionsController : ControllerBase
         string format,
         [FromQuery] string? firstEntryId = null,
         [FromQuery] string? lastEntryId = null,
+        [FromQuery] bool includeTools = true,
+        [FromQuery] bool includeThinking = false,
+        [FromQuery] bool includeSystemMessages = true,
+        [FromQuery] bool redactSecrets = true,
         CancellationToken cancellationToken = default)
     {
         if (!ExportFormat.TryParse(format, out var exportFormat))
@@ -399,7 +412,17 @@ public sealed class SessionsController : ControllerBase
         var result = await assembler.AssembleSessionRangeAsync(
             SessionId.From(sessionId), range, cancellationToken);
 
-        return ExportRangeBinding.ToActionResult(result, exportFormat, this);
+        if (!result.IsSuccess || result.Document is null)
+            return ExportRangeBinding.ToActionResult(result, exportFormat, this);
+
+        var options = new ExportContentOptions(
+            includeTools,
+            includeThinking,
+            includeSystemMessages,
+            redactSecrets);
+        var filtered = ExportContentFilter.Apply(result.Document, options);
+
+        return ExportResponse.File(filtered, exportFormat, this, options.RedactSecrets);
     }
 
     /// <summary>
@@ -534,6 +557,11 @@ public sealed class SessionsController : ControllerBase
         if (authorizationFailure is not null)
             return authorizationFailure;
 
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            session, cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var patch = new Dictionary<string, object?>();
         foreach (var property in metadataPatch.EnumerateObject())
         {
@@ -630,6 +658,11 @@ public sealed class SessionsController : ControllerBase
         if (authorizationFailure is not null)
             return authorizationFailure;
 
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            session, cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         await _sessions.DeleteAsync(sid, cancellationToken);
 
         // #2956: the session row and its indexed memory rows are two stores that only ever
@@ -699,6 +732,11 @@ public sealed class SessionsController : ControllerBase
         if (authorizationFailure is not null)
             return authorizationFailure;
 
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            session, cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         if (session.Status != SessionStatus.Active)
             return Conflict(new { error = $"Cannot suspend session in '{session.Status}' state." });
 
@@ -737,6 +775,11 @@ public sealed class SessionsController : ControllerBase
         var authorizationFailure = AuthorizeSessionCaller(session);
         if (authorizationFailure is not null)
             return authorizationFailure;
+
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            session, cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
 
         if (session.Status != SessionStatus.Suspended)
             return Conflict(new { error = $"Cannot resume session in '{session.Status}' state." });
@@ -778,6 +821,11 @@ public sealed class SessionsController : ControllerBase
         var authorizationFailure = AuthorizeSessionCaller(session);
         if (authorizationFailure is not null)
             return authorizationFailure;
+
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            session, cancellationToken: cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
 
         // Phase 5 / F-6 step 2b (#555): sub-agent eligibility is driven by the
         // typed SessionType discriminator (persisted on the session row by

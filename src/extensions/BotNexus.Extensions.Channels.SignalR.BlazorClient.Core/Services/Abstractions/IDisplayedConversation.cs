@@ -6,7 +6,7 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 ///
 /// <para>
 /// Before this seam existed, every inbound-event visibility decision compared the event's
-/// conversation id against the ambient per-agent <c>AgentState.ActiveConversationId</c>. That value
+/// conversation id against the ambient per-agent <c>the deleted per-agent conversation marker</c>. That value
 /// is a <em>last-selected</em> marker maintained independently on every agent, so it answered a
 /// different question from the one the caller was actually asking: not "is the user looking at this
 /// pane" but "was this the last conversation this agent happened to have selected". Nine agents
@@ -47,7 +47,7 @@ public interface IDisplayedConversation
     /// <summary>
     /// The displayed conversation id for <paramref name="agentId"/>, or <see langword="null"/> when
     /// that agent is not the displayed one. This is the route-derived replacement for reads of
-    /// <c>AgentState.ActiveConversationId</c> on recovery paths (session reset, reconnect) that need
+    /// <c>the deleted per-agent conversation marker</c> on recovery paths (session reset, reconnect) that need
     /// to know which pane the user is actually staring at, and it is intentionally null for every
     /// agent except the displayed one.
     /// </summary>

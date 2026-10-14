@@ -19,15 +19,20 @@ public sealed class SessionControlsTests : IDisposable
 
     public void Dispose() => _ctx.Dispose();
 
-    private static AgentState MakeAgent(string agentId, string? sessionId = null) =>
-        new AgentState { AgentId = agentId, DisplayName = agentId, SessionId = sessionId };
+    private void SeedConversation(string sessionId)
+    {
+        _store.SeedAgents([new AgentSummary("agent-1", "Agent 1")]);
+        _store.SeedConversations("agent-1", [new ConversationSummaryDto(
+            "conv-1", "agent-1", "Chat", true, "Active", sessionId, 0,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)]);
+    }
 
     [Fact]
     public void Shows_truncated_session_ID_when_session_exists()
     {
-        _store.UpsertAgent(MakeAgent("agent-1", "abcdefghijklmnop"));
+        SeedConversation("abcdefghijklmnop");
 
-        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         Assert.Contains("abcdefgh", cut.Markup);
     }
@@ -36,9 +41,9 @@ public sealed class SessionControlsTests : IDisposable
     public void Shows_copy_icon_and_tooltip_with_full_session_ID()
     {
         const string fullId = "full-session-id-12345";
-        _store.UpsertAgent(MakeAgent("agent-1", fullId));
+        SeedConversation(fullId);
 
-        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         var span = cut.Find(".session-id");
         Assert.Contains(fullId, span.GetAttribute("title") ?? "");
@@ -47,9 +52,9 @@ public sealed class SessionControlsTests : IDisposable
     [Fact]
     public void Does_not_render_session_id_element_when_session_is_null()
     {
-        _store.UpsertAgent(MakeAgent("agent-1", sessionId: null));
+        _store.SeedAgents([new AgentSummary("agent-1", "Agent 1")]);
 
-        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         Assert.Empty(cut.FindAll(".session-id"));
     }
@@ -57,9 +62,9 @@ public sealed class SessionControlsTests : IDisposable
     [Fact]
     public void Does_not_render_reset_button()
     {
-        _store.UpsertAgent(MakeAgent("agent-1", "some-session-id"));
+        SeedConversation("some-session-id");
 
-        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // Reset button was removed in the refactor — confirm absent
         Assert.Empty(cut.FindAll(".reset-btn"));
@@ -69,9 +74,9 @@ public sealed class SessionControlsTests : IDisposable
     [Fact]
     public void Shows_session_controls_container()
     {
-        _store.UpsertAgent(MakeAgent("agent-1", "some-id"));
+        SeedConversation("some-id");
 
-        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".session-controls");
     }
@@ -79,9 +84,9 @@ public sealed class SessionControlsTests : IDisposable
     [Fact]
     public void Session_ID_truncated_to_8_chars_with_ellipsis()
     {
-        _store.UpsertAgent(MakeAgent("agent-1", "1234567890abcdef"));
+        SeedConversation("1234567890abcdef");
 
-        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<SessionControls>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         Assert.Contains("12345678", cut.Markup);
         Assert.Contains("…", cut.Markup);

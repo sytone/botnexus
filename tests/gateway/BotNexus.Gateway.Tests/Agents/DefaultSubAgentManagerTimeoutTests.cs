@@ -11,7 +11,7 @@ using Moq;
 
 namespace BotNexus.Gateway.Tests.Agents;
 
-public sealed class DefaultSubAgentManagerTimeoutTests
+public sealed partial class DefaultSubAgentManagerTimeoutTests
 {
     /// <summary>
     /// The run's deadline is scheduled on a virtual clock and fires ONLY because the test advances
@@ -60,6 +60,346 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         AssertTimedOut(result, dispatcher, timeoutSeconds: 300);
     }
 
+    /// <summary>#4286: timeout preserves the typed response, including incomplete tool state and usage.</summary>
+    [Fact]
+    public async Task RunSubAgentAsync_InterruptedAtTimeout_PreservesStructuredPartialEvidence()
+    {
+        var partial = new AgentResponse
+        {
+            Content = "Read the configuration and started the final write.",
+            RunUsage = new AgentResponseUsage(InputTokens: 80, OutputTokens: 12),
+            TurnCount = 3,
+            ToolCalls =
+            [
+                new AgentToolCallInfo("read-1", "read", false, ResultContent: "configuration evidence"),
+                new AgentToolCallInfo("write-1", "write", false, IsIncomplete: true)
+            ]
+        };
+        var handle = CreateHandle(async token =>
+        {
+            var cancellationObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = token.Register(() => cancellationObserved.SetResult());
+            await cancellationObserved.Task;
+            throw new AgentPromptInterruptedException(partial, token);
+        });
+        var time = new ControllableTimeProvider();
+        var (manager, _, dispatched) = CreateManager(handle, time, timeoutSecondsBudget: 300);
+
+        var result = await SpawnAndAwaitTerminalAsync(
+            manager,
+            dispatched,
+            time,
+            advanceBy: TimeSpan.FromSeconds(300),
+            timeoutSeconds: 300);
+
+        result.Status.ShouldBe(SubAgentStatus.TimedOut);
+        result.PartialResult.ShouldNotBeNull();
+        result.PartialResult.StopReason.ShouldBe(SubAgentStopReason.Timeout);
+        result.PartialResult.TurnsUsed.ShouldBe(3);
+        result.PartialResult.Usage.ShouldBe(partial.RunUsage);
+        result.PartialResult.VerifiedEvidence.ShouldHaveSingleItem().ToolCallId.ShouldBe("read-1");
+        result.PartialResult.ActionsTaken.Single(action => action.ToolCallId == "write-1").Completed.ShouldBeFalse();
+        result.ResultSummary.ShouldNotBeNull();
+        result.ResultSummary.ShouldContain("[partial:timeout]");
+        result.ResultSummary.ShouldContain(partial.Content);
+    }
+
+    /// <summary>#4297: the last turn is reserved for one text-only synthesis attempt.</summary>
+    [Fact]
+    public async Task RunSubAgentAsync_TurnReservation_ForcesOneToolFreeFinalizationWithinBudget()
+    {
+        Action? onTurnCompleted = null;
+        var explorationToken = CancellationToken.None;
+        var finalizationToken = CancellationToken.None;
+        var partial = new AgentResponse
+        {
+            Content = "Inspected the implementation.",
+            TurnCount = 2,
+            ToolCalls = [new AgentToolCallInfo("read-1", "read", false, ResultContent: "evidence")]
+        };
+        var handle = CreateHandle(token =>
+        {
+            explorationToken = token;
+            onTurnCompleted.ShouldNotBeNull();
+            onTurnCompleted();
+            onTurnCompleted();
+            throw new AgentPromptInterruptedException(partial, token);
+        });
+        handle.Setup(h => h.ObserveTurns(It.IsAny<Action>()))
+            .Callback<Action>(callback => onTurnCompleted = callback)
+            .Returns(Mock.Of<IDisposable>());
+        handle.Setup(h => h.PromptWithoutToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<string, CancellationToken>((_, token) =>
+            {
+                finalizationToken = token;
+                return Task.FromResult(new AgentResponse { Content = "Implemented and validated the bounded fix.", TurnCount = 3 });
+            });
+        var (manager, _, dispatched) = CreateManager(handle, new ControllableTimeProvider(), maxTurnsBudget: 3);
+
+        var result = await SpawnAndAwaitTerminalAsync(manager, dispatched, maxTurns: 3);
+
+        result.Status.ShouldBe(SubAgentStatus.Completed);
+        result.ResultSummary.ShouldBe("Implemented and validated the bounded fix.");
+        result.TurnsUsed.ShouldBe(3);
+        explorationToken.IsCancellationRequested.ShouldBeTrue();
+        finalizationToken.IsCancellationRequested.ShouldBeFalse();
+        handle.Verify(h => h.PromptWithoutToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunSubAgentAsync_MaxTurnsOne_UsesOnlyReservedFinalizationTurn()
+    {
+        var handle = CreateHandle(_ => throw new InvalidOperationException("exploration must not run"));
+        handle.Setup(h => h.PromptWithoutToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "One-turn final answer." });
+        var (manager, _, dispatched) = CreateManager(
+            handle, new ControllableTimeProvider(), maxTurnsBudget: 1);
+
+        var result = await SpawnAndAwaitTerminalAsync(manager, dispatched, maxTurns: 1);
+
+        result.Status.ShouldBe(SubAgentStatus.Completed);
+        result.TurnsUsed.ShouldBe(1);
+        handle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        handle.Verify(h => h.PromptWithoutToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RunSubAgentAsync_OrdinaryEarlyCompletion_DoesNotFinalize()
+    {
+        Action? onTurnCompleted = null;
+        var handle = CreateHandle(_ =>
+        {
+            onTurnCompleted.ShouldNotBeNull();
+            onTurnCompleted();
+            return Task.FromResult(new AgentResponse { Content = "Completed early." });
+        });
+        handle.Setup(h => h.ObserveTurns(It.IsAny<Action>()))
+            .Callback<Action>(callback => onTurnCompleted = callback)
+            .Returns(Mock.Of<IDisposable>());
+        var (manager, _, dispatched) = CreateManager(
+            handle, new ControllableTimeProvider(), maxTurnsBudget: 3);
+
+        var result = await SpawnAndAwaitTerminalAsync(manager, dispatched, maxTurns: 3);
+
+        result.Status.ShouldBe(SubAgentStatus.Completed);
+        result.ResultSummary.ShouldBe("Completed early.");
+        result.TurnsUsed.ShouldBe(1);
+        handle.Verify(h => h.PromptWithoutToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RunSubAgentAsync_PreDeadlineReserve_CancelsOnlyExplorationAndRetainsAbsoluteDeadline()
+    {
+        var explorationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var explorationCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finalizationStarted = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = CreateHandle(async token =>
+        {
+            explorationStarted.TrySetResult();
+            using var registration = token.Register(() => explorationCancelled.TrySetResult());
+            await explorationCancelled.Task;
+            throw new AgentPromptInterruptedException(
+                new AgentResponse { Content = "Evidence before reserve." }, token);
+        });
+        handle.Setup(h => h.PromptWithoutToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<string, CancellationToken>((_, token) =>
+            {
+                finalizationStarted.TrySetResult(token);
+                return Task.FromResult(new AgentResponse { Content = "Reserved synthesis." });
+            });
+        var time = new ControllableTimeProvider();
+        var (manager, _, dispatched) = CreateManager(
+            handle, time, timeoutSecondsBudget: 300, maxTurnsBudget: 3);
+        var spawned = await manager.SpawnAsync(new SubAgentSpawnRequest
+        {
+            ParentAgentId = AgentId.From("parent-agent"),
+            ParentSessionId = SessionId.From("parent-session"),
+            Task = "Do background work",
+            TimeoutSeconds = 300,
+            MaxTurns = 3,
+            Mode = new Embody(SubAgentArchetype.General),
+            InheritedConversationId = ConversationId.From("inherited-conversation")
+        });
+
+        await explorationStarted.Task.WaitAsync(HangGuard);
+        time.Advance(TimeSpan.FromSeconds(270));
+        var finalToken = await finalizationStarted.Task.WaitAsync(HangGuard);
+        await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(HangGuard);
+        var result = await manager.GetAsync(spawned.SubAgentId);
+
+        result.ShouldNotBeNull();
+        result.Status.ShouldBe(SubAgentStatus.Completed);
+        result.ResultSummary.ShouldBe("Reserved synthesis.");
+        finalToken.IsCancellationRequested.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task RunSubAgentAsync_ReserveFinalizationFailure_WaitsForDeadlineAndClassifiesTimeout()
+    {
+        var explorationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = CreateHandle(async token =>
+        {
+            explorationStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return new AgentResponse { Content = "never" };
+        });
+        handle.Setup(h => h.PromptWithoutToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NotSupportedException("finalization unavailable"));
+        var time = new ControllableTimeProvider();
+        var (manager, _, dispatched) = CreateManager(
+            handle, time, timeoutSecondsBudget: 300, maxTurnsBudget: 3);
+        var spawned = await manager.SpawnAsync(new SubAgentSpawnRequest
+        {
+            ParentAgentId = AgentId.From("parent-agent"),
+            ParentSessionId = SessionId.From("parent-session"),
+            Task = "Do background work",
+            TimeoutSeconds = 300,
+            MaxTurns = 3,
+            Mode = new Embody(SubAgentArchetype.General),
+            InheritedConversationId = ConversationId.From("inherited-conversation")
+        });
+
+        await explorationStarted.Task.WaitAsync(HangGuard);
+        time.Advance(TimeSpan.FromSeconds(270));
+        (await manager.GetAsync(spawned.SubAgentId)).ShouldNotBeNull().Status.ShouldBe(SubAgentStatus.Running);
+
+        time.Advance(TimeSpan.FromSeconds(30));
+        await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(HangGuard);
+        var result = await manager.GetAsync(spawned.SubAgentId);
+
+        result.ShouldNotBeNull();
+        result.Status.ShouldBe(SubAgentStatus.TimedOut);
+        result.ResultSummary.ShouldNotBeNull().ShouldContain("timed out");
+    }
+
+    [Fact]
+    public async Task RunSubAgentAsync_FinalizationReturnsLateText_ClassifiesTimeoutAndRejectsText()
+    {
+        Action? onTurnCompleted = null;
+        var finalizationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = CreateHandle(token =>
+        {
+            onTurnCompleted.ShouldNotBeNull();
+            onTurnCompleted();
+            onTurnCompleted();
+            throw new AgentPromptInterruptedException(
+                new AgentResponse
+                {
+                    Content = "Exploration evidence.",
+                    ToolCalls = [new AgentToolCallInfo("read-1", "read", false, ResultContent: "evidence")]
+                },
+                token);
+        });
+        handle.Setup(h => h.ObserveTurns(It.IsAny<Action>()))
+            .Callback<Action>(callback => onTurnCompleted = callback)
+            .Returns(Mock.Of<IDisposable>());
+        handle.Setup(h => h.PromptWithoutToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<string, CancellationToken>(async (_, token) =>
+            {
+                finalizationStarted.TrySetResult();
+                var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                using var registration = token.Register(() => cancelled.TrySetResult());
+                await cancelled.Task;
+                return new AgentResponse { Content = "LATE TEXT MUST NOT WIN" };
+            });
+        var time = new ControllableTimeProvider();
+        var (manager, _, dispatched) = CreateManager(
+            handle, time, timeoutSecondsBudget: 300, maxTurnsBudget: 3);
+        var spawned = await manager.SpawnAsync(new SubAgentSpawnRequest
+        {
+            ParentAgentId = AgentId.From("parent-agent"),
+            ParentSessionId = SessionId.From("parent-session"),
+            Task = "Do background work",
+            TimeoutSeconds = 300,
+            MaxTurns = 3,
+            Mode = new Embody(SubAgentArchetype.General),
+            InheritedConversationId = ConversationId.From("inherited-conversation")
+        });
+        await finalizationStarted.Task.WaitAsync(HangGuard);
+
+        time.Advance(TimeSpan.FromSeconds(300));
+        await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(HangGuard);
+        var result = await manager.GetAsync(spawned.SubAgentId);
+
+        result.ShouldNotBeNull();
+        result.Status.ShouldBe(SubAgentStatus.TimedOut);
+        result.PartialResult.ShouldNotBeNull();
+        result.PartialResult.StopReason.ShouldBe(SubAgentStopReason.Timeout);
+        result.PartialResult.VerifiedEvidence.ShouldHaveSingleItem().ToolCallId.ShouldBe("read-1");
+        result.ResultSummary.ShouldNotBeNull();
+        result.ResultSummary.ShouldNotContain("LATE TEXT MUST NOT WIN");
+    }
+
+    [Fact]
+    public async Task RunSubAgentAsync_SuccessfulFinalization_PreservesExplorationFailureOutcome()
+    {
+        Action? onTurnCompleted = null;
+        var exploration = new AgentResponse
+        {
+            Content = "Attempted the write.",
+            ToolCalls = [new AgentToolCallInfo("write-1", "write", false, IsIncomplete: true)]
+        };
+        var handle = CreateHandle(token =>
+        {
+            onTurnCompleted.ShouldNotBeNull();
+            onTurnCompleted();
+            onTurnCompleted();
+            throw new AgentPromptInterruptedException(exploration, token);
+        });
+        handle.Setup(h => h.ObserveTurns(It.IsAny<Action>()))
+            .Callback<Action>(callback => onTurnCompleted = callback)
+            .Returns(Mock.Of<IDisposable>());
+        handle.Setup(h => h.PromptWithoutToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "Everything is complete." });
+        var (manager, _, dispatched) = CreateManager(
+            handle, new ControllableTimeProvider(), maxTurnsBudget: 3);
+
+        var result = await SpawnAndAwaitTerminalAsync(manager, dispatched, maxTurns: 3);
+
+        result.Status.ShouldBe(SubAgentStatus.Failed);
+        result.Status.ShouldNotBe(SubAgentStatus.Completed);
+        result.ResultSummary.ShouldNotBeNull();
+        result.ResultSummary.ShouldContain("did not complete");
+        result.ResultSummary.ShouldContain("Everything is complete.");
+    }
+
+    /// <summary>#4297: failed synthesis cannot replace #4286 evidence or its original stop reason.</summary>
+    [Fact]
+    public async Task RunSubAgentAsync_FinalizationFailure_PreservesOriginalTurnLimitPartialEvidence()
+    {
+        Action? onTurnCompleted = null;
+        var partial = new AgentResponse
+        {
+            Content = "Read the configuration before the budget stop.",
+            TurnCount = 2,
+            ToolCalls = [new AgentToolCallInfo("read-1", "read", false, ResultContent: "configuration evidence")]
+        };
+        var handle = CreateHandle(token =>
+        {
+            onTurnCompleted.ShouldNotBeNull();
+            onTurnCompleted();
+            onTurnCompleted();
+            throw new AgentPromptInterruptedException(partial, token);
+        });
+        handle.Setup(h => h.ObserveTurns(It.IsAny<Action>()))
+            .Callback<Action>(callback => onTurnCompleted = callback)
+            .Returns(Mock.Of<IDisposable>());
+        handle.Setup(h => h.PromptWithoutToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("provider unavailable"));
+        var (manager, _, dispatched) = CreateManager(handle, new ControllableTimeProvider(), maxTurnsBudget: 3);
+
+        var result = await SpawnAndAwaitTerminalAsync(manager, dispatched, maxTurns: 3);
+
+        result.Status.ShouldBe(SubAgentStatus.BudgetExhausted);
+        result.PartialResult.ShouldNotBeNull();
+        result.PartialResult.StopReason.ShouldBe(SubAgentStopReason.TurnLimit);
+        result.PartialResult.VerifiedEvidence.ShouldHaveSingleItem().ToolCallId.ShouldBe("read-1");
+        result.ResultSummary.ShouldNotBeNull();
+        result.ResultSummary.ShouldContain("[partial:turn_limit]");
+        result.ResultSummary.ShouldContain(partial.Content);
+        handle.Verify(h => h.PromptWithoutToolsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task RunSubAgentAsync_SnapshotFailure_PreservesTimedOutStatusAndReportsFailure()
     {
@@ -89,7 +429,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
 
 
     [Fact]
-    public async Task RunSubAgentAsync_KillWinsDuringCapture_DeletesOrphanedArtifact()
+    public async Task RunSubAgentAsync_CompletionWinsDuringCapture_DeletesOrphanedArtifact()
     {
         var handle = CreateHandle(async token =>
         {
@@ -130,29 +470,39 @@ public sealed class DefaultSubAgentManagerTimeoutTests
 
         time.Advance(TimeSpan.FromSeconds(300));
         await captureStarted.Task.WaitAsync(HangGuard);
-        var killed = await manager.KillAsync(spawned.SubAgentId, SessionId.From("parent-session"));
+        await manager.OnCompletedAsync(spawned.SubAgentId, "External completion wins.");
         releaseCapture.SetResult(new SubAgentWorktreeSnapshot(
             SubAgentWorktreeSnapshotOutcome.Captured, "worktree", artifactPath, 12, [], false));
         await artifactDeleted.Task.WaitAsync(HangGuard);
         var result = await manager.GetAsync(spawned.SubAgentId);
 
-        killed.ShouldBeTrue();
         result.ShouldNotBeNull();
-        result.Status.ShouldBe(SubAgentStatus.Killed);
+        result.Status.ShouldBe(SubAgentStatus.Completed);
         result.WorktreeSnapshot.ShouldBeNull();
         snapshotService.VerifyAll();
+        snapshotService.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public async Task KillAsync_ExplicitCallerKill_DoesNotCaptureSnapshot()
+    public async Task RunSubAgentAsync_TimeoutCaptureStarted_KillCannotWin()
     {
         var handle = CreateHandle(async token =>
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return new AgentResponse { Content = "unreachable" };
         });
+        var captureStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCapture = new TaskCompletionSource<SubAgentWorktreeSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var snapshotService = new Mock<ISubAgentWorktreeSnapshotService>(MockBehavior.Strict);
-        var (manager, _, _) = CreateManager(handle, new ControllableTimeProvider(), snapshotService: snapshotService.Object);
+        snapshotService
+            .Setup(service => service.CaptureAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                captureStarted.SetResult();
+                return await releaseCapture.Task;
+            });
+        var time = new ControllableTimeProvider();
+        var (manager, _, dispatched) = CreateManager(handle, time, timeoutSecondsBudget: 300, snapshotService: snapshotService.Object);
         var spawned = await manager.SpawnAsync(new SubAgentSpawnRequest
         {
             ParentAgentId = AgentId.From("parent-agent"),
@@ -164,7 +514,58 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             InheritedConversationId = ConversationId.From("inherited-conversation")
         });
 
+        time.Advance(TimeSpan.FromSeconds(300));
+        await captureStarted.Task.WaitAsync(HangGuard);
         var killed = await manager.KillAsync(spawned.SubAgentId, SessionId.From("parent-session"));
+        killed.ShouldBeFalse();
+        time.Advance(TimeSpan.FromSeconds(300));
+        releaseCapture.SetResult(new SubAgentWorktreeSnapshot(
+            SubAgentWorktreeSnapshotOutcome.Captured, "worktree", Path.Combine(Path.GetTempPath(), "timeout-loser.patch"), 12, [], false));
+        await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(HangGuard);
+        var result = await manager.GetAsync(spawned.SubAgentId);
+
+        result.ShouldNotBeNull();
+        result.Status.ShouldBe(SubAgentStatus.TimedOut);
+        result.WorktreeSnapshot.ShouldNotBeNull();
+        snapshotService.VerifyAll();
+        snapshotService.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task KillAsync_ExplicitCallerKill_DoesNotCaptureSnapshot()
+    {
+        var promptStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handle = CreateHandle(async token =>
+        {
+            promptStarted.TrySetResult();
+            using var registration = token.Register(() => cancellationObserved.TrySetResult());
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return new AgentResponse { Content = "unreachable" };
+        });
+        var subscription = new Mock<IDisposable>();
+        subscription.Setup(item => item.Dispose()).Callback(() => runExited.TrySetResult());
+        handle.Setup(item => item.ObserveTurns(It.IsAny<Action>())).Returns(subscription.Object);
+        var snapshotService = new Mock<ISubAgentWorktreeSnapshotService>(MockBehavior.Strict);
+        var time = new ControllableTimeProvider();
+        var (manager, _, _) = CreateManager(handle, time, snapshotService: snapshotService.Object);
+        var spawned = await manager.SpawnAsync(new SubAgentSpawnRequest
+        {
+            ParentAgentId = AgentId.From("parent-agent"),
+            ParentSessionId = SessionId.From("parent-session"),
+            Task = "Do background work",
+            TimeoutSeconds = 300,
+            GrantedWritePaths = ["granted"],
+            Mode = new Embody(SubAgentArchetype.General),
+            InheritedConversationId = ConversationId.From("inherited-conversation")
+        });
+
+        await promptStarted.Task.WaitAsync(HangGuard);
+        var killed = await manager.KillAsync(spawned.SubAgentId, SessionId.From("parent-session"));
+        await cancellationObserved.Task.WaitAsync(HangGuard);
+        time.Advance(TimeSpan.FromSeconds(300));
+        await runExited.Task.WaitAsync(HangGuard);
         var result = await manager.GetAsync(spawned.SubAgentId);
 
         killed.ShouldBeTrue();
@@ -188,7 +589,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         result.Status.ShouldBe(SubAgentStatus.Failed);
         result.ResultSummary.ShouldNotBeNull();
         result.ResultSummary.ShouldContain("empty final response");
-        VerifyDiagnostic(dispatcher, "failed", "empty final response");
+        VerifyDiagnostic(result, dispatcher, SubAgentStatus.Failed, "empty final response");
     }
 
     [Fact]
@@ -202,7 +603,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
 
         result.Status.ShouldBe(SubAgentStatus.Completed);
         result.ResultSummary.ShouldBe("Implemented the fix.");
-        VerifyDiagnostic(dispatcher, "completed", "Implemented the fix.");
+        VerifyDiagnostic(result, dispatcher, SubAgentStatus.Completed, "Implemented the fix.");
     }
 
     /// <summary>
@@ -265,7 +666,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         result.Status.ShouldBe(SubAgentStatus.TimedOut);
         result.ResultSummary.ShouldNotBeNull();
         result.ResultSummary.ShouldContain("timed out after 300 seconds");
-        VerifyDiagnostic(dispatcher, "timed out", "timed out after 300 seconds");
+        VerifyDiagnostic(result, dispatcher, SubAgentStatus.TimedOut, "timed out after 300 seconds");
     }
 
     /// <summary>
@@ -303,7 +704,8 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         ControllableTimeProvider? time = null,
         TimeSpan? advanceBy = null,
         int timeoutSeconds = 1,
-        IReadOnlyList<string>? grantedWritePaths = null)
+        IReadOnlyList<string>? grantedWritePaths = null,
+        int maxTurns = 30)
     {
         var spawned = await manager.SpawnAsync(new SubAgentSpawnRequest
         {
@@ -311,6 +713,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             ParentSessionId = SessionId.From("parent-session"),
             Task = "Do background work",
             TimeoutSeconds = timeoutSeconds,
+            MaxTurns = maxTurns,
             GrantedWritePaths = grantedWritePaths,
             Mode = new Embody(SubAgentArchetype.General),
             InheritedConversationId = ConversationId.From("inherited-conversation")
@@ -319,7 +722,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         if (time is not null && advanceBy is { } delta)
             time.Advance(delta);
 
-        await dispatched.Task.WaitAsync(HangGuard);
+        await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(HangGuard);
 
         var current = await manager.GetAsync(spawned.SubAgentId);
         current.ShouldNotBeNull();
@@ -349,16 +752,15 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         result.Status.ShouldBe(SubAgentStatus.TimedOut);
         result.ResultSummary.ShouldNotBeNull();
         result.ResultSummary.ShouldContain(expected);
-        VerifyDiagnostic(dispatcher, "timed out", expected);
+        VerifyDiagnostic(result, dispatcher, SubAgentStatus.TimedOut, expected);
     }
 
-    private static void VerifyDiagnostic(Mock<IChannelDispatcher> dispatcher, string status, string diagnostic)
+    private static void VerifyDiagnostic(SubAgentInfo result, Mock<IChannelDispatcher> dispatcher, SubAgentStatus status, string diagnostic)
     {
-        dispatcher.Verify(d => d.DispatchAsync(
-            It.Is<InboundMessage>(message =>
-                message.Content.Contains(status, StringComparison.OrdinalIgnoreCase) &&
-                message.Content.Contains(diagnostic, StringComparison.OrdinalIgnoreCase)),
-            It.IsAny<CancellationToken>()), Times.Once);
+        result.Status.ShouldBe(status);
+        result.ResultSummary.ShouldNotBeNull();
+        result.ResultSummary.ShouldContain(diagnostic);
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static Mock<IAgentHandle> CreateHandle(Func<CancellationToken, Task<AgentResponse>> prompt)
@@ -464,7 +866,9 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         Mock<IAgentHandle> handle,
         TimeProvider? timeProvider = null,
         int timeoutSecondsBudget = 1,
-        ISubAgentWorktreeSnapshotService? snapshotService = null)
+        ISubAgentWorktreeSnapshotService? snapshotService = null,
+        int maxTurnsBudget = 30,
+        Action<SubAgentOptions>? configureSubAgents = null)
     {
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(
@@ -490,14 +894,24 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             .Callback(() => dispatched.TrySetResult())
             .Returns(Task.CompletedTask);
 
+        var activity = new Mock<IActivityBroadcaster>();
+        activity.Setup(a => a.PublishAsync(It.IsAny<GatewayActivity>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewayActivity, CancellationToken>((eventData, _) =>
+            {
+                if (eventData.Type is GatewayActivityType.SubAgentCompleted or GatewayActivityType.SubAgentFailed)
+                    dispatched.TrySetResult();
+            }).Returns(ValueTask.CompletedTask);
         var options = new GatewayOptions();
         options.SubAgents.MaxTimeoutSeconds = timeoutSecondsBudget;
         options.SubAgents.DefaultTimeoutSeconds = timeoutSecondsBudget;
+        options.SubAgents.MaxTurnsCeiling = maxTurnsBudget;
+        options.SubAgents.DefaultMaxTurns = maxTurnsBudget;
+        configureSubAgents?.Invoke(options.SubAgents);
 
         return (new DefaultSubAgentManager(
             supervisor.Object,
             registry.Object,
-            Mock.Of<IActivityBroadcaster>(),
+            activity.Object,
             dispatcher.Object,
             new TestOptionsMonitor<GatewayOptions>(options),
             NullLogger<DefaultSubAgentManager>.Instance,

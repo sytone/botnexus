@@ -78,7 +78,7 @@ public sealed class GitHubIssueGetTool : GitHubToolBase
             ["tool"] = Name,
             ["repository"] = repository,
             ["ok"] = true,
-            ["issue"] = GitHubProjections.Issue(body),
+            ["issue"] = body.Issue(),
         };
 
         if (includeComments)
@@ -93,7 +93,7 @@ public sealed class GitHubIssueGetTool : GitHubToolBase
             // and discarding it would force a retry of both. The failure is reported as a field so
             // the caller can distinguish "no comments" from "comments could not be read".
             payload["comments"] = comments is { IsSuccess: true, Body.ValueKind: JsonValueKind.Array }
-                ? comments.Body.Value.EnumerateArray().Select(GitHubProjections.Comment).ToArray()
+                ? comments.Body.Value.EnumerateArray().Select(comment => comment.Comment()).ToArray()
                 : null;
             payload["commentsError"] = comments.IsSuccess ? null : comments.ErrorMessage;
         }

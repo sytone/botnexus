@@ -99,16 +99,14 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
             .ToArray();
     }
 
-    public async Task<IReadOnlyList<SessionSummary>> GetAvailableSessionsAsync(string agentId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<SessionSummary>> GetAvailableSessionsAsync(AgentId agentId, CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(agentId);
-
         if (!IsEnabled())
             return [];
 
         await RefreshAgentInternalAsync(agentId, ct);
 
-        if (!_cache.TryGetValue(agentId, out var sessions))
+        if (!_cache.TryGetValue(agentId.Value, out var sessions))
             return [];
 
         return sessions.OrderByDescending(static session => session.UpdatedAt).ToArray();
@@ -125,7 +123,7 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
             return;
         }
 
-        await RefreshAgentInternalAsync(lifecycleEvent.AgentId, cancellationToken);
+        await RefreshAgentInternalAsync(AgentId.From(lifecycleEvent.AgentId), cancellationToken);
     }
 
     private bool IsEnabled() => _options.Value.Enabled;
@@ -175,7 +173,7 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
         }
     }
 
-    private async Task RefreshAgentInternalAsync(string agentId, CancellationToken ct)
+    private async Task RefreshAgentInternalAsync(AgentId agentId, CancellationToken ct)
     {
         await _refreshGate.WaitAsync(ct);
         try
@@ -186,9 +184,9 @@ public sealed class SessionWarmupService : ISessionWarmupService, IHostedService
             var summaries = await _sessionStore.ListSummariesAsync(
                 ComputeUpdatedAfter(options), limit: null, offset: 0, ct);
             var agentSummaries = summaries
-                .Where(summary => string.Equals(summary.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
+                .Where(summary => string.Equals(summary.AgentId, agentId.Value, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
-            _cache[agentId] = BuildVisibleSummaries(agentSummaries, options);
+            _cache[agentId.Value] = BuildVisibleSummaries(agentSummaries, options);
         }
         finally
         {

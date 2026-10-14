@@ -203,6 +203,51 @@ public sealed class SoulTriggerTests
     }
 
     [Fact]
+    public async Task CreateSessionAsync_ReportsAuthoritativeRunCompletion()
+    {
+        var agentId = AgentId.From("agent-a");
+        var now = new DateTimeOffset(2026, 1, 10, 0, 30, 0, TimeSpan.Zero);
+        var expectedSessionId = SessionId.ForSoul(agentId, new DateOnly(2026, 1, 10));
+        var completion = new RunCompletionSignal(
+            "Parked",
+            ["decision"],
+            "UserInput",
+            "Waiting for a decision.",
+            "ask_user is persisted",
+            "user",
+            "user responds",
+            0);
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(r => r.Get(agentId)).Returns(CreateDescriptor(agentId, new SoulAgentConfig()));
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(s => s.ListAsync(agentId, It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        sessions.Setup(s => s.GetOrCreateAsync(expectedSessionId, agentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewaySession { SessionId = expectedSessionId, AgentId = agentId });
+        sessions.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync("reflect", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentResponse { Content = "waiting", Completion = completion });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(agentId, expectedSessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var trigger = new SoulTrigger(
+            supervisor.Object,
+            registry.Object,
+            sessions.Object,
+            NullLogger<SoulTrigger>.Instance,
+            new FixedTimeProvider(now));
+        var request = new BotNexus.Gateway.Abstractions.Triggers.InternalTriggerRequest
+        {
+            CronJobId = JobId.From("job-completion")
+        };
+
+        await trigger.CreateSessionAsync(agentId, "reflect", request: request);
+
+        request.Completion.ShouldBe(completion);
+    }
+
+    [Fact]
     public async Task CreateSessionAsync_DailyTurnWithToolCalls_PersistsOrderedToolRows()
     {
         var agentId = AgentId.From("agent-a");

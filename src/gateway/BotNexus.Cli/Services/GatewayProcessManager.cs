@@ -26,6 +26,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     // Injectable process enumeration for PID-file-less discovery (#2772). Tests supply fakes so no
     // real process is ever inspected or signalled.
     private readonly Func<IEnumerable<IGatewayProcessHandle>> _processEnumerator;
+    private readonly Func<string?, string, CancellationToken, Task<bool>> _plannedShutdownRequester;
     // Default health URL used for status probing when no override is provided.
     internal const string DefaultHealthUrl = GatewayDefaults.LoopbackListenUrl + "/health";
 
@@ -36,7 +37,8 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         Func<Process, int, bool>? waitForExitOverride = null,
         TimeSpan? gracefulStopTimeout = null,
         HttpClient? probeClient = null,
-        Func<IEnumerable<IGatewayProcessHandle>>? processEnumerator = null)
+        Func<IEnumerable<IGatewayProcessHandle>>? processEnumerator = null,
+        Func<string?, string, CancellationToken, Task<bool>>? plannedShutdownRequester = null)
     {
         _processEnumerator = processEnumerator ?? LiveProcessHandle.EnumerateAll;
         _healthChecker = healthChecker;
@@ -45,6 +47,7 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         _gracefulStopTimeout = gracefulStopTimeout ?? TimeSpan.FromSeconds(10);
         _waitForExitOverride = waitForExitOverride;
         _probeClient = probeClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        _plannedShutdownRequester = plannedShutdownRequester ?? SendPlannedShutdownRequestAsync;
     }
 
     /// <summary>
@@ -245,6 +248,22 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     /// Falls back to <c>dotnet &lt;dll&gt;</c> when no apphost is found next to the DLL.
     /// </para>
     /// </summary>
+    internal static string? ResolveApphostPath(string executablePath)
+    {
+        if (!executablePath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            return executablePath;
+
+        var directory = Path.GetDirectoryName(executablePath);
+        var stem = Path.GetFileNameWithoutExtension(executablePath);
+        if (directory is null || string.IsNullOrEmpty(stem))
+            return null;
+
+        var candidate = OperatingSystem.IsWindows()
+            ? Path.Combine(directory, stem + ".exe")
+            : Path.Combine(directory, stem);
+        return File.Exists(candidate) ? candidate : null;
+    }
+
     internal (string FileName, string Arguments) ResolveLaunchTarget(GatewayStartOptions options)
     {
         var extraArgs = options.Arguments ?? string.Empty;
@@ -255,21 +274,11 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             if (!string.IsNullOrWhiteSpace(dllPath)
                 && dllPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             {
-                // The apphost sits beside the DLL with the same base name. On Windows it carries a
-                // .exe suffix; on Unix it is extension-less. Probe both so this works cross-platform.
-                var dir = Path.GetDirectoryName(dllPath) ?? string.Empty;
-                var baseName = Path.GetFileNameWithoutExtension(dllPath);
-                var candidates = OperatingSystem.IsWindows()
-                    ? new[] { Path.Combine(dir, baseName + ".exe") }
-                    : new[] { Path.Combine(dir, baseName) };
-
-                foreach (var apphost in candidates)
+                var apphost = ResolveApphostPath(dllPath);
+                if (apphost is not null)
                 {
-                    if (File.Exists(apphost))
-                    {
-                        _logger.LogDebug("Launching gateway via apphost executable {Apphost}", apphost);
-                        return (apphost, extraArgs.Trim());
-                    }
+                    _logger.LogDebug("Launching gateway via apphost executable {Apphost}", apphost);
+                    return (apphost, extraArgs.Trim());
                 }
             }
         }
@@ -318,7 +327,18 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     /// not-running — it is NEVER killed.
     /// </para>
     /// </summary>
-    public async Task<GatewayStopResult> StopAsync(string? homePath = null, string? gatewayBinaryPath = null, CancellationToken cancellationToken = default)
+    /// <inheritdoc />
+    public Task<bool> RequestPlannedShutdownAsync(
+        string? homePath,
+        string gatewayUrl,
+        CancellationToken cancellationToken = default)
+        => _plannedShutdownRequester(homePath, gatewayUrl, cancellationToken);
+
+    public async Task<GatewayStopResult> StopAsync(
+        string? homePath = null,
+        string? gatewayBinaryPath = null,
+        CancellationToken cancellationToken = default,
+        string? gatewayUrl = null)
     {
         var pidFilePath = ResolvePidFilePath(homePath);
         var (verifiedProcess, record, staleReason) = await ResolveVerifiedProcessAsync(pidFilePath);
@@ -359,7 +379,31 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
 
         try
         {
-            if (handle.RequestGracefulStop())
+            if (gatewayUrl is not null &&
+                await _plannedShutdownRequester(homePath, gatewayUrl, cancellationToken).ConfigureAwait(false))
+            {
+                _logger.LogInformation(
+                    "Requested planned host shutdown for gateway process {Pid} at {GatewayUrl}",
+                    pid,
+                    gatewayUrl);
+                var gracefulTimeoutMs = (int)_gracefulStopTimeout.TotalMilliseconds;
+                if (await Task.Run(() => handle.WaitForExit(gracefulTimeoutMs), cancellationToken))
+                {
+                    await CleanupPidFileAsync(pidFilePath);
+                    return new GatewayStopResult(
+                        Success: true,
+                        Message: $"Gateway stopped gracefully (PID {pid})",
+                        Outcome: GatewayStopOutcome.Stopped);
+                }
+
+                escalated = true;
+                _logger.LogWarning(
+                    "Gateway process {Pid} did not exit after accepting planned shutdown within {Timeout}s; escalating",
+                    pid,
+                    _gracefulStopTimeout.TotalSeconds);
+            }
+
+            if (!escalated && handle.RequestGracefulStop())
             {
                 _logger.LogInformation(
                     "Requested graceful stop for gateway process {Pid} ({Source})", pid, source);
@@ -570,6 +614,40 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
     /// <see cref="GatewayProbeResult.ReachableNoAuth"/> on 401/403,
     /// and <see cref="GatewayProbeResult.Unreachable"/> on connection failure or timeout.
     /// </summary>
+    private static async Task<bool> SendPlannedShutdownRequestAsync(
+        string? homePath,
+        string gatewayUrl,
+        CancellationToken cancellationToken)
+    {
+        var resolution = GatewayClientFactory.Resolve(
+            gatewayUrl,
+            TimeSpan.FromSeconds(5),
+            explicitToken: null,
+            GatewayClientFactory.DefaultCredentialSource(homePath));
+        if (resolution.Client is null)
+        {
+            return false;
+        }
+
+        using var client = resolution.Client;
+        try
+        {
+            using var response = await client.PostAsync(
+                "api/gateway/shutdown",
+                content: null,
+                cancellationToken).ConfigureAwait(false);
+            return response.StatusCode == System.Net.HttpStatusCode.Accepted;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
     internal async Task<GatewayProbeResult> ProbeGatewayAsync(string healthUrl, CancellationToken cancellationToken)
     {
         try

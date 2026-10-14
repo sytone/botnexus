@@ -1,4 +1,5 @@
 using BotNexus.Domain.Text;
+using BotNexus.Gateway.Sessions;
 using System.CommandLine;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
@@ -72,6 +73,24 @@ internal sealed class DebugSessionsCommand
             return Task.CompletedTask;
         });
 
+        // ── read payload audit ──
+        var fromOption = new Option<DateTimeOffset>("--from", "Inclusive UTC start of the audit window.") { IsRequired = true };
+        var toOption = new Option<DateTimeOffset>("--to", "Exclusive UTC end of the audit window.") { IsRequired = true };
+        var readPayloadAuditCommand = new Command("read-payload-audit", "Measure repeated full read payloads in a complete audit window.")
+        {
+            fromOption, toOption
+        };
+        readPayloadAuditCommand.SetHandler(context =>
+        {
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var format = context.ParseResult.GetValueForOption(formatOption) ?? "table";
+            var windowStart = context.ParseResult.GetValueForOption(fromOption);
+            var windowEnd = context.ParseResult.GetValueForOption(toOption);
+            var dbPath = ResolveSessionsDb(target);
+            context.ExitCode = ExecuteReadPayloadAudit(dbPath, windowStart, windowEnd, format);
+            return Task.CompletedTask;
+        });
+
         // ── retention preview ──
         var olderThanDaysOption = new Option<int>("--older-than-days", () => 30, "Minimum age of successful historical tool invocations.");
         var retentionCommand = new Command("retention-preview", "Report tool payload retention candidates without modifying the store.")
@@ -85,6 +104,24 @@ internal sealed class DebugSessionsCommand
             var olderThanDays = context.ParseResult.GetValueForOption(olderThanDaysOption);
             var dbPath = ResolveSessionsDb(target);
             context.ExitCode = ExecuteRetentionPreview(dbPath, olderThanDays, format);
+            return Task.CompletedTask;
+        });
+
+        // ── legacy tool invocation backfill ──
+        var batchSizeOption = new Option<int>("--batch-size", () => 1000, "Maximum unlinked legacy tool rows to scan.");
+        var commitOption = new Option<bool>("--commit", "Apply the backfill. Without this flag the command is read-only.");
+        var backfillCommand = new Command("backfill-tool-invocations", "Preview or apply one bounded legacy tool invocation backfill batch.")
+        {
+            batchSizeOption, commitOption
+        };
+        backfillCommand.SetHandler(context =>
+        {
+            var target = context.ParseResult.GetValueForOption(targetOption);
+            var format = context.ParseResult.GetValueForOption(formatOption) ?? "table";
+            var batchSize = context.ParseResult.GetValueForOption(batchSizeOption);
+            var commit = context.ParseResult.GetValueForOption(commitOption);
+            var dbPath = ResolveSessionsDb(target);
+            context.ExitCode = ExecuteToolInvocationBackfill(dbPath, batchSize, commit, format);
             return Task.CompletedTask;
         });
 
@@ -102,7 +139,9 @@ internal sealed class DebugSessionsCommand
         command.AddCommand(listCommand);
         command.AddCommand(getCommand);
         command.AddCommand(compactionCommand);
+        command.AddCommand(readPayloadAuditCommand);
         command.AddCommand(retentionCommand);
+        command.AddCommand(backfillCommand);
         command.AddCommand(statsCommand);
         return command;
     }
@@ -351,6 +390,52 @@ internal sealed class DebugSessionsCommand
         return 0;
     }
 
+    internal static int ExecuteReadPayloadAudit(
+        string dbPath,
+        DateTimeOffset windowStart,
+        DateTimeOffset windowEnd,
+        string format)
+    {
+        if (!File.Exists(dbPath))
+        {
+            ReportMissingStore(dbPath);
+            return 1;
+        }
+
+        ReadPayloadAuditReport report;
+        try
+        {
+            report = ReadPayloadAudit.CreateReport(dbPath, windowStart, windowEnd);
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{CliText.SafeDisplay(ex.Message)}[/]");
+            return 1;
+        }
+
+        if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
+        {
+            AnsiConsole.Write(new Text(JsonSerializer.Serialize(report, JsonOpts)));
+            AnsiConsole.WriteLine();
+            return 0;
+        }
+
+        AnsiConsole.MarkupLine("[bold]Read Payload Audit[/]");
+        AnsiConsole.MarkupLine($"  Window:                       [bold]{report.WindowStart:O}[/] to [bold]{report.WindowEnd:O}[/] (end exclusive)");
+        AnsiConsole.MarkupLine($"  Successful read results:      [bold]{report.SuccessfulReadResults:N0}[/]");
+        AnsiConsole.MarkupLine($"  Repeated full payloads:       [bold]{report.RepeatedFullPayloads:N0}[/]");
+        AnsiConsole.MarkupLine($"  Repeated payload bytes:       [bold]{report.RepeatedFullPayloadBytes:N0}[/]");
+        AnsiConsole.MarkupLine($"  Repeated payloads per 1,000:  [bold]{report.RepeatedPayloadsPerThousand:N2}[/]");
+        AnsiConsole.MarkupLine($"  Threshold per 1,000:          [bold]{report.MaximumRepeatedPayloadsPerThousand:N2}[/] ({(report.MeetsThreshold ? "meets" : "exceeds")})");
+        AnsiConsole.MarkupLine($"  Unchanged markers:            [bold]{report.UnchangedMarkers:N0}[/]");
+        AnsiConsole.MarkupLine($"  Changed same-slice results:   [bold]{report.ChangedSameSliceResults:N0}[/]");
+        AnsiConsole.MarkupLine($"  Different-slice results:      [bold]{report.DifferentSliceResults:N0}[/]");
+        AnsiConsole.MarkupLine($"  Unclassifiable results:       [bold]{report.UnclassifiableResults:N0}[/]");
+        AnsiConsole.MarkupLine($"  Excluded error results:       [bold]{report.ExcludedErrorResults:N0}[/]");
+        AnsiConsole.MarkupLine("[dim]Numerator: repeated complete response body for the same normalized path/offset/limit in one session. Denominator: all successful read result rows in the half-open window. Unchanged markers never enter the numerator.[/]");
+        return 0;
+    }
+
     internal static int ExecuteRetentionPreview(string dbPath, int olderThanDays, string format)
     {
         if (!File.Exists(dbPath))
@@ -386,6 +471,43 @@ internal sealed class DebugSessionsCommand
         AnsiConsole.MarkupLine($"  Unique argument bytes:  [bold]{report.CandidateArgumentBytes:N0}[/]");
         AnsiConsole.MarkupLine($"  Estimated reclaimable:  [bold]{report.EstimatedReclaimableBytes:N0}[/]");
         AnsiConsole.MarkupLine("[dim]Read-only preview. Physical SQLite reclamation is a separate operator-controlled operation.[/]");
+        return 0;
+    }
+
+    internal static int ExecuteToolInvocationBackfill(string dbPath, int batchSize, bool commit, string format)
+    {
+        if (!File.Exists(dbPath))
+        {
+            ReportMissingStore(dbPath);
+            return 1;
+        }
+
+        LegacyToolInvocationBackfillReport report;
+        try
+        {
+            report = LegacyToolInvocationBackfill.Run(dbPath, batchSize, commit);
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{CliText.SafeDisplay(ex.Message)}[/]");
+            return 1;
+        }
+
+        if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
+        {
+            AnsiConsole.Write(new Text(JsonSerializer.Serialize(report, JsonOpts)));
+            AnsiConsole.WriteLine();
+            return 0;
+        }
+
+        AnsiConsole.MarkupLine("[bold]Legacy Tool Invocation Backfill[/]");
+        AnsiConsole.MarkupLine($"  Mode:         [bold]{(report.Committed ? "commit" : "preview")}[/]");
+        AnsiConsole.MarkupLine($"  Scanned rows: [bold]{report.ScannedRows:N0}[/]");
+        AnsiConsole.MarkupLine($"  Linked rows:  [bold]{report.LinkedRows:N0}[/]");
+        AnsiConsole.MarkupLine($"  Invocations:  [bold]{report.InvocationCount:N0}[/]");
+        AnsiConsole.MarkupLine($"  More remain:  [bold]{(report.HasMore ? "yes" : "no")}[/]");
+        if (!report.Committed)
+            AnsiConsole.MarkupLine("[dim]Read-only preview. Pass --commit to apply this batch.[/]");
         return 0;
     }
 

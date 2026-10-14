@@ -28,7 +28,7 @@ internal sealed class BaseInstructionEditGuard
         _getBaseFileName = getBaseFileName ?? ContextFileVariants.GetBaseFileName;
         _baseInstructionPaths = new HashSet<string>(PathComparer);
 
-        foreach (var path in BuiltInBaseFiles.Concat(descriptor.SystemPromptFiles))
+        foreach (var path in BuiltInBaseFiles)
             AddBaseInstructionPath(path);
     }
 

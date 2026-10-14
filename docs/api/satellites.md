@@ -9,7 +9,8 @@ gateway authentication: an API key is required when keys are configured. The
 no-key development mode is subject to the optional browser-Origin guard
 (see [Authentication](README.md#authentication)).
 
-Source: `src/gateway/BotNexus.Gateway.Api/Controllers/SatellitesController.cs`.
+Sources: `src/gateway/BotNexus.Gateway.Api/Controllers/SatellitesController.cs` and
+`src/extensions/BotNexus.Extensions.Channels.SignalR/SatelliteHub.cs`.
 
 ---
 
@@ -43,7 +44,9 @@ when that age is **greater than** the configured timeout. An entry with no monot
 heartbeat stamp is not selected. The periodic detector checks every 30 seconds by
 default, so this is not an exact disconnect deadline.
 
-The detector then marks the satellite **offline** and clears its `connectionId`.
+The detector then marks the satellite **offline** and clears its `connectionId`. The
+transition is conditional on the connection ID captured in the stale snapshot, so a
+reconnect racing the sweep remains online.
 Despite the setting's name and the `stale` enum value, this sweep does not publish
 an intermediate `stale` status. `lastSeen` remains the wall-clock timestamp for
 display; it is not the clock used for the timeout decision. Disabled configured
@@ -52,6 +55,27 @@ satellites are not seeded into this registry.
 Sources: [SatelliteConfig](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway.Configuration/SatelliteConfig.cs),
 [InMemorySatelliteRegistry](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Satellites/InMemorySatelliteRegistry.cs),
 and [SatelliteStaleDetectionService](https://github.com/Sytone/botnexus/blob/main/src/gateway/BotNexus.Gateway/Satellites/SatelliteStaleDetectionService.cs).
+
+## Live connection contract
+
+Enabled satellites connect to the dedicated SignalR endpoint `/hub/satellite` using the
+API key produced by `botnexus satellite register`. Supply it through the normal gateway
+API-key header during negotiation and transport requests. The endpoint does not accept a
+satellite ID or owner ID from the client: the gateway-authenticated caller identity selects
+the configured satellite, and the registry retains its configured `ownerUserId` as routing
+metadata.
+
+A successful connection atomically replaces any older live connection for the same
+satellite and makes the existing status API report it as `online`. Invoke the parameterless
+hub method `Heartbeat` before `staleTimeoutSeconds` elapses. Only the currently active
+connection may heartbeat or transition the satellite offline. A heartbeat from a replaced
+connection is rejected, and disconnecting that replaced connection does not affect the
+replacement. Clean disconnect and stale expiry mark the active connection offline.
+
+The boundary requires both `satellite:connect` and `satellite:heartbeat` permissions at the
+corresponding operations. Non-satellite callers and identities that do not map to an enabled
+configured satellite fail closed. Configured capabilities remain descriptive and are not
+authorization grants.
 
 ## Endpoints
 

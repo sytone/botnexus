@@ -287,6 +287,12 @@ same deserialize, migration, and validation contract for direct reads.
 
 ## Configuration Sections
 
+### Navigating the Configuration page
+
+The web Configuration page derives its section and subsection navigation from the configuration schema. When a section has multiple `x-ui-group` groups, each group appears as an addressable subsection at `/configuration/<section>/<subsection>`. Fields without a group appear under **General**. Sections with only one subsection omit the redundant subsection navigation.
+
+Changing sections or subsections keeps the same in-progress edit buffer and does not itself mark configuration as changed. **Save Changes**, **Validate**, and **Reload** continue to apply to the whole configuration page, not only the visible subsection.
+
 ### Root: PlatformConfig
 
 | JSON property | Bound type | Default | Description |
@@ -659,8 +665,6 @@ apply where the property description says so.
 | `summary` | string | `null` | `LocalOnly` | Agent-maintained account of what the agent is *currently* doing. Written by the agent itself through `update_agent`, and only for its own id - a cross-agent summary write is refused with a policy denial. Length is bounded by `gateway.agentSummary.maxLength` (default 500); a longer summary is refused rather than truncated. When unset the field is omitted from every projection entirely |
 | `model` | string | `null` | `ScalarOverride` | Model identifier (for example `gpt-4.1`) |
 | `allowedModels` | array | `null` | `ReplaceAsUnit` | Model ids this agent may use. Null or an empty list means unrestricted within the provider allowlist. A non-empty list also governs per-run and per-conversation overrides: `/model` and the conversation override API reject models outside it, and an older forbidden stored override is ignored at runtime in favor of the agent default |
-| `systemPromptFiles` | array | `null` | `ReplaceAsUnit` | Deprecated custom prompt-file list retained for compatibility; use standard workspace instruction files, `WORLD.md`, inline prompts, conversation instructions, or model-specific variants |
-| `systemPromptFile` | string | `null` | `ScalarOverride` | Deprecated custom prompt file retained for compatibility; use the supported instruction mechanisms above |
 | `toolIds` | array | `null` | `ReplaceAsUnit` | Tool identifiers this agent has access to |
 | `toolTimeoutSeconds` | int? | inherits | `ScalarOverride` | Per-tool timeout in seconds for this agent |
 | `subAgents` | array | `null` | `ReplaceAsUnit` | Agent ids this agent can call as sub-agents |
@@ -780,6 +784,11 @@ disagree. **Extra-high** marks a model that accepts the `xhigh` thinking level.
 | `gpt-5.6-luna` | GPT-5.6 Luna | **Yes** | **Yes** | 922K | 128K | text, image |
 | `gpt-5.6-sol` | GPT-5.6 Sol | **Yes** | **Yes** | 922K | 128K | text, image |
 | `gpt-5.6-terra` | GPT-5.6 Terra | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-6-astra` | GPT-6 Astra | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-6-luna` | GPT-6 Luna | **Yes** | **Yes** | 922K | 128K | text, image |
+| `gpt-6-sol` | GPT-6 Sol | **Yes** | **Yes** | 922K | 128K | text, image |
+
+The GPT-6 model pages describe a 1,050,000-token total context composed of up to 922,000 input tokens and 128,000 output tokens. The registry's **Context** column records the maximum input budget rather than adding input and output together.
 
 ##### Gemini Models (OpenAI Completions API)
 | Model ID | Name | Reasoning | Extra-high | Context | Max Output | Input Types |
@@ -1018,8 +1027,18 @@ Configuration reloads apply to subsequent spawns; running sub-agents retain the 
 selected when they started. Clamp warning logs include `ParentAgentId` and `PolicyTier` (`global`
 or `parent-override`) so operators can audit which authorization tier applied.
 
+Prefer narrower staged tasks over increasing `defaultMaxTurns`, `maxTurnsCeiling`, or timeout values.
+The runtime reserves the final turn inside `maxTurns` for one tool-free synthesis attempt when earlier
+turns consume the exploratory budget. It also stops exploration before the absolute timeout, reserving
+10% of the configured duration (bounded to 100 ms through 30 seconds) for that same attempt; finalization
+still uses the original deadline and any response arriving after it is discarded. Larger ceilings add cost and delay without guaranteeing a better
+result; split investigation, implementation, and validation into separate sub-agent stages instead.
+
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
+| `subAgents.noProgressEnabled` | bool | false | Enable early finalization using completed tool evidence. Handles without activity visibility retain existing budget behavior. |
+| `subAgents.noProgressTurnWindow` | int | 6 | Rolling completed exploratory-turn window. Also requires this many successive turns of unchanged successful tool evidence for the general no-progress rule. Runtime clamps values to 2–64. |
+| `subAgents.noProgressRepeatedFailureThreshold` | int | 3 | Matching failing tool sequences on separate turns required inside the window. Idle turns consume window space but do not count as failures. Runtime clamps values to 2–64; a threshold larger than the window cannot trigger this rule. |
 | `subAgents.defaultTimeoutSeconds` | int | 600 | Timeout used when a spawn omits or supplies a non-positive timeout. |
 | `subAgents.maxTimeoutSeconds` | int | 1800 | Global timeout ceiling. |
 | `subAgents.advisoryTimeoutSeconds` | int | 1500 | Effective timeout above which a staging advisory is returned and logged; `0` disables it. The advisory does not change the timeout. |
@@ -1031,6 +1050,21 @@ or `parent-override`) so operators can audit which authorization tier applied.
 | `subAgents.workspaceRoot` | string | ` ` (empty) | Temporary root directory under which each sub-agent's isolated workspace is created and later reclaimed. Empty preserves the historical default of `<OS temp>/botnexus-subagent-workspaces`. Supports `~` and environment-variable expansion and is normalized to an absolute path. The gateway (`FileAgentWorkspaceManager`) and the CLI (`botnexus subagent workspace list|prune` plus `doctor`) resolve this through the same shared resolver, so they can never target different directories. |
 | `subAgents.completedRecordRetentionMinutes` | int | 15 | How long a finished (completed/failed/killed/timed-out) sub-agent record is kept in memory so `list_subagents` and status queries can still surface a recently-finished run. After the window the record is swept and its timeout source disposed, bounding the manager's registry on a long-lived gateway. `0` or less disables **time-based** eviction; the count cap below still applies. Running records are never evicted. |
 | `subAgents.maxRetainedCompletedRecords` | int | 200 | Maximum number of **completed** records retained regardless of age - a burst-spawn backstop so the registry stays bounded even inside the retention window. When exceeded, the oldest completed records are evicted first. `0` or less disables the cap. Running records do not count toward it. |
+
+To enable no-progress detection for subsequent spawns, run
+`botnexus config set gateway.subAgents.noProgressEnabled true`. Set it to `false` to disable it.
+The detector compares fixed-size digests of normalized tool names and result evidence, including
+non-text blocks, not invocation IDs, arguments, or model narration. New successful read evidence resets
+the window; identical read evidence does not. Successful write, edit, command, and unknown-tool receipts
+cannot prove unchanged underlying work, so they conservatively reset the window every time—even when
+their confirmation text is identical. Repeated prose, idle turns, and changing failures alone do not establish no progress. Decisions
+wait until all tool results in a turn have arrived, so a later successful result can reset a failing batch.
+Oversized tool batches are not classified from truncated evidence.
+
+A no-progress stop requests the existing single tool-free finalization turn without extending either
+hard budget. It returns `Failed` with a partial `no_progress` result, preserved tool evidence and actions,
+and an unverified summary—even if the finalizer claims success or returns no text. Timeout and caller
+kill remain authoritative. This supervisor policy is separate from the agent loop's tool-specific guard.
 
 #### Session warmup (`sessionWarmup`)
 

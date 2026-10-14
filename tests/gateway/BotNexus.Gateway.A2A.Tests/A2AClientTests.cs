@@ -34,6 +34,28 @@ public sealed class A2AClientTests
         handler.RequestCount.ShouldBe(2);
     }
 
+    [Fact]
+    public async Task SendMessageAsync_StatelessAgentMessage_CompletesWithTypedResult()
+    {
+        using var httpClient = new HttpClient(new StatelessAgentHandler());
+        using var client = new A2AClient(httpClient);
+
+        var result = await client.SendMessageAsync(
+            new A2AClientOptions(new Uri("https://agents.example.test/")),
+            new A2AMessage("Answer directly."),
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            CancellationToken.None);
+
+        result.Outcome.ShouldBe(A2ATerminalOutcome.Completed);
+        result.ContextId.ShouldBe("ctx-stateless");
+        result.TaskId.ShouldBeNull();
+        result.Summary.ShouldBe("Immediate synthetic answer.");
+        result.Artifacts.ShouldBeEmpty();
+        result.Provenance.ShouldNotBeNull().AgentName.ShouldBe("Example Research Agent");
+        result.Usage.ShouldNotBeNull().OutputTokens.ShouldBe(4);
+        result.Error.ShouldBeNull();
+    }
+
     [Theory]
     [InlineData("TASK_STATE_INPUT_REQUIRED", A2ATerminalOutcome.InputRequired)]
     [InlineData("TASK_STATE_FAILED", A2ATerminalOutcome.Failed)]
@@ -206,6 +228,24 @@ public sealed class A2AClientTests
             var usage = includeUsage ? ",\"metadata\":{\"usage\":{\"inputTokens\":17,\"outputTokens\":9}}" : string.Empty;
             var responseJson = "{\"jsonrpc\":\"2.0\",\"id\":\"" + requestId + "\",\"result\":{\"task\":{\"id\":\"task-synthetic\",\"contextId\":\"ctx-synthetic\",\"status\":{\"state\":\"" + state + "\",\"message\":{\"parts\":[{\"text\":\"Three synthetic records were summarized.\"}]}},\"artifacts\":[{\"artifactId\":\"report\",\"name\":\"report.json\",\"parts\":[{\"url\":\"https://agents.example.test/artifacts/report.json\",\"mediaType\":\"application/json\"}]}]" + usage + "}}}";
             return Json(responseJson);
+        }
+    }
+
+    private sealed class StatelessAgentHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                return Json("""{"name":"Example Research Agent","supportedInterfaces":[{"url":"https://agents.example.test/a2a","protocolBinding":"JSONRPC","protocolVersion":"1.0"}]}""");
+            }
+
+            var requestJson = await request.Content!.ReadAsStringAsync(cancellationToken);
+            using var requestDocument = System.Text.Json.JsonDocument.Parse(requestJson);
+            var requestId = requestDocument.RootElement.GetProperty("id").GetString().ShouldNotBeNull();
+            return Json("{\"jsonrpc\":\"2.0\",\"id\":\"" + requestId + "\",\"result\":{\"message\":{\"messageId\":\"message-stateless\",\"contextId\":\"ctx-stateless\",\"role\":\"ROLE_AGENT\",\"parts\":[{\"text\":\"Immediate synthetic answer.\"}],\"metadata\":{\"usage\":{\"outputTokens\":4}}}}}");
         }
     }
 

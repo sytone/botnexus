@@ -247,7 +247,7 @@ public sealed class SteeringQueueTests : IDisposable
 
         _store.AddSteeringEntry("conv-1", new SteeringEntry("e1", "Steer it", SteeringEntryKind.Steer, SteeringEntryStatus.Pending));
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.WaitForAssertion(() =>
         {
@@ -261,7 +261,7 @@ public sealed class SteeringQueueTests : IDisposable
     {
         SetupAgentWithConversation();
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         Assert.DoesNotContain("steering-queue-panel", cut.Markup);
     }

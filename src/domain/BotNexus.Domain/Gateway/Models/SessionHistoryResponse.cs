@@ -7,8 +7,10 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// <param name="Limit">The maximum number of entries returned.</param>
 /// <param name="TotalCount">The total number of entries in the session history.</param>
 /// <param name="Entries">The list of session history entries.</param>
+/// <param name="Completion">Latest authoritative completion disposition for this session.</param>
 public sealed record SessionHistoryResponse(
     int Offset,
     int Limit,
     int TotalCount,
-    IReadOnlyList<SessionEntry> Entries);
+    IReadOnlyList<SessionEntry> Entries,
+    RunCompletionSignal? Completion = null);

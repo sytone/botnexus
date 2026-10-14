@@ -148,6 +148,9 @@ public sealed class ConversationHistoryEntry
     /// <summary>Message content (for kind = "message").</summary>
     public string? Content { get; init; }
 
+    /// <summary>Inline source-backed attachments retained with the stored message.</summary>
+    public IReadOnlyList<ConversationHistoryAttachment>? Attachments { get; init; }
+
     /// <summary>Tool name (for kind = "message" with tool role).</summary>
     public string? ToolName { get; init; }
 
@@ -195,3 +198,6 @@ public sealed class ConversationHistoryEntry
     /// </summary>
     public string? MessageKind { get; init; }
 }
+
+/// <summary>Safe inline attachment projected from persisted source content.</summary>
+public sealed record ConversationHistoryAttachment(string FileName, string MimeType, long? Size, string Base64Data);

@@ -49,8 +49,11 @@ children reach the stdin readiness boundary before release; success never depend
 on sleeping or elapsed-time assertions.
 
 The protocol has a 60-second safety cancellation deadline. Cleanup has a separate
-10-second deadline and attempts both owned children before awaiting completion.
-Deadline expiry is failure, never a retry or an accepted startup result.
+10-second deadline and starts both owned termination attempts before awaiting their
+outcomes. Each cache root is deleted only after its child termination is confirmed;
+a failed termination retains that child's cache and reports its path while cleanup
+continues for the other child. Deadline expiry is failure, never a retry or an
+accepted startup result.
 
 The named mutation **omit startup-profile disable** retains module-cache and Unix
 cache-root isolation but removes the `DOTNET_MultiCoreJitMinNumCpus` override. It
@@ -87,7 +90,9 @@ The fifteen lint regressions use `RunLintAtAsync` through the existing synchrono
 adapter. The helper starts asynchronous stdout and stderr drains together, then
 awaits both drains and process exit under a linked 60-second safety deadline.
 Tests may supply a shorter deadline to exercise failure; elapsed time is not a
-success oracle. Caller cancellation remains cancellation; the helper's deadline
+success oracle. A test readiness callback may observe child startup before the
+execution deadline is armed, so startup latency and deliberate non-termination are
+separate contracts. Caller cancellation remains cancellation; the helper's deadline
 produces an explicit `TimeoutException`, never a lint exit code.
 
 On cancellation or failure, the helper attempts owned process-tree termination

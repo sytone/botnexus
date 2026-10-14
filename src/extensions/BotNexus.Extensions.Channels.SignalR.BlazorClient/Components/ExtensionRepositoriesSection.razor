@@ -24,7 +24,7 @@
         <header><strong>@repository.Id</strong><span>@(repository.Enabled ? "Enabled" : "Disabled")</span></header>
         <div>@repository.RepositoryUrl</div><div>Requested ref: @repository.RequestedRef</div>
         <dl class="repository-status">
-          <dt>Status</dt><dd>Not yet reconciled</dd><dt>Resolved commit</dt><dd>@Unavailable(repository.ResolvedCommit)</dd><dt>Clone path</dt><dd>@Unavailable(repository.ClonePath)</dd>
+          <dt>Status</dt><dd>@repository.ReconciliationStatus</dd><dt>Resolved commit</dt><dd>@Unavailable(repository.ResolvedCommit)</dd><dt>Clone path</dt><dd>@Unavailable(repository.ClonePath)</dd>
           <dt>Last attempt</dt><dd>@Unavailable(repository.LastAttemptUtc)</dd><dt>Last success</dt><dd>@Unavailable(repository.LastSuccessUtc)</dd>
           <dt>Deployed version</dt><dd>@Unavailable(repository.DeployedVersion)</dd><dt>Latest named failure</dt><dd>@Unavailable(repository.LatestFailure)</dd>
         </dl>
@@ -32,8 +32,7 @@
           <button type="button" class="toolbar-btn" @onclick="() => Edit(repository)">Edit</button>
           <button type="button" class="toolbar-btn" data-testid="@($"toggle-{repository.Id}")" @onclick="() => Toggle(repository)">@(repository.Enabled ? "Disable" : "Enable")</button>
           <button type="button" class="toolbar-btn" @onclick="() => Remove(repository.Id)">Remove</button>
-          <button type="button" class="toolbar-btn" data-testid="@($"sync-{repository.Id}")" disabled title="A reconciler has not been implemented.">Sync Now</button>
-          <span class="text-muted">Unavailable until reconciliation</span>
+          <button type="button" class="toolbar-btn" data-testid="@($"sync-{repository.Id}")" disabled="@(_pending || !repository.SyncAvailable)" @onclick="() => Sync(repository.Id)">Sync Now</button>
         </div>
       </article>
     }
@@ -65,5 +64,6 @@
   private void CancelEdit() { _editingId = null; _id = _url = string.Empty; _requestedRef = "main"; _updatesEnabled = true; _trustAcknowledged = false; }
   private async Task Toggle(PlatformConfigService.ExtensionRepositoryItem r) { await ConfigService.SetExtensionRepositoryEnabledAsync(r.Id, !r.Enabled); await Load(); }
   private async Task Remove(string id) { await ConfigService.RemoveExtensionRepositoryAsync(id); await Load(); }
+  private async Task Sync(string id) { _pending = true; var result = await ConfigService.SyncExtensionRepositoryAsync(id); _pending = false; await Load(); if (!result.Success) _error = result.Error; }
   private static string Unavailable(object? value) => value?.ToString() ?? "Unavailable — not yet reconciled";
 }

@@ -31,7 +31,7 @@ public sealed class CanvasSubmitToAgentTests
         _store.UpsertAgent(new AgentState { AgentId = "agent-2", DisplayName = "Agent 2", IsConnected = true });
 
         var agent1 = _store.GetAgent("agent-1")!;
-        agent1.ActiveConversationId = OwnedConversation;
+        _store.SelectView(agent1.AgentId, OwnedConversation ?? string.Empty, SelectionSource.RouteNavigation);
         agent1.Conversations[OwnedConversation] = new ConversationState
         {
             ConversationId = OwnedConversation,
@@ -43,7 +43,7 @@ public sealed class CanvasSubmitToAgentTests
         // A conversation that belongs to a DIFFERENT agent. A canvas rendered by agent-1 must never
         // be able to reach it.
         var agent2 = _store.GetAgent("agent-2")!;
-        agent2.ActiveConversationId = ForeignConversation;
+        _store.SelectView(agent2.AgentId, ForeignConversation ?? string.Empty, SelectionSource.RouteNavigation);
         agent2.Conversations[ForeignConversation] = new ConversationState
         {
             ConversationId = ForeignConversation,
@@ -213,25 +213,26 @@ public sealed class CanvasSubmitToAgentTests
         Owned.Messages.Count.ShouldBe(ownedBefore);
     }
 
-    // ── Degraded mid-turn path (pending #2438) ───────────────────────────
+    // ── Authoritative active-run admission ──────────────────────────────
 
     /// <summary>
-    /// #2388: an inbound message arriving while the agent is running is dropped server-side, and the
-    /// follow-up queue that would defer it (#2438) does not exist yet. Until it does, this verb
-    /// refuses mid-turn with an explicit reason the iframe can surface - never a silent drop and
-    /// never a fabricated success.
+    /// The client run projection may be stale (#4482), so it cannot decide whether the message is
+    /// queued, steered, or rejected. The dedicated hub verb must receive the submission and let the
+    /// authoritative inbound orchestrator resolve the current run state.
     /// </summary>
     [Fact]
-    public async Task Submit_while_the_agent_is_mid_turn_is_refused_rather_than_queued()
+    public async Task Submit_with_a_client_projected_active_turn_still_reaches_authoritative_admission()
     {
         Owned.StreamState.IsStreaming = true;
         var ownedBefore = Owned.Messages.Count;
 
         var result = await _service.SubmitCanvasPromptAsync("agent-1", OwnedConversation, "please read", null);
 
+        Owned.Messages.Count.ShouldBe(ownedBefore + 1);
+        Owned.Messages[^1].Content.ShouldBe("please read");
         result.Accepted.ShouldBeFalse();
-        result.Reason.ShouldBe("Agent is already running; try again when the current turn finishes.");
-        Owned.Messages.Count.ShouldBe(ownedBefore);
+        result.Reason.ShouldStartWith("Submit failed:");
+        result.Reason.ShouldNotContain("already running");
     }
 
     /// <summary>

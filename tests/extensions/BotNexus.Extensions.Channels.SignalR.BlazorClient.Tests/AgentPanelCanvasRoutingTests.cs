@@ -30,7 +30,7 @@ public sealed class AgentPanelCanvasRoutingTests : IDisposable
                 CreatedAt: DateTimeOffset.UtcNow,
                 UpdatedAt: DateTimeOffset.UtcNow)
         ]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(Substitute.For<IPortalPreferencesService>());
@@ -95,8 +95,9 @@ public sealed class AgentPanelCanvasRoutingTests : IDisposable
 
         // The CanvasPanel declaration must include ConversationId
         source.ShouldContain("ConversationId=");
-        // It must reference the active conversation via Agent?.ActiveConversationId
-        source.ShouldContain("ActiveConversationId");
+        // It must use the route-owned resolver and never an ambient active-conversation marker.
+        source.ShouldContain("EffectiveConversationId");
+        source.ShouldNotContain("ActiveConversationId");
     }
 
     private static string FindRepositoryRoot()

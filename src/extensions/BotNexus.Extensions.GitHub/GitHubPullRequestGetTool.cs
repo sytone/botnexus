@@ -68,7 +68,7 @@ public sealed class GitHubPullRequestGetTool : GitHubToolBase
             tool = Name,
             repository,
             ok = true,
-            pullRequest = GitHubProjections.PullRequest(body),
+            pullRequest = body.PullRequest(),
         });
     }
 }

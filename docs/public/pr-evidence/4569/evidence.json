@@ -1,0 +1,119 @@
+{
+  "schemaVersion": "1.0",
+  "source": {
+    "commit": "3bde5dd1e6d92ad613975ad1470d280617578ff5",
+    "tree": "8484bb94f7e25f2f29db58c7ef08524b5a3166f5981aaf9d9f1276f20fa5e468"
+  },
+  "scenario": {
+    "name": "active-stream",
+    "promptKey": "SLOW_STREAM",
+    "pagePath": "/release-history"
+  },
+  "viewport": {
+    "width": 1440,
+    "height": 1000
+  },
+  "screenshot": {
+    "path": "portal.png",
+    "sha256": "d8f30e75bd7c1051ca8c10d3ff532ae05b5f15aa31a900d541881de63962e7d8"
+  },
+  "assertions": [
+    {
+      "kind": "conversation",
+      "target": "POST /api/conversations",
+      "passed": true,
+      "detail": "status 201"
+    },
+    {
+      "kind": "message",
+      "target": "POST conversation message",
+      "passed": true,
+      "detail": "status 202"
+    },
+    {
+      "kind": "activeRunSelector",
+      "target": "[data-testid=\"streaming-badge\"]",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "activeRunSelector",
+      "target": "[data-testid=\"chat-abort-btn\"]",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "accessibility",
+      "target": "chat-steer-btn",
+      "passed": true,
+      "detail": "accessible name: Steer at next turn boundary"
+    },
+    {
+      "kind": "accessibility",
+      "target": "chat-redirect-btn",
+      "passed": true,
+      "detail": "accessible name: Redirect immediately"
+    },
+    {
+      "kind": "accessibility",
+      "target": "chat-followup-btn",
+      "passed": true,
+      "detail": "accessible name: Queue follow-up after completion"
+    },
+    {
+      "kind": "accessibility",
+      "target": "chat-abort-btn",
+      "passed": true,
+      "detail": "accessible name: Stop agent"
+    },
+    {
+      "kind": "activeRun",
+      "target": "[data-testid=\"chat-abort-btn\"]",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "targetSelector",
+      "target": "[data-testid=\"release-source-status\"]",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "targetSelector",
+      "target": "[data-testid=\"release-history-entry\"]",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserErrors",
+      "target": "pageerror/console.error",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "screenshot",
+      "target": "portal.png",
+      "passed": true,
+      "detail": ""
+    }
+  ],
+  "accessibility": {
+    "activeRunControls": {
+      "chat-steer-btn": "Steer at next turn boundary",
+      "chat-redirect-btn": "Redirect immediately",
+      "chat-followup-btn": "Queue follow-up after completion",
+      "chat-abort-btn": "Stop agent"
+    }
+  },
+  "timestamps": {
+    "startedUtc": "2026-10-02T01:13:27.611Z",
+    "capturedUtc": "2026-10-02T01:13:42.792Z",
+    "completedUtc": "2026-10-02T01:13:42.792Z"
+  },
+  "cleanup": {
+    "gatewayStopped": true,
+    "browserClosed": true,
+    "temporaryDataRemoved": true,
+    "containerRemoved": true
+  }
+}

@@ -65,6 +65,13 @@ public interface IPortalLoadService
     Task RefreshAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Re-fetches portal data and reconciles the transcript for the conversation explicitly named
+    /// by the displayed route. Callers with route identity must use this overload instead of relying
+    /// on the store's last-selected conversation marker.
+    /// </summary>
+    Task RefreshAsync(string agentId, string conversationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Liveness-verified hub reset for mobile app resume (#1838). On foreground return, iOS may
     /// have silently recycled the background WebSocket, leaving <see cref="IsSignalRConnected"/>
     /// reporting connected on a dead "zombie" socket. This probes the hub with a short-timeout

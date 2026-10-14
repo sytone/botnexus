@@ -13,7 +13,7 @@ namespace BotNexus.Persistence.Sqlite;
 public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
 {
     /// <summary>The first independently versioned schema understood by this ledger.</summary>
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly SqliteConnection _connection;
@@ -118,7 +118,8 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
                 return Result(ManagedTaskLedgerWriteOutcome.RevisionConflict, snapshot);
             if (!IsValidTransition(snapshot.Run.Status, command.Status))
                 return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
-
+            if (IsTerminal(command.Status) && HasPendingWait(command.RunId, transaction))
+                return Result(ManagedTaskLedgerWriteOutcome.PendingWaitConflict, snapshot);
 
             var updated = Execute(transaction,
                 "UPDATE managed_task_run SET status=$status, revision=revision+1, updated_at=$now " +
@@ -168,6 +169,8 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
                 return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
             if (snapshot.Attempts.Any(item => item.StepId == command.StepId && !item.IsRetryable))
                 return Result(ManagedTaskLedgerWriteOutcome.Terminal, snapshot);
+            if (HasPendingWait(command.RunId, command.StepId, transaction))
+                return Result(ManagedTaskLedgerWriteOutcome.PendingWaitConflict, snapshot);
 
             var epoch = snapshot.Attempts.Where(item => item.StepId == command.StepId)
                 .Select(item => item.Epoch).DefaultIfEmpty(0).Max() + 1;
@@ -294,6 +297,17 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
                 "UPDATE managed_task_attempt SET status=$status, updated_at=$now WHERE run_id=$run AND status=$running;",
                 ("$status", ManagedTaskAttemptStatus.Cancelled.ToString()), ("$now", Format(now)),
                 ("$run", command.RunId), ("$running", ManagedTaskAttemptStatus.Running.ToString()));
+            Execute(transaction,
+                "UPDATE managed_task_wait SET status=$status, revision=revision+1, updated_at=$now " +
+                "WHERE run_id=$run AND status=$pending;",
+                ("$status", ManagedTaskWaitStatus.Cancelled.ToString()), ("$now", Format(now)),
+                ("$run", command.RunId), ("$pending", ManagedTaskWaitStatus.Pending.ToString()));
+            Execute(transaction,
+                "UPDATE managed_task_continuation_intent SET status=$status, generation=generation+1, updated_at=$now " +
+                "WHERE run_id=$run AND status IN ($pending, $inProgress);",
+                ("$status", ManagedTaskContinuationStatus.Cancelled.ToString()), ("$now", Format(now)),
+                ("$run", command.RunId), ("$pending", ManagedTaskContinuationStatus.Pending.ToString()),
+                ("$inProgress", ManagedTaskContinuationStatus.InProgress.ToString()));
             AppendEvent(transaction, command.RunId, command.CommandId, ManagedTaskEventType.RunCancelled, now);
             return Applied(command.CommandId, identity, transaction, now);
         }, cancellationToken);
@@ -489,6 +503,226 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
         }, cancellationToken);
     }
 
+    /// <summary>Parks a step with bounded durable resume metadata.</summary>
+    public Task<ManagedTaskWaitWriteResult> ParkWaitAsync(
+        ParkManagedTaskWaitCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateWaitMetadata(command);
+        var identity = CommandIdentity.Create("park-wait", command.RunId, command);
+        return WriteWaitAsync(command.CommandId, identity, (transaction, now) =>
+        {
+            var duplicate = ReadWaitDuplicate(command.CommandId, identity, command.WaitId, transaction);
+            if (duplicate is not null)
+                return duplicate;
+
+            var snapshot = ReadSnapshot(command.RunId, transaction);
+            if (snapshot is null)
+                return new(ManagedTaskLedgerWriteOutcome.RunNotFound, null, null);
+            if (snapshot.Run.Status == ManagedTaskRunStatus.Cancelled)
+                return new(ManagedTaskLedgerWriteOutcome.Cancelled, null, null);
+            if (IsTerminal(snapshot.Run.Status))
+                return new(ManagedTaskLedgerWriteOutcome.Terminal, null, null);
+            var step = snapshot.Steps.SingleOrDefault(item => item.StepId == command.StepId);
+            if (step is null)
+                return new(ManagedTaskLedgerWriteOutcome.StepNotFound, null, null);
+            if (step.Revision != command.ExpectedStepRevision)
+                return new(ManagedTaskLedgerWriteOutcome.RevisionConflict, null, null);
+            if (HasPendingWait(command.RunId, command.StepId, transaction))
+                return new(ManagedTaskLedgerWriteOutcome.PendingWaitConflict, null, null);
+
+            var parkedStepRevision = command.ExpectedStepRevision + 1;
+            var updated = Execute(transaction,
+                "UPDATE managed_task_step SET revision=$parkedRevision, updated_at=$now " +
+                "WHERE run_id=$run AND step_id=$step AND revision=$revision;",
+                ("$parkedRevision", parkedStepRevision), ("$now", Format(now)), ("$run", command.RunId),
+                ("$step", command.StepId), ("$revision", command.ExpectedStepRevision));
+            if (updated != 1)
+                return new(ManagedTaskLedgerWriteOutcome.RevisionConflict, null, null);
+
+            Execute(transaction, """
+                INSERT INTO managed_task_wait(
+                    run_id, step_id, wait_id, reason, reason_detail, detail, evidence,
+                    continuation_owner, wake_kind, wake_condition, status, revision, step_revision,
+                    deadline, response, created_at, updated_at)
+                VALUES($run, $step, $wait, $reason, $reasonDetail, $detail, $evidence,
+                    $owner, $wakeKind, $wakeCondition, $status, 0, $stepRevision,
+                    $deadline, NULL, $now, $now);
+                """, ("$run", command.RunId), ("$step", command.StepId), ("$wait", command.WaitId),
+                ("$reason", command.Reason.ToString()), ("$reasonDetail", command.ReasonDetail),
+                ("$detail", command.Detail), ("$evidence", command.Evidence),
+                ("$owner", command.ContinuationOwner), ("$wakeKind", command.WakeKind.ToString()),
+                ("$wakeCondition", command.WakeCondition), ("$status", ManagedTaskWaitStatus.Pending.ToString()),
+                ("$stepRevision", parkedStepRevision), ("$deadline", Format(command.Deadline)), ("$now", Format(now)));
+
+            AppendEvent(transaction, command.RunId, command.CommandId, ManagedTaskEventType.WaitParked, now);
+            RecordCommand(transaction, command.CommandId, identity, now);
+            return new(ManagedTaskLedgerWriteOutcome.Applied,
+                RequireWait(command.RunId, command.WaitId, transaction), null);
+        }, cancellationToken);
+    }
+
+    /// <summary>Commits the response and exactly one continuation intent in one transaction.</summary>
+    public Task<ManagedTaskWaitWriteResult> WakeWaitAsync(
+        WakeManagedTaskWaitCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(command.WaitId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(command.ExpectedEvidence);
+        ValidateBounded(command.Response, ManagedTaskWaitLimits.MaxResponseLength, nameof(command.Response));
+        ValidateBounded(command.ContinuationIntentId, ManagedTaskWaitLimits.MaxContinuationIntentIdLength,
+            nameof(command.ContinuationIntentId));
+        var identity = CommandIdentity.Create("wake-wait", command.RunId, command);
+        return WriteWaitAsync(command.CommandId, identity, (transaction, now) =>
+        {
+            var duplicate = ReadWaitDuplicate(command.CommandId, identity, command.WaitId, transaction);
+            if (duplicate is not null)
+                return duplicate;
+
+            var snapshot = ReadSnapshot(command.RunId, transaction);
+            if (snapshot is null)
+                return new(ManagedTaskLedgerWriteOutcome.RunNotFound, null, null);
+            var wait = ReadWait(command.RunId, command.WaitId, transaction);
+            if (wait is null)
+                return new(ManagedTaskLedgerWriteOutcome.WaitNotFound, null, null);
+            if (snapshot.Run.Status == ManagedTaskRunStatus.Cancelled || wait.Status == ManagedTaskWaitStatus.Cancelled)
+                return new(ManagedTaskLedgerWriteOutcome.Cancelled, wait, null);
+            if (IsTerminal(snapshot.Run.Status))
+                return new(ManagedTaskLedgerWriteOutcome.Terminal, wait, null);
+            if (wait.Status != ManagedTaskWaitStatus.Pending)
+                return new(ManagedTaskLedgerWriteOutcome.Terminal, wait, ReadContinuation(command.RunId, command.WaitId, transaction));
+            if (wait.Deadline <= now)
+            {
+                Execute(transaction,
+                    "UPDATE managed_task_wait SET status=$status, revision=revision+1, updated_at=$now " +
+                    "WHERE run_id=$run AND wait_id=$wait AND status=$pending;",
+                    ("$status", ManagedTaskWaitStatus.Expired.ToString()), ("$now", Format(now)),
+                    ("$run", command.RunId), ("$wait", command.WaitId),
+                    ("$pending", ManagedTaskWaitStatus.Pending.ToString()));
+                AppendEvent(transaction, command.RunId, command.CommandId, ManagedTaskEventType.WaitExpired, now);
+                RecordCommand(transaction, command.CommandId, identity, now);
+                return new(ManagedTaskLedgerWriteOutcome.Expired,
+                    RequireWait(command.RunId, command.WaitId, transaction), null);
+            }
+            if (wait.Revision != command.ExpectedWaitRevision
+                || wait.StepRevision != command.ExpectedStepRevision)
+                return new(ManagedTaskLedgerWriteOutcome.RevisionConflict, wait, null);
+            var step = snapshot.Steps.SingleOrDefault(item => item.StepId == wait.StepId);
+            if (step is null)
+                return new(ManagedTaskLedgerWriteOutcome.StepNotFound, wait, null);
+            if (step.Revision != wait.StepRevision)
+                return new(ManagedTaskLedgerWriteOutcome.RevisionConflict, wait, null);
+            if (wait.Evidence != command.ExpectedEvidence || wait.WakeKind != command.WakeKind)
+                return new(ManagedTaskLedgerWriteOutcome.EvidenceConflict, wait, null);
+
+            var updated = Execute(transaction,
+                "UPDATE managed_task_wait SET status=$status, revision=revision+1, response=$response, updated_at=$now " +
+                "WHERE run_id=$run AND wait_id=$wait AND revision=$revision AND step_revision=$stepRevision AND status=$pending;",
+                ("$status", ManagedTaskWaitStatus.Woken.ToString()), ("$response", command.Response),
+                ("$now", Format(now)), ("$run", command.RunId), ("$wait", command.WaitId),
+                ("$revision", command.ExpectedWaitRevision), ("$stepRevision", command.ExpectedStepRevision),
+                ("$pending", ManagedTaskWaitStatus.Pending.ToString()));
+            if (updated != 1)
+                return new(ManagedTaskLedgerWriteOutcome.RevisionConflict, wait, null);
+            Execute(transaction, """
+                INSERT INTO managed_task_continuation_intent(
+                    run_id, step_id, wait_id, intent_id, owner, response, status, generation, created_at, updated_at)
+                VALUES($run, $step, $wait, $intent, $owner, $response, $status, 0, $now, $now);
+                """, ("$run", command.RunId), ("$step", wait.StepId), ("$wait", command.WaitId),
+                ("$intent", command.ContinuationIntentId), ("$owner", wait.ContinuationOwner),
+                ("$response", command.Response), ("$status", ManagedTaskContinuationStatus.Pending.ToString()),
+                ("$now", Format(now)));
+            AppendEvent(transaction, command.RunId, command.CommandId, ManagedTaskEventType.WaitWoken, now);
+            RecordCommand(transaction, command.CommandId, identity, now);
+            return new(ManagedTaskLedgerWriteOutcome.Applied,
+                RequireWait(command.RunId, command.WaitId, transaction),
+                ReadContinuation(command.RunId, command.WaitId, transaction));
+        }, cancellationToken);
+    }
+
+    /// <summary>Claims a pending continuation and advances its consumer generation.</summary>
+    public Task<ManagedTaskContinuationWriteResult> ClaimContinuationIntentAsync(
+        ClaimManagedTaskContinuationIntentCommand command,
+        CancellationToken cancellationToken = default) =>
+        ChangeContinuationAsync(command.CommandId, command.RunId, command.IntentId, "claim-continuation",
+            command, command.ExpectedGeneration, ManagedTaskContinuationStatus.Pending,
+            ManagedTaskContinuationStatus.InProgress, cancellationToken);
+
+    /// <summary>Recovers an interrupted claim for replay and invalidates the old consumer generation.</summary>
+    public Task<ManagedTaskContinuationWriteResult> RecoverContinuationIntentAsync(
+        RecoverManagedTaskContinuationIntentCommand command,
+        CancellationToken cancellationToken = default) =>
+        ChangeContinuationAsync(command.CommandId, command.RunId, command.IntentId, "recover-continuation",
+            command, command.ExpectedGeneration, ManagedTaskContinuationStatus.InProgress,
+            ManagedTaskContinuationStatus.Pending, cancellationToken);
+
+    /// <summary>Completes a continuation only for the generation currently owned by its consumer.</summary>
+    public Task<ManagedTaskContinuationWriteResult> CompleteContinuationIntentAsync(
+        CompleteManagedTaskContinuationIntentCommand command,
+        CancellationToken cancellationToken = default) =>
+        ChangeContinuationAsync(command.CommandId, command.RunId, command.IntentId, "complete-continuation",
+            command, command.ExpectedGeneration, ManagedTaskContinuationStatus.InProgress,
+            ManagedTaskContinuationStatus.Completed, cancellationToken, advanceGeneration: false);
+
+    /// <summary>Reads one durable wait.</summary>
+    public async Task<ManagedTaskWaitRecord?> GetWaitAsync(
+        string runId,
+        string waitId,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { return ReadWait(runId, waitId); }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Reads waits that remain parked across process restarts.</summary>
+    public async Task<IReadOnlyList<ManagedTaskWaitRecord>> GetPendingWaitsAsync(
+        int maxWaits = 100,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxWaits, 1);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { return ReadWaits(ManagedTaskWaitStatus.Pending, maxWaits); }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Reads continuation intents awaiting owner processing.</summary>
+    public Task<IReadOnlyList<ManagedTaskContinuationIntentRecord>> GetPendingContinuationIntentsAsync(
+        int maxIntents = 100,
+        CancellationToken cancellationToken = default) =>
+        GetContinuationIntentsAsync(ManagedTaskContinuationStatus.Pending, maxIntents, cancellationToken);
+
+    /// <summary>Reads claimed intents that a restarted owner must recover before replay.</summary>
+    public Task<IReadOnlyList<ManagedTaskContinuationIntentRecord>> GetInProgressContinuationIntentsAsync(
+        int maxIntents = 100,
+        CancellationToken cancellationToken = default) =>
+        GetContinuationIntentsAsync(ManagedTaskContinuationStatus.InProgress, maxIntents, cancellationToken);
+
+    private async Task<IReadOnlyList<ManagedTaskContinuationIntentRecord>> GetContinuationIntentsAsync(
+        ManagedTaskContinuationStatus status,
+        int maxIntents,
+        CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxIntents, 1);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT run_id, step_id, wait_id, intent_id, owner, response, status, generation, created_at, updated_at
+                FROM managed_task_continuation_intent WHERE status=$status ORDER BY created_at, run_id, intent_id LIMIT $max;
+                """;
+            command.Parameters.AddWithValue("$status", status.ToString());
+            command.Parameters.AddWithValue("$max", maxIntents);
+            using var reader = command.ExecuteReader();
+            var rows = new List<ManagedTaskContinuationIntentRecord>();
+            while (reader.Read())
+                rows.Add(ReadContinuation(reader));
+            return rows;
+        }
+        finally { _gate.Release(); }
+    }
+
     /// <summary>
     /// Reads accepted completion intents for at-least-once replay. Callers deduplicate with CompletionId;
     /// the ledger does not claim exactly-once external execution or delivery.
@@ -577,6 +811,293 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
         await _gate.WaitAsync().ConfigureAwait(false);
         try { await _connection.DisposeAsync().ConfigureAwait(false); }
         finally { _gate.Release(); _gate.Dispose(); }
+    }
+
+    private Task<ManagedTaskContinuationWriteResult> ChangeContinuationAsync<T>(
+        string commandId,
+        string runId,
+        string intentId,
+        string kind,
+        T payload,
+        long expectedGeneration,
+        ManagedTaskContinuationStatus expectedStatus,
+        ManagedTaskContinuationStatus status,
+        CancellationToken cancellationToken,
+        bool advanceGeneration = true)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(intentId);
+        var identity = CommandIdentity.Create(kind, runId, payload);
+        return WriteContinuationAsync(commandId, identity, (transaction, now) =>
+        {
+            var duplicate = ReadContinuationDuplicate(commandId, identity, intentId, transaction);
+            if (duplicate is not null)
+                return duplicate;
+            var snapshot = ReadSnapshot(runId, transaction);
+            if (snapshot is null)
+                return new(ManagedTaskLedgerWriteOutcome.RunNotFound, null);
+            var intent = ReadContinuationById(runId, intentId, transaction);
+            if (intent is null)
+                return new(ManagedTaskLedgerWriteOutcome.ContinuationIntentNotFound, null);
+            if (snapshot.Run.Status == ManagedTaskRunStatus.Cancelled || intent.Status == ManagedTaskContinuationStatus.Cancelled)
+                return new(ManagedTaskLedgerWriteOutcome.Cancelled, intent);
+            if (IsTerminal(snapshot.Run.Status))
+                return new(ManagedTaskLedgerWriteOutcome.Terminal, intent);
+            if (intent.Generation != expectedGeneration)
+                return new(ManagedTaskLedgerWriteOutcome.ContinuationGenerationConflict, intent);
+            if (intent.Status != expectedStatus)
+                return new(ManagedTaskLedgerWriteOutcome.Terminal, intent);
+
+            var generation = advanceGeneration ? expectedGeneration + 1 : expectedGeneration;
+            var updated = Execute(transaction, """
+                UPDATE managed_task_continuation_intent
+                SET status=$status, generation=$nextGeneration, updated_at=$now
+                WHERE run_id=$run AND intent_id=$intent AND status=$expectedStatus AND generation=$generation;
+                """, ("$status", status.ToString()), ("$nextGeneration", generation), ("$now", Format(now)),
+                ("$run", runId), ("$intent", intentId), ("$expectedStatus", expectedStatus.ToString()),
+                ("$generation", expectedGeneration));
+            if (updated != 1)
+                return new(ManagedTaskLedgerWriteOutcome.ContinuationGenerationConflict,
+                    ReadContinuationById(runId, intentId, transaction));
+            AppendEvent(transaction, runId, commandId, ManagedTaskEventType.ContinuationIntentChanged, now);
+            RecordCommand(transaction, commandId, identity, now);
+            return new(ManagedTaskLedgerWriteOutcome.Applied,
+                ReadContinuationById(runId, intentId, transaction));
+        }, cancellationToken);
+    }
+
+    private async Task<ManagedTaskContinuationWriteResult> WriteContinuationAsync(
+        string commandId,
+        CommandIdentity identity,
+        Func<SqliteTransaction, DateTimeOffset, ManagedTaskContinuationWriteResult> body,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(commandId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(identity.RunId);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var transaction = _connection.BeginTransaction(deferred: false);
+            var result = body(transaction, _timeProvider.GetUtcNow());
+            if (result.Outcome != ManagedTaskLedgerWriteOutcome.Applied)
+            {
+                transaction.Rollback();
+                return result;
+            }
+            _observer?.OnCommitPoint(ManagedTaskFlowCommitPoint.BeforeCommit, commandId);
+            transaction.Commit();
+            _observer?.OnCommitPoint(ManagedTaskFlowCommitPoint.AfterCommit, commandId);
+            return result;
+        }
+        finally { _gate.Release(); }
+    }
+
+    private async Task<ManagedTaskWaitWriteResult> WriteWaitAsync(
+        string commandId,
+        CommandIdentity identity,
+        Func<SqliteTransaction, DateTimeOffset, ManagedTaskWaitWriteResult> body,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(commandId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(identity.RunId);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var transaction = _connection.BeginTransaction(deferred: false);
+            var result = body(transaction, _timeProvider.GetUtcNow());
+            if (result.Outcome is not (ManagedTaskLedgerWriteOutcome.Applied or ManagedTaskLedgerWriteOutcome.Expired))
+            {
+                transaction.Rollback();
+                return result;
+            }
+
+            _observer?.OnCommitPoint(ManagedTaskFlowCommitPoint.BeforeCommit, commandId);
+            transaction.Commit();
+            _observer?.OnCommitPoint(ManagedTaskFlowCommitPoint.AfterCommit, commandId);
+            return result;
+        }
+        finally { _gate.Release(); }
+    }
+
+    private ManagedTaskContinuationWriteResult? ReadContinuationDuplicate(
+        string commandId,
+        CommandIdentity identity,
+        string intentId,
+        SqliteTransaction transaction)
+    {
+        using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            "SELECT run_id, command_kind, payload_fingerprint FROM managed_task_command WHERE command_id=$command;";
+        command.Parameters.AddWithValue("$command", commandId);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+            return null;
+        var storedRunId = reader.GetString(0);
+        var storedKind = reader.GetString(1);
+        var storedFingerprint = reader.GetString(2);
+        if (storedRunId != identity.RunId || storedKind != identity.Kind || storedFingerprint != identity.PayloadFingerprint)
+            throw new ManagedTaskLedgerConflictException(
+                $"Command id '{commandId}' was already used for a different command or run.");
+        reader.Close();
+        return new(ManagedTaskLedgerWriteOutcome.Duplicate,
+            ReadContinuationById(storedRunId, intentId, transaction));
+    }
+
+    private ManagedTaskWaitWriteResult? ReadWaitDuplicate(
+        string commandId,
+        CommandIdentity identity,
+        string waitId,
+        SqliteTransaction transaction)
+    {
+        using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            "SELECT run_id, command_kind, payload_fingerprint FROM managed_task_command WHERE command_id=$command;";
+        command.Parameters.AddWithValue("$command", commandId);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        var storedRunId = reader.GetString(0);
+        var storedKind = reader.GetString(1);
+        var storedFingerprint = reader.GetString(2);
+        if (storedRunId != identity.RunId || storedKind != identity.Kind || storedFingerprint != identity.PayloadFingerprint)
+            throw new ManagedTaskLedgerConflictException(
+                $"Command id '{commandId}' was already used for a different command or run.");
+
+        reader.Close();
+        return new(ManagedTaskLedgerWriteOutcome.Duplicate,
+            ReadWait(storedRunId, waitId, transaction), ReadContinuation(storedRunId, waitId, transaction));
+    }
+
+    private ManagedTaskWaitRecord RequireWait(string runId, string waitId, SqliteTransaction transaction) =>
+        ReadWait(runId, waitId, transaction)
+        ?? throw new InvalidOperationException($"Managed task wait '{waitId}' disappeared inside a write transaction.");
+
+    private bool HasPendingWait(string runId, SqliteTransaction transaction)
+    {
+        using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM managed_task_wait WHERE run_id=$run AND status=$pending);";
+        command.Parameters.AddWithValue("$run", runId);
+        command.Parameters.AddWithValue("$pending", ManagedTaskWaitStatus.Pending.ToString());
+        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture) == 1;
+    }
+
+    private bool HasPendingWait(string runId, string stepId, SqliteTransaction transaction)
+    {
+        using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT EXISTS(
+                SELECT 1 FROM managed_task_wait
+                WHERE run_id=$run AND step_id=$step AND status=$pending);
+            """;
+        command.Parameters.AddWithValue("$run", runId);
+        command.Parameters.AddWithValue("$step", stepId);
+        command.Parameters.AddWithValue("$pending", ManagedTaskWaitStatus.Pending.ToString());
+        return Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture) == 1;
+    }
+
+    private ManagedTaskWaitRecord? ReadWait(
+        string runId,
+        string waitId,
+        SqliteTransaction? transaction = null)
+    {
+        using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = WaitSelect + " WHERE run_id=$run AND wait_id=$wait;";
+        command.Parameters.AddWithValue("$run", runId);
+        command.Parameters.AddWithValue("$wait", waitId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadWait(reader) : null;
+    }
+
+    private IReadOnlyList<ManagedTaskWaitRecord> ReadWaits(ManagedTaskWaitStatus status, int maxWaits)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = WaitSelect + " WHERE status=$status ORDER BY created_at, run_id, wait_id LIMIT $max;";
+        command.Parameters.AddWithValue("$status", status.ToString());
+        command.Parameters.AddWithValue("$max", maxWaits);
+        using var reader = command.ExecuteReader();
+        var rows = new List<ManagedTaskWaitRecord>();
+        while (reader.Read())
+            rows.Add(ReadWait(reader));
+        return rows;
+    }
+
+    private const string WaitSelect = """
+        SELECT run_id, step_id, wait_id, reason, reason_detail, detail, evidence,
+               continuation_owner, wake_kind, wake_condition, status, revision, step_revision,
+               deadline, response, created_at, updated_at
+        FROM managed_task_wait
+        """;
+
+    private static ManagedTaskWaitRecord ReadWait(SqliteDataReader reader) =>
+        new(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+            Enum.Parse<ManagedTaskWaitReason>(reader.GetString(3)), reader.GetString(4), reader.GetString(5),
+            reader.GetString(6), reader.GetString(7), Enum.Parse<ManagedTaskWaitWakeKind>(reader.GetString(8)),
+            reader.GetString(9), Enum.Parse<ManagedTaskWaitStatus>(reader.GetString(10)), reader.GetInt64(11),
+            reader.GetInt64(12), Parse(reader.GetString(13)), reader.IsDBNull(14) ? null : reader.GetString(14),
+            Parse(reader.GetString(15)), Parse(reader.GetString(16)));
+
+    private ManagedTaskContinuationIntentRecord? ReadContinuationById(
+        string runId,
+        string intentId,
+        SqliteTransaction transaction)
+    {
+        using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT run_id, step_id, wait_id, intent_id, owner, response, status, generation, created_at, updated_at
+            FROM managed_task_continuation_intent WHERE run_id=$run AND intent_id=$intent;
+            """;
+        command.Parameters.AddWithValue("$run", runId);
+        command.Parameters.AddWithValue("$intent", intentId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadContinuation(reader) : null;
+    }
+
+    private ManagedTaskContinuationIntentRecord? ReadContinuation(
+        string runId,
+        string waitId,
+        SqliteTransaction transaction)
+    {
+        using var command = _connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT run_id, step_id, wait_id, intent_id, owner, response, status, generation, created_at, updated_at
+            FROM managed_task_continuation_intent WHERE run_id=$run AND wait_id=$wait;
+            """;
+        command.Parameters.AddWithValue("$run", runId);
+        command.Parameters.AddWithValue("$wait", waitId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadContinuation(reader) : null;
+    }
+
+    private static ManagedTaskContinuationIntentRecord ReadContinuation(SqliteDataReader reader) =>
+        new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+            reader.GetString(4), reader.GetString(5),
+            Enum.Parse<ManagedTaskContinuationStatus>(reader.GetString(6)), reader.GetInt64(7),
+            Parse(reader.GetString(8)), Parse(reader.GetString(9)));
+
+    private static void ValidateWaitMetadata(ParkManagedTaskWaitCommand command)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(command.RunId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(command.StepId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(command.WaitId);
+        ValidateBounded(command.ReasonDetail, ManagedTaskWaitLimits.MaxReasonDetailLength, nameof(command.ReasonDetail));
+        ValidateBounded(command.Detail, ManagedTaskWaitLimits.MaxDetailLength, nameof(command.Detail));
+        ValidateBounded(command.Evidence, ManagedTaskWaitLimits.MaxEvidenceLength, nameof(command.Evidence));
+        ValidateBounded(command.ContinuationOwner, ManagedTaskWaitLimits.MaxContinuationOwnerLength, nameof(command.ContinuationOwner));
+        ValidateBounded(command.WakeCondition, ManagedTaskWaitLimits.MaxWakeConditionLength, nameof(command.WakeCondition));
+    }
+
+    private static void ValidateBounded(string value, int maximumLength, string parameterName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
+        if (value.Length > maximumLength)
+            throw new ArgumentException($"{parameterName} cannot exceed {maximumLength} characters.", parameterName);
     }
 
     private Task<ManagedTaskLedgerWriteResult> ChangeDeliveryAsync<T>(
@@ -766,6 +1287,43 @@ public sealed class SqliteManagedTaskFlowLedger : IAsyncDisposable
                 PRIMARY KEY(run_id, completion_id),
                 UNIQUE(run_id, step_id, attempt_id),
                 FOREIGN KEY(run_id, step_id, attempt_id) REFERENCES managed_task_result(run_id, step_id, attempt_id));
+            CREATE TABLE IF NOT EXISTS managed_task_wait(
+                run_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                wait_id TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                reason_detail TEXT NOT NULL,
+                detail TEXT NOT NULL,
+                evidence TEXT NOT NULL,
+                continuation_owner TEXT NOT NULL,
+                wake_kind TEXT NOT NULL,
+                wake_condition TEXT NOT NULL,
+                status TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                step_revision INTEGER NOT NULL,
+                deadline TEXT NOT NULL,
+                response TEXT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(run_id, wait_id),
+                FOREIGN KEY(run_id, step_id) REFERENCES managed_task_step(run_id, step_id));
+            CREATE TABLE IF NOT EXISTS managed_task_continuation_intent(
+                run_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                wait_id TEXT NOT NULL,
+                intent_id TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                response TEXT NOT NULL,
+                status TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(run_id, intent_id),
+                UNIQUE(run_id, wait_id),
+                FOREIGN KEY(run_id, wait_id) REFERENCES managed_task_wait(run_id, wait_id));
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_managed_task_wait_pending_step
+                ON managed_task_wait(run_id, step_id)
+                WHERE status = 'Pending';
             """);
         Execute(transaction, $"PRAGMA user_version = {CurrentSchemaVersion};");
         transaction.Commit();

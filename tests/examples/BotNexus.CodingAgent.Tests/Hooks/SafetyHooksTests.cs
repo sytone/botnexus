@@ -1,4 +1,4 @@
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
 using BotNexus.Agent.Core.Types;
 using BotNexus.CodingAgent;
 using BotNexus.CodingAgent.Hooks;
@@ -83,11 +83,11 @@ public sealed class SafetyHooksTests : IDisposable
         shellResult.ShouldBeNull();
     }
 
-    private static BeforeToolCallContext CreateContext(string toolName, Dictionary<string, object?> args)
+    private static ToolExecutionContext CreateContext(string toolName, Dictionary<string, object?> args)
     {
         var assistant = new AssistantAgentMessage("run tool");
         var toolCall = new ToolCallContent("tool-1", toolName, args);
-        return new BeforeToolCallContext(assistant, toolCall, args, new AgentContext(null, [], []));
+        return new ToolExecutionContext(assistant, toolCall, args, new AgentContext(null, [], []));
     }
 
     public void Dispose()

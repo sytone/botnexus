@@ -28,6 +28,13 @@ public sealed class BuiltInModelsGpt56GenerationTests
         "gpt-5.6-terra",
     ];
 
+    private static readonly string[] Gpt6Fallbacks =
+    [
+        "gpt-6-astra",
+        "gpt-6-luna",
+        "gpt-6-sol",
+    ];
+
     /// <summary>The full thinking ladder discovery reports for this generation.</summary>
     private static readonly ThinkingLevel[] FullThinkingLadder =
     [
@@ -75,6 +82,33 @@ public sealed class BuiltInModelsGpt56GenerationTests
                 $"'{id}' must report the same context window the discovery overlay reports for it");
             ModelRegistry.GetSupportedContextSizes(model).ShouldBe([DiscoveredContextWindow]);
         }
+    }
+
+    [Fact]
+    public void RegisterAll_RegistersTheGpt6Generation_ForGitHubCopilot()
+    {
+        var registry = BuildRegistry();
+
+        foreach (var id in Gpt6Fallbacks)
+        {
+            var model = registry.GetModel("github-copilot", id);
+            model.ShouldNotBeNull($"'{id}' must remain available when discovery is unavailable");
+            model.Api.ShouldBe("github-copilot-responses");
+            model.ContextWindow.ShouldBe(922000);
+            model.MaxTokens.ShouldBe(128000);
+            model.Input.ShouldBe(["text", "image"]);
+        }
+    }
+
+    [Fact]
+    public void Gpt6Sol_PreservesFullReasoningLadder()
+    {
+        var model = BuildRegistry().GetModel("github-copilot", "gpt-6-sol");
+
+        model.ShouldNotBeNull();
+        model.Reasoning.ShouldBeTrue();
+        model.SupportsExtraHighThinking.ShouldBeTrue();
+        ModelRegistry.GetSupportedThinkingLevels(model).ShouldBe(FullThinkingLadder);
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Memory;
 using BotNexus.Memory.Models;
 using Moq;
@@ -6,7 +7,7 @@ namespace BotNexus.Extensions.Qmd.Tests;
 
 public sealed class MemoryQmdBackendTests
 {
-    private const string AgentId = "test-agent";
+    private static readonly AgentId AgentId = AgentId.From("test-agent");
 
     private static (MemoryQmdBackend backend, Mock<ISharedMemoryStoreRegistry> registry, Mock<IMemoryStore> store) CreateSut(
         string storeName = "platform-knowledge",
@@ -19,8 +20,8 @@ public sealed class MemoryQmdBackendTests
             .ReturnsAsync(new MemoryStoreStats(entries?.Count ?? 0, 1024, DateTimeOffset.UtcNow));
 
         var registry = new Mock<ISharedMemoryStoreRegistry>();
-        registry.Setup(r => r.GetReadableStores(AgentId)).Returns([storeName]);
-        registry.Setup(r => r.CanRead(AgentId, storeName)).Returns(true);
+        registry.Setup(r => r.GetReadableStores(AgentId.Value)).Returns([storeName]);
+        registry.Setup(r => r.CanRead(AgentId.Value, storeName)).Returns(true);
         registry.Setup(r => r.GetStore(storeName)).Returns(store.Object);
         registry.Setup(r => r.GetAllConfigs()).Returns([
             new SharedMemoryStoreConfig { Name = storeName, Description = "Test store" }
@@ -55,15 +56,15 @@ public sealed class MemoryQmdBackendTests
 
         await backend.SearchAsync("test", "memory:platform-knowledge", QmdSearchMode.Keyword, 5);
 
-        registry.Verify(r => r.CanRead(AgentId, "platform-knowledge"), Times.Once);
+        registry.Verify(r => r.CanRead(AgentId.Value, "platform-knowledge"), Times.Once);
     }
 
     [Fact]
     public async Task SearchAsync_ReturnsEmpty_WhenStoreNotReadable()
     {
         var registry = new Mock<ISharedMemoryStoreRegistry>();
-        registry.Setup(r => r.GetReadableStores(AgentId)).Returns([]);
-        registry.Setup(r => r.CanRead(AgentId, "secret-store")).Returns(false);
+        registry.Setup(r => r.GetReadableStores(AgentId.Value)).Returns([]);
+        registry.Setup(r => r.CanRead(AgentId.Value, "secret-store")).Returns(false);
         var backend = new MemoryQmdBackend(registry.Object, AgentId);
 
         var results = await backend.SearchAsync("test", "secret-store", QmdSearchMode.Hybrid, 10);
@@ -87,7 +88,7 @@ public sealed class MemoryQmdBackendTests
         store.Setup(s => s.GetByIdAsync("abc123", It.IsAny<CancellationToken>())).ReturnsAsync(entry);
 
         var registry = new Mock<ISharedMemoryStoreRegistry>();
-        registry.Setup(r => r.CanRead(AgentId, "my-store")).Returns(true);
+        registry.Setup(r => r.CanRead(AgentId.Value, "my-store")).Returns(true);
         registry.Setup(r => r.GetStore("my-store")).Returns(store.Object);
 
         var backend = new MemoryQmdBackend(registry.Object, AgentId);
@@ -104,7 +105,7 @@ public sealed class MemoryQmdBackendTests
     public async Task GetDocumentAsync_ReturnsNull_WhenNotReadable()
     {
         var registry = new Mock<ISharedMemoryStoreRegistry>();
-        registry.Setup(r => r.CanRead(AgentId, "secret")).Returns(false);
+        registry.Setup(r => r.CanRead(AgentId.Value, "secret")).Returns(false);
         var backend = new MemoryQmdBackend(registry.Object, AgentId);
 
         var doc = await backend.GetDocumentAsync("memory:secret/abc123");

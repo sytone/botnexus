@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <RootNamespace>BotNexus.Extensions.A2A</RootNamespace>
+    <Description>Provider-neutral A2A task delegation tool.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotNexus.Extensions.A2A.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="botnexus-extension.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../agent/BotNexus.Agent.Core/BotNexus.Agent.Core.csproj" />
+    <ProjectReference Include="../../gateway/BotNexus.Gateway.Abstractions/BotNexus.Gateway.Abstractions.csproj" />
+    <ProjectReference Include="../../gateway/BotNexus.Gateway.A2A/BotNexus.Gateway.A2A.csproj" />
+  </ItemGroup>
+  <Target Name="CopyExtensionToArtifacts" AfterTargets="Build">
+    <PropertyGroup>
+      <ExtensionArtifactDir>$(MSBuildThisFileDirectory)..\..\..\artifacts\extensions\botnexus-a2a\</ExtensionArtifactDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(ExtensionArtifactDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ExtensionArtifactDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)botnexus-extension.json" DestinationFolder="$(ExtensionArtifactDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

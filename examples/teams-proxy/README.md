@@ -119,6 +119,8 @@ Uses the `ServiceBusOutboundEnvelope` shape written by the BotNexus Service Bus 
 
 The proxy uses `conversationId` to look up Teams routing data from its in-memory `ConversationContextStore`. The store is populated on each inbound publish. If the proxy restarts between inbound and outbound processing, the context will be missing and the outbound message is dead-lettered with reason `MissingConversationContext`.
 
+When `streamResponse` is enabled, the proxy uses **pseudo-streaming**: it completes every non-final or `delta` envelope without posting an activity, then sends exactly one Teams activity from the non-empty final `done` envelope. Raw deltas must never be forwarded as independent activities; they can be whitespace, punctuation, words, or other provider-sized chunks. A relay that needs true live streaming must enforce `sequence` ordering and update one provisional activity instead of posting N activities.
+
 ## Local queue agent
 
 Use `scripts\Invoke-BotNexusQueueAgent.ps1` to manually simulate BotNexus — it receives inbound envelopes, calls Copilot CLI, and publishes outbound envelopes. This lets you validate the full roundtrip without a running BotNexus gateway:

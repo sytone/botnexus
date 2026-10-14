@@ -135,7 +135,7 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
 
         // A real, unrelated conversation now appears and the panel re-points at it.
         _store.SeedConversations("agent-1", [Conv("conv-b", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-b");
+        _store.SelectView("agent-1", "conv-b", SelectionSource.RouteNavigation);
         cut.Render(p =>
         {
             p.Add(c => c.AgentId, "agent-1");
@@ -161,7 +161,7 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
     {
         SeedAgent("agent-1");
         _store.SeedConversations("agent-1", [Conv("conv-a", "agent-1"), Conv("conv-b", "agent-1", isDefault: false)]);
-        _store.SetActiveConversation("agent-1", "conv-a");
+        _store.SelectView("agent-1", "conv-a", SelectionSource.RouteNavigation);
 
         var a = Render("agent-1", "conv-a");
         Send(a, "prompt-in-a");
@@ -191,7 +191,7 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
     {
         SeedAgent("agent-1", isStreaming: true);
         _store.SeedConversations("agent-1", [Conv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
         var cut = Render("agent-1", "conv-1");
         Send(cut, "earlier-prompt");
@@ -220,7 +220,7 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
     {
         SeedAgent("agent-1");
         _store.SeedConversations("agent-1", [Conv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
         var cut = Render("agent-1", "conv-1");
         Send(cut, "earlier-prompt");
@@ -327,7 +327,7 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
     {
         SeedAgent("agent-1");
         _store.SeedConversations("agent-1", [Conv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         var cut = Render("agent-1", "conv-1");
         Send(cut, "same");
         Send(cut, "same");
@@ -362,7 +362,7 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
     {
         SeedAgent("agent-1");
         _store.SeedConversations("agent-1", [Conv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         var cut = Render("agent-1", "conv-1");
         foreach (var p in prompts)
             Send(cut, p);
@@ -401,7 +401,7 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
         conv.AppendMessage(new ChatMessage("User", "landing-prompt", DateTimeOffset.UtcNow));
         conv.AppendMessage(new ChatMessage("Assistant", "some reply", DateTimeOffset.UtcNow));
         agent.Conversations["conv-a"] = conv;
-        agent.ActiveConversationId = "conv-a";
+        _store.SelectView(agent.AgentId, "conv-a" ?? string.Empty, SelectionSource.RouteNavigation);
 
         var cut = Render("agent-1", conversationId: "conv-a");
 
@@ -435,7 +435,7 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
         var agent = _store.GetAgent("agent-1")!;
         var conv = new ConversationState { ConversationId = "conv-a", Title = "conv-a" };
         agent.Conversations["conv-a"] = conv;
-        agent.ActiveConversationId = "conv-a";
+        _store.SelectView(agent.AgentId, "conv-a" ?? string.Empty, SelectionSource.RouteNavigation);
 
         var cut = Render("agent-1", conversationId: "conv-a");
         Send(cut, "typed-one");
@@ -478,7 +478,7 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
         var b = new ConversationState { ConversationId = "conv-b", Title = "conv-b" };
         agent.Conversations["conv-b"] = b;
 
-        agent.ActiveConversationId = "conv-a";
+        _store.SelectView(agent.AgentId, "conv-a" ?? string.Empty, SelectionSource.RouteNavigation);
 
         // Render the panel bound to conv-b; conv-a's transcript must be invisible to it.
         var cut = Render("agent-1", conversationId: "conv-b");
@@ -520,7 +520,7 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
         conv.AppendMessage(new ChatMessage("Assistant", "reply", DateTimeOffset.UtcNow));
         conv.AppendMessage(new ChatMessage("User", "page-two-new", DateTimeOffset.UtcNow));
         agent.Conversations["conv-a"] = conv;
-        agent.ActiveConversationId = "conv-a";
+        _store.SelectView(agent.AgentId, "conv-a" ?? string.Empty, SelectionSource.RouteNavigation);
 
         var cut = Render("agent-1", conversationId: "conv-a");
         StubCaret(onFirstLine: true, onLastLine: true);
@@ -570,7 +570,7 @@ public sealed class ChatPanelPromptHistoryTests : IDisposable
 
         var other = new ConversationState { ConversationId = "conv-b", Title = "conv-b" };
         agent.Conversations["conv-b"] = other;
-        agent.ActiveConversationId = "conv-a";
+        _store.SelectView(agent.AgentId, "conv-a" ?? string.Empty, SelectionSource.RouteNavigation);
 
         var cut = Render("agent-1", conversationId: "conv-a");
         Send(cut, "typed-one");

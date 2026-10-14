@@ -24,6 +24,7 @@ public class PortalPreferencesServiceTests
         Assert.True(prefs.ExpandingInput);
         Assert.Equal(8, prefs.ExpandingInputMaxLines);
         Assert.Equal(PortalShell.Classic, prefs.Shell);
+        Assert.True(prefs.AnimateActiveRunIndicator);
     }
 
     [Fact]
@@ -68,6 +69,19 @@ public class PortalPreferencesServiceTests
         await _sut.SetExpandingInputAsync(false);
 
         Assert.True(raised);
+    }
+
+    [Fact]
+    public async Task SetAnimateActiveRunIndicatorAsync_UpdatesPersistsAndRaisesOnChanged()
+    {
+        var raised = false;
+        _sut.OnChanged += () => raised = true;
+
+        await _sut.SetAnimateActiveRunIndicatorAsync(false);
+
+        Assert.False(_sut.Current.AnimateActiveRunIndicator);
+        Assert.True(raised);
+        await _js.Received(1).InvokeAsync<object>("portalPrefs.save", Arg.Any<object[]>());
     }
 
     [Fact]

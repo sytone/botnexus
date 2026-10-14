@@ -53,6 +53,10 @@ else
         }
 
         var activeAgent = Store.ActiveAgentId is not null ? Store.GetAgent(Store.ActiveAgentId) : null;
+        var displayedConversationId = (Store as IDisplayedConversation)?.DisplayedConversationIdFor(Store.ActiveAgentId);
+        var displayedSessionId = displayedConversationId is not null
+            ? activeAgent?.Conversations.GetValueOrDefault(displayedConversationId)?.ActiveSessionId
+            : null;
 
         var report = new ChannelErrorReportDto
         {
@@ -66,7 +70,7 @@ else
             AgentId = Store.ActiveAgentId,
             // Prefer the active conversation's session so logged reports carry the
             // session the user was actually in when the error surfaced.
-            SessionId = activeAgent?.ActiveConversationSessionId ?? activeAgent?.SessionId,
+            SessionId = displayedSessionId ?? activeAgent?.SessionId,
             Url = url,
             UserAgent = ua,
         };

@@ -1,6 +1,12 @@
 using System.Reflection;
+using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Extensions;
+using BotNexus.Gateway.Abstractions.Security;
+using Microsoft.AspNetCore.Http;
 using BotNexus.Gateway.Commands;
 using BotNexus.Gateway.Configuration;
 using Microsoft.AspNetCore.Mvc;
@@ -83,14 +89,35 @@ public sealed class CommandsControllerTests
         ], NullLogger<CommandRegistry>.Instance);
 
         var supervisor = new Mock<IAgentSupervisor>();
+        var agentId = AgentId.From("test-agent");
+        var sessionId = SessionId.From("session-1");
+        var conversationId = ConversationId.From("controller-conversation");
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(store => store.GetAsync(sessionId, It.IsAny<CancellationToken>())).ReturnsAsync(
+            new GatewaySession { SessionId = sessionId, AgentId = agentId, ConversationId = conversationId });
+        var conversations = new Mock<IConversationStore>();
+        conversations.Setup(store => store.GetAsync(conversationId, It.IsAny<CancellationToken>())).ReturnsAsync(
+            new Conversation { ConversationId = conversationId, AgentId = agentId, ActiveSessionId = sessionId });
         var home = new BotNexusHome(@"Q:\repos\botnexus\.botnexus");
 
-        return CreateInstance(controllerType, new Dictionary<Type, object>
+        var controller = CreateInstance(controllerType, new Dictionary<Type, object>
         {
             [typeof(CommandRegistry)] = commandRegistry,
             [typeof(IAgentSupervisor)] = supervisor.Object,
+            [typeof(ISessionStore)] = sessions.Object,
+            [typeof(IConversationStore)] = conversations.Object,
             [typeof(BotNexusHome)] = home
         });
+        var mvcController = controller as ControllerBase
+            ?? throw new InvalidOperationException("Expected an MVC controller.");
+        var httpContext = new DefaultHttpContext();
+        // Every real API request has an authenticated identity, including keyless development.
+        httpContext.Items[GatewayAuthHttpContext.CallerIdentityItemKey] = new GatewayCallerIdentity
+        {
+            CallerId = "command-test", AllowedAgents = ["test-agent"]
+        };
+        mvcController.ControllerContext = new ControllerContext { HttpContext = httpContext };
+        return controller;
     }
 
     private static object CreateExecuteRequest(MethodInfo executeMethod, string? input)

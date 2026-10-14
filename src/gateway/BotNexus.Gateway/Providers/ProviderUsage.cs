@@ -2,28 +2,8 @@ using System.Collections.Concurrent;
 
 namespace BotNexus.Gateway.Providers;
 
-/// <summary>
-/// One provider's rate-limit headroom, as the provider last reported it.
-/// </summary>
-/// <remarks>
-/// Every value here is stated by the provider on a real response, not inferred. A null field means
-/// the provider did not report that dimension — OpenAI, for example, reports requests and total
-/// tokens but not the input/output split Anthropic gives.
-/// </remarks>
-/// <param name="Provider">Canonical provider id, e.g. <c>anthropic</c>.</param>
-/// <param name="RequestsLimit">Requests permitted in the current window.</param>
-/// <param name="RequestsRemaining">Requests still available.</param>
-/// <param name="RequestsResetUtc">When the request allowance refills.</param>
-/// <param name="InputTokensLimit">Input tokens permitted in the current window.</param>
-/// <param name="InputTokensRemaining">Input tokens still available.</param>
-/// <param name="InputTokensResetUtc">When the input-token allowance refills.</param>
-/// <param name="OutputTokensLimit">Output tokens permitted in the current window.</param>
-/// <param name="OutputTokensRemaining">Output tokens still available.</param>
-/// <param name="OutputTokensResetUtc">When the output-token allowance refills.</param>
-/// <param name="TokensLimit">Combined token allowance, where the provider reports one.</param>
-/// <param name="TokensRemaining">Combined tokens still available.</param>
-/// <param name="TokensResetUtc">When the combined allowance refills.</param>
-/// <param name="ObservedAtUtc">When this snapshot was captured.</param>
+/// <summary>One provider's rate-limit headroom, as the provider last reported it.</summary>
+/// <remarks>A null field means the provider did not report that dimension.</remarks>
 public sealed record ProviderRateLimitSnapshot(
     string Provider,
     long? RequestsLimit = null,
@@ -45,91 +25,60 @@ public sealed record ProviderRateLimitSnapshot(
         RequestsLimit is > 0 || InputTokensLimit is > 0 || OutputTokensLimit is > 0 || TokensLimit is > 0;
 }
 
-/// <summary>
-/// One observed provider call: which model, and what it consumed.
-/// </summary>
+/// <summary>One HTTP response observed from a provider.</summary>
 /// <remarks>
-/// <para>
-/// <paramref name="Requests"/> is exact — one call, counted once. The token figures are
-/// <b>derived</b>, from the provider's own consumed-so-far counter for the current rate-limit
-/// window, attributed to the model this request named.
-/// </para>
-/// <para>
-/// That derivation is sound for sequential traffic and approximate under concurrency: if two calls
-/// to different models overlap, the whole drop lands on whichever response returns second. The
-/// portal labels these as observed rather than billed for exactly this reason. The alternative —
-/// parsing usage out of the response — is not available here, because agent turns stream as SSE and
-/// buffering that body to read a trailing usage frame is precisely what the streaming guard forbids.
-/// </para>
+/// Requests and failures count response-bearing wire attempts. Transport exceptions have no HTTP
+/// response and therefore produce no sample. Nullable token values distinguish unavailable counter
+/// evidence from a measured zero delta. Combined tokens remain separate from the input/output split.
 /// </remarks>
-/// <param name="Provider">Canonical provider id.</param>
-/// <param name="Model">Model id named in the request body.</param>
-/// <param name="Requests">Calls observed. Exact.</param>
-/// <param name="Failures">Calls that returned a non-success status. Exact.</param>
-/// <param name="InputTokens">Input tokens observed. Derived from the window's consumed counter.</param>
-/// <param name="OutputTokens">Output tokens observed. Derived from the window's consumed counter.</param>
-/// <param name="ObservedAtUtc">When the call completed.</param>
 public sealed record ProviderUsageSample(
     string Provider,
-    string Model,
+    string? Model,
     long Requests,
     long Failures,
-    long InputTokens,
-    long OutputTokens,
+    long? InputTokens,
+    long? OutputTokens,
+    long? TotalTokens,
     DateTimeOffset ObservedAtUtc);
 
-/// <summary>
-/// Holds the latest rate-limit headroom per provider and a bounded rolling window of observed calls.
-/// </summary>
+/// <summary>A bounded usage query and whether the exact requested window was retained.</summary>
+public sealed record ProviderUsageQueryResult(
+    IReadOnlyList<ProviderUsageSample> Samples,
+    bool IsTruncated);
+
+/// <summary>Holds latest provider headroom and a bounded rolling window of observed responses.</summary>
 public interface IProviderUsageStore
 {
-    /// <summary>Records a rate-limit snapshot and, when a model is known, a usage sample.</summary>
-    /// <param name="snapshot">The freshly parsed snapshot.</param>
-    /// <param name="model">Model named in the request that produced it; may be null.</param>
-    /// <param name="failed">
-    /// Whether the call returned a non-success status. Recorded because a burn view that counts
-    /// only successes hides the most expensive kind of mistake: a misconfigured model that 404s on
-    /// every send looks identical to no traffic at all.
-    /// </param>
+    /// <summary>Records one response-bearing wire attempt and any counters it supplied.</summary>
     void Record(ProviderRateLimitSnapshot snapshot, string? model, bool failed = false);
 
-    /// <summary>The most recent snapshot per provider.</summary>
+    /// <summary>The most recent independently merged dimensions per provider.</summary>
     IReadOnlyDictionary<string, ProviderRateLimitSnapshot> Snapshots { get; }
 
-    /// <summary>Usage samples observed at or after <paramref name="sinceUtc"/>.</summary>
-    /// <param name="sinceUtc">Window start.</param>
-    IReadOnlyList<ProviderUsageSample> SamplesSince(DateTimeOffset sinceUtc);
+    /// <summary>Queries samples and reports whether retention removed part of the requested window.</summary>
+    ProviderUsageQueryResult QuerySince(DateTimeOffset sinceUtc);
 }
 
-/// <summary>
-/// In-memory <see cref="IProviderUsageStore"/>.
-/// </summary>
-/// <remarks>
-/// Deliberately not persisted. This answers "what is my burn rate right now", which is a live
-/// question: rate-limit headroom is meaningless once its reset has passed, and a restarted gateway
-/// has no in-flight allowance to report. Persisting it would add a schema and a migration to store
-/// values that are stale the moment the process stops.
-/// </remarks>
+/// <summary>In-memory <see cref="IProviderUsageStore"/>.</summary>
 public sealed class ProviderUsageStore : IProviderUsageStore
 {
-    /// <summary>
-    /// How long samples are kept. Bounds memory and matches the longest window the portal offers.
-    /// </summary>
+    /// <summary>Longest retained time window.</summary>
     public static readonly TimeSpan Retention = TimeSpan.FromHours(24);
 
-    /// <summary>
-    /// Hard cap on retained samples, so a runaway loop cannot grow this without bound between the
-    /// time-based prunes. At roughly 100 bytes a sample this is a few megabytes worst case.
-    /// </summary>
     private const int MaxSamples = 20_000;
 
-    private readonly ConcurrentDictionary<string, ProviderRateLimitSnapshot> _snapshots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ProviderRateLimitSnapshot> _snapshots =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CounterBaselines> _counterBaselines =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTimeOffset> _latestObservedAt =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ProviderUsageSample> _samples = [];
     private readonly Lock _gate = new();
     private readonly TimeProvider _time;
+    private DateTimeOffset? _discardedThroughUtc;
 
     /// <summary>Creates a store.</summary>
-    /// <param name="timeProvider">Clock, injected so tests need no real waiting.</param>
     public ProviderUsageStore(TimeProvider? timeProvider = null) => _time = timeProvider ?? TimeProvider.System;
 
     /// <inheritdoc/>
@@ -140,91 +89,184 @@ public sealed class ProviderUsageStore : IProviderUsageStore
     {
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        var previous = _snapshots.TryGetValue(snapshot.Provider, out var p) ? p : null;
-        _snapshots[snapshot.Provider] = snapshot;
+        var observedAt = snapshot.ObservedAtUtc == default ? _time.GetUtcNow() : snapshot.ObservedAtUtc;
+        var normalizedModel = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
 
-        if (string.IsNullOrWhiteSpace(model))
-            return;
-
-        var input = Consumed(
-            Used(previous?.InputTokensLimit, previous?.InputTokensRemaining), previous?.InputTokensResetUtc,
-            Used(snapshot.InputTokensLimit, snapshot.InputTokensRemaining), snapshot.InputTokensResetUtc);
-        var output = Consumed(
-            Used(previous?.OutputTokensLimit, previous?.OutputTokensRemaining), previous?.OutputTokensResetUtc,
-            Used(snapshot.OutputTokensLimit, snapshot.OutputTokensRemaining), snapshot.OutputTokensResetUtc);
-
-        var sample = new ProviderUsageSample(
-            snapshot.Provider, model.Trim(), Requests: 1, Failures: failed ? 1 : 0, input, output,
-            snapshot.ObservedAtUtc == default ? _time.GetUtcNow() : snapshot.ObservedAtUtc);
-
+        // The stale check, all dimension deltas, all baseline advances, the latest view and sample
+        // publication are one provider transition under one gate. Stale responses remain countable
+        // wire attempts, but cannot report a token delta or rewind any baseline/headroom dimension.
         lock (_gate)
         {
-            _samples.Add(sample);
+            var isStale = _latestObservedAt.TryGetValue(snapshot.Provider, out var latest) && observedAt < latest;
+            if (!_counterBaselines.TryGetValue(snapshot.Provider, out var baselines))
+                baselines = new CounterBaselines();
+
+            long? input = null;
+            long? output = null;
+            long? total = null;
+            if (!isStale)
+            {
+                input = DeltaAndAdvance(
+                    ref baselines.Input,
+                    snapshot.InputTokensLimit,
+                    snapshot.InputTokensRemaining,
+                    snapshot.InputTokensResetUtc);
+                output = DeltaAndAdvance(
+                    ref baselines.Output,
+                    snapshot.OutputTokensLimit,
+                    snapshot.OutputTokensRemaining,
+                    snapshot.OutputTokensResetUtc);
+                total = DeltaAndAdvance(
+                    ref baselines.Total,
+                    snapshot.TokensLimit,
+                    snapshot.TokensRemaining,
+                    snapshot.TokensResetUtc);
+
+                _counterBaselines[snapshot.Provider] = baselines;
+                _latestObservedAt[snapshot.Provider] = observedAt;
+                _snapshots[snapshot.Provider] = MergeSnapshot(
+                    _snapshots.TryGetValue(snapshot.Provider, out var current) ? current : null,
+                    snapshot,
+                    observedAt);
+            }
+
+            _samples.Add(new ProviderUsageSample(
+                snapshot.Provider,
+                normalizedModel,
+                Requests: 1,
+                Failures: failed ? 1 : 0,
+                input,
+                output,
+                total,
+                observedAt));
             Prune();
         }
     }
 
     /// <inheritdoc/>
-    public IReadOnlyList<ProviderUsageSample> SamplesSince(DateTimeOffset sinceUtc)
+    public ProviderUsageQueryResult QuerySince(DateTimeOffset sinceUtc)
     {
         lock (_gate)
         {
             Prune();
-            return [.. _samples.Where(s => s.ObservedAtUtc >= sinceUtc)];
+            return new ProviderUsageQueryResult(
+                [.. _samples.Where(sample => sample.ObservedAtUtc >= sinceUtc)],
+                _discardedThroughUtc is { } discardedThrough && discardedThrough >= sinceUtc);
         }
     }
 
-    /// <summary>Allowance consumed so far in the current window, or null when not reported.</summary>
-    /// <param name="limit">Window allowance.</param>
-    /// <param name="remaining">Allowance still available.</param>
-    /// <returns>Consumed tokens, never negative.</returns>
+    /// <summary>Allowance consumed so far, or null when the dimension is unavailable.</summary>
     internal static long? Used(long? limit, long? remaining) =>
         limit is null || remaining is null ? null : Math.Max(0, limit.Value - remaining.Value);
 
-    /// <summary>
-    /// Tokens this call consumed, from the provider's own consumed-so-far counter.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Keyed on <c>used</c> (limit minus remaining) rather than on the drop in <c>remaining</c>,
-    /// because the two behave differently across a window boundary and the boundary is the common
-    /// case, not the rare one: Anthropic's token windows roll roughly every minute, so two ordinary
-    /// user turns almost never share one.
-    /// </para>
-    /// <para>
-    /// Within a window, consumption is the rise in <c>used</c>. When the window has rolled — the
-    /// reset instant moved — <c>used</c> has restarted from zero, so its current value <em>is</em>
-    /// this window's consumption and is counted whole. An earlier version returned zero on a
-    /// rollover to avoid mistaking a refill for spend; correct about the hazard, but it discarded
-    /// nearly every real measurement, and the panel reported a flat zero burn while tokens were
-    /// visibly being spent.
-    /// </para>
-    /// </remarks>
-    /// <param name="beforeUsed">Consumed-so-far at the previous observation.</param>
-    /// <param name="beforeReset">Reset instant at the previous observation.</param>
-    /// <param name="afterUsed">Consumed-so-far now.</param>
-    /// <param name="afterReset">Reset instant now.</param>
-    /// <returns>Tokens attributable to this call, never negative.</returns>
-    internal static long Consumed(long? beforeUsed, DateTimeOffset? beforeReset, long? afterUsed, DateTimeOffset? afterReset)
+    /// <summary>Delta in one provider counter window, or null when the new reading is unavailable.</summary>
+    internal static long? Consumed(
+        long? beforeUsed,
+        DateTimeOffset? beforeReset,
+        long? afterUsed,
+        DateTimeOffset? afterReset)
     {
         if (afterUsed is null)
-            return 0;
-
-        // No prior reading, or the window rolled: the counter restarted, so what it reads now is
-        // what has been spent since it did.
+            return null;
         if (beforeUsed is null || beforeReset is null || afterReset is null || afterReset != beforeReset)
             return afterUsed.Value;
 
-        var delta = afterUsed.Value - beforeUsed.Value;
-        return delta > 0 ? delta : 0;
+        return Math.Max(0, afterUsed.Value - beforeUsed.Value);
+    }
+
+    private static long? DeltaAndAdvance(
+        ref CounterBaseline baseline,
+        long? limit,
+        long? remaining,
+        DateTimeOffset? resetUtc)
+    {
+        var used = Used(limit, remaining);
+        if (used is null)
+            return null;
+
+        var delta = Consumed(baseline.Used, baseline.ResetUtc, used, resetUtc);
+        baseline = new CounterBaseline(used, resetUtc);
+        return delta;
+    }
+
+    private static ProviderRateLimitSnapshot MergeSnapshot(
+        ProviderRateLimitSnapshot? current,
+        ProviderRateLimitSnapshot incoming,
+        DateTimeOffset observedAt)
+    {
+        // Preserve the first provider-stated object exactly. Handler snapshots already carry an
+        // observation time; direct callers may intentionally use the default and existing store
+        // semantics expose that same snapshot instance.
+        if (current is null)
+            return incoming;
+
+        static (long? Limit, long? Remaining, DateTimeOffset? Reset) Dimension(
+            long? newLimit,
+            long? newRemaining,
+            DateTimeOffset? newReset,
+            long? oldLimit,
+            long? oldRemaining,
+            DateTimeOffset? oldReset) =>
+            newLimit is not null && newRemaining is not null
+                ? (newLimit, newRemaining, newReset)
+                : (oldLimit, oldRemaining, oldReset);
+
+        var requests = Dimension(
+            incoming.RequestsLimit, incoming.RequestsRemaining, incoming.RequestsResetUtc,
+            current?.RequestsLimit, current?.RequestsRemaining, current?.RequestsResetUtc);
+        var input = Dimension(
+            incoming.InputTokensLimit, incoming.InputTokensRemaining, incoming.InputTokensResetUtc,
+            current?.InputTokensLimit, current?.InputTokensRemaining, current?.InputTokensResetUtc);
+        var output = Dimension(
+            incoming.OutputTokensLimit, incoming.OutputTokensRemaining, incoming.OutputTokensResetUtc,
+            current?.OutputTokensLimit, current?.OutputTokensRemaining, current?.OutputTokensResetUtc);
+        var total = Dimension(
+            incoming.TokensLimit, incoming.TokensRemaining, incoming.TokensResetUtc,
+            current?.TokensLimit, current?.TokensRemaining, current?.TokensResetUtc);
+
+        return new ProviderRateLimitSnapshot(
+            incoming.Provider,
+            requests.Limit, requests.Remaining, requests.Reset,
+            input.Limit, input.Remaining, input.Reset,
+            output.Limit, output.Remaining, output.Reset,
+            total.Limit, total.Remaining, total.Reset,
+            observedAt);
     }
 
     // Caller holds _gate.
     private void Prune()
     {
         var cutoff = _time.GetUtcNow() - Retention;
-        _samples.RemoveAll(s => s.ObservedAtUtc < cutoff);
+        var expired = _samples.Where(sample => sample.ObservedAtUtc < cutoff).ToList();
+        if (expired.Count > 0)
+        {
+            NoteDiscarded(expired);
+            _samples.RemoveAll(sample => sample.ObservedAtUtc < cutoff);
+        }
+
         if (_samples.Count > MaxSamples)
-            _samples.RemoveRange(0, _samples.Count - MaxSamples);
+        {
+            var removeCount = _samples.Count - MaxSamples;
+            NoteDiscarded(_samples.GetRange(0, removeCount));
+            _samples.RemoveRange(0, removeCount);
+        }
+    }
+
+    private void NoteDiscarded(IEnumerable<ProviderUsageSample> discarded)
+    {
+        foreach (var sample in discarded)
+        {
+            if (_discardedThroughUtc is null || sample.ObservedAtUtc > _discardedThroughUtc)
+                _discardedThroughUtc = sample.ObservedAtUtc;
+        }
+    }
+
+    private readonly record struct CounterBaseline(long? Used, DateTimeOffset? ResetUtc);
+
+    private sealed class CounterBaselines
+    {
+        public CounterBaseline Input;
+        public CounterBaseline Output;
+        public CounterBaseline Total;
     }
 }

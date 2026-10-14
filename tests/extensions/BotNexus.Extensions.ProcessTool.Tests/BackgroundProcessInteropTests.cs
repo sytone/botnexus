@@ -243,6 +243,46 @@ public sealed class BackgroundProcessInteropTests : IDisposable
     }
 
     [Fact]
+    public async Task Register_PidCollisionBeforeBothDrainsComplete_RefusesReplacementAndPreservesBothOwners()
+    {
+        const int reusedPid = 3985;
+        var registry = new BackgroundProcessRegistry();
+        var stdout = new ControlledReadStream("old-final-output");
+        using var oldRoot = StartProcess("exit 0");
+        await oldRoot.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        var oldEntry = new BackgroundProcess(
+            oldRoot,
+            "old",
+            DateTimeOffset.UtcNow.AddSeconds(-1),
+            reusedPid,
+            new StreamReader(stdout),
+            StreamReader.Null);
+        registry.Register("old-owner", oldEntry);
+        oldEntry.IsRunning.ShouldBeFalse();
+        oldEntry.IsComplete.ShouldBeFalse("the old root exited but its final stdout is still draining");
+
+        using var newRoot = StartProcess(OperatingSystem.IsWindows() ? "[Console]::ReadLine()" : "read line");
+        var newEntry = new BackgroundProcess(
+            newRoot,
+            "new",
+            DateTimeOffset.UtcNow,
+            reusedPid,
+            StreamReader.Null,
+            StreamReader.Null);
+
+        var collision = Should.Throw<InvalidOperationException>(() => registry.Register("new-owner", newEntry));
+        collision.Message.ShouldContain("PID is still owned");
+        registry.Get("old-owner", reusedPid).ShouldBeSameAs(oldEntry);
+        registry.Get("new-owner", reusedPid).ShouldBeNull();
+
+        stdout.Release();
+        await oldEntry.WaitForCompletionAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        oldEntry.GetOutput().ShouldContain("old-final-output");
+        newEntry.Kill().ShouldBeTrue("the rejected replacement remains owned and manageable by its caller");
+        registry.Get("old-owner", reusedPid).ShouldBeSameAs(oldEntry);
+    }
+
+    [Fact]
     public async Task TailOne_ReturnsLastContentLineRatherThanTrailingSplitSentinel()
     {
         var pid = await Launch("[Console]::WriteLine('hello')");
@@ -257,6 +297,7 @@ public sealed class BackgroundProcessInteropTests : IDisposable
         var info = new ProcessStartInfo(OperatingSystem.IsWindows() ? "pwsh" : "/bin/sh")
         {
             UseShellExecute = false,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
@@ -296,6 +337,36 @@ public sealed class BackgroundProcessInteropTests : IDisposable
             _returnedCaptured = true;
             _captured.CopyTo(buffer);
             return _captured.Length;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class ControlledReadStream(string content) : Stream
+    {
+        private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly byte[] _content = Encoding.UTF8.GetBytes(content);
+        private int _position;
+
+        public void Release() => _released.TrySetResult();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await _released.Task.WaitAsync(cancellationToken);
+            if (_position == _content.Length) return 0;
+            var count = Math.Min(buffer.Length, _content.Length - _position);
+            _content.AsMemory(_position, count).CopyTo(buffer);
+            _position += count;
+            return count;
         }
 
         public override bool CanRead => true;

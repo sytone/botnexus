@@ -10,6 +10,24 @@ public sealed record SkillResolution
     public required IReadOnlyList<SkillDefinition> Loaded { get; init; }
     public required IReadOnlyList<SkillDefinition> Available { get; init; }
     public required IReadOnlyList<SkillDefinition> Denied { get; init; }
+    public required IReadOnlyList<SkillLoadRejection> Rejections { get; init; }
+}
+
+/// <summary>Why an otherwise eligible requested skill was not loaded.</summary>
+public enum SkillLoadRejectionReason
+{
+    CountLimit,
+    ContentLimit
+}
+
+/// <summary>Measurements for a resolver budget refusal.</summary>
+public sealed record SkillLoadRejection
+{
+    public required SkillDefinition Skill { get; init; }
+    public required SkillLoadRejectionReason Reason { get; init; }
+    public required int ConfiguredLimit { get; init; }
+    public required int Current { get; init; }
+    public required int Requested { get; init; }
 }
 
 /// <summary>
@@ -27,7 +45,7 @@ public static class SkillResolver
         config ??= new SkillsConfig();
 
         if (!config.Enabled)
-            return new SkillResolution { Loaded = [], Available = [], Denied = [] };
+            return new SkillResolution { Loaded = [], Available = [], Denied = [], Rejections = [] };
 
         // Treat negative limits as "no limit"
         var maxLoadedSkills = config.MaxLoadedSkills < 0 ? int.MaxValue : config.MaxLoadedSkills;
@@ -72,6 +90,7 @@ public static class SkillResolver
 
         var loaded = new List<SkillDefinition>();
         var available = new List<SkillDefinition>();
+        var rejections = new List<SkillLoadRejection>();
         var totalChars = 0;
 
         foreach (var skill in eligible)
@@ -87,12 +106,28 @@ public static class SkillResolver
             if (loaded.Count >= maxLoadedSkills)
             {
                 available.Add(skill);
+                rejections.Add(new SkillLoadRejection
+                {
+                    Skill = skill,
+                    Reason = SkillLoadRejectionReason.CountLimit,
+                    ConfiguredLimit = config.MaxLoadedSkills,
+                    Current = loaded.Count,
+                    Requested = 1
+                });
                 continue;
             }
 
             if (totalChars + skill.Content.Length > maxSkillContentChars)
             {
                 available.Add(skill);
+                rejections.Add(new SkillLoadRejection
+                {
+                    Skill = skill,
+                    Reason = SkillLoadRejectionReason.ContentLimit,
+                    ConfiguredLimit = config.MaxSkillContentChars,
+                    Current = totalChars,
+                    Requested = skill.Content.Length
+                });
                 continue;
             }
 
@@ -100,6 +135,12 @@ public static class SkillResolver
             totalChars += skill.Content.Length;
         }
 
-        return new SkillResolution { Loaded = loaded, Available = available, Denied = denied };
+        return new SkillResolution
+        {
+            Loaded = loaded,
+            Available = available,
+            Denied = denied,
+            Rejections = rejections
+        };
     }
 }

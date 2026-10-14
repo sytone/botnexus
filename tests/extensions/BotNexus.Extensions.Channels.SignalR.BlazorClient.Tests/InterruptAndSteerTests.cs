@@ -41,7 +41,7 @@ public sealed class InterruptAndSteerTests
     {
         // Arrange - wire up session so we know the no-op is due to blank message, not missing session
         var agent = _store.GetAgent("agent-1")!;
-        agent.ActiveConversationId = "conv-1";
+        _store.SelectView(agent.AgentId, "conv-1" ?? string.Empty, SelectionSource.RouteNavigation);
         agent.Conversations["conv-1"] = new ConversationState { ConversationId = "conv-1", Title = "T", HistoryLoaded = true };
         agent.Conversations["conv-1"].ActiveSessionId = "session-1";
 
@@ -69,7 +69,7 @@ public sealed class InterruptAndSteerTests
     {
         // Arrange - set up session so the hub call path is reached
         var agent = _store.GetAgent("agent-1")!;
-        agent.ActiveConversationId = "conv-1";
+        _store.SelectView(agent.AgentId, "conv-1" ?? string.Empty, SelectionSource.RouteNavigation);
         agent.Conversations["conv-1"] = new ConversationState { ConversationId = "conv-1", Title = "T", HistoryLoaded = true };
         agent.Conversations["conv-1"].ActiveSessionId = "session-1";
 

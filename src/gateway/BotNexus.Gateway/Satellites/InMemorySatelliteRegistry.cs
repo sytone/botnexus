@@ -91,48 +91,84 @@ public sealed class InMemorySatelliteRegistry : ISatelliteRegistry
             .AsReadOnly();
 
     /// <inheritdoc />
-    public void MarkOnline(string satelliteId, string connectionId)
+    public bool MarkOnline(string satelliteId, string connectionId)
     {
         if (!_satellites.TryGetValue(satelliteId, out var info))
         {
             _logger.LogWarning("Attempted to mark unknown satellite {SatelliteId} as online", satelliteId);
-            return;
+            return false;
         }
 
-        info.Status = SatelliteStatus.Online;
-        info.ConnectionId = connectionId;
-        info.LastSeen = _timeProvider.GetUtcNow();
-        _lastSeenTimestamps[satelliteId] = _timeProvider.GetTimestamp();
-        _logger.LogInformation("Satellite {SatelliteId} connected (connection={ConnectionId})", satelliteId, connectionId);
-    }
-
-    /// <inheritdoc />
-    public void MarkOffline(string satelliteId)
-    {
-        if (!_satellites.TryGetValue(satelliteId, out var info))
-            return;
-
-        info.Status = SatelliteStatus.Offline;
-        info.ConnectionId = null;
-        _logger.LogInformation("Satellite {SatelliteId} disconnected", satelliteId);
-    }
-
-    /// <inheritdoc />
-    public void RecordHeartbeat(string satelliteId)
-    {
-        if (_satellites.TryGetValue(satelliteId, out var info))
+        lock (info)
         {
+            info.Status = SatelliteStatus.Online;
+            info.ConnectionId = connectionId;
             info.LastSeen = _timeProvider.GetUtcNow();
             _lastSeenTimestamps[satelliteId] = _timeProvider.GetTimestamp();
         }
+
+        _logger.LogInformation("Satellite {SatelliteId} connected (connection={ConnectionId})", satelliteId, connectionId);
+        return true;
+    }
+
+    /// <inheritdoc />
+    public bool MarkOffline(string satelliteId, string connectionId)
+    {
+        if (!_satellites.TryGetValue(satelliteId, out var info))
+            return false;
+
+        lock (info)
+        {
+            if (!string.Equals(info.ConnectionId, connectionId, StringComparison.Ordinal))
+                return false;
+
+            info.Status = SatelliteStatus.Offline;
+            info.ConnectionId = null;
+        }
+
+        _logger.LogInformation("Satellite {SatelliteId} disconnected (connection={ConnectionId})", satelliteId, connectionId);
+        return true;
+    }
+
+    /// <inheritdoc />
+    public bool RecordHeartbeat(string satelliteId, string connectionId)
+    {
+        if (!_satellites.TryGetValue(satelliteId, out var info))
+            return false;
+
+        lock (info)
+        {
+            if (info.Status != SatelliteStatus.Online ||
+                !string.Equals(info.ConnectionId, connectionId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            info.LastSeen = _timeProvider.GetUtcNow();
+            _lastSeenTimestamps[satelliteId] = _timeProvider.GetTimestamp();
+        }
+
+        return true;
     }
 
     /// <inheritdoc />
     public IReadOnlyList<SatelliteConnectionInfo> GetStaleSatellites() =>
         _satellites.Values
-            .Where(s => s.Status == SatelliteStatus.Online && IsStale(s))
+            .Select(GetStaleSnapshot)
+            .Where(snapshot => snapshot is not null)
+            .Cast<SatelliteConnectionInfo>()
             .ToList()
             .AsReadOnly();
+
+    private SatelliteConnectionInfo? GetStaleSnapshot(SatelliteConnectionInfo satellite)
+    {
+        lock (satellite)
+        {
+            return satellite.Status == SatelliteStatus.Online && IsStale(satellite)
+                ? satellite with { }
+                : null;
+        }
+    }
 
     /// <summary>
     /// Decides freshness from two readings of the SAME monotonic clock. A satellite with no monotonic

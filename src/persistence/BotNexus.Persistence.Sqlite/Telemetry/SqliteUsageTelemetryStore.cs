@@ -100,7 +100,7 @@ public sealed class SqliteUsageTelemetryStore : IUsageTelemetry, IAsyncDisposabl
             // shipped - but the version is recorded now so the FIRST real schema change has a
             // defined starting point, and so a store written by a future build is refused today
             // rather than silently half-read by this one.
-            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
+            connection.Apply( CurrentSchemaVersion, Migrations);
 
             _initialized = true;
         }

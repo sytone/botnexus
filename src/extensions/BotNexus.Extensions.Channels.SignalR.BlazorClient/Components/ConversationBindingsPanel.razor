@@ -1,0 +1,129 @@
+@inject IGatewayRestClient Rest
+
+<section class="conversation-bindings" aria-labelledby="conversation-bindings-title">
+    <div class="binding-heading">
+        <div><h4 id="conversation-bindings-title">Channel bindings</h4><p>Route a channel address to this conversation.</p></div>
+        <button type="button" class="binding-button" data-testid="binding-add-open" @onclick="OpenAdd">Add binding</button>
+    </div>
+    @if (_loading) { <p class="binding-status">Loading bindings.</p> }
+    else if (_error is not null) { <div class="binding-error" role="alert"><span>@_error</span><button type="button" class="binding-button" data-testid="binding-retry" @onclick="LoadAsync">Retry</button></div> }
+    else if (_bindings.Count == 0) { <p class="binding-status" data-testid="binding-empty">No channel bindings.</p> }
+    else
+    {
+        <div class="binding-list">
+            @foreach (var binding in _bindings)
+            {
+                <div class="binding-card" data-binding-id="@binding.BindingId">
+                    <div class="binding-description"><strong>@binding.ChannelType</strong><code>@binding.ChannelAddress</code><span>@binding.Mode / @binding.ThreadingMode</span></div>
+                    <div class="binding-actions">
+                        @if (MoveTargets.Count > 0) { <button type="button" class="binding-button" data-testid="binding-move-@binding.BindingId" @onclick="() => OpenMove(binding.BindingId)">Move</button> }
+                        <button type="button" class="binding-button danger" data-testid="binding-remove-@binding.BindingId" @onclick="() => OpenRemove(binding.BindingId)">Remove</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+    @if (_adding)
+    {
+        <div class="binding-editor">
+            <label>Channel type <input data-testid="binding-channel-type" @bind="_channelType" /></label>
+            <label>Channel address <input data-testid="binding-channel-address" @bind="_channelAddress" /></label>
+            <div class="binding-actions"><button type="button" class="binding-button primary" data-testid="binding-add-save" disabled="@_busy" @onclick="AddAsync">Add</button><button type="button" class="binding-button" @onclick="CancelDialogs">Cancel</button></div>
+        </div>
+    }
+    @if (_removeBindingId is not null)
+    {
+        <div class="binding-confirm"><span>Remove this binding?</span><button type="button" class="binding-button danger" data-testid="binding-remove-confirm" disabled="@_busy" @onclick="RemoveAsync">Remove</button><button type="button" class="binding-button" @onclick="CancelDialogs">Cancel</button></div>
+    }
+    @if (_moveBindingId is not null)
+    {
+        <div class="binding-editor">
+            <label>Move to conversation<select data-testid="binding-move-target" @bind="_moveTargetId"><option value="">Select a conversation</option>@foreach (var target in MoveTargets){<option value="@target.ConversationId">@target.Title</option>}</select></label>
+            <div class="binding-actions"><button type="button" class="binding-button primary" data-testid="binding-move-confirm" disabled="@(_busy || string.IsNullOrWhiteSpace(_moveTargetId))" @onclick="MoveAsync">Move</button><button type="button" class="binding-button" @onclick="CancelDialogs">Cancel</button></div>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public string ConversationId { get; set; } = string.Empty;
+    [Parameter] public IReadOnlyList<ConversationBindingTargetDto> MoveTargets { get; set; } = [];
+    private IReadOnlyList<ConversationBindingDto> _bindings = [];
+    private bool _loading = true;
+    private bool _busy;
+    private bool _adding;
+    private string? _error;
+    private string _channelType = string.Empty;
+    private string _channelAddress = string.Empty;
+    private string? _removeBindingId;
+    private string? _moveBindingId;
+    private string _moveTargetId = string.Empty;
+    private string? _loadedConversationId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.Equals(_loadedConversationId, ConversationId, StringComparison.Ordinal))
+        {
+            _loadedConversationId = ConversationId;
+            await LoadAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            var conversation = await Rest.GetConversationAsync(ConversationId);
+            _bindings = conversation?.Bindings ?? [];
+            if (conversation is null) _error = "Conversation was not found.";
+        }
+        catch (Exception ex) { _bindings = []; _error = ex.Message; }
+        finally { _loading = false; }
+    }
+
+    private void OpenAdd() { CancelDialogs(); _adding = true; }
+    private void OpenRemove(string bindingId) { CancelDialogs(); _removeBindingId = bindingId; }
+    private void OpenMove(string bindingId) { CancelDialogs(); _moveBindingId = bindingId; }
+    private void CancelDialogs() { _adding = false; _removeBindingId = null; _moveBindingId = null; _moveTargetId = string.Empty; }
+
+    private async Task AddAsync()
+    {
+        var channelType = _channelType.Trim();
+        var channelAddress = _channelAddress.Trim();
+        if (channelType.Length == 0 || channelAddress.Length == 0) { _error = "Channel type and address are required."; return; }
+        await MutateAsync(async () =>
+        {
+            await Rest.AddConversationBindingAsync(ConversationId, new AddConversationBindingRequestDto(channelType, channelAddress));
+            _channelType = string.Empty;
+            _channelAddress = string.Empty;
+        });
+    }
+
+    private async Task RemoveAsync()
+    {
+        var bindingId = _removeBindingId;
+        if (bindingId is null) return;
+        await MutateAsync(async () =>
+        {
+            if (!await Rest.RemoveConversationBindingAsync(ConversationId, bindingId)) throw new HttpRequestException("The binding could not be removed.");
+        });
+    }
+
+    private async Task MoveAsync()
+    {
+        var bindingId = _moveBindingId;
+        var targetId = _moveTargetId;
+        if (bindingId is null || string.IsNullOrWhiteSpace(targetId)) return;
+        await MutateAsync(async () => await Rest.MoveConversationBindingAsync(ConversationId, bindingId, new MoveConversationBindingRequestDto(targetId)));
+    }
+
+    private async Task MutateAsync(Func<Task> mutation)
+    {
+        _busy = true;
+        _error = null;
+        try { await mutation(); CancelDialogs(); await LoadAsync(); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

@@ -88,20 +88,20 @@ public sealed class WorkspaceContextBuilderConversationScopeTests
     }
 
     [Fact]
-    public async Task BuildSystemPromptAsync_WhenScopeIsShared_ExcludesPrivateFilesNamedExplicitlyInSystemPromptFiles()
+    public async Task BuildSystemPromptAsync_WhenScopeIsShared_ExcludesStandardPrivateInstructionFiles()
     {
         var workspacePath = CreateFullWorkspace();
         try
         {
             var builder = new WorkspaceContextBuilder(new StubWorkspaceManager(workspacePath), _fileSystem);
-            var descriptor = CreateDescriptor() with { SystemPromptFiles = ["AGENTS.md", "USER.md", "MEMORY.md"] };
+            var descriptor = CreateDescriptor();
 
             (await builder.BuildSystemPromptAsync(descriptor, null, null, ConversationScope.Private))
                 .ShouldContain(MemorySentinel);
 
             var sharedPrompt = await builder.BuildSystemPromptAsync(descriptor, null, null, ConversationScope.Shared);
 
-            // An explicit systemPromptFiles entry is an operator request, but it cannot authorise
+            // An explicit custom prompt-file selection entry is an operator request, but it cannot authorise
             // disclosure to third parties — the conversation boundary outranks the config list.
             sharedPrompt.ShouldNotContain(MemorySentinel);
             sharedPrompt.ShouldNotContain(UserSentinel);

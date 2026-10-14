@@ -147,7 +147,32 @@ public static class PlatformConfigLoader
 
         config = MigrateLegacyGatewaySettings(config, root);
         ExtractAgentDefaults(config, root);
+        MarkLegacyPromptFileKeys(config, root);
         return config;
+    }
+
+    private static void MarkLegacyPromptFileKeys(PlatformConfig config, JsonElement root)
+    {
+        if (config.Agents is null
+            || !root.TryGetProperty("agents", out var agents)
+            || agents.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        foreach (var agentProperty in agents.EnumerateObject())
+        {
+            if (!config.Agents.TryGetValue(agentProperty.Name, out var agent)
+                || agent is null
+                || agentProperty.Value.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            agent.LegacyPromptFileKeysPresent =
+                agentProperty.Value.TryGetProperty("systemPromptFile", out _)
+                || agentProperty.Value.TryGetProperty("systemPromptFiles", out _);
+        }
     }
 
     /// <summary>

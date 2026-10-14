@@ -20,6 +20,7 @@
     <Compile Include="WebhookSecretHelper.cs" />
     <Compile Include="SqliteWebhookRegistrationStore.cs" />
     <Compile Include="SqliteWebhookRunStore.cs" />
+    <Compile Include="WebhookSqliteSchema.cs" />
     <Compile Include="WebhookServiceCollectionExtensions.cs" />
     <Compile Include="WebhookCallbackValidator.cs" />
     <Compile Include="WebhookCallbackHttpTransport.cs" />

@@ -113,7 +113,7 @@ public sealed class InMemorySatelliteRegistryClockStepTests
         Assert.Equal(start, registry.GetById("sat1")!.LastSeen);
 
         clock.AdvanceMonotonic(TimeSpan.FromSeconds(30));
-        registry.RecordHeartbeat("sat1");
+        registry.RecordHeartbeat("sat1", "conn-1");
 
         Assert.Equal(start.AddSeconds(30), registry.GetById("sat1")!.LastSeen);
     }

@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;

@@ -44,10 +44,10 @@ public sealed class SqliteBusyTimeoutArchitectureTests : ArchitectureTest
 
     // Post-#1541: the busy_timeout policy is owned by the shared SqliteConnectionFactory, which
     // attaches a StateChange Open-handler that applies `PRAGMA busy_timeout` on every open. A store
-    // satisfies the fence either by the literal inline pragma (legacy shape) OR by routing through
-    // the factory (SqliteConnectionFactory.Create / AttachBusyTimeout).
+    // satisfies the fence either by the literal inline pragma (legacy shape), by routing through
+    // SqliteConnectionFactory.Create, or by attaching the shared policy as a connection extension.
     private static readonly Regex BusyTimeoutPragma =
-        new(@"PRAGMA\s+busy_timeout|SqliteConnectionFactory\.(Create|AttachBusyTimeout)", RegexOptions.IgnoreCase);
+        new(@"PRAGMA\s+busy_timeout|SqliteConnectionFactory\.Create|\.AttachBusyTimeout\(", RegexOptions.IgnoreCase);
 
     // Post-#1436: the seven unblocked stores delegate journal-mode selection to the shared
     // SqliteWalMaintenance helper (WAL on local disk, DELETE on network mounts) instead of an
@@ -206,6 +206,32 @@ public sealed class SqliteBusyTimeoutArchitectureTests : ArchitectureTest
         CapturingBusyTimeoutHandler.IsMatch(preFixHandler).ShouldBeTrue(
             "Vacuity guard: the detector must recognise the pre-#2977 capturing handler shape. " +
             "If this fails, the lifetime fence above is vacuous.");
+    }
+
+    [Fact]
+    public void ProductionSqliteConnections_RouteThroughTheCanonicalFactory()
+    {
+        var violations = Directory
+            .EnumerateFiles(Path.Combine(Repository.Root, "src"), "*.cs", SearchOption.AllDirectories)
+            .Select(path => new
+            {
+                Relative = Path.GetRelativePath(Repository.Root, path).Replace('\\', '/'),
+                Source = File.ReadAllText(path),
+            })
+            .Where(file => !file.Relative.Equals(
+                "src/persistence/BotNexus.Persistence.Sqlite/SqliteConnectionFactory.cs",
+                StringComparison.OrdinalIgnoreCase))
+            .Where(file => Regex.IsMatch(file.Source, @"FOREIGN\s+KEY|REFERENCES\s+[A-Za-z_]", RegexOptions.IgnoreCase))
+            .Where(file => Regex.IsMatch(file.Source, @"new\s+SqliteConnection\s*\(", RegexOptions.IgnoreCase))
+            .Select(file => file.Relative)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        violations.ShouldBeEmpty(
+            "Production stores and writers must route connection opens through " +
+            "SqliteConnectionFactory so per-connection busy-timeout, foreign-key, and store-identity " +
+            "policies cannot be bypassed. This fence covers every production source file that " +
+            "declares a SQLite foreign-key relationship.");
     }
 
     [Fact]

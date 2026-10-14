@@ -10,7 +10,8 @@ namespace BotNexus.Agent.Core.Types;
 /// <param name="Tools">The currently available tools (registered in AgentState.Tools).</param>
 /// <remarks>
 /// AgentContext is a snapshot of the current agent state at a specific point in the loop.
-/// It is immutable and passed to TransformContext, ConvertToLlm, and hook delegates.
+/// Its message list is passed to AgentContextTransformer and ProviderMessageTransformer;
+/// the snapshot is also available to tool execution policy and result transformer delegates.
 /// </remarks>
 public record AgentContext(
     string? SystemPrompt,

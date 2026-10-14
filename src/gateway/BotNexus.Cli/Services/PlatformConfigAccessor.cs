@@ -24,6 +24,16 @@ namespace BotNexus.Cli.Services;
 public interface IPlatformConfigAccessor
 {
     /// <summary>
+    /// Returns the effective configuration rooted at <paramref name="homePath"/>.
+    /// </summary>
+    /// <remarks>
+    /// Home is the configuration identity. Backend filenames remain an implementation detail of
+    /// the central composition layer, so callers cannot accidentally promote a generated
+    /// compatibility projection back into runtime authority.
+    /// </remarks>
+    PlatformConfig GetFromHome(string homePath);
+
+    /// <summary>
     /// Returns the effective configuration for <paramref name="configPath"/>.
     /// </summary>
     /// <remarks>
@@ -75,6 +85,13 @@ public sealed class PlatformConfigAccessor : IPlatformConfigAccessor
     /// read looks fine.
     /// </para>
     /// </remarks>
+    public PlatformConfig GetFromHome(string homePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(homePath);
+
+        return PlatformConfigurationSources.BuildMonitorForHome(homePath).CurrentValue;
+    }
+
     public PlatformConfig Get(string configPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);

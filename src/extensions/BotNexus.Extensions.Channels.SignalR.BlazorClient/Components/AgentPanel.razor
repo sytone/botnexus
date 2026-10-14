@@ -82,30 +82,22 @@
     public string? RoutedConversationId { get; set; }
 
     /// <summary>
-    /// Resolves which conversation the per-conversation panes bind to. #3062 extends this from the
-    /// canvas pane alone to the chat and todo panes, so a deep link can no longer render the routed
-    /// conversation's canvas beside a different conversation's transcript and checklist.
-    ///
-    /// The routed id is honoured ONLY when it belongs to THIS agent. That guard is load-bearing, not
-    /// defensive padding: Home.razor renders one AgentPanel per agent in Store.Agents, while the route
-    /// names a single agent, and CanvasPanel resolves HTML via IClientStateStore.GetConversation which
-    /// searches EVERY agent's conversation map. Passing the routed id down unconditionally would make
-    /// every other agent's panel resolve and render the routed agent's canvas. Ownership is checked
-    /// against this agent's own Conversations map, so a stale or hand-edited URL naming a foreign
-    /// conversation falls back rather than leaking another agent's canvas.
+    /// Resolves which conversation the per-conversation panes bind to. Home canonicalizes
+    /// conversation-less routes before rendering this panel, so the route-owned parameter is the
+    /// only conversation authority here. A routed id is honoured only when it belongs to this agent;
+    /// otherwise no conversation renders rather than silently substituting ambient selected state.
     /// </summary>
     private string? EffectiveConversationId
     {
         get
         {
-            var agent = Agent;
             if (RoutedConversationId is { Length: > 0 } routed &&
-                agent?.Conversations.ContainsKey(routed) == true)
+                Agent?.Conversations.ContainsKey(routed) == true)
             {
                 return routed;
             }
 
-            return agent?.ActiveConversationId;
+            return null;
         }
     }
 

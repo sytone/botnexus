@@ -64,8 +64,6 @@ public sealed class PluginAgentPrivilegeFenceArchitectureTests : ArchitectureTes
         nameof(AgentDescriptor.ContextWindow),
         // Prompt content - text the agent reads, not a grant.
         nameof(AgentDescriptor.SystemPrompt),
-        nameof(AgentDescriptor.SystemPromptFile),
-        nameof(AgentDescriptor.SystemPromptFiles),
         // Tool ids name tools that must already be registered by the host; an unknown id resolves
         // to nothing. Declaring one cannot conjure a capability the host has not installed.
         nameof(AgentDescriptor.ToolIds),

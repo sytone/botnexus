@@ -166,6 +166,19 @@ public sealed class TelegramGatewayOptions
     public bool ShowToolActivity { get; set; } = true;
 
     /// <summary>
+    /// When true (default), user messages persisted from another surface are echoed to the
+    /// applicable Telegram chat. Mirrored into the synthesised default bot.
+    /// </summary>
+    [Display(
+        Name = "Echo foreign user messages",
+        Description = "When on (default), user messages sent from another conversation surface are echoed to Telegram.",
+        GroupName = "Telegram",
+        Order = 10)]
+    [DefaultValue(true)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "telegram", Order = 10)]
+    public bool EchoForeignUserMessages { get; set; } = true;
+
+    /// <summary>
     /// Maximum Rich Message length before payload splitting. Rich Messages allow up to 32768
     /// characters; the default (32000) stays safely below that. Only used when
     /// <see cref="RichMessages"/> is enabled.
@@ -259,6 +272,7 @@ public sealed class TelegramGatewayOptions
             MaxMessageLength = MaxMessageLength,
             RichMessages = RichMessages,
             ShowToolActivity = ShowToolActivity,
+            EchoForeignUserMessages = EchoForeignUserMessages,
             MaxRichMessageLength = MaxRichMessageLength,
             ErrorCooldownMs = ErrorCooldownMs,
             ProcessEditedMessages = ProcessEditedMessages,

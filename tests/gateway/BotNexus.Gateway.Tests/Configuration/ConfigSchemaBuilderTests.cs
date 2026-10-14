@@ -117,6 +117,20 @@ public sealed class ConfigSchemaBuilderTests
     }
 
     [Fact]
+    public void Build_GatewayLargeObjects_HaveDedicatedSubsectionGroups()
+    {
+        var schema = BuildSchema();
+
+        GetPropertyNode(schema, "gateway", "sessionStore")["x-ui-group"]!.GetValue<string>()
+            .ShouldBe("session-store");
+
+        // GetPropertyNode intentionally descends through dictionary additionalProperties, but the
+        // subsection metadata belongs to the dictionary property itself rather than its value type.
+        var gatewayProperties = schema["schema"]!["properties"]!["gateway"]!["properties"]!.AsObject();
+        gatewayProperties["locations"]!["x-ui-group"]!.GetValue<string>().ShouldBe("locations");
+    }
+
+    [Fact]
     public void Build_DeeplyNestedObject_Recurses()
     {
         var schema = BuildSchema();

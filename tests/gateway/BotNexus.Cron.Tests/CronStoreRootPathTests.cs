@@ -28,10 +28,9 @@ namespace BotNexus.Cron.Tests;
 /// it would still catch the defect if the resolution strategy were replaced entirely, and it
 /// cannot pass by agreeing with the implementation about where the file "should" be.
 /// </remarks>
+[Collection(BotNexusHomeCollection.Name)]
 public sealed class CronStoreRootPathTests
 {
-    private static readonly SemaphoreSlim EnvLock = new(1, 1);
-
     /// <summary>
     /// Best-effort recursive delete. SQLite may still hold the file briefly after the provider is
     /// disposed, and a cleanup IOException must never be reported as an assertion failure -- that
@@ -140,7 +139,6 @@ public sealed class CronStoreRootPathTests
         var isolatedHome = Path.Combine(Path.GetTempPath(), "botnexus-2819-env-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(isolatedHome);
 
-        await EnvLock.WaitAsync();
         var before = Environment.GetEnvironmentVariable(BotNexusHome.HomeOverrideEnvVar);
 
         try
@@ -156,7 +154,6 @@ public sealed class CronStoreRootPathTests
         finally
         {
             Environment.SetEnvironmentVariable(BotNexusHome.HomeOverrideEnvVar, before);
-            EnvLock.Release();
             TryDelete(isolatedHome);
         }
     }

@@ -67,9 +67,7 @@ public sealed class DisplayedConversationPredicateTests
         // rendered exactly one.
         var store = CreateStore();
         store.SelectView("a-1", "c-1", SelectionSource.RouteNavigation);
-        store.GetAgent("a-2")!.ActiveConversationId = "c-9";
-
-        Assert.Equal("c-9", store.GetAgent("a-2")!.ActiveConversationId);
+        Assert.Null(store.DisplayedConversationIdFor("a-2"));
         Assert.False(store.IsConversationDisplayed("a-2", "c-9"));
     }
 
@@ -106,7 +104,7 @@ public sealed class DisplayedConversationPredicateTests
         store.SelectView("a-1", "c-1", SelectionSource.RouteNavigation);
         store.GetAgent("a-1")!.Conversations["c-2"].UnreadCount = 4;
 
-        store.SetActiveConversation("a-1", "c-2");
+        store.SelectView("a-1", "c-2", SelectionSource.RouteNavigation);
 
         // a-1 is the displayed agent, so moving it to c-2 makes c-2 displayed and read.
         Assert.True(store.IsConversationDisplayed("a-1", "c-2"));
@@ -123,7 +121,8 @@ public sealed class DisplayedConversationPredicateTests
         store.SelectView("a-1", "c-1", SelectionSource.RouteNavigation);
         store.GetAgent("a-2")!.Conversations["c-9"].UnreadCount = 4;
 
-        store.SetActiveConversation("a-2", "c-9");
+        // A background-agent data update is not a route selection. The displayed route remains a-1.
+        store.NotifyChanged();
 
         Assert.False(store.IsConversationDisplayed("a-2", "c-9"));
         Assert.Equal(4, store.GetConversation("c-9")!.UnreadCount);

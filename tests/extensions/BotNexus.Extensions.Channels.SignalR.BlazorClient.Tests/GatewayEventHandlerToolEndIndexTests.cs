@@ -24,7 +24,6 @@ public sealed class GatewayEventHandlerToolEndIndexTests
             DisplayName = "Agent 1",
             IsConnected = true,
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         });
 
         var agent = _store.GetAgent("agent-1")!;

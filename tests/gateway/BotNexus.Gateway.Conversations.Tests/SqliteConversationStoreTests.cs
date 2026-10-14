@@ -177,6 +177,28 @@ public sealed class SqliteConversationStoreTests
     }
 
     [Fact]
+    public async Task TryArchiveAsync_ConcurrentCallers_CommitOneTransitionAndOneAudit()
+    {
+        using var fixture = new StoreFixture();
+        var firstStore = fixture.CreateStore();
+        var secondStore = fixture.CreateStore();
+        var conversation = await firstStore.CreateAsync(CreateConversation(Agent("agent-a"), "Concurrent retention"));
+
+        var results = await Task.WhenAll(
+            firstStore.TryArchiveAsync(conversation.ConversationId, "retention", "core", "system"),
+            secondStore.TryArchiveAsync(conversation.ConversationId, "webhook-retention", "webhook", "system"));
+
+        results.Count(result => result).ShouldBe(1);
+        using var audit = new SqliteConversationAuditLog(fixture.ConnectionString);
+        (await audit.GetAsync(conversation.ConversationId.Value)).Count.ShouldBe(1);
+
+        var archived = await fixture.CreateStore().GetAsync(conversation.ConversationId);
+        archived.ShouldNotBeNull();
+        archived.Status.ShouldBe(ConversationStatus.Archived);
+        archived.Version.ShouldBe(conversation.Version + 1);
+    }
+
+    [Fact]
     public async Task ArchiveAsync_ClearsActiveSessionId()
     {
         using var fixture = new StoreFixture();

@@ -192,7 +192,7 @@ public sealed class MobileConversationPickerGroupingTests : IDisposable
         Add(agent, Conv("normal", kind: kind, source: source));
         BuildStore([agent], "quill");
 
-        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "quill"));
+        var cut = _ctx.Render<Chat>(p => p.Add(c => c.AgentId, "quill").Add(c => c.ConversationId, "normal"));
 
         Assert.Equal(expectedComposer, cut.FindAll(".bottom-bar").Count == 1);
     }
@@ -253,7 +253,6 @@ public sealed class MobileConversationPickerGroupingTests : IDisposable
         DisplayName = "Quill",
         IsConnected = true,
         IsObserverAgent = isObserverAgent,
-        ActiveConversationId = "normal"
     };
 
     private static void Add(AgentState agent, ConversationState conv)
@@ -304,6 +303,10 @@ public sealed class MobileConversationPickerGroupingTests : IDisposable
         store.GetMessages(Arg.Any<string>()).Returns(new List<ChatMessage>());
 
         _ctx.Services.AddSingleton(store);
+        var displayedConversation = Substitute.For<IDisplayedConversation>();
+        displayedConversation.DisplayedConversationIdFor(Arg.Any<string?>())
+            .Returns(call => call.Arg<string?>() is { } agentId ? (store as IDisplayedConversation)?.DisplayedConversationIdFor(agentId) : null);
+        _ctx.Services.AddSingleton(displayedConversation);
         _ctx.Services.AddSingleton(portalLoad);
         _ctx.Services.AddSingleton(new BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Services.MobileHubTuningOptions());
         _ctx.Services.AddSingleton(interaction);

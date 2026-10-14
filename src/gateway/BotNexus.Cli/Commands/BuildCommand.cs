@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Configuration;
 using System.CommandLine;
 using Spectre.Console;
 
@@ -5,7 +6,7 @@ namespace BotNexus.Cli.Commands;
 
 internal sealed class BuildCommand
 {
-    public Command Build(Option<bool> verboseOption)
+    public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
     {
         var pathOption = new Option<string?>(
             "--path",
@@ -28,7 +29,14 @@ internal sealed class BuildCommand
             var dev = context.ParseResult.GetValueForOption(devOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
             var repoRoot = ResolveRepoRoot(path, dev);
-            context.ExitCode = await BuildSolutionAsync(repoRoot, verbose, context.GetCancellationToken());
+            var exitCode = await BuildSolutionAsync(repoRoot, verbose, context.GetCancellationToken());
+            if (exitCode == 0)
+            {
+                var home = CliPaths.ResolveTarget(context.ParseResult.GetValueForOption(targetOption));
+                var result = await ExtensionLifecycleReconciler.CreateDefault(home, repoRoot, verbose).ReconcileAsync(cancellationToken: context.GetCancellationToken(), purpose: ExtensionLifecyclePurpose.RepositoryMaintenance);
+                ExtensionRepositoryCommand.Report(result, "build");
+            }
+            context.ExitCode = exitCode;
         });
 
         return command;

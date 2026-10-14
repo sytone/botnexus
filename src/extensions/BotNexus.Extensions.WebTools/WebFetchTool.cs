@@ -282,7 +282,7 @@ public sealed class WebFetchTool : IAgentTool, IDisposable
 
         try
         {
-            var response = await SendWithRedirectsAsync(url, cancellationToken).ConfigureAwait(false);
+            using var response = await SendWithRedirectsAsync(url, cancellationToken).ConfigureAwait(false);
             var finalUrl = response.RequestMessage?.RequestUri?.ToString() ?? url;
             var statusCode = (int)response.StatusCode;
             var contentType = response.Content.Headers.ContentType?.ToString();

@@ -81,7 +81,7 @@ public sealed class InboundDeliveryIntentParityTests : IDisposable
                 ConversationId, AgentId, "Test", false, "Active", "session-1", 0,
                 DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         ]);
-        store.SetActiveConversation(AgentId, ConversationId);
+        store.SelectView(AgentId, ConversationId, SelectionSource.RouteNavigation);
     }
 
 }

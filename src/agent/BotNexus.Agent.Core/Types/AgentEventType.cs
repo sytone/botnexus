@@ -56,6 +56,11 @@ public enum AgentEventType
     ToolExecutionEnd,
 
     /// <summary>
+    /// Signals a bounded provider retry, shared-circuit, admission, probe, or recovery transition.
+    /// </summary>
+    ProviderRecovery,
+
+    /// <summary>
     /// Signals that the post-turn claim auditor detected one or more artifact-shaped
     /// claims in the agent's final message that lack a backing tool call (#1600).
     /// </summary>

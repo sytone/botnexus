@@ -5,9 +5,10 @@
 **/obj
 **/node_modules
 tests/
-docs/
+# The desktop portal publishes docs/skills.md as static guide content; keep docs in the context.
 examples/
-tools/
+# tools/BotNexus.SourceGenerators is part of the production project graph and must remain in
+# container build contexts. Ignore only generated outputs through the bin/obj rules above.
 scripts/
 agents/
 .ai-team/

@@ -16,7 +16,7 @@ public sealed class WorkspaceContextBuilderTests
     private readonly MockFileSystem _fileSystem = new();
 
     [Fact]
-    public async Task BuildSystemPromptAsync_WithExplicitPromptFiles_LoadsInOrderAndDeletesBootstrap()
+    public async Task BuildSystemPromptAsync_StandardPromptFiles_LoadInOrderAndDeleteBootstrap()
     {
         var workspacePath = CreateWorkspace(
             ("AGENTS.md", "AGENTS"),
@@ -34,13 +34,12 @@ public sealed class WorkspaceContextBuilderTests
                 DisplayName = "Farnsworth",
                 ModelId = "test-model",
                 ApiProvider = "test-provider",
-                SystemPromptFiles = ["AGENTS.md", "BOOTSTRAP.md", "TOOLS.md"]
             });
 
             result.ShouldContain("AGENTS");
             result.ShouldContain("BOOTSTRAP");
             result.ShouldContain("TOOLS");
-            result.ShouldNotContain("SOUL");
+            result.ShouldContain("SOUL");
             _fileSystem.File.Exists(Path.Combine(workspacePath, "BOOTSTRAP.md")).ShouldBeFalse();
         }
         finally
@@ -50,12 +49,11 @@ public sealed class WorkspaceContextBuilderTests
     }
 
     [Fact]
-    public async Task BuildSystemPromptAsync_WithDeniedPromptPaths_ExcludesExactAndDirectoryMatches()
+    public async Task BuildSystemPromptAsync_WithDeniedStandardPromptPath_ExcludesExactMatchAndKeepsNeighbor()
     {
         var workspacePath = CreateWorkspace(
-            ("allowed/AGENTS.md", "ALLOWED NEIGHBOR SENTINEL"),
-            ("protected/exact.secret", "EXACT DENIED SENTINEL"),
-            ("protected/nested/directory.secret", "DIRECTORY DENIED SENTINEL"));
+            ("AGENTS.md", "ALLOWED NEIGHBOR SENTINEL"),
+            ("SOUL.md", "EXACT DENIED SENTINEL"));
         try
         {
             var descriptor = new AgentDescriptor
@@ -64,19 +62,9 @@ public sealed class WorkspaceContextBuilderTests
                 DisplayName = "Policy Test",
                 ModelId = "test-model",
                 ApiProvider = "test-provider",
-                SystemPromptFiles =
-                [
-                    "allowed/AGENTS.md",
-                    "protected/exact.secret",
-                    "protected/nested/directory.secret"
-                ],
                 FileAccess = new FileAccessPolicy
                 {
-                    DeniedPaths =
-                    [
-                        Path.Combine(workspacePath, "protected", "exact.secret"),
-                        Path.Combine(workspacePath, "protected", "nested")
-                    ]
+                    DeniedPaths = [Path.Combine(workspacePath, "SOUL.md")]
                 }
             };
 
@@ -85,7 +73,6 @@ public sealed class WorkspaceContextBuilderTests
 
             result.ShouldContain("ALLOWED NEIGHBOR SENTINEL");
             result.ShouldNotContain("EXACT DENIED SENTINEL");
-            result.ShouldNotContain("DIRECTORY DENIED SENTINEL");
         }
         finally
         {
@@ -108,7 +95,6 @@ public sealed class WorkspaceContextBuilderTests
                 DisplayName = "Variant Policy Test",
                 ModelId = "gpt-5",
                 ApiProvider = "test-provider",
-                SystemPromptFiles = ["AGENTS.md", "SOUL.md"],
                 FileAccess = new FileAccessPolicy
                 {
                     DeniedPaths = [Path.Combine(workspacePath, "AGENTS.gpt-5.md")]
@@ -131,8 +117,8 @@ public sealed class WorkspaceContextBuilderTests
     [Fact]
     public async Task BuildSystemPromptAsync_WhenResolvedBootstrapVariantIsDenied_DoesNotReadOrDeleteIt()
     {
-        var workspacePath = CreateWorkspace(("nested/BOOTSTRAP.gpt-5.md", "DENIED BOOTSTRAP SENTINEL"));
-        var bootstrapPath = Path.Combine(workspacePath, "nested", "BOOTSTRAP.gpt-5.md");
+        var workspacePath = CreateWorkspace(("BOOTSTRAP.gpt-5.md", "DENIED BOOTSTRAP SENTINEL"));
+        var bootstrapPath = Path.Combine(workspacePath, "BOOTSTRAP.gpt-5.md");
         try
         {
             var descriptor = new AgentDescriptor
@@ -141,7 +127,6 @@ public sealed class WorkspaceContextBuilderTests
                 DisplayName = "Bootstrap Policy Test",
                 ModelId = "gpt-5",
                 ApiProvider = "test-provider",
-                SystemPromptFiles = ["nested/BOOTSTRAP.md"],
                 FileAccess = new FileAccessPolicy
                 {
                     DeniedPaths = [bootstrapPath]
@@ -322,7 +307,7 @@ public sealed class WorkspaceContextBuilderTests
     }
 
     [Fact]
-    public async Task BuildSystemPromptAsync_WithExplicitPromptFiles_StillIncludesRecentDailyMemoryFiles()
+    public async Task BuildSystemPromptAsync_DefaultPrompt_IncludesRecentDailyMemoryFiles()
     {
         var today = DateTime.Now.Date;
         var workspacePath = CreateWorkspace(
@@ -341,7 +326,6 @@ public sealed class WorkspaceContextBuilderTests
                 DisplayName = "Farnsworth",
                 ModelId = "test-model",
                 ApiProvider = "test-provider",
-                SystemPromptFiles = ["AGENTS.md", "SOUL.md"]
             });
 
             result.ShouldContain("AGENTS");
@@ -355,7 +339,7 @@ public sealed class WorkspaceContextBuilderTests
     }
 
     [Fact]
-    public async Task BuildSystemPromptAsync_WithExplicitPromptFilesAndMemoryFactory_StillIncludesDailyNotes()
+    public async Task BuildSystemPromptAsync_DefaultPromptWithMemoryFactory_IncludesDailyNotes()
     {
         var workspacePath = CreateWorkspace(("AGENTS.md", "AGENTS"));
         try
@@ -380,7 +364,6 @@ public sealed class WorkspaceContextBuilderTests
                 DisplayName = "Farnsworth",
                 ModelId = "test-model",
                 ApiProvider = "test-provider",
-                SystemPromptFiles = ["AGENTS.md"]
             });
 
             result.ShouldContain("AGENTS");
@@ -393,11 +376,10 @@ public sealed class WorkspaceContextBuilderTests
     }
 
     [Fact]
-    public async Task BuildSystemPromptAsync_WhenDailyNoteAlsoListedInPromptFiles_EmitsItOnce()
+    public async Task BuildSystemPromptAsync_DailyMemoryPass_EmitsEachNoteOnce()
     {
         var today = DateTime.Now.Date;
         var yesterday = today.AddDays(-1);
-        var todayRelativePath = $"memory/{today:yyyy-MM-dd}.md";
         var workspacePath = CreateWorkspace(
             ("AGENTS.md", "AGENTS"),
             (Path.Combine("memory", $"{today:yyyy-MM-dd}.md"), "TODAY MEMORY ENTRY"),
@@ -413,13 +395,9 @@ public sealed class WorkspaceContextBuilderTests
                 DisplayName = "Farnsworth",
                 ModelId = "test-model",
                 ApiProvider = "test-provider",
-                SystemPromptFiles = ["AGENTS.md", todayRelativePath]
             });
 
-            // Yesterday's note is not in the prompt-file list, so it can only arrive via the daily
-            // memory pass. Asserting it is present proves that pass actually ran, which makes the
-            // count-of-one below a real dedupe assertion rather than a side-effect of the pass
-            // being skipped (as it was before the systemPromptFiles gate was removed).
+            // Both notes arrive through the automatic daily-memory pass; each must appear once.
             result.ShouldContain("YESTERDAY MEMORY ENTRY");
             CountOccurrences(result, "TODAY MEMORY ENTRY").ShouldBe(1);
         }
@@ -430,74 +408,7 @@ public sealed class WorkspaceContextBuilderTests
     }
 
     [Fact]
-    public async Task BuildSystemPromptAsync_WhenDailyNoteListedWithDotSlashPrefix_EmitsItOnce()
-    {
-        // #2940: "./memory/{today}.md" denotes the same file as "memory/{today}.md", so the
-        // de-dupe in AddContextFilesWithoutDuplicates must treat them as one identity.
-        var today = DateTime.Now.Date;
-        var yesterday = today.AddDays(-1);
-        var todayRelativePath = $"./memory/{today:yyyy-MM-dd}.md";
-        var workspacePath = CreateWorkspace(
-            ("AGENTS.md", "AGENTS"),
-            (Path.Combine("memory", $"{today:yyyy-MM-dd}.md"), "TODAY MEMORY ENTRY"),
-            (Path.Combine("memory", $"{yesterday:yyyy-MM-dd}.md"), "YESTERDAY MEMORY ENTRY"));
-        try
-        {
-            var manager = new StubWorkspaceManager(workspacePath);
-            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
-
-            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
-            {
-                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
-                DisplayName = "Farnsworth",
-                ModelId = "test-model",
-                ApiProvider = "test-provider",
-                SystemPromptFiles = ["AGENTS.md", todayRelativePath]
-            });
-
-            // Yesterday's note is absent from the prompt-file list, so its presence proves the
-            // daily-memory pass actually ran and the count-of-one below is a real dedupe assertion.
-            result.ShouldContain("YESTERDAY MEMORY ENTRY");
-            CountOccurrences(result, "TODAY MEMORY ENTRY").ShouldBe(1);
-        }
-        finally
-        {
-            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task BuildSystemPromptAsync_WithSingularPromptFile_StillIncludesRecentDailyMemoryFiles()
-    {
-        var today = DateTime.Now.Date;
-        var workspacePath = CreateWorkspace(
-            ("AGENTS.md", "AGENTS"),
-            (Path.Combine("memory", $"{today:yyyy-MM-dd}.md"), "TODAY MEMORY ENTRY"));
-        try
-        {
-            var manager = new StubWorkspaceManager(workspacePath);
-            var builder = new WorkspaceContextBuilder(manager, _fileSystem);
-
-            var result = await builder.BuildSystemPromptAsync(new AgentDescriptor
-            {
-                AgentId = BotNexus.Domain.Primitives.AgentId.From("farnsworth"),
-                DisplayName = "Farnsworth",
-                ModelId = "test-model",
-                ApiProvider = "test-provider",
-                SystemPromptFile = "AGENTS.md"
-            });
-
-            result.ShouldContain("AGENTS");
-            result.ShouldContain("TODAY MEMORY ENTRY");
-        }
-        finally
-        {
-            _fileSystem.Directory.Delete(Path.GetDirectoryName(workspacePath)!, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task BuildSystemPromptAsync_WithExplicitPromptFilesAndPromptInjectionNone_SkipsRecentDailyMemoryFiles()
+    public async Task BuildSystemPromptAsync_WithPromptInjectionNone_SkipsRecentDailyMemoryFiles()
     {
         var today = DateTime.Now.Date;
         var workspacePath = CreateWorkspace(
@@ -509,7 +420,7 @@ public sealed class WorkspaceContextBuilderTests
             var builder = new WorkspaceContextBuilder(manager, _fileSystem);
             var memoryConfig = new MemoryAgentConfig { Enabled = true };
 
-            // Positive control: the same workspace and prompt-file list DO surface the daily note
+            // Positive control: the same workspace does surface the daily note
             // when injection is left at its default, so the negative assertion below is meaningful.
             var descriptor = new AgentDescriptor
             {
@@ -517,7 +428,6 @@ public sealed class WorkspaceContextBuilderTests
                 DisplayName = "Farnsworth",
                 ModelId = "test-model",
                 ApiProvider = "test-provider",
-                SystemPromptFiles = ["AGENTS.md"],
                 Memory = memoryConfig
             };
             (await builder.BuildSystemPromptAsync(descriptor)).ShouldContain("TODAY MEMORY ENTRY");
@@ -535,7 +445,7 @@ public sealed class WorkspaceContextBuilderTests
     }
 
     [Fact]
-    public async Task BuildSystemPromptAsync_WithPromptInjectionNoneAndExplicitlyListedDailyNote_StillLoadsIt()
+    public async Task BuildSystemPromptAsync_WithPromptInjectionNone_DoesNotLoadDailyNotes()
     {
         var today = DateTime.Now.Date;
         var yesterday = today.AddDays(-1);
@@ -556,14 +466,11 @@ public sealed class WorkspaceContextBuilderTests
                 DisplayName = "Farnsworth",
                 ModelId = "test-model",
                 ApiProvider = "test-provider",
-                SystemPromptFiles = ["AGENTS.md", $"memory/{today:yyyy-MM-dd}.md"],
                 Memory = memoryConfig
             });
 
-            // `none` suppresses the automatic daily-memory pass, not an explicit request: a file the
-            // operator named in systemPromptFiles is still loaded by the prompt-file pass. Yesterday's
-            // note is not listed, so its absence shows the automatic pass really was suppressed.
-            result.ShouldContain("TODAY MEMORY ENTRY");
+            // With custom prompt-file selection retired, `none` suppresses all automatic daily-note injection.
+            result.ShouldNotContain("TODAY MEMORY ENTRY");
             result.ShouldNotContain("YESTERDAY MEMORY ENTRY");
         }
         finally

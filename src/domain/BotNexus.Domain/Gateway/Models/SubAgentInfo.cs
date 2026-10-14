@@ -12,6 +12,9 @@ public sealed record SubAgentInfo
     /// </summary>
     public required string SubAgentId { get; init; }
 
+    /// <summary>Original parent spawn call, retained for same-call retries.</summary>
+    public string? SpawningToolCallId { get; init; }
+
     /// <summary>
     /// Gets the parent session identifier that owns this sub-agent.
     /// </summary>
@@ -45,6 +48,9 @@ public sealed record SubAgentInfo
     /// minimal hosts), in which case there is nothing to mint against.
     /// </summary>
     public ConversationId? ChildConversationId { get; init; }
+
+    /// <summary>Gets the supervisor conversation that owns this run.</summary>
+    public ConversationId? ParentConversationId { get; init; }
 
     /// <summary>
     /// Gets the delegated task assigned to the sub-agent.
@@ -81,10 +87,22 @@ public sealed record SubAgentInfo
     /// </summary>
     public int TurnsUsed { get; init; }
 
+    /// <summary>Gets the effective turn ceiling enforced for this run, or null when unknown.</summary>
+    public int? EffectiveMaxTurns { get; init; }
+
+    /// <summary>Gets the effective wall-clock budget in seconds, or null when unknown.</summary>
+    public int? EffectiveTimeoutSeconds { get; init; }
+
     /// <summary>
     /// Gets an optional completion summary produced by the sub-agent.
     /// </summary>
     public string? ResultSummary { get; init; }
+
+    /// <summary>
+    /// Gets the structured result retained when a bounded run stops before ordinary completion.
+    /// Narrated summary text is explicitly unverified; tool-backed evidence is projected separately.
+    /// </summary>
+    public SubAgentPartialResult? PartialResult { get; init; }
 
     /// <summary>
     /// Gets the budget reduction applied to this spawn, or <c>null</c> when the request fitted
@@ -107,26 +125,77 @@ public sealed record SubAgentInfo
     public SubAgentWorktreeSnapshot? WorktreeSnapshot { get; init; }
 
     /// <summary>
-    /// Gets whether the completion follow-up actually reached the parent session (#3703).
-    /// <para>
-    /// <b>Why this is separate from <see cref="Status"/>.</b> A run can finish its work perfectly
-    /// and still strand its supervisor: the terminal status describes what the CHILD did, while
-    /// this describes whether the parent was ever told. Before this field existed a dispatch that
-    /// threw was caught, counted and logged, and the record still read <c>Completed</c> - the
-    /// parent waited forever for a push-based announcement that had already been dropped, and no
-    /// operator could tell the two apart without reading gateway logs. Modelled on the hardened
-    /// cron sibling, <c>CronRunStatus.DeliveryFailed</c>.
-    /// </para>
+    /// Gets the historical completion announcement disposition (#3703).
+    /// Current tool-owned results do not send announcements and leave this field Pending;
+    /// Pending is not evidence that a terminal result is unready or unconsumed. The session
+    /// store's tool-call receipt, not this compatibility field, owns result consumption.
     /// </summary>
     public SubAgentCompletionDelivery CompletionDelivery { get; init; } = SubAgentCompletionDelivery.Pending;
 
     /// <summary>
     /// Gets the failure detail when <see cref="CompletionDelivery"/> is
     /// <see cref="SubAgentCompletionDelivery.Failed"/>; otherwise <c>null</c>. Carries the
-    /// dispatch exception's message so the surfaced state answers "why did it not arrive?"
-    /// rather than only "it did not arrive".
+    /// historical dispatch exception's message. Current tool-owned results do not update it.
     /// </summary>
     public string? CompletionDeliveryError { get; init; }
+}
+
+/// <summary>Structured disposition of a bounded sub-agent result.</summary>
+public enum SubAgentCompletion
+{
+    Complete,
+    Partial,
+    Parked,
+    Failed,
+    Cancelled
+}
+
+/// <summary>Authoritative reason a bounded run stopped.</summary>
+public enum SubAgentStopReason
+{
+    TurnLimit,
+    Timeout,
+    TokenLimit,
+    NoProgress,
+    CallerCancelled
+}
+
+/// <summary>A tool action retained from the interrupted run's authoritative timeline.</summary>
+public sealed record SubAgentPartialAction(
+    string ToolCallId,
+    string ToolName,
+    bool Completed,
+    bool Succeeded);
+
+/// <summary>Successful tool evidence retained separately from unverified child narration.</summary>
+public sealed record SubAgentVerifiedEvidence(
+    string ToolCallId,
+    string ToolName,
+    string? Result);
+
+/// <summary>
+/// Machine-readable result retained when a bounded run is interrupted. Unknown usage remains
+/// <c>null</c>; a missing measurement is never serialized as measured zero.
+/// </summary>
+public sealed record SubAgentPartialResult
+{
+    public required SubAgentCompletion Completion { get; init; }
+    public required SubAgentStopReason StopReason { get; init; }
+    public string? Summary { get; init; }
+    public bool SummaryIsVerified { get; init; }
+    public IReadOnlyList<SubAgentVerifiedEvidence> VerifiedEvidence { get; init; } = [];
+    /// <summary>
+    /// Verified tool names recovered from bounded retained history. These preserve the recorded
+    /// classification only; original call IDs and raw results are unavailable, not reconstructed.
+    /// </summary>
+    public IReadOnlyList<string> RetainedVerifiedTools { get; init; } = [];
+    public IReadOnlyList<string> UnresolvedWork { get; init; } = [];
+    public IReadOnlyList<SubAgentPartialAction> ActionsTaken { get; init; } = [];
+    public IReadOnlyList<string> SideEffects { get; init; } = [];
+    public int TurnsUsed { get; init; }
+    public AgentResponseUsage? Usage { get; init; }
+    public SessionId? CheckpointSessionId { get; init; }
+    public ConversationId? CheckpointConversationId { get; init; }
 }
 
 /// <summary>

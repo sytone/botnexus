@@ -11,10 +11,19 @@ namespace BotNexus.Cli.Commands;
 internal sealed class GatewayCommand
 {
     private readonly IGatewayProcessManager _processManager;
+    private readonly Func<IOsServiceManager?> _serviceManagerFactory;
 
     public GatewayCommand(IGatewayProcessManager processManager)
+        : this(processManager, OsServiceManagerFactory.Create)
+    {
+    }
+
+    internal GatewayCommand(
+        IGatewayProcessManager processManager,
+        Func<IOsServiceManager?> serviceManagerFactory)
     {
         _processManager = processManager;
+        _serviceManagerFactory = serviceManagerFactory;
     }
 
     public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
@@ -112,11 +121,18 @@ internal sealed class GatewayCommand
             context.ExitCode = await InstallServiceAsync(repoRoot, home, port, verbose, context.GetCancellationToken());
         });
 
-        var uninstallCommand = new Command("uninstall", "Stop and remove the gateway OS service");
+        var uninstallCommand = new Command("uninstall", "Stop and remove the gateway OS service")
+        {
+            sourceOption
+        };
         uninstallCommand.SetHandler(async context =>
         {
+            var source = context.ParseResult.GetValueForOption(sourceOption);
+            var target = context.ParseResult.GetValueForOption(targetOption);
             var verbose = context.ParseResult.GetValueForOption(verboseOption);
-            context.ExitCode = await UninstallServiceAsync(verbose, context.GetCancellationToken());
+            var repoRoot = CliPaths.ResolveSource(source);
+            var home = CliPaths.ResolveTarget(target);
+            context.ExitCode = await UninstallServiceAsync(repoRoot, home, verbose, context.GetCancellationToken());
         });
 
         command.AddCommand(installCommand);
@@ -159,11 +175,11 @@ internal sealed class GatewayCommand
             AnsiConsole.WriteLine();
         }
 
-        ServeCommand.DeployExtensions(repoRoot, home, verbose);
+        await ServeCommand.ReconcileLifecycleAsync(repoRoot, home, verbose, cancellationToken, "gateway");
 
         // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
         // argument below, so probe where it will actually listen rather than where we asked.
-        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromConfig(port);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(port, home);
         var options = new GatewayStartOptions(
             ExecutablePath: gatewayDll,
             Arguments: $"--urls \"{gatewayUrl}\" --environment Development",
@@ -265,11 +281,11 @@ internal sealed class GatewayCommand
             return 1;
         }
 
-        ServeCommand.DeployExtensions(repoRoot, home, verbose);
+        await ServeCommand.ReconcileLifecycleAsync(repoRoot, home, verbose, cancellationToken, "gateway");
 
         // The gateway binds gateway.listenUrl when one is configured, overriding the --urls
         // argument below, so probe where it will actually listen rather than where we asked.
-        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromConfig(port);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(port, home);
         var lastExitCode = 0;
 
         while (true)
@@ -295,8 +311,13 @@ internal sealed class GatewayCommand
             using var process = System.Diagnostics.Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start Gateway process.");
 
-            await process.WaitForExitAsync(cancellationToken);
-            lastExitCode = process.ExitCode;
+            lastExitCode = await ForegroundGatewayLifecycle.WaitForExitAsync(
+                process,
+                _processManager,
+                home,
+                gatewayDll,
+                gatewayUrl,
+                cancellationToken);
 
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine($"[dim]Gateway exited (code [yellow]{lastExitCode}[/]).[/]");
@@ -318,6 +339,9 @@ internal sealed class GatewayCommand
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
         var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(
+            fallbackPort: 5005,
+            homePath: home);
         GatewayStopResult result;
 
         if (interactive)
@@ -328,13 +352,13 @@ internal sealed class GatewayCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
+                    capturedResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken, gatewayUrl);
                 });
             result = capturedResult;
         }
         else
         {
-            result = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
+            result = await _processManager.StopAsync(home, gatewayBinary, cancellationToken, gatewayUrl);
         }
 
         if (result.Outcome == GatewayStopOutcome.Stopped)
@@ -355,9 +379,9 @@ internal sealed class GatewayCommand
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
         var repoRoot = CliPaths.ResolveSource(explicitSource: null);
         var gatewayBinaryPath = ResolveGatewayBinaryPath(repoRoot);
-        var healthUrl = GatewayProbeUrlResolver.ResolveFromConfig(
+        var healthUrl = GatewayProbeUrlResolver.ResolveFromHome(
             fallbackPort: 5005,
-            configPath: Path.Combine(home, "config.json")) + "/health";
+            homePath: home) + "/health";
         GatewayStatus status;
 
         if (interactive)
@@ -462,6 +486,9 @@ internal sealed class GatewayCommand
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
         var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(
+            fallbackPort: port,
+            homePath: home);
 
         // Stop
         GatewayStopResult stopResult;
@@ -473,14 +500,14 @@ internal sealed class GatewayCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Stopping gateway...", async ctx =>
                 {
-                    capturedStop = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
+                    capturedStop = await _processManager.StopAsync(home, gatewayBinary, cancellationToken, gatewayUrl);
                 });
             stopResult = capturedStop;
         }
         else
         {
             AnsiConsole.MarkupLine("[blue][[gateway]][/] Stopping gateway...");
-            stopResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken);
+            stopResult = await _processManager.StopAsync(home, gatewayBinary, cancellationToken, gatewayUrl);
         }
 
         if (stopResult.Outcome == GatewayStopOutcome.Stopped)
@@ -533,7 +560,8 @@ internal sealed class GatewayCommand
             return 1;
         }
 
-        var result = await manager.InstallAsync(gatewayDll, home, port, cancellationToken);
+        var serviceExecutable = GatewayProcessManager.ResolveApphostPath(gatewayDll) ?? gatewayDll;
+        var result = await manager.InstallAsync(serviceExecutable, home, port, cancellationToken);
 
         if (result.Success)
         {
@@ -541,7 +569,7 @@ internal sealed class GatewayCommand
             if (verbose)
             {
                 AnsiConsole.MarkupLine($"  [dim]Manager:[/] {manager.ServiceManagerName}");
-                AnsiConsole.MarkupLine($"  [dim]Binary:[/]  {CliText.SafeDisplay(gatewayDll)}");
+                AnsiConsole.MarkupLine($"  [dim]Binary:[/]  {CliText.SafeDisplay(serviceExecutable)}");
                 AnsiConsole.MarkupLine($"  [dim]Home:[/]    {CliText.SafeDisplay(home)}");
                 AnsiConsole.MarkupLine($"  [dim]Port:[/]    {port}");
             }
@@ -552,18 +580,32 @@ internal sealed class GatewayCommand
         return 1;
     }
 
-    private static async Task<int> UninstallServiceAsync(bool verbose, CancellationToken cancellationToken)
+    private async Task<int> UninstallServiceAsync(
+        string repoRoot,
+        string home,
+        bool verbose,
+        CancellationToken cancellationToken)
     {
-        var manager = OsServiceManagerFactory.Create();
+        var manager = _serviceManagerFactory();
         if (manager is null)
         {
             AnsiConsole.MarkupLine("[red]\u2717[/] OS service management is not supported on this platform.");
             return 1;
         }
 
-        AnsiConsole.MarkupLine($"[blue][[gateway]][/] Removing {manager.ServiceManagerName} service...");
+        var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
+        var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(
+            fallbackPort: GatewayDefaults.ListenPort,
+            homePath: home);
 
-        var result = await manager.UninstallAsync(cancellationToken);
+        AnsiConsole.MarkupLine($"[blue][[gateway]][/] Stopping gateway before removing {manager.ServiceManagerName} service...");
+        var lifecycle = new GatewayServiceLifecycle(_processManager);
+        var result = await lifecycle.StopAndRemoveAsync(
+            manager,
+            home,
+            gatewayBinary,
+            gatewayUrl,
+            cancellationToken);
 
         if (result.Success)
         {

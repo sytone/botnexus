@@ -211,6 +211,17 @@ public sealed class MatrixHttpClient : IMatrixClient
     }
 
     /// <inheritdoc />
+    public async Task SendReadReceiptAsync(string roomId, string eventId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(roomId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventId);
+
+        var url = $"/_matrix/client/v3/rooms/{Uri.EscapeDataString(roomId)}/receipt/m.read/{Uri.EscapeDataString(eventId)}";
+        using var response = await _http.PostAsJsonAsync(url, new { }, JsonOptions, cancellationToken);
+        await EnsureSuccessAsync(response, "send read receipt", cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task SetTypingAsync(string roomId, bool typing, int timeoutMs, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(roomId);

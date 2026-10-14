@@ -33,9 +33,8 @@ public sealed class BackgroundProcessRegistry
             if (_processes.TryGetValue(process.Pid, out var previous))
             {
                 if (ReferenceEquals(previous.Process, process)) return;
-                if (previous.Process.IsRunning || previous.Process.KillUnconfirmed)
+                if (!previous.Process.TryReleaseCompleted())
                     throw new InvalidOperationException("PID is still owned by a tracked process.");
-                previous.Process.Dispose();
             }
             _processes[process.Pid] = (owner, process);
             ReapCore();
@@ -122,7 +121,8 @@ public class BackgroundProcess : IDisposable
 
     /// <summary>Adopts a process started by a trusted caller; output must be redirected and unread.</summary>
     public BackgroundProcess(Process process, string command, DateTimeOffset startedAt)
-        : this(process, command, startedAt, process?.StandardOutput, process?.StandardError)
+        : this(process, command, startedAt, GetProcess(process).Id,
+            GetProcess(process).StandardOutput, GetProcess(process).StandardError)
     {
     }
 
@@ -132,17 +132,31 @@ public class BackgroundProcess : IDisposable
         DateTimeOffset startedAt,
         StreamReader? standardOutput,
         StreamReader? standardError)
+        : this(process, command, startedAt, GetProcess(process).Id,
+            standardOutput ?? throw new ArgumentNullException(nameof(standardOutput)),
+            standardError ?? throw new ArgumentNullException(nameof(standardError)))
     {
-        _process = process ?? throw new ArgumentNullException(nameof(process));
-        Pid = process.Id;
+    }
+
+    internal BackgroundProcess(
+        Process process,
+        string command,
+        DateTimeOffset startedAt,
+        int pid,
+        StreamReader standardOutput,
+        StreamReader standardError)
+    {
+        _process = GetProcess(process);
+        Pid = pid;
         Command = command;
         StartedAt = startedAt;
         try { ProcessName = process.ProcessName; }
         catch (InvalidOperationException) { ProcessName = "exited"; }
-        _completion = CompleteAsync(
-            DrainAsync(standardOutput ?? throw new ArgumentNullException(nameof(standardOutput))),
-            DrainAsync(standardError ?? throw new ArgumentNullException(nameof(standardError))));
+        _completion = CompleteAsync(DrainAsync(standardOutput), DrainAsync(standardError));
     }
+
+    private static Process GetProcess(Process? process)
+        => process ?? throw new ArgumentNullException(nameof(process));
 
     /// <summary>Captured PID remains available after handle disposal.</summary>
     public int Pid { get; }

@@ -5,6 +5,7 @@ using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
@@ -163,6 +164,148 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
     }
 
     [Fact]
+    public void Grouped_section_renders_addressable_subsection_navigation_without_marking_dirty()
+    {
+        var schema = BuildSchema();
+        var gateway = schema["schema"]!["properties"]!["gateway"]!.AsObject();
+        var gatewayProperties = gateway["properties"]!.AsObject();
+        gatewayProperties["listenUrl"]!["x-ui-group"] = "network";
+        gatewayProperties["world"]!["x-ui-group"] = "network";
+        gatewayProperties["apiKeys"]!["x-ui-group"] = "network";
+        gatewayProperties["logLevel"]!["x-ui-group"] = "logging";
+        ConfigureServices(new FakeConfigApiHandler(schema, SampleConfig()));
+
+        var cut = _ctx.Render<Configuration>(parameters => parameters
+            .Add(component => component.Section, "gateway")
+            .Add(component => component.Subsection, "logging"));
+
+        cut.WaitForAssertion(() =>
+        {
+            var subsections = cut.FindAll(".config-subsection-item");
+            Assert.Equal(new[] { "network", "logging" }, subsections.Select(element => element.GetAttribute("data-subsection")));
+            cut.Find(".config-sidebar-item[data-section='gateway']").GetAttribute("aria-current").ShouldBe("page");
+            cut.Find(".config-subsection-item[data-subsection='logging']").GetAttribute("aria-current").ShouldBe("page");
+            cut.Find("[data-testid='field-gateway.logLevel'] select");
+            Assert.Empty(cut.FindAll("[data-testid='field-gateway.listenUrl']"));
+            cut.Find("button.primary").HasAttribute("disabled").ShouldBeTrue();
+        });
+
+        cut.Find(".config-subsection-item[data-subsection='network']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Find("[data-testid='field-gateway.listenUrl'] input");
+            cut.Find("button.primary").HasAttribute("disabled").ShouldBeTrue();
+            _ctx.Services.GetRequiredService<NavigationManager>().Uri.ShouldEndWith("/configuration/gateway/network");
+        });
+    }
+
+    [Fact]
+    public void Edits_across_subsections_and_sections_share_one_patch_with_canonical_paths()
+    {
+        var schema = BuildSchema();
+        var gatewayProperties = schema["schema"]!["properties"]!["gateway"]!["properties"]!.AsObject();
+        gatewayProperties["listenUrl"]!["x-ui-group"] = "network";
+        gatewayProperties["world"]!["x-ui-group"] = "network";
+        gatewayProperties["apiKeys"]!["x-ui-group"] = "security";
+        gatewayProperties["logLevel"]!["x-ui-group"] = "logging";
+        var handler = new FakeConfigApiHandler(schema, SampleConfig());
+        ConfigureServices(handler);
+
+        var cut = _ctx.Render<Configuration>(parameters => parameters
+            .Add(component => component.Section, "gateway")
+            .Add(component => component.Subsection, "network"));
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-gateway.listenUrl'] input"));
+        cut.Find("[data-testid='field-gateway.listenUrl'] input").Change("http://localhost:9000");
+        cut.Find("[data-testid='field-gateway.world.name'] input").Change("Changed world");
+
+        cut.Find(".config-subsection-item[data-subsection='logging']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-gateway.logLevel'] select"));
+        cut.Find("[data-testid='field-gateway.logLevel'] select").Change("Debug");
+
+        cut.Find(".config-sidebar-item[data-section='cron']").Click();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-cron.tickIntervalSeconds'] input"));
+        cut.Find("[data-testid='field-cron.tickIntervalSeconds'] input").Change("30");
+        cut.Find("button.primary").Click();
+
+        cut.WaitForAssertion(() => handler.Patches.ShouldHaveSingleItem());
+        handler.Patches[0]["operations"]!.AsArray()
+            .Select(operation => operation!["path"]!.GetValue<string>())
+            .ShouldBe(new[]
+            {
+                "cron.tickIntervalSeconds",
+                "gateway.listenUrl",
+                "gateway.logLevel",
+                "gateway.world.name",
+            }, ignoreOrder: true);
+    }
+
+    [Fact]
+    public void Validation_error_identifies_hidden_subsection_and_navigates_to_it()
+    {
+        var schema = BuildSchema();
+        var gatewayProperties = schema["schema"]!["properties"]!["gateway"]!["properties"]!.AsObject();
+        gatewayProperties["listenUrl"]!["x-ui-group"] = "network";
+        gatewayProperties["world"]!["x-ui-group"] = "network";
+        gatewayProperties["apiKeys"]!["x-ui-group"] = "security";
+        gatewayProperties["logLevel"]!["x-ui-group"] = "logging";
+        var handler = new FakeConfigApiHandler(schema, SampleConfig())
+        {
+            ValidationErrors = ["gateway.logLevel must be one of: Trace, Debug, Information."],
+        };
+        ConfigureServices(handler);
+
+        var cut = _ctx.Render<Configuration>(parameters => parameters
+            .Add(component => component.Section, "gateway")
+            .Add(component => component.Subsection, "network"));
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-gateway.listenUrl'] input"));
+        cut.FindAll(".platform-config-actions .toolbar-btn").Single(button => button.TextContent == "Validate").Click();
+
+        cut.WaitForAssertion(() => cut.Find(".validation-error-link").TextContent.ShouldBe("Gateway / Logging"));
+        cut.Find(".validation-error-link").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Find("[data-testid='field-gateway.logLevel'] select");
+            _ctx.Services.GetRequiredService<NavigationManager>().Uri.ShouldEndWith("/configuration/gateway/logging");
+        });
+    }
+
+    [Fact]
+    public void Simple_section_omits_redundant_subsection_navigation()
+    {
+        ConfigureServices(new FakeConfigApiHandler(BuildSchema(), SampleConfig()));
+
+        var cut = _ctx.Render<Configuration>(parameters => parameters
+            .Add(component => component.Section, "cron"));
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-cron.enabled']"));
+        Assert.Empty(cut.FindAll(".config-subsection-nav"));
+    }
+
+    [Fact]
+    public void Invalid_subsection_route_falls_back_to_first_schema_subsection()
+    {
+        var schema = BuildSchema();
+        var gatewayProperties = schema["schema"]!["properties"]!["gateway"]!["properties"]!.AsObject();
+        gatewayProperties["listenUrl"]!["x-ui-group"] = "network";
+        gatewayProperties["world"]!["x-ui-group"] = "network";
+        gatewayProperties["apiKeys"]!["x-ui-group"] = "network";
+        gatewayProperties["logLevel"]!["x-ui-group"] = "logging";
+        ConfigureServices(new FakeConfigApiHandler(schema, SampleConfig()));
+
+        var cut = _ctx.Render<Configuration>(parameters => parameters
+            .Add(component => component.Section, "gateway")
+            .Add(component => component.Subsection, "missing"));
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid='field-gateway.listenUrl'] input"));
+        Assert.Empty(cut.FindAll("[data-testid='field-gateway.logLevel']"));
+        cut.Find(".config-subsection-item[data-subsection='network']").ClassList.ShouldContain("active");
+    }
+
+    [Fact]
     public void Editing_a_schema_field_enables_save()
     {
         ConfigureServices(new FakeConfigApiHandler(BuildSchema(), SampleConfig()));
@@ -286,6 +429,8 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
         /// <summary>When set, the patch endpoint answers 409 to exercise the conflict path.</summary>
         public bool ConflictOnPatch { get; init; }
 
+        public IReadOnlyList<string> ValidationErrors { get; init; } = [];
+
         public FakeConfigApiHandler(JsonObject schema, JsonObject config)
         {
             _schema = schema;
@@ -303,6 +448,16 @@ public sealed class ConfigurationPageSchemaFormTests : IDisposable
                 return Json(_config);
             if (path == "/api/config/raw" && request.Method == HttpMethod.Get)
                 return Json(_config);
+            if (path == "/api/config/validate" && request.Method == HttpMethod.Get)
+            {
+                return Json(new JsonObject
+                {
+                    ["isValid"] = ValidationErrors.Count == 0,
+                    ["configPath"] = "config.json",
+                    ["warnings"] = new JsonArray(),
+                    ["errors"] = new JsonArray(ValidationErrors.Select(error => JsonValue.Create(error)).ToArray()),
+                });
+            }
             if (path == "/api/config" && request.Method == HttpMethod.Patch)
             {
                 var body = await request.Content!.ReadAsStringAsync(cancellationToken);

@@ -5,11 +5,410 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.50.0] - 2026-10-12
 
-### ⚠️ Changed
+### ✨ Features
 
-- **#3882:** BotNexus-owned SQLite databases now use the `.sqlite` extension. First access to a lone legacy `.db` store blocks while BotNexus validates it, preserves committed WAL data through SQLite's backup API, promotes the canonical store, and archives the legacy database and sidecars. No interactive action is required; ambiguous installations with both active names fail closed.
+- **cron:** Record planned restart dispositions (#4776)
+- **agents:** Preserve neutral evidence and detect outcome cycles (#4806)
+- **sessions:** Correlate tool evidence with durable agent runs (#4807)
+
+### 🐛 Bug Fixes
+
+- **agents:** Bound alternating housekeeping loops (#4734)
+- **gateway:** Expose unattributed private memory diagnostics (#4750)
+- **providers:** Support configured per-model capacity metadata (#4751)
+- **sessions:** Preserve missing legacy result evidence (#4752)
+- **channels:** Converge host-shared extension dependencies (#4784)
+- **search:** Enforce caller scope and hidden-record visibility (#4755)
+- **agents:** Enforce peer grants before mirror admission (#4757)
+- **security:** Isolate local child process environments (#4760)
+- **testing:** Require positive sandbox child identity (#4761)
+- **providers:** Enforce the anthropic request cache budget (#4762)
+- **portal:** Coordinate mobile markdown render regression (#4764)
+- **channels:** Await mobile canvas close event completion (#4766)
+- **gateway:** Preserve blocking response cache usage (#4767)
+- **gateway:** Expose sqlite allocator memory diagnostics (#4769)
+- **gateway:** Expose scoped context budget provenance (#4772)
+- **gateway:** Keep compaction budgets scoped and failures visible (#4773)
+- **providers:** Bound response cache keys and preserve sub-agent errors (#4775)
+- **gateway:** Retire subagents after owned cleanup finishes (#4771)
+- **gateway:** Expose last-gc generation diagnostics (#4791)
+- **providers:** Reject incomplete anthropic model discovery (#4765)
+- **cli:** Validate named copilot provider types (#4724)
+- **cli:** Report copilot catalogue activation restart requirement (#4799)
+- **ci:** Authenticate coverage uploads and fail closed (#4800)
+- **channels:** Converge agent365 host-shared dependencies (#4785)
+- **sqlite:** Expose logical connection lifetime observations (#4801)
+- **agents:** Return subagent completion through tool results (#4805)
+- **gateway:** Reconcile immediate file watcher readiness changes (#4809)
+- **portal:** Show separated copilot quota and bounded local usage (#4810)
+- **portal:** Preserve workspace navigation during refresh (#4790)
+- **diagnostics:** Expose last-gc collection characteristics (#4812)
+- **gateway:** Sanitize malformed auth-file diagnostics (#4819)
+- **cli:** Make agent exec the sole timeout owner (#4823)
+- **gateway:** Pin checked follow-up conversation destinations (#4825)
+
+### 🔨 Refactor
+
+- **persistence:** Make schema migration methods extensions (#4735)
+- **github:** Make json projections extension methods (#4754)
+- **config:** Make secret merge operations extension methods (#4770)
+- **config:** Make patch operations extension methods (#4792)
+- **streaming:** Make responses error extraction an extension (#4802)
+- **streaming:** Make final block text reading an extension (#4808)
+- **streaming:** Make responses usage parsing an extension (#4814)
+
+### 🧪 Testing
+
+- **cron:** Make prompt template fixture paths portable (#4758)
+- **gateway:** Coordinate audit deadline store-entry observation (#4774)
+- **cli:** Control readiness child lifetime (#4821)
+- **portal:** Await encoded selection event completion (#4822)
+- **cron:** Isolate ambient home fixtures (#4826)
+
+### 🔧 CI/Build
+
+- **docs:** Validate the documentation site on pull requests (#4768)
+
+## [0.49.1] - 2026-10-07
+
+### 🐛 Bug Fixes
+
+- **cli:** Route gateway termination through planned shutdown (#4723)
+- **portal:** Preserve whole-run activity snapshots (#4727)
+
+### 🔨 Refactor
+
+- **persistence:** Make busy-timeout attachment an extension (#4722)
+
+## [0.49.0] - 2026-10-07
+
+### ✨ Features
+
+- **gateway:** Fence planned restart admission (#4718)
+
+### 🐛 Bug Fixes
+
+- **providers:** Reject unrouteable config api (#4712)
+- **agents:** Preserve configured reasoning state (#4713)
+- **sessions:** Bound legacy invocation backfill scans (#4716)
+- **config:** Protect assigned provider instances (#4719)
+
+### ⚡ Performance
+
+- **sessions:** Bound summary history counts (#4717)
+
+### 🔨 Refactor
+
+- **persistence:** Make store identity checks extensions (#4715)
+
+### 🧪 Testing
+
+- **gateway:** Coordinate compactor cancellation assertions (#4707)
+- **gateway:** Coordinate inbound non-truncation boundary (#4708)
+- **agents:** Await sub-agent run disposal boundary (#4714)
+
+## [0.48.0] - 2026-10-07
+
+### ✨ Features
+
+- **agents:** Coordinate transient provider recovery (#4489)
+- **cli:** Manage named copilot provider instances (#4514)
+- **sessions:** Automate legacy invocation backfill (#4530)
+- **a2a:** Accept stateless message responses (#4533)
+- **skills:** Add containerized ui evidence workflow (#4539)
+- **agents:** Finalize bounded sub-agent runs (#4546)
+- **agents:** Measure tool result context leases (#4547)
+- **gateway:** Request planned host shutdown (#4536)
+- **agents:** Unify sub-agent run detail (#4551)
+- **portal:** Add export message range selection (#4557)
+- **persistence:** Version gateway-owned sqlite stores (#4561)
+- **gateway:** Add satellite connection data plane (#4562)
+- **memory:** Run bounded resumable re-embedding (#4563)
+- **sessions:** Report legacy backfill progress (#4571)
+- **cli:** Validate live provider readiness (#4572)
+- **agents:** Expose provider recovery lifecycle (#4575)
+- **a2a:** Enforce delegation policy boundary (#4578)
+- **portal:** Highlight active conversation composer (#4584)
+- **sessions:** Persist run completion disposition (#4595)
+- **agents:** Dispatch durable task flow continuations (#4549)
+- **portal:** Manage conversation channel bindings (#4588)
+- **agents:** Filter and page sub-agent run history (#4614)
+- **persistence:** Version sqlite secret store reads and writes (#4616)
+- **sessions:** Clear normalized legacy tool payloads (#4573)
+- **gateway:** Expose conversation read cursor api (#4550)
+- **portal:** Expose bounded client run-state diagnostics (#4609)
+- **memory:** Converge sqlite memory schema version stamps (#4639)
+- **channels:** Echo foreign user messages to telegram (#4675)
+- **providers:** Expose provider instance types (#4686)
+- **providers:** Add microsoft foundry responses authentication (#4693)
+- **skills:** Bundle shared skill optimization prompt (#4694)
+- **portal:** Distinguish provider instance types (#4700)
+- **cli:** Add microsoft foundry provider configuration (#4702)
+- **portal:** Add configurable active-run pulse (#4704)
+
+### 🐛 Bug Fixes
+
+- **portal:** Compact conversation composer controls (#4481)
+- **gateway:** Terminalize cancelled queued webhooks (#4525)
+- **gateway:** Make provider usage accounting truthful (#4527)
+- **mobile:** Canonicalize standalone app launch (#4535)
+- **tools:** Preserve output drains on pid collision (#4522)
+- **cron:** Project agent completion outcomes (#4541)
+- **mobile:** Isolate transcript repair from roster failure (#4552)
+- **cli:** Define redundant read payload metric (#4553)
+- **portal:** Corroborate activity session liveness (#4554)
+- **gateway:** Activate home world sentinel (#4558)
+- **agents:** Fence startup config source revisions (#4568)
+- **portal:** Reconcile missed terminal run state (#4570)
+- **portal:** Serve local release history (#4576)
+- **portal:** Style the home composer surface (#4585)
+- **channels:** Enforce final-only Teams streaming replies (#4586)
+- **channels:** Separate telegram thinking from reply content (#4611)
+- **channels:** Isolate tui console output (#4598)
+- **ci:** Isolate local install fixture from release refs (#4623)
+- **docs:** Highlight pwsh fences as powershell
+- **ci:** Bound core test host lifetime (#4590)
+- **agent:** Initialize Tools and Messages in AgentState
+- **cli:** Block removal of assigned providers (#4582)
+- **ci:** Preserve coverage collector argument in bounded runner (#4635)
+- **agents:** Arbitrate sub-agent kill before snapshot capture (#4629)
+- **channels:** Reject foreign service bus binding snapshots (#4628)
+- **sessions:** Avoid hydrating transcripts during reconciliation (#4660)
+- **sessions:** Unify shared database journal policy (#4664)
+- **sessions:** Bound legacy tool payload cleanup (#4665)
+- **sessions:** Commit session aggregate atomically (#4671)
+- **providers:** Preserve overlays with legacy copilot config (#4672)
+- **cli:** Block disabling assigned providers (#4673)
+- **sessions:** Bound startup maintenance scans (#4674)
+- **conversations:** Make retention archive compare-and-set (#4676)
+- **portal:** Center composer send glyph (#4677)
+- **sessions:** Serialize legacy agent id removal (#4678)
+- **persistence:** Report incomplete wal checkpoints (#4680)
+- **persistence:** Enforce sqlite foreign keys (#4681)
+- **prompts:** Share narration threshold across guidance rungs (#4643)
+- **portal:** Ignore stale run snapshots after live events (#4647)
+- **signalr:** Close active-run subscription race (#4697)
+- **agent:** Preserve durable ask-user waits (#4698)
+- **providers:** Report rejected catalogue activation (#4690)
+- **agent:** Isolate informational diagnostic observer failures (#4687)
+- **agent:** Bound repeated non-progress tool turns (#4637)
+
+### 📖 Documentation
+
+- **agent:** Define extension-point naming
+- **agent:** Define reusable policy rule composition
+- **config:** Require cross-language sqlite authority review (#4605)
+
+### ⚡ Performance
+
+- **sessions:** Bound cleanup projection payload scans (#4692)
+- **persistence:** Avoid repeated foreign key scans (#4695)
+- **sessions:** Bound interrupted-turn hydration (#4699)
+
+### 🔨 Refactor
+
+- **gateway:** Publish conversation creation facts (#4548)
+- **channels:** Route tui steering intent through gateway (#4560)
+- **qmd:** Type memory backend agent ids (#4556)
+- **portal:** Remove ambient conversation state (#4577)
+- **channels:** Project agent365 conversation events (#4599)
+- **gateway:** Publish conversation metadata facts (#4601)
+- **gateway:** Publish conversation archive facts (#4612)
+- **mcp:** Carry typed agent ids through warmup cache (#4615)
+- **config:** Make raw json operations extensions (#4580)
+- **agent:** Align extension contracts with responsibility names
+- **agent:** Align extension test names and filenames
+- **agent:** Organize extension contracts by responsibility
+- **cron:** Carry typed alert target through rejection messages (#4618)
+- **gateway:** Publish binding attachment facts (#4620)
+- **agent:** Clarify extension contracts and runtime wiring
+- **gateway:** Make conversation row mapping reader extensions (#4631)
+- **sessions:** Make row mappers reader extensions (#4679)
+
+### 🧪 Testing
+
+- **gateway:** Signal long-turn queue phases (#4528)
+- **channels:** Cover reset provenance projection (#4543)
+- **channels:** Prove tui event projection (#4545)
+- **gateway:** Pin auth cache read count (#4555)
+- **agents:** Synchronize kill cleanup assertions (#4596)
+- **channels:** Prove lifecycle event ordering (#4597)
+- **config:** Ratchet production configuration authority (#4603)
+- **channels:** Prove cross-conversation event isolation (#4610)
+- **providers:** Prove sqlite provider add permits live agent assignment (#4617)
+- **prompts:** Add todo behavior evaluator (#4581)
+- **portal:** Restore routed active-composer coverage (#4613)
+- **channels:** Isolate interleaved lifecycle projections (#4627)
+- **agent:** Enforce extension contract organization
+- **cli:** Bind latest source install to in-tree tool (#4650)
+- **ci:** Coordinate powershell pipe-capacity regression (#4652)
+- **cli:** Populate main from shallow source checkout (#4653)
+- **providers:** Prove live gateway assignment after cli provider add (#4630)
+- **prompts:** Summarize repeated behavior evidence (#4642)
+- **portal:** Capture routed active composer browser matrix (#4658)
+- **channels:** Require extension-owned event projection (#4696)
+- **architecture:** Classify static helper candidates (#4703)
+
+### ⚙️ Miscellaneous
+
+- Add dirs.sln to .gitignore
+- **deps:** Bump @vue/server-renderer and vue (#4655)
+- **deps-dev:** Bump source-map-js from 1.2.1 to 1.2.2 (#4656)
+
+### 🔧 CI/Build
+
+- Retire redundant main health probe (#4651)
+- **tests:** Surface bounded failure details in actions logs (#4654)
+
+## [0.47.0] - 2026-10-01
+
+### ✨ Features
+
+- **agents:** Add generic a2a client foundation (#4346)
+- **agents:** Add managed task flow ledger (#4347)
+- **providers:** Add microsoft foundry responses authentication (#4352)
+- **portal:** Add durable conversation read cursor stores (#4355)
+- **plugins:** Expose lifecycle through CLI and API (#4357)
+- **plugins:** Add generated marketplace catalog adapter (#4358)
+- **providers:** Add named copilot instance routing (#4353)
+- **portal:** Add prompt template picker (#4337)
+- **agents:** Bundle trailguide workspace corpus (#4371)
+- **cli:** Reconcile registered extension repository clones (#4373)
+- **agents:** Persist accepted task results and delivery (#4374)
+- **cli:** Bundle copilot session import prompt (#4377)
+- **agents:** Make trailguide docs-first (#4387)
+- **search:** Add memory and file contributors (#4391)
+- **search:** Add bounded aggregation endpoint (#4393)
+- **agents:** Advise oversized sub-agent budgets (#4394)
+- **agents:** Persist governed agent proposals (#4398)
+- **portal:** Share conversation action menu (#4408)
+- **providers:** Add payload-free terminal server diagnostics (#4411)
+- **config:** Make extension scopes explicit (#4412)
+- **sessions:** Normalize new tool invocations (#4413)
+- **tools:** Add typed result envelopes (#4414)
+- **agent:** Preserve satellite execution context (#4416)
+- **gateway:** Capture structured diagnostics (#4436)
+- **skills:** Gate exact security acknowledgements (#4437)
+- **agents:** Bundle trailguide guidance skills (#4442)
+- **portal:** Show released version history (#4449)
+- **cli:** Select source release targets (#4453)
+- **mobile:** Add attachment and camera composer inputs (#4456)
+- **portal:** Add opt-in simplified shell preference (#4457)
+- **search:** Add agent conversation and session contributors (#4466)
+- **search:** Add agent conversation and session contributors (#4466)
+- **sessions:** Backfill legacy tool invocations (#4486)
+- **agents:** Lease tool result detail in live context (#4488)
+- **skills:** Emit revision-pinned security evidence (#4496)
+- **portal:** Render chat attachments (#4500)
+- **portal:** Simplify opted-in home hierarchy (#4503)
+- **extensions:** Reconcile repositories across lifecycle commands (#4505)
+- **agents:** Add a2a delegation extension (#4509)
+- **gateway:** Derive stable conversation reader identity (#4515)
+- **skills:** Explain budget refusals with bounded recovery (#4516)
+- **agents:** Persist durable task flow waits (#4517)
+- **portal:** Add configuration subsection navigation (#4519)
+- **matrix:** Send read receipts after dispatch (#4520)
+
+### 🐛 Bug Fixes
+
+- **memory:** Apply configured temporal decay policy (#4348)
+- **gateway:** Contain context export paths (#4349)
+- **gateway:** Sanitize structured log text (#4350)
+- **providers:** Reconcile config models on reload (#4351)
+- **cli:** Discover live gateway during status (#4356)
+- **cli:** Stop gateways discovered without pid files (#4360)
+- **providers:** Redact streamed provider errors (#4361)
+- **providers:** Retry rejected copilot effort once (#4362)
+- **gateway:** Recover agent-origin interrupted turns (#4372)
+- **portal:** Preserve clipboard image paste binding (#4381)
+- **portal:** Keep conversation timestamps clear of actions (#4385)
+- **agents:** Fail closed on compaction conflicts (#4386)
+- **cron:** Route agent prompts through cron trigger (#4389)
+- **gateway:** Deduplicate streamed tool audit starts (#4390)
+- **cli:** Report every updated configuration backend (#4396)
+- **memory:** Enforce memory expiry (#4397)
+- **gateway:** Reject malformed reset durations (#4400)
+- **ci:** Reject incomplete pull request inventories (#4401)
+- **persistence:** Normalize sqlite database extensions (#4392)
+- **tools:** Warn about powershell pid collisions (#4409)
+- **cron:** Reconcile sealed run owners (#4410)
+- **agents:** Validate parked run dispositions (#4415)
+- **gateway:** Keep config diagnostics nonfatal (#4422)
+- **providers:** Distinguish unavailable reasoning summaries (#4423)
+- **portal:** Reconcile active run state (#4427)
+- **providers:** Preserve unknown copilot billing (#4428)
+- **config:** Migrate legacy extension settings safely (#4429)
+- **security:** Enforce filesystem root denials (#4433)
+- **gateway:** Enforce prompt file access policy (#4432)
+- **tests:** Disable shared PowerShell startup profiles (#4434)
+- **portal:** Make client view selection explicit (#4443)
+- **portal:** Reconcile generated guide assets (#4447)
+- **portal:** Preserve confirmation danger contrast (#4450)
+- **sessions:** Honor jsonl write cancellation (#4451)
+- **skills:** Make repeat loads context-aware (#4454)
+- **portal:** Show cron failure reasons in activity (#4455)
+- **cli:** Retry atomic extension deployment locks (#4464)
+- **skills:** Enable shared management by default (#4477)
+- **portal:** Replace export label with save icon (#4478)
+- **portal:** Preserve desktop sidebar across navigation (#4484)
+- **agents:** Recover terminal automated turns (#4487)
+- **portal:** Surface canvas submission outcomes (#4491)
+- **providers:** Use discovered Copilot models (#4492)
+- **agents:** Preserve bounded sub-agent evidence (#4493)
+- **portal:** Keep pin state route-owned (#4498)
+- **portal:** Clear stale turn state from snapshots (#4507)
+- **agents:** Retry once after provider auth rejection (#4508)
+- **gateway:** Bound sqlite audit persistence (#4510)
+- **providers:** Report runtime activation separately (#4512)
+- **gateway:** Propagate webhook execution deadlines (#4513)
+- **ci:** Preserve startup probe cleanup ownership (#4521)
+- **tools:** Dispose terminal web fetch responses (#4524)
+
+### 📖 Documentation
+
+- **providers:** Define provider account assignment semantics (#4354)
+- **development:** Document issue filing fallback (#4395)
+- **tools:** Qualify background process lifecycle guarantees (#4417)
+- **platform:** Reconcile configuration and prompt contracts (#4452)
+- **cli:** Reconcile command-local options (#4518)
+
+### 🔨 Refactor
+
+- **gateway:** Publish interrupted-turn session facts (#4446)
+- **config:** Type agent configuration ids (#4458)
+- **gateway:** Route legacy steering through inbound orchestrator (#4469)
+- **providers:** Separate semantic generation and execution options (#4470)
+- **agents:** Deprecate custom prompt files (#4472)
+- **gateway:** Publish compaction session facts (#4468)
+- **gateway:** Publish active-session reset facts (#4494)
+- **sessions:** Type warmup agent ids (#4499)
+- **mobile:** Make conversation identity route-owned (#4501)
+- **gateway:** Unify inbound activity publication (#4502)
+- **agents:** Remove custom prompt-file selection (#4506)
+
+### 🧪 Testing
+
+- **portal:** Cover spa deep-link caching (#4399)
+- **exec:** Restore launch-time background pruning coverage (#4402)
+- **cron:** Inventory persistence writes (#4425)
+- **sessions:** Audit delta save mutations (#4438)
+- **channels:** Add real conversation event seam (#4441)
+- **validation:** Assert snapshot path safety (#4445)
+- **channels:** Cover service bus event projection (#4448)
+- **cron:** Cover persistence write seams (#4459)
+- **channels:** Add multi-channel event scenario (#4465)
+- **channels:** Cover matrix event projection (#4467)
+- **config:** Prove automatic sqlite option reload (#4483)
+- **channels:** Cover lifecycle event projection (#4495)
+- **channels:** Prove service bus request isolation (#4497)
+- **webhooks:** Cover persistence write seams (#4504)
+- **gateway:** Cover external structured log classes (#4511)
+
+### 🔧 CI/Build
+
+- **buildtest:** Allow five concurrent validation runners (#4431)
 
 ## [0.46.0] - 2026-09-23
 
@@ -4447,6 +4846,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session log for loop alignment & UI fix
 - Log session-switching design review orchestration, decisions, and session metadata
 
+[0.50.0]: https://github.com/sytone/botnexus/compare/v0.49.1...v0.50.0
+[0.49.1]: https://github.com/sytone/botnexus/compare/v0.49.0...v0.49.1
+[0.49.0]: https://github.com/sytone/botnexus/compare/v0.48.0...v0.49.0
+[0.48.0]: https://github.com/sytone/botnexus/compare/v0.47.0...v0.48.0
+[0.47.0]: https://github.com/sytone/botnexus/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/sytone/botnexus/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/sytone/botnexus/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/sytone/botnexus/compare/v0.43.0...v0.44.0

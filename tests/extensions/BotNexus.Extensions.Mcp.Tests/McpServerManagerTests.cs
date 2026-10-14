@@ -283,6 +283,10 @@ public class McpServerManagerTests
         };
         var descriptor = CreateDescriptor(config, agentId);
         McpServerWarmupCache.Contains(agentId, config).ShouldBeFalse("precondition: nothing registered this agent yet");
+        // The cache API must accept the descriptor's typed identity without an unwrap/reparse hop.
+        McpServerWarmupCache.EnsureStarted(agentId, config, NullLogger.Instance);
+        McpServerWarmupCache.Contains(agentId, config).ShouldBeTrue();
+        await McpServerWarmupCache.DisposeAllAsync();
 
         var registry = new StubAgentRegistry([descriptor]);
         var service = new McpServerWarmupHostedService(registry, NullLoggerFactory.Instance);

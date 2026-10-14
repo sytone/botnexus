@@ -333,7 +333,6 @@ public sealed class MobileSystemSectionParityTests : IDisposable
         AgentId = "quill",
         DisplayName = "Quill",
         IsConnected = true,
-        ActiveConversationId = "normal"
     };
 
     private static void Add(AgentState agent, ConversationState conv)

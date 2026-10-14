@@ -32,7 +32,6 @@ public sealed class MobileCanvasBridgeRoundTripTests : IDisposable
             AgentId = "agent-1",
             DisplayName = "Alpha",
             SessionId = "sess-1",
-            ActiveConversationId = ConversationId,
             CanvasHtml = "<html><body>canvas</body></html>",
         };
         _store.GetAgent("agent-1").Returns(agentState);

@@ -7,7 +7,7 @@
 <div class="platform-config-page release-history-page">
     <header class="platform-config-toolbar">
         <h2 class="page-heading"><span>Change history</span></h2>
-        <button class="secondary-btn" data-testid="release-history-refresh" disabled="@_loading" @onclick="LoadAsync">Refresh</button>
+        <button class="secondary-btn" data-testid="release-history-refresh" disabled="@_loading" @onclick="RefreshAsync">Refresh</button>
     </header>
 
     <main class="release-history-content" aria-live="polite">
@@ -15,27 +15,36 @@
         {
             <p class="workspace-state t-body" data-testid="release-history-loading">Loading released versions…</p>
         }
-        else if (_error && _manifest is null)
+        else if (_error && _response is null)
         {
             <div class="workspace-state t-body" role="alert" data-testid="release-history-error">
                 <p>Release history is unavailable.</p>
-                <button class="secondary-btn" @onclick="LoadAsync">Retry</button>
+                <button class="secondary-btn" @onclick="RefreshAsync">Retry</button>
             </div>
         }
-        else if (_manifest?.Releases.Count == 0)
-        {
-            <p class="workspace-state t-body" data-testid="release-history-empty">No released versions are available yet.</p>
-        }
-        else if (_manifest is not null)
+        else if (_response is not null)
         {
             @if (_error)
             {
                 <div class="workspace-state t-body" role="alert" data-testid="release-history-refresh-error">
                     <span>Could not refresh release history. Showing the last validated data.</span>
-                    <button class="secondary-btn" @onclick="LoadAsync">Retry</button>
+                    <button class="secondary-btn" @onclick="RefreshAsync">Retry</button>
                 </div>
             }
-            @foreach (var release in _manifest.Releases)
+            <section class="release-source-status" data-testid="release-source-status">
+                <h3>Running source</h3>
+                <p>@ReleaseSummary(_response.SourceStatus)</p>
+                <p>@RemoteSummary(_response.SourceStatus)</p>
+                @if (!string.IsNullOrWhiteSpace(_response.SourceStatus.RemoteRefreshError))
+                {
+                    <p class="text-muted" data-testid="release-remote-refresh-warning">@_response.SourceStatus.RemoteRefreshError</p>
+                }
+            </section>
+            @if (_response.Releases.Count == 0)
+            {
+                <p class="workspace-state t-body" data-testid="release-history-empty">No released versions are available yet.</p>
+            }
+            @foreach (var release in _response.Releases)
             {
                 <article class="release-history-entry" data-testid="release-history-entry">
                     <header class="release-history-heading">
@@ -72,19 +81,23 @@
 
 @code {
     private readonly CancellationTokenSource _disposeCancellation = new();
-    private ReleaseHistoryManifest? _manifest;
+    private ReleaseHistoryResponse? _response;
     private bool _loading = true;
     private bool _error;
 
     protected override Task OnInitializedAsync() => LoadAsync();
 
-    private async Task LoadAsync()
+    private Task LoadAsync() => LoadAsync(refreshRemote: false);
+
+    private Task RefreshAsync() => LoadAsync(refreshRemote: true);
+
+    private async Task LoadAsync(bool refreshRemote)
     {
         _loading = true;
         _error = false;
         try
         {
-            _manifest = await ReleaseHistoryClient.GetAsync(_disposeCancellation.Token);
+            _response = await ReleaseHistoryClient.GetAsync(refreshRemote, _disposeCancellation.Token);
         }
         catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
         {
@@ -98,6 +111,31 @@
             _loading = false;
         }
     }
+
+    private static string ReleaseSummary(SourceVersionStatus status)
+    {
+        if (status.LatestReleaseVersion is null)
+            return $"Running {status.RunningCommitShort}; no released version is available.";
+        return status.ReleaseDistance switch
+        {
+            { Ahead: 0, Behind: 0 } => $"Running {status.RunningCommitShort}, which matches release {status.LatestReleaseVersion}.",
+            { Ahead: > 0, Behind: 0 } distance => $"Running {status.RunningCommitShort}, {distance.Ahead} commit{Plural(distance.Ahead)} ahead of release {status.LatestReleaseVersion}.",
+            { Ahead: 0, Behind: > 0 } distance => $"Running {status.RunningCommitShort}, {distance.Behind} commit{Plural(distance.Behind)} behind release {status.LatestReleaseVersion}.",
+            { } distance => $"Running {status.RunningCommitShort} has diverged from release {status.LatestReleaseVersion} ({distance.Ahead} ahead, {distance.Behind} behind).",
+            null => $"Running {status.RunningCommitShort}; distance to release {status.LatestReleaseVersion} is unavailable."
+        };
+    }
+
+    private static string RemoteSummary(SourceVersionStatus status) => status.RemoteDistance switch
+    {
+        { Ahead: 0, Behind: 0 } => $"Running build matches {status.RemoteName}/{status.RemoteBranch} at {status.RemoteDistance.TargetCommitShort}.",
+        { Ahead: > 0, Behind: 0 } distance => $"Running build is {distance.Ahead} commit{Plural(distance.Ahead)} ahead of {status.RemoteName}/{status.RemoteBranch}.",
+        { Ahead: 0, Behind: > 0 } distance => $"Running build is {distance.Behind} commit{Plural(distance.Behind)} behind {status.RemoteName}/{status.RemoteBranch} ({distance.TargetCommitShort}).",
+        { } distance => $"Running build has diverged from {status.RemoteName}/{status.RemoteBranch} ({distance.Ahead} ahead, {distance.Behind} behind).",
+        null => $"Distance to {status.RemoteName}/{status.RemoteBranch} is unavailable."
+    };
+
+    private static string Plural(int count) => count == 1 ? string.Empty : "s";
 
     private static string PlainText(string summary) =>
         System.Text.RegularExpressions.Regex.Replace(

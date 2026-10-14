@@ -207,4 +207,20 @@ public sealed class SkillLinkedFilesTests
 
         text.ShouldContain("not found");
     }
+
+    [Fact]
+    public async Task ViewFile_DeniedSkill_DoesNotLeakPathOrContent()
+    {
+        var (fs, skillDir) = CreateSkillWithFiles("denied");
+        var tool = new SkillTool(
+            SkillDiscovery.Discover(Root, null, null, fs),
+            new SkillsConfig { Disabled = ["denied"] },
+            fs);
+
+        var text = ResultText(await tool.ExecuteAsync("c1", Args("view_file", "denied", "references/api-reference.md")));
+
+        text.ShouldContain("not available");
+        text.ShouldNotContain(skillDir);
+        text.ShouldNotContain("Detailed docs.");
+    }
 }

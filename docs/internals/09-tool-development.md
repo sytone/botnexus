@@ -383,15 +383,15 @@ When a tool is called, here's what happens:
    ├─ Throw ArgumentException on error → tool fails, LLM gets error message
    └─ Return prepared arguments
    ↓
-4. BeforeToolCall hook (if registered)
-   ├─ Can block execution: return BeforeToolCallResult(Block: true)
+4. ToolExecutionPolicy (if registered)
+    ├─ Can block execution: return ToolExecutionDecision(Block: true)
    └─ Proceed to execution
    ↓
 5. ExecuteAsync() — Run the actual operation
    ├─ Use updateCallback to stream long results
    └─ Return AgentToolResult
    ↓
-6. AfterToolCall hook (if registered)
+6. ToolResultTransformer (if registered)
    ├─ Can transform the result
    └─ Result is appended to conversation as ToolResultMessage
    ↓
@@ -559,7 +559,7 @@ public async Task<AgentToolResult> ExecuteAsync(
 
 ## Related documentation
 
-- **[Agent Core — Tool Execution](02-agent-core.md#tool-execution)** — How tools fit into the agent loop
+- **[Agent Core — Tool Execution](02-agent-core.md#tool-execution-pipeline)** — How tools fit into the agent loop
 - **[Coding Agent — Built-in Tools](03-coding-agent.md#built-in-tools)** — Examples: ReadTool, ListDirectoryTool, WriteTool, EditTool, ShellTool, GrepTool, GlobTool
 - **[Building Your Own Agent](04-building-your-own.md)** — Register and use tools in your agent
 - **[ReadTool.cs source](../../src/gateway/BotNexus.Tools/ReadTool.cs)** — Reference implementation

@@ -80,7 +80,7 @@ public sealed class ChatPanelAskUserLifecycleTests : IDisposable
     {
         _store.UpsertAgent(new AgentState { AgentId = "agent-1", DisplayName = "Test Agent", IsConnected = true });
         _store.SeedConversations("agent-1", [MakeConvDto("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _store.SetPendingAskUser(new AskUserPromptState
         {
             RequestId = "req-1",
@@ -94,7 +94,7 @@ public sealed class ChatPanelAskUserLifecycleTests : IDisposable
             ]
         });
 
-        return _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        return _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
     }
 
     private static ConversationSummaryDto MakeConvDto(string convId, string agentId) =>

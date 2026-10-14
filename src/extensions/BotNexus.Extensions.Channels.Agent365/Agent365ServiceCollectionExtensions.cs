@@ -1,4 +1,5 @@
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Events;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -26,7 +27,9 @@ public static class Agent365ServiceCollectionExtensions
 
         services.AddHttpClient();
         services.TryAddSingleton<IAgent365ConnectorSender, Agent365ConnectorSender>();
-        services.AddSingleton<IChannelAdapter, Agent365ChannelAdapter>();
+        services.AddSingleton<Agent365ChannelAdapter>();
+        services.AddSingleton<IChannelAdapter>(sp => sp.GetRequiredService<Agent365ChannelAdapter>());
+        services.AddSingleton<IConversationEventSink>(sp => sp.GetRequiredService<Agent365ChannelAdapter>());
         return services;
     }
 }

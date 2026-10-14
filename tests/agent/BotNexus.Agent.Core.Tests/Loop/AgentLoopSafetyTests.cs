@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Tests.TestUtils;
@@ -16,19 +17,31 @@ public sealed class AgentLoopSafetyTests
 {
     [Fact]
     [Trait("Category", "Security")]
-    [Trait("Category", "SecurityGap")]
-    public async Task InfiniteToolLoop_StopsOnlyByCancellation_CurrentBehavior()
+    public async Task InfiniteToolLoop_ParksAtTheAbsoluteResultLimit()
     {
+        var callNumber = 0;
         using var provider = TestHelpers.RegisterProvider(new TestApiProvider(
             "loop-safety",
-            simpleStreamFactory: (_, _, _) => TestStreamFactory.CreateToolCallResponse(("tc1", "echo", new Dictionary<string, object?> { ["value"] = "x" }))));
+            simpleStreamFactory: (_, _, _) => TestStreamFactory.CreateToolCallResponse((
+                $"tc{Interlocked.Increment(ref callNumber)}",
+                "echo",
+                new Dictionary<string, object?> { ["value"] = "x" }))));
 
         var config = CreateConfig("loop-safety");
         var context = new AgentContext(null, [], [new EchoTool()]);
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
+        var events = new List<AgentEvent>();
 
-        var act = () => AgentLoopRunner.RunAsync([new AgentUserMessage("go")], context, config, _ => Task.CompletedTask, cts.Token);
-        await act.ShouldThrowAsync<OperationCanceledException>();
+        var produced = await AgentLoopRunner.RunAsync(
+            [new AgentUserMessage("go")],
+            context,
+            config,
+            evt => { events.Add(evt); return Task.CompletedTask; },
+            CancellationToken.None);
+
+        produced.OfType<ToolResultAgentMessage>().Count().ShouldBe(ToolNonProgressGuard.AbsoluteToolResultLimit);
+        var completion = events.OfType<AgentEndEvent>().ShouldHaveSingleItem().Completion;
+        completion.Status.ShouldBe(RunCompletionStatus.Parked);
+        completion.Detail.ShouldNotBeNull().ShouldContain("absolute-tool-result-limit");
     }
 
     [Fact]

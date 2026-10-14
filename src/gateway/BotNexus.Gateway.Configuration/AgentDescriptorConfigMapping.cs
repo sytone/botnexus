@@ -51,8 +51,6 @@ public static class AgentDescriptorConfigMapping
         nameof(AgentDescriptor.Summary),
         nameof(AgentDescriptor.ModelId),
         nameof(AgentDescriptor.ApiProvider),
-        nameof(AgentDescriptor.SystemPromptFile),
-        nameof(AgentDescriptor.SystemPromptFiles),
         nameof(AgentDescriptor.ToolIds),
         nameof(AgentDescriptor.AllowedModelIds),
         nameof(AgentDescriptor.SubAgentIds),
@@ -88,11 +86,9 @@ public static class AgentDescriptorConfigMapping
     /// <item><see cref="AgentDescriptor.Order"/> - display-ordering hint; there is no
     /// <c>agents.&lt;id&gt;.order</c> config field and <see cref="PlatformConfigAgentSource"/>
     /// never reads one, so it cannot round-trip through config and is not persisted.</item>
-    /// <item><see cref="AgentDescriptor.SystemPrompt"/> - inline prompt text. The persisted
-    /// mechanism for agent prompts is the prompt-file list (<see cref="AgentDescriptor.SystemPromptFile"/>
-    /// / <see cref="AgentDescriptor.SystemPromptFiles"/>); <see cref="PlatformConfigAgentSource"/>
-    /// never populates the inline prompt from config, so it is not round-trippable and is not
-    /// persisted.</item>
+    /// <item><see cref="AgentDescriptor.SystemPrompt"/> - inline prompt text is supplied by
+    /// non-config sources; <see cref="PlatformConfigAgentSource"/> never populates it from config,
+    /// so it is not round-trippable and is not persisted.</item>
     /// <item><see cref="AgentDescriptor.ConversationRetention"/> - there is no corresponding
     /// <c>AgentDefinitionConfig</c> field and the source never reads one, so it cannot round-trip
     /// and is not persisted.</item>

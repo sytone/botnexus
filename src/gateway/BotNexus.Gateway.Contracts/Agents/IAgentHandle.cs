@@ -39,6 +39,20 @@ public interface IAgentHandle : IAsyncDisposable
     Task<AgentResponse> PromptAsync(string message, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Runs one text-only finalization turn without exposing tools to the model.
+    /// </summary>
+    /// <param name="message">The instruction to synthesize a final response from existing context.</param>
+    /// <param name="cancellationToken">The original run deadline token.</param>
+    /// <returns>The final text response.</returns>
+    /// <remarks>
+    /// The default fails closed because silently falling back to <see cref="PromptAsync(string,CancellationToken)"/>
+    /// would expose tools during a call whose contract explicitly forbids them. Implementations must also
+    /// suppress completion continuations so this remains exactly one model turn.
+    /// </remarks>
+    Task<AgentResponse> PromptWithoutToolsAsync(string message, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException($"{GetType().Name} does not support tool-free finalization.");
+
+    /// <summary>
     /// Sends a multimodal user message (text + optional images) and waits for the complete response.
     /// Use the string overload when no images are present.
     /// </summary>
@@ -46,6 +60,22 @@ public interface IAgentHandle : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The complete agent response.</returns>
     Task<AgentResponse> PromptAsync(AgentUserMessage message, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Waits for the agent's run slot, reports when this message actually owns it, then executes the
+    /// prompt with producer-owned cancellation.
+    /// </summary>
+    /// <remarks>
+    /// Handles that cannot provide an atomic wait/start boundary fail closed. Falling back to
+    /// <see cref="PromptAsync(AgentUserMessage, CancellationToken)"/> would either reject a busy
+    /// agent or falsely report a queued message as running.
+    /// </remarks>
+    Task<AgentResponse> PromptWhenAvailableAsync(
+        AgentUserMessage message,
+        Func<Task> onStartedAsync,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support producer-owned queued execution.");
 
     /// <summary>
     /// Sends a message to the agent and streams back events in real time.
@@ -84,6 +114,15 @@ public interface IAgentHandle : IAsyncDisposable
     /// zero turns were used. Handles that own a real agent loop MUST override this.
     /// </remarks>
     IDisposable? ObserveTurns(Action onTurnCompleted) => null;
+
+    /// <summary>
+    /// Observes authoritative completed-tool and turn-boundary activity for no-progress policy.
+    /// Producers must derive fixed-size identities from normalized tool/result evidence internally,
+    /// never from model narration, and must not expose arguments or result payloads. Observations
+    /// are ordered; completed tools precede their turn boundary. Callbacks must be fast and not throw.
+    /// </summary>
+    /// <returns>A disposable subscription, or null when authoritative activity is unavailable.</returns>
+    IDisposable? ObserveActivity(Action<AgentActivityObservation> onActivity) => null;
 
     /// <summary>
     /// Aborts the current agent execution, if any.

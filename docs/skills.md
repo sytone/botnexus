@@ -291,9 +291,9 @@ Skills that fail validation are silently skipped.
 - Skills in `disabled` are denied.
 - If `allowed` is set, skills not in the list are denied.
 - Among eligible skills, those in `autoLoad` or explicitly loaded by the agent are activated.
-- Loading stops when `maxLoadedSkills` or `maxSkillContentChars` is reached.
+- Loading stops when `maxLoadedSkills` or `maxSkillContentChars` is reached. `0` blocks non-empty requests for that budget; a negative value means unlimited.
 
-The resolver produces three lists: **loaded**, **available** (eligible but not loaded), and **denied**.
+The resolver produces **loaded**, **available** (eligible but not loaded), and **denied** lists. It also records a structured rejection for each requested skill refused by the count or content budget. Each rejection includes the configured limit, current usage, and requested increment.
 
 ### 4. Prompt injection
 
@@ -366,8 +366,11 @@ Once loaded, the skill content is available in the agent's context for the rest 
 
 - **Skill not found:** `Skill 'unknown-skill' not found. Use action 'list' to see available skills.`
 - **Already loaded:** `Skill 'git-workflow' is already loaded.`
-- **Denied by config:** `Skill 'experimental' is not available for this agent.`
-- **Budget exceeded:** `Skill 'large-reference' cannot be loaded (budget exceeded).`
+- **Denied by config:** `Skill 'experimental' is not available for this agent.` The response does not expose the denied skill's path or content.
+- **Count budget exceeded:** the response includes `reason=count_limit` and the configured, current, and requested skill counts.
+- **Content budget exceeded:** the response includes `reason=content_limit` and the configured, current, and requested character counts.
+
+A budget refusal does not include the skill body and does not raise either budget. If discovery found authorized support files under `references/`, `templates/`, `scripts/`, or `assets/`, the response names the resolved root tier and lists those relative paths. The agent can then use `view_file` to load one bounded support file. A denied skill remains unreadable through `view_file`; a missing skill or support file is reported separately.
 
 ---
 

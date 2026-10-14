@@ -1,4 +1,4 @@
-using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
 using BotNexus.Agent.Core.Types;
 
 namespace BotNexus.CodingAgent.Tests;
@@ -6,9 +6,9 @@ namespace BotNexus.CodingAgent.Tests;
 public sealed class CodingAgentTests
 {
     [Fact]
-    public async Task DefaultMessageConverter_FiltersSystemMessages()
+    public async Task DefaultProviderMessageTransformer_FiltersSystemMessages()
     {
-        var convertToLlm = DefaultMessageConverter.Create();
+        var convertToLlm = DefaultProviderMessageTransformer.Create();
 
         var providerMessages = await convertToLlm([new SystemAgentMessage("[Session context summary: compacted]")], CancellationToken.None);
 

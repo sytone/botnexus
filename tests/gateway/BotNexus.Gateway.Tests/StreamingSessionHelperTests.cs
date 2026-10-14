@@ -1,6 +1,8 @@
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Streaming;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace BotNexus.Gateway.Tests;
@@ -973,6 +975,86 @@ public sealed class StreamingSessionHelperTests
 
         // After the run completes cleanly, no sentinel may remain.
         session.History.Any(e => e.IsCrashSentinel).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ProcessAndSaveAsync_FailedFinalCompletion_RetainsSentinelAndPublishesAfterSave()
+    {
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From("session-sentinel-failed"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1")
+        };
+        session.AddEntry(NewCrashSentinel());
+        var store = new Mock<ISessionStore>();
+        var saveCompleted = false;
+        store.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+            .Callback(() => saveCompleted = true)
+            .Returns(Task.CompletedTask);
+        var lifecycle = new SessionLifecycleEvents(NullLogger<SessionLifecycleEvents>.Instance);
+        SessionLifecycleEvent? published = null;
+        lifecycle.SessionChanged += (evt, _) =>
+        {
+            saveCompleted.ShouldBeTrue("live recovery must observe the authoritative failed transcript");
+            published = evt;
+            return Task.CompletedTask;
+        };
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.RunEnded,
+                    Completion = new RunCompletionSignal("Failed", [], null, "provider failed", null, null, null, 0)
+                }
+            ]),
+            session,
+            store.Object,
+            lifecycleEvents: lifecycle);
+
+        session.History.ShouldContain(e => e.IsCrashSentinel);
+        published.ShouldNotBeNull();
+        published.Type.ShouldBe(SessionLifecycleEventType.TerminalFailure);
+        published.Session.ShouldBeSameAs(session);
+    }
+
+    [Theory]
+    [InlineData("Completed")]
+    [InlineData("Cancelled")]
+    public async Task ProcessAndSaveAsync_NonFailedFinalCompletion_RemovesSentinelWithoutFailureSignal(string status)
+    {
+        var session = new GatewaySession
+        {
+            SessionId = BotNexus.Domain.Primitives.SessionId.From($"session-sentinel-{status.ToLowerInvariant()}"),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From("agent-1")
+        };
+        session.AddEntry(NewCrashSentinel());
+        var store = new Mock<ISessionStore>();
+        var lifecycle = new SessionLifecycleEvents(NullLogger<SessionLifecycleEvents>.Instance);
+        var terminalFailures = 0;
+        lifecycle.SessionChanged += (evt, _) =>
+        {
+            if (evt.Type == SessionLifecycleEventType.TerminalFailure)
+                terminalFailures++;
+            return Task.CompletedTask;
+        };
+
+        await StreamingSessionHelper.ProcessAndSaveAsync(
+            ToAsyncEnumerable(
+            [
+                new AgentStreamEvent
+                {
+                    Type = AgentStreamEventType.RunEnded,
+                    Completion = new RunCompletionSignal(status, [], null, null, null, null, null, 0)
+                }
+            ]),
+            session,
+            store.Object,
+            lifecycleEvents: lifecycle);
+
+        session.History.ShouldNotContain(e => e.IsCrashSentinel);
+        terminalFailures.ShouldBe(0);
     }
 
     [Fact]

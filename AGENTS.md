@@ -429,16 +429,16 @@ docs(planning): archive completed provider-routing spec
 test(domain): add missing edge case for session expiry
 ```
 
-## Configuration
+## Configuration authority review (#4324, #4564, #4567)
 
-The BotNexus development configuration file is located at:
+The target contract is SQLite-first: `config.sqlite` is the live configuration authority after verified cutover. `config.json` may be a legacy import, explicit export/rollback input, or marked generated projection; a generated projection is never a runtime read source. The cutover is not complete on `main` yet, so distinguish current compatibility behavior from the target contract rather than assuming the latter has shipped.
 
-```
-C:\Users\<ALIAS>\.botnexus\config.json
-```
+Before approving configuration-related changes, inspect the actual read/write path in **C#, executable scripts (including shell, PowerShell and Python), tests, and operator documentation**. Require ordinary startup, gateway/CLI commands, REST/Portal, agent tools and helpers to use the central home-rooted provider and canonical writer. Do not introduce a direct `config.json` read, file-existence gate, filename-shaped configuration identity, caller-selected backend switch, or JSON-first instruction merely because current fixtures or a generated projection contain the file. A `config.json` mention is not automatically a defect: migration, explicit import/export/rollback, projection generation, and isolated fixtures are legitimate when bounded and labelled. For a new configuration consumer, test SQLite-only operation with the projection absent, corrupt, and conflicting; ensure scripts and launch helpers receive the same scrutiny as C#.
 
-Use the BotNexus CLI to manage configuration:
+The first-stage architecture ratchet (#4603) scans production C# only. It is not evidence that non-C# helpers or documentation follow the authority contract. See #4134's `scripts/gateway-restart.sh` for the direct-JSON restart-address failure shape. File a concrete issue or blocking PR finding when a new leak is found; do not treat a green C# gate as clearance for other languages.
+
+Use the BotNexus CLI/API to manage live configuration; do not hand-edit a generated JSON projection. For a source checkout the CLI is invoked with:
 
 ```shell
-dotnet run --project src\gateway\BotNexus.Cli -- <command>
+dotnet run --project src/gateway/BotNexus.Cli -- <command>
 ```

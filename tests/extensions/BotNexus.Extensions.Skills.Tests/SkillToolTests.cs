@@ -153,6 +153,53 @@ public sealed class SkillToolTests
     }
 
     [Fact]
+    public async Task Load_CountLimit_ReturnsDistinctReasonAndMeasurements()
+    {
+        // Put the new request first to prove discovery order cannot displace session-loaded usage.
+        var skills = new[] { MakeSkill("requested"), MakeSkill("already-loaded") };
+        var config = new SkillsConfig { MaxLoadedSkills = 1 };
+        var tool = new SkillTool(skills, config);
+        await tool.ExecuteAsync("call-1", Args("load", "already-loaded"));
+
+        var text = ResultText(await tool.ExecuteAsync("call-2", Args("load", "requested")));
+
+        text.ShouldContain("reason=count_limit");
+        text.ShouldContain("configured=1");
+        text.ShouldContain("current=1");
+        text.ShouldContain("requested=1");
+        text.ShouldNotContain("Content for requested");
+    }
+
+    [Fact]
+    public async Task Load_ContentLimit_ReturnsDistinctReasonAndAuthorizedRecovery()
+    {
+        var skill = MakeSkill("large", content: new string('x', 20), sourcePath: "/skills/large") with
+        {
+            LinkedFiles =
+            [
+                new SkillLinkedFile
+                {
+                    RelativePath = "references/focused.md",
+                    Directory = "references",
+                    SizeBytes = 12
+                }
+            ]
+        };
+        var tool = new SkillTool([skill], new SkillsConfig { MaxSkillContentChars = 10 });
+
+        var text = ResultText(await tool.ExecuteAsync("call-1", Args("load", "large")));
+
+        text.ShouldContain("reason=content_limit");
+        text.ShouldContain("configured=10");
+        text.ShouldContain("current=0");
+        text.ShouldContain("requested=20");
+        text.ShouldContain("**Resolved from:** Global skill root");
+        text.ShouldContain("references/focused.md");
+        text.ShouldContain("view_file");
+        text.ShouldNotContain(new string('x', 20));
+    }
+
+    [Fact]
     public async Task Load_MissingSkillName_ReturnsError()
     {
         var tool = new SkillTool([], config: null);

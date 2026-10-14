@@ -94,9 +94,9 @@ public sealed class OutboundQueueWorker : BackgroundService
             return;
         }
 
-        // This sample demonstrates pseudo-streaming: request deltas for responsive consumers,
-        // but ignore them here and send only the consolidated terminal response to Teams.
-        if (!envelope.IsFinal || string.Equals(envelope.Type, "delta", StringComparison.OrdinalIgnoreCase))
+        // Teams pseudo-streaming is final-only. Raw deltas are transport chunks, not activities;
+        // forwarding them creates blank, punctuation-only, or token-sized chat messages.
+        if (!TeamsOutboundEnvelopePolicy.ShouldPostActivity(envelope))
         {
             await args.CompleteMessageAsync(args.Message, args.CancellationToken);
             return;

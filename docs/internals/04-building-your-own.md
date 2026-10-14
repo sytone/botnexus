@@ -22,11 +22,11 @@ flowchart TD
     ImplTools --> Q3{Need custom hooks?}
     UseBuiltIn --> Q3
 
-    Q3 -->|Yes| ImplHooks[Implement Before/After<br/>hook delegates]
+    Q3 -->|Yes| ImplHooks[Implement ToolExecutionPolicy<br/>and ToolResultTransformer delegates]
     Q3 -->|No| Q4{Need custom message<br/>conversion?}
     ImplHooks --> Q4
 
-    Q4 -->|Yes| ImplConvert[Implement ConvertToLlm<br/>delegate]
+    Q4 -->|Yes| ImplConvert[Implement ProviderMessageTransformer<br/>delegate]
     Q4 -->|No| UseDefault[Use MessageConverter<br/>ToProviderMessages]
     ImplConvert --> Wire[Wire AgentOptions<br/>Create Agent]
     UseDefault --> Wire
@@ -265,7 +265,9 @@ public sealed class WeatherTool : IAgentTool
 ```csharp
 using BotNexus.Agent.Core;
 using BotNexus.Agent.Core.Configuration;
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -306,22 +308,25 @@ var httpClient = new HttpClient();
 apiProviderRegistry.Register(new AnthropicProvider(httpClient));
 var llmClient = new LlmClient(apiProviderRegistry, modelRegistry);
 
-// ── ConvertToLlm delegate ───────────────────────────────
+// ── ProviderMessageTransformer delegate ─────────────────
 // Maps AgentMessage types to provider Message types.
 // Use the built-in converter for standard scenarios:
-ConvertToLlmDelegate convertToLlm = MessageConverter.ToProviderMessages;
+ProviderMessageTransformer convertToLlm = DefaultProviderMessageTransformer.TransformAsync;
 
-// ── TransformContext delegate ───────────────────────────
+// ── AgentContextTransformer delegate ────────────────────
 // Identity (pass-through) — or implement compaction logic
-TransformContextDelegate transformContext =
+AgentContextTransformer transformContext =
     (messages, ct) => Task.FromResult(messages);
 
-// ── GetApiKey delegate ──────────────────────────────────
-GetApiKeyDelegate getApiKey = (provider, ct) =>
-    Task.FromResult(Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY"));
+// ── Provider execution options ──────────────────────────
+ProviderExecutionOptionsProvider executionOptionsProvider = (provider, ct) =>
+    Task.FromResult<ProviderExecutionOptions?>(new ProviderExecutionOptions
+    {
+        ApiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
+    });
 
 // ── GenerationSettings ──────────────────────────────────
-var generationSettings = new SimpleStreamOptions
+var generationSettings = new GenerationOptions
 {
     Reasoning = ThinkingLevel.Low,
     CacheRetention = CacheRetention.Short,
@@ -329,8 +334,8 @@ var generationSettings = new SimpleStreamOptions
 };
 
 // ── Before/After tool call hooks (optional) ─────────────
-BeforeToolCallDelegate? beforeHook = null;  // See Step 5
-AfterToolCallDelegate? afterHook = null;    // See Step 5
+ToolExecutionPolicy? beforeHook = null;     // See Step 5
+ToolResultTransformer? afterHook = null;   // See Step 5
 
 // ── Assemble AgentOptions ───────────────────────────────
 var options = new AgentOptions(
@@ -341,14 +346,14 @@ var options = new AgentOptions(
     ),
     Model: model,
     LlmClient: llmClient,
-    ConvertToLlm: convertToLlm,
-    TransformContext: transformContext,
-    GetApiKey: getApiKey,
-    GetSteeringMessages: null,         // Inject messages mid-run
-    GetFollowUpMessages: null,         // Auto-follow-up messages
+    ProviderMessageTransformer: convertToLlm,
+    AgentContextTransformer: transformContext,
+    ProviderExecutionOptionsProvider: executionOptionsProvider,
+    SteeringMessageProvider: null,    // Inject messages mid-run
+    FollowUpMessageProvider: null,    // Auto-follow-up messages
     ToolExecutionMode: ToolExecutionMode.Sequential,  // or Parallel
-    BeforeToolCall: beforeHook,
-    AfterToolCall: afterHook,
+    ToolExecutionPolicy: beforeHook,
+    ToolResultTransformer: afterHook,
     GenerationSettings: generationSettings,
     SteeringMode: QueueMode.All,       // Consume all queued steering messages
     FollowUpMode: QueueMode.OneAtATime // Process follow-ups one at a time
@@ -362,14 +367,14 @@ var options = new AgentOptions(
 | `InitialState` | `AgentInitialState` | System prompt, model, initial tools and messages |
 | `Model` | `LlmModel` | Default model for LLM calls |
 | `LlmClient` | `LlmClient` | Routes requests to the right provider |
-| `ConvertToLlm` | `ConvertToLlmDelegate` | Maps `AgentMessage` → provider `Message` |
-| `TransformContext` | `TransformContextDelegate` | Identity or context compaction |
+| `ProviderMessageTransformer` | `ProviderMessageTransformer` | Maps `AgentMessage` → provider `Message` |
+| `AgentContextTransformer` | `AgentContextTransformer` | Identity or context compaction |
 | `GetApiKey` | `GetApiKeyDelegate` | Resolves API key per provider |
-| `GetSteeringMessages` | `GetMessagesDelegate?` | Injects messages mid-run |
-| `GetFollowUpMessages` | `GetMessagesDelegate?` | Auto-follow-up messages |
+| `SteeringMessageProvider` | `AgentMessageProvider?` | Injects messages mid-run |
+| `FollowUpMessageProvider` | `AgentMessageProvider?` | Auto-follow-up messages |
 | `ToolExecutionMode` | `ToolExecutionMode` | `Sequential` or `Parallel` |
-| `BeforeToolCall` | `BeforeToolCallDelegate?` | Pre-execution hook |
-| `AfterToolCall` | `AfterToolCallDelegate?` | Post-execution hook |
+| `ToolExecutionPolicy` | `ToolExecutionPolicy?` | Pre-execution policy |
+| `ToolResultTransformer` | `ToolResultTransformer?` | Post-execution transformation |
 | `GenerationSettings` | `SimpleStreamOptions` | Temperature, reasoning level, cache |
 | `SteeringMode` | `QueueMode` | `All` or `OneAtATime` |
 | `FollowUpMode` | `QueueMode` | `All` or `OneAtATime` |
@@ -418,10 +423,10 @@ var followUp = await agent.PromptAsync("How about Tokyo?");
 
 Hooks let you intercept tool calls before and after execution — for policy enforcement, logging, redaction, or result transformation.
 
-### BeforeToolCallDelegate — block dangerous operations
+### ToolExecutionPolicy — block dangerous operations
 
 ```csharp
-BeforeToolCallDelegate beforeHook = async (context, ct) =>
+ToolExecutionPolicy beforeHook = async (context, ct) =>
 {
     // Block shell commands that contain "rm" or "del"
     if (context.ToolCallRequest.Name == "run_command")
@@ -430,7 +435,7 @@ BeforeToolCallDelegate beforeHook = async (context, ct) =>
         if (cmd.Contains("rm ", StringComparison.OrdinalIgnoreCase)
             || cmd.Contains("del ", StringComparison.OrdinalIgnoreCase))
         {
-            return new BeforeToolCallResult(
+            return new ToolExecutionDecision(
                 Block: true,
                 Reason: "Destructive commands are not allowed."
             );
@@ -442,18 +447,18 @@ BeforeToolCallDelegate beforeHook = async (context, ct) =>
 };
 ```
 
-The `BeforeToolCallContext` record gives you access to:
+The `ToolExecutionContext` record gives you access to:
 - `AssistantMessage` — the assistant message requesting the tool call
 - `ToolCallRequest` — the `ToolCallContent` (id, name, arguments)
 - `ValidatedArgs` — arguments after `PrepareArgumentsAsync`
 - `AgentContext` — the full agent context (system prompt, messages, tools)
 
-Return `null` to allow the call, or a `BeforeToolCallResult(Block: true, Reason: "...")` to reject it.
+Return `null` to allow the call, or a `ToolExecutionDecision(Block: true, Reason: "...")` to reject it.
 
-### AfterToolCallDelegate — transform or log results
+### ToolResultTransformer — transform or log results
 
 ```csharp
-AfterToolCallDelegate afterHook = async (context, ct) =>
+ToolResultTransformer afterHook = async (context, ct) =>
 {
     // Log every tool call
     Console.WriteLine(
@@ -469,29 +474,29 @@ AfterToolCallDelegate afterHook = async (context, ct) =>
         )
     ).ToList();
 
-    return new AfterToolCallResult(Content: redacted);
+    return new ToolResultTransformResult(Content: redacted);
 };
 ```
 
-The `AfterToolCallContext` record gives you access to:
+The `ToolResultTransformContext` record gives you access to:
 - `Result` — the `AgentToolResult` (before hook transformation)
 - `IsError` — whether execution failed
-- Same context as `BeforeToolCallContext`
+- Same context as `ToolExecutionContext`
 
-Return `null` to leave the result unchanged, or an `AfterToolCallResult` with replacement content.
+Return `null` to leave the result unchanged, or a `ToolResultTransformResult` with replacement content.
 
 ### Wire hooks into AgentOptions
 
 ```csharp
 var options = new AgentOptions(
     // ... other parameters ...
-    BeforeToolCall: beforeHook,
-    AfterToolCall: afterHook,
+    ToolExecutionPolicy: beforeHook,
+    ToolResultTransformer: afterHook,
     // ...
 );
 ```
 
-> **Key takeaway:** Hooks are your policy layer. Use `BeforeToolCall` for access control, `AfterToolCall` for redaction and logging. They run synchronously in the tool execution pipeline.
+> **Key takeaway:** Use `ToolExecutionPolicy` for access control and `ToolResultTransformer` for redaction and logging. Both delegates are awaited in the tool execution pipeline.
 
 ---
 
@@ -555,10 +560,10 @@ var sessions = await sessionManager.ListSessionsAsync("/projects/myapp");
 
 ### Compaction for long conversations
 
-As conversations grow, context windows fill up. Use the `TransformContext` delegate to implement compaction — trimming or summarizing older messages:
+As conversations grow, context windows fill up. Use the `AgentContextTransformer` delegate to implement compaction — trimming or summarizing older messages:
 
 ```csharp
-TransformContext: (messages, ct) =>
+AgentContextTransformer: (messages, ct) =>
 {
     if (messages.Count <= 50)
         return Task.FromResult(messages);
@@ -572,7 +577,7 @@ TransformContext: (messages, ct) =>
 },
 ```
 
-> **Key takeaway:** Sessions are stored as append-only JSONL files with parent-child entry relationships. Use `SessionManager` for save/resume, and `TransformContext` for compaction.
+> **Key takeaway:** Sessions are stored as append-only JSONL files with parent-child entry relationships. Use `SessionManager` for save/resume, and `AgentContextTransformer` for compaction.
 
 ---
 
@@ -689,20 +694,20 @@ Assert.Contains("Seattle", lastAssistant.Content, StringComparison.OrdinalIgnore
 
 ```csharp
 var blocked = false;
-BeforeToolCallDelegate testHook = async (ctx, ct) =>
+ToolExecutionPolicy testHook = async (ctx, ct) =>
 {
     if (ctx.ToolCallRequest.Name == "get_weather"
         && ctx.ValidatedArgs["location"]?.ToString() == "classified")
     {
         blocked = true;
-        return new BeforeToolCallResult(Block: true, Reason: "Classified location");
+        return new ToolExecutionDecision(Block: true, Reason: "Classified location");
     }
     return null;
 };
 
 // Wire and verify
 var agent = new Agent(new AgentOptions(
-    BeforeToolCall: testHook,
+    ToolExecutionPolicy: testHook,
     // ... rest of options
 ));
 ```
@@ -720,14 +725,14 @@ public sealed class LoggingExtension : IExtension
 
     public IReadOnlyList<IAgentTool> GetTools() => [];
 
-    public async ValueTask<BeforeToolCallResult?> OnToolCallAsync(
+    public async ValueTask<ToolExecutionDecision?> OnToolCallAsync(
         ToolCallLifecycleContext context, CancellationToken ct)
     {
         Console.WriteLine($"[LOG] Calling {context.ToolName}");
         return null;  // Don't block
     }
 
-    public async ValueTask<AfterToolCallResult?> OnToolResultAsync(
+    public async ValueTask<ToolResultTransformResult?> OnToolResultAsync(
         ToolResultLifecycleContext context, CancellationToken ct)
     {
         var status = context.IsError ? "ERROR" : "OK";
@@ -1375,7 +1380,7 @@ public sealed class WriteDocTool : IAgentTool
 
 ```csharp
 // Only allow reading .cs files, only allow writing .md files
-BeforeToolCallDelegate safetyHook = async (context, ct) =>
+ToolExecutionPolicy safetyHook = async (context, ct) =>
 {
     var toolName = context.ToolCallRequest.Name;
     var args = context.ValidatedArgs;
@@ -1384,7 +1389,7 @@ BeforeToolCallDelegate safetyHook = async (context, ct) =>
     {
         var path = args["path"]?.ToString() ?? "";
         if (!path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-            return new BeforeToolCallResult(
+            return new ToolExecutionDecision(
                 Block: true,
                 Reason: "Only .cs files can be read by the doc agent.");
     }
@@ -1393,7 +1398,7 @@ BeforeToolCallDelegate safetyHook = async (context, ct) =>
     {
         var path = args["path"]?.ToString() ?? "";
         if (!path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
-            return new BeforeToolCallResult(
+            return new ToolExecutionDecision(
                 Block: true,
                 Reason: "Only .md files can be written.");
     }
@@ -1407,7 +1412,9 @@ BeforeToolCallDelegate safetyHook = async (context, ct) =>
 ```csharp
 using BotNexus.Agent.Core;
 using BotNexus.Agent.Core.Configuration;
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -1471,16 +1478,16 @@ var options = new AgentOptions(
     ),
     Model: model,
     LlmClient: llmClient,
-    ConvertToLlm: MessageConverter.ToProviderMessages,
-    TransformContext: (ctx, ct) => Task.FromResult(ctx),
+    ProviderMessageTransformer: MessageConverter.ToProviderMessages,
+    AgentContextTransformer: (ctx, ct) => Task.FromResult(ctx),
     GetApiKey: (provider, ct) =>
         Task.FromResult(
             Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")),
-    GetSteeringMessages: null,
-    GetFollowUpMessages: null,
+    SteeringMessageProvider: null,
+    FollowUpMessageProvider: null,
     ToolExecutionMode: ToolExecutionMode.Sequential,
-    BeforeToolCall: safetyHook,
-    AfterToolCall: null,
+    ToolExecutionPolicy: safetyHook,
+    ToolResultTransformer: null,
     GenerationSettings: new SimpleStreamOptions
     {
         Reasoning = ThinkingLevel.Medium,
@@ -1528,7 +1535,7 @@ Console.WriteLine($"\nDone — {result.Count} messages produced.");
 | 2 | Custom tools | `IAgentTool`, `Tool`, `AgentToolResult`, `AgentToolContent` |
 | 3 | Agent wiring | `AgentOptions`, `AgentInitialState`, `SimpleStreamOptions` |
 | 4 | Create and run | `Agent`, `PromptAsync`, `Subscribe` |
-| 5 | Safety hooks | `BeforeToolCallDelegate`, `AfterToolCallDelegate`, `BeforeToolCallResult` |
+| 5 | Safety hooks | `ToolExecutionPolicy`, `ToolResultTransformer`, `ToolExecutionDecision` |
 | 6 | Session persistence | `SessionManager`, JSONL format |
 | 7 | System prompt engineering | `SystemPromptBuilder`, `GetPromptSnippet`, `GetPromptGuidelines` |
 | 8 | Testing | `AgentEvent`, `ToolExecutionStartEvent`, `ToolExecutionEndEvent` |

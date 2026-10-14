@@ -153,6 +153,30 @@ public sealed class SidebarNavigationTests
     }
 
     [SkippableFact]
+    public async Task Desktop_sidebar_stays_open_across_top_level_navigation()
+    {
+        Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
+        using var playwright = await Playwright.CreateAsync();
+        var (browser, skipReason) = await PortalTestHelpers.TryLaunchBrowserAsync(playwright);
+        Skip.If(browser is null, skipReason);
+        await using var _ = browser!;
+        var (page, portal, _) = await PortalTestHelpers.NewChatPageAsync(browser, _fx.GatewayBaseUrl, _fx.AgentIds[0]);
+
+        foreach (var testId in new[] { "nav-skills", "nav-agents", "nav-cron-jobs" })
+        {
+            var link = page.Locator($"[data-testid='{testId}']");
+            await link.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+            await link.ClickAsync();
+            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+
+            await page.Locator(".main-sidebar.sidebar-open").WaitForAsync(
+                new() { State = WaitForSelectorState.Attached, Timeout = 5_000 });
+            Assert.Equal("true", await page.EvaluateAsync<string>(
+                "() => localStorage.getItem('botnexus-sidebar-open')"));
+        }
+    }
+
+    [SkippableFact]
     public async Task AgentStatusLabel_ShowsIdleWhenNotStreaming()
     {
         Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");

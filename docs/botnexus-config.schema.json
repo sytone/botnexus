@@ -1778,25 +1778,6 @@
             "type": "string"
           }
         },
-        "systemPromptFiles": {
-          "title": "System prompt files",
-          "type": [
-            "array",
-            "null"
-          ],
-          "description": "Deprecated custom prompt-file list retained for compatibility. Use standard workspace instruction files, WORLD.md, inline prompts, conversation instructions, or model-specific variants.",
-          "items": {
-            "type": "string"
-          }
-        },
-        "systemPromptFile": {
-          "title": "System prompt file",
-          "type": [
-            "null",
-            "string"
-          ],
-          "description": "Deprecated custom prompt file retained for compatibility. Use standard workspace instruction files, WORLD.md, inline prompts, conversation instructions, or model-specific variants."
-        },
         "toolIds": {
           "title": "Tool ids",
           "type": [

@@ -1,4 +1,5 @@
-using BotNexus.Agent.Core.Hooks;
+using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
+using BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 
 namespace BotNexus.CodingAgent.Extensions;
 
@@ -7,14 +8,14 @@ public sealed class ExtensionRunner(IReadOnlyList<IExtension> extensions)
     private readonly IReadOnlyList<IExtension> _extensions = extensions;
     public IReadOnlyList<IExtension> Extensions => _extensions;
 
-    public async Task<BeforeToolCallResult?> OnToolCallAsync(
+    public async Task<ToolExecutionDecision?> OnToolCallAsync(
         ToolCallLifecycleContext context,
         CancellationToken cancellationToken = default)
     {
-        BeforeToolCallResult? result = null;
+        ToolExecutionDecision? result = null;
         foreach (var extension in _extensions)
         {
-            BeforeToolCallResult? current;
+            ToolExecutionDecision? current;
             try
             {
                 current = await extension.OnToolCallAsync(context, cancellationToken).ConfigureAwait(false);
@@ -39,14 +40,14 @@ public sealed class ExtensionRunner(IReadOnlyList<IExtension> extensions)
         return result;
     }
 
-    public async Task<AfterToolCallResult?> OnToolResultAsync(
+    public async Task<ToolResultTransformResult?> OnToolResultAsync(
         ToolResultLifecycleContext context,
         CancellationToken cancellationToken = default)
     {
-        AfterToolCallResult? result = null;
+        ToolResultTransformResult? result = null;
         foreach (var extension in _extensions)
         {
-            AfterToolCallResult? current;
+            ToolResultTransformResult? current;
             try
             {
                 current = await extension.OnToolResultAsync(context, cancellationToken).ConfigureAwait(false);
@@ -148,14 +149,14 @@ public sealed class ExtensionRunner(IReadOnlyList<IExtension> extensions)
         return currentPayload;
     }
 
-    private static AfterToolCallResult Merge(AfterToolCallResult? current, AfterToolCallResult next)
+    private static ToolResultTransformResult Merge(ToolResultTransformResult? current, ToolResultTransformResult next)
     {
         if (current is null)
         {
             return next;
         }
 
-        return new AfterToolCallResult(
+        return new ToolResultTransformResult(
             Content: next.Content ?? current.Content,
             Details: next.Details ?? current.Details,
             IsError: next.IsError ?? current.IsError);

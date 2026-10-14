@@ -38,7 +38,28 @@ public sealed class ConversationEventStreamRoutingTests
     }
 
     [Fact]
-    public void GetTargets_IgnoresNonAgentEventsAndEventsWithoutSession()
+    public void GetTargets_SessionScopedLifecycleEvent_UsesEligibleBindingSnapshot()
+    {
+        var bindingId = BindingId.From("lifecycle-observer");
+        var lifecycleEvent = new ConversationSessionItemPersistedEvent
+        {
+            AgentId = AgentId.From("agent"),
+            ConversationId = ConversationId.From("conversation"),
+            SessionId = SessionId.From("session"),
+            Bindings = [Binding(bindingId, "signalr", null, "observer-address", BindingMode.NotifyOnly)],
+            Item = new SessionEntry { Role = MessageRole.Notification, Content = "persisted" },
+        };
+
+        var target = ConversationEventStreamRouting.GetTargets(lifecycleEvent, ChannelKey.From("signalr"), null)
+            .ShouldHaveSingleItem();
+
+        target.BindingId.ShouldBe(bindingId);
+        target.ChannelAddress.ShouldBe(ChannelAddress.From("observer-address"));
+        target.ChannelRequestId.ShouldBeNull();
+    }
+
+    [Fact]
+    public void GetTargets_IgnoresEventsWithoutSession()
     {
         var lifecycleEvent = new ConversationCreatedEvent
         {

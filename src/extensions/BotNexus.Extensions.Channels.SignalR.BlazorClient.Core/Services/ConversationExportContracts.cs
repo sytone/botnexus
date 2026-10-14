@@ -6,7 +6,9 @@ public sealed record ConversationExportRequest(
     bool IncludeTools = true,
     bool IncludeThinking = false,
     bool IncludeSystemMessages = false,
-    bool RedactSecrets = true);
+    bool RedactSecrets = true,
+    string? FirstEntryId = null,
+    string? LastEntryId = null);
 
 /// <summary>Download payload returned by the gateway export route.</summary>
 public sealed record ExportDownload(string FileName, string ContentType, byte[] Content);

@@ -165,6 +165,20 @@ public sealed class TelegramBotConfig
     public bool ShowToolActivity { get; set; } = true;
 
     /// <summary>
+    /// When true (default), user messages persisted from another surface are echoed to this bot's
+    /// applicable chats with a literal <c>User said:</c> label. Messages originating from the same
+    /// Telegram binding are always suppressed to prevent a native-message duplicate.
+    /// </summary>
+    [Display(
+        Name = "Echo foreign user messages",
+        Description = "When on (default), user messages sent from another conversation surface are echoed to this Telegram chat.",
+        GroupName = "Telegram bot",
+        Order = 10)]
+    [DefaultValue(true)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "telegram-bot", Order = 10)]
+    public bool EchoForeignUserMessages { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the maximum Rich Message length before payload splitting. Rich Messages allow up
     /// to 32768 characters (vs 4096 for plain), so the default (32000) stays safely below that limit.
     /// Only used when <see cref="RichMessages"/> is enabled; the legacy fallback path uses

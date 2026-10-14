@@ -176,7 +176,7 @@ public class ProviderRetryAfterTests
     [Fact]
     public void ComputeRetryDelayMs_RandomPinnedToZero_ReproducesTheHistoricalBackoffSequence()
     {
-        var config = CreateConfig("jitter-zero", maxRetryDelayMs: null) with { RetryRandomSource = () => 0d };
+        var config = CreateConfig("jitter-zero", maxRetryDelayMs: null) with { RetryRandomnessProvider = () => 0d };
 
         AgentLoopRunner.ComputeRetryDelayMs(500, retryAfter: null, config).ShouldBe(500);
         AgentLoopRunner.ComputeRetryDelayMs(1000, retryAfter: null, config).ShouldBe(1000);
@@ -194,7 +194,7 @@ public class ProviderRetryAfterTests
     [InlineData(2000)]
     public void ComputeRetryDelayMs_RandomPinnedToMax_IsStrictlyLongerAndBoundedByTheJitterFactor(int backoffMs)
     {
-        var config = CreateConfig("jitter-max", maxRetryDelayMs: null) with { RetryRandomSource = () => 1d };
+        var config = CreateConfig("jitter-max", maxRetryDelayMs: null) with { RetryRandomnessProvider = () => 1d };
 
         var delay = AgentLoopRunner.ComputeRetryDelayMs(backoffMs, retryAfter: null, config);
 
@@ -257,7 +257,7 @@ public class ProviderRetryAfterTests
     [Fact]
     public void ComputeRetryDelayMs_ReasonableRetryAfter_IsHonouredVerbatim()
     {
-        var config = CreateDefaultCeilingConfig("reasonable-retry-after") with { RetryRandomSource = () => 1d };
+        var config = CreateDefaultCeilingConfig("reasonable-retry-after") with { RetryRandomnessProvider = () => 1d };
 
         AgentLoopRunner.ComputeRetryDelayMs(500, TimeSpan.FromSeconds(5), config).ShouldBe(5000);
     }
@@ -281,7 +281,7 @@ public class ProviderRetryAfterTests
     [Fact]
     public void ComputeRetryDelayMs_JitterNeverOvershootsAnExplicitCeiling()
     {
-        var config = CreateConfig("tight-ceiling", maxRetryDelayMs: 600) with { RetryRandomSource = () => 1d };
+        var config = CreateConfig("tight-ceiling", maxRetryDelayMs: 600) with { RetryRandomnessProvider = () => 1d };
 
         AgentLoopRunner.ComputeRetryDelayMs(2000, retryAfter: null, config).ShouldBe(600);
     }
@@ -293,19 +293,19 @@ public class ProviderRetryAfterTests
         return new AgentLoopConfig(
             Model: TestHelpers.CreateTestModel(apiId),
             LlmClient: TestHelpers.CreateLlmClient(),
-            ConvertToLlm: (messages, _) => Task.FromResult<IReadOnlyList<Message>>(
+            ProviderMessageTransformer: (messages, _) => Task.FromResult<IReadOnlyList<Message>>(
                 messages.OfType<AgentUserMessage>()
                     .Select(m => (Message)new BotNexus.Agent.Providers.Core.Models.UserMessage(
                         new UserMessageContent(m.Content),
                         DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
                     .ToList()),
-            TransformContext: (messages, _) => Task.FromResult(messages),
-            GetProviderExecutionOptions: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
-            GetSteeringMessages: null,
-            GetFollowUpMessages: null,
+            AgentContextTransformer: (messages, _) => Task.FromResult(messages),
+            ProviderExecutionOptionsProvider: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
+            SteeringMessageProvider: null,
+            FollowUpMessageProvider: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
-            BeforeToolCall: null,
-            AfterToolCall: null,
+            ToolExecutionPolicy: null,
+            ToolResultTransformer: null,
             GenerationSettings: new GenerationOptions(),
             MaxRetryDelayMs: maxRetryDelayMs);
     }
@@ -320,14 +320,14 @@ public class ProviderRetryAfterTests
         return new AgentLoopConfig(
             Model: TestHelpers.CreateTestModel(apiId),
             LlmClient: TestHelpers.CreateLlmClient(),
-            ConvertToLlm: (messages, _) => Task.FromResult<IReadOnlyList<Message>>([]),
-            TransformContext: (messages, _) => Task.FromResult(messages),
-            GetProviderExecutionOptions: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
-            GetSteeringMessages: null,
-            GetFollowUpMessages: null,
+            ProviderMessageTransformer: (messages, _) => Task.FromResult<IReadOnlyList<Message>>([]),
+            AgentContextTransformer: (messages, _) => Task.FromResult(messages),
+            ProviderExecutionOptionsProvider: (_, _) => Task.FromResult<ProviderExecutionOptions?>(null),
+            SteeringMessageProvider: null,
+            FollowUpMessageProvider: null,
             ToolExecutionMode: ToolExecutionMode.Sequential,
-            BeforeToolCall: null,
-            AfterToolCall: null,
+            ToolExecutionPolicy: null,
+            ToolResultTransformer: null,
             GenerationSettings: new GenerationOptions());
     }
 

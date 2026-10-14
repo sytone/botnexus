@@ -11,7 +11,7 @@ namespace BotNexus.Gateway.Configuration;
 /// <para>
 /// #2887. Every consumer outside <c>BotNexus.Gateway.Configuration</c> addresses configuration by
 /// canonical dotted path through this type. The raw traversal primitives
-/// (<see cref="RawConfigPath"/>, <see cref="ConfigPathSyntax"/>) and the underlying
+/// (<see cref="JsonObjectExtensions"/>, <see cref="ConfigPathSyntax"/>) and the underlying
 /// <see cref="JsonObject"/> are project-internal, so a consumer <em>cannot express</em> a
 /// hand-rolled traversal - which is the #2764 defect made unrepresentable rather than merely fixed.
 /// </para>
@@ -77,7 +77,7 @@ public sealed class ConfigDocument
         value = null;
         RequireRecognised(path);
 
-        return RawConfigPath.Get(_root, path) is JsonValue node
+        return _root.Get(path) is JsonValue node
                && node.TryGetValue(out value);
     }
 
@@ -86,7 +86,7 @@ public sealed class ConfigDocument
     {
         RequireRecognised(path);
 
-        return RawConfigPath.Get(_root, path) is JsonValue node && node.TryGetValue<bool>(out var value)
+        return _root.Get(path) is JsonValue node && node.TryGetValue<bool>(out var value)
             ? value
             : null;
     }
@@ -96,7 +96,7 @@ public sealed class ConfigDocument
     {
         RequireRecognised(path);
 
-        return RawConfigPath.Get(_root, path) is JsonValue node && node.TryGetValue<int>(out var value)
+        return _root.Get(path) is JsonValue node && node.TryGetValue<int>(out var value)
             ? value
             : null;
     }
@@ -106,14 +106,14 @@ public sealed class ConfigDocument
     public bool Exists(string path)
     {
         RequireRecognised(path);
-        return RawConfigPath.Exists(_root, path);
+        return _root.Exists(path);
     }
 
     /// <summary>Returns true when an object exists at <paramref name="path"/>.</summary>
     public bool HasObject(string path)
     {
         RequireRecognised(path);
-        return RawConfigPath.Get(_root, path) is JsonObject;
+        return _root.Get(path) is JsonObject;
     }
 
     /// <summary>
@@ -125,7 +125,7 @@ public sealed class ConfigDocument
     {
         RequireRecognised(path);
 
-        if (RawConfigPath.Get(_root, path) is not JsonArray array)
+        if (_root.Get(path) is not JsonArray array)
             return [];
 
         return array
@@ -139,7 +139,7 @@ public sealed class ConfigDocument
     public bool HasNonEmptyList(string path)
     {
         RequireRecognised(path);
-        return RawConfigPath.Get(_root, path) is JsonArray { Count: > 0 };
+        return _root.Get(path) is JsonArray { Count: > 0 };
     }
 
     /// <summary>
@@ -151,7 +151,7 @@ public sealed class ConfigDocument
     {
         RequireRecognised(path);
 
-        return RawConfigPath.Get(_root, path) is JsonObject section
+        return _root.Get(path) is JsonObject section
             ? section.Select(pair => pair.Key).ToList()
             : [];
     }
@@ -166,7 +166,7 @@ public sealed class ConfigDocument
     public string? FindEntryKey(string sectionPath, string key)
     {
         RequireRecognised(sectionPath);
-        return RawConfigPath.FindEntryKey(_root, sectionPath, key);
+        return _root.FindEntryKey(sectionPath, key);
     }
 
     /// <summary>Renders the entry at <paramref name="sectionPath"/>/<paramref name="key"/> as
@@ -175,7 +175,7 @@ public sealed class ConfigDocument
     {
         RequireRecognised(sectionPath);
 
-        return RawConfigPath.GetEntry(_root, sectionPath, key)
+        return _root.GetEntry(sectionPath, key)
             ?.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
@@ -194,7 +194,7 @@ public sealed class ConfigDocument
         if (!TryConvert(value, path, out var node, out error))
             return false;
 
-        return RawConfigPath.TrySet(_root, path, node, out error);
+        return _root.TrySet(path, node, out error);
     }
 
     /// <summary>
@@ -305,7 +305,7 @@ public sealed class ConfigDocument
             ? null
             : JsonSerializer.SerializeToNode(value, value.GetType(), WriteOptions);
 
-        return RawConfigPath.TrySet(_root, path, node, out error);
+        return _root.TrySet(path, node, out error);
     }
 
     /// <summary>Sets <paramref name="path"/> to an object built from <paramref name="values"/>.</summary>
@@ -319,7 +319,7 @@ public sealed class ConfigDocument
         if (!TryBuildObject(values, path, out var node, out error))
             return false;
 
-        return RawConfigPath.TrySet(_root, path, node, out error);
+        return _root.TrySet(path, node, out error);
     }
 
     /// <summary>
@@ -337,7 +337,7 @@ public sealed class ConfigDocument
         if (!TryBuildObject(values, path, out var node, out error))
             return false;
 
-        return RawConfigPath.TryPatchObject(_root, path, node, out error);
+        return _root.TryPatchObject(path, node, out error);
     }
 
     /// <summary>
@@ -373,7 +373,7 @@ public sealed class ConfigDocument
         if (!ConfigPathBinding.TryRecognise(path, out error))
             return false;
 
-        return RawConfigPath.TryRemove(_root, path, out error);
+        return _root.TryRemove(path, out error);
     }
 
     /// <summary>Replaces the entry <paramref name="key"/> of <paramref name="sectionPath"/> with an
@@ -388,7 +388,7 @@ public sealed class ConfigDocument
         if (!TryBuildObject(values, sectionPath, out var node, out error))
             return false;
 
-        return RawConfigPath.TrySetEntry(_root, sectionPath, key, node, out error);
+        return _root.TrySetEntry(sectionPath, key, node, out error);
     }
 
     /// <summary>
@@ -402,7 +402,7 @@ public sealed class ConfigDocument
             return false;
 
         var node = JsonSerializer.SerializeToNode(value, WriteOptions);
-        return RawConfigPath.TrySetEntry(_root, sectionPath, key, node, out error);
+        return _root.TrySetEntry(sectionPath, key, node, out error);
     }
 
     /// <summary>Overlays <paramref name="values"/> onto the entry <paramref name="key"/> of
@@ -417,7 +417,7 @@ public sealed class ConfigDocument
         if (!TryBuildObject(values, sectionPath, out var node, out error))
             return false;
 
-        return RawConfigPath.TryPatchEntry(_root, sectionPath, key, node, out error);
+        return _root.TryPatchEntry(sectionPath, key, node, out error);
     }
 
     /// <summary>Removes the entry <paramref name="key"/> from <paramref name="sectionPath"/>. A
@@ -427,7 +427,7 @@ public sealed class ConfigDocument
         if (!ConfigPathBinding.TryRecognise(sectionPath, out error))
             return false;
 
-        return RawConfigPath.TryRemoveEntry(_root, sectionPath, key, out error);
+        return _root.TryRemoveEntry(sectionPath, key, out error);
     }
 
     /// <summary>

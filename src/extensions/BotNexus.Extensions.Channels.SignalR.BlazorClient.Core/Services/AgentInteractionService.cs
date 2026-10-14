@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -90,7 +90,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             InboundDeliveryMode.Interrupt => "[redirect] " + content,
             _ => content
         };
-        AppendTo(conv, "User", localEcho);
+        AppendTo(conv, "User", localEcho, attachments.Select(ToChatAttachment).ToArray());
 
         if (deliveryMode == InboundDeliveryMode.Steer)
         {
@@ -140,12 +140,10 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// cannot spoof, reusing the #2300 provenance vocabulary at message level rather than a literal
     /// stamped into the text. Content is still control-character stripped so it cannot fabricate
     /// extra transcript lines.</description></item>
-    /// <item><description><b>Mid-turn (degraded, pending #2438).</b> When the bound conversation
-    /// already has an active turn the submission is REJECTED here with an explicit "agent is busy"
-    /// reason, before it reaches the transport. It is not queued and not silently dropped: an
-    /// inbound message arriving mid-run is currently lost server-side (#2388) and the follow-up
-    /// queue that would defer it (#2438) does not exist yet. When #2438 lands this path should
-    /// enqueue instead of refusing.</description></item>
+    /// <item><description><b>Authoritative run state.</b> Client stream state is a projection and may
+    /// be stale. It never rejects a submission locally. The dedicated hub verb submits with the
+    /// existing automatic delivery intent so the server-side inbound orchestrator decides whether
+    /// the turn can start, queue, steer, or reject against authoritative state.</description></item>
     /// <item><description><b>Bounds.</b> Prompt and instruction length are capped by an arbitrary
     /// guardrail (see <see cref="CanvasSubmitGuards.MaxPromptLength"/>). There is deliberately no
     /// rate limiting, in-flight tracking or content inspection.</description></item>
@@ -179,9 +177,6 @@ public sealed class AgentInteractionService : IAgentInteractionService
                 return CanvasSubmitResult.Rejected(
                     $"Instructions must be at most {CanvasSubmitGuards.MaxInstructionsLength} characters.");
         }
-
-        if (conv.StreamState.IsTurnActive)
-            return CanvasSubmitResult.Rejected("Agent is already running; try again when the current turn finishes.");
 
         var now = DateTimeOffset.UtcNow;
         var content = CanvasSubmitGuards.ComposeContent(safePrompt, safeInstructions);
@@ -219,7 +214,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
     /// </summary>
     /// <remarks>
     /// #3211 replaced the former <c>TryResolveActiveConversationTarget</c>, which re-derived the
-    /// conversation from ambient <see cref="AgentState.ActiveConversationId"/>. Ambient derivation
+    /// conversation from ambient <see cref="ambient conversation state"/>. Ambient derivation
     /// meant a deep link to a non-most-recent conversation could steer or abort a different
     /// conversation entirely. The conversation is now an argument, and only the SESSION is resolved
     /// here - from that conversation's own <see cref="ConversationState.ActiveSessionId"/> with no
@@ -255,7 +250,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             return;
         var convId = conversationId;
 
-        AppendTo(conv, "User", content);
+        AppendTo(conv, "User", content, attachments.Select(ToChatAttachment).ToArray());
 
         // Add entry to steering queue panel with FollowUp kind
         var entry = new SteeringEntry(Guid.NewGuid().ToString("N"), content, SteeringEntryKind.FollowUp, SteeringEntryStatus.Pending);
@@ -312,7 +307,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         agent.ProcessingStage = null;
 
         if (agent.Conversations.GetValueOrDefault(conversationId) is { } conv)
-            conv.StreamState.EndRun();
+            conv.StreamState.EndRun("LocalStop");
 
         // #2439: the run is being torn down, so nothing will ever inject a queued follow-up or
         // steer. Clear the pending chip alongside the run bracket rather than leaving a stale
@@ -400,7 +395,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             };
 
             if (select)
-                _store.SetActiveConversation(agentId, dto.ConversationId);
+                _store.SelectView(agentId, dto.ConversationId, SelectionSource.UserClick);
             else
                 _store.NotifyChanged();
 
@@ -419,7 +414,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         if (agent is null) return;
         if (!agent.Conversations.ContainsKey(conversationId)) return;
 
-        _store.SetActiveConversation(agentId, conversationId);
+        _store.SelectView(agentId, conversationId, SelectionSource.UserClick);
 
         var conv = agent.Conversations.GetValueOrDefault(conversationId);
 
@@ -490,7 +485,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
         // actual server-side turn result rather than a perpetual in-progress spinner.
         if (conv is not null && conv.StreamState.IsTurnActive)
         {
-            conv.StreamState.EndRun();
+            conv.StreamState.EndRun("ConversationNavigationRecovery");
             conv.HistoryLoaded = false; // force reload below
         }
 
@@ -683,24 +678,15 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
             agent.Conversations.Remove(conversationId);
 
-            // If this was the active conversation, switch to the next available or clear
-            if (agent.ActiveConversationId == conversationId)
+            // The route owner chooses any replacement. Mark the displayed selection invalid rather
+            // than silently selecting another conversation behind an unchanged URL.
+            if (_store is IDisplayedConversation displayed
+                && displayed.IsConversationDisplayed(agentId, conversationId))
             {
-                var next = agent.Conversations.Keys.FirstOrDefault();
-                if (next is not null)
-                {
-                    _store.SetActiveConversation(agentId, next);
-                }
-                else
-                {
-                    agent.ActiveConversationId = null;
-                    _store.NotifyChanged();
-                }
+                _store.MarkSelectionInvalid();
             }
-            else
-            {
-                _store.NotifyChanged();
-            }
+
+            _store.NotifyChanged();
         }
         catch (Exception ex)
         {
@@ -826,10 +812,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         // Load history if needed
         var agent = _store.GetAgent(subAgentId)!;
-        var convId = agent.ActiveConversationId;
-        if (convId is null || (agent.Conversations.GetValueOrDefault(convId) is { } conv && !conv.HistoryLoaded))
+        var observerConversationId = $"subagent-session:{subAgentId}";
+        if (!agent.Conversations.TryGetValue(observerConversationId, out var observerConversation)
+            || !observerConversation.HistoryLoaded)
         {
-            // Sub-agent sessions are loaded by session ID
+            // Sub-agent sessions are loaded by session ID.
             await LoadSubAgentHistoryAsync(subAgentId);
         }
     }
@@ -869,16 +856,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
     public async Task<bool> ExecuteGatewayCommandAsync(string agentId, string conversationId, string commandText)
     {
         if (string.IsNullOrWhiteSpace(commandText))
-        {
-            AppendError(agentId, "Cannot execute an empty command.");
             return false;
-        }
 
         var agent = _store.GetAgent(agentId);
         if (string.IsNullOrEmpty(conversationId) ||
             agent?.Conversations.GetValueOrDefault(conversationId) is not { } conv)
         {
-            AppendError(agentId, $"Cannot run {commandText}: no active conversation.");
             return false;
         }
 
@@ -1036,9 +1019,13 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         conv.HistoryLoaded = true;
 
-        // Sync session ID
-        if (agent.ActiveConversationId == conversationId && conv.ActiveSessionId is not null)
+        // Sync the agent-level fallback only for the route-displayed conversation.
+        if (_store is IDisplayedConversation displayed
+            && displayed.IsConversationDisplayed(agent.AgentId, conversationId)
+            && conv.ActiveSessionId is not null)
+        {
             agent.SessionId = conv.ActiveSessionId;
+        }
     }
 
     /// <summary>
@@ -1096,23 +1083,11 @@ public sealed class AgentInteractionService : IAgentInteractionService
     {
         _logger.LogWarning(ex, "History 404 for conversation {ConversationId}", Sanitise(conversationId));
         agent.Conversations.Remove(conversationId);
-        if (agent.ActiveConversationId == conversationId)
+        if (_store is IDisplayedConversation displayed
+            && displayed.IsConversationDisplayed(agentId, conversationId))
         {
-            var nextConversationId = agent.Conversations.Values
-                .OrderByDescending(c => c.IsDefault)
-                .ThenByDescending(c => c.UpdatedAt)
-                .Select(c => c.ConversationId)
-                .FirstOrDefault();
-            if (nextConversationId is not null)
-            {
-                _store.SetActiveConversation(agentId, nextConversationId);
-            }
-            else
-            {
-                agent.ActiveConversationId = null;
-                _store.MarkSelectionInvalid();
-                _store.NotifyChanged();
-            }
+            _store.MarkSelectionInvalid();
+            _store.NotifyChanged();
         }
     }
 
@@ -1146,7 +1121,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
 
         // Keep ActiveSessionId in sync with the actual child session ID
         conv.ActiveSessionId = agent.SessionId ?? subAgentId;
-        agent.ActiveConversationId = convId;
+        _store.SelectView(subAgentId, convId, SelectionSource.SubAgentView);
         if (conv.HistoryLoaded || conv.IsLoadingHistory) return;
 
         conv.IsLoadingHistory = true;
@@ -1198,23 +1173,6 @@ public sealed class AgentInteractionService : IAgentInteractionService
             var list = await _restClient.GetConversationsAsync(agentId);
             _store.SeedConversations(agentId, list);
 
-            // Fetch canvas for the auto-selected conversation on initial load (#383)
-            var agent = _store.GetAgent(agentId);
-            var activeConvId = agent?.ActiveConversationId;
-            if (activeConvId is not null && agent!.Conversations.TryGetValue(activeConvId, out var activeConv))
-            {
-                try
-                {
-                    var canvasHtml = await _restClient.GetConversationCanvasAsync(agentId, activeConvId);
-                    if (canvasHtml is not null)
-                    {
-                        activeConv.CanvasHtml = canvasHtml;
-                        activeConv.CanvasUpdatedAt = DateTimeOffset.UtcNow;
-                    }
-                }
-                catch (Exception ex) { _logger.LogDebug(ex, "Best-effort canvas hydration failed for {ConversationId}", Sanitise(activeConvId)); }
-            }
-
             _store.NotifyChanged();
         }
         catch (Exception ex)
@@ -1223,41 +1181,40 @@ public sealed class AgentInteractionService : IAgentInteractionService
         }
     }
 
-    private void AppendUserMessage(string agentId, string content)
-    {
-        var agent = _store.GetAgent(agentId);
-        var convId = agent?.ActiveConversationId;
-        if (convId is null || agent!.Conversations.GetValueOrDefault(convId) is not { } conv) return;
-
-        conv.AppendMessage(new ChatMessage("User", content, DateTimeOffset.UtcNow));
-        _store.NotifyChanged();
-    }
-
     /// <summary>
     /// Appends a locally-rendered row to an EXPLICITLY named conversation (#3063). The ambient
     /// <see cref="AppendUserMessage"/>/<see cref="AppendError"/> pair resolve their target through
-    /// <c>ActiveConversationId</c>; the send path knows its conversation and must not consult
+    /// <c>ambient conversation state</c>; the send path knows its conversation and must not consult
     /// ambient state to echo into it. #3211 moved every ACTION path (steer, follow-up, abort,
     /// redirect, reset, compact, gateway command) onto this helper too, so a local echo can no
     /// longer appear in a conversation other than the one the action targeted.
     /// </summary>
-    private void AppendTo(ConversationState conversation, string role, string content)
+    private void AppendTo(
+        ConversationState conversation,
+        string role,
+        string content,
+        IReadOnlyList<ChatAttachment>? attachments = null)
     {
-        conversation.AppendMessage(new ChatMessage(role, content, DateTimeOffset.UtcNow));
-        _store.NotifyChanged();
-    }
-
-    private void AppendError(string agentId, string message)
-    {
-        var agent = _store.GetAgent(agentId);
-        var convId = agent?.ActiveConversationId;
-        if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
+        conversation.AppendMessage(new ChatMessage(role, content, DateTimeOffset.UtcNow)
         {
-            conv.AppendMessage(new ChatMessage("Error", message, DateTimeOffset.UtcNow));
-        }
-
+            Attachments = attachments ?? []
+        });
         _store.NotifyChanged();
     }
+
+    private static ChatAttachment ToChatAttachment(DraftAttachment attachment) =>
+        new(
+            attachment.FileName,
+            attachment.MimeType,
+            attachment.Size,
+            attachment.Base64Data);
+
+    private static IReadOnlyList<ChatAttachment> ToChatAttachments(IReadOnlyList<HistoryAttachmentDto>? attachments) =>
+        attachments?.Select(attachment => new ChatAttachment(
+            attachment.FileName,
+            attachment.MimeType,
+            attachment.Size,
+            attachment.Base64Data)).ToArray() ?? [];
 
     // #3456: role normalisation is owned by MessageRole. Do not reintroduce a local switch here.
     private static string MapRole(string role) => MessageRole.Normalize(role);
@@ -1296,7 +1253,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
             entry.ToolCallId,
             entry.ToolArgs,
             entry.ToolIsError,
-            entry.ThinkingContent);
+            entry.ThinkingContent,
+            ToChatAttachments(entry.Attachments));
 
     // Shared projection logic for both transcript-entry DTO shapes. An entry is treated
     // as a tool call when it carries a tool name; only then is its content surfaced as the
@@ -1310,7 +1268,8 @@ public sealed class AgentInteractionService : IAgentInteractionService
         string? toolCallId,
         string? toolArgs,
         bool toolIsError,
-        string? thinkingContent)
+        string? thinkingContent,
+        IReadOnlyList<ChatAttachment>? attachments = null)
     {
         var isToolCall = toolName is not null;
         return new ChatMessage(MapRole(role ?? "system"), content ?? string.Empty, timestamp)
@@ -1320,6 +1279,7 @@ public sealed class AgentInteractionService : IAgentInteractionService
             ToolArgs = toolArgs,
             ToolIsError = toolIsError,
             ThinkingContent = thinkingContent,
+            Attachments = attachments ?? [],
             IsToolCall = isToolCall,
             ToolResult = isToolCall ? AnsiStripper.Strip(content) : null
         };

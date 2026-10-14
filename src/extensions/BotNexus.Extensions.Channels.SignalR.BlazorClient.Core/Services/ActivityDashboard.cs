@@ -625,9 +625,9 @@ public static class ActivityDashboardProjection
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <see langword="null"/> or an empty roster yields an empty map rather than throwing - a failed
-    /// session fetch must degrade the dashboard to its pre-#3713 rendering, never break it and never
-    /// blank every Live badge on the page.
+    /// <see langword="null"/> or an empty roster yields an empty map rather than throwing. Callers
+    /// must preserve fetch success separately: a successful empty roster is authoritative, while a
+    /// failed fetch should pass <see langword="null"/> to the projection for compatibility fallback.
     /// </para>
     /// <para>
     /// First-wins on a duplicated session id, matching <see cref="CronHealthById"/> and
@@ -666,18 +666,19 @@ public static class ActivityDashboardProjection
     /// liveness (#3713), given the session-status map from <see cref="SessionStatusById"/>.
     /// </summary>
     /// <remarks>
-    /// An absent or empty map means the caller supplied no corroborating evidence, so every row
-    /// resolves to <see cref="ActivitySessionLiveness.Unverifiable"/> and the projection is
-    /// byte-identical to its pre-#3713 output. Once a roster IS supplied, a pointer it does not
-    /// name resolves to <see cref="ActivitySessionLiveness.Absent"/> - which is not live.
+    /// A <see langword="null"/> map means the caller supplied no corroborating evidence, so every
+    /// row resolves to <see cref="ActivitySessionLiveness.Unverifiable"/> and the projection is
+    /// byte-identical to its pre-#3713 output. Once a roster IS supplied, even an empty one, a
+    /// pointer it does not name resolves to <see cref="ActivitySessionLiveness.Absent"/> - which is
+    /// not live.
     /// </remarks>
     /// <param name="activeSessionId">The conversation's routing pointer.</param>
-    /// <param name="sessionStatus">The session-status map, or <see langword="null"/>/empty when none was fetched.</param>
+    /// <param name="sessionStatus">The session-status map, or <see langword="null"/> when none was fetched.</param>
     public static ActivitySessionLiveness ResolveSessionLiveness(
         string? activeSessionId,
         IReadOnlyDictionary<string, string?>? sessionStatus)
     {
-        if (sessionStatus is null || sessionStatus.Count == 0)
+        if (sessionStatus is null)
             return ActivitySessionLiveness.Unverifiable;
 
         if (string.IsNullOrWhiteSpace(activeSessionId))
@@ -821,12 +822,12 @@ public static class ActivityDashboardProjection
     /// </param>
     /// <param name="sessionStatus">
     /// Session-id to status map from <see cref="SessionStatusById"/> (#3713), built from the
-    /// <c>GET /api/sessions</c> roster the portal already loads. A <see langword="null"/> or empty
-    /// map - which is what a failed session fetch yields - leaves every row's
-    /// <see cref="ActivityRow.SessionLiveness"/> at <see cref="ActivitySessionLiveness.Unverifiable"/>,
-    /// so the Live badge, the <c>live now</c> count and the liveness facet all behave exactly as they
-    /// did before this shipped. Passed in rather than fetched here to keep the projection pure,
-    /// matching <paramref name="cronHealth"/>.
+    /// <c>GET /api/sessions</c> roster the portal already loads. A <see langword="null"/> map -
+    /// which is what a failed session fetch yields - leaves every row's
+    /// <see cref="ActivityRow.SessionLiveness"/> at <see cref="ActivitySessionLiveness.Unverifiable"/>.
+    /// An empty but non-null map is a successfully loaded empty roster and therefore authoritative:
+    /// pointers absent from it are idle. Passed in rather than fetched here to keep the projection
+    /// pure, matching <paramref name="cronHealth"/>.
     /// </param>
     public static IReadOnlyList<ActivityRow> Project(
         IEnumerable<ConversationSummaryDto> conversations,

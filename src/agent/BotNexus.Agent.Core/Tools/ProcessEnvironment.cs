@@ -3,8 +3,8 @@ namespace BotNexus.Agent.Core.Tools;
 /// <summary>
 /// Single merge seam for caller-supplied child-process environment overrides.
 /// <para>
-/// Every spawn site (the <c>exec</c> tool, the MCP stdio transport) routes its override
-/// dictionary through <see cref="Merge"/> rather than writing
+/// The <c>exec</c> tool (via <see cref="LocalChildEnvironment"/>) and the MCP stdio transport
+/// route their override dictionaries through <see cref="Merge"/> rather than writing
 /// <c>startInfo.Environment[key] = value</c> directly. Writing directly leaks the CALLER
 /// dictionary's comparer into the merge: on Windows the process environment block is
 /// case-insensitive, so a caller passing <c>path</c> over an inherited <c>PATH</c> either

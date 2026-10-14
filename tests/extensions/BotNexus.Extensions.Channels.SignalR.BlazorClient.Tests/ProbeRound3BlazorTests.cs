@@ -69,7 +69,7 @@ public sealed class ProbeRound3BlazorTests : IDisposable
     {
         SetupAgent("agent-1");
         _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _store.AppendMessage("conv-1", new ChatMessage("Tool", "", DateTimeOffset.UtcNow)
         {
             IsToolCall = true,
@@ -78,7 +78,7 @@ public sealed class ProbeRound3BlazorTests : IDisposable
             ToolResult = "found 3"
         });
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // Click the tool header to expand details
         var header = cut.Find(".tool-header");
@@ -93,7 +93,7 @@ public sealed class ProbeRound3BlazorTests : IDisposable
     {
         SetupAgent("agent-1");
         _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _store.AppendMessage("conv-1", new ChatMessage("Tool", "result-text", DateTimeOffset.UtcNow)
         {
             IsToolCall = true,
@@ -102,7 +102,7 @@ public sealed class ProbeRound3BlazorTests : IDisposable
             ToolResult = "ok"
         });
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
         var header = cut.Find(".tool-header");
         header.Click();
 
@@ -118,9 +118,9 @@ public sealed class ProbeRound3BlazorTests : IDisposable
     {
         SetupAgent("agent-1");
         _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // Initially, the editable title span is visible
         var titleSpan = cut.Find(".conversation-title.editable");
@@ -136,13 +136,13 @@ public sealed class ProbeRound3BlazorTests : IDisposable
     {
         SetupAgent("agent-1");
         _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
         // Change conversation title
         var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
         conv.Title = "My Custom Title";
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
         cut.Find(".conversation-title.editable").Click();
 
         var input = cut.Find(".conversation-title-input");
@@ -236,7 +236,6 @@ public sealed class ProbeRound3BlazorTests : IDisposable
             DisplayName = "Agent 1",
             IsConnected = true,
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         });
         var agent = store.GetAgent("agent-1")!;
         agent.Conversations["conv-1"] = new ConversationState
@@ -281,7 +280,6 @@ public sealed class ProbeRound3BlazorTests : IDisposable
             DisplayName = "Agent 1",
             IsConnected = true,
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         });
         var agent = store.GetAgent("agent-1")!;
         agent.Conversations["conv-1"] = new ConversationState

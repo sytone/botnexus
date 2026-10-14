@@ -111,7 +111,7 @@ The `AgentLoopRunner` is the core orchestration loop. It runs until the LLM stop
 ```text
 while (hasMoreToolCalls || pendingSteeringMessages):
     1. Drain any steering messages (injected mid-turn)
-    2. Optionally run TransformContext (compaction-aware trimming)
+    2. Optionally run AgentContextTransformer (compaction-aware trimming)
     3. Convert full timeline → provider Context
     4. Call LLM (full context sent)
     5. Accumulate streamed response → AssistantMessage
@@ -130,7 +130,7 @@ Each iteration of this loop is a separate stateless HTTP call to the provider. A
 |-------------------------------|-----------------------------------------------------------------------------------------|
 | `AgentLoopRunner.cs`          | Core turn loop — drain steering → call LLM → execute tools → repeat                    |
 | `ContextConverter.cs`         | Transforms `AgentContext` (agent messages) into provider `Context` (provider messages + tools) |
-| `DefaultMessageConverter.cs`  | Default conversion from `AgentMessage[]` to provider `Message[]`                        |
+| `ExtensionPoints/Messages/DefaultProviderMessageTransformer.cs` | Default transformation from `AgentMessage[]` to provider `Message[]`                |
 | `LlmClient.cs`               | Resolves API provider from registry and delegates streaming call                        |
 | `StreamAccumulator.cs`        | Collects SSE stream chunks into a complete `AssistantMessage`                           |
 | `AnthropicRequestBuilder.cs`  | Builds the JSON body for Anthropic Messages API                                         |

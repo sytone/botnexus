@@ -52,7 +52,7 @@ public static class CronAlertTarget
     /// </summary>
     /// <param name="conversationId">The unresolvable conversation id.</param>
     /// <returns>The rejection message.</returns>
-    public static string UnresolvableMessage(string conversationId)
+    public static string UnresolvableMessage(ConversationId conversationId)
         => $"FailureAlertConversationId '{conversationId}' does not resolve to an existing conversation. "
            + "Alerts for this job could never be delivered, so the job was not saved.";
 
@@ -63,7 +63,7 @@ public static class CronAlertTarget
     /// </summary>
     /// <param name="conversationId">The unverifiable conversation id.</param>
     /// <returns>The rejection message.</returns>
-    public static string UnverifiableMessage(string conversationId)
+    public static string UnverifiableMessage(ConversationId conversationId)
         => $"FailureAlertConversationId '{conversationId}' cannot be verified because no "
            + $"{nameof(ICronAlertTargetResolver)} is available; failing closed rather than storing an "
            + "alert target that may never deliver.";
@@ -86,11 +86,11 @@ public static class CronAlertTarget
             return CronAlertTargetValidation.Valid;
 
         if (resolver is null)
-            return new CronAlertTargetValidation(false, UnverifiableMessage(target.Value));
+            return new CronAlertTargetValidation(false, UnverifiableMessage(target));
 
         var exists = await resolver.ExistsAsync(target, ct).ConfigureAwait(false);
         return exists
             ? CronAlertTargetValidation.Valid
-            : new CronAlertTargetValidation(false, UnresolvableMessage(target.Value));
+            : new CronAlertTargetValidation(false, UnresolvableMessage(target));
     }
 }

@@ -216,8 +216,21 @@ public sealed class InboundBoundaryObservabilityTests
     /// </summary>
     private static async Task AssertHealthyTurnSurvivesAnElapsedBoundAsync()
     {
-        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProcessor = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runningCompletionWaitEntered = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRunningCompletion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<InboundDispatchResult> HoldRunningCompletionAtAssertionBoundary(
+            Task<InboundDispatchResult> completion,
+            CancellationToken cancellationToken)
+        {
+            runningCompletionWaitEntered.TrySetResult(true);
+            await releaseRunningCompletion.Task.WaitAsync(cancellationToken);
+            return await completion.WaitAsync(cancellationToken);
+        }
 
         var processor = Substitute.For<IInboundMessageProcessor>();
         processor
@@ -225,14 +238,15 @@ public sealed class InboundBoundaryObservabilityTests
             .Returns(async _ =>
             {
                 started.TrySetResult(true);
-                await release.Task;
+                await releaseProcessor.Task;
                 return new InboundProcessingOutcome(EmptyDispatches, false);
             });
 
         var orchestrator = new DefaultInboundMessageOrchestrator(
             processor,
             new CapturingLogger<DefaultInboundMessageOrchestrator>(),
-            queueWaitTimeout: TimeSpan.FromMilliseconds(100));
+            queueWaitTimeout: TimeSpan.FromMilliseconds(100),
+            waitForRunningCompletion: HoldRunningCompletionAtAssertionBoundary);
 
         var head = orchestrator.AcceptAsync(CreateMessage("addr-healthy-long"));
 
@@ -240,6 +254,7 @@ public sealed class InboundBoundaryObservabilityTests
         try
         {
             await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await runningCompletionWaitEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
             var behind = await orchestrator
                 .AcceptAsync(CreateMessage("addr-healthy-long"))
@@ -253,7 +268,8 @@ public sealed class InboundBoundaryObservabilityTests
             head.IsCompleted.ShouldBeFalse(
                 "the queue-wait bound has demonstrably elapsed, yet it must not truncate the running turn");
 
-            release.SetResult(true);
+            releaseProcessor.SetResult(true);
+            releaseRunningCompletion.SetResult(true);
 
             var result = await head.WaitAsync(TimeSpan.FromSeconds(30));
             result.Status.ShouldBe(
@@ -263,7 +279,8 @@ public sealed class InboundBoundaryObservabilityTests
         }
         finally
         {
-            release.TrySetResult(true);
+            releaseProcessor.TrySetResult(true);
+            releaseRunningCompletion.TrySetResult(true);
             try { await head.WaitAsync(TimeSpan.FromSeconds(30)); } catch { /* not under test */ }
             try { await orchestrator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(30)); }
             catch { /* best effort */ }
@@ -326,14 +343,19 @@ public sealed class InboundBoundaryObservabilityTests
     {
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var queueDelays = new Queue<TaskCompletionSource<bool>>();
+        var behindDelayRegistered = new TaskCompletionSource<TaskCompletionSource<bool>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         var runningCompletionObserved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var captureBehindDelay = 0;
         var runningCompletionWaits = 0;
         Task ControlledQueueDelay(TimeSpan _, CancellationToken cancellationToken)
         {
             var delay = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             cancellationToken.Register(static state => ((TaskCompletionSource<bool>)state!).TrySetCanceled(), delay);
-            queueDelays.Enqueue(delay);
+            if (Volatile.Read(ref captureBehindDelay) != 0)
+            {
+                behindDelayRegistered.TrySetResult(delay);
+            }
             return delay.Task;
         }
 
@@ -371,19 +393,19 @@ public sealed class InboundBoundaryObservabilityTests
         try
         {
             await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await Should.NotThrowAsync(
+                async () => await runningCompletionObserved.Task.WaitAsync(TimeSpan.FromSeconds(30)),
+                $"iteration {iteration}: the head must reach the unbounded post-Started completion wait");
+            Volatile.Read(ref runningCompletionWaits).ShouldBe(
+                1,
+                $"iteration {iteration}: the head must reach the unbounded post-Started completion wait exactly once");
 
-            // The worker is now inside ProcessAsync, so the head's pre-start wait must have observed
-            // Started rather than its timer. Advance the queued-behind message's timer explicitly;
-            // no scheduler delay can cause the head caller to time out before this precondition.
+            // The head has crossed the pre-start boundary. Capture only the queued-behind delay so
+            // the test cannot accidentally expire a timer that belongs to the running head.
+            Volatile.Write(ref captureBehindDelay, 1);
             var behindTask = orchestrator.AcceptAsync(CreateMessage("addr-long"));
-            queueDelays.Count.ShouldBe(
-                2,
-                $"iteration {iteration}: head and queued-behind accepts must each register one queue delay");
-            var headDelay = queueDelays.Dequeue();
-            await Should.ThrowAsync<TaskCanceledException>(
-                async () => await headDelay.Task.WaitAsync(TimeSpan.FromSeconds(30)),
-                $"iteration {iteration}: observing Started must cancel the head's pre-start delay");
-            queueDelays.Dequeue().TrySetResult(true);
+            var behindDelay = await behindDelayRegistered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            behindDelay.TrySetResult(true);
 
             // The orchestrator's own bound, advanced rather than timed. Stalled is returned ONLY after
             // _queueWaitTimeout has elapsed inside WaitForProcessingStartAsync, so receiving it is
@@ -398,12 +420,6 @@ public sealed class InboundBoundaryObservabilityTests
                 $"iteration {iteration}: the message queued behind a running turn must hit the #3600 " +
                 "queue-wait bound, which is what makes this a proof that the bound has elapsed");
 
-            await Should.NotThrowAsync(
-                async () => await runningCompletionObserved.Task.WaitAsync(TimeSpan.FromSeconds(30)),
-                $"iteration {iteration}: the head must reach the unbounded post-Started completion wait");
-            Volatile.Read(ref runningCompletionWaits).ShouldBe(
-                1,
-                $"iteration {iteration}: the head must reach the unbounded post-Started completion wait exactly once");
             accept.IsCompleted.ShouldBeFalse(
                 $"iteration {iteration}: the #3600 bound has demonstrably elapsed (the message behind " +
                 "this one was just reported Stalled) and yet it must not truncate a turn that is " +

@@ -137,7 +137,6 @@ public sealed class MobileListOrderingTests : IDisposable
             AgentId = "quill",
             DisplayName = "Quill",
             IsConnected = true,
-            ActiveConversationId = "default"
         };
         agent.Conversations["recent"] = Conv("recent", isDefault: false, updated: now, title: "Recent");
         agent.Conversations["default"] = Conv("default", isDefault: true, updated: now.AddDays(-5), title: "Default");

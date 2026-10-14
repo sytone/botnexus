@@ -7,12 +7,12 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 /// <para>
 /// This exists so the URL can be the single source of rendered identity. An agent-only route
 /// (<c>/agent/{AgentId}</c>) carries no conversation segment, so every component below it has had to
-/// resolve identity ambiently from <c>AgentState.ActiveConversationId</c>. Consulting this MRU lets
+/// resolve identity ambiently from <c>the deleted per-agent conversation marker</c>. Consulting this MRU lets
 /// the route seam resolve an explicit conversation ONCE and redirect, after which identity flows
 /// down by parameter.
 /// </para>
 /// <para>
-/// It is deliberately NOT the same question as <c>ActiveConversationId</c>, which conflates "what am
+/// It is deliberately NOT the same question as <c>ambient conversation state</c>, which conflates "what am
 /// I looking at" with "what is most current" and has no ordering. This answers exactly one question:
 /// which conversations has this circuit navigated to, most recent first.
 /// </para>

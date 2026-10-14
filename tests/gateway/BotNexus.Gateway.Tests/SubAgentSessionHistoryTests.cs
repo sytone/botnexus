@@ -72,12 +72,12 @@ public sealed class SubAgentSessionHistoryTests : IDisposable
         result.Count.ShouldBe(2);
         result[0].SubAgentId.ShouldBe("sub-1");
         result[0].Archetype.ShouldBe("researcher");
-        result[0].Status.ShouldBe("Completed");
-        result[0].EndedAt.ShouldNotBeNull();
+        result[0].Status.ShouldBe(SubAgentStatus.Completed);
+        result[0].CompletedAt.ShouldNotBeNull();
         result[1].SubAgentId.ShouldBe("sub-2");
         result[1].Archetype.ShouldBeNull();
-        result[1].Status.ShouldBe("Active");
-        result[1].EndedAt.ShouldBeNull();
+        result[1].Status.ShouldBe(SubAgentStatus.Running);
+        result[1].CompletedAt.ShouldBeNull();
     }
 
     [Fact]
@@ -121,7 +121,7 @@ public sealed class SubAgentSessionHistoryTests : IDisposable
         var actionResult = await controller.GetSubAgentHistory("s-ctrl-5", CancellationToken.None);
 
         var ok = actionResult.Result.ShouldBeOfType<OkObjectResult>();
-        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentSessionSummary>>();
+        var summaries = ok.Value.ShouldBeAssignableTo<IReadOnlyList<SubAgentRunDetail>>();
         summaries!.ShouldNotBeNull();
         // InMemorySessionStore has no sub_agent_sessions persistence -- result is empty (correct)
         summaries.ShouldBeEmpty();

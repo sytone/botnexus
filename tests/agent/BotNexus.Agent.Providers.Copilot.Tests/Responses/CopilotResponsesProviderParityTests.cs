@@ -29,6 +29,29 @@ public class CopilotResponsesProviderParityTests
         provider.Api.ShouldBe("github-copilot-responses");
     }
 
+    [Theory]
+    [InlineData(ThinkingLevel.Minimal, "none")]
+    [InlineData(ThinkingLevel.Low, "low")]
+    [InlineData(ThinkingLevel.Medium, "medium")]
+    [InlineData(ThinkingLevel.High, "high")]
+    [InlineData(ThinkingLevel.ExtraHigh, "xhigh")]
+    [InlineData(ThinkingLevel.Max, "max")]
+    public void MapThinkingLevel_PreservesTheFullGpt6CopilotResponsesLadder(
+        ThinkingLevel level,
+        string expected)
+    {
+        var model = BuildModel() with { Id = "gpt-6-sol" };
+
+        CopilotResponsesProvider.MapThinkingLevel(model, level).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void MapThinkingLevel_PreservesMinimalForEarlierResponsesModels()
+    {
+        CopilotResponsesProvider.MapThinkingLevel(BuildModel(), ThinkingLevel.Minimal)
+            .ShouldBe("minimal");
+    }
+
     [Fact]
     public async Task Stream_Gpt55WithToolCatalogue_MatchesOpenAICopilotModeBody()
     {

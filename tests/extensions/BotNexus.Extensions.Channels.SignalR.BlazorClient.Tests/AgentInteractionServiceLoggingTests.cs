@@ -61,7 +61,7 @@ public sealed class AgentInteractionServiceLoggingTests
         await Should.NotThrowAsync(async () => await _service.SelectConversationAsync("agent-1", "conv-1"));
 
         // The conversation selection still succeeded.
-        agent.ActiveConversationId.ShouldBe("conv-1");
+        (_store as IDisplayedConversation)?.DisplayedConversationIdFor(agent.AgentId).ShouldBe("conv-1");
 
         // The swallowed best-effort failure is now diagnosable at Debug (was a silent empty catch).
         var debug = _logger.Entries.FirstOrDefault(e => e.Level == LogLevel.Debug && e.Exception == boom);

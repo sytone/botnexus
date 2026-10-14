@@ -40,11 +40,11 @@ public sealed class TokenStatsStyleTests : IDisposable
                 Status: "Active", ActiveSessionId: null, BindingCount: 0,
                 CreatedAt: DateTimeOffset.UtcNow, UpdatedAt: DateTimeOffset.UtcNow)
         ]);
-        _store.SetActiveConversation("a-1", "c-1");
+        _store.SelectView("a-1", "c-1", SelectionSource.RouteNavigation);
         _store.AppendMessage("c-1", msg);
 
         return _ctx.Render<ChatPanel>(p =>
-            p.Add(x => x.AgentId, "a-1"));
+            p.Add(x => x.AgentId, "a-1").Add(x => x.ConversationId, "c-1"));
     }
 
     [Fact]

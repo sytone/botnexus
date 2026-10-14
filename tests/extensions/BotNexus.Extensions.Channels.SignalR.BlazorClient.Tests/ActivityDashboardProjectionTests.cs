@@ -1989,7 +1989,7 @@ public sealed class ActivityDashboardProjectionTests
     /// <c>List</c> and compares by reference.
     /// </summary>
     [Fact]
-    public void An_omitted_or_empty_session_map_leaves_every_row_unchanged()
+    public void An_omitted_session_map_leaves_every_row_unchanged()
     {
         var conv = Conv("c1", activeSessionId: "s-1");
         var filter = new ActivityDashboardFilter();
@@ -1997,14 +1997,23 @@ public sealed class ActivityDashboardProjectionTests
         var baseline = ActivityDashboardProjection.Project([conv], filter, Now).Single();
         var omitted = ActivityDashboardProjection.Project(
             [conv], filter, Now, null, null).Single();
-        var emptyMap = ActivityDashboardProjection.Project(
-            [conv], filter, Now, null, ActivityDashboardProjection.SessionStatusById(null)).Single();
 
         Assert.Equal(ActivitySessionLiveness.Unverifiable, baseline.SessionLiveness);
         Assert.True(baseline.IsLive);
-
         Assert.Equal(baseline with { InvolvedAgents = [] }, omitted with { InvolvedAgents = [] });
-        Assert.Equal(baseline with { InvolvedAgents = [] }, emptyMap with { InvolvedAgents = [] });
+    }
+
+    [Fact]
+    public void An_empty_successful_session_map_is_authoritative()
+    {
+        var row = Assert.Single(ActivityDashboardProjection.Project(
+            [Conv("c1", activeSessionId: "s-1")],
+            new ActivityDashboardFilter(),
+            Now,
+            sessionStatus: ActivityDashboardProjection.SessionStatusById([])));
+
+        Assert.Equal(ActivitySessionLiveness.Absent, row.SessionLiveness);
+        Assert.False(row.IsLive);
     }
 
     /// <summary>

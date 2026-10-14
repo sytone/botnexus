@@ -359,7 +359,13 @@ public sealed class TelegramChannelAdapter(
                     break;
 
                 case AgentStreamEventType.ContentDelta when streamEvent.ContentDelta is not null:
-                    // Buffer raw markdown; conversion to MarkdownV2 happens at flush time.
+                    // Keep the first assistant delta separate from the preceding thinking line;
+                    // later deltas continue the same reply without inserting extra newlines.
+                    if (state.PreviousWasThinking)
+                    {
+                        AppendLineIfNeeded(state.Buffer);
+                        state.PreviousWasThinking = false;
+                    }
                     state.Buffer.Append(streamEvent.ContentDelta);
                     state.PendingCharacterCount += streamEvent.ContentDelta.Length;
                     break;
@@ -369,6 +375,7 @@ public sealed class TelegramChannelAdapter(
                     state.Buffer.Append("Thinking: ");
                     state.Buffer.Append(streamEvent.ThinkingContent);
                     state.PendingCharacterCount += streamEvent.ThinkingContent.Length;
+                    state.PreviousWasThinking = true;
                     break;
 
                 case AgentStreamEventType.ToolStart:
@@ -1650,6 +1657,7 @@ public sealed class TelegramChannelAdapter(
         public int PendingCharacterCount { get; set; }
         public DateTimeOffset LastFlushUtc { get; set; } = DateTimeOffset.UtcNow;
         public StringBuilder Buffer { get; } = new();
+        public bool PreviousWasThinking { get; set; }
         public SemaphoreSlim Lock { get; } = new(1, 1);
 
         /// <summary>
@@ -1679,6 +1687,7 @@ public sealed class TelegramChannelAdapter(
             PendingCharacterCount = 0;
             LastFlushUtc = DateTimeOffset.UtcNow;
             Buffer.Clear();
+            PreviousWasThinking = false;
             RichDraftId = null;
             HasRichDraft = false;
             RichDraftDisabled = false;
@@ -1689,11 +1698,43 @@ public sealed class TelegramChannelAdapter(
         ConversationEvent conversationEvent,
         CancellationToken cancellationToken = default)
     {
+        var targets = ConversationEventStreamRouting.GetTargets(
+            conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId);
+
+        if (conversationEvent is ConversationSessionItemPersistedEvent persistedUser
+            && persistedUser.Item.Role == MessageRole.User)
+        {
+            EnsureBotsInitialized();
+            foreach (var target in targets)
+            {
+                if (target.BindingId == conversationEvent.Origin.BindingId)
+                    continue;
+
+                var runtime = ResolveStreamingBot(conversationEvent.AgentId);
+                if (!runtime.Config.EchoForeignUserMessages
+                    || !TelegramChannelAddress.TryDecode(target.ChannelAddress, out var chatId, out var messageThreadId)
+                    || !IsChatAllowed(runtime.Config, chatId))
+                {
+                    continue;
+                }
+
+                var text = $"*User said:*\n{TelegramMarkdownFormatter.EscapeMarkdownV2(persistedUser.Item.Content)}";
+                foreach (var chunk in TelegramMessageSplitter.SplitMessage(
+                             text,
+                             Math.Max(1, runtime.Config.MaxMessageLength)))
+                {
+                    await runtime.ApiClient.SendMessageAsync(chatId, chunk, messageThreadId, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+
+            return;
+        }
+
         if (conversationEvent is not ConversationAgentEvent agentEvent)
             return;
 
-        foreach (var target in ConversationEventStreamRouting.GetTargets(
-                     conversationEvent, ChannelType, ((IChannelAdapter)this).AdapterId))
+        foreach (var target in targets)
         {
             if (((IStreamEventChannelAdapter)this).CanSendStreamEvent(target))
             {

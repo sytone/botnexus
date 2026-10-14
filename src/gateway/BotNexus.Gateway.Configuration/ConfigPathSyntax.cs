@@ -5,7 +5,7 @@ namespace BotNexus.Gateway.Configuration;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Both <see cref="ConfigPathResolver"/> (typed graph) and <see cref="RawConfigPath"/> (raw JSON
+/// Both <see cref="ConfigPathResolver"/> (typed graph) and <see cref="JsonObjectExtensions"/> (raw JSON
 /// document) split a dotted path on '.' at bracket depth zero, and both historically clamped an
 /// unbalanced ']' to depth zero via <c>Math.Max(0, depth - 1)</c>. A stray ']' with no opener was
 /// therefore absorbed into the segment text rather than rejected: <c>agents.my]agent.model</c>

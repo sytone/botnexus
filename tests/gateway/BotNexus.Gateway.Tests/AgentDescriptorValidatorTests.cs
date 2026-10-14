@@ -133,12 +133,11 @@ public sealed class AgentDescriptorValidatorTests
     }
 
     [Fact]
-    public void Validate_WithSystemPromptAndSystemPromptFile_ReturnsNoPromptErrors()
+    public void Validate_WithSystemPrompt_ReturnsNoPromptErrors()
     {
         var descriptor = CreateValidDescriptor() with
         {
             SystemPrompt = "Prompt",
-            SystemPromptFile = "prompt.txt"
         };
 
         var errors = AgentDescriptorValidator.Validate(descriptor);
@@ -147,12 +146,11 @@ public sealed class AgentDescriptorValidatorTests
     }
 
     [Fact]
-    public void Validate_WithoutSystemPromptAndSystemPromptFile_ReturnsNoPromptErrors()
+    public void Validate_WithoutSystemPrompt_ReturnsNoPromptErrors()
     {
         var descriptor = CreateValidDescriptor() with
         {
             SystemPrompt = null,
-            SystemPromptFile = null
         };
 
         var errors = AgentDescriptorValidator.Validate(descriptor);

@@ -122,6 +122,34 @@ public sealed class AgentPromptActionTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ForwardsTriggerReportedCompletionDisposition()
+    {
+        var action = new AgentPromptAction();
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+        var completion = new RunCompletionSignal(
+            "IncompleteWithoutStopReason",
+            ["publish"],
+            null,
+            "Work remained actionable.",
+            null,
+            null,
+            null,
+            2);
+
+        trigger.SetupGet(value => value.Type).Returns(TriggerType.Cron);
+        trigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .Callback<AgentId, string, CancellationToken, InternalTriggerRequest?>((_, _, _, request) => request!.Completion = completion)
+            .ReturnsAsync(SessionId.From("cron:job-1:run-1"));
+        registry.Setup(value => value.Get(AgentId.From("agent-a"))).Returns(SoulDisabledDescriptor);
+        var context = CreateContext(BuildServices(trigger.Object, registry.Object));
+
+        await action.ExecuteAsync(context);
+
+        context.RunCompletion.ShouldBe(completion);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WhenTriggerReportsNoToolCount_LeavesContextCountNull()
     {
         // #2985: null must stay null across the seam. If the action defaulted an unreported count

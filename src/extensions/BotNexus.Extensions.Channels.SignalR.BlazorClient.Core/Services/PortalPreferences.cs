@@ -14,6 +14,9 @@ public sealed class PortalPreferences
     /// <summary>Show the debug inspector panel entry point in the main layout. Default: false.</summary>
     public bool DebugModeEnabled { get; set; } = false;
 
+    /// <summary>Animate the active-run bottom-edge accent. Default: true.</summary>
+    public bool AnimateActiveRunIndicator { get; set; } = true;
+
     /// <summary>Prompt for confirmation before archiving/closing a conversation. Default: true.</summary>
     public bool ArchiveConfirmEnabled { get; set; } = true;
 

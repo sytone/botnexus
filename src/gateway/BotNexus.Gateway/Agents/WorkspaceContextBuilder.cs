@@ -261,11 +261,9 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
             }
         }
 
-        // Automatic daily memory injection is governed by the memory config (`memory.promptInjection`)
-        // alone. It is deliberately NOT gated on `systemPromptFiles` / `systemPromptFile`: those settings
-        // select which workspace prompt files to load, and must not silently disable memory. Note that
-        // `none` suppresses only this automatic pass; a memory file named explicitly in `systemPromptFiles`
-        // is still loaded by the prompt-file pass above, because an explicit list is an explicit request.
+        // Automatic daily memory injection is governed by `memory.promptInjection`. Standard workspace
+        // instruction-file loading and daily-memory loading are independent passes so either can be
+        // filtered without silently disabling the other.
         // NOTE: like MEMORY.md and USER.md, daily notes are owner-private content. They are loaded
         // unconditionally here and withheld later by FilterOwnerPrivateContextFiles when the
         // conversation is shared (#2846), so this pass stays concerned only with memory config.
@@ -623,8 +621,8 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
 
     /// <summary>
     /// Appends <paramref name="additions"/> to <paramref name="contextFiles"/>, skipping any whose
-    /// normalized path is already present. A daily note listed explicitly in <c>systemPromptFiles</c>
-    /// is loaded by the prompt-file pass and would otherwise be emitted twice.
+    /// normalized path is already present. This keeps independently contributed context sections from
+    /// emitting the same physical file twice.
     /// </summary>
     private static void AddContextFilesWithoutDuplicates(List<ContextFile> contextFiles, IReadOnlyList<ContextFile> additions)
     {
@@ -727,15 +725,7 @@ public sealed class WorkspaceContextBuilder : IContextBuilder
     }
 
     private static IReadOnlyList<string> ResolvePromptFiles(AgentDescriptor descriptor, bool includeMemoryFile)
-    {
-        if (descriptor.SystemPromptFiles.Count > 0)
-            return FilterMemoryFiles(descriptor.SystemPromptFiles, includeMemoryFile);
-
-        if (!string.IsNullOrWhiteSpace(descriptor.SystemPromptFile))
-            return includeMemoryFile || !IsMemoryPromptFile(descriptor.SystemPromptFile) ? [descriptor.SystemPromptFile] : [];
-
-        return includeMemoryFile ? DefaultPromptFiles : FilterMemoryFiles(DefaultPromptFiles, includeMemoryFile);
-    }
+        => includeMemoryFile ? DefaultPromptFiles : FilterMemoryFiles(DefaultPromptFiles, includeMemoryFile);
 
     private static IReadOnlyList<string> FilterMemoryFiles(IReadOnlyList<string> promptFiles, bool includeMemoryFile)
     {

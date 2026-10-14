@@ -1776,6 +1776,10 @@ X-Api-Key: your-api-key
 - `format` (string, path) — `markdown` or `html`
 - `firstEntryId` (string, query, optional) — Entry id of the first included entry (partial-range export)
 - `lastEntryId` (string, query, optional) — Entry id of the last included entry
+- `includeTools` (boolean, query, optional; default `true`) — Include tool calls and results
+- `includeThinking` (boolean, query, optional; default `false`) — Include assistant reasoning
+- `includeSystemMessages` (boolean, query, optional; default `true`) — Include system messages and conversation instructions
+- `redactSecrets` (boolean, query, optional; default `true`) — Redact recognised secrets before rendering
 
 **Response:** 200 OK — `text/markdown` or `text/html` file attachment named `<slug>-<yyyy-MM-dd>.<ext>`.
 
@@ -1878,23 +1882,36 @@ X-Api-Key: your-api-key
     "subAgentId": "sub-abc123",
     "parentSessionId": "session-abc123",
     "childSessionId": "session-sub-abc123",
-    "name": "docs-audit",
+    "parentConversationId": "conv-parent",
+    "childConversationId": "conv-9f2",
     "parentAgentId": "farnsworth",
     "childAgentId": "farnsworth",
-    "childConversationId": "conv-9f2",
+    "name": "docs-audit",
     "task": "Audit the API reference for missing endpoints",
-    "model": "claude-opus-5",
     "archetype": "Researcher",
+    "model": "claude-opus-5",
     "status": "Running",
     "startedAt": "2026-07-26T10:30:00Z",
     "completedAt": null,
+    "elapsedSeconds": 45.2,
+    "effectiveMaxTurns": 20,
+    "effectiveTimeoutSeconds": 900,
+    "remainingTurns": 16,
+    "remainingTimeSeconds": 854.8,
     "turnsUsed": 4,
-    "resultSummary": null
+    "resultSummary": null,
+    "result": null,
+    "completionDelivery": "Pending",
+    "completionDeliveryError": null,
+    "deliveryWarning": null,
+    "worktreeSnapshot": null
   }
 ]
 ```
 
-A sub-agent run owns its own conversation (`childConversationId`), linked back to the supervisor by `Conversation.ParentConversationId` rather than by sharing the parent's identity. `status` is one of `Running`, `Completed`, `Failed`, `Killed`, `TimedOut`, `BudgetExhausted`.
+All live and historical endpoints in this section return this bounded `SubAgentRunDetail` contract. A run owns its own conversation (`childConversationId`), linked to `parentConversationId`; the session and agent identifiers provide the corresponding navigation lineage. `status` is one of `Running`, `Completed`, `Failed`, `Killed`, `TimedOut`, `BudgetExhausted`, or `HandedOff`.
+
+`remainingTurns` and `remainingTimeSeconds` are available only for a non-terminal run with a measured effective budget. `result` contains a bounded structured partial outcome when one exists: `completion`, `stopReason`, `summary`, `turnsUsed`, measured `usage`, `verifiedTools`, and `unresolvedWork`. `completionDelivery` independently records whether the terminal completion announcement is `Pending`, `Delivered`, or `Failed`; a failed delivery also supplies bounded error and warning text. `worktreeSnapshot` exposes only safe relative recovery references and bounded changed-file names, never a private absolute path.
 
 **Error Responses:**
 - `404 Not Found` — Session does not exist
@@ -1916,7 +1933,7 @@ GET /api/sessions/session-abc123/subagents/history
 X-Api-Key: your-api-key
 ```
 
-**Response:** 200 OK — an array of the same `SubAgentSessionSummary` shape returned by [List Sub-Agent Runs](#list-sub-agent-runs), scoped to this parent session.
+**Response:** 200 OK — an array of the same bounded `SubAgentRunDetail` shape returned by [List Live Sub-Agents for a Session](#list-live-sub-agents-for-a-session), scoped to this parent session. Historical rows retain the terminal timing, result, completion-delivery verdict, and safe recovery references recorded for the run. Legacy rows written before detailed projection was introduced still return the same contract, with fields that were not recorded represented as `null` or empty collections.
 
 **Error Responses:**
 - `404 Not Found` — Session does not exist
@@ -2108,38 +2125,27 @@ X-Api-Key: your-api-key
 
 **Endpoint:** `GET /api/subagents`
 
-**Description:** Read-only, platform-wide sub-agent observability feed. Lists persisted sub-agent runs across **all** parent sessions, newest-started first, so an operator can review what sub-agents did after the fact — including whether a run genuinely completed or bailed. This surface is strictly read-only: it never spawns, kills, or mutates sub-agent state. It reads the same persisted `sub_agent_sessions` rows that the parent-scoped session history exposes, but aggregated across every parent session.
+**Description:** Read-only, platform-wide sub-agent observability feed. Lists persisted sub-agent runs across **all** parent sessions, newest-started first, so an operator can review what sub-agents did after the fact — including whether a run genuinely completed or bailed. This surface is strictly read-only: it never spawns, kills, or mutates sub-agent state. It reads the same persisted `sub_agent_sessions` rows that the parent-scoped session history exposes, but aggregated across every parent session. Filters apply before pagination, including to legacy rows without stored detail. Equal start times are ordered by run ID descending to keep page boundaries stable while the rows remain unchanged.
 
 **Query Parameters:**
 - `status` (string, optional) - Case-insensitive status filter (e.g. `Active`, `Completed`, `Failed`, `Killed`, `TimedOut`, `BudgetExhausted`). When omitted, runs of every status are returned.
+- `parentSessionId` (string, optional) — Match one parent session ID.
+- `childAgentId` (string, optional) — Match one child agent ID.
 - `limit` (int, optional, default `200`) — Maximum number of rows to return. Bounded to `1`–`500`; values above `500` are clamped.
+- `offset` (int, optional, default `0`) — Number of matching rows to skip; must not be negative. Offset pagination can shift if runs are added or changed between requests.
 
 **Request:**
 ```http
-GET /api/subagents?status=Completed&limit=50
+GET /api/subagents?status=Completed&parentSessionId=s-parent-1&childAgentId=agent-b&limit=50&offset=0
 X-Api-Key: your-api-key
 ```
 
-**Response:** 200 OK
-```json
-[
-  {
-    "subAgentId": "sub-abc123",
-    "parentSessionId": "session-xyz789",
-    "parentAgentId": "farnsworth",
-    "childAgentId": "farnsworth",
-    "archetype": "coder",
-    "startedAt": "2026-07-15T10:30:00Z",
-    "endedAt": "2026-07-15T10:42:00Z",
-    "status": "Completed"
-  }
-]
-```
+**Response:** 200 OK — an array of the same bounded `SubAgentRunDetail` contract documented under [List Live Sub-Agents for a Session](#list-live-sub-agents-for-a-session), ordered by start time and run ID, both descending. This platform view and the parent-scoped history endpoint read the same persisted projection, so status, navigation identities, terminal result, usage, completion-delivery verdict, and safe recovery references do not vary by endpoint.
 
-Each summary carries the run's task lineage (`parentAgentId` / `childAgentId`), behavioral `archetype` (or `null` if unset), lifecycle `status`, and start/end timestamps (`endedAt` is `null` while a run is still active).
+Legacy rows remain readable. Information that was not persisted for a legacy row is returned as `null` or an empty collection rather than inferred; `completedAt` is the terminal timestamp field (there is no separate `endedAt` field).
 
 **Error Responses:**
-- `400 Bad Request` — `limit` is not greater than zero
+- `400 Bad Request` — `limit` is not greater than zero, or `offset` is negative
 
 ---
 
@@ -2819,17 +2825,19 @@ The timeout is a configuration setting, not a field in this response.
 **Endpoint:** `GET /api/providers`
 
 Returns `200 OK` with an array from the model filter's available-provider list.
-This is a discovery call, not a credential or reachability test. Each row contains
-three strings with the same provider identifier:
+This is a discovery call, not a credential or reachability test. Each row identifies
+the selectable provider instance and its non-secret built-in provider type:
 
 | Field | Meaning |
 |-------|---------|
-| `name` | The provider identifier, not a separate friendly display name. |
-| `providerId` | The provider identifier. |
+| `name` | The provider-instance identifier, not a separate friendly display name. |
+| `providerId` | The provider-instance identifier used for model selection. |
 | `id` | An alias of `providerId`. |
+| `type` | The built-in provider type backing the instance. Canonical instances use their own identifier; the `copilot` alias reports `github-copilot`. |
 
-For example, a returned row may be
-`{ "name": "anthropic", "providerId": "anthropic", "id": "anthropic" }`.
+For example, a named instance backed by GitHub Copilot may be returned as
+`{ "name": "copilot-work", "providerId": "copilot-work", "id": "copilot-work", "type": "github-copilot" }`.
+The response does not include provider credentials.
 The endpoint uses normal [gateway authentication](#authentication). As an MVC
 `OkObjectResult`, it supports [sparse fieldsets](#sparse-fieldsets-fields), unlike
 `/api/version`, `/api/uptime`, and `/api/world`.
@@ -3361,6 +3369,73 @@ GET /api/diagnostics/memory-pressure
 
 Returns a point-in-time memory snapshot with both raw byte counts and human-readable forms, GC
 collection counts per generation, a pressure percentage, a `level`, and operator `guidance`.
+
+The response also includes these diagnostic fields:
+
+| Field | Meaning |
+| --- | --- |
+| `privateMemoryBytes`, `privateMemoryReadable` | Process-private memory at capture time, in bytes and readable form. This is not the same as the resident working set. |
+| `gcHeapSizeBytes` | Managed heap size reported by the last garbage collection (GC), including fragmentation. |
+| `gcFragmentedBytes` | Fragmentation reported by that GC. This is not a current live-object census. |
+| `gcCollectionIndex` | Index of the GC supplying these values. Zero means no GC information is available yet. |
+| `lastGcCollection` | Immutable characteristics of that GC: `generation` (Int32), `compacted` and `concurrent` (booleans), `pinnedObjectsCount` and `finalizationPendingCount` (Int64 object counts). `null` when the collection index is zero or a stored snapshot has no observation. |
+| `gcGenerations` | Array of up to five ordinal runtime slots from the same last GC as `gcCollectionIndex`. Empty (`[]`) when the index is zero. Each entry has `slot` (zero-based integer), `sizeBeforeBytes`, `fragmentationBeforeBytes`, `sizeAfterBytes`, and `fragmentationAfterBytes` (Int64 byte counts). |
+| `sqliteConnections` | Immutable observations of logical connections explicitly created by `SqliteConnectionFactory` or attached through its policy: `currentObservedOpenConnections`, `peakObservedOpenConnections`, `openTransitions`, `closeTransitions`, `poolingEnabledObservedOpenConnections`, and `poolingDisabledObservedOpenConnections` (Int64 counts). `null` only for a stored snapshot without this observation. |
+| `sqliteAllocatorAvailable` | Whether the SQLite raw provider was available at capture. If false, both allocator byte counters are `null`, not zero. |
+| `sqliteAllocatorCurrentBytes` | Current bytes reported by the current SQLite native library allocator, as an Int64; `null` when unavailable. An available zero is valid. |
+| `sqliteAllocatorPeakBytes` | Peak allocator bytes since the native library's last high-water reset, as an Int64, read without resetting; `null` when unavailable. |
+| `unattributedPrivateBytesAboveLastGcCommitment` | `max(0, privateMemoryBytes - gcCommittedBytes)`. The process and last-GC measurements are not atomic or necessarily contemporaneous. This difference does not identify native allocations, SQLite caches, or retained transcripts. |
+
+`gcCommittedBytes` and the other GC memory values describe the last collection, not current
+allocation ownership. `gcGenerations` copies the runtime's `GenerationInfo` slots in their original
+order, with sizes and fragmentation on entry to and exit from that collection. Slots are ordinal
+identifiers, not generation labels. These readings are not a current live-object count and are not
+atomic with current process-private memory. Both endpoints return this additive field; history
+preserves the immutable stored readings without resampling GC. No additional sampling timer or
+collection is introduced. See the [.NET 10 GC memory information source](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/GCMemoryInfo.cs)
+for the five-slot and before/after field contract.
+
+`lastGcCollection` comes from the same `GCMemoryInfo` sample as `gcCollectionIndex` and
+`gcGenerations`. `generation` identifies the collected generation, including younger generations;
+`concurrent` identifies a background GC. The pinned-object and ready-for-finalization counts are
+what that collection observed, not a current pinned-object population, live-object census, or
+finalization queue size. An available zero count is distinct from a missing (`null`) observation.
+`compacted` identifies a compacting GC but does not prove that process-private memory was reclaimed
+or returned to the operating system. Both endpoints preserve the immutable observation; history
+mapping does not resample GC. These fields help interpret collection and fragmentation readings,
+not identify the cause of retained memory. See the [.NET GC collection characteristics](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/GCMemoryInfo.cs).
+
+Capture does not force a collection. The pressure percentage and level
+continue to use GC commitment; the extra fields do not change alert thresholds or establish a
+safe memory bound. Use repeated samples and allocation profiling to investigate a peak.
+
+`sqliteConnections` is a coherent process-local observation captured under one lock, not an
+inventory of native handles. It excludes idle pooled native connections, connections that bypass
+the shared factory/policy, and other processes. Pooling counts describe the connection-string
+setting at entry into Open, not whether a particular database is actually pooled. An already-open
+connection begins observation as one open transition when attached. Open events are counted
+before open policy runs, including a policy failure or unavailable native handle; a later observed
+close/dispose balances them. Opens failing before an Open event are excluded. An abandoned open
+connection with no observed close cannot be reconciled by garbage collection, so the current count
+means observed opens not yet balanced by observed closes, not guaranteed currently live resources.
+Peak and transition counts cover the process lifetime, not the history window. Both endpoints
+preserve stored observations; reading history does not resample connections. No path, connection
+string, provider initialization, extra database query, pool clearing, or cache-policy change is
+introduced. These counts do not attribute the process-private memory gap or establish a safe bound.
+
+SQLite allocator counters cover only the current SQLite native library's allocator, not all
+SQLite mappings or page-cache memory, connection counts, or all process-native allocations.
+They do not establish that SQLite owns the private-minus-GC gap. Current and peak are separate,
+non-atomic reads; the peak is not scoped to the history window. Capture does not
+initialize or change the SQLite provider, open a database, release memory, or reset the peak.
+Both memory-pressure endpoints expose these fields; history returns the stored readings without
+resampling SQLite. These counters include SQLite allocator overhead but exclude underlying
+system-allocator overhead. SQLite memory-status collection can be disabled by its build or
+configuration; an available zero does not prove the absence of SQLite allocations. The sampler
+does not enable memory-status collection or change library configuration. See the SQLite
+[allocator statistics](https://www.sqlite.org/c3ref/memory_highwater.html) and
+[memory-status configuration](https://www.sqlite.org/c3ref/c_config_covering_index_scan.html#sqliteconfigmemstatus)
+contracts.
 
 ```json
 {

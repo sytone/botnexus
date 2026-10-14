@@ -28,7 +28,6 @@ public sealed class FollowUpChipLifecycleTests
             DisplayName = "Agent 1",
             IsConnected = true,
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         });
 
         var agent = _store.GetAgent("agent-1")!;
@@ -158,7 +157,7 @@ public sealed class FollowUpChipLifecycleTests
     {
         QueueFollowUp();
 
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         Assert.Empty(_store.GetSteeringQueue("conv-1"));
     }
@@ -168,7 +167,7 @@ public sealed class FollowUpChipLifecycleTests
     {
         QueueFollowUp("conv-2", "f2", "target conversation follow-up");
 
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         Assert.Single(_store.GetSteeringQueue("conv-2"));
     }

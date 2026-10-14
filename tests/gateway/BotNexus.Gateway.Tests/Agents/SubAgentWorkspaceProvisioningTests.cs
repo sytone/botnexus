@@ -67,6 +67,35 @@ public sealed class SubAgentWorkspaceProvisioningTests
     }
 
     [Fact]
+    public async Task Spawn_ToolOriginRunInsertFails_RollsBackWithoutStartingChildOrRetainingRetryIdentity()
+    {
+        await using var fixture = new SpawnFixture(admissionFailure: AdmissionFailure.RunInsert);
+
+        var failure = await Should.ThrowAsync<AdmissionAbortedException>(() =>
+            fixture.SpawnAsync(toolCallId: "failed-admission"));
+
+        failure.ShouldBeSameAs(fixture.AbortException);
+        fixture.AssertAdmissionRolledBack();
+        fixture.StopCount.ShouldBe(1);
+        fixture.Entered.Task.IsCompleted.ShouldBeFalse();
+        fixture.ParentResourcesShouldRemain();
+    }
+
+    [Fact]
+    public async Task Spawn_ToolOriginWithoutStore_RefusesBeforeAcquiringChildResources()
+    {
+        await using var fixture = new SpawnFixture(withoutStore: true);
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            fixture.SpawnAsync(toolCallId: "no-store"));
+
+        fixture.AttemptedChildAgentId.ShouldBeNull();
+        fixture.Entered.Task.IsCompleted.ShouldBeFalse();
+        fixture.StopCount.ShouldBe(0);
+        fixture.ParentResourcesShouldRemain();
+    }
+
+    [Fact]
     public async Task Spawn_RollbackFailure_IsLoggedWithoutHidingOriginalFailure()
     {
         await using var fixture = new SpawnFixture(
@@ -219,9 +248,24 @@ public sealed class SubAgentWorkspaceProvisioningTests
 
     [Theory]
     [InlineData(false, false)]
+    [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task Kill_ThrowingChildCallback_DisposesAndCleansExactlyOnce(bool raceCompletion, bool workspaceAlreadyAbsent)
+    public Task Kill_ThrowingChildCallback_DisposesAndCleansExactlyOnce(bool raceCompletion, bool workspaceAlreadyAbsent)
+        => AssertThrowingCallbackCleanupAsync(raceCompletion, workspaceAlreadyAbsent);
+
+    [Fact]
+    public async Task Kill_ThrowingChildCallback_RepeatedMatrixRemainsDeterministic()
+    {
+        for (var iteration = 0; iteration < 12; iteration++)
+        {
+            await AssertThrowingCallbackCleanupAsync(
+                raceCompletion: (iteration & 1) != 0,
+                workspaceAlreadyAbsent: (iteration & 2) != 0);
+        }
+    }
+
+    private static async Task AssertThrowingCallbackCleanupAsync(bool raceCompletion, bool workspaceAlreadyAbsent)
     {
         await using var fixture = new SpawnFixture(throwOnCancellation: true, raceCompletion: raceCompletion);
         var spawned = await fixture.SpawnAsync();
@@ -233,7 +277,7 @@ public sealed class SubAgentWorkspaceProvisioningTests
             Directory.Delete(Path.GetDirectoryName(workspace).ShouldNotBeNull(), recursive: true);
 
         (await fixture.Manager.KillAsync(spawned.SubAgentId, SpawnFixture.ParentSession)).ShouldBeTrue();
-        await fixture.WaitForCleanupAsync();
+        await fixture.WaitForCleanupAsync(spawned.SubAgentId);
         if (fixture.CompletionRace is { } race)
             await race;
         await fixture.Manager.OnCompletedAsync(spawned.SubAgentId, "late completion");
@@ -279,6 +323,7 @@ public sealed class SubAgentWorkspaceProvisioningTests
         internal Task<SubAgentInfo?>? CancellationSnapshot { get; private set; }
 
         internal CancellationToken ChildToken { get; private set; }
+        private readonly TaskCompletionSource _childRunExited = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal int ThrowingCallbackCount;
         internal int StopCount;
         internal Task? CompletionRace { get; private set; }
@@ -303,7 +348,8 @@ public sealed class SubAgentWorkspaceProvisioningTests
             bool preExistingChildResources = false,
             bool mirrorTarget = false,
             bool throwDuringRollback = false,
-            CancellationTokenSource? cancellationSource = null)
+            CancellationTokenSource? cancellationSource = null,
+            bool withoutStore = false)
         {
             _admissionFailure = admissionFailure;
             _preExistingChildResources = preExistingChildResources;
@@ -341,8 +387,12 @@ public sealed class SubAgentWorkspaceProvisioningTests
                 });
             sessionStore.Setup(store => store.DeleteAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
                 .Returns<SessionId, CancellationToken>(_sessions.DeleteAsync);
+            sessionStore.Setup(store => store.ListSubAgentSessionsAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<SubAgentRunDetail>());
             sessionStore.Setup(store => store.SaveSubAgentSessionAsync(It.IsAny<SubAgentInfo>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+                .Returns<SubAgentInfo, CancellationToken>((_, _) =>
+                    _admissionFailure == AdmissionFailure.RunInsert
+                        ? Task.FromException(AbortException) : Task.CompletedTask);
             _sessionStore = sessionStore.Object;
             _policyProvider = new DefaultToolPolicyProvider(
                 new TestOptionsMonitor<PlatformConfig>(new PlatformConfig()),
@@ -405,8 +455,15 @@ public sealed class SubAgentWorkspaceProvisioningTests
                         }
                     });
                     Entered.TrySetResult();
-                    await waitForRelease;
-                    return new AgentResponse { Content = "done" };
+                    try
+                    {
+                        await waitForRelease;
+                        return new AgentResponse { Content = "done" };
+                    }
+                    finally
+                    {
+                        _childRunExited.TrySetResult();
+                    }
                 });
             var supervisor = new Mock<IAgentSupervisor>();
             supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
@@ -444,16 +501,18 @@ public sealed class SubAgentWorkspaceProvisioningTests
             Manager = new DefaultSubAgentManager(supervisor.Object, Registry.Object, activity.Object,
                 Mock.Of<IChannelDispatcher>(), new TestOptionsMonitor<GatewayOptions>(new GatewayOptions()),
                 new AuditLogger(Audits, Warnings), workspaceManager: Workspaces,
-                policyProvider: _policyProvider, sessionStore: _sessionStore);
+                policyProvider: _policyProvider, sessionStore: withoutStore ? null : _sessionStore);
         }
 
         internal async Task<SubAgentInfo> SpawnAsync(
             bool shared = false,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            string? toolCallId = null)
         {
             var request = new SubAgentSpawnRequest
             {
                 ParentAgentId = Parent, ParentSessionId = ParentSession, Task = "cwd probe",
+                SpawningToolCallId = toolCallId,
                 Mode = _mirrorTarget is { } target
                     ? new Mirror(target)
                     : new Embody(SubAgentArchetype.General),
@@ -516,6 +575,14 @@ public sealed class SubAgentWorkspaceProvisioningTests
 
         internal Task WaitForCleanupAsync() => _terminal.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
+        internal async Task WaitForCleanupAsync(string subAgentId)
+        {
+            await _childRunExited.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await _unregistered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            Manager.IsRetiredForTest(subAgentId).ShouldBeTrue();
+            await Manager.WaitForRunCompletionForTestAsync(subAgentId).WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
         public async ValueTask DisposeAsync()
         {
             Release.TrySetResult();
@@ -531,7 +598,7 @@ public sealed class SubAgentWorkspaceProvisioningTests
         }
     }
 
-    private enum AdmissionFailure { None, SessionSave, HandleConstruction, Cancellation }
+    private enum AdmissionFailure { None, SessionSave, HandleConstruction, Cancellation, RunInsert }
 
     private sealed class AdmissionAbortedException(string message) : Exception(message);
 

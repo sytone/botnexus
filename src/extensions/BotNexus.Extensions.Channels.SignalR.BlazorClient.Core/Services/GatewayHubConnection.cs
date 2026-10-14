@@ -248,8 +248,8 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <c>PortalLoadService</c> for why. This verb is retained for its GROUP-JOINING side effect,
     /// which is the only thing the hub is responsible for on that path.
     /// </remarks>
-    public async Task<SubscribeAllResult> SubscribeAllAsync()
-        => await _connection!.InvokeAsync<SubscribeAllResult>("SubscribeAll");
+    public async Task<SubscribeAllResult> SubscribeAllAsync(CancellationToken cancellationToken = default)
+        => await _connection!.InvokeAsync<SubscribeAllResult>("SubscribeAll", cancellationToken);
 
     /// <summary>
     /// Joins the per-agent notification groups so this connection receives

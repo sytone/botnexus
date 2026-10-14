@@ -9,7 +9,7 @@ namespace BotNexus.Agent.Core.Loop;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The <c>BeforeToolCall</c> budget is enforced with <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/>,
+/// The <c>ToolExecutionPolicy</c> budget is enforced with <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/>,
 /// which is wall-clock. When the workstation slept for 4h41m mid-hook, the hook was declared to have
 /// overrun a 15s budget by 16945s and the tool call was denied fail-closed. Nothing ran slowly — the
 /// whole process was frozen. Measuring the breach against wall clock therefore misclassifies a host

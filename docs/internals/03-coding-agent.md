@@ -34,7 +34,7 @@ Here's what `CreateAsync` does, step by step:
 7. **System prompt construction** — `SystemPromptBuilder.Build` with a `SystemPromptContext` record (see [System prompt construction](#system-prompt-construction))
 8. **ResolveModel** — resolves the model from config + `ModelRegistry` (see [Model resolution](#model-resolution))
 9. **Create AuditHooks and SafetyHooks** — wires up safety validation and audit logging
-10. **Build AgentOptions** — assembles all delegates: `LlmClient` (instance-based), `GetApiKey`, `BeforeToolCall`, `AfterToolCall`, `ConvertToLlm`, `TransformContext`
+10. **Build AgentOptions** — assembles the client and callbacks: `LlmClient` (instance-based), `GetApiKey`, `ToolExecutionPolicy`, `ToolResultTransformer`, `ProviderMessageTransformer`, `AgentContextTransformer`
 11. **Wire SessionManager** — if provided, configures auto-persistence of agent state to sessions
 12. **Return `new Agent(options)`** — the configured agent, ready to run
 
@@ -528,7 +528,7 @@ The `Load(workingDirectory)` method handles the merge chain. `EnsureDirectories`
 
 ## Safety hooks
 
-`SafetyHooks` runs as a `BeforeToolCallDelegate` and enforces three categories of safety:
+`SafetyHooks` runs as a `ToolExecutionPolicy` delegate and enforces three categories of safety:
 
 ### Path validation (write/edit tools)
 
@@ -552,7 +552,7 @@ BlockedPaths: [".env", "secrets/"]            // These paths are off-limits
 
 Payloads over 1 MB trigger a console warning (not a block) so the user is aware of unusually large file writes.
 
-> **Key takeaway:** Safety hooks are a `BeforeToolCall` delegate — they can block tool execution entirely or let it through with warnings. Path containment prevents the agent from escaping the working directory.
+> **Key takeaway:** Safety hooks use a `ToolExecutionPolicy` delegate — they can block tool execution entirely or let it through with warnings. Path containment prevents the agent from escaping the working directory.
 
 ## Session management
 
@@ -695,11 +695,11 @@ public interface IExtension
     IReadOnlyList<IAgentTool> GetTools();
 
     // Hook: before tool execution (return Block: true to prevent)
-    ValueTask<BeforeToolCallResult?> OnToolCallAsync(
+    ValueTask<ToolExecutionDecision?> OnToolCallAsync(
         ToolCallLifecycleContext context, CancellationToken ct);
 
     // Hook: after tool execution (return to transform result)
-    ValueTask<AfterToolCallResult?> OnToolResultAsync(
+    ValueTask<ToolResultTransformResult?> OnToolResultAsync(
         ToolResultLifecycleContext context, CancellationToken ct);
 
     // Session lifecycle

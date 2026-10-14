@@ -105,6 +105,8 @@ public sealed class AgentPromptAction : ICronAction
         // produced an unbroken streak of green runs indefinitely.
         if (triggerRequest.DeliveryError is { } deliveryError)
             context.RecordDeliveryFailure(deliveryError);
+        if (triggerRequest.Completion is { } completion)
+            context.RecordRunCompletion(completion);
     }
 
     /// <summary>

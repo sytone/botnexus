@@ -1,5 +1,5 @@
 ﻿using System.Collections.Generic;
-using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Agent.Core.Types;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Isolation;

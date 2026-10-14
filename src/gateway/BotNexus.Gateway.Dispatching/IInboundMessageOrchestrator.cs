@@ -47,6 +47,26 @@ public interface IInboundMessageOrchestrator
     Task<InboundDispatchResult> AcceptAsync(InboundMessage message, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Enqueues an inbound message whose execution lifetime is owned by the producer and reports
+    /// when the queue worker actually hands it to the processor.
+    /// </summary>
+    /// <remarks>
+    /// This overload is for durable execution origins such as webhooks. Ordinary transport callers
+    /// should use <see cref="AcceptAsync(InboundMessage, CancellationToken)"/> so disconnect
+    /// cancellation remains detached from processor work.
+    /// </remarks>
+    async Task<InboundDispatchResult> AcceptAsync(
+        InboundMessage message,
+        InboundExecutionControl executionControl,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(executionControl);
+        executionControl.CancellationToken.ThrowIfCancellationRequested();
+        await executionControl.NotifyStartedAsync().ConfigureAwait(false);
+        return await AcceptAsync(message, executionControl.CancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Fire-and-forget enqueue: writes the message onto the per-session queue and
     /// returns immediately without awaiting the processing outcome. Use this when
     /// the caller must not block on agent execution (e.g. the conversation tool

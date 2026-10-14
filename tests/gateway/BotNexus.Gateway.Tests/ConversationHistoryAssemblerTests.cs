@@ -51,6 +51,43 @@ public sealed class ConversationHistoryAssemblerTests
     }
 
     [Fact]
+    public async Task AssembleAsync_ProjectsInlineOriginalContentPartsAsAttachments()
+    {
+        var conversationId = ConversationId.From("c_attachments");
+        var sessions = new InMemorySessionStore();
+        var session = await sessions.GetOrCreateAsync(SessionId.From("s-attachments"), AgentId.From("quill"));
+        session.Session.ConversationId = conversationId;
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.User,
+            Content = "see files",
+            Timestamp = Ts(0),
+            OriginalContentParts =
+            [
+                new BinaryContentPart { MimeType = "image/png", FileName = "photo.png", Data = [1, 2, 3] },
+                new TextContentPart { MimeType = "text/plain", FileName = "notes.txt", Text = "hello" },
+                new ReferenceContentPart { MimeType = "application/pdf", FileName = "remote.pdf", Uri = "https://example.invalid/file" }
+            ]
+        });
+        await sessions.SaveAsync(session);
+        var assembler = await NewAssemblerAsync(conversationId, "quill", sessions);
+
+        var result = await assembler.AssembleAsync(conversationId, limit: 50, offset: 0);
+
+        result.ShouldNotBeNull();
+        var attachments = result!.Entries.ShouldHaveSingleItem().Attachments;
+        attachments.ShouldNotBeNull();
+        attachments.Count.ShouldBe(2);
+        attachments[0].FileName.ShouldBe("photo.png");
+        attachments[0].MimeType.ShouldBe("image/png");
+        attachments[0].Size.ShouldBe(3);
+        attachments[0].Base64Data.ShouldBe("AQID");
+        attachments[1].FileName.ShouldBe("notes.txt");
+        attachments[1].Base64Data.ShouldBe("aGVsbG8=");
+        attachments.ShouldNotContain(attachment => attachment.FileName == "remote.pdf");
+    }
+
+    [Fact]
     public async Task AssembleAsync_MultipleSessions_InsertsBoundaryMarkerBetweenThem()
     {
         var conversationId = ConversationId.From("c_two_sessions");

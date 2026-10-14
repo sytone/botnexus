@@ -440,8 +440,6 @@ public sealed class PlatformConfigValidationTests
                   "displayName": "Assistant",
                   "description": "General helper",
                   "model": "gpt-4.1",
-                  "systemPromptFile": "SOUL.md",
-                  "systemPromptFiles": ["SOUL.md", "IDENTITY.md"],
                   "toolIds": ["read", "write"],
                   "allowedModels": ["gpt-4.1", "gpt-4o"],
                   "subAgents": ["scribe", "hermes"],
@@ -506,7 +504,6 @@ public sealed class PlatformConfigValidationTests
 
                 errors.ShouldBeEmpty();
                 agent.DisplayName.ShouldBe("Assistant");
-                agent.SystemPromptFiles.ShouldBe(["SOUL.md", "IDENTITY.md"]);
                 agent.ToolIds.ShouldBe(["read", "write"]);
                 agent.AllowedModels.ShouldBe(["gpt-4.1", "gpt-4o"]);
                 agent.SubAgents.ShouldBe(["scribe", "hermes"]);

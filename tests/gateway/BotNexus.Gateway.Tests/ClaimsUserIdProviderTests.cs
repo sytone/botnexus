@@ -1,4 +1,6 @@
+using BotNexus.Domain.Primitives;
 using BotNexus.Extensions.Channels.SignalR;
+using BotNexus.Gateway.Abstractions;
 using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
 
@@ -33,6 +35,19 @@ public sealed class ClaimsUserIdProviderTests
     }
 
     [Fact]
+    public void GetUserId_WithBlankOid_FallsBackToSub()
+    {
+        var connection = CreateConnection(
+            authenticated: true,
+            new Claim(ClaimsUserIdProvider.OidClaimType, "  "),
+            new Claim(ClaimsUserIdProvider.SubClaimType, "sub-after-blank-oid"));
+
+        var result = _provider.GetUserId(connection);
+
+        result.ShouldBe("sub-after-blank-oid");
+    }
+
+    [Fact]
     public void GetUserId_WithSubClaim_WhenNoOid_ReturnsSub()
     {
         var connection = CreateConnection(
@@ -58,13 +73,38 @@ public sealed class ClaimsUserIdProviderTests
     }
 
     [Fact]
-    public void GetUserId_Unauthenticated_ReturnsNull()
+    public void GetUserId_Unauthenticated_UsesServerOwnedLocalReader()
     {
-        var connection = CreateConnection(authenticated: false);
+        var firstConnection = CreateConnection(authenticated: false);
+        var secondConnection = CreateConnection(authenticated: false);
 
-        var result = _provider.GetUserId(connection);
+        var first = _provider.GetUserId(firstConnection);
+        var second = _provider.GetUserId(secondConnection);
 
-        result.ShouldBeNull();
+        first.ShouldBe(ConversationReaderIdentity.LocalOwner.Value);
+        second.ShouldBe(first);
+        first.ShouldNotBe("test-connection");
+    }
+
+    [Fact]
+    public void ResolveReaderId_WithAuthenticatedOid_ReturnsTypedReaderId()
+    {
+        var principal = CreatePrincipal(
+            authenticated: true,
+            new Claim(ClaimsUserIdProvider.OidClaimType, " reader-oid "),
+            new Claim(ClaimsUserIdProvider.SubClaimType, "reader-sub"));
+
+        var readerId = ConversationReaderIdentity.Resolve(principal);
+
+        readerId.ShouldBe(ConversationReaderId.From("reader-oid"));
+    }
+
+    [Fact]
+    public void ResolveReaderId_WithAuthenticatedIdentityMissingStableClaim_FailsClosed()
+    {
+        var principal = CreatePrincipal(authenticated: true, new Claim(ClaimTypes.Name, "display-name"));
+
+        ConversationReaderIdentity.Resolve(principal).ShouldBeNull();
     }
 
     [Fact]
@@ -84,14 +124,16 @@ public sealed class ClaimsUserIdProviderTests
     /// </summary>
     private static HubConnectionContext CreateConnection(bool authenticated, params Claim[] claims)
     {
+        // Use the TestHubConnectionContext to avoid unmockable HubConnectionContext constructor
+        return new TestHubConnectionContext(CreatePrincipal(authenticated, claims));
+    }
+
+    private static ClaimsPrincipal CreatePrincipal(bool authenticated, params Claim[] claims)
+    {
         var identity = authenticated
             ? new ClaimsIdentity(claims, "Bearer")
             : new ClaimsIdentity(claims); // no authenticationType → IsAuthenticated = false
-
-        var principal = new ClaimsPrincipal(identity);
-
-        // Use the TestHubConnectionContext to avoid unmockable HubConnectionContext constructor
-        return new TestHubConnectionContext(principal);
+        return new ClaimsPrincipal(identity);
     }
 
     /// <summary>

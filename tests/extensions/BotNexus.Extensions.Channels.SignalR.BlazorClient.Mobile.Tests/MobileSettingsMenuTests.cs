@@ -44,7 +44,6 @@ public sealed class MobileSettingsMenuTests : IDisposable
             DisplayName = "Agent 1",
             Emoji = null,
             SessionId = "session-1",
-            ActiveConversationId = "conv-1"
         };
         agentState.Conversations["conv-1"] = convState;
 

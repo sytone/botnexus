@@ -79,6 +79,45 @@ public sealed class SubAgentInfo
 }
 
 /// <summary>
+/// An attachment that can be rendered and activated without dereferencing an untrusted URL.
+/// </summary>
+/// <param name="FileName">Display and download filename.</param>
+/// <param name="MimeType">Media type used to construct the safe data URL.</param>
+/// <param name="Size">Payload size in bytes when known.</param>
+/// <param name="DataUrl">Self-contained data URL built from accepted or persisted content.</param>
+public sealed record ChatAttachment
+{
+    /// <summary>Builds a renderable attachment from a trusted inline payload.</summary>
+    public ChatAttachment(string fileName, string mimeType, long? size, string base64Data)
+    {
+        FileName = string.IsNullOrWhiteSpace(fileName) ? "attachment" : fileName;
+        MimeType = IsSafeMimeType(mimeType) ? mimeType : "application/octet-stream";
+        Size = size;
+        DataUrl = $"data:{MimeType};base64,{base64Data}";
+    }
+
+    /// <summary>Display and download filename.</summary>
+    public string FileName { get; }
+
+    /// <summary>Validated media type used by the data URL.</summary>
+    public string MimeType { get; }
+
+    /// <summary>Payload size in bytes when known.</summary>
+    public long? Size { get; }
+
+    /// <summary>Self-contained data URL built exclusively from inline content.</summary>
+    public string DataUrl { get; }
+
+    /// <summary>Whether the attachment can be displayed as an inline image.</summary>
+    public bool IsImage => MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSafeMimeType(string value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Contains('/', StringComparison.Ordinal)
+        && value.All(character => char.IsAsciiLetterOrDigit(character) || character is '/' or '+' or '-' or '.');
+}
+
+/// <summary>
 /// A single chat message in an agent session.
 /// </summary>
 public sealed record ChatMessage(string Role, string Content, DateTimeOffset Timestamp)
@@ -94,6 +133,9 @@ public sealed record ChatMessage(string Role, string Content, DateTimeOffset Tim
 
     /// <summary>Agent that produced this message (for multi-agent conversations).</summary>
     public string? AgentId { get; init; }
+
+    /// <summary>Accepted inline attachments retained with this message.</summary>
+    public IReadOnlyList<ChatAttachment> Attachments { get; init; } = [];
 
     /// <summary>Tool name if this is a tool-related message.</summary>
     public string? ToolName { get; init; }

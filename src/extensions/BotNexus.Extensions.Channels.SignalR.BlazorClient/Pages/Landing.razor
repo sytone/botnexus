@@ -21,6 +21,7 @@
 @inject GatewayInfoService GatewayInfo
 @inject HttpClient Http
 @inject NavigationManager Nav
+@inject IPortalPreferencesService Prefs
 @implements IDisposable
 
 <PageTitle>Home - BotNexus</PageTitle>
@@ -41,17 +42,20 @@
 else
 {
     <div class="home-page" data-testid="home-page">
-        <section class="home-summary" data-testid="home-summary" aria-label="Site and agent summary">
-            <PlatformStatsPanel />
-            <div class="home-agent-summary">
-                <span class="home-agent-count" data-testid="home-agent-count">@_agents.Count</span>
-                <span class="home-agent-count-label">@(_agents.Count == 1 ? "agent" : "agents") available</span>
-                @if (_connectedCount > 0)
-                {
-                    <span class="home-agent-connected" data-testid="home-agent-connected">@_connectedCount connected</span>
-                }
-            </div>
-        </section>
+        @if (!IsSimplifiedShell)
+        {
+            <section class="home-summary" data-testid="home-summary" aria-label="Site and agent summary">
+                <PlatformStatsPanel />
+                <div class="home-agent-summary">
+                    <span class="home-agent-count" data-testid="home-agent-count">@_agents.Count</span>
+                    <span class="home-agent-count-label">@(_agents.Count == 1 ? "agent" : "agents") available</span>
+                    @if (_connectedCount > 0)
+                    {
+                        <span class="home-agent-connected" data-testid="home-agent-connected">@_connectedCount connected</span>
+                    }
+                </div>
+            </section>
+        }
 
         @if (_agents.Count == 0)
         {
@@ -65,84 +69,86 @@ else
             <section class="home-starter" aria-label="Start a conversation">
                 <h2 class="home-starter-title">What would you like to do?</h2>
 
-                <textarea class="home-message-input"
-                          data-testid="home-message-input"
-                          aria-label="Message"
-                          rows="4"
-                          placeholder="Type your message, then press Enter to start a conversation…"
-                          @bind="_draft"
-                          @bind:event="oninput"
-                          @onkeydown="HandleKeyDownAsync"></textarea>
+                <div class="home-composer-surface" data-testid="home-composer-surface">
+                    <textarea class="home-message-input"
+                              data-testid="home-message-input"
+                              aria-label="Message"
+                              rows="4"
+                              placeholder="Type your message, then press Enter to start a conversation…"
+                              @bind="_draft"
+                              @bind:event="oninput"
+                              @onkeydown="HandleKeyDownAsync"></textarea>
 
-                <div class="home-starter-controls">
-                    <label class="home-control">
-                        <span class="home-control-label">Agent</span>
-                        <select class="home-agent-select"
-                                data-testid="home-agent-select"
-                                aria-label="Agent"
-                                @onchange="OnAgentChangedAsync">
-                            @foreach (var agent in _agents)
-                            {
-                                <option value="@agent.AgentId" selected="@(agent.AgentId == _selectedAgentId)">@AgentLabel(agent)</option>
-                            }
-                        </select>
-                    </label>
-
-                    <label class="home-control">
-                        <span class="home-control-label">Model</span>
-                        <select class="home-model-select"
-                                data-testid="home-model-select"
-                                aria-label="Model"
-                                @onchange="OnModelChanged">
-                            @foreach (var model in _models)
-                            {
-                                <option value="@(model.ModelId)" selected="@(model.ModelId == _selectedModel)">@(model.Name)</option>
-                            }
-                        </select>
-                    </label>
-
-                    @if (ThinkingLevels.Count > 0)
-                    {
+                    <div class="home-starter-controls" data-testid="home-starter-controls">
                         <label class="home-control">
-                            <span class="home-control-label">Reasoning</span>
-                            <select class="home-thinking-select"
-                                    data-testid="home-thinking-select"
-                                    aria-label="Reasoning level"
-                                    @onchange="OnThinkingChanged">
-                                <option value="" selected="@(_selectedThinking.Length == 0)">(model default)</option>
-                                @foreach (var level in ThinkingLevels)
+                            <span class="home-control-label">Agent</span>
+                            <select class="home-agent-select"
+                                    data-testid="home-agent-select"
+                                    aria-label="Agent"
+                                    @onchange="OnAgentChangedAsync">
+                                @foreach (var agent in _agents)
                                 {
-                                    <option value="@level" selected="@(level == _selectedThinking)">@level</option>
+                                    <option value="@agent.AgentId" selected="@(agent.AgentId == _selectedAgentId)">@AgentLabel(agent)</option>
                                 }
                             </select>
                         </label>
-                    }
 
-                    @if (ContextSizes.Count > 1)
-                    {
                         <label class="home-control">
-                            <span class="home-control-label">Context</span>
-                            <select class="home-context-select"
-                                    data-testid="home-context-select"
-                                    aria-label="Context window"
-                                    @onchange="OnContextChanged">
-                                <option value="" selected="@(_selectedContext.Length == 0)">(model default)</option>
-                                @foreach (var size in ContextSizes)
+                            <span class="home-control-label">Model</span>
+                            <select class="home-model-select"
+                                    data-testid="home-model-select"
+                                    aria-label="Model"
+                                    @onchange="OnModelChanged">
+                                @foreach (var model in _models)
                                 {
-                                    <option value="@size" selected="@(size.ToString(System.Globalization.CultureInfo.InvariantCulture) == _selectedContext)">@size.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) tokens</option>
+                                    <option value="@(model.ModelId)" selected="@(model.ModelId == _selectedModel)">@(model.Name)</option>
                                 }
                             </select>
                         </label>
-                    }
 
-                    <button type="button"
-                            class="home-send-btn"
-                            data-testid="home-send"
-                            aria-label="Start conversation"
-                            disabled="@(!CanSend)"
-                            @onclick="SendAsync">
-                        @(_starting ? "Starting\u2026" : "Send")
-                    </button>
+                        @if (ThinkingLevels.Count > 0)
+                        {
+                            <label class="home-control">
+                                <span class="home-control-label">Reasoning</span>
+                                <select class="home-thinking-select"
+                                        data-testid="home-thinking-select"
+                                        aria-label="Reasoning level"
+                                        @onchange="OnThinkingChanged">
+                                    <option value="" selected="@(_selectedThinking.Length == 0)">(model default)</option>
+                                    @foreach (var level in ThinkingLevels)
+                                    {
+                                        <option value="@level" selected="@(level == _selectedThinking)">@level</option>
+                                    }
+                                </select>
+                            </label>
+                        }
+
+                        @if (ContextSizes.Count > 1)
+                        {
+                            <label class="home-control">
+                                <span class="home-control-label">Context</span>
+                                <select class="home-context-select"
+                                        data-testid="home-context-select"
+                                        aria-label="Context window"
+                                        @onchange="OnContextChanged">
+                                    <option value="" selected="@(_selectedContext.Length == 0)">(model default)</option>
+                                    @foreach (var size in ContextSizes)
+                                    {
+                                        <option value="@size" selected="@(size.ToString(System.Globalization.CultureInfo.InvariantCulture) == _selectedContext)">@size.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) tokens</option>
+                                    }
+                                </select>
+                            </label>
+                        }
+
+                        <button type="button"
+                                class="home-send-btn"
+                                data-testid="home-send"
+                                aria-label="Start conversation"
+                                disabled="@(!CanSend)"
+                                @onclick="SendAsync">
+                            @(_starting ? "Starting\u2026" : "Send")
+                        </button>
+                        </div>
                 </div>
 
                 @if (_error is not null)
@@ -150,6 +156,21 @@ else
                     <div class="home-error" data-testid="home-error" role="alert">@_error</div>
                 }
             </section>
+
+            @if (IsSimplifiedShell)
+            {
+                <section class="home-summary home-summary-quiet" data-testid="home-summary" aria-label="Site and agent summary">
+                    <PlatformStatsPanel />
+                    <div class="home-agent-summary">
+                        <span class="home-agent-count" data-testid="home-agent-count">@_agents.Count</span>
+                        <span class="home-agent-count-label">@(_agents.Count == 1 ? "agent" : "agents") available</span>
+                        @if (_connectedCount > 0)
+                        {
+                            <span class="home-agent-connected" data-testid="home-agent-connected">@_connectedCount connected</span>
+                        }
+                    </div>
+                </section>
+            }
 
             <section class="home-agent-roster" data-testid="home-agent-roster" aria-labelledby="home-agent-roster-title">
                 <div class="home-agent-roster-heading">
@@ -193,6 +214,8 @@ else
 
     private bool CanSend => !_starting && !string.IsNullOrWhiteSpace(_draft) && _selectedAgentId is { Length: > 0 };
 
+    private bool IsSimplifiedShell => PortalShell.Normalize(Prefs.Current.Shell) == PortalShell.Simplified;
+
     private IReadOnlyList<string> ThinkingLevels =>
         _models.FirstOrDefault(m => m.ModelId == _selectedModel)?.SupportedThinkingLevels ?? [];
 
@@ -206,6 +229,7 @@ else
     {
         PortalLoad.OnReadyChanged += HandleReadyChanged;
         Store.OnChanged += HandleStateChanged;
+        Prefs.OnChanged += HandlePreferencesChanged;
     }
 
     protected override async Task OnInitializedAsync()
@@ -242,6 +266,8 @@ else
             await RefreshRosterAsync();
             StateHasChanged();
         });
+
+    private void HandlePreferencesChanged() => _ = InvokeAsync(StateHasChanged);
 
     /// <summary>
     /// Rebuilds the agent list from the shared client state store and, on first population, resolves
@@ -434,6 +460,7 @@ else
     {
         PortalLoad.OnReadyChanged -= HandleReadyChanged;
         Store.OnChanged -= HandleStateChanged;
+        Prefs.OnChanged -= HandlePreferencesChanged;
     }
 
     /// <summary>

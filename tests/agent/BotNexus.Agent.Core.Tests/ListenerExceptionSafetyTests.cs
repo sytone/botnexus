@@ -15,7 +15,7 @@ public sealed class ListenerExceptionSafetyTests
         var options = TestHelpers.CreateTestOptions(model: TestHelpers.CreateTestModel(api))
             with
             {
-                OnDiagnostic = message => diagnostics.Add(message)
+                DiagnosticObserver = message => diagnostics.Add(message)
             };
         var agent = new BotNexus.Agent.Core.Agent(options);
         using var _ = agent.Subscribe((_, _) => throw new InvalidOperationException("listener exploded"));

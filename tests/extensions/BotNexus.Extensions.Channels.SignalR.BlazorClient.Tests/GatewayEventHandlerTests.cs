@@ -17,7 +17,6 @@ public sealed class GatewayEventHandlerTests
             DisplayName = "Agent 1",
             IsConnected = true,
             SessionId = "sess-1",
-            ActiveConversationId = "conv-1"
         });
 
         var agent = _store.GetAgent("agent-1")!;
@@ -323,10 +322,167 @@ public sealed class GatewayEventHandlerTests
 
         Assert.True(conv.StreamState.IsRunActive);
         Assert.True(conv.StreamState.IsTurnActive);
+        Assert.Equal("RunActivitySnapshot", conv.StreamState.GetDiagnosticSnapshot().RunStateLastChangedBy);
+
+        // Simulate a missed terminal edge: every client-side constituent can remain asserted even
+        // though the next authoritative server snapshot says no run is active.
+        conv.StreamState.SetStreaming(true, "MessageStart");
+        conv.StreamState.ActiveToolCalls["stale-tool"] = new ActiveToolCall
+        {
+            ToolCallId = "stale-tool",
+            ToolName = "read",
+            StartedAt = DateTimeOffset.UtcNow,
+            MessageId = "stale-tool-message"
+        };
+        conv.StreamState.RecordActiveToolCallsChanged("ToolStart");
 
         _handler.ApplyRunActivitySnapshot([]);
 
         Assert.False(conv.StreamState.IsRunActive);
+        Assert.False(conv.StreamState.IsStreaming);
+        Assert.Empty(conv.StreamState.ActiveToolCalls);
+        Assert.False(conv.StreamState.IsTurnActive);
+        var idle = conv.StreamState.GetDiagnosticSnapshot();
+        Assert.Equal("RunActivitySnapshot", idle.RunStateLastChangedBy);
+        Assert.Equal("RunActivitySnapshot", idle.StreamingLastChangedBy);
+        Assert.Equal("RunActivitySnapshot", idle.ActiveToolCallsLastChangedBy);
+    }
+
+    [Fact]
+    public void Subscribe_snapshot_cannot_resurrect_run_after_newer_RunEnded()
+    {
+        var conversation = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        var revision = _handler.CaptureRunStateRevision();
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        _handler.HandleRunEnded(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        _handler.TryApplyRunActivitySnapshot(
+            [new RunActivitySnapshot("sess-1", "agent-1", "conv-1")], revision);
+
+        Assert.False(conversation.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public void Subscribe_snapshot_cannot_clear_newer_internal_continuation()
+    {
+        var conversation = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        var revision = _handler.CaptureRunStateRevision();
+
+        // A durable ask_user answer can start a new run while the subscription is in flight.
+        // Its internal channel origin does not change the conversation-scoped event contract.
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        _handler.TryApplyRunActivitySnapshot([], revision);
+
+        Assert.True(conversation.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public async Task MissedRunEnded_after_quiescent_terminal_edge_reconciles_authoritative_idle()
+    {
+        var agent = _store.GetAgent("agent-1")!;
+        var conv = agent.Conversations["conv-1"];
+        _handler.RunStateReconciliationDelay = (_, _) => Task.CompletedTask;
+        _handler.RunActivitySnapshotProvider = _ => Task.FromResult(
+            new SubscribeAllResult([], []));
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleContentDelta(new AgentStreamEvent { SessionId = "sess-1", ContentDelta = "done" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.NotNull(_handler.LastRunStateReconciliation);
+        await _handler.LastRunStateReconciliation!;
+
+        Assert.False(conv.StreamState.IsRunActive);
+        Assert.False(conv.StreamState.IsTurnActive);
+        Assert.False(agent.IsStreaming);
+    }
+
+    [Fact]
+    public async Task Quiescent_reconciliation_preserves_a_genuinely_active_run()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        _handler.RunStateReconciliationDelay = (_, _) => Task.CompletedTask;
+        _handler.RunActivitySnapshotProvider = _ => Task.FromResult(
+            new SubscribeAllResult([], [new RunActivitySnapshot("sess-1", "agent-1", "conv-1")]));
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.NotNull(_handler.LastRunStateReconciliation);
+        await _handler.LastRunStateReconciliation!;
+
+        Assert.True(conv.StreamState.IsRunActive);
+        Assert.True(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public async Task Stale_reconciliation_cannot_clear_a_newer_active_run()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        _handler.RunStateReconciliationDelay = (_, _) => Task.CompletedTask;
+        var snapshotStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSnapshot = new TaskCompletionSource<SubscribeAllResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _handler.RunActivitySnapshotProvider = _ =>
+        {
+            snapshotStarted.SetResult();
+            return releaseSnapshot.Task;
+        };
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+        await snapshotStarted.Task;
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        releaseSnapshot.SetResult(new SubscribeAllResult([], []));
+        await _handler.LastRunStateReconciliation!;
+
+        Assert.True(conv.StreamState.IsRunActive);
+        Assert.True(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public async Task Tool_only_turn_with_missed_RunEnded_reconciles_after_TurnEnd()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        _handler.RunStateReconciliationDelay = (_, _) => Task.CompletedTask;
+        _handler.RunActivitySnapshotProvider = _ => Task.FromResult(new SubscribeAllResult([], []));
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleToolStart(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "tool-1", ToolName = "read" });
+        _handler.HandleToolEnd(new AgentStreamEvent { SessionId = "sess-1", ToolCallId = "tool-1", ToolName = "read", ToolResult = "done" });
+        _handler.HandleTurnEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        Assert.NotNull(_handler.LastRunStateReconciliation);
+        await _handler.LastRunStateReconciliation!;
+        Assert.False(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public async Task Run_state_reconciliation_waits_for_the_grace_period()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        var delayStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDelay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _handler.RunStateReconciliationDelay = async (_, _) =>
+        {
+            delayStarted.SetResult();
+            await releaseDelay.Task;
+        };
+        _handler.RunActivitySnapshotProvider = _ => Task.FromResult(new SubscribeAllResult([], []));
+
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+        await delayStarted.Task;
+
+        Assert.True(conv.StreamState.IsTurnActive);
+
+        releaseDelay.SetResult();
+        await _handler.LastRunStateReconciliation!;
         Assert.False(conv.StreamState.IsTurnActive);
     }
 
@@ -623,7 +779,7 @@ public sealed class GatewayEventHandlerTests
         };
         _store.RegisterSession("agent-1", "sess-2");
 
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
             SubAgentId: "sub-1",
@@ -640,7 +796,7 @@ public sealed class GatewayEventHandlerTests
             ChildSessionId: null,
             ConversationId: "conv-1"));
 
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _handler.HandleSubAgentCompleted(new SubAgentEventPayload(
             SessionId: "sess-1",
@@ -676,7 +832,7 @@ public sealed class GatewayEventHandlerTests
         };
         _store.RegisterSession("agent-1", "sess-2");
 
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
             SubAgentId: "sub-2",
@@ -693,7 +849,7 @@ public sealed class GatewayEventHandlerTests
             ChildSessionId: null,
             ConversationId: "conv-1"));
 
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _handler.HandleSubAgentFailed(new SubAgentEventPayload(
             SessionId: "sess-1",
@@ -729,7 +885,7 @@ public sealed class GatewayEventHandlerTests
         };
         _store.RegisterSession("agent-1", "sess-2");
 
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
         _handler.HandleSubAgentSpawned(new SubAgentEventPayload(
             SessionId: "sess-1",
             SubAgentId: "sub-3",
@@ -746,7 +902,7 @@ public sealed class GatewayEventHandlerTests
             ChildSessionId: null,
             ConversationId: "conv-1"));
 
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _handler.HandleSubAgentKilled(new SubAgentEventPayload(
             SessionId: "sess-1",
@@ -855,7 +1011,7 @@ public sealed class GatewayEventHandlerTests
             Title = "New Conversation",
             ActiveSessionId = null   // not yet set before REST refresh
         };
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
         // Simulate RegisterSession being called after SendMessageAsync returns sess-2
         _store.RegisterSession("agent-1", "sess-2");
 
@@ -882,7 +1038,7 @@ public sealed class GatewayEventHandlerTests
             Title = "New Conversation",
             ActiveSessionId = null
         };
-        _store.SetActiveConversation("agent-1", "conv-2");
+        _store.SelectView("agent-1", "conv-2", SelectionSource.RouteNavigation);
 
         _store.RegisterSession("agent-1", "sess-2");
 
@@ -1094,6 +1250,79 @@ public sealed class GatewayEventHandlerTests
     // ---- Stream/history reconciliation tests (issue #759) ----
 
     [Fact]
+    public async Task HandleReconnectedAsync_records_reset_source_and_preserves_authoritative_active_run()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        var agent = _store.GetAgent("agent-1")!;
+        agent.IsStreaming = true;
+        conv.StreamState.SetRunActive(true, "RunStarted");
+        conv.StreamState.SetStreaming(true, "MessageStart");
+        _handler.HandleReconnecting();
+        var snapshotProviderCalled = false;
+        _handler.RunActivitySnapshotProvider = _ =>
+        {
+            snapshotProviderCalled = true;
+            return Task.FromResult(
+                new SubscribeAllResult([], [new RunActivitySnapshot("sess-1", "agent-1", "conv-1")]));
+        };
+
+        await _handler.HandleReconnectedAsync();
+
+        Assert.True(snapshotProviderCalled);
+
+        var snapshot = conv.StreamState.GetDiagnosticSnapshot();
+        Assert.True(snapshot.IsRunActive);
+        Assert.False(snapshot.IsStreaming);
+        Assert.Equal("RunStarted", snapshot.RunStateLastChangedBy);
+        Assert.Equal("ReconnectRecovery", snapshot.StreamingLastChangedBy);
+        Assert.True(conv.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public async Task Reconnect_snapshot_does_not_clear_a_newer_internal_continuation()
+    {
+        var conversation = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<SubscribeAllResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _handler.RunActivitySnapshotProvider = _ =>
+        {
+            started.SetResult();
+            return release.Task;
+        };
+
+        var reconnect = _handler.HandleReconnectedAsync();
+        await started.Task;
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        release.SetResult(new SubscribeAllResult([], []));
+        await reconnect;
+
+        Assert.True(conversation.StreamState.IsRunActive);
+        Assert.True(conversation.StreamState.IsTurnActive);
+    }
+
+    [Fact]
+    public async Task Reconnect_snapshot_does_not_resurrect_a_newer_completed_run()
+    {
+        var conversation = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<SubscribeAllResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _handler.RunActivitySnapshotProvider = _ =>
+        {
+            started.SetResult();
+            return release.Task;
+        };
+
+        var reconnect = _handler.HandleReconnectedAsync();
+        await started.Task;
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        _handler.HandleRunEnded(new AgentStreamEvent { SessionId = "sess-1", ConversationId = "conv-1" });
+        release.SetResult(new SubscribeAllResult([], [new RunActivitySnapshot("sess-1", "agent-1", "conv-1")]));
+        await reconnect;
+
+        Assert.False(conversation.StreamState.IsTurnActive);
+    }
+
+    [Fact]
     public async Task HandleReconnectedAsync_marks_HistoryLoaded_false_for_streaming_conversations()
     {
         var agent = _store.GetAgent("agent-1")!;
@@ -1200,6 +1429,147 @@ public sealed class GatewayEventHandlerTests
         Assert.False(state.IsStreaming);
         Assert.Single(state.ActiveToolCalls);
         Assert.True(state.IsTurnActive); // still active because a tool call remains
+    }
+
+    [Fact]
+    public void ConversationStreamState_diagnostic_snapshot_tracks_constituents_without_false_idle_between_turns()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        _handler.HandleRunStarted(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageStart(new AgentStreamEvent { SessionId = "sess-1" });
+        _handler.HandleMessageEnd(new AgentStreamEvent { SessionId = "sess-1" });
+
+        var afterMessage = conv.StreamState.GetDiagnosticSnapshot();
+        Assert.True(afterMessage.IsRunActive);
+        Assert.False(afterMessage.IsStreaming);
+        Assert.Equal("RunStarted", afterMessage.RunStateLastChangedBy);
+        Assert.Equal("MessageEnd", afterMessage.StreamingLastChangedBy);
+        Assert.Empty(afterMessage.ActiveToolCallIds);
+
+        _handler.HandleToolStart(new AgentStreamEvent
+        {
+            SessionId = "sess-1",
+            ToolCallId = "tool-safe-id",
+            ToolName = "search",
+            ToolArgs = new Dictionary<string, object?> { ["secret"] = "must-not-appear" }
+        });
+
+        var whileToolIsActive = conv.StreamState.GetDiagnosticSnapshot();
+        Assert.True(whileToolIsActive.IsRunActive);
+        Assert.False(whileToolIsActive.IsStreaming);
+        Assert.Equal("ToolStart", whileToolIsActive.ActiveToolCallsLastChangedBy);
+        Assert.Equal(new[] { "tool-safe-id" }, whileToolIsActive.ActiveToolCallIds);
+        Assert.DoesNotContain("must-not-appear", System.Text.Json.JsonSerializer.Serialize(whileToolIsActive));
+
+        _handler.HandleRunEnded(new AgentStreamEvent { SessionId = "sess-1" });
+        var afterRun = conv.StreamState.GetDiagnosticSnapshot();
+        Assert.False(afterRun.IsRunActive);
+        Assert.False(afterRun.IsStreaming);
+        Assert.Equal("RunEnded", afterRun.RunStateLastChangedBy);
+        Assert.Equal("RunEnded", afterRun.ActiveToolCallsLastChangedBy);
+        Assert.Empty(afterRun.ActiveToolCallIds);
+    }
+
+    [Fact]
+    public void Run_activity_snapshot_preserves_change_sources_for_unchanged_active_values()
+    {
+        var conv = _store.GetAgent("agent-1")!.Conversations["conv-1"];
+        conv.StreamState.SetRunActive(true, "RunStarted");
+        conv.StreamState.SetStreaming(true, "MessageStart");
+        conv.StreamState.Reset("MessageEnd");
+        conv.StreamState.ActiveToolCalls["tool-1"] = new ActiveToolCall
+        {
+            ToolCallId = "tool-1",
+            ToolName = "search",
+            StartedAt = DateTimeOffset.UtcNow,
+            MessageId = "message-1"
+        };
+        conv.StreamState.RecordActiveToolCallsChanged("ToolStart");
+
+        _handler.ApplyRunActivitySnapshot([new RunActivitySnapshot("sess-1", "agent-1", "conv-1")]);
+
+        var snapshot = conv.StreamState.GetDiagnosticSnapshot();
+        Assert.True(snapshot.IsRunActive);
+        Assert.False(snapshot.IsStreaming);
+        Assert.Equal("RunStarted", snapshot.RunStateLastChangedBy);
+        Assert.Equal("MessageEnd", snapshot.StreamingLastChangedBy);
+        Assert.Equal("RunActivitySnapshot", snapshot.ActiveToolCallsLastChangedBy);
+        Assert.Empty(snapshot.ActiveToolCallIds);
+    }
+
+    [Fact]
+    public void ConversationStreamState_diagnostics_only_record_actual_constituent_changes()
+    {
+        var state = new ConversationStreamState();
+        state.SetRunActive(true, "RunStarted");
+        state.SetStreaming(true, "MessageStart");
+        state.RecordActiveToolCallsChanged("ToolStart");
+        state.ActiveToolCalls["tool-1"] = new ActiveToolCall
+        {
+            ToolCallId = "tool-1",
+            ToolName = "search",
+            StartedAt = DateTimeOffset.UtcNow,
+            MessageId = "message-1"
+        };
+        state.SetRunActive(true, "ContentDelta");
+        state.SetStreaming(true, "MessageStart");
+        state.Reset("MessageEnd");
+        state.Reset("RepeatedMessageEnd");
+        state.EndRun("RunEnded");
+        var snapshot = state.GetDiagnosticSnapshot();
+
+        Assert.Equal("RunEnded", snapshot.RunStateLastChangedBy);
+        Assert.Equal("MessageEnd", snapshot.StreamingLastChangedBy);
+        Assert.Equal("RunEnded", snapshot.ActiveToolCallsLastChangedBy);
+        Assert.Empty(snapshot.ActiveToolCallIds);
+
+        state.RecordActiveToolCallsChanged("PriorToolEvent");
+        state.EndRun("RepeatedRunEnded");
+        Assert.Equal("PriorToolEvent", state.GetDiagnosticSnapshot().ActiveToolCallsLastChangedBy);
+    }
+
+    [Fact]
+    public void ConversationStreamState_diagnostic_snapshot_bounds_reported_tool_ids()
+    {
+        var state = new ConversationStreamState();
+        for (var index = 0; index < ConversationStreamState.DiagnosticToolIdLimit + 3; index++)
+        {
+            var id = $"tool-{index:D2}";
+            state.ActiveToolCalls[id] = new ActiveToolCall
+            {
+                ToolCallId = id,
+                ToolName = "search",
+                StartedAt = DateTimeOffset.UtcNow,
+                MessageId = $"message-{index:D2}"
+            };
+        }
+
+        var snapshot = state.GetDiagnosticSnapshot();
+
+        Assert.Equal(ConversationStreamState.DiagnosticToolIdLimit, snapshot.ActiveToolCallIds.Count);
+        Assert.Equal(ConversationStreamState.DiagnosticToolIdLimit + 3, snapshot.ActiveToolCallCount);
+        Assert.True(snapshot.ActiveToolCallIdsTruncated);
+        Assert.DoesNotContain("must-not-appear", System.Text.Json.JsonSerializer.Serialize(snapshot));
+    }
+
+    [Fact]
+    public void ConversationStreamState_diagnostic_snapshot_truncates_long_tool_call_ids()
+    {
+        var state = new ConversationStreamState();
+        var id = new string('x', ConversationStreamState.DiagnosticToolCallIdLengthLimit + 20);
+        state.ActiveToolCalls[id] = new ActiveToolCall
+        {
+            ToolCallId = id,
+            ToolName = "search",
+            StartedAt = DateTimeOffset.UtcNow,
+            MessageId = "message-1"
+        };
+
+        var snapshot = state.GetDiagnosticSnapshot();
+
+        Assert.Single(snapshot.ActiveToolCallIds);
+        Assert.Equal(ConversationStreamState.DiagnosticToolCallIdLengthLimit, snapshot.ActiveToolCallIds[0].Length);
+        Assert.True(snapshot.ActiveToolCallIdsTruncated);
     }
 
     [Fact]

@@ -1,5 +1,5 @@
 using System.Text.Json;
-using BotNexus.Agent.Core.Loop;
+using BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Tools;
 

@@ -16,6 +16,11 @@ public sealed record SentMessage(string RoomId, MatrixMessageContent Content);
 /// <param name="Typing">Whether typing was turned on or off.</param>
 public sealed record TypingCall(string RoomId, bool Typing);
 
+/// <summary>A read receipt the adapter sent to the fake homeserver.</summary>
+/// <param name="RoomId">Room containing the handled event.</param>
+/// <param name="EventId">Handled event acknowledged as read.</param>
+public sealed record ReadReceiptCall(string RoomId, string EventId);
+
 /// <summary>A bounded media download requested by the adapter.</summary>
 public sealed class MediaDownloadCall
 {
@@ -50,6 +55,9 @@ public sealed class FakeMatrixClient : IMatrixClient
     /// <summary>Typing-state calls the adapter made, in order.</summary>
     public List<TypingCall> TypingCalls { get; } = [];
 
+    /// <summary>Read receipts the adapter sent, in order.</summary>
+    public List<ReadReceiptCall> ReadReceiptCalls { get; } = [];
+
     /// <summary>The <c>since</c> tokens the adapter supplied on each sync, in order.</summary>
     public List<string?> SinceTokens { get; } = [];
 
@@ -74,6 +82,9 @@ public sealed class FakeMatrixClient : IMatrixClient
 
     /// <summary>When set, <see cref="SetTypingAsync"/> throws this on every call.</summary>
     public Exception? TypingFailure { get; set; }
+
+    /// <summary>When set, <see cref="SendReadReceiptAsync"/> throws this on every call.</summary>
+    public Exception? ReadReceiptFailure { get; set; }
 
     /// <summary>Queues one scripted sync response.</summary>
     /// <param name="response">The response to return.</param>
@@ -157,6 +168,17 @@ public sealed class FakeMatrixClient : IMatrixClient
             JoinedRooms.Add(roomId);
 
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task SendReadReceiptAsync(string roomId, string eventId, CancellationToken cancellationToken)
+    {
+        lock (ReadReceiptCalls)
+            ReadReceiptCalls.Add(new ReadReceiptCall(roomId, eventId));
+
+        return ReadReceiptFailure is null
+            ? Task.CompletedTask
+            : Task.FromException(ReadReceiptFailure);
     }
 
     /// <inheritdoc />

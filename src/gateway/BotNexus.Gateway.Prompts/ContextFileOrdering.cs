@@ -51,9 +51,8 @@ public static class ContextFileOrdering
     /// (<see cref="SortForPrompt"/>, <see cref="GetBasename"/>) the leading <c>./</c> is pure noise
     /// — collapsing it changes no relative order, and it makes <c>./memory/2026-08-11.md</c> match
     /// the <c>memory/</c> daily-note prefix test as it always should have. As an IDENTITY key
-    /// (<c>AddContextFilesWithoutDuplicates</c>) the collapse is required, or an operator writing
-    /// <c>./memory/{date}.md</c> in <c>systemPromptFiles</c> defeats the de-duplication and the note
-    /// is emitted twice.
+    /// (<c>AddContextFilesWithoutDuplicates</c>) the collapse is required so alternate spellings such
+    /// as <c>./memory/{date}.md</c> cannot defeat de-duplication and emit a note twice.
     /// <para>
     /// <c>..</c> segments are deliberately NOT resolved: workspace containment is the sole
     /// responsibility of <c>IsPathUnderWorkspace</c>, and duplicating it here would split a security

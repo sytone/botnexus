@@ -63,9 +63,9 @@ public sealed class ProbeRound2ComponentTests : IDisposable
     {
         SeedConnectedAgent("agent-1");
         _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // Type a message into the textarea
         var textarea = cut.Find(".chat-input");
@@ -87,12 +87,12 @@ public sealed class ProbeRound2ComponentTests : IDisposable
     {
         SeedConnectedAgent("agent-1");
         _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
         // Mark the run active so the run controls (incl. Follow Up) render instead of Send.
         _store.GetStreamState("conv-1").IsRunActive = true;
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         var textarea = cut.Find(".chat-input");
         await cut.InvokeAsync(() => textarea.Input("Next, write the tests."));
@@ -111,9 +111,9 @@ public sealed class ProbeRound2ComponentTests : IDisposable
     {
         SeedConnectedAgent("agent-1");
         _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         var textarea = cut.Find(".chat-input");
         Assert.Contains("/prompts", textarea.GetAttribute("placeholder"));
@@ -124,9 +124,9 @@ public sealed class ProbeRound2ComponentTests : IDisposable
     {
         SeedConnectedAgent("agent-1");
         _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
         var textarea = cut.Find(".chat-input");
 
         await cut.InvokeAsync(() => textarea.Input("/prompts"));
@@ -142,7 +142,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
     {
         SeedConnectedAgent("agent-1");
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // Confirm dialog should not be visible initially
         Assert.Empty(cut.FindAll(".reset-confirm-overlay"));
@@ -164,9 +164,9 @@ public sealed class ProbeRound2ComponentTests : IDisposable
         SeedConnectedAgent("agent-1");
         // #3211: the reset targets an explicit conversation, so the panel must have one to act on.
         _store.SeedConversations("agent-1", [MakeConv("conv-1", "agent-1")]);
-        _store.SetActiveConversation("agent-1", "conv-1");
+        _store.SelectView("agent-1", "conv-1", SelectionSource.RouteNavigation);
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         // Open confirmation dialog
         cut.Find(".new-chat-btn").Click();
@@ -185,7 +185,7 @@ public sealed class ProbeRound2ComponentTests : IDisposable
     {
         SeedConnectedAgent("agent-1");
 
-        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1"));
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1").Add(c => c.ConversationId, "conv-1"));
 
         cut.Find(".new-chat-btn").Click();
         cut.Find(".cancel-btn").Click();

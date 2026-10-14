@@ -56,7 +56,6 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
                     Description = "Helpful assistant",
                     Model = "gpt-4.1",
                     AllowedModels = ["gpt-4.1", "gpt-4o"],
-                    SystemPromptFiles = ["AGENTS.md", "SOUL.md"],
                     SubAgents = ["helper-agent"],
                     IsolationStrategy = "remote",
                     MaxConcurrentSessions = 3,
@@ -109,7 +108,6 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         descriptor.IsolationOptions.ShouldContainKey("timeoutMs");
         descriptor.IsolationOptions["timeoutMs"].ShouldBe(1000L);
         descriptor.SystemPrompt.ShouldBeNull();
-        descriptor.SystemPromptFiles.ShouldBe(new[] { "AGENTS.md", "SOUL.md" });
         descriptor.Memory.ShouldNotBeNull();
         descriptor.Memory!.Enabled.ShouldBeTrue();
         descriptor.Memory.Indexing.ShouldBe("auto");
@@ -117,30 +115,6 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
         descriptor.Memory.Search!.DefaultTopK.ShouldBe(7);
         descriptor.Memory.Search.TemporalDecay.ShouldNotBeNull();
         descriptor.Memory.Search.TemporalDecay!.HalfLifeDays.ShouldBe(21);
-    }
-
-    [Fact]
-    public async Task LoadAsync_WithLegacySystemPromptFile_MapsSinglePromptFile()
-    {
-        var config = new PlatformConfig
-        {
-            Agents = new Dictionary<string, AgentDefinitionConfig>
-            {
-                ["assistant"] = new()
-                {
-                    Provider = "copilot",
-                    Model = "gpt-4.1",
-                    SystemPromptFile = @"prompts\missing.txt"
-                }
-            }
-        };
-
-        var source = new PlatformConfigAgentSource(new TestOptionsMonitor<PlatformConfig>(config), _configDirectory, new ListLogger<PlatformConfigAgentSource>());
-
-        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
-
-        descriptor.SystemPromptFile.ShouldBe(@"prompts\missing.txt");
-        descriptor.SystemPromptFiles.ShouldBe(new[] { @"prompts\missing.txt" });
     }
 
     [Fact]
