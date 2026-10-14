@@ -50,11 +50,25 @@ public static class ResponsesStreamEngine
         LlmModel model,
         Context context,
         StreamOptions? options)
+        => StreamAsync(profile, httpClient, logger, model, context, options, TaskScheduler.Default);
+
+    // Per-call scheduling allows cancellation before dispatch to be exercised without changing
+    // the process-wide thread pool or affecting other streams.
+    internal static LlmStream StreamAsync(
+        ResponsesTransportProfile profile,
+        HttpClient httpClient,
+        ILogger logger,
+        LlmModel model,
+        Context context,
+        StreamOptions? options,
+        TaskScheduler producerScheduler)
     {
         var stream = new LlmStream();
         var ct = options?.CancellationToken ?? CancellationToken.None;
 
-        _ = Task.Run(async () =>
+        // The producer owns terminal completion even when cancellation precedes dispatch.
+        // Only request work is cancelable; scheduling must not bypass the abort handler.
+        _ = Task.Factory.StartNew(async () =>
         {
             using var activity = ProviderDiagnostics.Source.StartActivity(profile.ActivityName, ActivityKind.Client);
             activity?.SetTag("botnexus.provider.name", model.Provider);
@@ -63,6 +77,7 @@ public static class ResponsesStreamEngine
 
             try
             {
+                ct.ThrowIfCancellationRequested();
                 await StreamCoreAsync(profile, httpClient, logger, stream, model, context, options, ct);
                 activity?.SetStatus(ActivityStatusCode.Ok);
             }
@@ -77,7 +92,7 @@ public static class ResponsesStreamEngine
                 EmitError(stream, profile.Api, model, ex.Message);
                 activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             }
-        }, ct);
+        }, CancellationToken.None, TaskCreationOptions.DenyChildAttach, producerScheduler).Unwrap();
 
         return stream;
     }
