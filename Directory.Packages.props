@@ -86,7 +86,7 @@
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.6" />
 
     <!-- Data -->
-    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.0-preview.3.25171.6" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.13" />
 
     <!-- Azure / identity -->
     <!-- #4778: the host unifies extension references by simple name. Keep the shared
