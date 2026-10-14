@@ -32,19 +32,22 @@ public sealed class ToolAuditDeadlineTests
                 entered.TrySetResult(true);
                 return completion.Task;
             });
-        var audit = Create(store.Object);
+        // This asynchronous store returns its incomplete task immediately, so inline dispatch
+        // establishes entry without involving thread-pool scheduling in the deadline assertion.
+        var audit = Create(store.Object, static append => append());
         var stopwatch = Stopwatch.StartNew();
 
         try
         {
-            await audit.PersistStartAsync("call-read", "read", Args("path", "secret-value"), CancellationToken.None)
-                .WaitAsync(TimeSpan.FromSeconds(2));
+            var persistence = audit.PersistStartAsync("call-read", "read", Args("path", "secret-value"), CancellationToken.None);
+            entered.Task.IsCompletedSuccessfully.ShouldBeTrue("inline dispatch must establish store entry before returning its task");
+            completion.Task.IsCompleted.ShouldBeFalse();
+            await persistence.WaitAsync(TimeSpan.FromSeconds(2));
 
             stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
 
-            // The queued append can enter the store after the hard deadline has already returned.
-            // Observe entry separately; this diagnostic guard is not part of the elapsed-time assertion.
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            entered.Task.IsCompletedSuccessfully.ShouldBeTrue();
+            completion.Task.IsCompleted.ShouldBeFalse("the read deadline must not await store completion");
             store.Verify(s => s.AppendEntriesAsync(
                 SessionId.From("session-a"),
                 It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1),
@@ -53,6 +56,66 @@ public sealed class ToolAuditDeadlineTests
         finally
         {
             completion.TrySetResult(new SessionAppendMutationResult(SessionMutationOutcome.Applied, 1));
+        }
+    }
+
+    [Fact]
+    public async Task PersistStartAsync_ReadAppendRemainsQueued_ReturnsWithinHardDeadlineBeforeEntryOrCompletion()
+    {
+        var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completion = new TaskCompletionSource<SessionAppendMutationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var dispatched = new TaskCompletionSource<SessionAppendMutationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Func<Task<SessionAppendMutationResult>>? queuedAppend = null;
+        var dispatchCount = 0;
+        var store = new Mock<ISessionStore>();
+        store.Setup(s => s.AppendEntriesAsync(
+                It.IsAny<SessionId>(),
+                It.IsAny<IReadOnlyList<SessionEntry>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                entered.TrySetResult(true);
+                return completion.Task;
+            });
+        var audit = Create(store.Object, append =>
+        {
+            dispatchCount++;
+            queuedAppend = append;
+            return dispatched.Task;
+        });
+        var stopwatch = Stopwatch.StartNew();
+        Task<SessionAppendMutationResult>? appendTask = null;
+
+        try
+        {
+            await audit.PersistStartAsync("call-queued", "read", Args("path", "file.txt"), CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(2));
+
+            stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
+            dispatchCount.ShouldBe(1);
+            entered.Task.IsCompleted.ShouldBeFalse("the append is still in the controlled dispatch queue");
+            dispatched.Task.IsCompleted.ShouldBeFalse();
+            completion.Task.IsCompleted.ShouldBeFalse();
+            store.Verify(s => s.AppendEntriesAsync(
+                It.IsAny<SessionId>(), It.IsAny<IReadOnlyList<SessionEntry>>(), It.IsAny<CancellationToken>()), Times.Never);
+
+            // Release dispatch only after the deadline returned; the store still ignores cancellation
+            // and remains incomplete. Entry and completion are distinct deterministic boundaries.
+            appendTask = queuedAppend.ShouldNotBeNull()();
+            entered.Task.IsCompletedSuccessfully.ShouldBeTrue();
+            appendTask.IsCompleted.ShouldBeFalse();
+            store.Verify(s => s.AppendEntriesAsync(
+                SessionId.From("session-a"),
+                It.Is<IReadOnlyList<SessionEntry>>(entries => entries.Count == 1 && entries[0].ToolCallId == "call-queued"),
+                It.Is<CancellationToken>(token => token.IsCancellationRequested)), Times.Once);
+        }
+        finally
+        {
+            completion.TrySetResult(new SessionAppendMutationResult(SessionMutationOutcome.Applied, 1));
+            if (appendTask is not null)
+                dispatched.TrySetResult(await appendTask);
+            else
+                dispatched.TrySetResult(new SessionAppendMutationResult(SessionMutationOutcome.Applied, 1));
         }
     }
 
@@ -291,14 +354,17 @@ public sealed class ToolAuditDeadlineTests
             .ShouldNotContain("do-not-emit-this-argument");
     }
 
-    private static ToolAuditWriteAhead Create(ISessionStore store) => new(
+    private static ToolAuditWriteAhead Create(
+        ISessionStore store,
+        Func<Func<Task<SessionAppendMutationResult>>, Task<SessionAppendMutationResult>>? dispatchReadAppend = null) => new(
         store,
         DefaultToolAuditSink.Instance,
         new SecretRedactor(),
         AgentId.From("agent-a"),
         SessionId.From("session-a"),
         NullLogger.Instance,
-        Deadline);
+        Deadline,
+        dispatchReadAppend);
 
     private static IReadOnlyDictionary<string, object?> Args(string name, string value) =>
         new Dictionary<string, object?> { [name] = value };

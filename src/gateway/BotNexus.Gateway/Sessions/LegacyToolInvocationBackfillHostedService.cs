@@ -1,6 +1,7 @@
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Telemetry;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Sessions;
@@ -103,7 +104,23 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
             catch (Exception ex)
             {
                 _metrics.RecordFailure();
-                _logger.LogWarning(ex, "Legacy tool invocation backfill or payload cleanup batch failed; retrying later.");
+                if (ex is SqliteException { SqliteErrorCode: 13 } full)
+                {
+                    var capacity = SqliteCapacityObservation.FromFailure(full);
+                    // Never log exception text here: paths and SQL/payloads may occur in it.
+                    _logger.LogWarning(
+                        "Legacy batch failed with SQLITE_FULL ({SqliteErrorCode}/{SqliteExtendedErrorCode}); observed constraints (not proven cause): PageLimit={PageLimitObserved}, MainVolumeFull={MainVolumeFullObserved}, TempVolumeFull={TempVolumeFullObserved}; PageCount={PageCount}, MaxPageCount={MaxPageCount}, PageSize={PageSize}, FreeListCount={FreeListCount}, TempStore={TempStore}, MainVolumeAvailableBytes={MainVolumeAvailableBytes}, TempVolumeAvailableBytes={TempVolumeAvailableBytes}. Missing observations and actual failure cause are unknown. Check database page limit and main/temp volume capacity or quotas; retrying in {RetrySeconds} seconds without vacuum or deletion.",
+                        full.SqliteErrorCode, full.SqliteExtendedErrorCode,
+                        capacity?.PageLimitObserved, capacity?.MainVolumeFullObserved, capacity?.TempVolumeFullObserved,
+                        capacity?.PageCount, capacity?.MaxPageCount, capacity?.PageSize,
+                        capacity?.FreeListCount, capacity?.TempStore,
+                        capacity?.MainVolumeAvailableBytes, capacity?.TempVolumeAvailableBytes,
+                        RetryDelay.TotalSeconds);
+                }
+                else
+                {
+                    _logger.LogWarning(ex, "Legacy tool invocation backfill or payload cleanup batch failed; retrying later.");
+                }
                 nextDelay = RetryDelay;
             }
 

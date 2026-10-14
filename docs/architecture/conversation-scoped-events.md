@@ -84,3 +84,30 @@ invariant exists to prevent.
 - **Portal-side fallbacks.** The `?? agent.ActiveConversationId` fallbacks in the portal's
   `GatewayEventHandler` are now provably unreachable for conversation-scoped events, but their
   removal belongs to the portal route-ownership arc, not here.
+
+## REST binding-removal facts and reconciliation
+
+For developers integrating conversation lifecycle consumers, REST binding removal is a bounded
+part of [issue #2088](https://github.com/Sytone/botnexus/issues/2088), not completion of the whole
+lifecycle migration. `ConversationsController.RemoveBinding` preserves the client write guard and
+uses the store's transactional single-binding delete. A rejected or failed store mutation emits
+no success fact. A successful removal keeps the existing `binding_removed` audit entry and emits
+`ConversationBindingRemovedEvent` instead of calling the legacy change notifier.
+
+The fact carries the agent and conversation identifiers, an immutable value snapshot of the
+removed binding, and an immutable snapshot of the remaining bindings reloaded after commit.
+The latter is an observation of durable state after deletion, not an atomic deletion result;
+concurrent mutations may already be reflected in it. If the removed binding was absent from the
+pre-delete read, or the conversation no longer exists after deletion, the controller cannot
+publish a complete removal fact and does not invent one.
+
+Event delivery is best effort, not a durable outbox. Publisher rejection or an exception does
+not undo the committed delete or change the successful response; the controller logs a warning.
+Consumers must refresh conversation state from the store or conversation API after a missed
+notification or reconnect. Do not restore a removed binding from an old client snapshot, and do
+not retry a successful delete solely because its notification was missed. The durable store is
+the authority; an event is a post-commit notification, not proof of exactly-once delivery.
+
+`ConversationsControllerRemoveBindingEventTests` exercises real in-memory and SQLite stores,
+checks durable deletion through a fresh SQLite store, and pins snapshot detachment, post-commit
+consumption, publisher failure isolation, and absence of legacy notifications.

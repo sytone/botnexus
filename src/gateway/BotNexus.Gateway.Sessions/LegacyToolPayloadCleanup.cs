@@ -14,41 +14,48 @@ public static class LegacyToolPayloadCleanup
             throw new ArgumentOutOfRangeException(nameof(batchSize), "Batch size must be positive.");
 
         using var connection = SqliteConnectionFactory.Create(connectionString);
-        connection.Open();
-
-        var orphanedInvocationsDeleted = DeleteOrphanedInvocations(connection, batchSize);
-
-        // Candidate selection is deliberately read-only and bounded. The old query registered a
-        // managed sha256 SQLite function and reran it across the complete corpus while a write
-        // transaction was held after every 100-row batch. Read only the next bounded window here;
-        // parity hashing below is then proportional to batchSize, never database size.
-        var candidates = ReadCandidateWindow(connection, batchSize, afterInvocationId);
-        var eligible = candidates.Where(IsEligible).ToArray();
-
-        long bytes = 0;
-        var rows = 0;
-        if (eligible.Length > 0)
+        try
         {
-            using var transaction = connection.BeginTransaction();
-            foreach (var candidate in eligible)
+            connection.Open();
+
+            var orphanedInvocationsDeleted = DeleteOrphanedInvocations(connection, batchSize);
+
+            // Candidate selection is deliberately read-only and bounded. The old query registered a
+            // managed sha256 SQLite function and reran it across the complete corpus while a write
+            // transaction was held after every 100-row batch. Read only the next bounded window here;
+            // parity hashing below is then proportional to batchSize, never database size.
+            var candidates = ReadCandidateWindow(connection, batchSize, afterInvocationId);
+            var eligible = candidates.Where(IsEligible).ToArray();
+
+            long bytes = 0;
+            var rows = 0;
+            if (eligible.Length > 0)
             {
-                using var update = connection.CreateCommand();
-                update.Transaction = transaction;
-                update.CommandText = "UPDATE session_history SET tool_args=NULL, content=CASE WHEN message_kind='tool-result' THEN NULL ELSE content END WHERE tool_invocation_id=$id AND message_kind IN ('tool-start','tool-result')";
-                update.Parameters.AddWithValue("$id", candidate.Id);
-                rows += update.ExecuteNonQuery();
-                bytes += candidate.LegacyBytes;
+                using var transaction = connection.BeginTransaction();
+                foreach (var candidate in eligible)
+                {
+                    using var update = connection.CreateCommand();
+                    update.Transaction = transaction;
+                    update.CommandText = "UPDATE session_history SET tool_args=NULL, content=CASE WHEN message_kind='tool-result' THEN NULL ELSE content END WHERE tool_invocation_id=$id AND message_kind IN ('tool-start','tool-result')";
+                    update.Parameters.AddWithValue("$id", candidate.Id);
+                    rows += update.ExecuteNonQuery();
+                    bytes += candidate.LegacyBytes;
+                }
+
+                transaction.Commit();
             }
 
-            transaction.Commit();
+            // Progress is a bounded existence probe, not an exact whole-corpus count. Protected and
+            // remaining counts were telemetry conveniences whose exact computation caused the defect;
+            // -1 explicitly reports "not counted" rather than disguising an estimate as a fact.
+            var lastScannedId = candidates.Count == 0 ? afterInvocationId : candidates[^1].Id;
+            var hasMore = HasAnotherCandidate(connection, lastScannedId) || HasOrphanedInvocation(connection);
+            return new(eligible.Length, rows, bytes, -1, -1, hasMore, lastScannedId, candidates.Count, orphanedInvocationsDeleted);
         }
-
-        // Progress is a bounded existence probe, not an exact whole-corpus count. Protected and
-        // remaining counts were telemetry conveniences whose exact computation caused the defect;
-        // -1 explicitly reports "not counted" rather than disguising an estimate as a fact.
-        var lastScannedId = candidates.Count == 0 ? afterInvocationId : candidates[^1].Id;
-        var hasMore = HasAnotherCandidate(connection, lastScannedId) || HasOrphanedInvocation(connection);
-        return new(eligible.Length, rows, bytes, -1, -1, hasMore, lastScannedId, candidates.Count, orphanedInvocationsDeleted);
+        catch (SqliteException ex) when (SqliteCapacityDiagnostics.ObserveFailure(connection, ex))
+        {
+            throw;
+        }
     }
 
     private static int DeleteOrphanedInvocations(SqliteConnection connection, int limit)
@@ -89,7 +96,21 @@ public static class LegacyToolPayloadCleanup
     private static List<Candidate> ReadCandidateWindow(SqliteConnection connection, int limit, long afterInvocationId)
     {
         using var command = connection.CreateCommand();
+        // Materialize IDs only: LIMIT must run before payload-bearing joins/aggregation.
+        // CROSS JOIN keeps the bounded window outermost even without planner statistics.
         command.CommandText = """
+            WITH candidate_ids AS MATERIALIZED (
+                SELECT i.id
+                FROM tool_invocations i
+                WHERE i.id > $afterInvocationId
+                  AND i.status='success' AND i.is_error=0 AND i.retention_state='hot'
+                  AND i.arguments_json IS NOT NULL AND i.result_content IS NOT NULL
+                  AND EXISTS(
+                      SELECT 1 FROM session_history payload
+                      WHERE payload.tool_invocation_id=i.id
+                        AND (payload.tool_args IS NOT NULL OR (payload.message_kind='tool-result' AND payload.content IS NOT NULL)))
+                ORDER BY i.id
+                LIMIT $limit)
             SELECT i.id, i.session_id, COALESCE(i.provider_tool_call_id, i.tool_call_id), i.arguments_json, i.started_at,
                    i.completed_at, i.result_content, i.result_bytes, i.result_sha256,
                    COUNT(h.id) AS linked_count,
@@ -113,18 +134,11 @@ public static class LegacyToolPayloadCleanup
                          AND u.tool_invocation_id IS NULL
                          AND (u.message_kind IN ('tool-start','tool-result') OR (u.message_kind IS NULL AND u.role='tool'))
                    ) AS has_unlinked_sibling
-            FROM tool_invocations i
-            JOIN session_history h ON h.tool_invocation_id=i.id
-            WHERE i.id > $afterInvocationId
-              AND i.status='success' AND i.is_error=0 AND i.retention_state='hot'
-              AND i.arguments_json IS NOT NULL AND i.result_content IS NOT NULL
-              AND EXISTS(
-                  SELECT 1 FROM session_history payload
-                  WHERE payload.tool_invocation_id=i.id
-                    AND (payload.tool_args IS NOT NULL OR (payload.message_kind='tool-result' AND payload.content IS NOT NULL)))
+            FROM candidate_ids c
+            CROSS JOIN tool_invocations i ON i.id=c.id
+            CROSS JOIN session_history h ON h.tool_invocation_id=i.id
             GROUP BY i.id
             ORDER BY i.id
-            LIMIT $limit
             """;
         command.Parameters.AddWithValue("$afterInvocationId", afterInvocationId);
         command.Parameters.AddWithValue("$limit", limit);

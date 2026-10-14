@@ -542,7 +542,7 @@ is how the portal could display one value while the gateway ran another.
 ### Agents: agent definitions and `agents.defaults`
 
 The `agents` section is a dictionary keyed by **agent id**. One reserved key, `defaults`, holds the
-world-level defaults that are field-merged into every agent; every other key defines a named agent.
+declared world-level defaults; every other key defines a named agent. Current `PlatformConfigAgentSource` uses each agent's configuration without merging that defaults block (#3515). Declaring a default does not prove it reaches the runtime descriptor; see the [heartbeat inheritance limitation](cron-and-scheduling.md#heartbeat-ownership-and-configuration).
 
 ```bash
 botnexus config set agents.defaults.toolIds '["read","write","shell"]'
@@ -556,15 +556,14 @@ botnexus config set agents.assistant.enabled true
 
 #### `agents.defaults` properties
 
-Backed by `AgentDefaultsConfig`. Only these five keys exist - a default that is not listed here is not
-merged, because there is no property to merge it into.
+Backed by `AgentDefaultsConfig`. These are the declared keys, not a guarantee of effective runtime inheritance. The source limitation described above applies.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `toolIds` | array | `null` | Default tool ids inherited by agents that do not set their own `toolIds` |
 | `toolTimeoutSeconds` | int? | `300` | Default per-tool timeout in seconds. Five minutes accommodates tools that wait on another agent while still bounding genuinely stuck calls |
 | `memory` | object | `null` | Default memory configuration inherited by agents |
-| `heartbeat` | object | `null` | Default heartbeat configuration inherited by agents |
+| `heartbeat` | object | `null` | Declared defaults object; see [current heartbeat ownership and inheritance limits](cron-and-scheduling.md#heartbeat-ownership-and-configuration) before relying on it |
 | `fileAccess` | object | `null` | Default file access policy inherited by agents |
 
 #### Inheritance policies
@@ -672,7 +671,7 @@ apply where the property description says so.
 | `isolationStrategy` | string | `null` | `ScalarOverride` | Isolation strategy name (for example `in-process`) |
 | `isolationOptions` | object | `null` | `ReplaceAsUnit` | Strategy-specific isolation options |
 | `cacheRetention` | string | `null` | `ScalarOverride` | Prompt-caching retention policy. Null means the provider default (short) |
-| `thinking` | string? | `null` | `ScalarOverride` | Agent-level default reasoning level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Agent layer of the three-layer model/thinking/context override stack; `null` inherits the model default. An unsupported value causes the agent to be skipped at config load with a warning |
+| `thinking` | string? | `null` | `ScalarOverride` | Agent-level default reasoning level (see the canonical [ThinkingLevel values](internals/07-thinking-levels.md#thinkinglevel-enum)). Agent layer of the three-layer model/thinking/context override stack; `null` inherits the model default. An unsupported value causes the agent to be skipped at config load with a warning |
 | `contextWindow` | int? | `null` | `ScalarOverride` | Agent-level default context-window size in tokens. Same override stack; validated against the model's advertised sizes |
 | `maxConcurrentSessions` | int? | `null` | `ScalarOverride` | Maximum concurrent sessions for this agent |
 | `metadata` | object | `null` | `KeyedMerge` | Agent-level metadata |
@@ -951,7 +950,7 @@ botnexus config set channels.agent365.inboundRoute /agent365/messages
 
 ### Gateway: GatewayConfig
 
-Gateway HTTP server settings.
+Gateway HTTP server settings. For heartbeat configuration and its relationship to system cron jobs, see [Heartbeat ownership and configuration](cron-and-scheduling.md#heartbeat-ownership-and-configuration).
 
 
 | Property | Type | Default | Description |
@@ -962,8 +961,6 @@ Gateway HTTP server settings.
 | `DefaultAgent` | string | null | Default agent name if message has no agent metadata |
 | `DefaultTimezone` | string | null | Server-wide default IANA timezone ID (for example `America/Los_Angeles`) used when an agent has no `soul.timezone` of its own. It is the third rung of the injected-datetime chain — agent `dateTimeInjection.timezone`, then the world-level `dateTimeInjection.timezone`, then this, then UTC — and it is also what seeds a new agent's timezone when one is created through the `create_agent` tool. A blank or unrecognised zone id falls back to UTC rather than failing the turn. |
 | `BroadcastWhenAgentUnspecified` | bool | false | If true, route to all agents when agent not specified |
-| `Heartbeat.Enabled` | bool | true | Enable heartbeat/keepalive messages |
-| `Heartbeat.IntervalSeconds` | int | 1800 | Heartbeat interval (30 minutes) |
 | `WalCheckpointIntervalMinutes` | int | 30 | Minutes between periodic PASSIVE SQLite WAL checkpoints. A TRUNCATE checkpoint also runs on graceful shutdown. Keeps the write-ahead log from growing unbounded on long-lived stores. |
 | `SessionsDirectory` | string | null | Directory holding session transcripts and the session store database. Setting this and leaving `SessionStore.Type` unset selects the `File` store. |
 | `SessionStore.Type` | string | _(inferred)_ | Session store backend: `InMemory`, `File`, or `Sqlite`. When unset it resolves to `File` if `SessionsDirectory` is set, otherwise `Sqlite` - `InMemory` is never chosen implicitly because it loses all data on restart. Any other value fails startup validation. |

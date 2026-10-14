@@ -2,6 +2,8 @@ using System.Diagnostics.Metrics;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Telemetry;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Data.Sqlite;
 
 namespace BotNexus.Gateway.Tests.Sessions;
 
@@ -219,6 +221,69 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
             delay,
             metrics ?? new BotNexusMetrics(),
             NullLogger<LegacyToolInvocationBackfillHostedService>.Instance);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteAsync_SqliteFull_ReportsPayloadFreeCapacityAndKeepsRetryDelay(bool cleanupFails)
+    {
+        var store = new SqliteSessionStore(
+            "Data Source=:memory:",
+            NullLogger<SqliteSessionStore>.Instance,
+            new InMemoryConversationStore());
+        var logger = new CapacityLogger();
+        var failed = new SqliteException("secret payload /private/database/path", 13);
+        var retryReached = NewSignal();
+        var calls = 0;
+        using var service = new LegacyToolInvocationBackfillHostedService(
+            store,
+            (_, _) =>
+            {
+                calls++;
+                if (!cleanupFails) throw failed;
+                return new(0, 0, 0, false, true);
+            },
+            (_, _, _) => throw failed,
+            async (delay, token) =>
+            {
+                if (delay == LegacyToolInvocationBackfillHostedService.InitialDelay) return;
+                delay.ShouldBe(TimeSpan.FromMinutes(5));
+                retryReached.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            },
+            new BotNexusMetrics(), logger);
+        await service.StartAsync(CancellationToken.None);
+        await retryReached.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await service.StopAsync(CancellationToken.None);
+        calls.ShouldBe(1);
+        var warning = logger.Messages.ShouldHaveSingleItem();
+        warning.ShouldContain("SQLITE_FULL");
+        warning.ShouldContain("observed");
+        warning.ShouldContain("PageCount");
+        warning.ShouldContain("MaxPageCount");
+        warning.ShouldContain("MainVolumeAvailableBytes");
+        warning.ShouldContain("TempVolumeAvailableBytes");
+        warning.ShouldContain("unknown");
+        warning.ShouldContain("300");
+        warning.ShouldNotContain("secret payload");
+        warning.ShouldNotContain("/private/database/path");
+        logger.Exceptions.ShouldAllBe(exception => exception == null);
+    }
+
+    private sealed class CapacityLogger : ILogger<LegacyToolInvocationBackfillHostedService>
+    {
+        public List<string> Messages { get; } = [];
+        public List<Exception?> Exceptions { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel != LogLevel.Warning) return;
+            Messages.Add(formatter(state, exception));
+            Exceptions.Add(exception);
+        }
     }
 
     private static TaskCompletionSource NewSignal() =>

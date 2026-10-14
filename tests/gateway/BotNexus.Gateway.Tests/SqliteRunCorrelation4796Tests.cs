@@ -69,7 +69,7 @@ public sealed class SqliteRunCorrelation4796Tests : IDisposable
             command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('session_history') WHERE name='agent_run_id'";
             if (Convert.ToInt64(await command.ExecuteScalarAsync()) != 0)
             {
-                command.CommandText = "ALTER TABLE session_history DROP COLUMN agent_run_id";
+                command.CommandText = "DROP INDEX IF EXISTS idx_session_history_unlinked_tool_sibling; ALTER TABLE session_history DROP COLUMN agent_run_id";
                 await command.ExecuteNonQueryAsync();
             }
         }
