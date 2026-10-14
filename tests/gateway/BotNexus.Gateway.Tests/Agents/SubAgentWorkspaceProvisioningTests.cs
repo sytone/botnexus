@@ -67,6 +67,35 @@ public sealed class SubAgentWorkspaceProvisioningTests
     }
 
     [Fact]
+    public async Task Spawn_ToolOriginRunInsertFails_RollsBackWithoutStartingChildOrRetainingRetryIdentity()
+    {
+        await using var fixture = new SpawnFixture(admissionFailure: AdmissionFailure.RunInsert);
+
+        var failure = await Should.ThrowAsync<AdmissionAbortedException>(() =>
+            fixture.SpawnAsync(toolCallId: "failed-admission"));
+
+        failure.ShouldBeSameAs(fixture.AbortException);
+        fixture.AssertAdmissionRolledBack();
+        fixture.StopCount.ShouldBe(1);
+        fixture.Entered.Task.IsCompleted.ShouldBeFalse();
+        fixture.ParentResourcesShouldRemain();
+    }
+
+    [Fact]
+    public async Task Spawn_ToolOriginWithoutStore_RefusesBeforeAcquiringChildResources()
+    {
+        await using var fixture = new SpawnFixture(withoutStore: true);
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            fixture.SpawnAsync(toolCallId: "no-store"));
+
+        fixture.AttemptedChildAgentId.ShouldBeNull();
+        fixture.Entered.Task.IsCompleted.ShouldBeFalse();
+        fixture.StopCount.ShouldBe(0);
+        fixture.ParentResourcesShouldRemain();
+    }
+
+    [Fact]
     public async Task Spawn_RollbackFailure_IsLoggedWithoutHidingOriginalFailure()
     {
         await using var fixture = new SpawnFixture(
@@ -319,7 +348,8 @@ public sealed class SubAgentWorkspaceProvisioningTests
             bool preExistingChildResources = false,
             bool mirrorTarget = false,
             bool throwDuringRollback = false,
-            CancellationTokenSource? cancellationSource = null)
+            CancellationTokenSource? cancellationSource = null,
+            bool withoutStore = false)
         {
             _admissionFailure = admissionFailure;
             _preExistingChildResources = preExistingChildResources;
@@ -357,8 +387,12 @@ public sealed class SubAgentWorkspaceProvisioningTests
                 });
             sessionStore.Setup(store => store.DeleteAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
                 .Returns<SessionId, CancellationToken>(_sessions.DeleteAsync);
+            sessionStore.Setup(store => store.ListSubAgentSessionsAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<SubAgentRunDetail>());
             sessionStore.Setup(store => store.SaveSubAgentSessionAsync(It.IsAny<SubAgentInfo>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+                .Returns<SubAgentInfo, CancellationToken>((_, _) =>
+                    _admissionFailure == AdmissionFailure.RunInsert
+                        ? Task.FromException(AbortException) : Task.CompletedTask);
             _sessionStore = sessionStore.Object;
             _policyProvider = new DefaultToolPolicyProvider(
                 new TestOptionsMonitor<PlatformConfig>(new PlatformConfig()),
@@ -467,16 +501,18 @@ public sealed class SubAgentWorkspaceProvisioningTests
             Manager = new DefaultSubAgentManager(supervisor.Object, Registry.Object, activity.Object,
                 Mock.Of<IChannelDispatcher>(), new TestOptionsMonitor<GatewayOptions>(new GatewayOptions()),
                 new AuditLogger(Audits, Warnings), workspaceManager: Workspaces,
-                policyProvider: _policyProvider, sessionStore: _sessionStore);
+                policyProvider: _policyProvider, sessionStore: withoutStore ? null : _sessionStore);
         }
 
         internal async Task<SubAgentInfo> SpawnAsync(
             bool shared = false,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            string? toolCallId = null)
         {
             var request = new SubAgentSpawnRequest
             {
                 ParentAgentId = Parent, ParentSessionId = ParentSession, Task = "cwd probe",
+                SpawningToolCallId = toolCallId,
                 Mode = _mirrorTarget is { } target
                     ? new Mirror(target)
                     : new Embody(SubAgentArchetype.General),
@@ -562,7 +598,7 @@ public sealed class SubAgentWorkspaceProvisioningTests
         }
     }
 
-    private enum AdmissionFailure { None, SessionSave, HandleConstruction, Cancellation }
+    private enum AdmissionFailure { None, SessionSave, HandleConstruction, Cancellation, RunInsert }
 
     private sealed class AdmissionAbortedException(string message) : Exception(message);
 

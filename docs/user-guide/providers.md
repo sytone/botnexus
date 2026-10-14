@@ -2,7 +2,7 @@
 
 A **provider type** is a service family such as GitHub Copilot, OpenAI, Anthropic or Ollama. A **provider instance** is the named entry under `providers.<name>` that holds one endpoint and credential selection. Its **API contract** is the wire format used to contact the service, such as OpenAI Completions or Anthropic Messages. A **model** is the program selected within that instance. Each agent chooses a provider instance with `agents.<id>.provider` and a model with `agents.<id>.model`.
 
-BotNexus can use several provider types in one gateway. It also supports multiple named OpenAI-compatible instances, for example separate `local-vllm` and `team-proxy` endpoints. Built-in providers have a narrower boundary: current GitHub Copilot authentication, discovery, diagnostics, health and quota handling use one canonical GitHub Copilot account named `github-copilot`. See [GitHub Copilot accounts and aliases](../providers/github-copilot.md#accounts-provider-instances-and-the-copilot-alias).
+BotNexus can use several provider types in one gateway. It also supports multiple named OpenAI-compatible instances, for example separate `local-vllm` and `team-proxy` endpoints. Existing named Copilot instances can be selected in Portal Usage; canonical CLI login and diagnostics still use `github-copilot`. This does not imply that every built-in provisioning or enterprise scenario supports named accounts. See [GitHub Copilot accounts and aliases](../providers/github-copilot.md#accounts-provider-instances-and-the-copilot-alias).
 
 This guide explains the setup route in the current source. A saved setting or a listed model does not prove that your account can use it. Check the result with a small request before relying on the connection.
 
@@ -128,7 +128,7 @@ Run:
 botnexus provider list
 ```
 
-Check that the intended provider is listed. This checks saved configuration, not whether a request will succeed. A running gateway normally refreshes config-defined provider models when it receives the configuration reload signal, so adding or changing one does not require a process restart. If a store-backed installation has not delivered that signal yet, the saved provider can appear in the CLI before the running gateway catalogue changes. Retry only after checking the gateway's available providers; do not treat persistence alone as a successful connection test.
+Check that the intended provider is listed. This checks saved configuration, not whether a request will succeed. A running gateway normally refreshes config-defined provider models when it receives the configuration reload signal, so adding or changing one does not require a process restart. GitHub Copilot is different: its model catalogue and discovery setup run at gateway startup, including named Copilot instances. After configuring Copilot, restart the gateway yourself, then run `botnexus provider test --name <NAME>` with your instance name before assigning an agent. The setup receipt confirms persistence, not runtime activation, and does not restart the gateway for you. If a store-backed installation has not delivered that signal yet, the saved provider can appear in the CLI before the running gateway catalogue changes. Retry only after checking the gateway's available providers; do not treat persistence alone as a successful connection test.
 
 For the canonical Copilot instance, these additional commands contact the service and may refresh the saved `github-copilot` credential:
 

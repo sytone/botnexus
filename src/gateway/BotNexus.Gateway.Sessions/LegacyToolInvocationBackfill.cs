@@ -52,6 +52,14 @@ public static class LegacyToolInvocationBackfill
         return new LegacyToolInvocationBackfillReport(rows.Count, rows.Count, invocationCount, hasMore, true);
     }
 
+    private static string LegacyCorrelationPredicate(SqliteConnection connection, SqliteTransaction? transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('session_history') WHERE name='agent_run_id'";
+        return Convert.ToInt64(command.ExecuteScalar()) == 0 ? "1=1" : "agent_run_id IS NULL";
+    }
+
     private static List<LegacyRow> ReadBatch(SqliteConnection connection, SqliteTransaction? transaction, int batchSize)
     {
         using var command = connection.CreateCommand();
@@ -62,6 +70,7 @@ public static class LegacyToolInvocationBackfill
             FROM session_history
             WHERE tool_invocation_id IS NULL
               AND tool_call_id IS NOT NULL
+              AND ({LegacyCorrelationPredicate(connection, transaction)})
               AND ({ToolRowPredicate})
             ORDER BY id
             LIMIT $batchSize
@@ -94,6 +103,7 @@ public static class LegacyToolInvocationBackfill
                 SELECT 1 FROM session_history
                 WHERE tool_invocation_id IS NULL
                   AND tool_call_id IS NOT NULL
+              AND ({LegacyCorrelationPredicate(connection, transaction)})
                   AND ({ToolRowPredicate})
                   AND ($lastId IS NULL OR id > $lastId))
             """;

@@ -186,7 +186,7 @@ public sealed class BuiltInSearchContributorTests
             Conversation("c-early", "agent-two", "NEEDLE earlier", DateTimeOffset.Parse("2026-09-23T00:00:00Z")),
             Conversation("c-other", "agent-two", "unrelated", DateTimeOffset.Parse("2026-09-22T00:00:00Z"))
         ]);
-        var contributor = new ConversationSearchContributor(store);
+        var contributor = new ConversationSearchContributor(store, Substitute.For<IAgentRegistry>());
 
         var results = await contributor.SearchAsync(new SearchRequest("needle", 2));
 
@@ -212,13 +212,20 @@ public sealed class BuiltInSearchContributorTests
                 var query = call.Arg<SessionSummaryQuery>();
                 query.Limit.ShouldBe(SessionSearchContributor.MaxScannedSummaries);
                 query.IncludeInactive.ShouldBeTrue();
+                query.ConversationIds.ShouldNotBeNull().Count.ShouldBe(3);
                 return Task.FromResult(new SessionSummaryPage([
                     Summary("session/2", "agent one", "conversation/2", DateTimeOffset.Parse("2026-09-24T00:00:00Z")),
                     Summary("session-1", "other", "conversation-1", DateTimeOffset.Parse("2026-09-23T00:00:00Z")),
                     Summary("session-0", "agent one", "conversation-0", DateTimeOffset.Parse("2026-09-22T00:00:00Z"))
                 ], 3, false));
             });
-        var contributor = new SessionSearchContributor(store);
+        var conversations = Substitute.For<IConversationStore>();
+        conversations.ListAsync(null, Arg.Any<CancellationToken>()).Returns([
+            Conversation("conversation/2", "agent one", "metadata", DateTimeOffset.MinValue),
+            Conversation("conversation-1", "other", "metadata", DateTimeOffset.MinValue),
+            Conversation("conversation-0", "agent one", "metadata", DateTimeOffset.MinValue)
+        ]);
+        var contributor = new SessionSearchContributor(store, conversations, Substitute.For<IAgentRegistry>());
 
         var results = await contributor.SearchAsync(new SearchRequest("agent ONE", 1));
 
@@ -243,8 +250,8 @@ public sealed class BuiltInSearchContributorTests
         var sessionStore = Substitute.For<ISessionStore>();
         ISearchContributor[] contributors = [
             new AgentSearchContributor(registry),
-            new ConversationSearchContributor(conversationStore),
-            new SessionSearchContributor(sessionStore)
+            new ConversationSearchContributor(conversationStore, registry),
+            new SessionSearchContributor(sessionStore, conversationStore, registry)
         ];
 
         contributors[0].IsAvailable.ShouldBeFalse();

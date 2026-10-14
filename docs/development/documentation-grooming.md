@@ -65,6 +65,51 @@ copy of the original docs-only trigger proves the regression detector rejects th
 These checks protect the workflow mechanics; they do not decide whether the resulting documentation
 is accurate or understandable. That still requires the review described below.
 
+### Documentation-site PR check
+
+The `docs-site` job in `.github/workflows/docs-site.yml` runs on every pull request, without
+path filters. It checks the candidate merge checkout using read-only repository access and does
+not configure, upload, or deploy GitHub Pages. The separate `deploy-docs.yml` workflow still
+publishes the site after relevant changes merge to `main`.
+
+The classifier, `scripts/repo/Get-DocsSiteImpact.ps1`, compares the PR head with its merge base.
+It includes additions, deletions, and both sides of a rename. Changes only on the base branch do
+not count as PR changes. Relevant inputs are `docs/**` (including VitePress configuration and
+assets), `package.json`, `package-lock.json`, the site and deployment workflows, and the classifier
+and its tests. Missing commit inputs, missing Git objects, or failed merge-base or diff operations
+fail the check; they do not become a successful skip.
+
+For relevant changes, the job uses Node.js 20 and runs the same commands as deployment:
+
+```powershell
+npm ci
+npm run docs:build
+```
+
+For unrelated or empty changes, the job records an explicit successful no-operation result
+(noop). The stable check name is `docs-site`, so unrelated PRs still receive a completed check.
+Repository administrators must decide whether to make it required after reviewing live CI
+results. Adding this workflow does not change branch protection or grant merge authority.
+
+Keep the three checks distinct:
+
+| Check | What it proves | What it does not prove |
+| --- | --- | --- |
+| `docs-site` | Relevant site inputs install and build; VitePress rejects dead relative links. | Documentation is accurate, understandable, or sufficient for a source change. |
+| `docs-impact` | A sensitive source change includes documentation or an explicit `no-docs-impact` justification. | The site builds or the justification is correct. |
+| Documentation lint | The configured literal-drift, contradiction, and legacy-marker rules pass. | All factual claims are correct or a reader can complete the task. |
+
+`DocsSiteWorkflowArchitectureTests` runs the standalone contract and disposable Git fixtures in
+the remote core suite. For a focused classifier/workflow check that starts no gateway, run:
+
+```powershell
+pwsh -NoProfile -File tests/architecture/BotNexus.Architecture.Tests/DocsSiteFocusedTests.ps1
+```
+
+The fixtures cover relevant and unrelated changes, deletion, rename, base drift, empty diffs,
+and fail-closed input and Git errors. This focused check is not a substitute for the repository's
+required validation of code changes.
+
 ### Tuning the rules
 
 - **Fact registry** — `scripts/repo/docs-lint-facts.json`. Each entry carries an `id`, the `defect`
@@ -104,9 +149,10 @@ Use the existing PR Validation section and identify the reviewed revision, revie
 and remaining gaps. Follow the standard's [review and authority boundaries](documentation-standards.md#review-is-not-merge-authority)
 for higher-risk instructions, protected pages, and decisions that require a human.
 
-Link checking is separate: `npm run docs:build` (VitePress) already fails on a dead link, and that
-is the gate `deploy-docs.yml` runs. Neither a build pass nor source inspection proves an end-to-end
-installation works.
+Link checking is separate: `npm run docs:build` (VitePress) fails on a dead relative link. The
+`docs-site` PR check runs it before merge for relevant inputs; `deploy-docs.yml` runs it again
+before publishing. Neither a build pass nor source inspection proves an end-to-end installation
+works.
 
 ## The release walk
 

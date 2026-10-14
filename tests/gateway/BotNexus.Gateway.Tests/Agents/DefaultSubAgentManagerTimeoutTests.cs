@@ -11,7 +11,7 @@ using Moq;
 
 namespace BotNexus.Gateway.Tests.Agents;
 
-public sealed class DefaultSubAgentManagerTimeoutTests
+public sealed partial class DefaultSubAgentManagerTimeoutTests
 {
     /// <summary>
     /// The run's deadline is scheduled on a virtual clock and fires ONLY because the test advances
@@ -224,7 +224,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         await explorationStarted.Task.WaitAsync(HangGuard);
         time.Advance(TimeSpan.FromSeconds(270));
         var finalToken = await finalizationStarted.Task.WaitAsync(HangGuard);
-        await dispatched.Task.WaitAsync(HangGuard);
+        await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(HangGuard);
         var result = await manager.GetAsync(spawned.SubAgentId);
 
         result.ShouldNotBeNull();
@@ -264,7 +264,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         (await manager.GetAsync(spawned.SubAgentId)).ShouldNotBeNull().Status.ShouldBe(SubAgentStatus.Running);
 
         time.Advance(TimeSpan.FromSeconds(30));
-        await dispatched.Task.WaitAsync(HangGuard);
+        await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(HangGuard);
         var result = await manager.GetAsync(spawned.SubAgentId);
 
         result.ShouldNotBeNull();
@@ -318,7 +318,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         await finalizationStarted.Task.WaitAsync(HangGuard);
 
         time.Advance(TimeSpan.FromSeconds(300));
-        await dispatched.Task.WaitAsync(HangGuard);
+        await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(HangGuard);
         var result = await manager.GetAsync(spawned.SubAgentId);
 
         result.ShouldNotBeNull();
@@ -521,7 +521,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         time.Advance(TimeSpan.FromSeconds(300));
         releaseCapture.SetResult(new SubAgentWorktreeSnapshot(
             SubAgentWorktreeSnapshotOutcome.Captured, "worktree", Path.Combine(Path.GetTempPath(), "timeout-loser.patch"), 12, [], false));
-        await dispatched.Task.WaitAsync(HangGuard);
+        await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(HangGuard);
         var result = await manager.GetAsync(spawned.SubAgentId);
 
         result.ShouldNotBeNull();
@@ -589,7 +589,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         result.Status.ShouldBe(SubAgentStatus.Failed);
         result.ResultSummary.ShouldNotBeNull();
         result.ResultSummary.ShouldContain("empty final response");
-        VerifyDiagnostic(dispatcher, "failed", "empty final response");
+        VerifyDiagnostic(result, dispatcher, SubAgentStatus.Failed, "empty final response");
     }
 
     [Fact]
@@ -603,7 +603,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
 
         result.Status.ShouldBe(SubAgentStatus.Completed);
         result.ResultSummary.ShouldBe("Implemented the fix.");
-        VerifyDiagnostic(dispatcher, "completed", "Implemented the fix.");
+        VerifyDiagnostic(result, dispatcher, SubAgentStatus.Completed, "Implemented the fix.");
     }
 
     /// <summary>
@@ -666,7 +666,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         result.Status.ShouldBe(SubAgentStatus.TimedOut);
         result.ResultSummary.ShouldNotBeNull();
         result.ResultSummary.ShouldContain("timed out after 300 seconds");
-        VerifyDiagnostic(dispatcher, "timed out", "timed out after 300 seconds");
+        VerifyDiagnostic(result, dispatcher, SubAgentStatus.TimedOut, "timed out after 300 seconds");
     }
 
     /// <summary>
@@ -722,7 +722,7 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         if (time is not null && advanceBy is { } delta)
             time.Advance(delta);
 
-        await dispatched.Task.WaitAsync(HangGuard);
+        await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId).WaitAsync(HangGuard);
 
         var current = await manager.GetAsync(spawned.SubAgentId);
         current.ShouldNotBeNull();
@@ -752,16 +752,15 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         result.Status.ShouldBe(SubAgentStatus.TimedOut);
         result.ResultSummary.ShouldNotBeNull();
         result.ResultSummary.ShouldContain(expected);
-        VerifyDiagnostic(dispatcher, "timed out", expected);
+        VerifyDiagnostic(result, dispatcher, SubAgentStatus.TimedOut, expected);
     }
 
-    private static void VerifyDiagnostic(Mock<IChannelDispatcher> dispatcher, string status, string diagnostic)
+    private static void VerifyDiagnostic(SubAgentInfo result, Mock<IChannelDispatcher> dispatcher, SubAgentStatus status, string diagnostic)
     {
-        dispatcher.Verify(d => d.DispatchAsync(
-            It.Is<InboundMessage>(message =>
-                message.Content.Contains(status, StringComparison.OrdinalIgnoreCase) &&
-                message.Content.Contains(diagnostic, StringComparison.OrdinalIgnoreCase)),
-            It.IsAny<CancellationToken>()), Times.Once);
+        result.Status.ShouldBe(status);
+        result.ResultSummary.ShouldNotBeNull();
+        result.ResultSummary.ShouldContain(diagnostic);
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static Mock<IAgentHandle> CreateHandle(Func<CancellationToken, Task<AgentResponse>> prompt)
@@ -868,7 +867,8 @@ public sealed class DefaultSubAgentManagerTimeoutTests
         TimeProvider? timeProvider = null,
         int timeoutSecondsBudget = 1,
         ISubAgentWorktreeSnapshotService? snapshotService = null,
-        int maxTurnsBudget = 30)
+        int maxTurnsBudget = 30,
+        Action<SubAgentOptions>? configureSubAgents = null)
     {
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(
@@ -894,16 +894,24 @@ public sealed class DefaultSubAgentManagerTimeoutTests
             .Callback(() => dispatched.TrySetResult())
             .Returns(Task.CompletedTask);
 
+        var activity = new Mock<IActivityBroadcaster>();
+        activity.Setup(a => a.PublishAsync(It.IsAny<GatewayActivity>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewayActivity, CancellationToken>((eventData, _) =>
+            {
+                if (eventData.Type is GatewayActivityType.SubAgentCompleted or GatewayActivityType.SubAgentFailed)
+                    dispatched.TrySetResult();
+            }).Returns(ValueTask.CompletedTask);
         var options = new GatewayOptions();
         options.SubAgents.MaxTimeoutSeconds = timeoutSecondsBudget;
         options.SubAgents.DefaultTimeoutSeconds = timeoutSecondsBudget;
         options.SubAgents.MaxTurnsCeiling = maxTurnsBudget;
         options.SubAgents.DefaultMaxTurns = maxTurnsBudget;
+        configureSubAgents?.Invoke(options.SubAgents);
 
         return (new DefaultSubAgentManager(
             supervisor.Object,
             registry.Object,
-            Mock.Of<IActivityBroadcaster>(),
+            activity.Object,
             dispatcher.Object,
             new TestOptionsMonitor<GatewayOptions>(options),
             NullLogger<DefaultSubAgentManager>.Instance,

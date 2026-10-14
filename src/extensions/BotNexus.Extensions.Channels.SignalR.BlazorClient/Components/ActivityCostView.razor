@@ -99,17 +99,19 @@
                             <span class="activity-agent-chip" data-testid="activity-cost-agent">@AgentLabel(row.OwningAgentId)</span>
                         </td>
                         <td class="activity-cell-title">
-                            @* Same ConversationLabel call as the main table's DisplayTitle. *@
-                            <span class="activity-conversation-title"
-                                  data-testid="activity-cost-title"
-                                  title="@row.Title">@DisplayTitle(row)</span>
-                            @if (ActivityDashboardProjection.OriginLabel(row) is { } originLabel)
-                            {
-                                @* Same OriginLabel/OriginModifier helpers as the main table. *@
-                                <span class="activity-badge activity-badge-@ActivityDashboardProjection.OriginModifier(row)"
-                                      data-testid="activity-cost-origin-badge"
-                                      data-origin="@ActivityDashboardProjection.OriginModifier(row)">@originLabel</span>
-                            }
+                            <div class="activity-title-content">
+                                @* Same ConversationLabel call as the main table's DisplayTitle. *@
+                                <span class="activity-conversation-title"
+                                      data-testid="activity-cost-title"
+                                      title="@row.Title">@DisplayTitle(row)</span>
+                                @if (ActivityDashboardProjection.OriginLabel(row) is { } originLabel)
+                                {
+                                    @* Same OriginLabel/OriginModifier helpers as the main table. *@
+                                    <span class="activity-badge activity-badge-@ActivityDashboardProjection.OriginModifier(row)"
+                                          data-testid="activity-cost-origin-badge"
+                                          data-origin="@ActivityDashboardProjection.OriginModifier(row)">@originLabel</span>
+                                }
+                            </div>
                         </td>
                         <td class="activity-cell-channels" data-testid="activity-cost-sessions">@cost.SessionCount</td>
                         <td class="activity-cell-channels" data-testid="activity-cost-messages">@cost.MessageCount</td>
@@ -223,7 +225,7 @@
 
     /// <summary>Identical call to the main activity table's title rendering - one label rule.</summary>
     private static string DisplayTitle(ActivityRow row) =>
-        ConversationLabel.DisplayTitle(row.Title, row.ConversationId, row.OwningAgentId);
+        ConversationLabel.FullDisplayTitle(row.Title, row.ConversationId, row.OwningAgentId);
 
     /// <summary>Resolve an agent id to its display name via the store, falling back to the raw id.</summary>
     private string AgentLabel(string agentId)

@@ -25,30 +25,21 @@ namespace BotNexus.Gateway.Tests.Agents;
 public sealed class SubAgentRecordConsolidationTests
 {
     [Fact]
-    public async Task OnCompleted_WakeUp_CarriesRealChildAgentId_NotSyntheticFallback()
+    public async Task OnCompleted_WaitRetainsRealChildAgentId_NotSyntheticFallback()
     {
         var manager = CreateManager(out var dispatcher, out _);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
-
-        InboundMessage? dispatched = null;
-        dispatcher
-            .Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<InboundMessage, CancellationToken>((message, _) => dispatched = message)
-            .Returns(Task.CompletedTask);
-
         await manager.OnCompletedAsync(spawned.SubAgentId, "done");
-
-        dispatched.ShouldNotBeNull();
-        // The producer-side sender must be the real child agent id minted at spawn
-        // (parent-agent--subagent--General--<uniqueId>), proving the record preserved it.
-        dispatched!.Sender.Kind.ShouldBe(CitizenKind.Agent);
-        dispatched.Sender.Value.ShouldStartWith("parent-agent--subagent--General--");
-        // It must NOT fall back to the synthetic id the old drift-prone path used.
-        dispatched.Sender.Value.ShouldNotStartWith("subagent:");
+        var terminal = await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId);
+        terminal.ChildAgentId.ShouldNotBeNull();
+        terminal.ChildAgentId.ShouldStartWith("parent-agent--subagent--General--");
+        terminal.ChildAgentId.ShouldNotStartWith("subagent:");
+        terminal.ResultSummary.ShouldBe("done");
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task OnCompleted_CalledTwice_DispatchesWakeUpExactlyOnce()
+    public async Task OnCompleted_CalledTwice_RetainsFirstResultWithoutDispatch()
     {
         var manager = CreateManager(out var dispatcher, out _);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
@@ -63,7 +54,8 @@ public sealed class SubAgentRecordConsolidationTests
         // The completion once-only gate now lives on the record; the second call is a no-op.
         dispatcher.Verify(
             d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
+        (await manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId)).ResultSummary.ShouldBe("first");
 
         var info = await manager.GetAsync(spawned.SubAgentId);
         info.ShouldNotBeNull();

@@ -84,7 +84,7 @@ public sealed class GitHubIssueUpdateTool : GitHubToolBase
             repository,
             ok = true,
             identity = Config.Identity,
-            issue = GitHubProjections.Issue(updated),
+            issue = updated.Issue(),
         });
     }
 }

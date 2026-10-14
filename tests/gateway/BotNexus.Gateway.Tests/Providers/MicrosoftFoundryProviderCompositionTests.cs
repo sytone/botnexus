@@ -31,6 +31,46 @@ public sealed class MicrosoftFoundryProviderCompositionTests
         model.BaseUrl.ShouldBe("https://example.services.ai.azure.com/openai/v1");
     }
 
+    [Fact]
+    public void Register_PerModelCapacity_UsesSharedResolutionAndProvenance()
+    {
+        var config = Config("entra-default", apiKey: null, clientId: null);
+        config.Providers.ShouldNotBeNull();
+        var chat = config.Providers["azure-foundry-test"].Chat;
+        chat.ShouldNotBeNull();
+        chat.Models = ["example-deployment", "small"];
+        chat.ModelCapacities["example-deployment"] = new() { ContextWindow = 1_050_000, MaxTokens = 128_000 };
+        var models = new ModelRegistry();
+        MicrosoftFoundryProviderComposition.Register(config, new ApiProviderRegistry(), models, NullLoggerFactory.Instance);
+        var large = models.GetModel("azure-foundry-test", "example-deployment");
+        large.ShouldNotBeNull();
+        large.ContextWindow.ShouldBe(1_050_000);
+        large.MaxTokens.ShouldBe(128_000);
+        large.ContextWindowSource.ShouldBe("configured-model");
+        large.MaxTokensSource.ShouldBe("configured-model");
+        var small = models.GetModel("azure-foundry-test", "small");
+        small.ShouldNotBeNull();
+        small.ContextWindow.ShouldBe(128_000);
+        small.MaxTokensSource.ShouldBe("fallback");
+    }
+
+    [Fact]
+    public void Register_InvalidCapacity_DoesNotPartiallyRegisterModels()
+    {
+        var config = Config("entra-default", apiKey: null, clientId: null);
+        config.Providers.ShouldNotBeNull();
+        var chat = config.Providers["azure-foundry-test"].Chat;
+        chat.ShouldNotBeNull();
+        chat.Models = ["valid", "invalid"];
+        chat.ModelCapacities["invalid"] = new() { ContextWindow = 100, MaxTokens = 100 };
+        var models = new ModelRegistry();
+        var providers = new ApiProviderRegistry();
+        Should.Throw<InvalidOperationException>(() => MicrosoftFoundryProviderComposition.Register(
+            config, providers, models, NullLoggerFactory.Instance)).Message.ShouldContain("invalid");
+        models.GetModel("azure-foundry-test", "valid").ShouldBeNull();
+        providers.Get("microsoft-foundry-responses").ShouldBeNull();
+    }
+
     [Theory]
     [InlineData("entra-default", null)]
     [InlineData("managed-identity", null)]

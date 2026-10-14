@@ -107,14 +107,14 @@ public sealed class AnthropicModelDiscoveryProvider : IModelDiscoveryProvider
         }
 
         var models = new List<LlmModel>();
+        var seenCursors = new HashSet<string>(StringComparer.Ordinal);
         string? afterId = null;
 
         for (var page = 0; page < MaxPages; page++)
         {
             var response = await FetchPageAsync(apiKey, afterId, cancellationToken).ConfigureAwait(false);
 
-            // A failed page is not a partial success: returning what we have would let a transient
-            // failure silently shrink the model list, which reads to the user as models disappearing.
+            // Discovery overlays existing entries; an incomplete result must not publish partial updates.
             if (response is null)
                 return null;
 
@@ -128,19 +128,35 @@ public sealed class AnthropicModelDiscoveryProvider : IModelDiscoveryProvider
                 }
             }
 
-            if (!response.HasMore || string.IsNullOrWhiteSpace(response.LastId))
-                break;
+            // Only a terminal page permits success, including when it is the final allowed page.
+            if (!response.HasMore)
+            {
+                if (models.Count == 0)
+                {
+                    _logger.LogDebug("Anthropic model discovery returned no models.");
+                    return null;
+                }
+
+                return models;
+            }
+
+            if (string.IsNullOrWhiteSpace(response.LastId))
+            {
+                _logger.LogWarning("Anthropic model discovery pagination failed: missing continuation cursor. Using built-in models.");
+                return null;
+            }
+
+            if (!seenCursors.Add(response.LastId))
+            {
+                _logger.LogWarning("Anthropic model discovery pagination failed: repeated continuation cursor. Using built-in models.");
+                return null;
+            }
 
             afterId = response.LastId;
         }
 
-        if (models.Count == 0)
-        {
-            _logger.LogDebug("Anthropic model discovery returned no models.");
-            return null;
-        }
-
-        return models;
+        _logger.LogWarning("Anthropic model discovery pagination failed: page limit reached before completion. Using built-in models.");
+        return null;
     }
 
     // Fetches one page. Returns null on any non-success status or unparseable body; the caller turns

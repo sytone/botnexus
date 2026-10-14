@@ -1,4 +1,6 @@
 using BotNexus.Agent.Core.Types;
+using BotNexus.Agent.Core.Tools;
+using Microsoft.Extensions.DependencyInjection;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
@@ -83,6 +85,33 @@ public sealed class ExecToolContributorTests
     public void IsToolAllowed_MatchesIsolationStrategySemantics(string[] toolIds, bool expected)
     {
         ExecToolContributor.IsToolAllowed(toolIds, "exec").ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Contribute_PassesTrustedPolicyToChild(bool configured)
+    {
+        var workspace = CreateWorkspace();
+        var name = "BN4749_CONTRIBUTOR_" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable(name, "synthetic-contributor");
+        try
+        {
+            var services = new ServiceCollection();
+            if (configured) services.AddSingleton(new LocalChildEnvironmentPolicy([name]));
+            using var provider = services.BuildServiceProvider();
+            var contributor = ActivatorUtilities.CreateInstance<ExecToolContributor>(provider);
+            var tool = (await contributor.ContributeAsync(BuildContext(workspace))).Tools.ShouldHaveSingleItem();
+            string[] command = OperatingSystem.IsWindows() ? ["cmd.exe", "/d", "/c", "set"] : ["/usr/bin/env"];
+            var args = await tool.PrepareArgumentsAsync(new Dictionary<string, object?> { ["command"] = command });
+            var result = await tool.ExecuteAsync("environment", args);
+            string.Join("\n", result.Content.Select(c => c.Value)).Contains("synthetic-contributor", StringComparison.Ordinal).ShouldBe(configured);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(name, null);
+            Directory.Delete(workspace, recursive: true);
+        }
     }
 
     private static string CreateWorkspace()

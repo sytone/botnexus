@@ -200,7 +200,7 @@ public sealed class ConfigBackupRestoreService
                 // the LIVE document before the swap, so a restore can never write "***" over a real
                 // secret. This is the same call UpdateSectionAsync and ApplyPatchAsync make, walking
                 // the same reflection-discovered secret paths.
-                ConfigSecretMerge.RestoreSecrets(root, candidate);
+                root.RestoreSecrets(candidate);
 
                 root.Clear();
                 foreach (var kvp in candidate)

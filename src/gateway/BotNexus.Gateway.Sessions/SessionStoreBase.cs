@@ -470,7 +470,8 @@ public abstract class SessionStoreBase : ISessionStore
 
     /// <inheritdoc />
     public virtual Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
+        => info.SpawningToolCallId is null ? Task.CompletedTask
+            : throw new NotSupportedException("This store cannot durably admit tool-origin sub-agents.");
 
     /// <inheritdoc />
     public virtual Task UpdateSubAgentSessionAsync(
@@ -493,6 +494,23 @@ public abstract class SessionStoreBase : ISessionStore
         string? childAgentId = null,
         int offset = 0)
         => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(Array.Empty<SubAgentRunDetail>());
+
+    /// <inheritdoc />
+    public virtual Task<IReadOnlyList<SubAgentRunDetail>> ListSubAgentSessionsAsync(SessionId sessionId, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<SubAgentRunDetail>>([]);
+
+    /// <inheritdoc />
+    public virtual Task<SubAgentRunDetail?> FindSubAgentSpawnAsync(SessionId parentSessionId, string toolCallId, CancellationToken cancellationToken = default)
+        => Task.FromResult<SubAgentRunDetail?>(null);
+
+    /// <inheritdoc />
+    public virtual Task<SubAgentRunDetail?> GetSubAgentSessionAsync(string subAgentId, CancellationToken cancellationToken = default)
+        => Task.FromResult<SubAgentRunDetail?>(null);
+
+    /// <inheritdoc />
+    public virtual Task<string?> ConsumeSubAgentResultAsync(string subAgentId, SessionId parentSessionId,
+        ConversationId? parentConversationId, SessionEntry result, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This store cannot atomically retain sub-agent tool results.");
 
     private static IEnumerable<GatewaySession> ApplyAgentFilter(IEnumerable<GatewaySession> sessions, AgentId? agentId)
         => agentId is null ? sessions : sessions.Where(session => session.AgentId == agentId);

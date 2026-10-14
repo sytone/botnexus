@@ -344,7 +344,7 @@ internal sealed class SqliteDataStoreBackend : IDataStoreBackend
         // busy_timeout MUST be set before WAL negotiation and on every open. The shared factory's
         // StateChange handler re-applies busy_timeout on every open (#1450, #1541); attaching it
         // before OpenAsync guarantees it runs before the WAL negotiation below.
-        SqliteConnectionFactory.AttachBusyTimeout(_connection);
+        _connection.AttachBusyTimeout();
         await _connection.OpenAsync(ct).ConfigureAwait(false);
 
         // #1436: filesystem-aware journal mode (WAL on local disk, DELETE on network mounts)

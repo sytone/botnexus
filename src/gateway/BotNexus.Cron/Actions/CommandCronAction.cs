@@ -28,7 +28,8 @@ namespace BotNexus.Cron.Actions;
 ///   <item>Timeout defaults to 120 seconds; configurable via <see cref="CronJob.Metadata"/> key "timeoutSeconds".
 ///   A value of <c>0</c> means <b>unlimited</b> (#2904): no timeout is armed and the run is bounded only
 ///   by the ambient cancellation token. A negative or unparseable value warns and falls back to the default.</item>
-///   <item>On timeout: kills the process tree (Windows: taskkill /T, POSIX: process group -KILL).</item>
+///   <item>On timeout or caller cancellation: requests process-tree termination with the runtime
+///   and bounds root exit/output drain. Root completion is not proof of descendant exit.</item>
 ///   <item>Captures stdout + stderr and records the combined output in the cron run.</item>
 /// </list>
 /// </remarks>
@@ -39,6 +40,8 @@ public sealed class CommandCronAction : ICronAction
 
     /// <summary>Maximum allowed output capture length in characters.</summary>
     internal const int MaxOutputChars = 50_000;
+
+    private static readonly TimeSpan ProcessCleanupTimeout = TimeSpan.FromSeconds(5);
 
     /// <inheritdoc/>
     public string ActionType => "command";
@@ -120,6 +123,11 @@ public sealed class CommandCronAction : ICronAction
         int? timeoutSeconds,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (timeoutSeconds is int armedTimeout)
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(armedTimeout));
+
         using var process = new Process();
         process.StartInfo = new ProcessStartInfo
         {
@@ -154,30 +162,43 @@ public sealed class CommandCronAction : ICronAction
             }
         };
 
+        cancellationToken.ThrowIfCancellationRequested();
         process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-
-        // #2904: null is the explicit "unlimited" sentinel - arm nothing, leaving the ambient token
-        // as the only thing that can cancel the wait. The kill path below is unchanged and still
-        // fires for every armed timeout.
-        if (timeoutSeconds is int armedTimeout)
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(armedTimeout));
-
         try
         {
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
             await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            // Timeout — kill the process tree
+            // Timeout — stop the tree, and fail clearly if stopping/reaping the root fails.
             KillProcessTree(process);
+            await WaitForRootExitAfterKillAsync(process).ConfigureAwait(false);
             return new CommandResult(
                 ExitCode: -1,
                 Output: outputBuilder.ToString(),
                 TimedOut: true);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Caller cancellation is distinct from a timeout. Attempt to stop the process tree,
+            // then bound reaping the root before propagating cancellation. A root exit does not
+            // prove that descendants exited; Process.Kill(entireProcessTree: true) exposes no
+            // portable completion signal for the whole tree.
+            KillProcessTree(process);
+            await WaitForRootExitAfterKillAsync(process).ConfigureAwait(false);
+            throw;
+        }
+        catch
+        {
+            // Reader setup and other post-spawn failures must not abandon a live command.
+            if (!process.HasExited)
+            {
+                KillProcessTree(process);
+                await WaitForRootExitAfterKillAsync(process).ConfigureAwait(false);
+            }
+            throw;
         }
 
         return new CommandResult(
@@ -187,24 +208,50 @@ public sealed class CommandCronAction : ICronAction
     }
 
     /// <summary>
-    /// Kills the process and all descendants (process tree).
-    /// On Windows uses taskkill /T; on POSIX kills the process directly
-    /// (which .NET 8+ Kill(entireProcessTree: true) handles natively).
+    /// Requests termination of this process and its descendants.
+    /// The runtime provides no portable way to confirm that every descendant has exited.
     /// </summary>
     internal static void KillProcessTree(Process process)
     {
+        ArgumentNullException.ThrowIfNull(process);
+
         try
         {
             process.Kill(entireProcessTree: true);
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
-            // Process already exited between timeout and kill.
+            throw new InvalidOperationException(
+                "Could not request termination of the command process; process cleanup is incomplete. The root process may already have exited, but descendant termination cannot be confirmed.",
+                ex);
         }
-        catch (SystemException)
+        catch (SystemException ex)
         {
-            // Platform-specific failure (access denied, zombie process, etc.)
-            // Best-effort — the timeout has fired so we move on.
+            throw new InvalidOperationException(
+                "Could not request termination of the command process; process cleanup is incomplete.",
+                ex);
+        }
+    }
+
+    private static async Task WaitForRootExitAfterKillAsync(Process process)
+    {
+        try
+        {
+            await process.WaitForExitAsync(CancellationToken.None)
+                .WaitAsync(ProcessCleanupTimeout)
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException ex)
+        {
+            throw new InvalidOperationException(
+                $"The command process did not exit within {ProcessCleanupTimeout.TotalSeconds:0} seconds after termination was requested; process cleanup is incomplete.",
+                ex);
+        }
+        catch (SystemException ex)
+        {
+            throw new InvalidOperationException(
+                "Failed while waiting for the command process to exit after termination was requested; process cleanup is incomplete.",
+                ex);
         }
     }
 

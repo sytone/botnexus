@@ -95,6 +95,24 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         cut.Find("[data-testid='activity-filter-recency']");
     }
 
+    [Fact]
+    public void Long_title_is_preserved_in_inner_wrapper_with_badges_and_purpose()
+    {
+        const string title = "Review the complete rendering regression for scheduled automation and conversation activity " +
+            "including this unbroken identifier abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz";
+        SetupConversations(Conv("long-title", title: title, source: "Webhook", purpose: "Keep the full identifying text readable."));
+
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.WaitForState(() => cut.FindAll("[data-testid='activity-row']").Count == 1);
+        var cell = cut.Find("[data-testid='activity-row'] td.activity-cell-title");
+        cell.Children.ShouldHaveSingleItem().ClassList.ShouldContain("activity-title-content");
+        cell.QuerySelector(".activity-title-content > .activity-conversation-title")?.TextContent.ShouldBe(title);
+        cell.QuerySelector(".activity-title-content > [data-testid='activity-origin-badge']").ShouldNotBeNull();
+        cell.QuerySelector(".activity-title-content > [data-testid='activity-purpose']")?.TextContent
+            .ShouldBe("Keep the full identifying text readable.");
+        cut.FindAll("[data-testid='activity-row'] td").Count.ShouldBe(5);
+    }
+
     // ── Empty state ────────────────────────────────────────────────────────
 
     [Fact]
@@ -603,7 +621,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     }
 
     [Fact]
-    public void Long_title_is_length_bounded_in_the_dom_and_the_full_value_is_available_on_hover()
+    public void Long_title_is_complete_in_the_dom_and_the_full_value_is_available_on_hover()
     {
         var longTitle = string.Join(" ", Enumerable.Repeat("verbose", 200));
         SetupConversations(Conv("c1", title: longTitle));
@@ -612,7 +630,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         cut.WaitForAssertion(() => cut.Find("[data-testid='activity-row']"));
 
         var title = cut.Find(".activity-conversation-title");
-        Assert.True(title.TextContent.Length <= ConversationLabel.MaxTitleLength);
+        Assert.Equal(longTitle, title.TextContent);
         Assert.Equal(longTitle, title.GetAttribute("title"));
     }
 

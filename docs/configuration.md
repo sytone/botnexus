@@ -1036,6 +1036,9 @@ result; split investigation, implementation, and validation into separate sub-ag
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
+| `subAgents.noProgressEnabled` | bool | false | Enable early finalization using completed tool evidence. Handles without activity visibility retain existing budget behavior. |
+| `subAgents.noProgressTurnWindow` | int | 6 | Rolling completed exploratory-turn window. Also requires this many successive turns of unchanged successful tool evidence for the general no-progress rule. Runtime clamps values to 2–64. |
+| `subAgents.noProgressRepeatedFailureThreshold` | int | 3 | Matching failing tool sequences on separate turns required inside the window. Idle turns consume window space but do not count as failures. Runtime clamps values to 2–64; a threshold larger than the window cannot trigger this rule. |
 | `subAgents.defaultTimeoutSeconds` | int | 600 | Timeout used when a spawn omits or supplies a non-positive timeout. |
 | `subAgents.maxTimeoutSeconds` | int | 1800 | Global timeout ceiling. |
 | `subAgents.advisoryTimeoutSeconds` | int | 1500 | Effective timeout above which a staging advisory is returned and logged; `0` disables it. The advisory does not change the timeout. |
@@ -1047,6 +1050,21 @@ result; split investigation, implementation, and validation into separate sub-ag
 | `subAgents.workspaceRoot` | string | ` ` (empty) | Temporary root directory under which each sub-agent's isolated workspace is created and later reclaimed. Empty preserves the historical default of `<OS temp>/botnexus-subagent-workspaces`. Supports `~` and environment-variable expansion and is normalized to an absolute path. The gateway (`FileAgentWorkspaceManager`) and the CLI (`botnexus subagent workspace list|prune` plus `doctor`) resolve this through the same shared resolver, so they can never target different directories. |
 | `subAgents.completedRecordRetentionMinutes` | int | 15 | How long a finished (completed/failed/killed/timed-out) sub-agent record is kept in memory so `list_subagents` and status queries can still surface a recently-finished run. After the window the record is swept and its timeout source disposed, bounding the manager's registry on a long-lived gateway. `0` or less disables **time-based** eviction; the count cap below still applies. Running records are never evicted. |
 | `subAgents.maxRetainedCompletedRecords` | int | 200 | Maximum number of **completed** records retained regardless of age - a burst-spawn backstop so the registry stays bounded even inside the retention window. When exceeded, the oldest completed records are evicted first. `0` or less disables the cap. Running records do not count toward it. |
+
+To enable no-progress detection for subsequent spawns, run
+`botnexus config set gateway.subAgents.noProgressEnabled true`. Set it to `false` to disable it.
+The detector compares fixed-size digests of normalized tool names and result evidence, including
+non-text blocks, not invocation IDs, arguments, or model narration. New successful read evidence resets
+the window; identical read evidence does not. Successful write, edit, command, and unknown-tool receipts
+cannot prove unchanged underlying work, so they conservatively reset the window every time—even when
+their confirmation text is identical. Repeated prose, idle turns, and changing failures alone do not establish no progress. Decisions
+wait until all tool results in a turn have arrived, so a later successful result can reset a failing batch.
+Oversized tool batches are not classified from truncated evidence.
+
+A no-progress stop requests the existing single tool-free finalization turn without extending either
+hard budget. It returns `Failed` with a partial `no_progress` result, preserved tool evidence and actions,
+and an unverified summary—even if the finalizer claims success or returns no text. Timeout and caller
+kill remain authoritative. This supervisor policy is separate from the agent loop's tool-specific guard.
 
 #### Session warmup (`sessionWarmup`)
 

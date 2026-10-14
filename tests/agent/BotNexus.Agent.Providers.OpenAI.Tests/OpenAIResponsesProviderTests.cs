@@ -93,6 +93,39 @@ public class OpenAIResponsesProviderTests
         body.RootElement.GetProperty("prompt_cache_retention").GetString().ShouldBe("24h");
     }
 
+    [Theory]
+    [InlineData(64)]
+    [InlineData(65)]
+    [InlineData(76)]
+    public async Task Stream_SessionCacheKey_UsesSharedBoundedKeyAndPreservesLongRetention(int length)
+    {
+        var handler = new RecordingHandler();
+        using var client = new HttpClient(handler);
+        var provider = new OpenAIResponsesProvider(client, NullLogger<OpenAIResponsesProvider>.Instance);
+        var sessionId = new string('s', length);
+        var result = await provider.Stream(
+                TestHelpers.MakeModel(id: "gpt-5.4", api: "openai-responses", provider: "openai"),
+                TestHelpers.MakeContext(),
+                new OpenAIResponsesOptions
+                {
+                    ApiKey = "test-key",
+                    SessionId = sessionId,
+                    CacheRetention = BotNexus.Agent.Providers.Core.Models.CacheRetention.Long
+                })
+            .GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        result.StopReason.ShouldNotBe(BotNexus.Agent.Providers.Core.Models.StopReason.Error);
+        handler.LastRequestBody.ShouldNotBeNull();
+        using var body = JsonDocument.Parse(handler.LastRequestBody);
+        var key = body.RootElement.GetProperty("prompt_cache_key").GetString();
+        key.ShouldNotBeNull();
+        key.Length.ShouldBeLessThanOrEqualTo(64);
+        key.ShouldBe(length <= 64
+            ? sessionId
+            : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(sessionId))));
+        body.RootElement.GetProperty("prompt_cache_retention").GetString().ShouldBe("24h");
+    }
+
     [Fact]
     public async Task StreamSimple_ClampsExtraHigh_WhenModelDoesNotSupportXhigh()
     {

@@ -11,6 +11,35 @@ namespace BotNexus.Gateway.Configuration;
 public sealed class SubAgentOptions
 {
     /// <summary>
+    /// Enables authoritative no-progress early finalization. Disabled by default so handles without
+    /// completed-tool visibility retain existing turn and timeout behavior.
+    /// </summary>
+    [Display(Name = "No progress enabled", Description = "Enable early finalization from repeated authoritative tool evidence.", GroupName = "Sub-agents", Order = 11)]
+    [ConfigField(Widget = ConfigFieldWidget.Toggle, Group = "sub-agents", Order = 11)]
+    [DefaultValue(false)]
+    public bool NoProgressEnabled { get; set; }
+
+    /// <summary>
+    /// Bounds the number of completed exploratory turns retained for no-progress decisions.
+    /// Tool callbacks within one turn do not consume this window.
+    /// </summary>
+    [Display(Name = "No progress turn window", Description = "Completed exploratory turn window for repeated tool evidence. Runtime clamps to 2 through 64.", GroupName = "Sub-agents", Order = 12)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 12)]
+    [DefaultValue(6)]
+    [Range(2, 64)]
+    public int NoProgressTurnWindow { get; set; } = 6;
+
+    /// <summary>
+    /// Requires this many turns with the identical failing activity sequence inside the window,
+    /// without new successful evidence. Repeated identical successful output is not new evidence.
+    /// </summary>
+    [Display(Name = "No progress repeated failure threshold", Description = "Matching failing turn sequences required inside the turn window. Runtime clamps to 2 through 64.", GroupName = "Sub-agents", Order = 13)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "sub-agents", Order = 13)]
+    [DefaultValue(3)]
+    [Range(2, 64)]
+    public int NoProgressRepeatedFailureThreshold { get; set; } = 3;
+
+    /// <summary>
     /// Gets or sets the maximum number of concurrent sub-agents allowed per parent session.
     /// </summary>
     [Display(
