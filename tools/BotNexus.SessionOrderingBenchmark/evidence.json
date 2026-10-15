@@ -1,0 +1,5541 @@
+{
+  "SourceSha256": "DA2F6DDEF3C0DE8024FD44EC2FD9B9E234CA47CB64CCFF3D957CDE608EBEE20C",
+  "Environment": {
+    "sqliteVersion": "3.46.1",
+    "sqliteSourceId": "2024-08-13 09:16:08 c9c2ab54ba1f5f46360f1b4f35d849cd3f080e6fc2b6c60e91b16c63f69a1e33",
+    "provider": "Microsoft.Data.Sqlite, Version=10.0.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60",
+    "runtime": ".NET 10.0.13",
+    "os": "Microsoft Windows 10.0.26300",
+    "page_size": "4096",
+    "cache_size": "-2000",
+    "synchronous": "2",
+    "temp_store": "0",
+    "journal_mode": "wal",
+    "wal_autocheckpoint": "1000",
+    "journal_size_limit": "67108864",
+    "foreign_keys": "1",
+    "busy_timeout": "5000",
+    "compileOptions": [
+      "ATOMIC_INTRINSICS=0",
+      "COMPILER=msvc-1929",
+      "DEFAULT_AUTOVACUUM",
+      "DEFAULT_CACHE_SIZE=-2000",
+      "DEFAULT_FILE_FORMAT=4",
+      "DEFAULT_FOREIGN_KEYS",
+      "DEFAULT_JOURNAL_SIZE_LIMIT=-1",
+      "DEFAULT_MMAP_SIZE=0",
+      "DEFAULT_PAGE_SIZE=4096",
+      "DEFAULT_PCACHE_INITSZ=20",
+      "DEFAULT_RECURSIVE_TRIGGERS",
+      "DEFAULT_SECTOR_SIZE=4096",
+      "DEFAULT_SYNCHRONOUS=2",
+      "DEFAULT_WAL_AUTOCHECKPOINT=1000",
+      "DEFAULT_WAL_SYNCHRONOUS=2",
+      "DEFAULT_WORKER_THREADS=0",
+      "DIRECT_OVERFLOW_READ",
+      "ENABLE_COLUMN_METADATA",
+      "ENABLE_FTS3",
+      "ENABLE_FTS3_PARENTHESIS",
+      "ENABLE_FTS4",
+      "ENABLE_FTS5",
+      "ENABLE_MATH_FUNCTIONS",
+      "ENABLE_RTREE",
+      "ENABLE_SNAPSHOT",
+      "MALLOC_SOFT_LIMIT=1024",
+      "MAX_ATTACHED=10",
+      "MAX_COLUMN=2000",
+      "MAX_COMPOUND_SELECT=500",
+      "MAX_DEFAULT_PAGE_SIZE=8192",
+      "MAX_EXPR_DEPTH=1000",
+      "MAX_FUNCTION_ARG=127",
+      "MAX_LENGTH=1000000000",
+      "MAX_LIKE_PATTERN_LENGTH=50000",
+      "MAX_MMAP_SIZE=0x7fff0000",
+      "MAX_PAGE_COUNT=0xfffffffe",
+      "MAX_PAGE_SIZE=65536",
+      "MAX_SQL_LENGTH=1000000000",
+      "MAX_TRIGGER_DEPTH=1000",
+      "MAX_VARIABLE_NUMBER=32766",
+      "MAX_VDBE_OP=250000000",
+      "MAX_WORKER_THREADS=8",
+      "MUTEX_W32",
+      "SYSTEM_MALLOC",
+      "TEMP_STORE=1",
+      "THREADSAFE=1"
+    ]
+  },
+  "Fixture": {
+    "Sessions": 17000,
+    "HistoryRows": 428782,
+    "HistoryCounts": {
+      "Min": 0,
+      "Max": 1000,
+      "Median": 9
+    },
+    "ConversationCounts": {
+      "c0000": 5066,
+      "c0028": 149,
+      "c0038": 136,
+      "c0036": 124,
+      "c0039": 123,
+      "c0001": 122,
+      "c0023": 121,
+      "c0011": 120,
+      "c0002": 119,
+      "c0017": 118
+    },
+    "BaseDatabaseBytes": 899772416,
+    "Seed": 3839
+  },
+  "Runs": [
+    {
+      "MeasuredAtUtc": "2026-10-14T01:52:01.5882485-07:00",
+      "Method": {
+        "ReadRepeats": 25,
+        "ReadWarmups": 3,
+        "WriteRepeats": 5,
+        "Analyze": false,
+        "ResultParityAcrossCandidates": true,
+        "WriteAutocheckpoint": 0,
+        "CandidateOrder": [
+          "conversation-updated-id",
+          "updated-desc-id",
+          "updated-desc",
+          "baseline"
+        ]
+      },
+      "Results": [
+        {
+          "Name": "conversation-updated-id",
+          "IndexSql": "CREATE INDEX candidate_conversation_updated_id ON sessions(conversation_id,updated_at DESC,id ASC)",
+          "DatabaseBytesBeforeWrites": 901144576,
+          "Reads": [
+            {
+              "Name": "enumerate-ids-unbounded",
+              "Plan": [
+                "3|0|SCAN sessions USING COVERING INDEX candidate_conversation_updated_id",
+                "10|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "BC758108E5E708626FC4820895F9D1F3A2773F7619304483ECC2FAA691AF08BF",
+              "LatencyMs": {
+                "Median": 11.0238,
+                "P95": 18.241,
+                "Min": 9.8231,
+                "Max": 20.989,
+                "Samples": [
+                  15.7615,
+                  18.241,
+                  17.0889,
+                  14.2208,
+                  20.989,
+                  14.162,
+                  14.3869,
+                  14.5435,
+                  15.2977,
+                  15.3722,
+                  15.9194,
+                  12.5274,
+                  9.8508,
+                  10.1929,
+                  9.8231,
+                  10.6922,
+                  9.8981,
+                  10.633,
+                  10.359,
+                  10.5273,
+                  11.0238,
+                  10.4995,
+                  10.7526,
+                  10.6575,
+                  10.2045
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "93|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "CEC43CF5CC22DF631691C32FCC345C11C3F4C8CD3A79F47A3F9B96B3538D8873",
+              "LatencyMs": {
+                "Median": 165.7071,
+                "P95": 197.1301,
+                "Min": 151.8672,
+                "Max": 212.1438,
+                "Samples": [
+                  167.6072,
+                  171.5147,
+                  158.0094,
+                  162.8961,
+                  151.8672,
+                  154.739,
+                  155.1005,
+                  153.7936,
+                  158.122,
+                  154.7542,
+                  154.3801,
+                  191.0269,
+                  212.1438,
+                  197.1301,
+                  176.4557,
+                  174.9446,
+                  165.7071,
+                  172.314,
+                  155.3233,
+                  160.3587,
+                  157.427,
+                  182.6584,
+                  175.9647,
+                  178.1776,
+                  166.8879
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50-offset5000",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "93|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "958236FCA72384D07A5A40ADCD21B8F5E6DAF5B7386DBF4AE783E893766126A5",
+              "LatencyMs": {
+                "Median": 183.5793,
+                "P95": 211.3143,
+                "Min": 171.3403,
+                "Max": 216.7223,
+                "Samples": [
+                  180.3258,
+                  175.2953,
+                  171.3403,
+                  178.1282,
+                  176.5137,
+                  175.9444,
+                  193.6928,
+                  188.7976,
+                  181.4602,
+                  179.9372,
+                  183.5793,
+                  202.9212,
+                  183.8853,
+                  188.6471,
+                  179.829,
+                  184.7738,
+                  178.2186,
+                  191.2423,
+                  190.8225,
+                  178.3445,
+                  202.8012,
+                  205.5818,
+                  176.1388,
+                  211.3143,
+                  216.7223
+                ]
+              }
+            },
+            {
+              "Name": "summaries-unbounded-managed-time",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "44|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "58|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "82|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "74D8C2358A40C3C1748A85D3331405E4C7E16002F45F402723927CEC41D40735",
+              "LatencyMs": {
+                "Median": 212.2431,
+                "P95": 231.9136,
+                "Min": 197.504,
+                "Max": 264.5129,
+                "Samples": [
+                  209.9015,
+                  205.4844,
+                  218.2183,
+                  220.445,
+                  231.9136,
+                  212.5008,
+                  230.2045,
+                  216.4477,
+                  206.092,
+                  211.1203,
+                  216.0288,
+                  264.5129,
+                  199.2986,
+                  208.5545,
+                  230.0137,
+                  216.6567,
+                  199.6375,
+                  212.2431,
+                  204.072,
+                  197.504,
+                  221.4906,
+                  201.1681,
+                  202.9015,
+                  211.362,
+                  212.7637
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "68|0|SCAN b",
+                "76|0|CORRELATED SCALAR SUBQUERY 2",
+                "81|76|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "98|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "8CA78D64F246CE31E15A241A1640F1C5EBD5E47E3B3C6558C3833F4CC7E730A5",
+              "LatencyMs": {
+                "Median": 30.3798,
+                "P95": 40.4452,
+                "Min": 27.49,
+                "Max": 42.1977,
+                "Samples": [
+                  29.6517,
+                  27.6399,
+                  28.0423,
+                  29.2974,
+                  32.3607,
+                  27.49,
+                  28.3509,
+                  31.0723,
+                  27.5577,
+                  28.1143,
+                  27.9668,
+                  28.3927,
+                  30.9734,
+                  30.1963,
+                  30.5049,
+                  31.5216,
+                  30.3798,
+                  30.4033,
+                  30.9808,
+                  29.5627,
+                  33.0065,
+                  35.1582,
+                  30.7498,
+                  40.4452,
+                  42.1977
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-all-200",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "38|0|SCAN b",
+                "46|0|CORRELATED SCALAR SUBQUERY 2",
+                "51|46|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "68|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 200,
+              "Fingerprint": "C493F336C8CD0DC245F67B9D34A2D1C53F3DDD42281D936BB03BA8313E4D24E5",
+              "LatencyMs": {
+                "Median": 4.1578,
+                "P95": 4.7471,
+                "Min": 3.5951,
+                "Max": 4.7595,
+                "Samples": [
+                  4.6891,
+                  4.3189,
+                  4.5221,
+                  4.4241,
+                  4.344,
+                  4.3442,
+                  4.3715,
+                  4.1364,
+                  4.0857,
+                  4.3324,
+                  4.0172,
+                  4.109,
+                  4.1772,
+                  3.9629,
+                  4.3443,
+                  4.107,
+                  4.1578,
+                  3.9091,
+                  4.7595,
+                  4.7471,
+                  3.6637,
+                  4.0518,
+                  3.8949,
+                  3.5951,
+                  3.7355
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "68|0|SCAN b",
+                "76|0|CORRELATED SCALAR SUBQUERY 2",
+                "81|76|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "98|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "A970C22EBE5D975221E61BF2DCB017115E8C63C156C8BBE629E7F9506478B5C1",
+              "LatencyMs": {
+                "Median": 46.9485,
+                "P95": 60.2661,
+                "Min": 37.3606,
+                "Max": 65.5894,
+                "Samples": [
+                  60.2661,
+                  65.5894,
+                  49.2688,
+                  47.6704,
+                  55.658,
+                  49.6395,
+                  42.7296,
+                  40.9115,
+                  37.3606,
+                  37.3841,
+                  41.9626,
+                  53.0946,
+                  47.3643,
+                  46.9485,
+                  46.4691,
+                  45.9181,
+                  43.6088,
+                  44.5922,
+                  47.4534,
+                  44.7756,
+                  45.1035,
+                  46.0791,
+                  48.621,
+                  48.0969,
+                  49.4117
+                ]
+              }
+            },
+            {
+              "Name": "page-single-sparse-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "68|0|SCAN b",
+                "76|0|CORRELATED SCALAR SUBQUERY 2",
+                "81|76|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "98|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 2,
+              "Fingerprint": "F4F2FEC174D36EC305ED924CD39BA83F6C5D29EF0FECA0A4BD9D0FCB2C26B171",
+              "LatencyMs": {
+                "Median": 0.1274,
+                "P95": 0.2722,
+                "Min": 0.1104,
+                "Max": 0.345,
+                "Samples": [
+                  0.1412,
+                  0.1397,
+                  0.1614,
+                  0.2722,
+                  0.345,
+                  0.1897,
+                  0.1711,
+                  0.165,
+                  0.1512,
+                  0.1324,
+                  0.132,
+                  0.118,
+                  0.1161,
+                  0.1731,
+                  0.1274,
+                  0.119,
+                  0.1176,
+                  0.1176,
+                  0.1145,
+                  0.1226,
+                  0.1117,
+                  0.1113,
+                  0.1104,
+                  0.1112,
+                  0.1119
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "430D3A0A4682BCA24FC8AD1B89CB45F450EEEA0F40499578C01E7B040EBD808E",
+              "LatencyMs": {
+                "Median": 62.7278,
+                "P95": 69.9132,
+                "Min": 50.4599,
+                "Max": 74.4984,
+                "Samples": [
+                  54.96,
+                  56.2203,
+                  50.4599,
+                  55.5279,
+                  55.91,
+                  56.6682,
+                  58.9692,
+                  62.7278,
+                  62.3804,
+                  67.0959,
+                  64.6851,
+                  74.4984,
+                  67.7608,
+                  66.6487,
+                  54.6662,
+                  69.65,
+                  69.9132,
+                  60.8136,
+                  53.809,
+                  65.8429,
+                  68.8857,
+                  69.1974,
+                  66.7066,
+                  67.5341,
+                  53.8912
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "E748AD5C26C8E1B9482CB5F15485FEFCE8D0E4A60B175A3683CFB39B5975DB0C",
+              "LatencyMs": {
+                "Median": 61.6322,
+                "P95": 78.21,
+                "Min": 58.1843,
+                "Max": 79.0433,
+                "Samples": [
+                  59.5417,
+                  61.4012,
+                  60.9961,
+                  62.5864,
+                  61.2654,
+                  63.5781,
+                  60.9373,
+                  60.4273,
+                  61.0319,
+                  63.6644,
+                  78.21,
+                  63.7057,
+                  59.6915,
+                  58.6973,
+                  61.6322,
+                  61.9512,
+                  60.1499,
+                  62.6649,
+                  74.7682,
+                  62.3432,
+                  58.1843,
+                  60.9361,
+                  70.4703,
+                  76.6977,
+                  79.0433
+                ]
+              }
+            },
+            {
+              "Name": "page-search4000-all-500",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "12046|3|USE TEMP B-TREE FOR ORDER BY",
+                "12058|0|SCAN b",
+                "12066|0|CORRELATED SCALAR SUBQUERY 2",
+                "12071|12066|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "12088|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 500,
+              "Fingerprint": "C93650895570787B962C6A778425E53631BF6CE879E59BA855838BCB9205CF5E",
+              "LatencyMs": {
+                "Median": 267.431,
+                "P95": 292.4981,
+                "Min": 248.7361,
+                "Max": 298.0856,
+                "Samples": [
+                  250.1787,
+                  248.7361,
+                  298.0856,
+                  289.6331,
+                  267.1077,
+                  279.9876,
+                  273.0972,
+                  276.144,
+                  269.9324,
+                  259.0995,
+                  259.0295,
+                  271.6652,
+                  292.4981,
+                  267.431,
+                  276.376,
+                  289.4547,
+                  254.3792,
+                  260.2207,
+                  267.4756,
+                  250.7806,
+                  269.3925,
+                  252.3802,
+                  249.7249,
+                  252.9188,
+                  257.8492
+                ]
+              }
+            },
+            {
+              "Name": "page-global-fallback-active",
+              "Plan": [
+                "3|0|SCAN s",
+                "41|0|CORRELATED SCALAR SUBQUERY 1",
+                "46|41|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "63|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 13714,
+              "Fingerprint": "5AEA6413C9014180B5B16C388C315ECE9619F65FD467407C5C71DF64C54CF788",
+              "LatencyMs": {
+                "Median": 183.9238,
+                "P95": 218.1113,
+                "Min": 147.5758,
+                "Max": 225.971,
+                "Samples": [
+                  151.1271,
+                  147.5758,
+                  149.0601,
+                  155.3637,
+                  172.4689,
+                  161.1968,
+                  182.7032,
+                  194.4626,
+                  189.1452,
+                  200.9337,
+                  200.6577,
+                  218.1113,
+                  183.9238,
+                  165.8882,
+                  163.6648,
+                  208.3336,
+                  201.6124,
+                  210.2565,
+                  225.971,
+                  211.0534,
+                  190.4975,
+                  166.8899,
+                  167.4637,
+                  190.3657,
+                  174.3019
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-fallback-managed-time",
+              "Plan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "173|0|CORRELATED SCALAR SUBQUERY 1",
+                "178|173|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "196|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 7548,
+              "Fingerprint": "01AF57DE66FFC4FD36B5E8FC77307944C2B6BDE319A96D9614CF26E7C527C246",
+              "LatencyMs": {
+                "Median": 132.3071,
+                "P95": 146.1679,
+                "Min": 123.3376,
+                "Max": 152.0241,
+                "Samples": [
+                  146.1679,
+                  132.3071,
+                  133.0178,
+                  145.8182,
+                  134.5044,
+                  130.7367,
+                  133.0697,
+                  133.4183,
+                  123.3376,
+                  136.8645,
+                  126.7443,
+                  128.7944,
+                  129.2218,
+                  130.105,
+                  133.7155,
+                  130.8219,
+                  126.015,
+                  127.7596,
+                  128.1315,
+                  129.0815,
+                  139.3598,
+                  152.0241,
+                  134.5244,
+                  128.3311,
+                  132.8138
+                ]
+              }
+            }
+          ],
+          "Writes": [
+            {
+              "Statements": 2000,
+              "TransactionSize": 2000,
+              "LatencyMs": {
+                "Median": 100.6896,
+                "P95": 121.0289,
+                "Min": 94.802,
+                "Max": 121.0289,
+                "Samples": [
+                  121.0289,
+                  99.3648,
+                  100.7853,
+                  100.6896,
+                  94.802
+                ]
+              },
+              "WalBytes": [
+                8054632,
+                7473712,
+                7448992,
+                7448992,
+                7448992
+              ]
+            },
+            {
+              "Statements": 2000,
+              "TransactionSize": 1,
+              "LatencyMs": {
+                "Median": 1308.0985,
+                "P95": 1466.9643,
+                "Min": 1290.5996,
+                "Max": 1466.9643,
+                "Samples": [
+                  1466.9643,
+                  1290.5996,
+                  1308.0985,
+                  1293.393,
+                  1333.6564
+                ]
+              },
+              "WalBytes": [
+                18214552,
+                23183272,
+                23232712,
+                23273912,
+                23302752
+              ]
+            }
+          ]
+        },
+        {
+          "Name": "updated-desc-id",
+          "IndexSql": "CREATE INDEX candidate_updated_id ON sessions(updated_at DESC,id ASC)",
+          "DatabaseBytesBeforeWrites": 901046272,
+          "Reads": [
+            {
+              "Name": "enumerate-ids-unbounded",
+              "Plan": [
+                "3|0|SCAN sessions USING COVERING INDEX candidate_updated_id"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "BC758108E5E708626FC4820895F9D1F3A2773F7619304483ECC2FAA691AF08BF",
+              "LatencyMs": {
+                "Median": 5.1849,
+                "P95": 6.5786,
+                "Min": 5.0693,
+                "Max": 7.9867,
+                "Samples": [
+                  5.7155,
+                  5.3224,
+                  5.3134,
+                  5.2139,
+                  5.1849,
+                  5.2781,
+                  7.9867,
+                  5.2208,
+                  5.1135,
+                  5.1544,
+                  5.1366,
+                  5.0693,
+                  6.5786,
+                  5.1094,
+                  5.0718,
+                  5.0901,
+                  5.1233,
+                  5.4795,
+                  5.1417,
+                  5.1275,
+                  5.3264,
+                  5.2326,
+                  5.1897,
+                  5.1262,
+                  5.1111
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX candidate_updated_id",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "CEC43CF5CC22DF631691C32FCC345C11C3F4C8CD3A79F47A3F9B96B3538D8873",
+              "LatencyMs": {
+                "Median": 52.521,
+                "P95": 59.0984,
+                "Min": 49.8827,
+                "Max": 61.4782,
+                "Samples": [
+                  52.1076,
+                  53.8122,
+                  58.6247,
+                  53.1628,
+                  51.6674,
+                  49.8827,
+                  50.119,
+                  51.3149,
+                  55.3981,
+                  55.0898,
+                  56.1805,
+                  51.4743,
+                  51.2121,
+                  52.7112,
+                  52.0906,
+                  52.3477,
+                  51.8685,
+                  52.521,
+                  51.8714,
+                  52.2787,
+                  56.7154,
+                  61.4782,
+                  59.0984,
+                  57.0333,
+                  58.3547
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50-offset5000",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX candidate_updated_id",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "958236FCA72384D07A5A40ADCD21B8F5E6DAF5B7386DBF4AE783E893766126A5",
+              "LatencyMs": {
+                "Median": 55.8726,
+                "P95": 60.4894,
+                "Min": 53.4446,
+                "Max": 63.2777,
+                "Samples": [
+                  54.452,
+                  55.1568,
+                  55.6823,
+                  60.4894,
+                  57.6768,
+                  53.4446,
+                  56.2081,
+                  56.4404,
+                  54.5826,
+                  54.983,
+                  58.8744,
+                  54.8854,
+                  55.8726,
+                  55.2123,
+                  54.5735,
+                  54.3855,
+                  53.9896,
+                  59.9971,
+                  57.7808,
+                  56.0968,
+                  54.8847,
+                  58.0284,
+                  58.5074,
+                  63.2777,
+                  59.973
+                ]
+              }
+            },
+            {
+              "Name": "summaries-unbounded-managed-time",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "44|0|SCAN s USING INDEX candidate_updated_id",
+                "58|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "74D8C2358A40C3C1748A85D3331405E4C7E16002F45F402723927CEC41D40735",
+              "LatencyMs": {
+                "Median": 207.6616,
+                "P95": 244.648,
+                "Min": 188.5943,
+                "Max": 245.187,
+                "Samples": [
+                  210.1615,
+                  245.187,
+                  205.1117,
+                  244.648,
+                  226.2282,
+                  201.8544,
+                  240.6037,
+                  212.5861,
+                  220.5305,
+                  224.646,
+                  191.043,
+                  196.3343,
+                  188.5943,
+                  221.0133,
+                  205.8909,
+                  207.474,
+                  193.3805,
+                  207.8441,
+                  198.0903,
+                  207.6616,
+                  193.9093,
+                  210.492,
+                  205.5619,
+                  203.7446,
+                  211.5424
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "8CA78D64F246CE31E15A241A1640F1C5EBD5E47E3B3C6558C3833F4CC7E730A5",
+              "LatencyMs": {
+                "Median": 69.8137,
+                "P95": 86.2154,
+                "Min": 59.5973,
+                "Max": 101.453,
+                "Samples": [
+                  65.2846,
+                  66.597,
+                  64.7867,
+                  75.1386,
+                  81.3992,
+                  86.2154,
+                  75.9761,
+                  60.6511,
+                  59.5973,
+                  62.7125,
+                  69.3766,
+                  69.8137,
+                  66.7956,
+                  69.5303,
+                  69.4806,
+                  84.2903,
+                  65.839,
+                  67.5222,
+                  72.0368,
+                  69.9418,
+                  77.3247,
+                  78.8903,
+                  84.3679,
+                  74.8024,
+                  101.453
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-all-200",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "39|3|USE TEMP B-TREE FOR ORDER BY",
+                "51|0|SCAN b",
+                "59|0|CORRELATED SCALAR SUBQUERY 2",
+                "64|59|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "81|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 200,
+              "Fingerprint": "C493F336C8CD0DC245F67B9D34A2D1C53F3DDD42281D936BB03BA8313E4D24E5",
+              "LatencyMs": {
+                "Median": 45.9841,
+                "P95": 54.6847,
+                "Min": 40.0718,
+                "Max": 55.9274,
+                "Samples": [
+                  44.5657,
+                  41.6799,
+                  42.1806,
+                  45.9841,
+                  42.9985,
+                  55.9274,
+                  49.532,
+                  46.3235,
+                  52.8781,
+                  50.3987,
+                  45.1491,
+                  44.0414,
+                  47.9552,
+                  41.7555,
+                  48.529,
+                  44.9593,
+                  40.0718,
+                  41.9723,
+                  43.9912,
+                  44.4651,
+                  53.3883,
+                  54.6847,
+                  48.9749,
+                  52.044,
+                  50.9967
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "A970C22EBE5D975221E61BF2DCB017115E8C63C156C8BBE629E7F9506478B5C1",
+              "LatencyMs": {
+                "Median": 71.3501,
+                "P95": 84.7499,
+                "Min": 66.9894,
+                "Max": 85.7751,
+                "Samples": [
+                  68.0824,
+                  67.2321,
+                  67.5504,
+                  75.6066,
+                  85.7751,
+                  66.9894,
+                  69.9674,
+                  69.6547,
+                  72.1067,
+                  73.0798,
+                  71.3501,
+                  74.9099,
+                  77.5086,
+                  73.3089,
+                  74.6651,
+                  71.6617,
+                  69.3406,
+                  68.4627,
+                  82.649,
+                  69.1506,
+                  84.7499,
+                  76.5225,
+                  68.4908,
+                  68.6274,
+                  68.9278
+                ]
+              }
+            },
+            {
+              "Name": "page-single-sparse-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 2,
+              "Fingerprint": "F4F2FEC174D36EC305ED924CD39BA83F6C5D29EF0FECA0A4BD9D0FCB2C26B171",
+              "LatencyMs": {
+                "Median": 0.1235,
+                "P95": 0.1759,
+                "Min": 0.1193,
+                "Max": 0.1896,
+                "Samples": [
+                  0.1403,
+                  0.1305,
+                  0.1254,
+                  0.1318,
+                  0.1274,
+                  0.1286,
+                  0.1208,
+                  0.1235,
+                  0.121,
+                  0.1223,
+                  0.1219,
+                  0.1234,
+                  0.1759,
+                  0.1301,
+                  0.1659,
+                  0.1245,
+                  0.1193,
+                  0.1193,
+                  0.1275,
+                  0.1896,
+                  0.1227,
+                  0.1211,
+                  0.1204,
+                  0.1207,
+                  0.1204
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "430D3A0A4682BCA24FC8AD1B89CB45F450EEEA0F40499578C01E7B040EBD808E",
+              "LatencyMs": {
+                "Median": 119.2966,
+                "P95": 147.065,
+                "Min": 112.7908,
+                "Max": 155.1152,
+                "Samples": [
+                  121.3893,
+                  118.093,
+                  121.5479,
+                  141.3068,
+                  138.0207,
+                  122.7336,
+                  112.7908,
+                  115.6426,
+                  117.3817,
+                  114.8915,
+                  117.9471,
+                  118.9147,
+                  117.5408,
+                  117.4814,
+                  116.3477,
+                  147.065,
+                  117.9913,
+                  119.2966,
+                  144.7696,
+                  128.6296,
+                  155.1152,
+                  123.7691,
+                  122.8269,
+                  118.6337,
+                  129.1414
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "E748AD5C26C8E1B9482CB5F15485FEFCE8D0E4A60B175A3683CFB39B5975DB0C",
+              "LatencyMs": {
+                "Median": 131.7952,
+                "P95": 159.1568,
+                "Min": 116.7807,
+                "Max": 162.7734,
+                "Samples": [
+                  124.1876,
+                  132.5533,
+                  153.1756,
+                  131.2177,
+                  116.7807,
+                  159.1568,
+                  152.2581,
+                  121.397,
+                  122.0146,
+                  137.1136,
+                  128.1092,
+                  123.4428,
+                  125.4132,
+                  127.732,
+                  123.1387,
+                  120.1317,
+                  132.2264,
+                  162.7734,
+                  124.4129,
+                  137.8137,
+                  145.9411,
+                  140.3089,
+                  131.7952,
+                  145.4752,
+                  145.795
+                ]
+              }
+            },
+            {
+              "Name": "page-search4000-all-500",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "12046|3|USE TEMP B-TREE FOR ORDER BY",
+                "12058|0|SCAN b",
+                "12066|0|CORRELATED SCALAR SUBQUERY 2",
+                "12071|12066|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "12088|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 500,
+              "Fingerprint": "C93650895570787B962C6A778425E53631BF6CE879E59BA855838BCB9205CF5E",
+              "LatencyMs": {
+                "Median": 357.7079,
+                "P95": 459.5298,
+                "Min": 337.7161,
+                "Max": 462.3218,
+                "Samples": [
+                  362.1374,
+                  349.9925,
+                  347.2495,
+                  362.35,
+                  462.3218,
+                  459.5298,
+                  377.0249,
+                  352.8099,
+                  372.8224,
+                  389.1425,
+                  337.7161,
+                  353.3599,
+                  344.6228,
+                  344.0033,
+                  340.7563,
+                  352.1654,
+                  359.6245,
+                  357.7079,
+                  354.9344,
+                  365.8464,
+                  373.7672,
+                  343.5896,
+                  359.99,
+                  361.5081,
+                  355.206
+                ]
+              }
+            },
+            {
+              "Name": "page-global-fallback-active",
+              "Plan": [
+                "4|0|SCAN s USING INDEX candidate_updated_id",
+                "45|0|CORRELATED SCALAR SUBQUERY 1",
+                "50|45|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)"
+              ],
+              "CountPlan": [],
+              "Rows": 13714,
+              "Fingerprint": "5AEA6413C9014180B5B16C388C315ECE9619F65FD467407C5C71DF64C54CF788",
+              "LatencyMs": {
+                "Median": 240.7204,
+                "P95": 286.3608,
+                "Min": 215.2706,
+                "Max": 286.6081,
+                "Samples": [
+                  250.3045,
+                  240.4933,
+                  279.1222,
+                  248.8123,
+                  242.3458,
+                  228.6607,
+                  235.6082,
+                  240.7204,
+                  286.3608,
+                  272.1503,
+                  279.0827,
+                  264.1307,
+                  230.3204,
+                  252.7058,
+                  286.6081,
+                  234.1066,
+                  223.7123,
+                  221.8309,
+                  221.6813,
+                  215.2706,
+                  219.4613,
+                  228.2405,
+                  225.3204,
+                  243.7849,
+                  244.5622
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-fallback-managed-time",
+              "Plan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "173|0|CORRELATED SCALAR SUBQUERY 1",
+                "178|173|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "196|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 7548,
+              "Fingerprint": "01AF57DE66FFC4FD36B5E8FC77307944C2B6BDE319A96D9614CF26E7C527C246",
+              "LatencyMs": {
+                "Median": 159.3184,
+                "P95": 191.6163,
+                "Min": 133.7298,
+                "Max": 198.2841,
+                "Samples": [
+                  155.9245,
+                  159.3184,
+                  198.2841,
+                  166.1336,
+                  191.6163,
+                  167.2742,
+                  137.5918,
+                  153.0383,
+                  137.1204,
+                  166.1464,
+                  170.4574,
+                  177.1022,
+                  149.7318,
+                  168.1418,
+                  159.3978,
+                  133.7298,
+                  138.6415,
+                  140.4929,
+                  144.8161,
+                  161.9486,
+                  168.346,
+                  161.1299,
+                  134.0849,
+                  134.5058,
+                  137.0205
+                ]
+              }
+            }
+          ],
+          "Writes": [
+            {
+              "Statements": 2000,
+              "TransactionSize": 2000,
+              "LatencyMs": {
+                "Median": 70.6255,
+                "P95": 159.6295,
+                "Min": 67.3086,
+                "Max": 159.6295,
+                "Samples": [
+                  159.6295,
+                  84.5396,
+                  70.6255,
+                  68.4476,
+                  67.3086
+                ]
+              },
+              "WalBytes": [
+                8112312,
+                6830992,
+                6830992,
+                6830992,
+                6826872
+              ]
+            },
+            {
+              "Statements": 2000,
+              "TransactionSize": 1,
+              "LatencyMs": {
+                "Median": 1234.0515,
+                "P95": 1412.1822,
+                "Min": 1136.8402,
+                "Max": 1412.1822,
+                "Samples": [
+                  1136.8402,
+                  1412.1822,
+                  1293.1582,
+                  1234.0515,
+                  1219.8093
+                ]
+              },
+              "WalBytes": [
+                22610592,
+                39300712,
+                39613832,
+                39502592,
+                39609712
+              ]
+            }
+          ]
+        },
+        {
+          "Name": "updated-desc",
+          "IndexSql": "CREATE INDEX candidate_updated ON sessions(updated_at DESC)",
+          "DatabaseBytesBeforeWrites": 900485120,
+          "Reads": [
+            {
+              "Name": "enumerate-ids-unbounded",
+              "Plan": [
+                "4|0|SCAN sessions USING INDEX candidate_updated"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "BC758108E5E708626FC4820895F9D1F3A2773F7619304483ECC2FAA691AF08BF",
+              "LatencyMs": {
+                "Median": 114.6124,
+                "P95": 167.5594,
+                "Min": 97.2397,
+                "Max": 186.7007,
+                "Samples": [
+                  121.4235,
+                  118.9796,
+                  186.7007,
+                  167.5594,
+                  135.5743,
+                  159.132,
+                  124.6793,
+                  121.5548,
+                  114.3456,
+                  100.038,
+                  114.6124,
+                  122.2635,
+                  98.4014,
+                  103.7033,
+                  99.5631,
+                  99.0078,
+                  123.2072,
+                  127.0553,
+                  112.932,
+                  106.1159,
+                  102.0886,
+                  119.6472,
+                  97.2397,
+                  99.9993,
+                  97.8976
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX candidate_updated",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "101|0|USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "CEC43CF5CC22DF631691C32FCC345C11C3F4C8CD3A79F47A3F9B96B3538D8873",
+              "LatencyMs": {
+                "Median": 51.2916,
+                "P95": 59.0608,
+                "Min": 48.7851,
+                "Max": 62.1956,
+                "Samples": [
+                  50.1949,
+                  51.7347,
+                  49.8685,
+                  49.8347,
+                  51.1395,
+                  51.4325,
+                  51.8085,
+                  50.5881,
+                  50.5835,
+                  51.9017,
+                  50.9219,
+                  51.1726,
+                  53.9715,
+                  51.4766,
+                  50.2411,
+                  50.0347,
+                  51.6632,
+                  51.2916,
+                  52.1706,
+                  49.8553,
+                  48.7851,
+                  51.7801,
+                  62.1956,
+                  59.0608,
+                  58.2504
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50-offset5000",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX candidate_updated",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "101|0|USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "958236FCA72384D07A5A40ADCD21B8F5E6DAF5B7386DBF4AE783E893766126A5",
+              "LatencyMs": {
+                "Median": 90.5822,
+                "P95": 104.0512,
+                "Min": 83.7925,
+                "Max": 105.2036,
+                "Samples": [
+                  88.9596,
+                  88.5055,
+                  87.7643,
+                  83.7925,
+                  87.1084,
+                  85.9591,
+                  90.2041,
+                  86.8049,
+                  90.5822,
+                  104.0512,
+                  100.2589,
+                  88.9437,
+                  88.2699,
+                  96.4244,
+                  87.5919,
+                  86.4848,
+                  103.9011,
+                  97.2221,
+                  94.0065,
+                  97.1483,
+                  92.4308,
+                  96.5048,
+                  97.8203,
+                  102.8431,
+                  105.2036
+                ]
+              }
+            },
+            {
+              "Name": "summaries-unbounded-managed-time",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "44|0|SCAN s USING INDEX candidate_updated",
+                "58|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "89|0|USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "74D8C2358A40C3C1748A85D3331405E4C7E16002F45F402723927CEC41D40735",
+              "LatencyMs": {
+                "Median": 223.9288,
+                "P95": 241.411,
+                "Min": 191.4897,
+                "Max": 251.2139,
+                "Samples": [
+                  205.5751,
+                  223.6386,
+                  251.2139,
+                  235.0665,
+                  229.0593,
+                  223.9288,
+                  207.602,
+                  225.5876,
+                  215.0321,
+                  241.411,
+                  220.4068,
+                  215.9326,
+                  205.457,
+                  203.7002,
+                  218.6316,
+                  230.3929,
+                  203.6885,
+                  230.6379,
+                  239.0031,
+                  229.2482,
+                  236.4623,
+                  229.8036,
+                  236.3191,
+                  216.7766,
+                  191.4897
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "8CA78D64F246CE31E15A241A1640F1C5EBD5E47E3B3C6558C3833F4CC7E730A5",
+              "LatencyMs": {
+                "Median": 71.137,
+                "P95": 89.4155,
+                "Min": 60.5921,
+                "Max": 96.2995,
+                "Samples": [
+                  60.5921,
+                  60.899,
+                  65.0555,
+                  64.626,
+                  71.137,
+                  71.4305,
+                  68.9288,
+                  79.4858,
+                  81.1244,
+                  80.9253,
+                  82.2222,
+                  83.961,
+                  88.2545,
+                  96.2995,
+                  81.0449,
+                  66.0596,
+                  61.7462,
+                  62.4133,
+                  62.3163,
+                  89.4155,
+                  78.1635,
+                  74.3461,
+                  63.6663,
+                  68.3402,
+                  64.4835
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-all-200",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "39|3|USE TEMP B-TREE FOR ORDER BY",
+                "51|0|SCAN b",
+                "59|0|CORRELATED SCALAR SUBQUERY 2",
+                "64|59|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "81|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 200,
+              "Fingerprint": "C493F336C8CD0DC245F67B9D34A2D1C53F3DDD42281D936BB03BA8313E4D24E5",
+              "LatencyMs": {
+                "Median": 50.2071,
+                "P95": 66.9441,
+                "Min": 46.6912,
+                "Max": 68.9362,
+                "Samples": [
+                  55.8859,
+                  47.8898,
+                  47.9816,
+                  47.9393,
+                  68.9362,
+                  48.0242,
+                  50.3788,
+                  62.7786,
+                  66.9441,
+                  50.5546,
+                  49.5748,
+                  46.6912,
+                  52.1248,
+                  53.231,
+                  51.9082,
+                  50.2071,
+                  52.3418,
+                  51.1446,
+                  55.2753,
+                  49.2793,
+                  48.9907,
+                  47.5447,
+                  49.1061,
+                  48.2068,
+                  47.8703
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "A970C22EBE5D975221E61BF2DCB017115E8C63C156C8BBE629E7F9506478B5C1",
+              "LatencyMs": {
+                "Median": 69.2363,
+                "P95": 83.3018,
+                "Min": 63.7485,
+                "Max": 84.5678,
+                "Samples": [
+                  65.0397,
+                  70.1416,
+                  69.2363,
+                  68.166,
+                  64.5562,
+                  70.7074,
+                  72.6551,
+                  80.7415,
+                  70.4171,
+                  66.0743,
+                  69.316,
+                  69.2851,
+                  70.4877,
+                  84.5678,
+                  83.3018,
+                  78.2863,
+                  65.097,
+                  64.1433,
+                  66.3652,
+                  66.7429,
+                  66.1491,
+                  69.2344,
+                  65.6118,
+                  70.1562,
+                  63.7485
+                ]
+              }
+            },
+            {
+              "Name": "page-single-sparse-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 2,
+              "Fingerprint": "F4F2FEC174D36EC305ED924CD39BA83F6C5D29EF0FECA0A4BD9D0FCB2C26B171",
+              "LatencyMs": {
+                "Median": 0.1261,
+                "P95": 0.1915,
+                "Min": 0.1191,
+                "Max": 0.2357,
+                "Samples": [
+                  0.128,
+                  0.1269,
+                  0.1252,
+                  0.1278,
+                  0.1261,
+                  0.1349,
+                  0.1434,
+                  0.2357,
+                  0.1336,
+                  0.1374,
+                  0.128,
+                  0.1234,
+                  0.1247,
+                  0.1203,
+                  0.1213,
+                  0.1222,
+                  0.1213,
+                  0.1215,
+                  0.1193,
+                  0.1191,
+                  0.1191,
+                  0.1577,
+                  0.1915,
+                  0.1295,
+                  0.1198
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "430D3A0A4682BCA24FC8AD1B89CB45F450EEEA0F40499578C01E7B040EBD808E",
+              "LatencyMs": {
+                "Median": 117.6367,
+                "P95": 149.4011,
+                "Min": 103.0164,
+                "Max": 154.9068,
+                "Samples": [
+                  135.4576,
+                  106.7377,
+                  103.0164,
+                  106.3044,
+                  154.9068,
+                  139.3449,
+                  132.184,
+                  140.0293,
+                  111.8165,
+                  116.359,
+                  111.9331,
+                  108.733,
+                  107.2527,
+                  111.3993,
+                  105.5294,
+                  122.2702,
+                  122.671,
+                  109.4738,
+                  109.6406,
+                  129.9452,
+                  134.2161,
+                  123.1758,
+                  130.2687,
+                  149.4011,
+                  117.6367
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "E748AD5C26C8E1B9482CB5F15485FEFCE8D0E4A60B175A3683CFB39B5975DB0C",
+              "LatencyMs": {
+                "Median": 137.1613,
+                "P95": 166.9066,
+                "Min": 114.8797,
+                "Max": 168.0973,
+                "Samples": [
+                  143.905,
+                  136.7078,
+                  147.0608,
+                  166.9066,
+                  142.6463,
+                  127.1518,
+                  155.7862,
+                  168.0973,
+                  145.5106,
+                  147.0273,
+                  137.1613,
+                  126.5356,
+                  122.1035,
+                  117.6,
+                  116.5854,
+                  138.7702,
+                  143.231,
+                  151.9372,
+                  131.5035,
+                  114.8797,
+                  142.3934,
+                  120.6215,
+                  134.8513,
+                  127.3482,
+                  119.4787
+                ]
+              }
+            },
+            {
+              "Name": "page-search4000-all-500",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "12046|3|USE TEMP B-TREE FOR ORDER BY",
+                "12058|0|SCAN b",
+                "12066|0|CORRELATED SCALAR SUBQUERY 2",
+                "12071|12066|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "12088|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 500,
+              "Fingerprint": "C93650895570787B962C6A778425E53631BF6CE879E59BA855838BCB9205CF5E",
+              "LatencyMs": {
+                "Median": 359.6549,
+                "P95": 426.9075,
+                "Min": 331.4539,
+                "Max": 562.6135,
+                "Samples": [
+                  333.1646,
+                  358.6729,
+                  352.3438,
+                  334.9177,
+                  378.1836,
+                  562.6135,
+                  411.3444,
+                  366.9653,
+                  426.9075,
+                  357.381,
+                  350.0998,
+                  361.8417,
+                  344.1847,
+                  370.1235,
+                  331.4539,
+                  368.9961,
+                  363.0282,
+                  384.1219,
+                  368.2343,
+                  371.2128,
+                  351.5398,
+                  359.6549,
+                  347.4423,
+                  346.3506,
+                  341.0055
+                ]
+              }
+            },
+            {
+              "Name": "page-global-fallback-active",
+              "Plan": [
+                "4|0|SCAN s USING INDEX candidate_updated",
+                "44|0|CORRELATED SCALAR SUBQUERY 1",
+                "49|44|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "72|0|USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 13714,
+              "Fingerprint": "5AEA6413C9014180B5B16C388C315ECE9619F65FD467407C5C71DF64C54CF788",
+              "LatencyMs": {
+                "Median": 241.0371,
+                "P95": 286.3035,
+                "Min": 223.6879,
+                "Max": 286.7534,
+                "Samples": [
+                  264.474,
+                  286.3035,
+                  286.7534,
+                  276.4756,
+                  240.7185,
+                  270.7608,
+                  247.6481,
+                  260.8879,
+                  229.4279,
+                  223.6879,
+                  229.3327,
+                  232.2801,
+                  235.0938,
+                  278.2837,
+                  250.6892,
+                  229.6749,
+                  227.6782,
+                  225.9159,
+                  232.8667,
+                  230.6555,
+                  245.4807,
+                  241.0371,
+                  248.9606,
+                  251.833,
+                  239.5706
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-fallback-managed-time",
+              "Plan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "173|0|CORRELATED SCALAR SUBQUERY 1",
+                "178|173|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "196|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 7548,
+              "Fingerprint": "01AF57DE66FFC4FD36B5E8FC77307944C2B6BDE319A96D9614CF26E7C527C246",
+              "LatencyMs": {
+                "Median": 149.0319,
+                "P95": 201.0888,
+                "Min": 125.4073,
+                "Max": 208.8003,
+                "Samples": [
+                  134.4226,
+                  142.7495,
+                  201.0888,
+                  154.6305,
+                  208.8003,
+                  185.0925,
+                  163.4384,
+                  170.9169,
+                  182.5836,
+                  180.5386,
+                  139.2763,
+                  156.8159,
+                  169.7651,
+                  149.0319,
+                  152.3754,
+                  143.7311,
+                  128.8632,
+                  145.2743,
+                  131.9687,
+                  146.8856,
+                  127.8283,
+                  125.4073,
+                  132.171,
+                  146.5389,
+                  158.2026
+                ]
+              }
+            }
+          ],
+          "Writes": [
+            {
+              "Statements": 2000,
+              "TransactionSize": 2000,
+              "LatencyMs": {
+                "Median": 74.3969,
+                "P95": 149.0621,
+                "Min": 65.3882,
+                "Max": 149.0621,
+                "Samples": [
+                  149.0621,
+                  67.567,
+                  83.1972,
+                  65.3882,
+                  74.3969
+                ]
+              },
+              "WalBytes": [
+                7407792,
+                6690912,
+                6686792,
+                6690912,
+                6690912
+              ]
+            },
+            {
+              "Statements": 2000,
+              "TransactionSize": 1,
+              "LatencyMs": {
+                "Median": 1198.1664,
+                "P95": 1251.3376,
+                "Min": 1180.3991,
+                "Max": 1251.3376,
+                "Samples": [
+                  1185.2038,
+                  1211.212,
+                  1251.3376,
+                  1180.3991,
+                  1198.1664
+                ]
+              },
+              "WalBytes": [
+                19133312,
+                34818152,
+                35444392,
+                35506192,
+                35477352
+              ]
+            }
+          ]
+        },
+        {
+          "Name": "baseline",
+          "IndexSql": null,
+          "DatabaseBytesBeforeWrites": 899772416,
+          "Reads": [
+            {
+              "Name": "enumerate-ids-unbounded",
+              "Plan": [
+                "3|0|SCAN sessions",
+                "10|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "BC758108E5E708626FC4820895F9D1F3A2773F7619304483ECC2FAA691AF08BF",
+              "LatencyMs": {
+                "Median": 52.3255,
+                "P95": 69.9533,
+                "Min": 34.8723,
+                "Max": 75.2507,
+                "Samples": [
+                  47.491,
+                  41.5683,
+                  46.8207,
+                  60.4269,
+                  75.2507,
+                  69.9533,
+                  64.888,
+                  49.5898,
+                  54.9668,
+                  51.0841,
+                  63.026,
+                  50.8055,
+                  63.6662,
+                  47.6047,
+                  61.8124,
+                  52.3255,
+                  42.6288,
+                  53.17,
+                  54.5093,
+                  57.5543,
+                  43.8275,
+                  40.8065,
+                  43.3185,
+                  34.8723,
+                  54.0408
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "93|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "CEC43CF5CC22DF631691C32FCC345C11C3F4C8CD3A79F47A3F9B96B3538D8873",
+              "LatencyMs": {
+                "Median": 190.5391,
+                "P95": 272.3124,
+                "Min": 154.3574,
+                "Max": 319.7079,
+                "Samples": [
+                  265.5986,
+                  319.7079,
+                  256.3316,
+                  234.2874,
+                  272.3124,
+                  184.4328,
+                  174.1978,
+                  194.2804,
+                  197.321,
+                  215.4428,
+                  179.5434,
+                  154.3574,
+                  217.5947,
+                  223.7622,
+                  184.6375,
+                  188.3853,
+                  196.7412,
+                  190.5391,
+                  166.7749,
+                  169.6473,
+                  158.4649,
+                  238.7085,
+                  182.64,
+                  188.6771,
+                  188.5953
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50-offset5000",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "93|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "958236FCA72384D07A5A40ADCD21B8F5E6DAF5B7386DBF4AE783E893766126A5",
+              "LatencyMs": {
+                "Median": 207.5086,
+                "P95": 238.1726,
+                "Min": 187.6226,
+                "Max": 264.7902,
+                "Samples": [
+                  238.1726,
+                  225.4935,
+                  212.6587,
+                  233.9006,
+                  264.7902,
+                  215.9267,
+                  207.5086,
+                  200.6291,
+                  227.5168,
+                  202.8298,
+                  219.0891,
+                  207.0611,
+                  217.8893,
+                  193.8909,
+                  201.5006,
+                  200.3681,
+                  197.4421,
+                  216.8875,
+                  213.8843,
+                  212.7279,
+                  198.1583,
+                  198.9046,
+                  197.3783,
+                  187.6226,
+                  196.2296
+                ]
+              }
+            },
+            {
+              "Name": "summaries-unbounded-managed-time",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "44|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "58|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "82|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "74D8C2358A40C3C1748A85D3331405E4C7E16002F45F402723927CEC41D40735",
+              "LatencyMs": {
+                "Median": 229.2586,
+                "P95": 263.2981,
+                "Min": 205.3268,
+                "Max": 270.0786,
+                "Samples": [
+                  207.9546,
+                  205.3268,
+                  233.0771,
+                  245.0117,
+                  211.604,
+                  214.521,
+                  230.6999,
+                  219.3368,
+                  263.2981,
+                  226.2667,
+                  214.3989,
+                  250.2183,
+                  227.0242,
+                  235.748,
+                  270.0786,
+                  248.2926,
+                  243.5459,
+                  254.2342,
+                  222.6298,
+                  229.2586,
+                  208.6316,
+                  230.79,
+                  213.4801,
+                  235.9805,
+                  206.729
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "8CA78D64F246CE31E15A241A1640F1C5EBD5E47E3B3C6558C3833F4CC7E730A5",
+              "LatencyMs": {
+                "Median": 73.5154,
+                "P95": 81.5265,
+                "Min": 67.7852,
+                "Max": 84.022,
+                "Samples": [
+                  72.6042,
+                  84.022,
+                  76.21,
+                  76.412,
+                  74.4453,
+                  80.1666,
+                  76.242,
+                  78.9076,
+                  72.6791,
+                  72.1349,
+                  67.7852,
+                  69.7669,
+                  81.5265,
+                  81.1712,
+                  72.6107,
+                  69.9928,
+                  67.8913,
+                  77.1254,
+                  68.9295,
+                  73.5351,
+                  71.4402,
+                  70.089,
+                  71.1005,
+                  74.5719,
+                  73.5154
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-all-200",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "39|3|USE TEMP B-TREE FOR ORDER BY",
+                "51|0|SCAN b",
+                "59|0|CORRELATED SCALAR SUBQUERY 2",
+                "64|59|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "81|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 200,
+              "Fingerprint": "C493F336C8CD0DC245F67B9D34A2D1C53F3DDD42281D936BB03BA8313E4D24E5",
+              "LatencyMs": {
+                "Median": 48.6333,
+                "P95": 53.9109,
+                "Min": 42.6021,
+                "Max": 54.2194,
+                "Samples": [
+                  49.5715,
+                  48.6648,
+                  51.975,
+                  48.6477,
+                  48.7563,
+                  48.6333,
+                  48.6181,
+                  53.9109,
+                  52.0297,
+                  49.253,
+                  48.8214,
+                  47.692,
+                  42.6021,
+                  43.0856,
+                  44.1418,
+                  45.4047,
+                  47.0771,
+                  54.2194,
+                  48.299,
+                  48.1945,
+                  48.42,
+                  51.677,
+                  51.2462,
+                  45.8447,
+                  43.8218
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "A970C22EBE5D975221E61BF2DCB017115E8C63C156C8BBE629E7F9506478B5C1",
+              "LatencyMs": {
+                "Median": 92.1064,
+                "P95": 116.2687,
+                "Min": 78.8064,
+                "Max": 117.6889,
+                "Samples": [
+                  108.8068,
+                  102.1474,
+                  102.4843,
+                  86.3175,
+                  97.5369,
+                  114.2034,
+                  99.3571,
+                  87.7054,
+                  94.4406,
+                  117.6889,
+                  116.2687,
+                  90.172,
+                  84.7494,
+                  91.4305,
+                  111.8154,
+                  86.9648,
+                  86.802,
+                  87.9513,
+                  91.0541,
+                  92.6051,
+                  89.0386,
+                  86.0101,
+                  78.8064,
+                  92.1064,
+                  101.9209
+                ]
+              }
+            },
+            {
+              "Name": "page-single-sparse-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 2,
+              "Fingerprint": "F4F2FEC174D36EC305ED924CD39BA83F6C5D29EF0FECA0A4BD9D0FCB2C26B171",
+              "LatencyMs": {
+                "Median": 0.1777,
+                "P95": 0.3592,
+                "Min": 0.1249,
+                "Max": 0.414,
+                "Samples": [
+                  0.2217,
+                  0.2211,
+                  0.2707,
+                  0.2418,
+                  0.1528,
+                  0.1355,
+                  0.1305,
+                  0.1292,
+                  0.1249,
+                  0.1906,
+                  0.132,
+                  0.1517,
+                  0.2148,
+                  0.1719,
+                  0.2349,
+                  0.1957,
+                  0.3592,
+                  0.414,
+                  0.2278,
+                  0.1777,
+                  0.1991,
+                  0.1454,
+                  0.1318,
+                  0.1272,
+                  0.162
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "430D3A0A4682BCA24FC8AD1B89CB45F450EEEA0F40499578C01E7B040EBD808E",
+              "LatencyMs": {
+                "Median": 132.2401,
+                "P95": 154.186,
+                "Min": 112.6531,
+                "Max": 203.6195,
+                "Samples": [
+                  139.7986,
+                  142.8013,
+                  135.0383,
+                  132.2401,
+                  117.6968,
+                  117.5279,
+                  121.6386,
+                  114.4266,
+                  131.8043,
+                  146.7952,
+                  143.8264,
+                  154.186,
+                  203.6195,
+                  130.9442,
+                  136.9265,
+                  141.6427,
+                  141.881,
+                  144.9864,
+                  112.6531,
+                  118.1835,
+                  121.9892,
+                  128.2558,
+                  146.3938,
+                  124.9456,
+                  120.7217
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "E748AD5C26C8E1B9482CB5F15485FEFCE8D0E4A60B175A3683CFB39B5975DB0C",
+              "LatencyMs": {
+                "Median": 145.1702,
+                "P95": 164.6723,
+                "Min": 116.4206,
+                "Max": 170.6419,
+                "Samples": [
+                  155.0324,
+                  153.0867,
+                  153.362,
+                  153.1742,
+                  148.5114,
+                  136.8536,
+                  164.6723,
+                  170.6419,
+                  155.5271,
+                  150.9737,
+                  151.1972,
+                  154.0898,
+                  120.7519,
+                  125.3654,
+                  126.4803,
+                  127.7496,
+                  120.1077,
+                  116.4206,
+                  123.5163,
+                  122.5667,
+                  140.5174,
+                  141.2966,
+                  139.9897,
+                  146.0259,
+                  145.1702
+                ]
+              }
+            },
+            {
+              "Name": "page-search4000-all-500",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "12046|3|USE TEMP B-TREE FOR ORDER BY",
+                "12058|0|SCAN b",
+                "12066|0|CORRELATED SCALAR SUBQUERY 2",
+                "12071|12066|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "12088|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 500,
+              "Fingerprint": "C93650895570787B962C6A778425E53631BF6CE879E59BA855838BCB9205CF5E",
+              "LatencyMs": {
+                "Median": 354.5393,
+                "P95": 395.8695,
+                "Min": 333.5292,
+                "Max": 451.0438,
+                "Samples": [
+                  353.6903,
+                  353.9929,
+                  355.635,
+                  335.6437,
+                  370.3468,
+                  379.8996,
+                  363.1754,
+                  359.67,
+                  395.8695,
+                  451.0438,
+                  369.7445,
+                  361.0852,
+                  352.7923,
+                  349.049,
+                  346.3608,
+                  354.5393,
+                  348.3539,
+                  337.0449,
+                  363.8748,
+                  357.5662,
+                  352.5823,
+                  347.3078,
+                  333.5554,
+                  333.5292,
+                  357.0506
+                ]
+              }
+            },
+            {
+              "Name": "page-global-fallback-active",
+              "Plan": [
+                "3|0|SCAN s",
+                "41|0|CORRELATED SCALAR SUBQUERY 1",
+                "46|41|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "63|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 13714,
+              "Fingerprint": "5AEA6413C9014180B5B16C388C315ECE9619F65FD467407C5C71DF64C54CF788",
+              "LatencyMs": {
+                "Median": 178.9427,
+                "P95": 203.4293,
+                "Min": 157.8031,
+                "Max": 203.5986,
+                "Samples": [
+                  196.1008,
+                  195.215,
+                  196.1304,
+                  178.2996,
+                  203.5986,
+                  199.9968,
+                  178.9427,
+                  180.8815,
+                  173.629,
+                  167.6193,
+                  177.3728,
+                  203.4293,
+                  168.3905,
+                  196.5763,
+                  163.3211,
+                  186.9469,
+                  162.2716,
+                  160.8743,
+                  169.197,
+                  182.3076,
+                  184.9506,
+                  169.6639,
+                  160.2495,
+                  157.8031,
+                  179.1341
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-fallback-managed-time",
+              "Plan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "173|0|CORRELATED SCALAR SUBQUERY 1",
+                "178|173|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "196|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 7548,
+              "Fingerprint": "01AF57DE66FFC4FD36B5E8FC77307944C2B6BDE319A96D9614CF26E7C527C246",
+              "LatencyMs": {
+                "Median": 140.3744,
+                "P95": 187.2385,
+                "Min": 123.5425,
+                "Max": 201.5409,
+                "Samples": [
+                  140.1031,
+                  134.6168,
+                  130.3912,
+                  132.4663,
+                  130.3858,
+                  123.5425,
+                  154.2883,
+                  127.4631,
+                  163.3689,
+                  130.1891,
+                  133.5328,
+                  150.2293,
+                  150.4425,
+                  154.9927,
+                  136.2258,
+                  128.9472,
+                  157.2513,
+                  155.2492,
+                  163.0494,
+                  153.6076,
+                  187.2385,
+                  152.5743,
+                  130.3005,
+                  201.5409,
+                  140.3744
+                ]
+              }
+            }
+          ],
+          "Writes": [
+            {
+              "Statements": 2000,
+              "TransactionSize": 2000,
+              "LatencyMs": {
+                "Median": 70.2348,
+                "P95": 72.9383,
+                "Min": 59.0958,
+                "Max": 72.9383,
+                "Samples": [
+                  59.0958,
+                  72.6377,
+                  72.9383,
+                  67.5682,
+                  70.2348
+                ]
+              },
+              "WalBytes": [
+                6521992,
+                6521992,
+                6521992,
+                6521992,
+                6521992
+              ]
+            },
+            {
+              "Statements": 2000,
+              "TransactionSize": 1,
+              "LatencyMs": {
+                "Median": 1069.3114,
+                "P95": 1143.9852,
+                "Min": 990.1787,
+                "Max": 1143.9852,
+                "Samples": [
+                  990.1787,
+                  1086.5296,
+                  1034.1012,
+                  1143.9852,
+                  1069.3114
+                ]
+              },
+              "WalBytes": [
+                8240032,
+                8240032,
+                8240032,
+                8240032,
+                8240032
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "MeasuredAtUtc": "2026-10-14T01:56:44.7394208-07:00",
+      "Method": {
+        "ReadRepeats": 25,
+        "ReadWarmups": 3,
+        "WriteRepeats": 5,
+        "Analyze": false,
+        "ResultParityAcrossCandidates": true,
+        "WriteAutocheckpoint": 0,
+        "CandidateOrder": [
+          "baseline",
+          "updated-desc",
+          "updated-desc-id",
+          "conversation-updated-id"
+        ]
+      },
+      "Results": [
+        {
+          "Name": "baseline",
+          "IndexSql": null,
+          "DatabaseBytesBeforeWrites": 899772416,
+          "Reads": [
+            {
+              "Name": "enumerate-ids-unbounded",
+              "Plan": [
+                "3|0|SCAN sessions",
+                "10|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "BC758108E5E708626FC4820895F9D1F3A2773F7619304483ECC2FAA691AF08BF",
+              "LatencyMs": {
+                "Median": 29.5206,
+                "P95": 40.8947,
+                "Min": 28.0332,
+                "Max": 44.6316,
+                "Samples": [
+                  44.6316,
+                  37.2895,
+                  31.8623,
+                  28.4386,
+                  30.11,
+                  36.0297,
+                  29.5955,
+                  29.0011,
+                  29.5206,
+                  30.6115,
+                  28.8969,
+                  29.2622,
+                  29.113,
+                  29.2463,
+                  28.0332,
+                  28.774,
+                  29.4072,
+                  28.6739,
+                  34.2396,
+                  37.133,
+                  39.6438,
+                  40.8947,
+                  28.3132,
+                  29.5674,
+                  29.4039
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "93|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "CEC43CF5CC22DF631691C32FCC345C11C3F4C8CD3A79F47A3F9B96B3538D8873",
+              "LatencyMs": {
+                "Median": 162.1351,
+                "P95": 210.9247,
+                "Min": 142.7277,
+                "Max": 212.5017,
+                "Samples": [
+                  157.2143,
+                  160.3282,
+                  174.5116,
+                  167.4515,
+                  145.1382,
+                  162.1351,
+                  155.9292,
+                  144.6525,
+                  142.7277,
+                  171.1845,
+                  163.1716,
+                  149.8971,
+                  148.3393,
+                  183.442,
+                  179.5442,
+                  146.8573,
+                  147.1046,
+                  161.5073,
+                  167.6013,
+                  197.6736,
+                  159.3401,
+                  212.5017,
+                  208.4582,
+                  210.9247,
+                  172.2192
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50-offset5000",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "93|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "958236FCA72384D07A5A40ADCD21B8F5E6DAF5B7386DBF4AE783E893766126A5",
+              "LatencyMs": {
+                "Median": 183.4782,
+                "P95": 210.3518,
+                "Min": 162.8934,
+                "Max": 214.2347,
+                "Samples": [
+                  207.8666,
+                  184.2331,
+                  203.47,
+                  210.3518,
+                  179.8993,
+                  180.0131,
+                  183.4782,
+                  180.399,
+                  169.2932,
+                  193.5761,
+                  194.0358,
+                  196.4669,
+                  214.2347,
+                  173.8015,
+                  194.6432,
+                  175.5438,
+                  164.8045,
+                  174.1776,
+                  174.1828,
+                  187.0972,
+                  171.473,
+                  190.0355,
+                  205.1963,
+                  162.8934,
+                  171.1888
+                ]
+              }
+            },
+            {
+              "Name": "summaries-unbounded-managed-time",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "44|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "58|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "82|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "74D8C2358A40C3C1748A85D3331405E4C7E16002F45F402723927CEC41D40735",
+              "LatencyMs": {
+                "Median": 212.878,
+                "P95": 285.7801,
+                "Min": 187.7595,
+                "Max": 323.4305,
+                "Samples": [
+                  196.3631,
+                  199.1658,
+                  241.0834,
+                  285.7801,
+                  323.4305,
+                  239.0993,
+                  237.7113,
+                  204.8048,
+                  212.878,
+                  217.265,
+                  239.3504,
+                  258.3006,
+                  214.7787,
+                  209.5476,
+                  200.5172,
+                  187.7595,
+                  206.8713,
+                  234.7463,
+                  222.5262,
+                  202.8078,
+                  202.5138,
+                  205.3113,
+                  215.5624,
+                  191.2698,
+                  197.8262
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "8CA78D64F246CE31E15A241A1640F1C5EBD5E47E3B3C6558C3833F4CC7E730A5",
+              "LatencyMs": {
+                "Median": 74.2683,
+                "P95": 110.1911,
+                "Min": 59.1144,
+                "Max": 122.9365,
+                "Samples": [
+                  79.5354,
+                  74.2683,
+                  76.2607,
+                  76.332,
+                  75.1824,
+                  77.9468,
+                  77.8189,
+                  93.3197,
+                  75.2544,
+                  71.5512,
+                  78.5517,
+                  66.5983,
+                  66.2052,
+                  63.8517,
+                  64.6445,
+                  70.483,
+                  70.3782,
+                  59.1144,
+                  64.1233,
+                  63.7228,
+                  73.3348,
+                  94.2341,
+                  72.1214,
+                  110.1911,
+                  122.9365
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-all-200",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "39|3|USE TEMP B-TREE FOR ORDER BY",
+                "51|0|SCAN b",
+                "59|0|CORRELATED SCALAR SUBQUERY 2",
+                "64|59|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "81|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 200,
+              "Fingerprint": "C493F336C8CD0DC245F67B9D34A2D1C53F3DDD42281D936BB03BA8313E4D24E5",
+              "LatencyMs": {
+                "Median": 51.9136,
+                "P95": 77.9878,
+                "Min": 39.0127,
+                "Max": 100.4727,
+                "Samples": [
+                  43.6539,
+                  44.4782,
+                  52.6172,
+                  54.5925,
+                  55.8982,
+                  73.7606,
+                  65.7332,
+                  100.4727,
+                  77.9878,
+                  67.7341,
+                  66.9538,
+                  73.4183,
+                  50.8001,
+                  48.5127,
+                  50.4939,
+                  43.8486,
+                  51.9136,
+                  41.3366,
+                  39.6049,
+                  39.0127,
+                  44.5974,
+                  51.9291,
+                  49.1029,
+                  55.9585,
+                  48.5204
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "A970C22EBE5D975221E61BF2DCB017115E8C63C156C8BBE629E7F9506478B5C1",
+              "LatencyMs": {
+                "Median": 69.0827,
+                "P95": 81.9198,
+                "Min": 60.942,
+                "Max": 87.2949,
+                "Samples": [
+                  74.7341,
+                  69.0526,
+                  71.8048,
+                  87.2949,
+                  80.7055,
+                  81.5907,
+                  74.0469,
+                  64.2733,
+                  70.2154,
+                  81.9198,
+                  76.266,
+                  68.2744,
+                  64.8514,
+                  81.3546,
+                  69.0827,
+                  65.7271,
+                  63.1289,
+                  61.5986,
+                  60.942,
+                  62.674,
+                  63.4481,
+                  61.0195,
+                  61.1824,
+                  75.2645,
+                  79.109
+                ]
+              }
+            },
+            {
+              "Name": "page-single-sparse-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 2,
+              "Fingerprint": "F4F2FEC174D36EC305ED924CD39BA83F6C5D29EF0FECA0A4BD9D0FCB2C26B171",
+              "LatencyMs": {
+                "Median": 0.135,
+                "P95": 0.2024,
+                "Min": 0.1182,
+                "Max": 0.2697,
+                "Samples": [
+                  0.1471,
+                  0.1623,
+                  0.187,
+                  0.155,
+                  0.1425,
+                  0.1259,
+                  0.2024,
+                  0.135,
+                  0.1251,
+                  0.1245,
+                  0.1256,
+                  0.1223,
+                  0.1182,
+                  0.1211,
+                  0.1876,
+                  0.1388,
+                  0.2697,
+                  0.1587,
+                  0.1378,
+                  0.1211,
+                  0.1568,
+                  0.1296,
+                  0.1299,
+                  0.12,
+                  0.1218
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "430D3A0A4682BCA24FC8AD1B89CB45F450EEEA0F40499578C01E7B040EBD808E",
+              "LatencyMs": {
+                "Median": 125.468,
+                "P95": 144.0481,
+                "Min": 103.42,
+                "Max": 150.0202,
+                "Samples": [
+                  124.4898,
+                  109.3549,
+                  106.8977,
+                  125.468,
+                  122.5836,
+                  130.1542,
+                  108.4657,
+                  117.2803,
+                  128.7249,
+                  123.1465,
+                  120.7881,
+                  139.0733,
+                  137.31,
+                  136.3708,
+                  132.9829,
+                  134.0344,
+                  119.2171,
+                  110.791,
+                  129.025,
+                  132.304,
+                  136.8067,
+                  144.0481,
+                  150.0202,
+                  108.6382,
+                  103.42
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "E748AD5C26C8E1B9482CB5F15485FEFCE8D0E4A60B175A3683CFB39B5975DB0C",
+              "LatencyMs": {
+                "Median": 132.0674,
+                "P95": 158.8043,
+                "Min": 114.1682,
+                "Max": 159.4295,
+                "Samples": [
+                  121.7464,
+                  124.3743,
+                  125.0434,
+                  118.4273,
+                  139.6542,
+                  118.599,
+                  118.4033,
+                  114.1682,
+                  143.7909,
+                  147.3591,
+                  139.9826,
+                  159.4295,
+                  137.0638,
+                  115.0571,
+                  116.0764,
+                  143.2829,
+                  149.0851,
+                  138.1672,
+                  158.8043,
+                  133.4126,
+                  132.0674,
+                  119.6425,
+                  122.3886,
+                  117.3096,
+                  136.4839
+                ]
+              }
+            },
+            {
+              "Name": "page-search4000-all-500",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "12046|3|USE TEMP B-TREE FOR ORDER BY",
+                "12058|0|SCAN b",
+                "12066|0|CORRELATED SCALAR SUBQUERY 2",
+                "12071|12066|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "12088|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 500,
+              "Fingerprint": "C93650895570787B962C6A778425E53631BF6CE879E59BA855838BCB9205CF5E",
+              "LatencyMs": {
+                "Median": 356.2449,
+                "P95": 376.0023,
+                "Min": 332.484,
+                "Max": 382.1799,
+                "Samples": [
+                  360.4295,
+                  339.9157,
+                  364.3832,
+                  350.6348,
+                  352.5918,
+                  356.2449,
+                  338.9327,
+                  369.3839,
+                  365.7112,
+                  353.7946,
+                  374.3654,
+                  343.2501,
+                  362.9686,
+                  360.7392,
+                  382.1799,
+                  340.4303,
+                  355.714,
+                  337.697,
+                  367.1096,
+                  376.0023,
+                  352.4316,
+                  371.6125,
+                  361.6668,
+                  353.4095,
+                  332.484
+                ]
+              }
+            },
+            {
+              "Name": "page-global-fallback-active",
+              "Plan": [
+                "3|0|SCAN s",
+                "41|0|CORRELATED SCALAR SUBQUERY 1",
+                "46|41|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "63|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 13714,
+              "Fingerprint": "5AEA6413C9014180B5B16C388C315ECE9619F65FD467407C5C71DF64C54CF788",
+              "LatencyMs": {
+                "Median": 182.6656,
+                "P95": 269.5784,
+                "Min": 158.0026,
+                "Max": 2749.4604,
+                "Samples": [
+                  175.9554,
+                  161.9576,
+                  160.4506,
+                  196.8515,
+                  172.5732,
+                  182.6656,
+                  189.9141,
+                  269.5784,
+                  224.2368,
+                  182.7071,
+                  2749.4604,
+                  186.8233,
+                  194.3855,
+                  181.6415,
+                  184.8561,
+                  181.4947,
+                  173.4935,
+                  169.5825,
+                  158.0026,
+                  190.2349,
+                  165.1094,
+                  218.0461,
+                  193.1359,
+                  175.2814,
+                  173.1427
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-fallback-managed-time",
+              "Plan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "173|0|CORRELATED SCALAR SUBQUERY 1",
+                "178|173|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "196|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 7548,
+              "Fingerprint": "01AF57DE66FFC4FD36B5E8FC77307944C2B6BDE319A96D9614CF26E7C527C246",
+              "LatencyMs": {
+                "Median": 142.5163,
+                "P95": 164.6656,
+                "Min": 125.2588,
+                "Max": 171.1526,
+                "Samples": [
+                  145.1625,
+                  127.2452,
+                  131.4978,
+                  130.3975,
+                  157.8062,
+                  156.3792,
+                  154.4305,
+                  142.5163,
+                  134.3708,
+                  135.2477,
+                  144.4133,
+                  164.6656,
+                  160.6093,
+                  171.1526,
+                  163.4864,
+                  129.1425,
+                  143.8044,
+                  136.0822,
+                  158.2565,
+                  147.956,
+                  125.2588,
+                  132.5419,
+                  136.1864,
+                  140.2273,
+                  136.9956
+                ]
+              }
+            }
+          ],
+          "Writes": [
+            {
+              "Statements": 2000,
+              "TransactionSize": 2000,
+              "LatencyMs": {
+                "Median": 61.8999,
+                "P95": 63.5834,
+                "Min": 59.8884,
+                "Max": 63.5834,
+                "Samples": [
+                  63.5834,
+                  60.6786,
+                  62.4359,
+                  61.8999,
+                  59.8884
+                ]
+              },
+              "WalBytes": [
+                6521992,
+                6521992,
+                6521992,
+                6521992,
+                6521992
+              ]
+            },
+            {
+              "Statements": 2000,
+              "TransactionSize": 1,
+              "LatencyMs": {
+                "Median": 1078.8111,
+                "P95": 1161.1033,
+                "Min": 1052.4055,
+                "Max": 1161.1033,
+                "Samples": [
+                  1075.523,
+                  1107.618,
+                  1161.1033,
+                  1078.8111,
+                  1052.4055
+                ]
+              },
+              "WalBytes": [
+                8240032,
+                8240032,
+                8240032,
+                8240032,
+                8240032
+              ]
+            }
+          ]
+        },
+        {
+          "Name": "updated-desc",
+          "IndexSql": "CREATE INDEX candidate_updated ON sessions(updated_at DESC)",
+          "DatabaseBytesBeforeWrites": 900485120,
+          "Reads": [
+            {
+              "Name": "enumerate-ids-unbounded",
+              "Plan": [
+                "4|0|SCAN sessions USING INDEX candidate_updated"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "BC758108E5E708626FC4820895F9D1F3A2773F7619304483ECC2FAA691AF08BF",
+              "LatencyMs": {
+                "Median": 95.325,
+                "P95": 111.0173,
+                "Min": 90.0201,
+                "Max": 116.4148,
+                "Samples": [
+                  107.7919,
+                  98.9381,
+                  91.3928,
+                  92.8591,
+                  91.094,
+                  100.126,
+                  93.824,
+                  90.0201,
+                  96.3408,
+                  92.3514,
+                  99.2617,
+                  93.0023,
+                  111.0173,
+                  95.5536,
+                  94.0334,
+                  95.325,
+                  98.1562,
+                  93.6051,
+                  106.4506,
+                  116.4148,
+                  108.4777,
+                  99.6281,
+                  93.8388,
+                  90.4545,
+                  92.9315
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX candidate_updated",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "101|0|USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "CEC43CF5CC22DF631691C32FCC345C11C3F4C8CD3A79F47A3F9B96B3538D8873",
+              "LatencyMs": {
+                "Median": 53.7229,
+                "P95": 58.0344,
+                "Min": 50.6631,
+                "Max": 59.7092,
+                "Samples": [
+                  50.6631,
+                  51.0481,
+                  51.4158,
+                  50.7238,
+                  50.9412,
+                  50.8353,
+                  51.3754,
+                  51.7242,
+                  56.6673,
+                  55.7477,
+                  51.7097,
+                  53.5629,
+                  58.0344,
+                  59.7092,
+                  57.3456,
+                  55.5779,
+                  55.7011,
+                  56.6282,
+                  55.9422,
+                  53.7456,
+                  53.7229,
+                  51.8239,
+                  53.9863,
+                  51.2816,
+                  54.0629
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50-offset5000",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX candidate_updated",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "101|0|USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "958236FCA72384D07A5A40ADCD21B8F5E6DAF5B7386DBF4AE783E893766126A5",
+              "LatencyMs": {
+                "Median": 93.6665,
+                "P95": 113.2244,
+                "Min": 81.9543,
+                "Max": 121.4717,
+                "Samples": [
+                  93.6665,
+                  94.6541,
+                  91.3657,
+                  89.7321,
+                  81.9543,
+                  90.2215,
+                  97.2989,
+                  96.4095,
+                  83.3648,
+                  86.6886,
+                  84.0938,
+                  91.7222,
+                  102.058,
+                  84.0388,
+                  84.5294,
+                  85.7372,
+                  97.8096,
+                  99.8515,
+                  108.8772,
+                  113.2244,
+                  103.3448,
+                  121.4717,
+                  96.4652,
+                  90.6304,
+                  98.0379
+                ]
+              }
+            },
+            {
+              "Name": "summaries-unbounded-managed-time",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "44|0|SCAN s USING INDEX candidate_updated",
+                "58|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "89|0|USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "74D8C2358A40C3C1748A85D3331405E4C7E16002F45F402723927CEC41D40735",
+              "LatencyMs": {
+                "Median": 210.7923,
+                "P95": 283.5596,
+                "Min": 193.1326,
+                "Max": 313.0159,
+                "Samples": [
+                  201.4656,
+                  193.1326,
+                  218.2403,
+                  205.6356,
+                  208.8705,
+                  205.607,
+                  234.0632,
+                  313.0159,
+                  283.5596,
+                  265.4752,
+                  223.488,
+                  226.5337,
+                  227.2361,
+                  212.9608,
+                  229.5551,
+                  228.7046,
+                  202.8083,
+                  194.6998,
+                  210.741,
+                  210.7923,
+                  210.4435,
+                  209.4607,
+                  219.5672,
+                  194.6911,
+                  195.141
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "8CA78D64F246CE31E15A241A1640F1C5EBD5E47E3B3C6558C3833F4CC7E730A5",
+              "LatencyMs": {
+                "Median": 67.615,
+                "P95": 75.5014,
+                "Min": 61.9378,
+                "Max": 76.2665,
+                "Samples": [
+                  66.4304,
+                  75.5014,
+                  66.8139,
+                  63.5248,
+                  62.9577,
+                  61.9378,
+                  68.6862,
+                  73.3751,
+                  69.7983,
+                  67.0893,
+                  65.6812,
+                  73.0953,
+                  65.8402,
+                  64.7594,
+                  73.1904,
+                  71.2163,
+                  73.7039,
+                  72.3062,
+                  74.618,
+                  67.2524,
+                  62.3016,
+                  67.615,
+                  65.5745,
+                  74.0728,
+                  76.2665
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-all-200",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "39|3|USE TEMP B-TREE FOR ORDER BY",
+                "51|0|SCAN b",
+                "59|0|CORRELATED SCALAR SUBQUERY 2",
+                "64|59|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "81|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 200,
+              "Fingerprint": "C493F336C8CD0DC245F67B9D34A2D1C53F3DDD42281D936BB03BA8313E4D24E5",
+              "LatencyMs": {
+                "Median": 41.6704,
+                "P95": 47.4269,
+                "Min": 38.2293,
+                "Max": 47.8805,
+                "Samples": [
+                  38.9635,
+                  39.5487,
+                  41.4879,
+                  40.8454,
+                  40.0201,
+                  39.5685,
+                  40.2068,
+                  43.8391,
+                  41.6704,
+                  42.7436,
+                  41.2379,
+                  43.4447,
+                  42.42,
+                  42.1917,
+                  43.0994,
+                  38.2293,
+                  42.503,
+                  40.9261,
+                  42.0499,
+                  44.5283,
+                  45.4677,
+                  47.4269,
+                  47.8805,
+                  40.4501,
+                  41.1972
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "A970C22EBE5D975221E61BF2DCB017115E8C63C156C8BBE629E7F9506478B5C1",
+              "LatencyMs": {
+                "Median": 83.0225,
+                "P95": 99.648,
+                "Min": 69.4097,
+                "Max": 101.4041,
+                "Samples": [
+                  85.3353,
+                  92.3788,
+                  101.4041,
+                  93.491,
+                  79.161,
+                  82.8138,
+                  85.5782,
+                  88.7602,
+                  99.648,
+                  79.4681,
+                  81.6369,
+                  83.1069,
+                  80.4553,
+                  83.0225,
+                  70.8068,
+                  69.4097,
+                  71.2135,
+                  71.4512,
+                  73.7279,
+                  83.7786,
+                  84.3408,
+                  83.6057,
+                  86.7516,
+                  75.12,
+                  69.5535
+                ]
+              }
+            },
+            {
+              "Name": "page-single-sparse-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 2,
+              "Fingerprint": "F4F2FEC174D36EC305ED924CD39BA83F6C5D29EF0FECA0A4BD9D0FCB2C26B171",
+              "LatencyMs": {
+                "Median": 0.1184,
+                "P95": 0.1356,
+                "Min": 0.1134,
+                "Max": 0.1736,
+                "Samples": [
+                  0.1329,
+                  0.1254,
+                  0.1231,
+                  0.1196,
+                  0.119,
+                  0.1182,
+                  0.1174,
+                  0.1181,
+                  0.1241,
+                  0.134,
+                  0.1184,
+                  0.1168,
+                  0.1179,
+                  0.1736,
+                  0.1356,
+                  0.1204,
+                  0.1211,
+                  0.1179,
+                  0.116,
+                  0.1257,
+                  0.115,
+                  0.116,
+                  0.1134,
+                  0.1152,
+                  0.1148
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "430D3A0A4682BCA24FC8AD1B89CB45F450EEEA0F40499578C01E7B040EBD808E",
+              "LatencyMs": {
+                "Median": 121.2182,
+                "P95": 143.1394,
+                "Min": 110.1301,
+                "Max": 143.6172,
+                "Samples": [
+                  141.1596,
+                  112.8921,
+                  118.6715,
+                  115.0448,
+                  115.1331,
+                  120.9582,
+                  143.6172,
+                  126.4567,
+                  134.9846,
+                  132.9264,
+                  113.1594,
+                  113.5081,
+                  141.7907,
+                  121.2182,
+                  110.1301,
+                  111.8908,
+                  137.1449,
+                  143.1394,
+                  131.0986,
+                  133.3629,
+                  125.5373,
+                  113.7513,
+                  114.2093,
+                  121.821,
+                  116.377
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "E748AD5C26C8E1B9482CB5F15485FEFCE8D0E4A60B175A3683CFB39B5975DB0C",
+              "LatencyMs": {
+                "Median": 138.6219,
+                "P95": 168.5128,
+                "Min": 116.7561,
+                "Max": 170.6963,
+                "Samples": [
+                  143.1656,
+                  139.7344,
+                  141.9642,
+                  135.8006,
+                  120.4924,
+                  122.138,
+                  119.5433,
+                  138.6219,
+                  158.6537,
+                  168.5128,
+                  143.1275,
+                  116.7561,
+                  137.2576,
+                  138.0779,
+                  161.4437,
+                  123.2932,
+                  133.1667,
+                  135.091,
+                  128.6714,
+                  139.4868,
+                  148.9749,
+                  142.0414,
+                  170.6963,
+                  140.5709,
+                  126.7585
+                ]
+              }
+            },
+            {
+              "Name": "page-search4000-all-500",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "12046|3|USE TEMP B-TREE FOR ORDER BY",
+                "12058|0|SCAN b",
+                "12066|0|CORRELATED SCALAR SUBQUERY 2",
+                "12071|12066|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "12088|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 500,
+              "Fingerprint": "C93650895570787B962C6A778425E53631BF6CE879E59BA855838BCB9205CF5E",
+              "LatencyMs": {
+                "Median": 357.5821,
+                "P95": 398.5378,
+                "Min": 333.9936,
+                "Max": 411.5733,
+                "Samples": [
+                  352.6949,
+                  359.0805,
+                  348.9037,
+                  368.5722,
+                  343.6392,
+                  411.5733,
+                  355.2422,
+                  357.5447,
+                  357.5821,
+                  376.1625,
+                  348.9543,
+                  376.5151,
+                  377.0137,
+                  361.3819,
+                  372.4366,
+                  398.5378,
+                  361.8832,
+                  371.8236,
+                  351.9705,
+                  344.8125,
+                  364.0584,
+                  344.328,
+                  333.9936,
+                  341.5625,
+                  343.0951
+                ]
+              }
+            },
+            {
+              "Name": "page-global-fallback-active",
+              "Plan": [
+                "4|0|SCAN s USING INDEX candidate_updated",
+                "44|0|CORRELATED SCALAR SUBQUERY 1",
+                "49|44|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "72|0|USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 13714,
+              "Fingerprint": "5AEA6413C9014180B5B16C388C315ECE9619F65FD467407C5C71DF64C54CF788",
+              "LatencyMs": {
+                "Median": 271.4136,
+                "P95": 326.317,
+                "Min": 228.8104,
+                "Max": 379.9534,
+                "Samples": [
+                  272.0079,
+                  228.8104,
+                  276.6646,
+                  261.9006,
+                  256.8134,
+                  379.9534,
+                  303.2664,
+                  326.317,
+                  299.5659,
+                  286.7235,
+                  308.4283,
+                  275.1714,
+                  260.5213,
+                  270.6514,
+                  243.7594,
+                  247.7987,
+                  269.4242,
+                  241.6045,
+                  291.3807,
+                  276.1972,
+                  271.4136,
+                  254.0447,
+                  241.1946,
+                  285.7246,
+                  248.9315
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-fallback-managed-time",
+              "Plan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "173|0|CORRELATED SCALAR SUBQUERY 1",
+                "178|173|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "196|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 7548,
+              "Fingerprint": "01AF57DE66FFC4FD36B5E8FC77307944C2B6BDE319A96D9614CF26E7C527C246",
+              "LatencyMs": {
+                "Median": 153.3886,
+                "P95": 172.4397,
+                "Min": 123.012,
+                "Max": 173.4344,
+                "Samples": [
+                  157.9802,
+                  147.2066,
+                  130.1931,
+                  130.0574,
+                  123.012,
+                  124.8482,
+                  137.1215,
+                  141.7164,
+                  139.8249,
+                  161.6746,
+                  153.3886,
+                  165.0044,
+                  162.7874,
+                  152.8617,
+                  165.4258,
+                  158.6446,
+                  135.8602,
+                  141.2744,
+                  135.7051,
+                  159.087,
+                  157.9262,
+                  170.9474,
+                  172.4397,
+                  173.4344,
+                  164.7465
+                ]
+              }
+            }
+          ],
+          "Writes": [
+            {
+              "Statements": 2000,
+              "TransactionSize": 2000,
+              "LatencyMs": {
+                "Median": 71.122,
+                "P95": 144.6615,
+                "Min": 65.1599,
+                "Max": 144.6615,
+                "Samples": [
+                  144.6615,
+                  65.1599,
+                  67.1027,
+                  71.122,
+                  73.2335
+                ]
+              },
+              "WalBytes": [
+                7407792,
+                6690912,
+                6686792,
+                6690912,
+                6690912
+              ]
+            },
+            {
+              "Statements": 2000,
+              "TransactionSize": 1,
+              "LatencyMs": {
+                "Median": 1194.6892,
+                "P95": 1350.1936,
+                "Min": 1103.8075,
+                "Max": 1350.1936,
+                "Samples": [
+                  1103.8075,
+                  1286.8374,
+                  1350.1936,
+                  1194.6892,
+                  1138.8999
+                ]
+              },
+              "WalBytes": [
+                19133312,
+                34818152,
+                35444392,
+                35506192,
+                35477352
+              ]
+            }
+          ]
+        },
+        {
+          "Name": "updated-desc-id",
+          "IndexSql": "CREATE INDEX candidate_updated_id ON sessions(updated_at DESC,id ASC)",
+          "DatabaseBytesBeforeWrites": 901046272,
+          "Reads": [
+            {
+              "Name": "enumerate-ids-unbounded",
+              "Plan": [
+                "3|0|SCAN sessions USING COVERING INDEX candidate_updated_id"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "BC758108E5E708626FC4820895F9D1F3A2773F7619304483ECC2FAA691AF08BF",
+              "LatencyMs": {
+                "Median": 5.2824,
+                "P95": 8.1265,
+                "Min": 4.9912,
+                "Max": 9.3032,
+                "Samples": [
+                  5.0643,
+                  5.1181,
+                  5.0648,
+                  5.0624,
+                  5.0632,
+                  5.0907,
+                  4.9912,
+                  5.0697,
+                  5.0216,
+                  5.9517,
+                  5.3674,
+                  5.139,
+                  5.1079,
+                  5.1123,
+                  8.0057,
+                  5.4881,
+                  5.2824,
+                  5.9831,
+                  5.5759,
+                  7.0397,
+                  8.1265,
+                  5.5294,
+                  5.7623,
+                  9.3032,
+                  5.5408
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX candidate_updated_id",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "CEC43CF5CC22DF631691C32FCC345C11C3F4C8CD3A79F47A3F9B96B3538D8873",
+              "LatencyMs": {
+                "Median": 51.1142,
+                "P95": 57.1805,
+                "Min": 48.8064,
+                "Max": 57.3749,
+                "Samples": [
+                  55.1776,
+                  55.55,
+                  56.3288,
+                  51.2598,
+                  51.017,
+                  51.1142,
+                  52.4543,
+                  50.4454,
+                  49.2754,
+                  48.8836,
+                  49.6461,
+                  49.1808,
+                  48.8389,
+                  49.1935,
+                  49.9582,
+                  48.8064,
+                  51.2735,
+                  52.0781,
+                  50.9557,
+                  50.3046,
+                  51.8315,
+                  57.3749,
+                  55.4589,
+                  56.2935,
+                  57.1805
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50-offset5000",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX candidate_updated_id",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "958236FCA72384D07A5A40ADCD21B8F5E6DAF5B7386DBF4AE783E893766126A5",
+              "LatencyMs": {
+                "Median": 59.972,
+                "P95": 65.2595,
+                "Min": 54.2409,
+                "Max": 68.7755,
+                "Samples": [
+                  59.3358,
+                  59.6535,
+                  60.0846,
+                  59.4423,
+                  60.112,
+                  59.972,
+                  62.1169,
+                  63.5139,
+                  61.88,
+                  68.7755,
+                  57.9333,
+                  65.2595,
+                  59.549,
+                  59.2112,
+                  60.2286,
+                  58.6603,
+                  57.7651,
+                  59.2152,
+                  64.9062,
+                  54.2409,
+                  58.1075,
+                  59.9974,
+                  58.9104,
+                  60.5539,
+                  60.014
+                ]
+              }
+            },
+            {
+              "Name": "summaries-unbounded-managed-time",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "44|0|SCAN s USING INDEX candidate_updated_id",
+                "58|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "74D8C2358A40C3C1748A85D3331405E4C7E16002F45F402723927CEC41D40735",
+              "LatencyMs": {
+                "Median": 205.6493,
+                "P95": 218.4449,
+                "Min": 183.1778,
+                "Max": 219.1127,
+                "Samples": [
+                  215.3304,
+                  205.6493,
+                  211.6665,
+                  210.7491,
+                  189.9825,
+                  206.1832,
+                  204.4283,
+                  213.2669,
+                  219.1127,
+                  188.513,
+                  189.7271,
+                  186.4993,
+                  188.4731,
+                  183.1778,
+                  187.5066,
+                  190.5375,
+                  187.7739,
+                  212.1256,
+                  188.5243,
+                  188.0836,
+                  210.7185,
+                  207.157,
+                  217.6616,
+                  218.4449,
+                  211.6154
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "8CA78D64F246CE31E15A241A1640F1C5EBD5E47E3B3C6558C3833F4CC7E730A5",
+              "LatencyMs": {
+                "Median": 81.0232,
+                "P95": 100.4134,
+                "Min": 61.9254,
+                "Max": 138.4629,
+                "Samples": [
+                  138.4629,
+                  87.7687,
+                  94.5029,
+                  91.8961,
+                  100.4134,
+                  99.8843,
+                  68.7726,
+                  93.4323,
+                  69.0963,
+                  75.4141,
+                  91.7544,
+                  91.6972,
+                  81.0912,
+                  71.3971,
+                  77.4338,
+                  79.5525,
+                  80.5205,
+                  80.1555,
+                  84.4028,
+                  81.0232,
+                  88.4858,
+                  79.6942,
+                  65.6586,
+                  61.9254,
+                  62.3656
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-all-200",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "39|3|USE TEMP B-TREE FOR ORDER BY",
+                "51|0|SCAN b",
+                "59|0|CORRELATED SCALAR SUBQUERY 2",
+                "64|59|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "81|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 200,
+              "Fingerprint": "C493F336C8CD0DC245F67B9D34A2D1C53F3DDD42281D936BB03BA8313E4D24E5",
+              "LatencyMs": {
+                "Median": 41.9915,
+                "P95": 48.7951,
+                "Min": 38.6191,
+                "Max": 49.5302,
+                "Samples": [
+                  49.5302,
+                  48.7951,
+                  46.5983,
+                  45.281,
+                  40.0433,
+                  39.9052,
+                  41.4311,
+                  40.9393,
+                  41.571,
+                  45.6699,
+                  48.0597,
+                  45.2463,
+                  40.1064,
+                  41.7449,
+                  47.9053,
+                  46.4427,
+                  45.9725,
+                  41.323,
+                  39.2184,
+                  41.5256,
+                  38.6191,
+                  39.291,
+                  45.1843,
+                  41.9915,
+                  45.4634
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "A970C22EBE5D975221E61BF2DCB017115E8C63C156C8BBE629E7F9506478B5C1",
+              "LatencyMs": {
+                "Median": 70.0763,
+                "P95": 84.3026,
+                "Min": 64.6833,
+                "Max": 85.5169,
+                "Samples": [
+                  65.481,
+                  69.85,
+                  68.0254,
+                  72.7671,
+                  68.2869,
+                  67.986,
+                  64.6833,
+                  66.4452,
+                  78.1656,
+                  83.2968,
+                  73.2465,
+                  66.9069,
+                  67.3225,
+                  69.9541,
+                  67.1716,
+                  72.922,
+                  83.0811,
+                  77.9187,
+                  70.0763,
+                  68.2437,
+                  73.4779,
+                  80.832,
+                  84.3026,
+                  85.5169,
+                  79.0133
+                ]
+              }
+            },
+            {
+              "Name": "page-single-sparse-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "69|3|USE TEMP B-TREE FOR ORDER BY",
+                "81|0|SCAN b",
+                "89|0|CORRELATED SCALAR SUBQUERY 2",
+                "94|89|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "111|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 2,
+              "Fingerprint": "F4F2FEC174D36EC305ED924CD39BA83F6C5D29EF0FECA0A4BD9D0FCB2C26B171",
+              "LatencyMs": {
+                "Median": 0.1247,
+                "P95": 0.2251,
+                "Min": 0.1146,
+                "Max": 0.2326,
+                "Samples": [
+                  0.1367,
+                  0.1369,
+                  0.1327,
+                  0.1255,
+                  0.127,
+                  0.118,
+                  0.12,
+                  0.1236,
+                  0.115,
+                  0.1207,
+                  0.1347,
+                  0.2251,
+                  0.1417,
+                  0.1247,
+                  0.2326,
+                  0.1311,
+                  0.1288,
+                  0.1205,
+                  0.1261,
+                  0.1154,
+                  0.1146,
+                  0.1183,
+                  0.1214,
+                  0.1153,
+                  0.1173
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "430D3A0A4682BCA24FC8AD1B89CB45F450EEEA0F40499578C01E7B040EBD808E",
+              "LatencyMs": {
+                "Median": 123.7734,
+                "P95": 145.8675,
+                "Min": 110.4906,
+                "Max": 154.7155,
+                "Samples": [
+                  111.1868,
+                  110.4906,
+                  113.2458,
+                  114.5904,
+                  114.4944,
+                  123.7734,
+                  115.8592,
+                  120.0236,
+                  124.9149,
+                  116.433,
+                  125.3833,
+                  154.7155,
+                  143.7282,
+                  120.404,
+                  122.8902,
+                  121.7954,
+                  132.3144,
+                  140.7475,
+                  145.8675,
+                  131.2439,
+                  116.9081,
+                  126.3896,
+                  128.1716,
+                  127.452,
+                  125.3118
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "E748AD5C26C8E1B9482CB5F15485FEFCE8D0E4A60B175A3683CFB39B5975DB0C",
+              "LatencyMs": {
+                "Median": 129.4728,
+                "P95": 156.586,
+                "Min": 112.9174,
+                "Max": 163.7286,
+                "Samples": [
+                  137.7734,
+                  124.7855,
+                  138.4635,
+                  126.4783,
+                  129.5335,
+                  125.5969,
+                  126.3647,
+                  129.5645,
+                  146.341,
+                  163.7286,
+                  144.2894,
+                  156.586,
+                  142.9364,
+                  146.7224,
+                  124.5431,
+                  122.4679,
+                  115.6624,
+                  129.4728,
+                  122.8186,
+                  112.9174,
+                  151.248,
+                  147.5556,
+                  128.8887,
+                  122.3199,
+                  125.2178
+                ]
+              }
+            },
+            {
+              "Name": "page-search4000-all-500",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "12046|3|USE TEMP B-TREE FOR ORDER BY",
+                "12058|0|SCAN b",
+                "12066|0|CORRELATED SCALAR SUBQUERY 2",
+                "12071|12066|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "12088|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX idx_sessions_conversation_created (conversation_id=?)"
+              ],
+              "Rows": 500,
+              "Fingerprint": "C93650895570787B962C6A778425E53631BF6CE879E59BA855838BCB9205CF5E",
+              "LatencyMs": {
+                "Median": 369.804,
+                "P95": 386.9006,
+                "Min": 329.2854,
+                "Max": 409.1263,
+                "Samples": [
+                  383.7277,
+                  371.1316,
+                  354.3823,
+                  372.3268,
+                  329.2854,
+                  370.0969,
+                  355.6676,
+                  354.9605,
+                  346.4784,
+                  358.1384,
+                  355.243,
+                  371.3896,
+                  343.8154,
+                  342.5295,
+                  369.804,
+                  357.0803,
+                  375.8152,
+                  383.345,
+                  381.8121,
+                  409.1263,
+                  377.1662,
+                  381.1107,
+                  359.7147,
+                  386.9006,
+                  359.53
+                ]
+              }
+            },
+            {
+              "Name": "page-global-fallback-active",
+              "Plan": [
+                "4|0|SCAN s USING INDEX candidate_updated_id",
+                "45|0|CORRELATED SCALAR SUBQUERY 1",
+                "50|45|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)"
+              ],
+              "CountPlan": [],
+              "Rows": 13714,
+              "Fingerprint": "5AEA6413C9014180B5B16C388C315ECE9619F65FD467407C5C71DF64C54CF788",
+              "LatencyMs": {
+                "Median": 282.6584,
+                "P95": 545.1147,
+                "Min": 217.4986,
+                "Max": 584.0028,
+                "Samples": [
+                  244.6395,
+                  226.4661,
+                  217.4986,
+                  267.6535,
+                  240.3287,
+                  230.6667,
+                  244.859,
+                  248.8782,
+                  244.0464,
+                  332.584,
+                  292.1582,
+                  250.6947,
+                  262.8757,
+                  323.4817,
+                  294.4751,
+                  330.9037,
+                  451.2481,
+                  392.0661,
+                  584.0028,
+                  545.1147,
+                  415.7483,
+                  282.6584,
+                  263.9973,
+                  323.0071,
+                  378.8806
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-fallback-managed-time",
+              "Plan": [
+                "4|0|SEARCH s USING INDEX idx_sessions_conversation_created (conversation_id=?)",
+                "173|0|CORRELATED SCALAR SUBQUERY 1",
+                "178|173|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "196|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 7548,
+              "Fingerprint": "01AF57DE66FFC4FD36B5E8FC77307944C2B6BDE319A96D9614CF26E7C527C246",
+              "LatencyMs": {
+                "Median": 145.4515,
+                "P95": 185.5415,
+                "Min": 122.9112,
+                "Max": 189.4637,
+                "Samples": [
+                  158.9834,
+                  158.887,
+                  185.5415,
+                  166.6206,
+                  143.702,
+                  189.4637,
+                  163.6071,
+                  149.4595,
+                  144.0106,
+                  135.9968,
+                  143.7404,
+                  144.5901,
+                  135.4858,
+                  135.8602,
+                  128.1762,
+                  138.6691,
+                  150.6701,
+                  122.9112,
+                  140.3081,
+                  166.2495,
+                  155.5338,
+                  139.5356,
+                  157.9049,
+                  157.6686,
+                  145.4515
+                ]
+              }
+            }
+          ],
+          "Writes": [
+            {
+              "Statements": 2000,
+              "TransactionSize": 2000,
+              "LatencyMs": {
+                "Median": 87.2253,
+                "P95": 178.0215,
+                "Min": 84.8591,
+                "Max": 178.0215,
+                "Samples": [
+                  178.0215,
+                  84.8591,
+                  87.2253,
+                  100.3295,
+                  85.633
+                ]
+              },
+              "WalBytes": [
+                8112312,
+                6830992,
+                6830992,
+                6830992,
+                6826872
+              ]
+            },
+            {
+              "Statements": 2000,
+              "TransactionSize": 1,
+              "LatencyMs": {
+                "Median": 1230.3555,
+                "P95": 1288.8551,
+                "Min": 1193.2577,
+                "Max": 1288.8551,
+                "Samples": [
+                  1207.7187,
+                  1193.2577,
+                  1230.3555,
+                  1288.8551,
+                  1249.5758
+                ]
+              },
+              "WalBytes": [
+                22610592,
+                39300712,
+                39613832,
+                39502592,
+                39609712
+              ]
+            }
+          ]
+        },
+        {
+          "Name": "conversation-updated-id",
+          "IndexSql": "CREATE INDEX candidate_conversation_updated_id ON sessions(conversation_id,updated_at DESC,id ASC)",
+          "DatabaseBytesBeforeWrites": 901144576,
+          "Reads": [
+            {
+              "Name": "enumerate-ids-unbounded",
+              "Plan": [
+                "3|0|SCAN sessions USING COVERING INDEX candidate_conversation_updated_id",
+                "10|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "BC758108E5E708626FC4820895F9D1F3A2773F7619304483ECC2FAA691AF08BF",
+              "LatencyMs": {
+                "Median": 10.3045,
+                "P95": 14.7476,
+                "Min": 9.6961,
+                "Max": 18.1074,
+                "Samples": [
+                  18.1074,
+                  10.3045,
+                  10.0822,
+                  10.3445,
+                  9.9415,
+                  9.815,
+                  9.7808,
+                  9.6961,
+                  13.8294,
+                  12.0308,
+                  10.3475,
+                  10.9295,
+                  10.41,
+                  10.0986,
+                  10.202,
+                  12.1473,
+                  14.7476,
+                  10.3916,
+                  10.2253,
+                  10.176,
+                  10.243,
+                  10.0333,
+                  12.6151,
+                  10.2436,
+                  11.0697
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "93|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "CEC43CF5CC22DF631691C32FCC345C11C3F4C8CD3A79F47A3F9B96B3538D8873",
+              "LatencyMs": {
+                "Median": 162.5364,
+                "P95": 187.6954,
+                "Min": 143.1214,
+                "Max": 188.0195,
+                "Samples": [
+                  176.5803,
+                  164.4062,
+                  175.9244,
+                  174.5354,
+                  158.1895,
+                  171.6689,
+                  148.1623,
+                  146.3118,
+                  143.361,
+                  164.1833,
+                  143.1214,
+                  156.7782,
+                  153.5951,
+                  152.8886,
+                  179.6217,
+                  154.702,
+                  162.4574,
+                  187.6954,
+                  166.8343,
+                  149.9906,
+                  148.5359,
+                  169.765,
+                  188.0195,
+                  162.5364,
+                  179.6716
+                ]
+              }
+            },
+            {
+              "Name": "summaries-global-50-offset5000",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "50|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "64|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "93|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 50,
+              "Fingerprint": "958236FCA72384D07A5A40ADCD21B8F5E6DAF5B7386DBF4AE783E893766126A5",
+              "LatencyMs": {
+                "Median": 202.5012,
+                "P95": 219.4898,
+                "Min": 178.4136,
+                "Max": 240.3188,
+                "Samples": [
+                  185.3956,
+                  210.32,
+                  206.2611,
+                  213.7722,
+                  206.3614,
+                  240.3188,
+                  204.7436,
+                  184.8819,
+                  187.5227,
+                  201.9697,
+                  190.826,
+                  197.139,
+                  186.0552,
+                  204.2319,
+                  209.6881,
+                  204.958,
+                  206.9189,
+                  185.4377,
+                  202.5012,
+                  206.92,
+                  178.4136,
+                  219.4898,
+                  197.3634,
+                  184.8731,
+                  192.3544
+                ]
+              }
+            },
+            {
+              "Name": "summaries-unbounded-managed-time",
+              "Plan": [
+                "3|0|MATERIALIZE h",
+                "10|3|SCAN session_history USING COVERING INDEX idx_session_history_session_id",
+                "44|0|SCAN s USING INDEX sqlite_autoindex_sessions_1",
+                "58|0|SEARCH h USING AUTOMATIC COVERING INDEX (session_id=?) LEFT-JOIN",
+                "82|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 17000,
+              "Fingerprint": "74D8C2358A40C3C1748A85D3331405E4C7E16002F45F402723927CEC41D40735",
+              "LatencyMs": {
+                "Median": 215.408,
+                "P95": 293.7296,
+                "Min": 193.9333,
+                "Max": 335.5504,
+                "Samples": [
+                  231.0288,
+                  210.0809,
+                  216.6173,
+                  293.7296,
+                  335.5504,
+                  244.5694,
+                  224.9673,
+                  216.6851,
+                  202.7868,
+                  215.408,
+                  201.103,
+                  225.0315,
+                  260.6502,
+                  194.7273,
+                  203.4349,
+                  214.1663,
+                  207.866,
+                  226.89,
+                  226.1871,
+                  193.9333,
+                  207.3279,
+                  196.448,
+                  208.3052,
+                  201.2029,
+                  216.4468
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "68|0|SCAN b",
+                "76|0|CORRELATED SCALAR SUBQUERY 2",
+                "81|76|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "98|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "8CA78D64F246CE31E15A241A1640F1C5EBD5E47E3B3C6558C3833F4CC7E730A5",
+              "LatencyMs": {
+                "Median": 29.1766,
+                "P95": 37.4059,
+                "Min": 26.9286,
+                "Max": 37.8856,
+                "Samples": [
+                  28.4876,
+                  29.6727,
+                  28.4403,
+                  29.6196,
+                  37.8856,
+                  28.5359,
+                  30.2755,
+                  28.0357,
+                  26.9793,
+                  27.4414,
+                  28.092,
+                  26.9286,
+                  29.4429,
+                  27.2799,
+                  27.7566,
+                  33.2922,
+                  37.4059,
+                  29.3582,
+                  29.4052,
+                  29.1766,
+                  28.4496,
+                  28.344,
+                  32.0009,
+                  36.2796,
+                  35.9703
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-all-200",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "38|0|SCAN b",
+                "46|0|CORRELATED SCALAR SUBQUERY 2",
+                "51|46|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "68|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 200,
+              "Fingerprint": "C493F336C8CD0DC245F67B9D34A2D1C53F3DDD42281D936BB03BA8313E4D24E5",
+              "LatencyMs": {
+                "Median": 3.4461,
+                "P95": 4.7808,
+                "Min": 3.1364,
+                "Max": 5.5871,
+                "Samples": [
+                  4.2433,
+                  4.7808,
+                  3.8163,
+                  3.3641,
+                  3.27,
+                  3.2445,
+                  3.3352,
+                  3.1364,
+                  3.203,
+                  3.342,
+                  3.3507,
+                  3.9541,
+                  3.5979,
+                  3.5877,
+                  3.4461,
+                  3.4674,
+                  3.8489,
+                  3.4797,
+                  3.3904,
+                  3.4607,
+                  5.5871,
+                  3.7663,
+                  3.3441,
+                  3.341,
+                  3.4079
+                ]
+              }
+            },
+            {
+              "Name": "page-single-hot-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "68|0|SCAN b",
+                "76|0|CORRELATED SCALAR SUBQUERY 2",
+                "81|76|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "98|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "A970C22EBE5D975221E61BF2DCB017115E8C63C156C8BBE629E7F9506478B5C1",
+              "LatencyMs": {
+                "Median": 44.6037,
+                "P95": 47.5125,
+                "Min": 34.5456,
+                "Max": 47.8197,
+                "Samples": [
+                  36.447,
+                  34.5456,
+                  45.9326,
+                  45.0106,
+                  43.6584,
+                  44.9153,
+                  43.478,
+                  44.9804,
+                  46.4958,
+                  45.8932,
+                  47.8197,
+                  47.3834,
+                  43.9731,
+                  44.7401,
+                  41.364,
+                  35.6208,
+                  35.3426,
+                  35.0963,
+                  42.1908,
+                  44.079,
+                  47.5125,
+                  44.9078,
+                  44.6037,
+                  46.6615,
+                  44.0939
+                ]
+              }
+            },
+            {
+              "Name": "page-single-sparse-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "68|0|SCAN b",
+                "76|0|CORRELATED SCALAR SUBQUERY 2",
+                "81|76|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "98|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 2,
+              "Fingerprint": "F4F2FEC174D36EC305ED924CD39BA83F6C5D29EF0FECA0A4BD9D0FCB2C26B171",
+              "LatencyMs": {
+                "Median": 0.1271,
+                "P95": 0.1651,
+                "Min": 0.1232,
+                "Max": 0.2046,
+                "Samples": [
+                  0.1405,
+                  0.1287,
+                  0.1273,
+                  0.1268,
+                  0.1267,
+                  0.1651,
+                  0.1334,
+                  0.1271,
+                  0.1259,
+                  0.1302,
+                  0.128,
+                  0.1283,
+                  0.1267,
+                  0.1259,
+                  0.2046,
+                  0.1316,
+                  0.1268,
+                  0.1256,
+                  0.1232,
+                  0.1263,
+                  0.1624,
+                  0.1303,
+                  0.1256,
+                  0.127,
+                  0.1243
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "430D3A0A4682BCA24FC8AD1B89CB45F450EEEA0F40499578C01E7B040EBD808E",
+              "LatencyMs": {
+                "Median": 65.2657,
+                "P95": 71.4217,
+                "Min": 51.0959,
+                "Max": 72.3009,
+                "Samples": [
+                  64.0005,
+                  67.3814,
+                  64.9571,
+                  67.4673,
+                  55.3905,
+                  56.9558,
+                  63.1683,
+                  69.2012,
+                  70.956,
+                  68.5715,
+                  66.0535,
+                  52.6399,
+                  51.9335,
+                  51.0959,
+                  56.8927,
+                  52.1711,
+                  67.5046,
+                  69.9643,
+                  71.4217,
+                  72.3009,
+                  70.1826,
+                  65.2657,
+                  67.7698,
+                  63.4199,
+                  53.6558
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-active-50-offset1000",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "196|3|USE TEMP B-TREE FOR ORDER BY",
+                "208|0|SCAN b",
+                "216|0|CORRELATED SCALAR SUBQUERY 2",
+                "221|216|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "238|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 50,
+              "Fingerprint": "E748AD5C26C8E1B9482CB5F15485FEFCE8D0E4A60B175A3683CFB39B5975DB0C",
+              "LatencyMs": {
+                "Median": 62.4096,
+                "P95": 81.2683,
+                "Min": 57.538,
+                "Max": 82.4631,
+                "Samples": [
+                  65.7424,
+                  65.4229,
+                  59.7114,
+                  62.3871,
+                  81.2683,
+                  77.7257,
+                  77.3633,
+                  82.4631,
+                  76.2143,
+                  62.6933,
+                  60.1158,
+                  60.6141,
+                  60.5567,
+                  61.4025,
+                  68.5736,
+                  72.7261,
+                  63.5343,
+                  61.5947,
+                  62.4096,
+                  59.9876,
+                  58.2699,
+                  57.538,
+                  60.4873,
+                  63.485,
+                  61.9582
+                ]
+              }
+            },
+            {
+              "Name": "page-search4000-all-500",
+              "Plan": [
+                "3|0|MATERIALIZE bounded_sessions",
+                "14|3|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "12046|3|USE TEMP B-TREE FOR ORDER BY",
+                "12058|0|SCAN b",
+                "12066|0|CORRELATED SCALAR SUBQUERY 2",
+                "12071|12066|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "12088|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [
+                "3|0|SEARCH s USING COVERING INDEX candidate_conversation_updated_id (conversation_id=?)"
+              ],
+              "Rows": 500,
+              "Fingerprint": "C93650895570787B962C6A778425E53631BF6CE879E59BA855838BCB9205CF5E",
+              "LatencyMs": {
+                "Median": 259.8869,
+                "P95": 287.2385,
+                "Min": 247.5222,
+                "Max": 303.1127,
+                "Samples": [
+                  255.6198,
+                  252.0124,
+                  259.8869,
+                  260.0415,
+                  248.6123,
+                  250.4361,
+                  277.529,
+                  261.4658,
+                  277.0094,
+                  256.3418,
+                  260.4506,
+                  254.857,
+                  277.0377,
+                  254.6413,
+                  280.0636,
+                  277.1617,
+                  260.1176,
+                  258.9599,
+                  303.1127,
+                  287.2385,
+                  259.0025,
+                  247.5222,
+                  258.8677,
+                  265.535,
+                  257.5495
+                ]
+              }
+            },
+            {
+              "Name": "page-global-fallback-active",
+              "Plan": [
+                "3|0|SCAN s",
+                "41|0|CORRELATED SCALAR SUBQUERY 1",
+                "46|41|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "63|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 13714,
+              "Fingerprint": "5AEA6413C9014180B5B16C388C315ECE9619F65FD467407C5C71DF64C54CF788",
+              "LatencyMs": {
+                "Median": 180.8967,
+                "P95": 915.1192,
+                "Min": 156.2727,
+                "Max": 1833.0764,
+                "Samples": [
+                  156.2727,
+                  159.052,
+                  187.7913,
+                  205.3644,
+                  183.4867,
+                  181.695,
+                  157.268,
+                  166.0217,
+                  183.2954,
+                  183.7339,
+                  175.3758,
+                  169.7577,
+                  182.8068,
+                  174.1002,
+                  175.7347,
+                  176.5976,
+                  179.4529,
+                  178.4661,
+                  180.8967,
+                  208.5792,
+                  915.1192,
+                  1833.0764,
+                  157.2949,
+                  189.7313,
+                  183.7004
+                ]
+              }
+            },
+            {
+              "Name": "page-agent40-fallback-managed-time",
+              "Plan": [
+                "4|0|SEARCH s USING INDEX candidate_conversation_updated_id (conversation_id=?)",
+                "173|0|CORRELATED SCALAR SUBQUERY 1",
+                "178|173|SEARCH h USING COVERING INDEX idx_session_history_session_id (session_id=?)",
+                "196|0|USE TEMP B-TREE FOR ORDER BY"
+              ],
+              "CountPlan": [],
+              "Rows": 7548,
+              "Fingerprint": "01AF57DE66FFC4FD36B5E8FC77307944C2B6BDE319A96D9614CF26E7C527C246",
+              "LatencyMs": {
+                "Median": 142.3327,
+                "P95": 163.8283,
+                "Min": 122.9971,
+                "Max": 175.7218,
+                "Samples": [
+                  126.5547,
+                  146.769,
+                  150.7286,
+                  143.4932,
+                  148.7404,
+                  134.6722,
+                  139.3117,
+                  124.3734,
+                  125.6864,
+                  131.0001,
+                  144.5255,
+                  128.8905,
+                  175.7218,
+                  159.4408,
+                  158.6235,
+                  146.4555,
+                  153.5048,
+                  142.3327,
+                  122.9971,
+                  128.7884,
+                  123.7125,
+                  129.5468,
+                  147.5971,
+                  136.1686,
+                  163.8283
+                ]
+              }
+            }
+          ],
+          "Writes": [
+            {
+              "Statements": 2000,
+              "TransactionSize": 2000,
+              "LatencyMs": {
+                "Median": 103.3451,
+                "P95": 129.82,
+                "Min": 85.4309,
+                "Max": 129.82,
+                "Samples": [
+                  129.82,
+                  104.9372,
+                  90.7225,
+                  103.3451,
+                  85.4309
+                ]
+              },
+              "WalBytes": [
+                8054632,
+                7473712,
+                7448992,
+                7448992,
+                7448992
+              ]
+            },
+            {
+              "Statements": 2000,
+              "TransactionSize": 1,
+              "LatencyMs": {
+                "Median": 1221.0797,
+                "P95": 1248.7153,
+                "Min": 1103.2605,
+                "Max": 1248.7153,
+                "Samples": [
+                  1221.0797,
+                  1163.325,
+                  1230.7672,
+                  1103.2605,
+                  1248.7153
+                ]
+              },
+              "WalBytes": [
+                18214552,
+                23183272,
+                23232712,
+                23273912,
+                23302752
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "SqlTemplates": {
+    "Enumeration": "SELECT id\nFROM sessions\nORDER BY updated_at DESC",
+    "GroupedSummaries": "SELECT s.id, s.channel_type, s.session_type, s.status,\n       s.created_at, s.updated_at, s.conversation_id,\n       COALESCE(h.cnt, 0) AS message_count\nFROM sessions s\nLEFT JOIN (\n    SELECT session_id, COUNT(*) AS cnt\n    FROM session_history\n    GROUP BY session_id\n) h ON h.session_id = s.id\nORDER BY s.updated_at DESC, s.id ASC",
+    "BoundedPage": "WITH bounded_sessions AS MATERIALIZED (\n    SELECT s.id, s.channel_type, s.session_type, s.status,\n           s.created_at, s.updated_at, s.conversation_id\n    FROM sessions s\n    {where}\n    ORDER BY s.updated_at DESC, s.id ASC\n    LIMIT $limit OFFSET $offset\n)\nSELECT b.id, b.channel_type, b.session_type, b.status,\n       b.created_at, b.updated_at, b.conversation_id,\n       (SELECT COUNT(*) FROM session_history h WHERE h.session_id = b.id) AS message_count\nFROM bounded_sessions b\nORDER BY b.updated_at DESC, b.id ASC",
+    "FallbackPage": "SELECT s.id, s.channel_type, s.session_type, s.status,\n       s.created_at, s.updated_at, s.conversation_id,\n       (SELECT COUNT(*) FROM session_history h WHERE h.session_id = s.id) AS message_count\nFROM sessions s\n{where}\nORDER BY s.updated_at DESC, s.id ASC",
+    "Count": "SELECT COUNT(*) FROM sessions s\r\n{where}"
+  }
+}

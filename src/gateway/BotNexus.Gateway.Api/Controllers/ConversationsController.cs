@@ -626,7 +626,12 @@ public sealed class ConversationsController : ControllerBase
             existing is null ? bindingId : DescribeBinding(existing),
             null,
             cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
+        // The detached binding comes from the pre-mutation aggregate; reload the committed
+        // binding set before publishing so sinks observe the post-removal state.
+        var updated = await _conversations.GetAsync(conversation.ConversationId, cancellationToken);
+        if (existing is not null && updated is not null &&
+            updated.ChannelBindings.All(b => b.BindingId != existing.BindingId))
+            await PublishConversationBindingRemovedBestEffortAsync(updated, existing, cancellationToken);
         return NoContent();
     }
 
@@ -1133,6 +1138,31 @@ public sealed class ConversationsController : ControllerBase
         }
     }
 
+    private async Task PublishConversationBindingRemovedBestEffortAsync(Conversation updated, ChannelBinding removed, CancellationToken cancellationToken)
+    {
+        if (_conversationEventPublisher is null)
+            return;
+
+        try
+        {
+            var accepted = await _conversationEventPublisher.PublishAsync(new ConversationBindingRemovedEvent
+            {
+                AgentId = updated.AgentId,
+                ConversationId = updated.ConversationId,
+                Binding = ConversationBindingSnapshot.From(removed),
+                Bindings = ConversationBindingSnapshot.FromMany(updated.ChannelBindings),
+                OccurredAt = updated.UpdatedAt
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (!accepted)
+                _logger.LogWarning("Conversation event publisher rejected binding removal for conversation {ConversationId}; clients must reconcile from durable conversation state.", updated.ConversationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to publish binding removal for conversation {ConversationId}; clients must reconcile from durable conversation state.", updated.ConversationId);
+        }
+    }
+
     private async Task NotifyConversationChangedBestEffortAsync(string changeType, string agentId, string conversationId, CancellationToken cancellationToken)
     {
         if (_conversationChangeNotifiers.Count == 0)
@@ -1172,6 +1202,7 @@ public sealed class ConversationsController : ControllerBase
         ModelOverride: c.ModelOverride,
         ThinkingOverride: c.ThinkingOverride,
         ContextWindowOverride: c.ContextWindowOverride,
+        CompactionTokenCeiling: c.CompactionTokenCeiling,
         ToolOverrideJson: c.ToolOverrideJson,
         Kind: c.Kind.ToString(),
         Source: c.Source.ToString(),
@@ -1252,7 +1283,9 @@ public sealed class ConversationsController : ControllerBase
     /// <c>ModelOverrideResolver</c> when the next session in this conversation starts.
     /// </summary>
     /// <param name="conversationId">The conversation identifier.</param>
-    /// <param name="request">The override request body. Fields left null clear that override.</param>
+    /// <param name="request">The override request body. Omitted/null Model, Thinking and ContextWindow
+    /// clear those overrides, including on ceiling writes. Resend them to preserve them. Tool and
+    /// ceiling fields are changed only when their corresponding Apply flag is true.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>200 with the updated conversation, 400 when an override is invalid, or 404 if not found.</returns>
     [HttpPut("{conversationId}/override")]
@@ -1319,6 +1352,9 @@ public sealed class ConversationsController : ControllerBase
 
         var prevModel = conversation.ModelOverride;
         var prevThinking = conversation.ThinkingOverride;
+        if (request.ApplyCompactionTokenCeiling && request.CompactionTokenCeiling is <= 0)
+            return BadRequest(new { error = "Compaction token ceiling must be positive or null." });
+
         var prevContext = conversation.ContextWindowOverride;
         var prevTools = conversation.ToolOverrideJson;
 
@@ -1340,6 +1376,7 @@ public sealed class ConversationsController : ControllerBase
             Model = FieldUpdate<string?>.Set(NormalizeOverrideString(request.Model)),
             Thinking = FieldUpdate<string?>.Set(NormalizeOverrideString(request.Thinking)),
             ContextWindow = FieldUpdate<int?>.Set(request.ContextWindow),
+            CompactionTokenCeiling = request.ApplyCompactionTokenCeiling ? FieldUpdate<int?>.Set(request.CompactionTokenCeiling) : default,
             // Written only on explicit opt-in, so an existing model-only caller cannot clear an
             // overlay it never mentioned (#3271).
             ToolOverrideJson = request.ApplyToolOverride
@@ -1384,6 +1421,7 @@ public sealed class ConversationsController : ControllerBase
             Model = FieldUpdate<string?>.Set(null),
             Thinking = FieldUpdate<string?>.Set(null),
             ContextWindow = FieldUpdate<int?>.Set(null),
+            CompactionTokenCeiling = FieldUpdate<int?>.Set(null),
             ToolOverrideJson = FieldUpdate<string?>.Set(null)
         };
         var updated = await _conversations.PatchOverrideAsync(ConversationId.From(conversationId), clearPatch, cancellationToken);

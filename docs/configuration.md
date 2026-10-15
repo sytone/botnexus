@@ -542,7 +542,7 @@ is how the portal could display one value while the gateway ran another.
 ### Agents: agent definitions and `agents.defaults`
 
 The `agents` section is a dictionary keyed by **agent id**. One reserved key, `defaults`, holds the
-world-level defaults that are field-merged into every agent; every other key defines a named agent.
+declared world-level defaults; every other key defines a named agent. Current `PlatformConfigAgentSource` uses each agent's configuration without merging that defaults block (#3515). Declaring a default does not prove it reaches the runtime descriptor; see the [heartbeat inheritance limitation](cron-and-scheduling.md#heartbeat-ownership-and-configuration).
 
 ```bash
 botnexus config set agents.defaults.toolIds '["read","write","shell"]'
@@ -556,15 +556,14 @@ botnexus config set agents.assistant.enabled true
 
 #### `agents.defaults` properties
 
-Backed by `AgentDefaultsConfig`. Only these five keys exist - a default that is not listed here is not
-merged, because there is no property to merge it into.
+Backed by `AgentDefaultsConfig`. These are the declared keys, not a guarantee of effective runtime inheritance. The source limitation described above applies.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `toolIds` | array | `null` | Default tool ids inherited by agents that do not set their own `toolIds` |
 | `toolTimeoutSeconds` | int? | `300` | Default per-tool timeout in seconds. Five minutes accommodates tools that wait on another agent while still bounding genuinely stuck calls |
 | `memory` | object | `null` | Default memory configuration inherited by agents |
-| `heartbeat` | object | `null` | Default heartbeat configuration inherited by agents |
+| `heartbeat` | object | `null` | Declared defaults object; see [current heartbeat ownership and inheritance limits](cron-and-scheduling.md#heartbeat-ownership-and-configuration) before relying on it |
 | `fileAccess` | object | `null` | Default file access policy inherited by agents |
 
 #### Inheritance policies
@@ -672,7 +671,7 @@ apply where the property description says so.
 | `isolationStrategy` | string | `null` | `ScalarOverride` | Isolation strategy name (for example `in-process`) |
 | `isolationOptions` | object | `null` | `ReplaceAsUnit` | Strategy-specific isolation options |
 | `cacheRetention` | string | `null` | `ScalarOverride` | Prompt-caching retention policy. Null means the provider default (short) |
-| `thinking` | string? | `null` | `ScalarOverride` | Agent-level default reasoning level (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Agent layer of the three-layer model/thinking/context override stack; `null` inherits the model default. An unsupported value causes the agent to be skipped at config load with a warning |
+| `thinking` | string? | `null` | `ScalarOverride` | Agent-level default reasoning level (see the canonical [ThinkingLevel values](internals/07-thinking-levels.md#thinkinglevel-enum)). Agent layer of the three-layer model/thinking/context override stack; `null` inherits the model default. An unsupported value causes the agent to be skipped at config load with a warning |
 | `contextWindow` | int? | `null` | `ScalarOverride` | Agent-level default context-window size in tokens. Same override stack; validated against the model's advertised sizes |
 | `maxConcurrentSessions` | int? | `null` | `ScalarOverride` | Maximum concurrent sessions for this agent |
 | `metadata` | object | `null` | `KeyedMerge` | Agent-level metadata |
@@ -951,7 +950,7 @@ botnexus config set channels.agent365.inboundRoute /agent365/messages
 
 ### Gateway: GatewayConfig
 
-Gateway HTTP server settings.
+Gateway HTTP server settings. For heartbeat configuration and its relationship to system cron jobs, see [Heartbeat ownership and configuration](cron-and-scheduling.md#heartbeat-ownership-and-configuration).
 
 
 | Property | Type | Default | Description |
@@ -962,8 +961,6 @@ Gateway HTTP server settings.
 | `DefaultAgent` | string | null | Default agent name if message has no agent metadata |
 | `DefaultTimezone` | string | null | Server-wide default IANA timezone ID (for example `America/Los_Angeles`) used when an agent has no `soul.timezone` of its own. It is the third rung of the injected-datetime chain — agent `dateTimeInjection.timezone`, then the world-level `dateTimeInjection.timezone`, then this, then UTC — and it is also what seeds a new agent's timezone when one is created through the `create_agent` tool. A blank or unrecognised zone id falls back to UTC rather than failing the turn. |
 | `BroadcastWhenAgentUnspecified` | bool | false | If true, route to all agents when agent not specified |
-| `Heartbeat.Enabled` | bool | true | Enable heartbeat/keepalive messages |
-| `Heartbeat.IntervalSeconds` | int | 1800 | Heartbeat interval (30 minutes) |
 | `WalCheckpointIntervalMinutes` | int | 30 | Minutes between periodic PASSIVE SQLite WAL checkpoints. A TRUNCATE checkpoint also runs on graceful shutdown. Keeps the write-ahead log from growing unbounded on long-lived stores. |
 | `SessionsDirectory` | string | null | Directory holding session transcripts and the session store database. Setting this and leaving `SessionStore.Type` unset selects the `File` store. |
 | `SessionStore.Type` | string | _(inferred)_ | Session store backend: `InMemory`, `File`, or `Sqlite`. When unset it resolves to `File` if `SessionsDirectory` is set, otherwise `Sqlite` - `InMemory` is never chosen implicitly because it loses all data on restart. Any other value fails startup validation. |
@@ -1371,7 +1368,7 @@ safe way to know.
 
 The `compaction` section tunes when and how a session's history is summarised to stay within the model's context window. Compaction is triggered when **either** of two signals trips (whichever fires first):
 
-- **Token-count threshold** — the estimated LLM-visible token total exceeds `contextWindowTokens × tokenThresholdRatio`.
+- **Token-count threshold** — the estimated LLM-visible token total, or an available provider prompt-token count, exceeds `floor(contextWindowTokens × tokenThresholdRatio)`, bounded by the scoped token ceiling below when configured.
 - **Bloat-aware (largest-entry) threshold** — a *single* visible history entry is at or above `largestEntryBytesThreshold` UTF-8 bytes. A session can accumulate a small number of enormous low-value entries (for example a raw transcript dump or a directory listing) whose total still sits under the token threshold while the visible tail is dominated by dead weight; this signal makes such a session eligible for compaction so the oversized entry gets summarised away instead of being re-sent on every turn.
 
 ```bash
@@ -1404,8 +1401,8 @@ using the same precedence chain the dispatch path already uses:
 3. Otherwise the registered model's own context window.
 4. Otherwise `gateway.compaction.contextWindowTokens`.
 
-Only the *base window* is scope-aware. `tokenThresholdRatio` is applied to whichever window was
-resolved, and `largestEntryBytesThreshold` is byte-based and unaffected. An agent with no scoped
+`tokenThresholdRatio` is applied to whichever window was resolved. A scoped token ceiling can
+lower that threshold (see below); `largestEntryBytesThreshold` is byte-based and unaffected. An agent with no scoped
 window at any layer behaves exactly as it did before this precedence existed.
 
 Without this, an agent pinned to a 32k model under a 200k global setting would reach provider
@@ -1415,6 +1412,46 @@ overflow-compaction path instead of compacting on schedule.
 A value of 0 or less at any layer is treated as unset and falls through to the next layer.
 
 
+
+##### Scoped compaction token ceilings
+
+Set a token ceiling when you want earlier history summarisation without reducing the model's
+context capacity. The backend supports `world.compactionTokenCeiling` and
+`agents.<id>.compactionTokenCeiling`. In a terminal with the installed CLI:
+
+```bash
+botnexus config set world.compactionTokenCeiling 50000
+botnexus config set agents.my-agent.compactionTokenCeiling 30000
+botnexus config get agents.my-agent.compactionTokenCeiling
+```
+
+Replace `my-agent` with your agent ID. These values must be positive 32-bit integers, not strings
+or fractions. Set a scope's value to `null` to resume inheritance:
+
+```bash
+botnexus config set agents.my-agent.compactionTokenCeiling null
+```
+
+The first configured ceiling wins: **conversation > agent > world**. A larger conversation
+ceiling replaces a smaller inherited ceiling; ceilings are not minimized across scopes. The
+effective token threshold is still `min(floor(resolved context window × tokenThresholdRatio),
+selected ceiling)`. If no scope supplies a ceiling, behavior remains ratio-only. Pressure must
+**exceed** the threshold; equality does not trigger compaction. The world default applies only
+to conversations in that gateway's world.
+
+The backend re-reads the policy before pre-turn and mid-loop checks, including conflict retries.
+An unavailable policy/session read blocks the next provider turn rather than silently dropping
+the ceiling. The ceiling is a trigger, not a hard cap on prompt size or a guarantee that
+summarisation succeeds. It does not change generation settings, preserved-turn behavior, the
+byte-size trigger, or the existing compaction circuit breaker.
+
+Conversation ceilings are available through the backend override contract, but there is no
+ceiling-specific CLI command, portal editing control, or effective-policy display in this slice.
+Integrators should use the [conversation override reference](api/conversations.md).
+That PUT is not a field-only patch: ceiling callers must also resend existing model, thinking,
+and context-window override values to preserve them. Omitted values clear those three overrides.
+Configuration writes reject case-insensitive duplicate ceiling keys and duplicate `world` or
+`agents` sections when a ceiling is present; remove the ambiguity instead of relying on key order.
 
 #### Conversation Auto-Title
 

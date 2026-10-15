@@ -53,6 +53,18 @@ public sealed record CompactionOptions
     public int ContextWindowTokens { get; init; } = 128_000;
 
     /// <summary>
+    /// Resolved positive scoped trigger ceiling, not model capacity. Null retains the ratio-only
+    /// threshold. Runtime callers resolve conversation > agent > world before each check.
+    /// </summary>
+    [Display(
+        Name = "Compaction token ceiling",
+        Description = "Positive token-count cap on the ratio-based compaction trigger, not model capacity. Null keeps the ratio-only threshold; runtime checks resolve conversation, then agent, then world overrides.",
+        GroupName = "Compaction",
+        Order = 11)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 11)]
+    public int? CompactionTokenCeiling { get; init; }
+
+    /// <summary>
     /// Per-entry size (in UTF-8 bytes) at or above which a single visible history entry makes the
     /// session eligible for compaction, independently of the token-count threshold (#1599 — bloat-aware
     /// trigger). A session can accumulate a small number of enormous low-value entries (e.g. a raw
@@ -151,6 +163,22 @@ public sealed record CompactionOptions
         Order = 10)]
     [ConfigField(Widget = ConfigFieldWidget.Select, Group = "compaction", Order = 10)]
     public MemoryFlushOptions MemoryFlush { get; init; } = new();
+}
+
+/// <summary>Pure token trigger policy shared by estimates, provider usage and cut-plan fallback.</summary>
+public static class CompactionThreshold
+{
+    /// <summary>Returns min(floor(window * ratio), ceiling); null means no ceiling.</summary>
+    public static int Resolve(CompactionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (options.CompactionTokenCeiling is <= 0)
+            throw new InvalidOperationException("Invalid compaction token ceiling; expected a positive integer.");
+        var ratioThreshold = (int)Math.Floor(options.ContextWindowTokens * options.TokenThresholdRatio);
+        return options.CompactionTokenCeiling is int ceiling
+            ? Math.Min(ratioThreshold, ceiling)
+            : ratioThreshold;
+    }
 }
 
 /// <summary>

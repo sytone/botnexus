@@ -63,16 +63,21 @@ public sealed partial class LogDiagnosticsRingBuffer
 
     private readonly object _gate = new();
     private readonly Dictionary<string, LogPatternEntry> _patterns = new(StringComparer.Ordinal);
+    /// <summary>Maximum age of retained diagnostic evidence.</summary>
+    public static readonly TimeSpan Retention = TimeSpan.FromDays(7);
+    private readonly TimeProvider _timeProvider;
     private readonly int _maxPatterns;
     private readonly int _maxRecentOccurrencesPerPattern;
 
     /// <summary>Creates a bounded diagnostic capture buffer.</summary>
     /// <param name="maxPatterns">Maximum number of aggregate patterns retained.</param>
     /// <param name="maxRecentOccurrencesPerPattern">Maximum recent occurrences retained per aggregate.</param>
-    public LogDiagnosticsRingBuffer(int maxPatterns = 1000, int maxRecentOccurrencesPerPattern = 20)
+    /// <param name="timeProvider">Clock used for capture and physical expiry; defaults to the system clock.</param>
+    public LogDiagnosticsRingBuffer(int maxPatterns = 1000, int maxRecentOccurrencesPerPattern = 20, TimeProvider? timeProvider = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(maxPatterns, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxRecentOccurrencesPerPattern, 1);
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _maxPatterns = maxPatterns;
         _maxRecentOccurrencesPerPattern = maxRecentOccurrencesPerPattern;
     }
@@ -107,19 +112,20 @@ public sealed partial class LogDiagnosticsRingBuffer
         capturedProperties.TryGetValue("FindingId", out var findingId);
         var fingerprint = ComputeFingerprint(
             templateIdentity, level, boundedCategory, eventId.Id, boundedEventName, findingId);
-        var timestamp = DateTimeOffset.UtcNow;
-        var occurrence = new LogPatternOccurrence
-        {
-            Timestamp = timestamp,
-            Category = boundedCategory,
-            EventId = eventId.Id,
-            EventName = boundedEventName,
-            RenderedMessage = boundedMessage,
-            Properties = capturedProperties
-        };
-
         lock (_gate)
         {
+            // Sample capture time in insertion order, not before competing writers acquire the lock.
+            var timestamp = _timeProvider.GetUtcNow();
+            var occurrence = new LogPatternOccurrence
+            {
+                Timestamp = timestamp,
+                Category = boundedCategory,
+                EventId = eventId.Id,
+                EventName = boundedEventName,
+                RenderedMessage = boundedMessage,
+                Properties = capturedProperties
+            };
+            PruneExpired(timestamp);
             if (_patterns.TryGetValue(fingerprint, out var existing))
             {
                 existing.AddOccurrence(occurrence, _maxRecentOccurrencesPerPattern, MaxDistinctValuesPerDimension);
@@ -150,16 +156,43 @@ public sealed partial class LogDiagnosticsRingBuffer
     /// <summary>Returns aggregates observed within a time window, newest first.</summary>
     public IReadOnlyList<LogPatternEntry> GetPatterns(TimeSpan window)
     {
-        var cutoff = DateTimeOffset.UtcNow - window;
         lock (_gate)
         {
+            var now = _timeProvider.GetUtcNow();
+            var cutoff = now - window;
+            PruneExpired(now);
             return _patterns.Values.Where(pattern => pattern.LastSeen >= cutoff)
                 .OrderByDescending(pattern => pattern.LastSeen).ToArray();
         }
     }
 
     /// <summary>Returns the current aggregate count.</summary>
-    public int PatternCount { get { lock (_gate) return _patterns.Count; } }
+    public int PatternCount { get { lock (_gate) { PruneExpired(_timeProvider.GetUtcNow()); return _patterns.Count; } } }
+
+    /// <summary>Returns detached, atomic aggregate snapshots with only occurrences inside the requested window.</summary>
+    public IReadOnlyList<LogPatternSnapshot> GetSnapshots(TimeSpan window)
+    {
+        lock (_gate)
+        {
+            var now = _timeProvider.GetUtcNow();
+            PruneExpired(now);
+            return _patterns.Values.Where(pattern => pattern.LastSeen >= now - window)
+                .Select(pattern => pattern.Snapshot(now - window))
+                .OrderByDescending(pattern => pattern.LastSeen).ThenBy(pattern => pattern.Fingerprint, StringComparer.Ordinal).ToArray();
+        }
+    }
+
+    private void PruneExpired(DateTimeOffset now)
+    {
+        var cutoff = now - Retention;
+        foreach (var pattern in _patterns.Values.ToArray())
+        {
+            if (pattern.LastSeen < cutoff)
+                _patterns.Remove(pattern.Fingerprint);
+            else
+                pattern.PruneExpired(cutoff, MaxDistinctValuesPerDimension);
+        }
+    }
 
     /// <summary>Removes all retained aggregates and occurrences.</summary>
     public void Clear()

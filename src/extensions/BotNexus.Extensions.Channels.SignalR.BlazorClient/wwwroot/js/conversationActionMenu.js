@@ -6,8 +6,9 @@ window.conversationActionMenu = (() => {
         cleanup = null;
     }
 
-    function open(menu, dotnet) {
+    function open(overlay, menu, dotnet) {
         close();
+        overlay.showPopover();
         requestAnimationFrame(() => {
             const rect = menu.getBoundingClientRect();
             const margin = 8;
@@ -27,6 +28,7 @@ window.conversationActionMenu = (() => {
             document.removeEventListener('pointerdown', dismiss, true);
             window.removeEventListener('scroll', dismiss, true);
             window.removeEventListener('resize', dismiss, true);
+            if (overlay.matches(':popover-open')) overlay.hidePopover();
         };
     }
 

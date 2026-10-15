@@ -54,8 +54,29 @@ Modes:
 ./scripts/repo/Invoke-AzureBuildTest.ps1 -Mode playwright
 ```
 
-These five values are the whole set the runner accepts; anything else is rejected by the
-`ValidateSet` on the `-Mode` parameter in `scripts/repo/Invoke-AzureBuildTest.ps1`.
+The runner also accepts `diagnostic` for a single named test project. This mode is not an authoritative validation gate and never writes a validation receipt. Other values are rejected by the `ValidateSet` on the `-Mode` parameter in `scripts/repo/Invoke-AzureBuildTest.ps1`.
+
+### Diagnose one test project
+
+For maintainers investigating a hung test host, use a literal repository-relative project path:
+
+```powershell
+./scripts/repo/Invoke-AzureBuildTest.ps1 -Mode diagnostic -DiagnosticProject tests/gateway/BotNexus.Gateway.Conversations.Tests/BotNexus.Gateway.Conversations.Tests.csproj -DiagnosticHangSeconds 120
+```
+
+The source snapshot is verified before building. The sender requires a deployed runner image whose content-addressed identity matches the candidate runner sources; unknown or mismatched images are refused before a job starts. Changing a worktree does not deploy its runner image. Infrastructure deployment remains a separate operator action.
+
+The diagnostic project must exist below `tests/`, explicitly reference the test SDK, and not opt out of test execution. Absolute paths, wildcards, traversal, links, and build-output paths are rejected. No test filter is added. The existing generated run settings and isolated test home are preserved.
+
+The event collector flushes each observed test start and end to a JSON Lines journal, including identity, name, assembly, UTC observation time, and per-journal sequence. Observation time is not an adapter-provided execution timestamp. Pairing is checked within each journal using test identity, assembly, and name; malformed timestamps, duplicate ends, or missing starts cannot certify complete evidence.
+
+The per-test inactivity timer requests mini hang dumps. An independent absolute watchdog also attempts native capture 90 seconds before the remaining outer test deadline, even if every test has ended but the host is stuck during shutdown. Each dump subprocess has a 60-second bound, inside the unchanged outer deadline. Native absolute capture uses the Linux test host's own runtime `createdump`, with an exact kernel process-start token and ownership checks. Unsupported platforms, unavailable tools, attach failures, and missing targets are recorded rather than treated as successful captures.
+
+Diagnostic commands and dump tools start behind a gated ownership boundary: a Windows job or Linux session. That boundary remains alive if the launcher exits first, so descendants and inherited output pipes can still be terminated and drained. Cleanup, reader closure, and pipe-drain failures remain incomplete evidence. Live journal reads permit the collector's write handle and defer only an unfinished trailing record; final evidence parsing remains strict.
+
+Supplementary VSTest traces, event journals, dump-attempt records, and source/runner identities are retained in the diagnostic artifacts. `diagnostic-evidence.json` checks native dump container and payload ranges, not decoded or symbolized stacks. A hang without structurally valid dump evidence remains incomplete; requesting a dump is not proof that it was produced. Inspect the private dump with an appropriate debugger to establish the actual stack. Diagnostic success does not replace a complete CORE run.
+
+**Treat these artifacts as sensitive.** Dumps and traces can contain credentials or test data. Diagnostic mode retains remote artifacts on failure instead of deleting the evidence. Storage remains authenticated and private; choose a private local output directory with `-OutputPath`. Do not attach raw artifacts to public issues or pull requests. Retention and deletion require the existing authorized storage controls.
 
 **`core` excludes exactly two projects.** The runner filters on
 `FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E`, so

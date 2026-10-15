@@ -332,6 +332,7 @@ public static class GatewayServiceCollectionExtensions
         // #2896: scope the auto-compaction budget to the agent's / conversation's own context window
         // instead of the process-global CompactionOptions.ContextWindowTokens.
         services.TryAddSingleton<ISessionContextWindowResolver, SessionContextWindowResolver>();
+        services.TryAddSingleton<ISessionCompactionCeilingResolver, SessionCompactionCeilingResolver>();
         // #3535: turns a context-exhausted empty completion from a silent blank turn into an
         // explicit MessageRole.Notification, discriminated against the SAME scope-resolved window.
         services.TryAddSingleton<IContextExhaustionNotifier, ContextExhaustionNotifier>();

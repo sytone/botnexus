@@ -79,9 +79,7 @@ separate agent/system/maintenance job taxonomy - every job is dispatched to the 
 | `heartbeat` | System-provisioned agent heartbeat | `agentId` | One model turn per fire |
 | `plugin-update` | Updates every installed plugin whose update preference is enabled (see [8.9](#_8-9-plugin-update)) | none - platform-wide, `agentId` is `null` | None |
 
-`heartbeat` and `skill-review` jobs are **auto-provisioned** by the gateway per user-defined agent
-and are marked `system` - they are hidden from `cron` tool `list` output unless `includeSystem` is
-set. The single `plugin-update` job is auto-provisioned the first time a plugin is installed and is
+For heartbeat provisioning and its opt-in agent configuration, see [Heartbeat ownership and configuration](#heartbeat-ownership-and-configuration). `skill-review` jobs are auto-provisioned per user-defined agent. These jobs are marked `system` and hidden from `cron` tool `list` output unless `includeSystem` is set. The single `plugin-update` job is auto-provisioned the first time a plugin is installed and is
 marked `system` for the same reason.
 
 ### 2.1 Agent prompt jobs (`actionType: "agent-prompt"`)
@@ -470,9 +468,11 @@ would be refused at fire time cannot be stored silently.
 ### 8.4 `memory-dreaming`
 
 **Name:** `memory-dreaming`  
-**Description:** Periodic memory consolidation via LLM — reads recent daily notes, builds a consolidation prompt, and dispatches a session to update `MEMORY.md` with distilled insights.
+**Description:** Implemented LLM review action that reads recent daily notes and dispatches a consolidation prompt. Dispatch does not prove that workspace `MEMORY.md` was updated.
 
-Unlike a mechanical file merge, memory dreaming uses an LLM to extract patterns, decisions, and knowledge from daily notes and weave them into the agent's long-term memory.
+**Main branch:** source-verified at `08ae4a8c353ce8a6ecfa6d866c53b70be86a8310` in `MemoryDreamingCronAction` and `CronServiceCollectionExtensions`. The action is registered, but no memory-dreaming startup provisioner is registered. A job must be configured explicitly; the example schedule below is not a platform default.
+
+**Persistence limitation:** The prompt asks for an append to workspace `MEMORY.md` through `memory_save`. Under the default memory root, `file_path="MEMORY.md"` resolves to `memory/MEMORY.md`, not the workspace-root file loaded into prompt context. Omitting the path saves a daily note; parent traversal is rejected. [#4818](https://github.com/sytone/botnexus/issues/4818) tracks this mismatch. Do not broaden write access or change the memory root to work around it. See [Memory consolidation](development/workspace-and-memory.md#memory-consolidation) for normal-turn boundaries and future authority work.
 
 **Job fields:**
 - `actionType`: `"memory-dreaming"`
@@ -497,10 +497,10 @@ Unlike a mechanical file merge, memory dreaming uses an LLM to extract patterns,
 **Behavior:**
 - Reads `memory/YYYY-MM-DD.md` files from the last N days in the agent's workspace
 - Builds a consolidation prompt with the collected daily notes as context
-- Dispatches a cron-triggered session that writes distilled insights back to `MEMORY.md`
+- Dispatches a cron-triggered session with instructions to append distilled insights; the persistence limitation above still applies
 - Skips execution if no daily notes exist in the lookback window
 
-**Use case:** Keep an agent's long-term memory fresh and relevant without manual curation. Schedule weekly during off-hours.
+**Use case:** Review recent notes for possible durable insights. The configured action is not a verified automatic update of long-term prompt memory.
 
 ### 8.5 Cron run retention (background service, not a job)
 
@@ -589,7 +589,7 @@ A default-enabled `skill-review` job is **auto-provisioned at startup for every 
 ```
 
 **Behavior:**
-- Auto-provisioned per user-defined agent at startup (job id `skill-review:<agentId>`), default schedule `0 4 * * *` (daily at 04:00, staggered after `memory-dreaming`)
+- Auto-provisioned per user-defined agent at startup (job id `skill-review:<agentId>`), default schedule `0 4 * * *` (daily at 04:00; this does not imply a memory-dreaming job is automatically scheduled)
 - Reads the last `lookbackHours` of the agent's session transcripts, scanning at most `maxSessions` sessions newest-first
 - Derives signals: total tool-call count, whether a skill was loaded (`skills`/`skills_list`/`skill_view`), and whether a `skill_manage` call errored
 - Runs the review pass only when `enabled` is true and the aggregated tool-call count meets `minToolCalls`
@@ -1026,6 +1026,18 @@ System jobs are excluded from the list by default, matching the API behaviour.
 
 The legacy `HeartbeatService` and `AgentConfig.CronJobs` have been replaced by the centralized `CronService`.
 
+### Heartbeat ownership and configuration
+
+**Main branch:** source-verified at `08ae4a8c353ce8a6ecfa6d866c53b70be86a8310`. This section owns the heartbeat feature and configuration relationship; other references link here.
+
+`HeartbeatCronProvisioner`, registered by `AddBotNexusCron`, creates and synchronizes system jobs named `heartbeat:<agentId>` from each registered descriptor's `heartbeat` object. The action type is `heartbeat`, executed by `HeartbeatAction` through `CronScheduler`. There is no separate `HeartbeatService` timer or health-check adapter.
+
+Configure `agents.<id>.heartbeat`, not `gateway.heartbeat.*`. The old gateway `Heartbeat.Enabled` and `Heartbeat.IntervalSeconds` settings have no current declaration, binder, or consumer and do not control these jobs. A present `HeartbeatAgentConfig` defaults to `enabled: true` and `intervalMinutes: 30`; an absent object does not enable a job. The provisioner converts minutes and optional active hours to a cron expression. Disabling the object removes the corresponding system-owned job; runtime agent creation and updates also invoke provisioning.
+
+`agents.defaults.heartbeat` is declared and bound, but current `PlatformConfigAgentSource` does not merge agent defaults into descriptors (#3515). Set the heartbeat object on the individual agent. Do not infer effective inheritance from the defaults schema.
+
+`HeartbeatAction` skips quiet hours and an absent or effectively empty `HEARTBEAT.md`. Scheduled runs defer while the agent is busy. This is periodic agent work, not an HTTP keepalive or proof of gateway health. Inspect system jobs and their run history using the scheduling interfaces described in this guide.
+
 ### Legacy Configuration (Deprecated)
 
 ```json
@@ -1457,10 +1469,7 @@ foreach (var job in jobs)
 
 ### 12.5 Health Check Integration
 
-The `HeartbeatService` (now a thin adapter) delegates to the cron service:
-
-- `IsHealthy` returns `true` if the cron service is running
-- `LastBeat` returns the timestamp of the most recent job execution
+Heartbeat feature ownership is described in [Heartbeat ownership and configuration](#heartbeat-ownership-and-configuration). There is no `HeartbeatService.IsHealthy` / `LastBeat` adapter in current source. Job execution history is not a substitute for gateway health diagnostics.
 
 ### 12.6 Per-run cost metrics (#2641)
 
@@ -1582,7 +1591,7 @@ Run a shell script every hour with no model turn.
 
 ### Example 3: Nightly Memory Consolidation
 
-Run an LLM memory-consolidation pass every night.
+Configure an LLM review of recent notes every night. The [memory-dreaming persistence limitation](#_8-4-memory-dreaming) applies; this example does not establish a successful `MEMORY.md` update.
 
 ```json
 {
@@ -1606,8 +1615,7 @@ Run an LLM memory-consolidation pass every night.
 ```
 
 **Behavior:**
-- **2:00 AM** (Pacific, daily): reads the agent's last 14 days of daily notes and writes distilled
-  insights back to `MEMORY.md`
+- **2:00 AM** (Pacific, daily): reads recent daily notes and dispatches a consolidation prompt. The persistence limitation above applies; dispatch does not verify an update to workspace `MEMORY.md`.
 - Skips execution if no daily notes exist in the lookback window
 - Old run records are purged automatically by the cron run retention service - no cleanup job needed
 

@@ -1922,6 +1922,10 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             CREATE INDEX IF NOT EXISTS idx_tool_invocations_session_started ON tool_invocations(session_id, started_at, id);
             CREATE INDEX IF NOT EXISTS idx_tool_invocations_retention_completed ON tool_invocations(retention_state, completed_at) WHERE completed_at IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_session_history_tool_invocation_id ON session_history(tool_invocation_id) WHERE tool_invocation_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_session_history_unlinked_tool_sibling ON session_history(session_id, tool_call_id, agent_run_id)
+                WHERE tool_invocation_id IS NULL
+                  AND (message_kind IN ('tool-start', 'tool-result')
+                       OR (message_kind IS NULL AND role = 'tool'));
             CREATE INDEX IF NOT EXISTS idx_session_history_unlinked_tool_rows ON session_history(id)
                 WHERE tool_invocation_id IS NULL
                   AND tool_call_id IS NOT NULL

@@ -73,6 +73,7 @@ internal static class SqliteDataReaderExtensions
             ModelOverride = GetNullableString(reader, "model_override"),
             ThinkingOverride = GetNullableString(reader, "thinking_override"),
             ContextWindowOverride = GetNullableInt(reader, "context_window_override"),
+            CompactionTokenCeiling = GetNullableInt(reader, "compaction_token_ceiling"),
             // #2523: absent for every row persisted before the column existed, and absent from any
             // pre-migration projection - GetOptionalString tolerates both, hydrating as "no overlay".
             ToolOverrideJson = GetOptionalString(reader, "tool_override_json")

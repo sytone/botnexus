@@ -8128,9 +8128,14 @@ h3.conversation-title.editable:hover {
 .conversation-actions-trigger:hover, .conversation-actions-trigger:focus-visible { background: var(--bg-hover); color: var(--text-primary); }
 .conversation-list-item > .conversation-action-context-target > .conversation-actions-trigger,
 .conversation-list-item .conversation-actions-trigger { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
-.conversation-action-menu-dismiss { position: fixed; inset: 0; z-index: 1098; border: 0; padding: 0; background: transparent; }
+.conversation-action-overlay {
+    position: fixed; inset: 0; width: auto; height: auto; max-width: none; max-height: none;
+    margin: 0; padding: 0; border: 0; background: transparent; overflow: visible;
+}
+.conversation-action-overlay::backdrop { background: transparent; }
+.conversation-action-menu-dismiss { position: fixed; inset: 0; border: 0; padding: 0; background: transparent; }
 .conversation-action-menu {
-    position: fixed; z-index: 1099; min-width: 180px; max-width: min(280px, calc(100vw - 16px));
+    position: fixed; min-width: 180px; max-width: min(280px, calc(100vw - 16px));
     max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px;
     border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary);
     box-shadow: 0 8px 24px rgba(0,0,0,.28);

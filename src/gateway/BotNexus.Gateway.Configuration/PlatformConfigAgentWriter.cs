@@ -38,6 +38,8 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
     {
         ArgumentNullException.ThrowIfNull(descriptor);
         ArgumentException.ThrowIfNullOrWhiteSpace(descriptor.AgentId.Value);
+        if (descriptor.CompactionTokenCeiling is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(descriptor), "CompactionTokenCeiling must be positive or null.");
 
         _ = _botNexusHome.GetAgentDirectory(descriptor.AgentId.Value);
 
@@ -66,6 +68,7 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             SetOptionalString(entry, "cacheRetention", descriptor.CacheRetentionMode);
             SetOptionalString(entry, "thinking", descriptor.Thinking);
             SetOptionalContextWindow(entry, "contextWindow", descriptor.ContextWindow);
+            SetOptionalContextWindow(entry, "compactionTokenCeiling", descriptor.CompactionTokenCeiling);
             SetOptionalCount(entry, "maxConcurrentSessions", descriptor.MaxConcurrentSessions);
 
             // List surface.

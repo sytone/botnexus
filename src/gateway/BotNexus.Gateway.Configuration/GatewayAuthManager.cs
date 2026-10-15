@@ -759,9 +759,10 @@ public sealed class GatewayAuthManager
                     builder.Append("absent");
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                _logger.LogDebug(ex, "Failed to stat auth file '{AuthPath}' for staleness detection.", candidatePath);
+                // Auth paths and filesystem exceptions can contain private data; log neither.
+                _logger.LogDebug("Failed to stat auth file for staleness detection.");
                 builder.Append("unknown");
             }
 

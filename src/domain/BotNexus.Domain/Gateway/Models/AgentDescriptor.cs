@@ -186,6 +186,10 @@ public sealed record AgentDescriptor : ICitizen
     [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 5)]
     public int? ContextWindow { get; init; }
 
+    /// <summary>Optional positive compaction trigger ceiling in tokens; null inherits the enclosing scope. Not model capacity.</summary>
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
+    public int? CompactionTokenCeiling { get; init; }
+
     /// <summary>
     /// Maximum concurrent sessions allowed for this agent.
     /// Zero means unlimited.

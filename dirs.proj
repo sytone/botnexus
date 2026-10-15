@@ -12,6 +12,7 @@
     <ProjectReference Include="$(MSBuildThisFileDirectory)src\dirs.proj" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)tests\dirs.proj" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)tools\BotNexus.PromptBehaviorEval\BotNexus.PromptBehaviorEval.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)tools\BotNexus.TestEventCollector\BotNexus.TestEventCollector.csproj" />
   </ItemGroup>
 
 </Project>

@@ -84,6 +84,12 @@ BeforeAll {
                 }
                 return @{ exitCode = 0; output = '' }
             }
+            if ($joined -match 'worktree prune') {
+                # Simulate successful cleanup, not just a zero exit code: the
+                # subject now verifies the real fixture metadata is gone (#4856).
+                Remove-Item -LiteralPath (Split-Path -Parent $LockFile) -Recurse -Force -ErrorAction Stop
+                return @{ exitCode = 0; output = '' }
+            }
             if ($joined -match 'rev-parse') { return @{ exitCode = 0; output = "feature/x`n" } }
             return @{ exitCode = 0; output = '' }
         }.GetNewClosure()
@@ -208,6 +214,8 @@ Describe 'Remove-WorktreeSafely worktree lock owner liveness (issue #2409)' {
             Enter-WorktreeReclaimGuard -LockFilePath $repo.LockFile | Should -BeNullOrEmpty
         }
         finally { Exit-WorktreeReclaimGuard -Guard $first }
-        Enter-WorktreeReclaimGuard -LockFilePath $repo.LockFile | Should -Not -BeNullOrEmpty
+        $second = Enter-WorktreeReclaimGuard -LockFilePath $repo.LockFile
+        try { $second | Should -Not -BeNullOrEmpty }
+        finally { Exit-WorktreeReclaimGuard -Guard $second }
     }
 }

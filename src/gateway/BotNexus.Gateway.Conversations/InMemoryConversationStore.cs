@@ -69,6 +69,8 @@ public sealed class InMemoryConversationStore : IConversationStore
 
     public Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
+        if (conversation.CompactionTokenCeiling is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(conversation), "CompactionTokenCeiling must be positive or null.");
         StampWorldId(conversation);
         if (!_conversations.TryAdd(conversation.ConversationId.Value, conversation))
             throw new InvalidOperationException($"A conversation with id '{conversation.ConversationId}' already exists.");
@@ -78,6 +80,8 @@ public sealed class InMemoryConversationStore : IConversationStore
     /// <inheritdoc />
     public Task SaveAsync(Conversation conversation, CancellationToken ct = default)
     {
+        if (conversation.CompactionTokenCeiling is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(conversation), "CompactionTokenCeiling must be positive or null.");
         if (conversation.Status == ConversationStatus.Archived && conversation.ActiveSessionId is not null)
             throw new InvalidOperationException($"Conversation '{conversation.ConversationId}' cannot be archived while an active session is assigned.");
         StampWorldId(conversation);
@@ -302,6 +306,8 @@ public sealed class InMemoryConversationStore : IConversationStore
     public async Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(patch);
+        if (patch.CompactionTokenCeiling.IsSet && patch.CompactionTokenCeiling.Value is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(patch), "CompactionTokenCeiling must be positive or null.");
         var conversationLock = GetParticipantLock(conversationId.Value);
         await conversationLock.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -313,6 +319,7 @@ public sealed class InMemoryConversationStore : IConversationStore
                 ModelOverride = patch.Model.IsSet ? patch.Model.Value : existing.ModelOverride,
                 ThinkingOverride = patch.Thinking.IsSet ? patch.Thinking.Value : existing.ThinkingOverride,
                 ContextWindowOverride = patch.ContextWindow.IsSet ? patch.ContextWindow.Value : existing.ContextWindowOverride,
+                CompactionTokenCeiling = patch.CompactionTokenCeiling.IsSet ? patch.CompactionTokenCeiling.Value : existing.CompactionTokenCeiling,
                 ToolOverrideJson = patch.ToolOverrideJson.IsSet ? patch.ToolOverrideJson.Value : existing.ToolOverrideJson,
                 UpdatedAt = DateTimeOffset.UtcNow
             };

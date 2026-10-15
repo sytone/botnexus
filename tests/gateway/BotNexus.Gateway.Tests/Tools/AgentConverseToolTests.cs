@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using BotNexus.Agent.Core.Tools;
@@ -237,20 +238,40 @@ public sealed class AgentConverseToolTests
     [Fact]
     public async Task ExecuteAsync_WhenCallerAborts_ReturnsCallerAbortedReportInsteadOfBareCancellation()
     {
-        using var callerCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        using var callerCancellation = new CancellationTokenSource();
+        var exchangeEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var service = new Mock<IAgentExchangeService>();
         service.Setup(s => s.ConverseAsync(It.IsAny<AgentExchangeRequest>(), It.IsAny<CancellationToken>()))
-            .Returns<AgentExchangeRequest, CancellationToken>((_, token) => WaitForCancellationAsync(token));
+            .Returns<AgentExchangeRequest, CancellationToken>((_, token) =>
+            {
+                token.IsCancellationRequested.ShouldBeFalse();
+                exchangeEntered.SetResult(true);
+                return WaitForCancellationAsync(token);
+            });
         var tool = new AgentConverseTool(service.Object, new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"));
 
-        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        var startedAt = Stopwatch.GetTimestamp();
+        var execution = tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
             ["agentId"] = "agent-c",
             ["message"] = "Take your time",
             ["timeoutSeconds"] = 1800
         }, callerCancellation.Token);
 
+        try
+        {
+            await exchangeEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            callerCancellation.IsCancellationRequested.ShouldBeFalse();
+        }
+        finally
+        {
+            await callerCancellation.CancelAsync();
+        }
+
+        var result = await execution;
+        var executionElapsed = Stopwatch.GetElapsedTime(startedAt);
         callerCancellation.IsCancellationRequested.ShouldBeTrue();
+        service.Verify(s => s.ConverseAsync(It.IsAny<AgentExchangeRequest>(), It.IsAny<CancellationToken>()), Times.Once);
 
         var text = ReadText(result);
         text.ShouldNotContain("A task was canceled");
@@ -262,7 +283,12 @@ public sealed class AgentConverseToolTests
         root.GetProperty("retryAdvised").GetBoolean().ShouldBeFalse();
         root.GetProperty("targetAgentId").GetString().ShouldBe("agent-c");
         root.GetProperty("timeoutSeconds").GetInt32().ShouldBe(1800);
-        root.GetProperty("elapsedSeconds").GetDouble().ShouldBeGreaterThan(0d);
+        // Production rounds its inner Stopwatch measurement to milliseconds. An immediate abort
+        // can validly round to zero; it must still be nonnegative, rounded, and within this call.
+        var elapsedSeconds = root.GetProperty("elapsedSeconds").GetDouble();
+        elapsedSeconds.ShouldBeGreaterThanOrEqualTo(0d);
+        elapsedSeconds.ShouldBe(Math.Round(elapsedSeconds, 3));
+        elapsedSeconds.ShouldBeLessThanOrEqualTo(Math.Round(executionElapsed.TotalSeconds, 3));
         root.GetProperty("message").GetString().ShouldNotBeNull()
             .ShouldContain("abandoned");
     }
@@ -275,19 +301,38 @@ public sealed class AgentConverseToolTests
     [Fact]
     public async Task ExecuteAsync_WhenCallerAborts_UsesCauseDistinctFromTimeoutAndTargetUnavailable()
     {
-        using var callerCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        using var callerCancellation = new CancellationTokenSource();
+        var exchangeEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var service = new Mock<IAgentExchangeService>();
         service.Setup(s => s.ConverseAsync(It.IsAny<AgentExchangeRequest>(), It.IsAny<CancellationToken>()))
-            .Returns<AgentExchangeRequest, CancellationToken>((_, token) => WaitForCancellationAsync(token));
+            .Returns<AgentExchangeRequest, CancellationToken>((_, token) =>
+            {
+                token.IsCancellationRequested.ShouldBeFalse();
+                exchangeEntered.SetResult(true);
+                return WaitForCancellationAsync(token);
+            });
         var tool = new AgentConverseTool(service.Object, new InMemorySessionStore(), AgentId.From("test-agent"), SessionId.From("session-1"));
 
-        var result = await tool.ExecuteAsync("call-1", new Dictionary<string, object?>
+        var execution = tool.ExecuteAsync("call-1", new Dictionary<string, object?>
         {
             ["agentId"] = "agent-c",
             ["message"] = "Take your time",
             ["timeoutSeconds"] = 1800
         }, callerCancellation.Token);
 
+        try
+        {
+            await exchangeEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            callerCancellation.IsCancellationRequested.ShouldBeFalse();
+        }
+        finally
+        {
+            await callerCancellation.CancelAsync();
+        }
+
+        var result = await execution;
+        callerCancellation.IsCancellationRequested.ShouldBeTrue();
+        service.Verify(s => s.ConverseAsync(It.IsAny<AgentExchangeRequest>(), It.IsAny<CancellationToken>()), Times.Once);
         using var payload = JsonDocument.Parse(ReadText(result));
         var cause = payload.RootElement.GetProperty("cancellationCause").GetString();
         cause.ShouldNotBe("timeout");

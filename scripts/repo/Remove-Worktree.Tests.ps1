@@ -11,13 +11,15 @@ BeforeAll {
     function New-FakeGit {
         param(
             [scriptblock]$RemoveResponse,   # param($attempt) -> @{exitCode;output}
-            [string]$Branch = 'fix/2104-worktree-locks'
+            [string]$Branch = 'fix/2104-worktree-locks',
+            [scriptblock]$PruneResponse = { @{ exitCode = 0; output = '' } }
         )
         $state = [ordered]@{
             calls       = [Collections.Generic.List[string]]::new()
             removeCalls = 0
             removeResp  = $RemoveResponse
             branch      = $Branch
+            pruneResp   = $PruneResponse
         }
         $invoker = {
             param([string[]]$GitArgs)
@@ -26,6 +28,9 @@ BeforeAll {
             if ($joined -match 'worktree remove') {
                 $state.removeCalls++
                 return (& $state.removeResp $state.removeCalls)
+            }
+            if ($joined -match 'worktree prune') {
+                return (& $state.pruneResp)
             }
             if ($joined -match 'rev-parse --abbrev-ref HEAD') {
                 return @{ exitCode = 0; output = "$($state.branch)`n" }
@@ -39,6 +44,16 @@ BeforeAll {
         $p = Join-Path ([IO.Path]::GetTempPath()) ("wt-" + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $p -Force | Out-Null
         return $p
+    }
+
+    function New-MetadataFixture {
+        $root = New-TempWorktreeDir
+        $repo = Join-Path $root 'repo'
+        $wt = Join-Path $root 'wt'
+        $meta = Join-Path (Join-Path (Join-Path $repo '.git') 'worktrees') 'wt'
+        New-Item -ItemType Directory -Path $meta, $wt -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $wt '.git') -Value "gitdir: $meta" -Encoding utf8
+        return @{ Root = $root; Repo = $repo; Worktree = $wt; Meta = $meta }
     }
 
     function Get-CallIndex {
@@ -60,6 +75,112 @@ BeforeAll {
 }
 
 Describe 'Remove-WorktreeSafely' {
+
+    Context 'prune and metadata verification (issue #4856)' {
+        It 'fails closed when prune fails even if metadata is <MetadataState>' -ForEach @(
+            @{ MetadataState = 'retained'; RemoveMetadata = $false }
+            @{ MetadataState = 'gone'; RemoveMetadata = $true }
+        ) {
+            $fixture = New-MetadataFixture
+            try {
+                $pruneResponse = {
+                    if ($RemoveMetadata) { Remove-Item -LiteralPath $fixture.Meta -Recurse -Force }
+                    @{ exitCode = 1; output = 'fatal: injected prune failure' }
+                }.GetNewClosure()
+                $fake = New-FakeGit -RemoveResponse { param($n) @{ exitCode = 0; output = '' } } -PruneResponse $pruneResponse
+                $result = Remove-WorktreeSafely -RepoRoot $fixture.Repo -WorktreePath $fixture.Worktree -DeleteBranch -GitInvoker $fake.invoker -DirectoryRemover { param($p) Remove-Item -LiteralPath $p -Recurse -Force } -LockerProbe { param($p) @() } -Sleeper { param($ms) }
+
+                $result.outcome | Should -Be 'error'
+                $result.pruned | Should -BeFalse
+                $result.metadataGone | Should -Be $RemoveMetadata
+                $result.branchDeleted | Should -BeFalse
+                $result.reclaimed | Should -BeFalse
+                $result.lastError | Should -Match 'injected prune failure'
+                $result.path | Should -Be $fixture.Worktree
+                $result.branch | Should -Be 'fix/2104-worktree-locks'
+                $result.metadataName | Should -Be 'wt'
+                Test-Path -LiteralPath $fixture.Worktree | Should -BeFalse
+                Get-CallCount -State $fake.state -Pattern 'worktree prune' | Should -Be 1
+                Get-CallCount -State $fake.state -Pattern 'branch -D' | Should -Be 0
+            }
+            finally { Remove-Item -LiteralPath $fixture.Root -Recurse -Force }
+        }
+
+        It 'fails closed when successful prune leaves metadata behind' {
+            $fixture = New-MetadataFixture
+            try {
+                $fake = New-FakeGit -RemoveResponse { param($n) @{ exitCode = 0; output = '' } }
+                $result = Remove-WorktreeSafely -RepoRoot $fixture.Repo -WorktreePath $fixture.Worktree -DeleteBranch -GitInvoker $fake.invoker -DirectoryRemover { param($p) Remove-Item -LiteralPath $p -Recurse -Force } -LockerProbe { param($p) @() } -Sleeper { param($ms) }
+
+                $result.outcome | Should -Be 'error'
+                $result.pruned | Should -BeTrue
+                $result.metadataGone | Should -BeFalse
+                $result.branchDeleted | Should -BeFalse
+                $result.reclaimed | Should -BeFalse
+                $result.lastError | Should -Match 'metadata'
+                $result.lastError | Should -Match ([regex]::Escape($fixture.Meta))
+                Test-Path -LiteralPath $fixture.Worktree | Should -BeFalse
+                Test-Path -LiteralPath $fixture.Meta | Should -BeTrue
+                Get-CallCount -State $fake.state -Pattern 'worktree prune' | Should -Be 1
+                Get-CallCount -State $fake.state -Pattern 'branch -D' | Should -Be 0
+            }
+            finally { Remove-Item -LiteralPath $fixture.Root -Recurse -Force }
+        }
+
+        It 'deletes the branch only after successful prune removes metadata' {
+            $fixture = New-MetadataFixture
+            try {
+                $pruneResponse = {
+                    Test-Path -LiteralPath $fixture.Worktree | Should -BeFalse
+                    Remove-Item -LiteralPath $fixture.Meta -Recurse -Force
+                    @{ exitCode = 0; output = '' }
+                }.GetNewClosure()
+                $fake = New-FakeGit -RemoveResponse { param($n) @{ exitCode = 0; output = '' } } -PruneResponse $pruneResponse
+                $result = Remove-WorktreeSafely -RepoRoot $fixture.Repo -WorktreePath $fixture.Worktree -DeleteBranch -GitInvoker $fake.invoker -DirectoryRemover { param($p) Remove-Item -LiteralPath $p -Recurse -Force } -LockerProbe { param($p) @() } -Sleeper { param($ms) }
+
+                $result.outcome | Should -Be 'removed'
+                $result.pruned | Should -BeTrue
+                $result.metadataGone | Should -BeTrue
+                $result.branchDeleted | Should -BeTrue
+                Test-Path -LiteralPath $fixture.Meta | Should -BeFalse
+                Get-CallCount -State $fake.state -Pattern 'branch -D' | Should -Be 1
+                (Get-CallIndex -State $fake.state -Pattern 'worktree prune') | Should -BeLessThan (Get-CallIndex -State $fake.state -Pattern 'branch -D')
+            }
+            finally { Remove-Item -LiteralPath $fixture.Root -Recurse -Force }
+        }
+
+        It 'does not claim reclaimed when stale-lock removal succeeds but <Failure> fails' -ForEach @(
+            @{ Failure = 'prune'; PruneExitCode = 1 }
+            @{ Failure = 'metadata verification'; PruneExitCode = 0 }
+        ) {
+            $fixture = New-MetadataFixture
+            try {
+                Set-Content -LiteralPath (Join-Path $fixture.Meta 'locked') -Value 'injected stale lock'
+                Mock Get-WorktreeLockOwnerState { 'Dead' }
+                $pruneResponse = { @{ exitCode = $PruneExitCode; output = 'injected stale cleanup failure' } }.GetNewClosure()
+                $fake = New-FakeGit -RemoveResponse {
+                    param($n)
+                    if ($n -eq 1) { return @{ exitCode = 1; output = 'fatal: worktree is locked' } }
+                    @{ exitCode = 0; output = '' }
+                } -PruneResponse $pruneResponse
+                $result = Remove-WorktreeSafely -RepoRoot $fixture.Repo -WorktreePath $fixture.Worktree -DeleteBranch -MaxRetries 0 -GitInvoker $fake.invoker -DirectoryRemover { param($p) Remove-Item -LiteralPath $p -Recurse -Force } -LockerProbe { param($p) @() } -Sleeper { param($ms) }
+
+                $result.outcome | Should -Be 'error'
+                $result.ownerState | Should -Be 'Dead'
+                $result.reclaimAttempted | Should -BeTrue
+                $result.reclaimed | Should -BeFalse
+                $result.attempts | Should -Be 2
+                $result.pruned | Should -Be ($PruneExitCode -eq 0)
+                $result.metadataGone | Should -BeFalse
+                $result.branchDeleted | Should -BeFalse
+                Test-Path -LiteralPath $fixture.Worktree | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $fixture.Meta 'locked.reclaim') | Should -BeFalse
+                Get-CallCount -State $fake.state -Pattern 'worktree unlock' | Should -Be 1
+                Get-CallCount -State $fake.state -Pattern 'branch -D' | Should -Be 0
+            }
+            finally { Remove-Item -LiteralPath $fixture.Root -Recurse -Force }
+        }
+    }
 
     Context 'when the worktree is persistently locked' {
         BeforeAll {
