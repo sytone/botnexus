@@ -35,12 +35,12 @@ public sealed class CopilotHeaderAuthTests
         var options = await auth.CreateExecutionOptionsAsync("work");
         options.ApiKey.ShouldBe(exactPresent && !equalAccess ? "access-a" : "access-b");
         var metadata = options.Metadata ?? throw new InvalidOperationException("Missing metadata");
-        if (exactPresent) metadata[CopilotHeaderScope.MetadataKey].ShouldBe(CopilotHeaderAttribution.Unavailable);
-        else
         {
             var scope = metadata[CopilotHeaderScope.MetadataKey].ShouldBeOfType<CopilotHeaderScope>();
             scope.Instance.ShouldBe("work");
-            scope.Generation.ShouldBe(auth.ResolveCopilotAccountCredential("work")?.Generation);
+            var account = auth.ResolveCopilotAccountCredential("work") ?? throw new InvalidOperationException("Selected account unavailable");
+            account.OAuthToken.ShouldBe(exactPresent ? "oauth-a" : "oauth-b");
+            scope.Generation.ShouldBe(account.Generation);
             JsonSerializer.Serialize(scope).ShouldNotContain("oauth-b");
             JsonSerializer.Serialize(scope).ShouldNotContain("access-b");
         }

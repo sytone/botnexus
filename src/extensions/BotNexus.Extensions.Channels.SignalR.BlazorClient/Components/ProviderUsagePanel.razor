@@ -28,6 +28,11 @@
                         data-testid="usage-close"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button>
             </div>
 
+            <p class="usage-note t-caption" data-testid="http-activity-scope">
+                Local observed process · HTTP response activity only, not total Copilot activity.
+                WebSocket traffic is excluded from these HTTP rate-limit and burn observations.
+            </p>
+
             @if (_error is not null)
             {
                 <p class="usage-empty t-body">@_error</p>
@@ -37,14 +42,14 @@
                 @if (_current is null)
                 {
                     <p class="usage-empty t-body">
-                        No provider calls observed yet. Send a message and the limits will appear here.
+                        No HTTP responses observed yet. HTTP rate-limit and burn observations will appear here when available.
                     </p>
                 }
                 else
                 {
                     <section class="usage-section">
                         <div class="usage-section-head">
-                            <span class="t-label">Rate limits · local observed process</span>
+                            <span class="t-label">HTTP rate limits · local observed process</span>
                             <span class="t-caption usage-dim">@Ago(_current.ObservedAtUtc)</span>
                         </div>
 
@@ -76,7 +81,7 @@
 
                     <section class="usage-section">
                         <div class="usage-section-head">
-                            <span class="t-label">Burn · local observed process</span>
+                            <span class="t-label">HTTP burn · local observed process</span>
                             <select class="usage-select t-caption" data-testid="usage-window-select"
                                     value="@_windowMinutes" @onchange="SelectWindow" aria-label="Window">
                                 <option value="15">last 15 min</option>
@@ -166,8 +171,11 @@
                 </div>
                 <p class="usage-note t-caption">Account API · provider quota units · configured instance @_instance · verified account instance @(_details?.Instance ?? "unknown / unavailable")</p>
                 <p class="usage-empty t-caption" data-testid="account-refresh-state">
-                    @(_refreshLoading ? "loading" : Status(_details?.Account.AttemptState)) · @Status(_details?.Account.State)
+                    @(_refreshLoading ? "loading" : RefreshStatus(_details?.Account)) · @Status(_details?.Account.State)
                     @if (_details?.Account.IsPartial == true) { <span> · partial</span> }
+                </p>
+                <p class="usage-empty t-caption" data-testid="account-diagnostic" role="status">
+                    @(_refreshLoading ? "Account refresh is in progress." : AccountDiagnostic(_details?.Account) ?? "Account refresh diagnostic is unavailable.")
                 </p>
                 @if (_detailsError is not null)
                 {
@@ -175,7 +183,9 @@
                 }
                 else if (_details?.Account.Snapshots.Count is not > 0)
                 {
-                    <p class="usage-empty t-caption">No premium-interaction quota data is available. Account identity and quota are unknown or unavailable.</p>
+                    <p class="usage-empty t-caption">@(AccountDiagnostic(_details?.Account) is not null
+                        ? "No recognized account quota dimensions are available."
+                        : "No premium-interaction quota data is available. Account identity and quota are unknown or unavailable.")</p>
                 }
                 else
                 {
@@ -295,6 +305,11 @@
     private bool _detailsBusy;
     private bool _detailsPending;
     private Task? _refreshTask;
+    private bool _refreshBusy;
+    private RefreshIntent? _refreshPending;
+    private CancellationTokenSource? _refreshLifecycle;
+    private long _refreshVersion;
+    private sealed record RefreshIntent(string Instance, bool Force, long Version, CancellationToken CancellationToken);
     private List<ProviderUsage> _providers = [];
     private ProviderUsage? _current;
     private Timer? _poll;
@@ -323,7 +338,7 @@
         _error = null;
         SetScheduledInterval();
         var detailsFetch = FetchDetailsAsync(request.Generation, request.CancellationToken);
-        _refreshTask = RefreshAccountAsync(request.Generation, request.CancellationToken, force: false);
+        RequestAccountRefresh(force: false);
         await RefreshAsync(request.Generation, _windowMinutes, request.CancellationToken);
         await detailsFetch;
         if (!Owns(request.Generation, request.CancellationToken)) return;
@@ -333,6 +348,7 @@
     private async Task Close()
     {
         _show = false;
+        CancelAccountRefresh();
         InvalidateLifecycle();
         await DeactivateFocusAsync(restoreFocus: true);
         StateHasChanged();
@@ -436,38 +452,71 @@
         }
     }
 
-    private async Task RefreshAccountAsync(long generation, CancellationToken cancellationToken, bool force)
+    private void RequestAccountRefresh(bool force)
     {
+        if (!_show || _disposed) return;
+        CancelAccountRefresh();
+        _refreshLifecycle = new CancellationTokenSource();
+        _refreshPending = new(_instance, force, _refreshVersion, _refreshLifecycle.Token);
         _refreshLoading = true;
         StateHasChanged();
+        // Coalesced callers retain the actual drain task, not another flight or queued waiter.
+        if (_refreshBusy) return;
+        _refreshBusy = true;
+        _refreshTask = DrainAccountRefreshAsync();
+    }
+
+    private bool OwnsRefresh(RefreshIntent intent) =>
+        !_disposed && _show && !intent.CancellationToken.IsCancellationRequested
+        && intent.Version == _refreshVersion && intent.Instance == _instance;
+
+    private async Task DrainAccountRefreshAsync()
+    {
         try
         {
-            using var response = await Http.PostAsync($"api/copilot/quota/refresh?instance={Uri.EscapeDataString(_instance)}&force={force.ToString().ToLowerInvariant()}", null, cancellationToken);
-            response.EnsureSuccessStatusCode();
-            if (!Owns(generation, cancellationToken)) return;
-            // The POST result is account-only; re-read the companion cache for consistent source display.
-            await FetchDetailsAsync(generation, cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
-        catch
-        {
-            if (Owns(generation, cancellationToken)) _detailsError = "Copilot account quota is currently unavailable.";
+            while (_refreshPending is { } intent)
+            {
+                _refreshPending = null;
+                if (!OwnsRefresh(intent)) continue;
+                try
+                {
+                    using var response = await Http.PostAsync($"api/copilot/quota/refresh?instance={Uri.EscapeDataString(intent.Instance)}&force={intent.Force.ToString().ToLowerInvariant()}", null, intent.CancellationToken);
+                    response.EnsureSuccessStatusCode();
+                    // Window reads have independent ownership: they neither cancel this POST nor
+                    // create another. Refresh the newest window only for the current instance.
+                    if (OwnsRefresh(intent) && _lifecycle is not null)
+                        await FetchDetailsAsync(_generation, _lifecycle.Token);
+                }
+                catch (OperationCanceledException) when (intent.CancellationToken.IsCancellationRequested) { }
+                catch
+                {
+                    if (OwnsRefresh(intent)) _detailsError = "Copilot account quota is currently unavailable.";
+                }
+            }
         }
         finally
         {
-            if (Owns(generation, cancellationToken))
-            {
-                _refreshLoading = false;
-                StateHasChanged();
-            }
+            _refreshBusy = false;
+            _refreshLoading = false;
+            if (_show && !_disposed) StateHasChanged();
         }
+    }
+
+    private void CancelAccountRefresh()
+    {
+        _refreshVersion++;
+        _refreshPending = null;
+        _refreshLoading = false;
+        _refreshLifecycle?.Cancel();
+        _refreshLifecycle?.Dispose();
+        _refreshLifecycle = null;
     }
 
     private Task ManualRefreshAsync()
     {
         if (_refreshLoading || !_show || _lifecycle is null) return Task.CompletedTask;
-        _refreshTask = RefreshAccountAsync(_generation, _lifecycle.Token, force: true);
-        return _refreshTask;
+        RequestAccountRefresh(force: true);
+        return _refreshTask ?? Task.CompletedTask;
     }
 
     private async Task SelectInstance(ChangeEventArgs e)
@@ -478,6 +527,7 @@
         _details = null; // Never display the previous account while a different instance loads.
         _detailsError = null;
         var request = ReplaceRefreshOwnership();
+        RequestAccountRefresh(force: false);
         await FetchDetailsAsync(request.Generation, request.CancellationToken);
     }
 
@@ -616,7 +666,6 @@
     {
         _generation++;
         _detailsPending = false;
-        _refreshLoading = false;
         _poll?.Dispose();
         _poll = null;
         _lifecycle?.Cancel();
@@ -629,6 +678,7 @@
     {
         if (_disposed) return;
         _show = false;
+        CancelAccountRefresh();
         InvalidateLifecycle();
         _disposed = true;
         await DeactivateFocusAsync(restoreFocus: false);
@@ -680,6 +730,36 @@
     private static string Boolean(bool? value) => value is null ? "unknown" : value.Value ? "yes" : "no";
     private static string Utc(DateTimeOffset? at) => at is null || at == default(DateTimeOffset) ? "unknown" : at.Value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture);
     private static string Status(string? state) => state is "fresh" or "stale" or "available" or "loading" or "success" or "error" or "cancelled" ? state : "unavailable";
+    // Refresh disposition is independent of the last attempt and retained snapshot freshness.
+    private static string RefreshStatus(AccountDetails? account) => account?.RefreshState switch
+    {
+        "not-requested" => "not yet requested",
+        "refreshing" => "loading",
+        "throttled" => "throttled",
+        "unavailable" => "unavailable",
+        "success" => "success",
+        "error" => "error",
+        "cancelled" => "cancelled",
+        _ => Status(account?.AttemptState)
+    };
+
+    // Only fixed contract pairs produce diagnostic copy. Never render the supplied reason itself.
+    private static string? AccountDiagnostic(AccountDetails? account) => (account?.RefreshState, account?.Reason) switch
+    {
+        ("not-requested", "not-yet-requested") => "Account refresh has not yet been requested.",
+        ("refreshing", "refresh-in-progress") => "Account refresh is in progress.",
+        ("throttled", "refresh-throttled") => "Account refresh was throttled. Try again after the next refresh time.",
+        ("unavailable", "identity-unavailable") => "Local account identity is unavailable; no upstream refresh was performed.",
+        ("unavailable", "capacity-unavailable") => "Local account quota capacity is unavailable; no upstream refresh was performed.",
+        ("error", "upstream-error") => "Upstream account refresh failed. Retained observations may still be shown.",
+        ("cancelled", "refresh-cancelled") => "Account refresh was cancelled.",
+        ("success", "success-empty") => "Account refresh succeeded, but returned no recognized quota dimensions.",
+        ("success", "success-partial") => "Account refresh succeeded with partial quota data; some fields are unknown.",
+        ("success", "success-stale") => "Last successful account observation is stale; it is not current quota data.",
+        ("success", "success") => "Account refresh succeeded with recognized quota data.",
+        _ => null
+    };
+
     private static string Dimension(string id) => id switch { "premium_interactions" => "Premium interactions", "chat" => "Chat", "completions" => "Completions", _ => "Unknown quota dimension" };
     private static decimal? Used(AccountQuota q) => q.IsUnlimited == false && q.Entitlement is >= 0 && q.Remaining is >= 0 && q.Entitlement >= q.Remaining ? q.Entitlement - q.Remaining : null;
 
@@ -697,6 +777,8 @@
     {
         public string State { get; init; } = "unavailable";
         public string AttemptState { get; init; } = "unavailable";
+        public string? RefreshState { get; init; }
+        public string? Reason { get; init; }
         public bool IsPartial { get; init; } = true;
         public List<AccountQuota> Snapshots { get; init; } = [];
         public DateTimeOffset? LastSuccessAtUtc { get; init; }

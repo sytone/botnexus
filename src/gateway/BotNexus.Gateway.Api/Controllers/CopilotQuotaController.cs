@@ -51,7 +51,7 @@ public sealed class CopilotQuotaService(GatewayAuthManager authManager, CopilotD
         {
             var credential = authManager.ResolveCopilotAccountCredential(instance);
             var entry = ResolveEntry(instance, credential);
-            return Task.FromResult(entry is null ? new CopilotQuotaState() : Project(entry));
+            return Task.FromResult(entry is null ? Unavailable(credential) : Project(entry));
         }
     }
 
@@ -63,7 +63,7 @@ public sealed class CopilotQuotaService(GatewayAuthManager authManager, CopilotD
         lock (_sync)
         {
             return _entries.TryGetValue(scope.Instance, out var entry) && entry.Generation == scope.Generation
-                ? Project(entry) : new CopilotQuotaState();
+                ? Project(entry) : new CopilotQuotaState { Instance = scope.Instance, RefreshState = "not-requested", Reason = "not-yet-requested" };
         }
     }
 
@@ -81,11 +81,18 @@ public sealed class CopilotQuotaService(GatewayAuthManager authManager, CopilotD
         {
             credential = authManager.ResolveCopilotAccountCredential(instance);
             var resolved = ResolveEntry(instance, credential);
-            if (resolved is null || credential is null) return new CopilotQuotaState();
+            if (resolved is null || credential is null) return Unavailable(credential);
             entry = resolved;
             var now = _clock.GetUtcNow();
-            if (entry.Busy || now < entry.NextAttempt || (!force && entry.LastSuccess is not null && now < entry.LastSuccess + SuccessDuration && entry.AttemptState == "success"))
+            if (entry.Busy) return Project(entry);
+            if (now < entry.NextAttempt)
+            {
+                entry.Throttled = true;
                 return Project(entry);
+            }
+            if (!force && entry.LastSuccess is not null && now < entry.LastSuccess + SuccessDuration && entry.AttemptState == "success")
+                return Project(entry);
+            entry.Throttled = false;
             entry.Busy = true;
             entry.AttemptState = "loading";
             entry.LastAttempt = now;
@@ -137,8 +144,9 @@ public sealed class CopilotQuotaService(GatewayAuthManager authManager, CopilotD
         }
         lock (_sync)
         {
-            var current = ResolveEntry(instance, authManager.ResolveCopilotAccountCredential(instance));
-            return current is null ? new CopilotQuotaState() : Project(current);
+            var currentCredential = authManager.ResolveCopilotAccountCredential(instance);
+            var current = ResolveEntry(instance, currentCredential);
+            return current is null ? Unavailable(currentCredential) : Project(current);
         }
     }
 
@@ -162,6 +170,7 @@ public sealed class CopilotQuotaService(GatewayAuthManager authManager, CopilotD
                 unavailable.LastAttempt = null;
                 unavailable.AttemptState = "unavailable";
                 unavailable.NextAttempt = default;
+                unavailable.Throttled = false;
             }
             return null;
         }
@@ -176,6 +185,7 @@ public sealed class CopilotQuotaService(GatewayAuthManager authManager, CopilotD
                 entry.LastAttempt = null;
                 entry.AttemptState = "unavailable";
                 entry.NextAttempt = default;
+                entry.Throttled = false;
             }
             return entry;
         }
@@ -186,29 +196,57 @@ public sealed class CopilotQuotaService(GatewayAuthManager authManager, CopilotD
         return entry;
     }
 
-    private CopilotQuotaState Project(Entry entry) => new()
+    private static CopilotQuotaState Unavailable(CopilotAccountCredential? credential) => new()
     {
-        Instance = entry.Scope,
-        Snapshots = entry.Snapshots,
-        LastSuccessAtUtc = entry.LastSuccess,
-        LastAttemptAtUtc = entry.LastAttempt,
-        AttemptState = entry.AttemptState,
-        IsStale = entry.LastSuccess is not null && (entry.AttemptState != "success" || _clock.GetUtcNow() >= entry.LastSuccess + SuccessDuration),
-        NextRefreshAtUtc = entry.NextAttempt == default ? null : entry.NextAttempt
+        Reason = credential is null ? "identity-unavailable" : "capacity-unavailable"
     };
+
+    private CopilotQuotaState Project(Entry entry)
+    {
+        var stale = entry.LastSuccess is not null && (entry.AttemptState != "success" || _clock.GetUtcNow() >= entry.LastSuccess + SuccessDuration);
+        var throttled = entry.Throttled && _clock.GetUtcNow() < entry.NextAttempt;
+        var refreshState = entry.AttemptState == "loading" ? "refreshing" : throttled ? "throttled" :
+            entry.LastAttempt is null ? "not-requested" : entry.AttemptState;
+        var reason = refreshState switch
+        {
+            "refreshing" => "refresh-in-progress",
+            "throttled" => "refresh-throttled",
+            "not-requested" => "not-yet-requested",
+            "error" => "upstream-error",
+            "cancelled" => "refresh-cancelled",
+            "success" when stale => "success-stale",
+            "success" when entry.Snapshots.Count == 0 => "success-empty",
+            "success" when entry.Snapshots.Any(x => x.IsPartial) => "success-partial",
+            "success" => "success",
+            _ => "identity-unavailable"
+        };
+        return new()
+        {
+            Instance = entry.Scope,
+            Snapshots = entry.Snapshots,
+            LastSuccessAtUtc = entry.LastSuccess,
+            LastAttemptAtUtc = entry.LastAttempt,
+            AttemptState = entry.AttemptState,
+            IsStale = stale,
+            RefreshState = refreshState,
+            Reason = reason,
+            NextRefreshAtUtc = entry.NextAttempt == default ? null : entry.NextAttempt
+        };
+    }
 
     private sealed class Entry
     {
         public required string Scope { get; init; }
         public required string Generation { get; set; }
-    /// <summary>Last successful allow-listed dimensions, empty when unknown.</summary>
+        /// <summary>Last successful allow-listed dimensions, empty when unknown.</summary>
         public IReadOnlyList<CopilotQuotaDto> Snapshots { get; set; } = [];
         public DateTimeOffset? LastSuccess { get; set; }
         public DateTimeOffset? LastAttempt { get; set; }
         public DateTimeOffset NextAttempt { get; set; }
-    /// <summary>Local attempt status without upstream details.</summary>
+        /// <summary>Local attempt status without upstream details.</summary>
         public string AttemptState { get; set; } = "unavailable";
         public bool Busy { get; set; }
+        public bool Throttled { get; set; }
     }
 }
 
@@ -229,6 +267,10 @@ public sealed class CopilotQuotaState
     public DateTimeOffset? NextRefreshAtUtc { get; init; }
     /// <summary>Local attempt status without upstream details.</summary>
     public string AttemptState { get; init; } = "unavailable";
+    /// <summary>Fixed local refresh disposition: unavailable, not-requested, refreshing, throttled, success, error or cancelled. Does not replace the last AttemptState.</summary>
+    public string RefreshState { get; init; } = "unavailable";
+    /// <summary>Fixed diagnostic only: identity-unavailable, capacity-unavailable, not-yet-requested, refresh-in-progress, refresh-throttled, upstream-error, refresh-cancelled, success, success-empty, success-partial or success-stale. Never reflects request or upstream data.</summary>
+    public string Reason { get; init; } = "identity-unavailable";
     /// <summary>Whether the retained success is expired or the latest attempt did not succeed.</summary>
     public bool IsStale { get; init; }
 }
