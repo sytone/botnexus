@@ -5,6 +5,24 @@ if (-not ('DiagnosticFixtureSignal' -as [type])) {
 using System;
 using System.IO;
 using System.Threading;
+// Fault injection at the real wrapper's WriteAllText calls: hold the file open
+// after creation, before writing any bytes. File markers order both processes.
+public static class DiagnosticFixturePublication
+{
+    public static string Result;
+    public static void WriteAllText(string path, string text)
+    {
+        if (path != Result && path != Result + ".tmp") { File.WriteAllText(path, text); return; }
+        using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+        {
+            File.WriteAllText(Result + ".opened.tmp", path);
+            File.Move(Result + ".opened.tmp", Result + ".opened");
+            DiagnosticFixtureSignal.Wait(Result + ".continue");
+            using var writer = new StreamWriter(stream);
+            writer.Write(text);
+        }
+    }
+}
 public static class DiagnosticFixtureSignal
 {
     public static void Wait(string path)

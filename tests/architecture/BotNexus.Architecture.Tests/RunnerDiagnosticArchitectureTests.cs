@@ -15,6 +15,7 @@ public sealed class RunnerDiagnosticArchitectureTests : ArchitectureTest
     [InlineData("RunnerDiagnostic.Tests.ps1")]
     [InlineData("RunnerDiagnosticDeadline.Tests.ps1")]
     [InlineData("RunnerDiagnosticCleanup.Tests.ps1")]
+    [InlineData("RunnerDiagnosticPublication.Tests.ps1")]
     public async Task Diagnostic_CandidateSourceFixtures_PassWithoutGatewayOrTesthost(string script)
     {
         var start = new ProcessStartInfo("pwsh")
