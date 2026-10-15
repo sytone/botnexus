@@ -333,6 +333,7 @@ public static class GatewayServiceCollectionExtensions
         // instead of the process-global CompactionOptions.ContextWindowTokens.
         services.TryAddSingleton<ISessionContextWindowResolver, SessionContextWindowResolver>();
         services.TryAddSingleton<ISessionCompactionCeilingResolver, SessionCompactionCeilingResolver>();
+        services.TryAddSingleton<ISessionCompactionDiagnostics, SessionCompactionDiagnostics>();
         // #3535: turns a context-exhausted empty completion from a silent blank turn into an
         // explicit MessageRole.Notification, discriminated against the SAME scope-resolved window.
         services.TryAddSingleton<IContextExhaustionNotifier, ContextExhaustionNotifier>();

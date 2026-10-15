@@ -27,6 +27,7 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/[controller]")]
 public sealed class AgentsController : ControllerBase
 {
+    private readonly ISessionCompactionDiagnostics? _compactionDiagnostics;
     private readonly ISessionStore? _sessions;
     private readonly IConversationStore? _conversations;
     private readonly IAgentRegistry _registry;
@@ -54,8 +55,10 @@ public sealed class AgentsController : ControllerBase
         IAgentWebhookProvisioner? webhookProvisioner = null,
         IExtensionLoader? extensionLoader = null,
         ISessionStore? sessions = null,
-        IConversationStore? conversations = null)
+        IConversationStore? conversations = null,
+        ISessionCompactionDiagnostics? compactionDiagnostics = null)
     {
+        _compactionDiagnostics = compactionDiagnostics;
         _sessions = sessions;
         _conversations = conversations;
         _registry = registry;
@@ -446,6 +449,21 @@ public sealed class AgentsController : ControllerBase
     /// </para>
     /// </remarks>
     [HttpGet("{agentId}/sessions/{sessionId}/context")]
+    public async Task<ActionResult> GetContextAsync(string agentId, string sessionId, CancellationToken cancellationToken = default)
+    {
+        var handle = GetAgentHandle(agentId, sessionId);
+        if (handle is null) return NotFound(NoActiveHandleMessage);
+        var inspector = handle as IAgentHandleInspector;
+        var diag = inspector?.GetContextDiagnostics();
+        if (diag is null) return NotFound("Handle does not support diagnostics.");
+        var policy = _compactionDiagnostics is null ? null
+            : await _compactionDiagnostics.ResolveAsync(AgentId.From(agentId), SessionId.From(sessionId), cancellationToken);
+        return Ok(BuildContextResponse(agentId, sessionId, diag, inspector?.GetContextWindowTokens(),
+            inspector?.GetContextBudgetDiagnostics(), policy));
+    }
+
+    /// <summary>Legacy synchronous helper for direct callers; HTTP uses fresh asynchronous policy resolution.</summary>
+    [NonAction]
     public ActionResult GetContext(string agentId, string sessionId)
     {
         var handle = GetAgentHandle(agentId, sessionId);
@@ -508,6 +526,7 @@ public sealed class AgentsController : ControllerBase
     /// <param name="contextWindowTokens">
     /// The resolved context window in tokens, or <see langword="null"/> when unresolvable.
     /// </param>
+    /// <param name="compactionPolicy">Fresh token trigger policy; null when unavailable.</param>
     /// <param name="contextBudget">
     /// The handle's source-backed binding snapshot, when available. Its working budget is the
     /// denominator; the legacy window remains supported for inspectors without provenance.
@@ -517,7 +536,8 @@ public sealed class AgentsController : ControllerBase
         string sessionId,
         ContextDiagnostics diag,
         int? contextWindowTokens = null,
-        ContextBudgetDiagnostics? contextBudget = null)
+        ContextBudgetDiagnostics? contextBudget = null,
+        CompactionPolicyDiagnostics? compactionPolicy = null)
     {
         if (contextBudget is not null)
             contextWindowTokens = contextBudget.EffectiveWorkingBudgetTokens;
@@ -528,6 +548,7 @@ public sealed class AgentsController : ControllerBase
             totalEstimatedTokens = diag.TotalEstimatedTokens,
             contextWindowTokens,
             contextBudget,
+            compactionPolicy,
             usagePercent = contextWindowTokens is > 0
                 ? Math.Round((double)diag.TotalEstimatedTokens / contextWindowTokens.Value * 100, 1)
                 : (double?)null,

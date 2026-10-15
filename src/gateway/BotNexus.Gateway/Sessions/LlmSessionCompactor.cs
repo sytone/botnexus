@@ -1306,7 +1306,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// here as a literal divide by four. Units are summed across all entries and converted once, so
     /// no per-entry remainder is discarded.
     /// </remarks>
-    private static int EstimateVisibleTokenCount(Session session)
+    internal static int EstimateVisibleTokenCount(Session session)
         => EstimateVisibleTokenCountFromEntries(session.History);
 
     /// <inheritdoc cref="EstimateVisibleTokenCount"/>
