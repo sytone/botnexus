@@ -404,6 +404,22 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         if (config is null)
             return 1;
 
+        // Shape recognition is not agent existence. Check before the typed resolver can
+        // materialize dictionary entries, then recheck against the locked latest document.
+        // Unrecognised paths retain the resolver's existing property/type diagnostics.
+        var agentIds = ConfigPathBinding.TryRecognise(keyPath, out _)
+            ? GetTargetAgentIds(keyPath, rawValue)
+            : [];
+        if (agentIds.Count > 0)
+        {
+            var document = await CliConfigMutation.ReadAsync(configPath, cancellationToken);
+            if (CheckAgentExistence(document, keyPath, agentIds) is { } existenceError)
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] {CliText.SafeDisplay(existenceError)}");
+                return 1;
+            }
+        }
+
         // The typed graph is used only to type-check and coerce the incoming string against the
         // declared shape of the key. It is deliberately NOT written back: re-serializing the typed
         // object would drop everything the graph does not model (#2057).
@@ -421,7 +437,8 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
 
         var saveCode = await CliConfigMutation.ApplyAsync(
             configPath,
-            document => document.TrySetFrom(keyPath, coerced, out var setError) ? null : setError,
+            document => CheckAgentExistence(document, keyPath, agentIds)
+                ?? (document.TrySetFrom(keyPath, coerced, out var setError) ? null : setError),
             "before-config-set",
             verbose,
             cancellationToken);
@@ -431,6 +448,46 @@ internal sealed class ConfigCommands(IConfigPathResolver configPathResolver)
         AnsiConsole.MarkupLine($"[green]\u2713[/] Set [green]{CliText.SafeDisplay(keyPath)}[/].");
         saveCode.PrintReceipt();
         return 0;
+    }
+
+    private static IReadOnlyList<string> GetTargetAgentIds(string keyPath, string rawValue)
+    {
+        // Recognition above has already validated the path. Only the first two dictionary
+        // segments matter; settings beneath the agent (including opaque JSON) remain open.
+        var segments = keyPath.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length == 0 || !segments[0].Equals("agents", StringComparison.OrdinalIgnoreCase))
+            return [];
+        if (segments.Length > 1)
+            return [segments[1]];
+
+        // Whole-collection replacement must not be an alternate agent creation command.
+        // Invalid JSON/value kinds are left to the existing typed coercion diagnostics.
+        try
+        {
+            using var replacement = JsonDocument.Parse(rawValue);
+            return replacement.RootElement.ValueKind == JsonValueKind.Object
+                ? replacement.RootElement.EnumerateObject().Select(entry => entry.Name).ToArray()
+                : [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static string? CheckAgentExistence(ConfigDocument document, string keyPath, IReadOnlyList<string> agentIds)
+    {
+        foreach (var agentId in agentIds)
+        {
+            // defaults is a reserved settings scope, not a lifecycle-managed named agent.
+            if (!agentId.Equals("defaults", StringComparison.OrdinalIgnoreCase)
+                && document.FindEntryKey("agents", agentId) is null)
+            {
+                return $"Configuration path '{keyPath}' targets unknown agent '{agentId}'. "
+                    + "Run 'botnexus agents list' to list agents or 'botnexus agents add' to create one.";
+            }
+        }
+        return null;
     }
 
     public Task<int> ExecuteSchemaAsync(string outputPath, bool verbose, CancellationToken cancellationToken)
