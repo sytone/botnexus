@@ -1385,7 +1385,18 @@ public sealed class ConversationsController : ControllerBase
         await AuditAsync(conversationId, "context_override_set", "api", "rest-api", prevContext?.ToString(), updated.ContextWindowOverride?.ToString(), cancellationToken);
         if (request.ApplyToolOverride)
             await AuditAsync(conversationId, "tool_override_set", "api", "rest-api", prevTools, updated.ToolOverrideJson, cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", updated.AgentId.Value, updated.ConversationId.Value, cancellationToken);
+        // Match metadata PATCH: report changed values only within this patch's write set,
+        // in a stable order. The pre-read is an observation, not an atomic before-image.
+        var changedFields = ImmutableArray.CreateBuilder<string>(4);
+        if (!string.Equals(prevModel, updated.ModelOverride, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ModelOverride));
+        if (!string.Equals(prevThinking, updated.ThinkingOverride, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ThinkingOverride));
+        if (prevContext != updated.ContextWindowOverride)
+            changedFields.Add(nameof(Conversation.ContextWindowOverride));
+        if (request.ApplyToolOverride && !string.Equals(prevTools, updated.ToolOverrideJson, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ToolOverrideJson));
+        await PublishConversationUpdatedBestEffortAsync(updated, changedFields.ToImmutable(), cancellationToken);
         return Ok(ToResponse(updated));
     }
 
@@ -1408,7 +1419,10 @@ public sealed class ConversationsController : ControllerBase
             return NotFound();
 
         var prevModel = conversation.ModelOverride;
-        // Transactional clear of only the three override columns (#2139).
+        var prevThinking = conversation.ThinkingOverride;
+        var prevContext = conversation.ContextWindowOverride;
+        var prevTools = conversation.ToolOverrideJson;
+        // Transactional clear of only the override columns (#2139).
         var clearPatch = new ConversationOverridePatch
         {
             Model = FieldUpdate<string?>.Set(null),
@@ -1420,7 +1434,16 @@ public sealed class ConversationsController : ControllerBase
         if (updated is null)
             return NotFound();
         await AuditAsync(conversationId, "model_override_cleared", "api", "rest-api", prevModel, null, cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", updated.AgentId.Value, updated.ConversationId.Value, cancellationToken);
+        var changedFields = ImmutableArray.CreateBuilder<string>(4);
+        if (!string.Equals(prevModel, updated.ModelOverride, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ModelOverride));
+        if (!string.Equals(prevThinking, updated.ThinkingOverride, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ThinkingOverride));
+        if (prevContext != updated.ContextWindowOverride)
+            changedFields.Add(nameof(Conversation.ContextWindowOverride));
+        if (!string.Equals(prevTools, updated.ToolOverrideJson, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ToolOverrideJson));
+        await PublishConversationUpdatedBestEffortAsync(updated, changedFields.ToImmutable(), cancellationToken);
         return Ok(ToResponse(updated));
     }
 
