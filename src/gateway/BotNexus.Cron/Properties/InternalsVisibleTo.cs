@@ -8,3 +8,7 @@ using System.Runtime.CompilerServices;
 // types to public would publish scheduling internals on the extension-facing surface; granting
 // the host assembly access keeps the single definition without doing that.
 [assembly: InternalsVisibleTo("BotNexus.Gateway.Api")]
+
+// #4732: the liveness dispatch-freshness probe must size each job's grace from the SAME effective
+// timeout the scheduler arms (including 0 = unlimited), not a private copy of the metadata rules.
+[assembly: InternalsVisibleTo("BotNexus.Gateway")]
