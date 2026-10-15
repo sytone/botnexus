@@ -45,7 +45,8 @@ public sealed class HeartbeatActionTests
     [Fact]
     public async Task ExecuteAsync_DuringQuietHours_SkipsExecution()
     {
-        var action = new HeartbeatAction();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        var action = new HeartbeatAction(clock);
         var trigger = new Mock<IInternalTrigger>();
         var registry = new Mock<IAgentRegistry>();
         var descriptor = CreateDescriptorWithQuietHours(new QuietHoursConfig
