@@ -381,7 +381,7 @@ function Invoke-DiagnosticProcess {
         # Reader disposal cancels blocked source reads. Never claim success on a
         # false Wait result, faulted copy or a destination closed while still copying.
         foreach ($pipe in $pipes) { if (-not $pipe.Copy.IsCompletedSuccessfully) { $drainComplete=$false }; $pipe.Destination.Dispose() }
-        foreach ($owned in $owners) { $owned.Process.Dispose(); if ($null -ne $owned.Job) { $owned.Job.Dispose() }; foreach ($suffix in @('.json','.release','.result','.identity','.error')) { Remove-Item -LiteralPath ($owned.Base+$suffix) -ErrorAction SilentlyContinue } }
+        foreach ($owned in $owners) { $owned.Process.Dispose(); if ($null -ne $owned.Job) { $owned.Job.Dispose() }; foreach ($suffix in @('.json','.release','.result','.result.tmp','.identity','.error')) { Remove-Item -LiteralPath ($owned.Base+$suffix) -ErrorAction SilentlyContinue } }
         $clock.Stop()
         $parts=@(); foreach ($part in @("$LogPath.stdout","$LogPath.stderr")) { if (Test-Path $part) { $parts+=Get-Content $part -Raw; Remove-Item $part } }; Set-Content $LogPath ($parts -join [Environment]::NewLine)
         if ($timedOut -and $captures.Count -eq 0) { $captures += [ordered]@{testHostProcessId=$null; startedSeconds=$null; exitCode=$null; timedOut=$false; error='No valid TestHostLaunched target was available before the absolute deadline.'; dumpPath=$null} }
