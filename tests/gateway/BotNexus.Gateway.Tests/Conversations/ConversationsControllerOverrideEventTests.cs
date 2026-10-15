@@ -170,6 +170,125 @@ public sealed class ConversationsControllerOverrideEventTests
         notifier.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(false, "set")]
+    [InlineData(true, "set")]
+    [InlineData(false, "reset")]
+    [InlineData(true, "reset")]
+    [InlineData(false, "preserve")]
+    [InlineData(true, "preserve")]
+    [InlineData(false, "unchanged")]
+    [InlineData(true, "unchanged")]
+    [InlineData(false, "clear")]
+    [InlineData(true, "clear")]
+    [InlineData(false, "clear-empty")]
+    [InlineData(true, "clear-empty")]
+    [InlineData(false, "invalid-zero")]
+    [InlineData(true, "invalid-zero")]
+    [InlineData(false, "invalid-negative")]
+    [InlineData(true, "invalid-negative")]
+    [InlineData(false, "invalid-request-positive")]
+    [InlineData(true, "invalid-request-positive")]
+    public async Task Override_CompactionCeilingOnly_ReportsOnlyChangedPatchedCeiling(bool sqlite, string operation)
+    {
+        using var fixture = new StoreFixture(sqlite);
+        var conversation = await SeedAsync(fixture.Store);
+        var clearing = operation.StartsWith("clear", StringComparison.Ordinal);
+        int? initialCeiling = operation is "set" or "clear-empty" ? null : 8192;
+        await fixture.Store.PatchOverrideAsync(conversation.ConversationId, new ConversationOverridePatch
+        {
+            Model = FieldUpdate<string?>.Set(clearing ? null : "old-model"),
+            Thinking = FieldUpdate<string?>.Set(clearing ? null : "low"),
+            ContextWindow = FieldUpdate<int?>.Set(clearing ? null : 2048),
+            ToolOverrideJson = FieldUpdate<string?>.Set(clearing ? null : Tools),
+            CompactionTokenCeiling = FieldUpdate<int?>.Set(initialCeiling)
+        });
+        var before = (await fixture.ReadDurableAsync(conversation.ConversationId)).ShouldNotBeNull();
+        var sink = new CapturingSink();
+        await using var publisher = new ConversationEventPublisher([sink]);
+        var notifier = new Mock<IConversationChangeNotifier>(MockBehavior.Strict);
+        var controller = CreateController(fixture.Store, publisher, notifier.Object);
+        int? requestedCeiling = operation switch
+        {
+            "reset" => null,
+            "invalid-zero" => 0,
+            "invalid-negative" => -1,
+            "unchanged" => initialCeiling,
+            _ => 16384
+        };
+        var result = clearing
+            ? await controller.ClearOverride(conversation.ConversationId.Value, CancellationToken.None)
+            : await controller.SetOverride(conversation.ConversationId.Value,
+                new(Model: " old-model ", Thinking: operation == "invalid-request-positive" ? "invalid" : "low",
+                    ContextWindow: 2048, ToolOverrideJson: "ignored invalid JSON", ApplyToolOverride: false,
+                    CompactionTokenCeiling: requestedCeiling, ApplyCompactionTokenCeiling: operation != "preserve"),
+                CancellationToken.None);
+        var invalid = operation.StartsWith("invalid", StringComparison.Ordinal);
+        if (invalid) result.ShouldBeOfType<BadRequestObjectResult>();
+        else result.ShouldBeOfType<OkObjectResult>();
+        await publisher.WaitForDrainAsync();
+
+        var persisted = (await fixture.ReadDurableAsync(conversation.ConversationId)).ShouldNotBeNull();
+        var changed = operation is "set" or "reset" or "clear";
+        persisted.CompactionTokenCeiling.ShouldBe(changed ? (operation == "set" ? 16384 : null) : initialCeiling);
+        persisted.ModelOverride.ShouldBe(before.ModelOverride);
+        persisted.ThinkingOverride.ShouldBe(before.ThinkingOverride);
+        persisted.ContextWindowOverride.ShouldBe(before.ContextWindowOverride);
+        persisted.ToolOverrideJson.ShouldBe(before.ToolOverrideJson);
+        persisted.Title.ShouldBe(before.Title);
+        persisted.IsPinned.ShouldBe(before.IsPinned);
+        if (invalid) persisted.UpdatedAt.ShouldBe(before.UpdatedAt);
+        if (changed)
+        {
+            var fact = sink.Events.ShouldHaveSingleItem().ShouldBeOfType<ConversationUpdatedEvent>();
+            fact.ChangedFields.ShouldBe([nameof(Conversation.CompactionTokenCeiling)], ignoreOrder: false);
+            fact.AgentId.ShouldBe(persisted.AgentId);
+            fact.ConversationId.ShouldBe(persisted.ConversationId);
+            fact.OccurredAt.ShouldBe(persisted.UpdatedAt);
+            fact.Bindings.ShouldBe(ConversationBindingSnapshot.FromMany(persisted.ChannelBindings), ignoreOrder: false);
+            persisted.ChannelBindings.ShouldHaveSingleItem().ChannelAddress = ChannelAddress.From("changed-after-ceiling-fact");
+            persisted.ChannelBindings.Clear();
+            fact.Bindings.ShouldHaveSingleItem().ChannelAddress.ShouldBe(ChannelAddress.From("override-address"));
+        }
+        else sink.Events.ShouldBeEmpty();
+        notifier.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(false, "set")]
+    [InlineData(true, "set")]
+    [InlineData(false, "clear")]
+    [InlineData(true, "clear")]
+    public async Task Override_AllFiveFieldsChanged_ReportsStableOrder(bool sqlite, string operation)
+    {
+        using var fixture = new StoreFixture(sqlite);
+        var conversation = await SeedAsync(fixture.Store);
+        await fixture.Store.PatchOverrideAsync(conversation.ConversationId, new ConversationOverridePatch
+        {
+            CompactionTokenCeiling = FieldUpdate<int?>.Set(8192)
+        });
+        var sink = new CapturingSink(fixture.Store, operation == "clear" ? "clear" : "tools");
+        await using var publisher = new ConversationEventPublisher([sink]);
+        var notifier = new Mock<IConversationChangeNotifier>(MockBehavior.Strict);
+        var controller = CreateController(fixture.Store, publisher, notifier.Object);
+        var result = operation == "clear"
+            ? await controller.ClearOverride(conversation.ConversationId.Value, CancellationToken.None)
+            : await controller.SetOverride(conversation.ConversationId.Value,
+                new(Model: "new-model", Thinking: "high", ContextWindow: 4096,
+                    ToolOverrideJson: null, ApplyToolOverride: true,
+                    CompactionTokenCeiling: 16384, ApplyCompactionTokenCeiling: true), CancellationToken.None);
+        result.ShouldBeOfType<OkObjectResult>();
+        await publisher.WaitForDrainAsync();
+        var persisted = (await fixture.ReadDurableAsync(conversation.ConversationId)).ShouldNotBeNull();
+        AssertOverrides(persisted, operation == "clear" ? "clear" : "tools");
+        persisted.CompactionTokenCeiling.ShouldBe(operation == "clear" ? null : 16384);
+        sink.WasDurableWhenConsumed.ShouldBeTrue();
+        sink.Events.ShouldHaveSingleItem().ShouldBeOfType<ConversationUpdatedEvent>().ChangedFields.ShouldBe(
+            [nameof(Conversation.ModelOverride), nameof(Conversation.ThinkingOverride), nameof(Conversation.ContextWindowOverride),
+                nameof(Conversation.ToolOverrideJson), nameof(Conversation.CompactionTokenCeiling)], ignoreOrder: false);
+        notifier.VerifyNoOtherCalls();
+    }
+
     private static Task<ActionResult> MutateAsync(ConversationsController controller, ConversationId id, string operation) =>
         operation == "clear" ? controller.ClearOverride(id.Value, CancellationToken.None)
             : controller.SetOverride(id.Value, new(Model: " new-model ", Thinking: "high", ContextWindow: 4096,

@@ -1357,6 +1357,7 @@ public sealed class ConversationsController : ControllerBase
 
         var prevContext = conversation.ContextWindowOverride;
         var prevTools = conversation.ToolOverrideJson;
+        var prevCeiling = conversation.CompactionTokenCeiling;
 
         // Tool overlay (#3271): validated before persistence so an unreadable overlay is rejected
         // with 400 rather than silently stored and then failed OPEN by the resolver at session
@@ -1368,7 +1369,7 @@ public sealed class ConversationsController : ControllerBase
             return BadRequest(new { error = "Tool override is not a readable SessionToolOverride document." });
         }
 
-        // Narrow, transactional override patch (#2139): writes only the three override columns,
+        // Narrow, transactional override patch (#2139): writes only the requested override columns,
         // so a pin/metadata mutation committed concurrently between the read and the write is
         // preserved instead of being reverted by a whole-record SaveAsync.
         var overridePatch = new ConversationOverridePatch
@@ -1394,7 +1395,7 @@ public sealed class ConversationsController : ControllerBase
             await AuditAsync(conversationId, "tool_override_set", "api", "rest-api", prevTools, updated.ToolOverrideJson, cancellationToken);
         // Match metadata PATCH: report changed values only within this patch's write set,
         // in a stable order. The pre-read is an observation, not an atomic before-image.
-        var changedFields = ImmutableArray.CreateBuilder<string>(4);
+        var changedFields = ImmutableArray.CreateBuilder<string>(5);
         if (!string.Equals(prevModel, updated.ModelOverride, StringComparison.Ordinal))
             changedFields.Add(nameof(Conversation.ModelOverride));
         if (!string.Equals(prevThinking, updated.ThinkingOverride, StringComparison.Ordinal))
@@ -1403,11 +1404,13 @@ public sealed class ConversationsController : ControllerBase
             changedFields.Add(nameof(Conversation.ContextWindowOverride));
         if (request.ApplyToolOverride && !string.Equals(prevTools, updated.ToolOverrideJson, StringComparison.Ordinal))
             changedFields.Add(nameof(Conversation.ToolOverrideJson));
+        if (request.ApplyCompactionTokenCeiling && prevCeiling != updated.CompactionTokenCeiling)
+            changedFields.Add(nameof(Conversation.CompactionTokenCeiling));
         await PublishConversationUpdatedBestEffortAsync(updated, changedFields.ToImmutable(), cancellationToken);
         return Ok(ToResponse(updated));
     }
 
-    /// <summary>Clears every per-conversation override, reverting all three fields to the agent default.</summary>
+    /// <summary>Clears all five per-conversation override fields to null.</summary>
     /// <param name="conversationId">The conversation identifier.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>200 with the updated conversation, or 404 if not found.</returns>
@@ -1429,6 +1432,7 @@ public sealed class ConversationsController : ControllerBase
         var prevThinking = conversation.ThinkingOverride;
         var prevContext = conversation.ContextWindowOverride;
         var prevTools = conversation.ToolOverrideJson;
+        var prevCeiling = conversation.CompactionTokenCeiling;
         // Transactional clear of only the override columns (#2139).
         var clearPatch = new ConversationOverridePatch
         {
@@ -1442,7 +1446,7 @@ public sealed class ConversationsController : ControllerBase
         if (updated is null)
             return NotFound();
         await AuditAsync(conversationId, "model_override_cleared", "api", "rest-api", prevModel, null, cancellationToken);
-        var changedFields = ImmutableArray.CreateBuilder<string>(4);
+        var changedFields = ImmutableArray.CreateBuilder<string>(5);
         if (!string.Equals(prevModel, updated.ModelOverride, StringComparison.Ordinal))
             changedFields.Add(nameof(Conversation.ModelOverride));
         if (!string.Equals(prevThinking, updated.ThinkingOverride, StringComparison.Ordinal))
@@ -1451,6 +1455,8 @@ public sealed class ConversationsController : ControllerBase
             changedFields.Add(nameof(Conversation.ContextWindowOverride));
         if (!string.Equals(prevTools, updated.ToolOverrideJson, StringComparison.Ordinal))
             changedFields.Add(nameof(Conversation.ToolOverrideJson));
+        if (prevCeiling != updated.CompactionTokenCeiling)
+            changedFields.Add(nameof(Conversation.CompactionTokenCeiling));
         await PublishConversationUpdatedBestEffortAsync(updated, changedFields.ToImmutable(), cancellationToken);
         return Ok(ToResponse(updated));
     }

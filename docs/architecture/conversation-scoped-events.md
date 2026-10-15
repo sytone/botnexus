@@ -125,9 +125,12 @@ result or store exception emits no success event.
 `ConversationUpdatedEvent` carries the committed agent and conversation identifiers, `UpdatedAt`
 as `OccurredAt`, and detached immutable binding snapshots. `ChangedFields` follows metadata PATCH:
 compare the pre-read values with the store-returned values, within the patch's write set, in the
-order `ModelOverride`, `ThinkingOverride`, `ContextWindowOverride`, `ToolOverrideJson`. Setting
-always patches the first three fields, including nulls; tools are patched only when
-`ApplyToolOverride` is true. Clearing patches all four to null. Unchanged values are omitted;
+order `ModelOverride`, `ThinkingOverride`, `ContextWindowOverride`, `ToolOverrideJson`,
+`CompactionTokenCeiling`. Setting always patches the first three fields, including nulls;
+tools are patched only when `ApplyToolOverride` is true, and the compaction ceiling is patched
+only when `ApplyCompactionTokenCeiling` is true (a null ceiling resets it). Clearing patches all
+five to null. Ceiling-only changes use the same event and field-selection contract as the other
+overrides; opting out preserves the ceiling and does not report it. Unchanged values are omitted;
 when no values differ, no event is published. The pre-read is not an atomic before-image, so
 these field names are a reconciliation hint, not a complete concurrent-change history.
 
