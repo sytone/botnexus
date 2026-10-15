@@ -1368,7 +1368,7 @@ safe way to know.
 
 The `compaction` section tunes when and how a session's history is summarised to stay within the model's context window. Compaction is triggered when **either** of two signals trips (whichever fires first):
 
-- **Token-count threshold** — the estimated LLM-visible token total exceeds `contextWindowTokens × tokenThresholdRatio`.
+- **Token-count threshold** — the estimated LLM-visible token total, or an available provider prompt-token count, exceeds `floor(contextWindowTokens × tokenThresholdRatio)`, bounded by the scoped token ceiling below when configured.
 - **Bloat-aware (largest-entry) threshold** — a *single* visible history entry is at or above `largestEntryBytesThreshold` UTF-8 bytes. A session can accumulate a small number of enormous low-value entries (for example a raw transcript dump or a directory listing) whose total still sits under the token threshold while the visible tail is dominated by dead weight; this signal makes such a session eligible for compaction so the oversized entry gets summarised away instead of being re-sent on every turn.
 
 ```bash
@@ -1401,8 +1401,8 @@ using the same precedence chain the dispatch path already uses:
 3. Otherwise the registered model's own context window.
 4. Otherwise `gateway.compaction.contextWindowTokens`.
 
-Only the *base window* is scope-aware. `tokenThresholdRatio` is applied to whichever window was
-resolved, and `largestEntryBytesThreshold` is byte-based and unaffected. An agent with no scoped
+`tokenThresholdRatio` is applied to whichever window was resolved. A scoped token ceiling can
+lower that threshold (see below); `largestEntryBytesThreshold` is byte-based and unaffected. An agent with no scoped
 window at any layer behaves exactly as it did before this precedence existed.
 
 Without this, an agent pinned to a 32k model under a 200k global setting would reach provider
@@ -1412,6 +1412,46 @@ overflow-compaction path instead of compacting on schedule.
 A value of 0 or less at any layer is treated as unset and falls through to the next layer.
 
 
+
+##### Scoped compaction token ceilings
+
+Set a token ceiling when you want earlier history summarisation without reducing the model's
+context capacity. The backend supports `world.compactionTokenCeiling` and
+`agents.<id>.compactionTokenCeiling`. In a terminal with the installed CLI:
+
+```bash
+botnexus config set world.compactionTokenCeiling 50000
+botnexus config set agents.my-agent.compactionTokenCeiling 30000
+botnexus config get agents.my-agent.compactionTokenCeiling
+```
+
+Replace `my-agent` with your agent ID. These values must be positive 32-bit integers, not strings
+or fractions. Set a scope's value to `null` to resume inheritance:
+
+```bash
+botnexus config set agents.my-agent.compactionTokenCeiling null
+```
+
+The first configured ceiling wins: **conversation > agent > world**. A larger conversation
+ceiling replaces a smaller inherited ceiling; ceilings are not minimized across scopes. The
+effective token threshold is still `min(floor(resolved context window × tokenThresholdRatio),
+selected ceiling)`. If no scope supplies a ceiling, behavior remains ratio-only. Pressure must
+**exceed** the threshold; equality does not trigger compaction. The world default applies only
+to conversations in that gateway's world.
+
+The backend re-reads the policy before pre-turn and mid-loop checks, including conflict retries.
+An unavailable policy/session read blocks the next provider turn rather than silently dropping
+the ceiling. The ceiling is a trigger, not a hard cap on prompt size or a guarantee that
+summarisation succeeds. It does not change generation settings, preserved-turn behavior, the
+byte-size trigger, or the existing compaction circuit breaker.
+
+Conversation ceilings are available through the backend override contract, but there is no
+ceiling-specific CLI command, portal editing control, or effective-policy display in this slice.
+Integrators should use the [conversation override reference](api/conversations.md).
+That PUT is not a field-only patch: ceiling callers must also resend existing model, thinking,
+and context-window override values to preserve them. Omitted values clear those three overrides.
+Configuration writes reject case-insensitive duplicate ceiling keys and duplicate `world` or
+`agents` sections when a ceiling is present; remove the ambiguity instead of relying on key order.
 
 #### Conversation Auto-Title
 

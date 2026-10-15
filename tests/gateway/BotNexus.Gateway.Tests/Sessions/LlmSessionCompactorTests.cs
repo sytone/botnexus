@@ -27,6 +27,87 @@ public sealed class LlmSessionCompactorTests
         MaxTokens: 4096);
 
     [Fact]
+    public void Ceiling_ThresholdBoundariesCapacityAndUnknownUsage()
+    {
+        var compactor = CreateCompactor("summary");
+        foreach (var window in new[] { 100, 1_000_000 })
+        {
+            var baseline = new CompactionOptions { ContextWindowTokens = window, TokenThresholdRatio = 0.6, LargestEntryBytesThreshold = 0 };
+            foreach (var ceiling in new int?[] { null, 30, 60, 600_000, 900_000 })
+            {
+                var options = baseline with { CompactionTokenCeiling = ceiling };
+                var threshold = Math.Min((int)Math.Floor(window * 0.6), ceiling ?? int.MaxValue);
+                CompactionThreshold.Resolve(options).ShouldBe(threshold);
+                options.ContextWindowTokens.ShouldBe(window);
+                foreach (var tokens in new[] { threshold - 1, threshold, threshold + 1 })
+                {
+                    var local = CreateSession(("user", new string('a', tokens * 4)));
+                    compactor.ShouldCompact(local.Session, options).ShouldBe(tokens > threshold);
+                    local.Metadata.ShouldNotContainKey(LlmSessionCompactor.ProviderPromptTokensMetadataKey);
+                    var provider = CreateSession(("user", "tiny"));
+                    provider.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = tokens;
+                    compactor.ShouldCompact(provider.Session, options).ShouldBe(tokens > threshold);
+                }
+            }
+        }
+        CompactionThreshold.Resolve(new CompactionOptions { ContextWindowTokens = 101, TokenThresholdRatio = 0.5 }).ShouldBe(50);
+        Should.Throw<InvalidOperationException>(() => CompactionThreshold.Resolve(new CompactionOptions { CompactionTokenCeiling = 0 }));
+    }
+
+    [Fact]
+    public async Task Ceiling_LargerConversationOverrideWinsButCannotExceedModelSafety()
+    {
+        var agentId = AgentId.From("ceiling-specific");
+        var conversationId = ConversationId.From("ceiling-specific-conversation");
+        var store = new BotNexus.Gateway.Conversations.InMemoryConversationStore();
+        await store.CreateAsync(new Conversation { AgentId = agentId, ConversationId = conversationId, WorldId = "ceiling-world", CompactionTokenCeiling = 200 });
+        var registry = new Mock<BotNexus.Gateway.Abstractions.Agents.IAgentRegistry>();
+        registry.Setup(value => value.Get(agentId)).Returns(new AgentDescriptor { AgentId = agentId, DisplayName = "A", ModelId = "m", ApiProvider = "p", CompactionTokenCeiling = 100 });
+        var config = new BotNexus.Gateway.Configuration.PlatformConfig
+        {
+            Gateway = new BotNexus.Gateway.Configuration.GatewaySettingsConfig { World = new BotNexus.Domain.WorldIdentity { Id = "ceiling-world", Name = "World" } },
+            World = new BotNexus.Gateway.Configuration.WorldSettingsConfig { CompactionTokenCeiling = 50 }
+        };
+        var resolver = new SessionCompactionCeilingResolver(NullLogger<SessionCompactionCeilingResolver>.Instance, registry.Object, store, new TestOptionsMonitor<BotNexus.Gateway.Configuration.PlatformConfig>(config));
+        var resolved = await resolver.ResolveAsync(agentId, conversationId);
+        resolved.Tokens.ShouldBe(200);
+        resolved.Source.ShouldBe("conversation");
+        var session = CreateSession(("user", new string('a', 600)));
+        var options = new CompactionOptions { ContextWindowTokens = 1000, TokenThresholdRatio = 0.6, CompactionTokenCeiling = resolved.Tokens, LargestEntryBytesThreshold = 0 };
+        CreateCompactor("summary").ShouldCompact(session.Session, options).ShouldBeFalse();
+        CompactionThreshold.Resolve(options).ShouldBe(200);
+        CompactionThreshold.Resolve(options with { ContextWindowTokens = 100 }).ShouldBe(60);
+        CreateCompactor("summary").ShouldCompact(session.Session, options with { ContextWindowTokens = 100 }).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Ceiling_LowTurnHighVolumeCutPlanMatchesEquivalentWindow()
+    {
+        foreach (var providerCount in new int?[] { null, 500 })
+        {
+            var bounded = CreateSession(("user", "u1"), ("tool", new string('a', providerCount is null ? 4000 : 40)));
+            var equivalent = CreateSession(("user", "u1"), ("tool", new string('a', providerCount is null ? 4000 : 40)));
+            if (providerCount is int count)
+            {
+                bounded.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = count;
+                equivalent.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = count;
+            }
+            var options = new CompactionOptions { ContextWindowTokens = 1_000_000, CompactionTokenCeiling = 50, TokenThresholdRatio = 0.5, PreservedTurns = 3, LargestEntryBytesThreshold = 0, SummarizationModel = TestModel.Id };
+            var compactor = CreateCompactor("short summary");
+            compactor.ShouldCompact(bounded.Session, options).ShouldBeTrue();
+            var result = await compactor.CompactAsync(bounded, options);
+            var expected = await CreateCompactor("short summary").CompactAsync(equivalent, options with { ContextWindowTokens = 100, CompactionTokenCeiling = null });
+            result.Succeeded.ShouldBeTrue();
+            result.EntriesSummarized.ShouldBeGreaterThan(0);
+            result.EntriesSummarized.ShouldBe(expected.EntriesSummarized);
+            result.EntriesPreserved.ShouldBe(expected.EntriesPreserved);
+            result.CompactedHistory.ShouldNotBeNull();
+            expected.CompactedHistory.ShouldNotBeNull();
+            result.CompactedHistory.Select(entry => entry.Content).ShouldBe(expected.CompactedHistory.Select(entry => entry.Content));
+        }
+    }
+
+    [Fact]
     public void ShouldCompact_BelowThreshold_ReturnsFalse()
     {
         var session = CreateSession(("user", new string('a', 100)));

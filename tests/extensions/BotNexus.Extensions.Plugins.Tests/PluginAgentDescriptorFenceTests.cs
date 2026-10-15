@@ -587,6 +587,7 @@ public sealed class PluginAgentDescriptorFenceTests
         new Dictionary<string, Func<AgentDescriptor, AgentDescriptor>>(StringComparer.Ordinal)
         {
             [nameof(AgentDescriptor.Kind)] = baseline => baseline with { Kind = AgentKind.SubAgent },
+            [nameof(AgentDescriptor.CompactionTokenCeiling)] = baseline => baseline with { CompactionTokenCeiling = 24_000 },
             [nameof(AgentDescriptor.IsolationStrategy)] = baseline => baseline with { IsolationStrategy = "container" },
             [nameof(AgentDescriptor.IsolationOptions)] = baseline => baseline with
             {

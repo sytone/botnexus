@@ -118,6 +118,61 @@ public sealed class ConfigSchemaMetadataFitnessTests
         channel.ContainsKey("additionalSettings").ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData(typeof(WorldSettingsConfig), "world")]
+    [InlineData(typeof(AgentDefinitionConfig), "agents/*")]
+    [InlineData(typeof(BotNexus.Gateway.Abstractions.Sessions.CompactionOptions), "gateway/compaction")]
+    public void Build_CompactionTokenCeiling_IsNullableNumericAndNotSecret(Type declaringType, string path)
+    {
+        const string jsonName = "compactionTokenCeiling";
+        var member = GetMember(declaringType, jsonName);
+        member.PropertyType.ShouldBe(typeof(int?));
+        var field = member.GetCustomAttribute<ConfigFieldAttribute>().ShouldNotBeNull();
+        field.Widget.ShouldBe(ConfigFieldWidget.Number);
+        field.Secret.ShouldBeFalse();
+        var display = member.GetCustomAttribute<DisplayAttribute>().ShouldNotBeNull();
+        display.Name.ShouldNotBeNullOrWhiteSpace();
+        display.Description.ShouldNotBeNullOrWhiteSpace();
+
+        var schema = GetPropertySchema(path, jsonName);
+        schema["type"].ShouldBeOfType<JsonArray>().Select(node => node?.GetValue<string>())
+            .ShouldBe(["integer", "null"]);
+        ((string?)schema["x-ui-widget"]).ShouldBe("number");
+        schema.ContainsKey("x-ui-secret").ShouldBeFalse();
+        AssertMemberMetadata(declaringType, path, jsonName);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(24000)]
+    public void Redact_CompactionTokenCeilings_PreservesNumericOrNullValues_AndMasksCredentials(int? ceiling)
+    {
+        var config = JsonSerializer.SerializeToNode(new PlatformConfig
+        {
+            World = new WorldSettingsConfig { CompactionTokenCeiling = ceiling },
+            Gateway = new GatewaySettingsConfig
+            {
+                Compaction = new BotNexus.Gateway.Abstractions.Sessions.CompactionOptions { CompactionTokenCeiling = ceiling }
+            },
+            Agents = new Dictionary<string, AgentDefinitionConfig>
+            {
+                ["agent-a"] = new() { CompactionTokenCeiling = ceiling }
+            },
+            Providers = new Dictionary<string, ProviderConfig>
+            {
+                ["provider-a"] = new() { ApiKey = "credential-must-be-masked" }
+            }
+        }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })
+            .ShouldBeOfType<JsonObject>();
+
+        config.Redact();
+
+        ((int?)config["world"]?["compactionTokenCeiling"]).ShouldBe(ceiling);
+        ((int?)config["gateway"]?["compaction"]?["compactionTokenCeiling"]).ShouldBe(ceiling);
+        ((int?)config["agents"]?["agent-a"]?["compactionTokenCeiling"]).ShouldBe(ceiling);
+        ((string?)config["providers"]?["provider-a"]?["apiKey"]).ShouldBe("***");
+    }
+
     private static void AssertMemberMetadata(Type declaringType, string path, string jsonName)
     {
         var member = GetMember(declaringType, jsonName);

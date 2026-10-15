@@ -56,7 +56,8 @@ public sealed record ConversationResponse(
     string? ToolOverrideJson = null,
     string Kind = "HumanAgent",
     string Source = "Channel",
-    string Visibility = "UserFacing");
+    string Visibility = "UserFacing",
+    int? CompactionTokenCeiling = null);
 
 /// <summary>
 /// Request body for setting or clearing a conversation's model / thinking / context override
@@ -79,12 +80,21 @@ public sealed record ConversationResponse(
 /// the new field is written ONLY when this flag is set, which makes an existing caller's payload
 /// bit-for-bit non-destructive. Defaults to <c>false</c>.
 /// </param>
+/// <param name="CompactionTokenCeiling">Positive token ceiling; null resets to inheritance when explicitly applied.</param>
+/// <param name="ApplyCompactionTokenCeiling">
+/// Opt-in ownership flag; false leaves the ceiling unchanged, true applies the value (null resets
+/// inheritance). This does NOT make the request a field-only patch: Model, Thinking and
+/// ContextWindow are still applied unconditionally. Ceiling callers must resend their current
+/// values to preserve them; omitting them clears those overrides, as on every existing PUT.
+/// </param>
 public sealed record SetConversationOverrideRequest(
     string? Model = null,
     string? Thinking = null,
     int? ContextWindow = null,
     string? ToolOverrideJson = null,
-    bool ApplyToolOverride = false);
+    bool ApplyToolOverride = false,
+    [property: System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)] int? CompactionTokenCeiling = null,
+    bool ApplyCompactionTokenCeiling = false);
 
 /// <summary>Channel binding response.</summary>
 public sealed record BindingResponse(
