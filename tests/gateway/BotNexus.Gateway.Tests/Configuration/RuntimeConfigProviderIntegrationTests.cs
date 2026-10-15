@@ -1,11 +1,14 @@
+using System.Collections.Concurrent;
 using System.IO.Abstractions;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
 
 namespace BotNexus.Gateway.Tests.Configuration;
 
@@ -47,7 +50,15 @@ public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
         };
         await File.WriteAllTextAsync(_configPath, initialConfig.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
 
-        using var serviceProvider = BuildServiceProvider(_configPath);
+        var rejections = new ConcurrentQueue<string>();
+        using var serviceProvider = BuildServiceProvider(_configPath, out var configuration,
+            onLoadFailure: (message, error) => rejections.Enqueue($"{message} {error}"));
+        var provider = configuration.Providers.ShouldHaveSingleItem().ShouldBeAssignableTo<FileConfigurationProvider>();
+        provider.Source.FileProvider.ShouldBeOfType<PhysicalFileProvider>();
+        provider.Source.ReloadOnChange.ShouldBeTrue();
+        var providerNotifications = 0;
+        using var providerSubscription = ChangeToken.OnChange(provider.GetReloadToken,
+            () => Interlocked.Increment(ref providerNotifications));
         var monitor = serviceProvider.GetRequiredService<IOptionsMonitor<PlatformConfig>>();
         var resolver = new DefaultLocationResolver(monitor);
         resolver.ResolvePath("repo-root").ShouldBe(initialPath);
@@ -55,8 +66,10 @@ public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
         var backupDirectory = Path.Combine(_rootPath, "backups");
         var writer = new PlatformConfigWriter(_configPath, _fileSystem, new ConfigBackupService(backupDirectory, _fileSystem));
         var changed = new TaskCompletionSource<PlatformConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var optionsCallbacks = 0;
         using var subscription = monitor.OnChange((config, _) =>
         {
+            Interlocked.Increment(ref optionsCallbacks);
             if (config.Gateway?.Locations?.TryGetValue("repo-root", out var location) == true
                 && string.Equals(location.Path, updatedPath, StringComparison.Ordinal))
             {
@@ -78,7 +91,18 @@ public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
 
         await writer.UpdateSectionAsync("gateway", gatewayUpdate);
 
-        await changed.Task.WaitAsync(TimeSpan.FromMinutes(2));
+        var persisted = JsonNode.Parse(await File.ReadAllTextAsync(_configPath));
+        var persistedPath = persisted?["gateway"]?["locations"]?["repo-root"]?["path"]?.GetValue<string>();
+        persistedPath.ShouldBe(updatedPath, "the writer must persist the new canonical location before waiting for reload propagation");
+        try
+        {
+            await changed.Task.WaitAsync(TimeSpan.FromMinutes(2));
+        }
+        catch (TimeoutException error)
+        {
+            throw LocationReloadTimeout(error, persistedPath, configuration,
+                Volatile.Read(ref providerNotifications), Volatile.Read(ref optionsCallbacks), rejections);
+        }
         resolver.ResolvePath("repo-root").ShouldBe(updatedPath);
         Directory.GetFiles(backupDirectory, "config-*.json").Length.ShouldBe(1);
     }
@@ -218,6 +242,58 @@ public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
             "pipeline when no IConfiguration is supplied. There are no remaining bootstrap loads.");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BuildServiceProvider_DisposeWithoutResolvingConfiguration_DisposesRoot(bool resolveOptions)
+    {
+        await File.WriteAllTextAsync(_configPath, "{}");
+        var probe = new DisposalProbe();
+        using var services = BuildServiceProvider(_configPath, out var configuration, probe);
+        try
+        {
+            if (resolveOptions)
+                _ = services.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
+
+            services.Dispose();
+            probe.Disposed.ShouldBeTrue("the fixture must own its root even when neither configuration registration is requested");
+        }
+        finally
+        {
+            // Also release the physical watcher when the ownership assertion is RED.
+            ((IDisposable)configuration).Dispose();
+        }
+    }
+
+    [Fact]
+    public void LocationReloadTimeout_IncludesBoundaryEvidenceAndOriginalException()
+    {
+        using var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["gateway:locations:repo-root:path"] = "visible-old-path"
+        }).Build() as ConfigurationRoot ?? throw new InvalidOperationException("Expected a configuration root.");
+        var original = new TimeoutException("original deadline");
+        var error = LocationReloadTimeout(original, "persisted-new-path", configuration, 3, 2,
+            new ConcurrentQueue<string>(["candidate rejected: invalid listenUrl"]));
+
+        error.InnerException.ShouldBeSameAs(original);
+        error.Message.ShouldContain("persistedPath='persisted-new-path'");
+        error.Message.ShouldContain("providerReloadNotifications=3");
+        error.Message.ShouldContain("configurationPath='visible-old-path'");
+        error.Message.ShouldContain("optionsCallbacks=2");
+        error.Message.ShouldContain("candidate rejected: invalid listenUrl");
+    }
+
+    private static TimeoutException LocationReloadTimeout(
+        TimeoutException error, string? persistedPath, IConfigurationRoot configuration,
+        int providerNotifications, int optionsCallbacks, ConcurrentQueue<string> rejections)
+        => new(
+            $"Location reload did not reach the expected options callback within the original two-minute deadline. " +
+            $"persistedPath='{persistedPath}'; providerReloadNotifications={providerNotifications}; " +
+            $"configurationPath='{configuration["gateway:locations:repo-root:path"]}'; " +
+            $"optionsCallbacks={optionsCallbacks}; rejections=[{string.Join(" | ", rejections.ToArray())}]",
+            error);
+
     public Task InitializeAsync() => Task.CompletedTask;
 
     public async Task DisposeAsync()
@@ -245,19 +321,38 @@ public sealed class RuntimeConfigProviderIntegrationTests : IAsyncLifetime
     }
 
     private static ServiceProvider BuildServiceProvider(string configPath)
+        => BuildServiceProvider(configPath, out _);
+
+    private static ServiceProvider BuildServiceProvider(
+        string configPath, out IConfigurationRoot configuration, IConfigurationSource? ownershipProbe = null,
+        Action<string, Exception?>? onLoadFailure = null)
     {
-        var configuration = (IConfigurationRoot)new ConfigurationBuilder()
-            .AddResilientJsonFile(configPath, optional: false, reloadOnChange: true)
-            .Build();
+        var builder = new ConfigurationBuilder()
+            .AddResilientJsonFile(configPath, optional: false, reloadOnChange: true, onLoadFailure: onLoadFailure);
+        if (ownershipProbe is not null)
+            builder.Add(ownershipProbe);
+        var root = builder.Build();
+        configuration = root;
 
         var services = new ServiceCollection();
-        services.AddSingleton(_ => configuration);
+        services.AddSingleton(_ => root);
         services.AddSingleton<IConfiguration>(provider => provider.GetRequiredService<IConfigurationRoot>());
-        services.AddOptions<PlatformConfig>().Bind(configuration);
+        services.AddOptions<PlatformConfig>().Bind(root);
         services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(
-            _ => new PlatformConfigPostConfigure(configuration, configPath));
+            _ => new PlatformConfigPostConfigure(root, configPath));
         services.AddSingleton<IValidateOptions<PlatformConfig>, PlatformConfigOptionsValidator>();
-        return services.BuildServiceProvider();
+        var provider = services.BuildServiceProvider();
+        // Binding captures root directly, so resolving options alone never activates this factory.
+        // Activate it here to transfer disposal ownership before returning the fixture's container.
+        _ = provider.GetRequiredService<IConfigurationRoot>();
+        return provider;
+    }
+
+    private sealed class DisposalProbe : ConfigurationProvider, IConfigurationSource, IDisposable
+    {
+        public bool Disposed { get; private set; }
+        public IConfigurationProvider Build(IConfigurationBuilder builder) => this;
+        public void Dispose() => Disposed = true;
     }
 
     private static string FindRepositoryRoot()
