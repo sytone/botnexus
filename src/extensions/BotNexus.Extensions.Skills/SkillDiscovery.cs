@@ -189,7 +189,7 @@ public static class SkillDiscovery
     /// That is the whole point of #3355 clause 3 — an acknowledgement records what a human
     /// actually reviewed, so it must not inherit approval for something they never saw.
     /// </remarks>
-    private static List<SkillSecurityFindingEvidence> FindUnacknowledgedCriticalFindings(
+    internal static List<SkillSecurityFindingEvidence> FindUnacknowledgedCriticalFindings(
         ScanSummary scanSummary,
         string skillName,
         string skillDir,

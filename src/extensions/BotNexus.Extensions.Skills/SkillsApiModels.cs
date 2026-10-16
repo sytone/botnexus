@@ -99,3 +99,13 @@ public sealed record SkillSecurityAcknowledgementRequest
     /// <summary>Bounded, nonblank operator justification retained in configuration.</summary>
     public string Reason { get; init; } = string.Empty;
 }
+
+/// <summary>Bounded unresolved critical findings visible to an administrator.</summary>
+public sealed record SkillSecurityFindingsResponse
+{
+    /// <summary>Currently unresolved critical scanner findings.</summary>
+    public IReadOnlyList<Security.SkillSecurityFindingEvidence> Findings { get; init; } = [];
+
+    /// <summary>Whether additional skills or findings were omitted by the API safety limits.</summary>
+    public bool IsTruncated { get; init; }
+}

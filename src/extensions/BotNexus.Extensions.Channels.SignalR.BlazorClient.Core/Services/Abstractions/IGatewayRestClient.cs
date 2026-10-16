@@ -221,6 +221,14 @@ public interface IGatewayRestClient
     /// <summary>GET /api/skills or /api/skills/{path} — browse the global skills directory.</summary>
     Task<WorkspaceResponseDto?> GetSkillsAsync(string? path = null, CancellationToken cancellationToken = default);
 
+    /// <summary>GET /api/skills/security-findings — returns administrator-only unresolved critical findings.</summary>
+    Task<SkillSecurityFindingsDto?> GetSkillSecurityFindingsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>POST /api/skills/security-acknowledgements — submits an exact finding acknowledgement.</summary>
+    Task<SkillSecurityAcknowledgementResult> AcknowledgeSkillSecurityFindingAsync(
+        SkillSecurityAcknowledgementDto request,
+        CancellationToken cancellationToken = default);
+
     /// <summary>PUT /api/skills/{path} — write text content to a skills-relative file.</summary>
     Task<bool> WriteSkillFileAsync(string path, string content, CancellationToken cancellationToken = default);
 
