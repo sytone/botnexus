@@ -194,6 +194,124 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         (await ReadInvocationAsync("cleanup", "safe")).ResultContent.ShouldBe(result);
     }
 
+    [Fact]
+    public Task CleanupLegacyToolPayloads_MidBatchAbortRollsBackAndFreshStoreRetryConverges() =>
+        AssertCleanupRestartAsync(abortSecondInvocation: true);
+
+    [Fact]
+    public Task CleanupLegacyToolPayloads_CommittedBatchRemainsUnchangedAcrossFreshStores() =>
+        AssertCleanupRestartAsync(abortSecondInvocation: false);
+
+    private async Task AssertCleanupRestartAsync(bool abortSecondInvocation)
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("restart"), AgentId.From("agent"));
+        var startedAt = DateTimeOffset.Parse("2026-02-01T00:00:00Z");
+        const string arguments = "{\"path\":\"α.txt\"}";
+        const string result = "résult ✓";
+        const string duplicate = "duplicate β";
+        foreach (var call in new[] { "first", "second" })
+        {
+            session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "started", ToolName = "read", ToolCallId = call, ToolArgs = arguments, Kind = MessageKind.ToolStart, Timestamp = startedAt });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = result, ToolName = "read", ToolCallId = call, ToolArgs = duplicate, Kind = MessageKind.ToolResult, Timestamp = startedAt.AddSeconds(2) });
+        }
+        await store.SaveAsync(session);
+        await using var connection = await OpenAsync();
+        var originalHistory = await ReadTableBytesAsync(connection, "session_history");
+        var originalInvocations = await ReadTableBytesAsync(connection, "tool_invocations");
+        originalHistory.Count.ShouldBe(4);
+        originalInvocations.Count.ShouldBe(2);
+        var expectedHistory = await ReadTableBytesAsync(connection, "session_history", projectCleanup: true);
+        expectedHistory.ShouldNotBe(originalHistory);
+        var lastId = await ScalarLongAsync(connection, "SELECT MAX(id) FROM tool_invocations");
+
+        if (abortSecondInvocation)
+        {
+            await using (var trigger = connection.CreateCommand())
+            {
+                // The predicate also proves an earlier invocation's UPDATE completed before
+                // the injected statement abort. SQLite ABORT alone does not roll that back.
+                trigger.CommandText = """
+                    CREATE TRIGGER abort_second_cleanup BEFORE UPDATE ON session_history
+                    WHEN OLD.tool_call_id='second'
+                      AND EXISTS(SELECT 1 FROM session_history WHERE tool_call_id='first' AND message_kind='tool-result' AND content IS NULL AND tool_args IS NULL)
+                    BEGIN SELECT RAISE(ABORT, 'injected second invocation cleanup failure'); END;
+                    """;
+                await trigger.ExecuteNonQueryAsync();
+            }
+            var failure = Should.Throw<SqliteException>(() => store.CleanupLegacyToolPayloads(2));
+            failure.SqliteErrorCode.ShouldBe(19);
+            failure.Message.ShouldContain("injected second invocation cleanup failure");
+            (await ReadTableBytesAsync(connection, "session_history")).ShouldBe(originalHistory);
+            (await ReadTableBytesAsync(connection, "tool_invocations")).ShouldBe(originalInvocations);
+            await using var drop = connection.CreateCommand();
+            drop.CommandText = "DROP TRIGGER abort_second_cleanup";
+            await drop.ExecuteNonQueryAsync();
+        }
+
+        // A new instance has no cached session or progress from the failed/committed batch.
+        var restartedStore = CreateStore();
+        var cleaned = restartedStore.CleanupLegacyToolPayloads(2);
+        cleaned.ScannedInvocations.ShouldBe(2);
+        cleaned.CleanedInvocations.ShouldBe(2);
+        cleaned.CleanedRows.ShouldBe(4);
+        cleaned.ClearedBytes.ShouldBe(2L * (Encoding.UTF8.GetByteCount(arguments) + Encoding.UTF8.GetByteCount(result) + Encoding.UTF8.GetByteCount(duplicate)));
+        cleaned.OrphanedInvocationsDeleted.ShouldBe(0);
+        cleaned.LastScannedInvocationId.ShouldBe(lastId);
+        cleaned.HasMore.ShouldBeFalse();
+        (await ReadTableBytesAsync(connection, "session_history")).ShouldBe(expectedHistory);
+        (await ReadTableBytesAsync(connection, "tool_invocations")).ShouldBe(originalInvocations);
+
+        // Fail even a same-value UPDATE on a repeated cleanup, not just visible changes.
+        await using (var guard = connection.CreateCommand())
+        {
+            guard.CommandText = """
+                CREATE TRIGGER reject_history_rewrite BEFORE UPDATE ON session_history
+                BEGIN SELECT RAISE(ABORT, 'unexpected history rewrite'); END;
+                CREATE TRIGGER reject_evidence_rewrite BEFORE UPDATE ON tool_invocations
+                BEGIN SELECT RAISE(ABORT, 'unexpected evidence rewrite'); END;
+                """;
+            await guard.ExecuteNonQueryAsync();
+        }
+        for (var restart = 0; restart < 2; restart++)
+        {
+            var freshStore = CreateStore();
+            var reloaded = await freshStore.GetAsync(SessionId.From("restart"));
+            reloaded.ShouldNotBeNull();
+            reloaded.GetHistorySnapshot().Select(entry => (entry.ToolCallId, entry.Content, entry.ToolArgs, entry.Kind, entry.Timestamp)).ShouldBe([
+                ("first", "started", arguments, (MessageKind?)MessageKind.ToolStart, startedAt),
+                ("first", result, (string?)null, (MessageKind?)MessageKind.ToolResult, startedAt.AddSeconds(2)),
+                ("second", "started", arguments, (MessageKind?)MessageKind.ToolStart, startedAt),
+                ("second", result, (string?)null, (MessageKind?)MessageKind.ToolResult, startedAt.AddSeconds(2))]);
+            // Restart without a persisted cursor must also be a no-op.
+            var repeated = freshStore.CleanupLegacyToolPayloads(2);
+            repeated.ScannedInvocations.ShouldBe(0);
+            repeated.CleanedInvocations.ShouldBe(0);
+            repeated.CleanedRows.ShouldBe(0);
+            repeated.ClearedBytes.ShouldBe(0);
+            repeated.OrphanedInvocationsDeleted.ShouldBe(0);
+            repeated.LastScannedInvocationId.ShouldBe(0);
+            repeated.HasMore.ShouldBeFalse();
+            (await ReadTableBytesAsync(connection, "session_history")).ShouldBe(expectedHistory);
+            (await ReadTableBytesAsync(connection, "tool_invocations")).ShouldBe(originalInvocations);
+        }
+    }
+
+    private static async Task<List<string>> ReadTableBytesAsync(SqliteConnection connection, string table, bool projectCleanup = false)
+    {
+        // Snapshot every column, preserving NULL/type and exact SQLite payload bytes.
+        // ORDER BY id protects row/link/order evidence, not only the duplicate columns.
+        var columns = await ReadStringsAsync(connection, $"SELECT name FROM pragma_table_info('{table}') ORDER BY cid");
+        var values = columns.Select(column =>
+        {
+            var expression = projectCleanup && column == "tool_args" ? "NULL"
+                : projectCleanup && column == "content" ? "CASE WHEN message_kind='tool-result' THEN NULL ELSE content END"
+                : $"\"{column}\"";
+            return $"typeof({expression}),hex(CAST({expression} AS BLOB))";
+        });
+        return await ReadStringsAsync(connection, $"SELECT json_array({string.Join(',', values)}) FROM {table} ORDER BY id");
+    }
+
     [Theory]
     [InlineData("tool-start", false, 1)]
     [InlineData("tool-start", false, 10)]
