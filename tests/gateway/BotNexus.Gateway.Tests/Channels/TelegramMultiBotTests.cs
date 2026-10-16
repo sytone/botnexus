@@ -23,37 +23,8 @@ public sealed class TelegramMultiBotTests
         var dispatchedMessages = new List<InboundMessage>();
         var twoMessagesSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // Bot 1 returns one update; bot 2 returns one update; subsequent polls empty.
-        var bot1Polls = 0;
-        var bot2Polls = 0;
-
-        HttpResponseMessage Bot1Handler(HttpRequestMessage req)
-        {
-            var method = req.RequestUri?.Segments.LastOrDefault()?.Trim('/');
-            if (method == "deleteWebhook") return JsonOk(true);
-            if (method == "getUpdates")
-            {
-                bot1Polls++;
-                if (bot1Polls == 1)
-                    return JsonOk(new[] { MakeUpdate(10, 101, "hello from bot1") });
-                return JsonOk(Array.Empty<TelegramUpdate>());
-            }
-            return JsonOk(true);
-        }
-
-        HttpResponseMessage Bot2Handler(HttpRequestMessage req)
-        {
-            var method = req.RequestUri?.Segments.LastOrDefault()?.Trim('/');
-            if (method == "deleteWebhook") return JsonOk(true);
-            if (method == "getUpdates")
-            {
-                bot2Polls++;
-                if (bot2Polls == 1)
-                    return JsonOk(new[] { MakeUpdate(20, 202, "hello from bot2") });
-                return JsonOk(Array.Empty<TelegramUpdate>());
-            }
-            return JsonOk(true);
-        }
+        using var bot1 = new PollingHandler(MakeUpdate(10, 101, "hello from bot1"));
+        using var bot2 = new PollingHandler(MakeUpdate(20, 202, "hello from bot2"));
 
         var options = new TelegramGatewayOptions
         {
@@ -77,8 +48,8 @@ public sealed class TelegramMultiBotTests
         };
 
         var httpFactory = new StubHttpClientFactory(name => name == "larry-bot"
-            ? new HttpClient(new StubHandler(req => Task.FromResult(Bot1Handler(req))))
-            : new HttpClient(new StubHandler(req => Task.FromResult(Bot2Handler(req)))));
+            ? new HttpClient(bot1, disposeHandler: false)
+            : new HttpClient(bot2, disposeHandler: false));
 
         var adapter = new TelegramChannelAdapter(
             NullLogger<TelegramChannelAdapter>.Instance,
@@ -94,12 +65,12 @@ public sealed class TelegramMultiBotTests
                 if (dispatchedMessages.Count >= 2) twoMessagesSeen.TrySetResult();
             });
 
-        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        await twoMessagesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await adapter.StopAsync(CancellationToken.None);
-
-        dispatchedMessages.ShouldContain(m => m.RoutingHints != null && m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "agent-b" && m.Content == "hello from bot1");
-        dispatchedMessages.ShouldContain(m => m.RoutingHints != null && m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "assistant" && m.Content == "hello from bot2");
+        await RunPollingScenarioAsync(adapter, dispatcher.Object, async () =>
+        {
+            await twoMessagesSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            dispatchedMessages.ShouldContain(m => m.RoutingHints != null && m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "agent-b" && m.Content == "hello from bot1");
+            dispatchedMessages.ShouldContain(m => m.RoutingHints != null && m.RoutingHints.RequestedAgentId != null && m.RoutingHints.RequestedAgentId.Value.Value == "assistant" && m.Content == "hello from bot2");
+        });
     }
 
     /// <summary>
@@ -118,23 +89,8 @@ public sealed class TelegramMultiBotTests
             PollingTimeoutSeconds = 1
         };
 
-        var httpFactory = new StubHttpClientFactory(_ =>
-        {
-            var polls = 0;
-            return new HttpClient(new StubHandler(req =>
-            {
-                var method = req.RequestUri?.Segments.LastOrDefault()?.Trim('/');
-                if (method == "deleteWebhook") return Task.FromResult(JsonOk(true));
-                if (method == "getUpdates")
-                {
-                    polls++;
-                    return Task.FromResult(polls == 1
-                        ? JsonOk(new[] { MakeUpdate(10, 42, "legacy message") })
-                        : JsonOk(Array.Empty<TelegramUpdate>()));
-                }
-                return Task.FromResult(JsonOk(true));
-            }));
-        });
+        using var handler = new PollingHandler(MakeUpdate(10, 42, "legacy message"));
+        var httpFactory = new StubHttpClientFactory(_ => new HttpClient(handler, disposeHandler: false));
 
         var adapter = new TelegramChannelAdapter(
             NullLogger<TelegramChannelAdapter>.Instance,
@@ -146,13 +102,13 @@ public sealed class TelegramMultiBotTests
             .Returns(Task.CompletedTask)
             .Callback<InboundMessage, CancellationToken>((m, _) => dispatched.TrySetResult(m));
 
-        await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
-        var message = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await adapter.StopAsync(CancellationToken.None);
-
-        message.RoutingHints.ShouldNotBeNull();
-        message.RoutingHints!.RequestedAgentId!.Value.Value.ShouldBe("legacy-agent");
-        message.Content.ShouldBe("legacy message");
+        await RunPollingScenarioAsync(adapter, dispatcher.Object, async () =>
+        {
+            var message = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var hints = message.RoutingHints.ShouldNotBeNull();
+            hints.RequestedAgentId.ShouldNotBeNull().Value.ShouldBe("legacy-agent");
+            message.Content.ShouldBe("legacy message");
+        });
     }
 
     /// <summary>
@@ -299,6 +255,139 @@ public sealed class TelegramMultiBotTests
         assistantSends.ShouldNotBeEmpty();
         assistantSends.ShouldContain(u => u.Contains("token-assistant"));
         larrySends.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// The fake must model a pending long poll, not an unbounded synchronous empty-response loop.
+    /// Exercise the real API client so wire serialization and cancellation are covered as well.
+    /// </summary>
+    [Fact]
+    public async Task PollingFixture_AfterInitialUpdate_PendsUntilCancelled()
+    {
+        using var handler = new PollingHandler(MakeUpdate(10, 42, "legacy message"));
+        using var http = new HttpClient(handler);
+        var api = new TelegramBotApiClient(http, "legacy-token", NullLogger.Instance);
+        await api.DeleteWebhookAsync();
+        var updates = await api.GetUpdatesAsync(null, 1);
+        var update = updates.ShouldHaveSingleItem();
+        update.UpdateId.ShouldBe(10);
+        var message = update.Message.ShouldNotBeNull();
+        message.Chat.ShouldNotBeNull().Id.ShouldBe(42);
+        message.Text.ShouldBe("legacy message");
+
+        using var cancellation = new CancellationTokenSource();
+        var pending = api.GetUpdatesAsync(update.UpdateId + 1, 1, cancellation.Token);
+        try
+        {
+            pending.IsCompleted.ShouldBeFalse("the second getUpdates must yield until cancellation");
+            await handler.PendingPoll.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            handler.Polls.ShouldBe(2);
+            var requests = handler.Requests.ToArray();
+            requests.Length.ShouldBe(3);
+            requests.ShouldAllBe(r => r.Method == HttpMethod.Post);
+            requests[0].Uri.ShouldBe("https://api.telegram.org/botlegacy-token/deleteWebhook");
+            requests[0].Body.GetProperty("drop_pending_updates").GetBoolean().ShouldBeFalse();
+            requests[1].Uri.ShouldBe("https://api.telegram.org/botlegacy-token/getUpdates");
+            requests[1].Body.GetProperty("offset").ValueKind.ShouldBe(JsonValueKind.Null);
+            requests[2].Uri.ShouldBe(requests[1].Uri);
+            requests[2].Body.GetProperty("offset").GetInt64().ShouldBe(11);
+            foreach (var request in requests.Skip(1))
+            {
+                request.Body.GetProperty("timeout").GetInt32().ShouldBe(1);
+                request.Body.GetProperty("allowed_updates").EnumerateArray()
+                    .Select(v => v.GetString()).ShouldContain("message");
+            }
+        }
+        finally
+        {
+            cancellation.Cancel();
+        }
+
+        await Should.ThrowAsync<OperationCanceledException>(async () => await pending);
+        handler.CancelledPoll.Task.IsCompletedSuccessfully.ShouldBeTrue();
+        handler.Polls.ShouldBe(2);
+    }
+
+    /// <summary>
+    /// A failing scenario must still cancel and join the adapter's poller before propagating.
+    /// </summary>
+    [Fact]
+    public async Task PollingFixture_WhenScenarioFails_StopsAndJoinsPolling()
+    {
+        using var handler = new PollingHandler(MakeUpdate(10, 42, "legacy message"));
+        var adapter = new TelegramChannelAdapter(
+            NullLogger<TelegramChannelAdapter>.Instance,
+            Options.Create(new TelegramGatewayOptions { BotToken = "legacy-token", AllowedChatIds = { 42 } }),
+            new StubHttpClientFactory(_ => new HttpClient(handler, disposeHandler: false)));
+        Task? pollingTask = null;
+        var expected = new InvalidOperationException("simulated assertion failure");
+        try
+        {
+            var actual = await Should.ThrowAsync<InvalidOperationException>(() =>
+                RunPollingScenarioAsync(adapter, Mock.Of<IChannelDispatcher>(), async () =>
+                {
+                    await handler.PendingPoll.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    pollingTask = adapter.GetPollingTask("default").ShouldNotBeNull();
+                    throw expected;
+                }));
+
+            actual.ShouldBeSameAs(expected);
+            adapter.IsRunning.ShouldBeFalse();
+            pollingTask.ShouldNotBeNull().IsCompletedSuccessfully.ShouldBeTrue();
+            handler.CancelledPoll.Task.IsCompletedSuccessfully.ShouldBeTrue();
+            handler.Polls.ShouldBe(2);
+            handler.Requests.Last().Body.GetProperty("offset").GetInt64().ShouldBe(11);
+        }
+        finally
+        {
+            // Keep the regression itself safe even when testing a broken scenario wrapper.
+            await adapter.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private static async Task RunPollingScenarioAsync(
+        TelegramChannelAdapter adapter, IChannelDispatcher dispatcher, Func<Task> scenario)
+    {
+        try
+        {
+            await adapter.StartAsync(dispatcher, CancellationToken.None);
+            await scenario();
+        }
+        finally
+        {
+            await adapter.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private sealed class PollingHandler(TelegramUpdate update) : HttpMessageHandler
+    {
+        private int _polls;
+        public int Polls => Volatile.Read(ref _polls);
+        public System.Collections.Concurrent.ConcurrentQueue<(HttpMethod Method, string Uri, JsonElement Body)> Requests { get; } = new();
+        public TaskCompletionSource PendingPoll { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource CancelledPoll { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            using var body = JsonDocument.Parse(await request.Content.ShouldNotBeNull().ReadAsStringAsync(cancellationToken));
+            Requests.Enqueue((request.Method, request.RequestUri.ShouldNotBeNull().AbsoluteUri, body.RootElement.Clone()));
+            var method = request.RequestUri?.Segments.LastOrDefault()?.Trim('/');
+            if (method == "deleteWebhook") return JsonOk(true);
+            if (method != "getUpdates") throw new InvalidOperationException($"Unexpected polling fixture request: {method}");
+            if (Interlocked.Increment(ref _polls) == 1) return JsonOk(new[] { update });
+            // A real long poll yields while Telegram has no update. Empty synchronous replies
+            // make the adapter hot-loop and compete with the dispatch continuation (#4942).
+            PendingPoll.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            finally
+            {
+                if (cancellationToken.IsCancellationRequested) CancelledPoll.TrySetResult();
+            }
+            throw new InvalidOperationException("A pending poll can only end through cancellation.");
+        }
     }
 
     private static TelegramUpdate MakeUpdate(int updateId, long chatId, string text) =>
