@@ -216,6 +216,11 @@ Adds a thing. Closes #10
 - low
 ## Merge notes
 - no migration
+## Contributor usability
+Consumers: extension authors configuring Example; platforms: Windows and Linux.
+Setup: public prerequisites and configuration in docs/user-guide/example.md.
+Validation: clean temporary home, hermetic fixtures; Windows: ` + "`node example.mjs`" + ` 4 passed / 0 failed; Linux: ` + "`node example.mjs`" + ` 4 passed / 0 failed.
+Private prerequisites: none.
 `;
 
 test("evaluate passes a well-formed non-UI feat PR", () => {
