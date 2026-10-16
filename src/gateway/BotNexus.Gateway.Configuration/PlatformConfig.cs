@@ -1774,6 +1774,11 @@ public sealed class SecretRedactionConfig
 /// <summary>Cron scheduler configuration.</summary>
 public sealed class CronConfig
 {
+    /// <summary>Opt-in global model for model-running cron jobs; explicit job models take precedence.</summary>
+    [Display(Name = "Default cron model", Description = "Optional provider/model or registered model ID. Explicit job model overrides this; unset inherits conversation then agent. Restart the gateway after changing configuration.", GroupName = "Cron", Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron", Order = 4)]
+    public string? DefaultModel { get; set; }
+
     /// <summary>Whether the cron scheduler is enabled.</summary>
     [Display(
         Name = "Enable cron",

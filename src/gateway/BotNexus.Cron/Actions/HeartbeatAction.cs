@@ -78,7 +78,8 @@ public sealed class HeartbeatAction(TimeProvider? timeProvider = null) : ICronAc
 
         // #2373: classify an unresolvable model override before dispatch so the run records the
         // real reason instead of an opaque provider error raised deep inside the agent turn.
-        CronModelPreflight.EnsureResolvable(
+        if (context.EffectiveModel is null)
+            CronModelPreflight.EnsureResolvable(
             context.Services.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
             context.Job.Model);
 
@@ -94,8 +95,11 @@ public sealed class HeartbeatAction(TimeProvider? timeProvider = null) : ICronAc
                     CronJobId = context.Job.Id,
                     JobName = ExternalText.Sanitize(context.Job.Name, ExternalText.DefaultDisplayLength),
                     ModelOverride = context.Job.Model,
+            CronRequestedModel = context.EffectiveModel?.RequestedModel,
+            CronModelSource = context.EffectiveModel?.Source,
                     ConversationId = context.Job.ConversationId,
-                    CreatedBy = context.Job.CreatedBy
+                    CreatedBy = context.Job.CreatedBy,
+                    SessionCreatedAsync = context.PersistSessionIdAsync
                 })
             .ConfigureAwait(false);
 

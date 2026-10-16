@@ -1314,15 +1314,67 @@ public sealed class CronScheduler(
 
             var scope = _scopeFactory.CreateScope();
             executionScope = scope;
+            CronModelSelection? modelSelection = null;
+            if (CronModelRouting.UsesModel(jobForRun.ActionType))
+            {
+                var agents = scope.ServiceProvider.GetService<BotNexus.Gateway.Abstractions.Agents.IAgentRegistry>();
+                var descriptor = jobForRun.AgentId is { } owner ? agents?.Get(owner) : null;
+                var globalModel = _optionsMonitor.CurrentValue.DefaultModel;
+                if (descriptor is null && (!string.IsNullOrWhiteSpace(globalModel) || !string.IsNullOrWhiteSpace(jobForRun.Model)))
+                    throw new InvalidOperationException("Cron model routing requires a registered owning agent.");
+                if (descriptor is not null)
+                {
+                    var isExchange = jobForRun.ActionType.Equals("agent-converse", StringComparison.OrdinalIgnoreCase);
+                    var hasPin = !string.IsNullOrWhiteSpace(jobForRun.Model) || !string.IsNullOrWhiteSpace(globalModel);
+                    if (isExchange && hasPin)
+                    {
+                        var targetId = jobForRun.Metadata?.GetValueOrDefault("targetAgentId")?.ToString();
+                        var target = !string.IsNullOrWhiteSpace(targetId) ? agents?.Get(AgentId.From(targetId)) : null;
+                        if (target is null && !string.IsNullOrWhiteSpace(targetId))
+                        {
+                            var matches = agents?.GetAll().Where(a => string.Equals(a.DisplayName, targetId, StringComparison.OrdinalIgnoreCase)).ToList();
+                            if (matches?.Count == 1) target = matches[0];
+                        }
+                        if (target is null)
+                            throw new InvalidOperationException("Pinned cron exchange models require a registered local target so model permissions can be verified.");
+                        descriptor = target;
+                    }
+                    var conversations = scope.ServiceProvider.GetService<IConversationStore>();
+                    var conversation = jobForRun.ConversationId is { } conversationId && conversations is not null
+                        ? await conversations.GetAsync(conversationId, ct).ConfigureAwait(false) : null;
+                    // Exchanges and heartbeats resolve their actual conversations inside their
+                    // runtimes. Without an authored scheduling pin, preserve that fallback rather
+                    // than pinning a different job conversation or inventing an effective audit.
+                    var runtimeOwnsFallback = isExchange || jobForRun.ActionType.Equals("heartbeat", StringComparison.OrdinalIgnoreCase);
+                    if (!runtimeOwnsFallback || hasPin)
+                        modelSelection = CronModelRouting.Resolve(jobForRun.ActionType, jobForRun.Model, globalModel,
+                            conversation?.ModelOverride, descriptor,
+                            scope.ServiceProvider.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>());
+                    if (modelSelection is not null)
+                    {
+                        if (jobForRun.ActionType.Equals("agent-converse", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var initiator = jobForRun.AgentId is { } initiatorId ? agents?.Get(initiatorId) : null;
+                            if (initiator is null || !AgentModelPermission.IsPermitted(initiator, modelSelection.ModelId))
+                                throw new InvalidOperationException("Cron exchange model is not permitted for the initiating agent.");
+                        }
+                        await _cronStore.RecordRunModelAsync(run.Id, modelSelection, ct).ConfigureAwait(false);
+                        run = run with { EffectiveModel = modelSelection };
+                    }
+                }
+            }
             var context = new CronExecutionContext
             {
-                Job = jobForRun,
+                Job = modelSelection is null ? jobForRun : jobForRun with { Model = modelSelection.QualifiedModel },
+                EffectiveModel = modelSelection,
                 RunId = run.Id,
                 TriggeredAt = triggeredAt,
                 TriggerType = triggerType,
                 Services = scope.ServiceProvider,
-                PersistSessionIdAsync = (sessionId, cancellationToken) =>
-                    _cronStore.RecordRunSessionAsync(run.Id, sessionId, cancellationToken)
+                PersistSessionIdAsync = async (sessionId, cancellationToken) =>
+                {
+                    await _cronStore.RecordRunSessionAsync(run.Id, sessionId, cancellationToken).ConfigureAwait(false);
+                }
             };
             executionContext = context;
 

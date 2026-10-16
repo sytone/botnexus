@@ -264,6 +264,19 @@ public sealed class AgentExchangeService : IAgentExchangeService
         session.Metadata["objective"] = request.Objective;
         session.Metadata["maxTurns"] = request.MaxTurns;
         session.Metadata["conversationId"] = conversation.ConversationId.Value;
+        if (!string.IsNullOrWhiteSpace(request.ModelOverride))
+        {
+            session.Metadata["modelOverride"] = request.ModelOverride;
+            if (request.CronModelSource is not null)
+            {
+                session.Metadata["cronModelOverride"] = request.ModelOverride;
+                session.Metadata["cronRequestedModel"] = request.CronRequestedModel;
+                session.Metadata["cronModelSource"] = request.CronModelSource;
+                var separator = request.ModelOverride.LastIndexOf('/');
+                session.Metadata["cronEffectiveProvider"] = separator > 0 ? request.ModelOverride[..separator] : null;
+                session.Metadata["cronEffectiveModel"] = separator > 0 ? request.ModelOverride[(separator + 1)..] : request.ModelOverride;
+            }
+        }
 
         await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 

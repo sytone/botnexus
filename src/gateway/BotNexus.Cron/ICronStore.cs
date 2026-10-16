@@ -96,6 +96,10 @@ public interface ICronStore
     Task RecordRunSessionAsync(RunId runId, SessionId sessionId, CancellationToken ct = default)
         => Task.CompletedTask;
 
+    /// <summary>Publishes the immutable dispatch model audit before model work begins.</summary>
+    Task RecordRunModelAsync(RunId runId, CronModelSelection selection, CancellationToken ct = default)
+        => Task.CompletedTask;
+
     /// <summary>
     /// Records a run's terminal outcome and, when supplied, its per-run cost measurements (#2641).
     /// </summary>
