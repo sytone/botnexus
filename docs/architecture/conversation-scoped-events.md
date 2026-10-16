@@ -111,3 +111,33 @@ the authority; an event is a post-commit notification, not proof of exactly-once
 `ConversationsControllerRemoveBindingEventTests` exercises real in-memory and SQLite stores,
 checks durable deletion through a fresh SQLite store, and pins snapshot detachment, post-commit
 consumption, publisher failure isolation, and absence of legacy notifications.
+
+
+## REST override-update facts
+
+For developers integrating lifecycle consumers, `ConversationsController.SetOverride` and
+`ClearOverride` are another bounded part of [issue #2088](https://github.com/Sytone/botnexus/issues/2088).
+They retain the existing client write guard, validation, narrow transactional override patch,
+audit entries, and HTTP response. After the store returns the committed aggregate, they use
+`PublishConversationUpdatedBestEffortAsync` instead of the legacy change notifier. A null store
+result or store exception emits no success event.
+
+`ConversationUpdatedEvent` carries the committed agent and conversation identifiers, `UpdatedAt`
+as `OccurredAt`, and detached immutable binding snapshots. `ChangedFields` follows metadata PATCH:
+compare the pre-read values with the store-returned values, within the patch's write set, in the
+order `ModelOverride`, `ThinkingOverride`, `ContextWindowOverride`, `ToolOverrideJson`,
+`CompactionTokenCeiling`. Setting always patches the first three fields, including nulls;
+tools are patched only when `ApplyToolOverride` is true, and the compaction ceiling is patched
+only when `ApplyCompactionTokenCeiling` is true (a null ceiling resets it). Clearing patches all
+five to null. Ceiling-only changes use the same event and field-selection contract as the other
+overrides; opting out preserves the ceiling and does not report it. Unchanged values are omitted;
+when no values differ, no event is published. The pre-read is not an atomic before-image, so
+these field names are a reconciliation hint, not a complete concurrent-change history.
+
+Delivery uses the existing best-effort seam, not an outbox. Publisher rejection or an exception
+does not roll back the overrides or change the successful response. Consumers must refresh from
+durable conversation state after a missed notification or reconnect.
+`ConversationsControllerOverrideEventTests` covers real in-memory and SQLite stores, fresh-store
+SQLite reads, post-commit consumption, snapshot detachment, deterministic field selection,
+audit preservation, and store/publisher failure boundaries. This slice does not migrate pin,
+move, or auto-title producers, and does not change compaction-ceiling behavior.
