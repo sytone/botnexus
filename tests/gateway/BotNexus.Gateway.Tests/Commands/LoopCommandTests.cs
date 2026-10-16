@@ -433,7 +433,7 @@ public sealed class LoopCommandTests
             var compaction = new Mock<IOptionsMonitor<CompactionOptions>>();
             compaction.SetupGet(value => value.CurrentValue).Returns(new CompactionOptions());
             var contributor = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null,
-                [new Mock<IAgentRegistry>().Object, new Mock<IAgentSupervisor>().Object, sessions.Object, compaction.Object, services, null], null) as ICommandContributor
+                [new Mock<IAgentRegistry>().Object, new Mock<IAgentSupervisor>().Object, sessions.Object, compaction.Object, services, null, null], null) as ICommandContributor
                 ?? throw new InvalidOperationException("Cannot construct built-in contributor");
             registry = new CommandRegistry([contributor], NullLogger<CommandRegistry>.Instance);
         }

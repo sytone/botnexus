@@ -1,6 +1,6 @@
-# Compaction policy diagnostics API
+# Compaction policy diagnostics
 
-For developers integrating session diagnostics. This is the backend diagnostics slice of #4888; it does not add a settings UI or change compaction policy.
+For developers integrating session diagnostics. These are the backend and `/context` command diagnostics slices of #4888; they do not add a settings UI or change compaction policy.
 
 ## Read the current policy
 
@@ -34,4 +34,12 @@ A configured fallback policy window is distinct from known model capacity. Clien
 - Token diagnostics do not claim to report the separate oversized-entry byte trigger, compaction circuit-breaker state or whether compaction will succeed.
 - The provider measurement is cleared by existing successful-compaction behavior; unknown measurements remain null, never zero placeholders.
 
-`/context` command integration and UI presentation remain outside this slice. The diagnostics service is reusable for a later command integration without introducing a second policy calculation.
+## `/context` command
+
+The built-in `/context` command also calls `ISessionCompactionDiagnostics` on every successful resident-handle read. It reports the fresh scoped working window, resolved ceiling and source, configured ratio, ratio safety threshold and effective token trigger threshold. It reuses the service's values, not a second threshold calculation or the handle's older model binding.
+
+When the scoped window is unknown, the command labels the runtime policy window as a compaction fallback, not known model capacity. Breakdown percentages are unavailable in that case. An unavailable policy stays unavailable; the command does not invent thresholds. Legacy callers without the optional service still receive the handle breakdown and a clearly labelled configured fallback.
+
+The persisted LLM-visible history estimate, last completed provider prompt count and source, and provider-to-estimate ratio are separate from the broader handle context estimate. Missing provider measurements and ratios say `unavailable`, not zero. Output contains only counts and allowed source labels, never prompt text or arbitrary metadata. A trigger threshold is not a hard cap or a promise that compaction will succeed; the byte trigger and circuit-breaker state are not reported.
+
+Missing context, unsupported diagnostics and missing handles keep their existing errors without reading policy or starting a handle. Cancellation and policy failures propagate. UI settings, UI presentation and the parent issue's UI acceptance remain outstanding outside this command-only slice.
