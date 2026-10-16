@@ -31,7 +31,7 @@ export function evaluateUsability(visibleBody, changedPaths = []) {
   const platformEvidence = platform => platformSegments.some(([, label, evidence]) =>
     label.toLowerCase() === platform.toLowerCase() && new RegExp(`^${commandResults.source}`, "i").test(evidence));
   const checks = {
-    consumers: consumers.replace(/\b(?:platforms?|Windows|Linux|and|only|portable|everyone|users|consumers|all)\b/gi, "").replace(/[^a-z0-9]/gi, "").length >= 8 && (windows || linux),
+    consumers: (consumers.match(/[a-z0-9]+/gi) ?? []).filter(word => !/^(?:platforms?|Windows|Linux|and|only|portable|everyone|users|consumers|all)$/i.test(word)).reduce((count, word) => count + word.length, 0) >= 8 && (windows || linux),
     setup: /\b(?:setup|configur\w*|install\w*)\b/i.test(setup) && /\bprerequisites?\b/i.test(setup) && /\bdocs\/[\w./-]+\.md\b/.test(setup),
     validation: /\b(?:clean|hermetic)\b/i.test(validation) && /\b(?:temporary|isolated|fixture\w*|fresh)\b/i.test(validation) && commandResults.test(validation),
     private: /^none\.?$/i.test(values.private ?? "") && !/(?:[a-z]:[\\/]Users[\\/]|\/(?:home|Users)\/[^\s/]+\/|\bprivate skills?\b|\bpre[- ]?seeded\s+(?:database|db)\b|\b(?:only|alone)[^\n]*(?:redact|paths?)[^\n]*(?:redact|paths?)|\bpath[- ]redaction[- ]only\b)/i.test(section),
