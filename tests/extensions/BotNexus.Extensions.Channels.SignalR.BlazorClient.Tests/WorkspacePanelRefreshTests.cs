@@ -42,8 +42,8 @@ public sealed class WorkspacePanelRefreshTests : IDisposable
             _ => null
         }));
         var cut = Render();
-        cut.Find(Row("memory")).Click();
-        cut.Find(Row("memory/days")).Click();
+        await ClickRowAsync(cut, "memory");
+        await ClickRowAsync(cut, "memory/days");
         cut.Find(Row("memory/days/old-day.md"));
 
         refreshed = true;
@@ -77,15 +77,15 @@ public sealed class WorkspacePanelRefreshTests : IDisposable
             _ => Task.FromResult<WorkspaceResponseDto?>(null)
         });
         var cut = Render();
-        cut.Find(Row("memory")).Click();
+        await ClickRowAsync(cut, "memory");
         await EndTurnAsync(cut);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         // Force a render while the response is held; don't rely on a stale pre-refresh DOM.
         cut.Render();
         AssertExpanded(cut, "memory", true);
         cut.Find(Row("memory/daily.md")).HasAttribute("disabled").ShouldBeFalse();
-        cut.Find(Row("memory")).Click();
-        cut.Find(Row("notes")).Click();
+        await ClickRowAsync(cut, "memory");
+        await ClickRowAsync(cut, "notes");
         cut.Find(Row("notes/note.md"));
 
         root.SetResult(Directory("", Folder("memory"), Folder("notes"), File("updated.md")));
@@ -102,11 +102,14 @@ public sealed class WorkspacePanelRefreshTests : IDisposable
     [Fact]
     public async Task Pending_directory_refresh_keeps_cached_children_interactive_and_does_not_reexpand_collapsed_folder()
     {
+        var root = PendingResponse();
+        var rootStarted = Signal();
         var directory = PendingResponse();
         var started = Signal();
         var refresh = false;
         Stub(path => path switch
         {
+            "" when refresh => Hold(root, rootStarted),
             "" => Task.FromResult<WorkspaceResponseDto?>(Directory("", Folder("memory"))),
             "memory" when refresh => Hold(directory, started),
             "memory" => Task.FromResult<WorkspaceResponseDto?>(Directory("memory", File("daily.md"))),
@@ -114,23 +117,118 @@ public sealed class WorkspacePanelRefreshTests : IDisposable
             _ => Task.FromResult<WorkspaceResponseDto?>(null)
         });
         var cut = Render();
-        cut.Find(Row("memory")).Click();
+        await ClickRowAsync(cut, "memory");
         refresh = true;
         await EndTurnAsync(cut);
         cut.Render();
         // Assert preservation before waiting for a directory request: the old code fails
         // for clearing expansion, not for failing to start a request within a deadline.
         AssertExpanded(cut, "memory", true);
-        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        cut.Render();
-        cut.Find(Row("memory/daily.md")).Click();
+        await rootStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var rendered = Signal();
+        void AfterRender(object? sender, EventArgs args) => rendered.TrySetResult(true);
+        cut.OnAfterRender += AfterRender;
+        try
+        {
+            root.SetResult(Directory("", Folder("memory")));
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // Transport start alone does not certify that the root refresh has
+            // finished replacing row bindings. Observe its render as well.
+            await rendered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            cut.OnAfterRender -= AfterRender;
+        }
+        await ClickRowAsync(cut, "memory/daily.md");
         cut.Find("pre.workspace-file-content").TextContent.ShouldBe("saved content");
-        cut.Find(Row("memory")).Click();
-        directory.SetResult(Directory("memory", File("updated.md")));
-        await cut.InvokeAsync(() => { });
+        await ClickRowAsync(cut, "memory");
+        var refreshRendered = Signal();
+        void AfterRefreshRender(object? sender, EventArgs args) => refreshRendered.TrySetResult(true);
+        cut.OnAfterRender += AfterRefreshRender;
+        try
+        {
+            directory.SetResult(Directory("memory", File("updated.md")));
+            await refreshRendered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            cut.OnAfterRender -= AfterRefreshRender;
+        }
         cut.WaitForAssertion(() => AssertExpanded(cut, "memory", false));
-        cut.Find(Row("memory")).Click();
+        cut.FindAll(Row("memory/daily.md")).ShouldBeEmpty();
+        cut.FindAll(Row("memory/updated.md")).ShouldBeEmpty();
+        await ClickRowAsync(cut, "memory");
         cut.WaitForAssertion(() => cut.Find(Row("memory/updated.md")));
+    }
+
+    [Fact]
+    public async Task Cached_row_binding_after_render_is_stale_but_fresh_dispatcher_interaction_succeeds()
+    {
+        Stub(path => Task.FromResult<WorkspaceResponseDto?>(path switch
+        {
+            "" => Directory("", Folder("memory")),
+            "memory" => Directory("memory", File("daily.md")),
+            "memory/daily.md" => Text("memory/daily.md", "saved content"),
+            _ => null
+        }));
+        var cut = Render();
+        await ClickRowAsync(cut, "memory");
+        // Pin the resolved DOM node: a normal Find wrapper refreshes itself on render.
+        var cachedRow = ((Bunit.Web.AngleSharp.IElementWrapper<AngleSharp.Dom.IElement>)cut.Find(Row("memory/daily.md"))).WrappedElement;
+        var previousBinding = cachedRow.GetAttribute("blazor:onclick");
+        previousBinding.ShouldNotBeNullOrWhiteSpace();
+        var rendered = Signal();
+        void AfterRender(object? sender, EventArgs args) => rendered.TrySetResult(true);
+        cut.OnAfterRender += AfterRender;
+        try
+        {
+            // Replace the pinned node's binding before attempting its event dispatch.
+            await cut.InvokeAsync(() => cut.Render());
+            await rendered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cut.Find(Row("memory/daily.md")).GetAttribute("blazor:onclick").ShouldNotBe(previousBinding);
+            await Should.ThrowAsync<Bunit.Rendering.UnknownEventHandlerIdException>(() =>
+                cachedRow.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs()));
+            await ClickRowAsync(cut, "memory/daily.md");
+        }
+        finally
+        {
+            cut.OnAfterRender -= AfterRender;
+        }
+        cut.Find("pre.workspace-file-content").TextContent.ShouldBe("saved content");
+    }
+
+    [Fact]
+    public async Task ClickRowAsync_resolves_row_on_renderer_dispatcher()
+    {
+        Stub(path => Task.FromResult<WorkspaceResponseDto?>(path switch
+        {
+            "" => Directory("", File("readme.md")),
+            "readme.md" => Text("readme.md", "saved content"),
+            _ => null
+        }));
+        var cut = Render();
+        _ctx.Renderer.Dispatcher.CheckAccess().ShouldBeFalse();
+
+        // Guard the actual Find boundary, not a callback inserted into the helper.
+        // Delegate to the real component DOM and renderer so event dispatch still
+        // selects a real file. Reverting to off-dispatch Find/Click must fail here,
+        // even when bUnit's self-refreshing element wrapper masks stale handlers.
+        var guarded = Substitute.For<IRenderedComponent<WorkspacePanel>>();
+        guarded.Services.Returns(cut.Services);
+        var lookups = 0;
+        guarded.Nodes.Returns(_ =>
+        {
+            _ctx.Renderer.Dispatcher.CheckAccess().ShouldBeTrue(
+                "row lookup and click must execute in the same renderer dispatcher turn");
+            lookups++;
+            return cut.Nodes;
+        });
+
+        await ClickRowAsync(guarded, "readme.md");
+
+        lookups.ShouldBeGreaterThan(0);
+        cut.Find("pre.workspace-file-content").TextContent.ShouldBe("saved content");
     }
 
     [Fact]
@@ -147,7 +245,7 @@ public sealed class WorkspacePanelRefreshTests : IDisposable
             _ => Task.FromResult<WorkspaceResponseDto?>(null)
         });
         var cut = Render();
-        cut.Find(Row("readme.md")).Click();
+        await ClickRowAsync(cut, "readme.md");
         cut.Find("button.workspace-btn-edit").Click();
         cut.Find("textarea.workspace-file-editor").Input("unsaved draft");
         refresh = true;
@@ -209,7 +307,7 @@ public sealed class WorkspacePanelRefreshTests : IDisposable
             _ => null
         }));
         var cut = Render();
-        cut.Find(Row("memory")).Click();
+        await ClickRowAsync(cut, "memory");
         await EndTurnAsync(cut);
         cut.Render();
         calls.ShouldBe(2);
@@ -237,7 +335,7 @@ public sealed class WorkspacePanelRefreshTests : IDisposable
             _ => Task.FromResult<WorkspaceResponseDto?>(null)
         });
         var cut = Render();
-        cut.Find(Row("memory")).Click();
+        await ClickRowAsync(cut, "memory");
         await EndTurnAsync(cut);
         cut.Render();
         AssertExpanded(cut, "memory", true);
@@ -291,8 +389,8 @@ public sealed class WorkspacePanelRefreshTests : IDisposable
             _ => null
         }));
         var cut = Render();
-        cut.Find(Row("memory")).Click();
-        cut.Find(Row("memory/daily.md")).Click();
+        await ClickRowAsync(cut, "memory");
+        await ClickRowAsync(cut, "memory/daily.md");
         await EndTurnAsync(cut);
         cut.WaitForAssertion(() =>
         {
@@ -352,6 +450,11 @@ public sealed class WorkspacePanelRefreshTests : IDisposable
     private void Stub(Func<string, Task<WorkspaceResponseDto?>> response) =>
         _restClient.GetWorkspaceAsync("agent-1", Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns(call => response(call.ArgAt<string?>(1) ?? string.Empty));
+
+    // Lookup and event dispatch must share the dispatcher turn: a refresh can
+    // replace the row's lambda/event binding even while its listing is cached.
+    private static Task ClickRowAsync(IRenderedComponent<WorkspacePanel> cut, string path) =>
+        cut.InvokeAsync(() => cut.Find(Row(path)).ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs()));
 
     private Task EndTurnAsync(IRenderedComponent<WorkspacePanel> cut) => cut.InvokeAsync(() =>
     {
