@@ -23,7 +23,7 @@ public sealed class UpdaterTargetBindingTests
             }
             Git("init", "-q", "-b", "main");
             Git("config", "user.name", "BotNexus Test");
-            Git("config", "user.email", "botnexus-test@example.invalid");
+            Git("config", "user.email", GitSandboxGuard.SentinelEmail);
             Git("config", "commit.gpgsign", "false");
             var contractPath = Path.Combine(root, UpdaterCompatibility.ContractPath);
             var contract = UpdaterContractTests.Contract();
