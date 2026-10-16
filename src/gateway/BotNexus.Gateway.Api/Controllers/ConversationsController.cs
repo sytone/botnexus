@@ -47,6 +47,7 @@ public sealed class ConversationsController : ControllerBase
     private readonly IAgentRegistry? _agentRegistry;
     private readonly IConversationReadStateStore? _readStateStore;
     private readonly IWorldContext? _worldContext;
+    private readonly IReadOnlyList<IConversationReadStateChangeNotifier> _readStateChangeNotifiers;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
@@ -68,6 +69,7 @@ public sealed class ConversationsController : ControllerBase
     /// <param name="readStateStore">Optional durable per-reader conversation cursor store.</param>
     /// <param name="worldContext">Optional current-world authority used to scope cursor keys.</param>
     /// <param name="conversationEventPublisher">Publishes channel-neutral conversation facts after their backing store mutation commits. Optional only for legacy direct-construction test harnesses; production DI supplies it.</param>
+    /// <param name="readStateChangeNotifiers">Publishes best-effort, reader-scoped invalidations after a durable cursor version advances.</param>
     public ConversationsController(
         IConversationStore conversations,
         ISessionStore sessions,
@@ -81,7 +83,8 @@ public sealed class ConversationsController : ControllerBase
         IAgentRegistry? agentRegistry = null,
         IConversationReadStateStore? readStateStore = null,
         IWorldContext? worldContext = null,
-        IConversationEventPublisher? conversationEventPublisher = null)
+        IConversationEventPublisher? conversationEventPublisher = null,
+        IEnumerable<IConversationReadStateChangeNotifier>? readStateChangeNotifiers = null)
     {
         _conversations = conversations;
         _sessions = sessions;
@@ -99,6 +102,7 @@ public sealed class ConversationsController : ControllerBase
         _agentRegistry = agentRegistry;
         _readStateStore = readStateStore;
         _worldContext = worldContext;
+        _readStateChangeNotifiers = readStateChangeNotifiers?.ToArray() ?? [];
     }
 
     /// <summary>Returns this caller's durable read cursor for one authorized conversation.</summary>
@@ -138,13 +142,17 @@ public sealed class ConversationsController : ControllerBase
         if (access.Failure is not null)
             return access.Failure;
 
-        var state = await _readStateStore!.AdvanceAsync(
+        var outcome = await _readStateStore!.AdvanceWithResultAsync(
             _worldContext!.CurrentWorldId,
             access.ReaderId!.Value,
             access.ConversationId!.Value,
             request.Position,
             cancellationToken).ConfigureAwait(false);
-        return Ok(ToReadStateResponse(state));
+
+        if (outcome.Changed)
+            await NotifyReadStateChangedBestEffortAsync(outcome.State, cancellationToken).ConfigureAwait(false);
+
+        return Ok(ToReadStateResponse(outcome.State));
     }
 
     private async Task<ReadStateAccess> ResolveReadStateAccessAsync(
@@ -1010,6 +1018,31 @@ public sealed class ConversationsController : ControllerBase
 
     // ΓöÇΓöÇ Notification helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
+    private async Task NotifyReadStateChangedBestEffortAsync(
+        ConversationReadState state,
+        CancellationToken cancellationToken)
+    {
+        foreach (var notifier in _readStateChangeNotifiers)
+        {
+            try
+            {
+                await notifier.NotifyReadStateChangedAsync(
+                    state.ReaderId, state.ConversationId, state.Position, state.Version, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // The cursor is already durable. A transport outage must not turn its successful
+                // PUT into a failure; clients can always recover by reading the persisted state.
+                _logger.LogWarning(
+                    ex,
+                    "Failed to publish read-state change for conversation {ConversationId} via notifier {NotifierType}.",
+                    state.ConversationId,
+                    notifier.GetType().FullName);
+            }
+        }
+    }
+
     private async Task PublishConversationCreatedBestEffortAsync(
         Conversation created,
         CancellationToken cancellationToken)
@@ -1357,6 +1390,7 @@ public sealed class ConversationsController : ControllerBase
 
         var prevContext = conversation.ContextWindowOverride;
         var prevTools = conversation.ToolOverrideJson;
+        var prevCeiling = conversation.CompactionTokenCeiling;
 
         // Tool overlay (#3271): validated before persistence so an unreadable overlay is rejected
         // with 400 rather than silently stored and then failed OPEN by the resolver at session
@@ -1368,7 +1402,7 @@ public sealed class ConversationsController : ControllerBase
             return BadRequest(new { error = "Tool override is not a readable SessionToolOverride document." });
         }
 
-        // Narrow, transactional override patch (#2139): writes only the three override columns,
+        // Narrow, transactional override patch (#2139): writes only the requested override columns,
         // so a pin/metadata mutation committed concurrently between the read and the write is
         // preserved instead of being reverted by a whole-record SaveAsync.
         var overridePatch = new ConversationOverridePatch
@@ -1392,11 +1426,24 @@ public sealed class ConversationsController : ControllerBase
         await AuditAsync(conversationId, "context_override_set", "api", "rest-api", prevContext?.ToString(), updated.ContextWindowOverride?.ToString(), cancellationToken);
         if (request.ApplyToolOverride)
             await AuditAsync(conversationId, "tool_override_set", "api", "rest-api", prevTools, updated.ToolOverrideJson, cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", updated.AgentId.Value, updated.ConversationId.Value, cancellationToken);
+        // Match metadata PATCH: report changed values only within this patch's write set,
+        // in a stable order. The pre-read is an observation, not an atomic before-image.
+        var changedFields = ImmutableArray.CreateBuilder<string>(5);
+        if (!string.Equals(prevModel, updated.ModelOverride, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ModelOverride));
+        if (!string.Equals(prevThinking, updated.ThinkingOverride, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ThinkingOverride));
+        if (prevContext != updated.ContextWindowOverride)
+            changedFields.Add(nameof(Conversation.ContextWindowOverride));
+        if (request.ApplyToolOverride && !string.Equals(prevTools, updated.ToolOverrideJson, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ToolOverrideJson));
+        if (request.ApplyCompactionTokenCeiling && prevCeiling != updated.CompactionTokenCeiling)
+            changedFields.Add(nameof(Conversation.CompactionTokenCeiling));
+        await PublishConversationUpdatedBestEffortAsync(updated, changedFields.ToImmutable(), cancellationToken);
         return Ok(ToResponse(updated));
     }
 
-    /// <summary>Clears every per-conversation override, reverting all three fields to the agent default.</summary>
+    /// <summary>Clears all five per-conversation override fields to null.</summary>
     /// <param name="conversationId">The conversation identifier.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>200 with the updated conversation, or 404 if not found.</returns>
@@ -1415,7 +1462,11 @@ public sealed class ConversationsController : ControllerBase
             return NotFound();
 
         var prevModel = conversation.ModelOverride;
-        // Transactional clear of only the three override columns (#2139).
+        var prevThinking = conversation.ThinkingOverride;
+        var prevContext = conversation.ContextWindowOverride;
+        var prevTools = conversation.ToolOverrideJson;
+        var prevCeiling = conversation.CompactionTokenCeiling;
+        // Transactional clear of only the override columns (#2139).
         var clearPatch = new ConversationOverridePatch
         {
             Model = FieldUpdate<string?>.Set(null),
@@ -1428,7 +1479,18 @@ public sealed class ConversationsController : ControllerBase
         if (updated is null)
             return NotFound();
         await AuditAsync(conversationId, "model_override_cleared", "api", "rest-api", prevModel, null, cancellationToken);
-        await NotifyConversationChangedBestEffortAsync("updated", updated.AgentId.Value, updated.ConversationId.Value, cancellationToken);
+        var changedFields = ImmutableArray.CreateBuilder<string>(5);
+        if (!string.Equals(prevModel, updated.ModelOverride, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ModelOverride));
+        if (!string.Equals(prevThinking, updated.ThinkingOverride, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ThinkingOverride));
+        if (prevContext != updated.ContextWindowOverride)
+            changedFields.Add(nameof(Conversation.ContextWindowOverride));
+        if (!string.Equals(prevTools, updated.ToolOverrideJson, StringComparison.Ordinal))
+            changedFields.Add(nameof(Conversation.ToolOverrideJson));
+        if (prevCeiling != updated.CompactionTokenCeiling)
+            changedFields.Add(nameof(Conversation.CompactionTokenCeiling));
+        await PublishConversationUpdatedBestEffortAsync(updated, changedFields.ToImmutable(), cancellationToken);
         return Ok(ToResponse(updated));
     }
 

@@ -84,6 +84,9 @@ public sealed class GatewayHubConnection : IAsyncDisposable
     /// <summary>Raised when a conversation is created, updated, or archived on the server.</summary>
     public event Action<ConversationChangedPayload>? OnConversationChanged;
 
+    /// <summary>Raised when this reader's durable cursor advances on any connected device.</summary>
+    public event Action<ConversationReadStateChangedPayload>? OnConversationReadStateChanged;
+
     /// <summary>Raised when agent configuration changes on the server (add/update/delete).</summary>
     public event Action<AgentsChangedPayload>? OnAgentsChanged;
 
@@ -182,6 +185,7 @@ public sealed class GatewayHubConnection : IAsyncDisposable
         _connection.On<string, string, object?>("CanvasStateChanged", (conversationId, key, value) => OnCanvasStateChanged?.Invoke(conversationId, key, value));
         _connection.On<string, string, string?>("TodoUpdated", (agentId, conversationId, todoJson) => OnTodoUpdated?.Invoke(agentId, conversationId, todoJson));
         _connection.On<AgentsChangedPayload>("AgentsChanged", p => OnAgentsChanged?.Invoke(p));
+        _connection.On<ConversationReadStateChangedPayload>("ConversationReadStateChanged", p => OnConversationReadStateChanged?.Invoke(p));
                 _connection.On<ConversationChangedPayload>("ConversationChanged", p => OnConversationChanged?.Invoke(p));
 
         _connection.Reconnecting += _ => { OnReconnecting?.Invoke(); return Task.CompletedTask; };

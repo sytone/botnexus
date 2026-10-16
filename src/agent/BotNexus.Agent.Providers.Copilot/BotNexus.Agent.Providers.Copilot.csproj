@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Agent.Providers.Copilot.Tests" />
+    <InternalsVisibleTo Include="BotNexus.Gateway.Api.Tests" />
   </ItemGroup>
 
   <ItemGroup>

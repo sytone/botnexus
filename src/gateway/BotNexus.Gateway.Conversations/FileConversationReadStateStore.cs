@@ -59,6 +59,16 @@ public sealed class FileConversationReadStateStore : IConversationReadStateStore
         ConversationId conversationId,
         ConversationReadPosition position,
         CancellationToken cancellationToken = default)
+        => (await AdvanceWithResultAsync(worldId, readerId, conversationId, position, cancellationToken)
+            .ConfigureAwait(false)).State;
+
+    /// <inheritdoc />
+    public async Task<ConversationReadStateAdvanceResult> AdvanceWithResultAsync(
+        string worldId,
+        ConversationReaderId readerId,
+        ConversationId conversationId,
+        ConversationReadPosition position,
+        CancellationToken cancellationToken = default)
     {
         var key = CreateKey(worldId, readerId, conversationId);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -69,7 +79,7 @@ public sealed class FileConversationReadStateStore : IConversationReadStateStore
                 path + ".lock", cancellationToken).ConfigureAwait(false);
             var current = await ReadAsync(path, cancellationToken).ConfigureAwait(false);
             if (current is not null && position.Value <= current.Position.Value)
-                return current;
+                return new ConversationReadStateAdvanceResult(current, false);
 
             var next = new ConversationReadState(
                 key.WorldId,
@@ -78,7 +88,7 @@ public sealed class FileConversationReadStateStore : IConversationReadStateStore
                 position,
                 current is null ? 1 : checked(current.Version + 1));
             await WriteAtomicallyAsync(path, next, cancellationToken).ConfigureAwait(false);
-            return next;
+            return new ConversationReadStateAdvanceResult(next, true);
         }
         finally
         {

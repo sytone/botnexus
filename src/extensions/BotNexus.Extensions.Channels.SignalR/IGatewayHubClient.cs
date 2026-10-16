@@ -37,6 +37,8 @@ public interface IGatewayHubClient
     Task SubAgentKilled(SubAgentEventPayload payload);
     Task AgentsChanged(AgentsChangedPayload payload);
     Task ConversationChanged(ConversationChangedPayload payload);
+    /// <summary>Server notifies one reader that its durable conversation cursor advanced.</summary>
+    Task ConversationReadStateChanged(ConversationReadStateChangedPayload payload);
 
     Task SteeringFeedback(SteeringFeedbackPayload payload);
     Task CanvasUpdated(string agentId, string conversationId, string html);

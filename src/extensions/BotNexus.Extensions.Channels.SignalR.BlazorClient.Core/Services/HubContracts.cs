@@ -7,6 +7,12 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 // ── Server → Client payloads ────────────────────────────────────────────
 
+/// <summary>A durable cursor invalidation scoped by the server to the connected reader.</summary>
+public sealed record ConversationReadStateChangedPayload(
+    [property: JsonPropertyName("conversationId")] string ConversationId,
+    [property: JsonPropertyName("position")] long Position,
+    [property: JsonPropertyName("version")] long Version);
+
 /// <summary>Payload sent via the <c>Connected</c> client method on hub connect.</summary>
 public sealed record ConnectedPayload(
     [property: JsonPropertyName("connectionId")] string ConnectionId,
