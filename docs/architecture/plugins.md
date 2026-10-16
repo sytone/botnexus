@@ -112,6 +112,35 @@ Recording `main` would make the question "has the source moved since install?" u
 and that is precisely the question update exists to answer. The installed record therefore
 carries both: `reference` is what update re-resolves, `resolvedVersion` is what is on disk.
 
+### Git source admission, authentication and diagnostics
+
+The Git fetch boundary admits a conservative source grammar before invoking Git. Supported
+forms are `https://host[:port]/path`, `ssh://[user@]host[:port]/path`, and
+`user@host:path` (including an absolute remote path). Hosts use ASCII letters, digits, dots
+and hyphens; SSH usernames use letters, digits, underscores, dots and hyphens. Repository
+paths use letters, digits, underscores, dots, hyphens, slashes and tildes, with a nonempty
+first segment. IPv6 literals and percent-encoded sources are not supported by this grammar.
+
+HTTPS user information, SSH passwords, query parameters, fragments, whitespace, control
+characters and backslashes are rejected, not stripped or normalized. Other transports,
+Git remote-helper syntax (such as `ext::`), file URLs and local paths are rejected too.
+An SSH username such as `git@` is supported; it is not an inline password. **Local
+user-checkout handoff is not supported.** A checkout accessible to a user's shell is not
+an alternative installation source.
+
+Git owns authentication in the **actual gateway or container environment**. This path does
+not use HTTP marketplace credential providers, browser sessions or cookies. Access from a
+user's shell does not establish access for the gateway. After a fetch failure, check Git
+availability, connectivity and repository access in that actual environment, then retry.
+A Git failure alone does not establish a permission or credential problem.
+
+Source rejections and fetch failures use fixed diagnostics. Fetch exceptions and the lifecycle
+fetch boundary do not expose the raw source, Git stdout/stderr, runner exception messages or
+inner exception chains. Caller-requested cancellation remains cancellation, without runner
+details. This is a bounded fetch-boundary contract (Refs #4151), not a claim that marketplace
+metadata or all plugin state and response projections are private. Admission does not grant
+trust: manifest validation and content trust checks still apply.
+
 ### Install is all-or-nothing
 
 Content is fetched and its manifest validated in a staging directory **outside the plugin
