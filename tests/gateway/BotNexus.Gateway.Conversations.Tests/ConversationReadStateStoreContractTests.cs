@@ -66,6 +66,89 @@ public abstract class ConversationReadStateStoreContractTests : IDisposable
     }
 
     [Fact]
+    public async Task AdvanceWithResultAsync_ReportsOnlyTheAtomicVersionChangingWrite()
+    {
+        var store = CreateStore();
+
+        var first = await store.AdvanceWithResultAsync(
+            "world-1", Reader, Conversation, ConversationReadPosition.From(10));
+        var equal = await store.AdvanceWithResultAsync(
+            "world-1", Reader, Conversation, ConversationReadPosition.From(10));
+        var lower = await store.AdvanceWithResultAsync(
+            "world-1", Reader, Conversation, ConversationReadPosition.From(8));
+        var higher = await store.AdvanceWithResultAsync(
+            "world-1", Reader, Conversation, ConversationReadPosition.From(11));
+
+        first.Changed.ShouldBeTrue();
+        first.State.Version.ShouldBe(1);
+        equal.Changed.ShouldBeFalse();
+        equal.State.ShouldBe(first.State);
+        lower.Changed.ShouldBeFalse();
+        lower.State.ShouldBe(first.State);
+        higher.Changed.ShouldBeTrue();
+        higher.State.Version.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AdvanceWithResultAsync_ConcurrentEqualPositions_HasExactlyOneWinnerPerVersion()
+    {
+        var stores = new[] { CreateStore(), CreateConcurrentStore(), CreateConcurrentStore() };
+        foreach (var store in stores)
+            await store.GetAsync("world-1", Reader, Conversation);
+
+        for (var version = 1; version <= 4; version++)
+        {
+            var position = ConversationReadPosition.From(version * 10);
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var writes = Enumerable.Range(0, 24).Select(index => Task.Run(async () =>
+            {
+                await start.Task;
+                return await stores[index % stores.Length].AdvanceWithResultAsync(
+                    "world-1", Reader, Conversation, position);
+            })).ToArray();
+            start.SetResult();
+            var outcomes = await Task.WhenAll(writes);
+
+            outcomes.Count(outcome => outcome.Changed).ShouldBe(1);
+            outcomes.ShouldAllBe(outcome => outcome.State.Version == version && outcome.State.Position == position);
+            foreach (var store in stores)
+                (await store.GetAsync("world-1", Reader, Conversation)).ShouldBe(outcomes[0].State);
+        }
+    }
+
+    [Fact]
+    public async Task AdvanceWithResultAsync_ConcurrentDistinctPositions_ReturnsEachWritersAtomicState()
+    {
+        var stores = new[] { CreateStore(), CreateConcurrentStore(), CreateConcurrentStore() };
+        foreach (var store in stores)
+            await store.GetAsync("world-1", Reader, Conversation);
+
+        for (var round = 0; round < 8; round++)
+        {
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var writes = Enumerable.Range(1, 32).Select(index => Task.Run(async () =>
+            {
+                await start.Task;
+                var requested = ConversationReadPosition.From(round * 32 + index);
+                var outcome = await stores[index % stores.Length].AdvanceWithResultAsync(
+                    "world-1", Reader, Conversation, requested);
+                return (Requested: requested, Outcome: outcome);
+            })).ToArray();
+            start.SetResult();
+            var results = await Task.WhenAll(writes);
+            var winners = results.Where(result => result.Outcome.Changed).ToArray();
+
+            winners.ShouldNotBeEmpty();
+            foreach (var winner in winners)
+                winner.Outcome.State.Position.ShouldBe(winner.Requested);
+            winners.Select(winner => winner.Outcome.State.Version).ShouldBeUnique();
+            results.ShouldAllBe(result => result.Outcome.State.Position.Value >= result.Requested.Value);
+            var state = await stores[0].GetAsync("world-1", Reader, Conversation);
+            state.ShouldNotBeNull().Position.Value.ShouldBe((round + 1) * 32);
+        }
+    }
+
+    [Fact]
     public async Task AdvanceAsync_RejectsUninitializedTypedKeys()
     {
         var store = CreateStore();

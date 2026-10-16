@@ -108,6 +108,12 @@ public sealed record ConversationChangedPayload(
     [property: JsonPropertyName("conversationId")] string ConversationId,
     [property: JsonPropertyName("updatedAt")] DateTimeOffset? UpdatedAt = null);
 
+/// <summary>Payload sent only to the reader whose durable conversation cursor advanced.</summary>
+public sealed record ConversationReadStateChangedPayload(
+    [property: JsonPropertyName("conversationId")] string ConversationId,
+    [property: JsonPropertyName("position")] long Position,
+    [property: JsonPropertyName("version")] long Version);
+
 /// <summary>Kind of steering feedback event.</summary>
 public enum SteeringFeedbackKind { Injected, Queued }
 

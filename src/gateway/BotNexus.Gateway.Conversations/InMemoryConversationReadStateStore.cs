@@ -7,6 +7,7 @@ namespace BotNexus.Gateway.Conversations;
 public sealed class InMemoryConversationReadStateStore : IConversationReadStateStore
 {
     private readonly ConcurrentDictionary<Key, ConversationReadState> _states = new();
+    private readonly object _advanceGate = new();
 
     /// <inheritdoc />
     public Task<ConversationReadState?> GetAsync(
@@ -22,7 +23,17 @@ public sealed class InMemoryConversationReadStateStore : IConversationReadStateS
     }
 
     /// <inheritdoc />
-    public Task<ConversationReadState> AdvanceAsync(
+    public async Task<ConversationReadState> AdvanceAsync(
+        string worldId,
+        ConversationReaderId readerId,
+        ConversationId conversationId,
+        ConversationReadPosition position,
+        CancellationToken cancellationToken = default)
+        => (await AdvanceWithResultAsync(worldId, readerId, conversationId, position, cancellationToken)
+            .ConfigureAwait(false)).State;
+
+    /// <inheritdoc />
+    public Task<ConversationReadStateAdvanceResult> AdvanceWithResultAsync(
         string worldId,
         ConversationReaderId readerId,
         ConversationId conversationId,
@@ -31,14 +42,22 @@ public sealed class InMemoryConversationReadStateStore : IConversationReadStateS
     {
         cancellationToken.ThrowIfCancellationRequested();
         var key = CreateKey(worldId, readerId, conversationId);
-        var state = _states.AddOrUpdate(
-            key,
-            static (candidate, requested) => candidate.ToState(requested, 1),
-            static (_, current, requested) => requested.Value > current.Position.Value
-                ? current with { Position = requested, Version = checked(current.Version + 1) }
-                : current,
-            position);
-        return Task.FromResult(state);
+        lock (_advanceGate)
+        {
+            if (!_states.TryGetValue(key, out var current))
+            {
+                var initial = key.ToState(position, 1);
+                _states[key] = initial;
+                return Task.FromResult(new ConversationReadStateAdvanceResult(initial, true));
+            }
+
+            if (position.Value <= current.Position.Value)
+                return Task.FromResult(new ConversationReadStateAdvanceResult(current, false));
+
+            var next = current with { Position = position, Version = checked(current.Version + 1) };
+            _states[key] = next;
+            return Task.FromResult(new ConversationReadStateAdvanceResult(next, true));
+        }
     }
 
     private static Key CreateKey(
