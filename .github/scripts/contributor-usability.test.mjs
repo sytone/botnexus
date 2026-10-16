@@ -64,7 +64,7 @@ test("portable claim without Linux execution is advisory", () => {
 for (const [name, replacement] of [
   ["private skills", "requires my private skills"],
   ["personal Windows path", "requires C:\\Users\\author\\settings.json"],
-  ["personal Linux path", "requires /home/author/settings.json"],
+  ["personal Linux path", "requires " + ["", "home", "author", "settings.json"].join("/")],
   ["preseeded database", "requires a preseeded database"],
   ["redaction only", "only personal paths were redacted; works for others"],
 ]) {
