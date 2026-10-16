@@ -111,19 +111,8 @@ public sealed class GatewayAuthManager
             return ProviderCredentialOutcome.NotConfigured();
         }
 
-        var authOutcome = await ResolveAuthEntryCredentialAsync(provider, cancellationToken).ConfigureAwait(false);
-        if (authOutcome.Status != ProviderCredentialStatus.NotConfigured)
-        {
-            return authOutcome;
-        }
-
-        // No auth.json entry, but a key may still be declared in config or the environment. A
-        // refresh failure above is returned as-is and never overwritten by a fallback lookup: the
-        // fault is the more important fact about the provider's health.
-        var fallbackKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
-        return string.IsNullOrWhiteSpace(fallbackKey)
-            ? ProviderCredentialOutcome.NotConfigured()
-            : ProviderCredentialOutcome.Success(fallbackKey);
+        var resolved = await ResolveSelectedCredentialAsync(provider, cancellationToken, stopOnRefreshFailure: true).ConfigureAwait(false);
+        return resolved.Outcome;
     }
 
     /// <summary>
@@ -135,31 +124,12 @@ public sealed class GatewayAuthManager
         if (string.IsNullOrWhiteSpace(provider))
             return null;
 
-        LoadAuthEntries();
+        var selection = SelectCredential(provider);
+        if (!string.IsNullOrWhiteSpace(selection.Entry?.Endpoint))
+            return selection.Entry.Endpoint;
 
-        if (TryGetAuthEntry(provider, out var entry) && !string.IsNullOrWhiteSpace(entry.Endpoint))
-            return entry.Endpoint;
-
-        if (_platformConfig.CurrentValue.Providers is not null &&
-            TryGetProviderConfig(_platformConfig.CurrentValue.Providers, provider, out var providerConfig))
-        {
-            const string AuthPrefix = "auth:";
-            if (providerConfig?.ApiKey?.StartsWith(AuthPrefix, StringComparison.OrdinalIgnoreCase) == true)
-            {
-                var referenceProvider = providerConfig.ApiKey[AuthPrefix.Length..].Trim();
-                if (!string.IsNullOrWhiteSpace(referenceProvider) &&
-                    TryGetAuthEntry(referenceProvider, out var referencedEntry) &&
-                    !string.IsNullOrWhiteSpace(referencedEntry.Endpoint))
-                {
-                    return referencedEntry.Endpoint;
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(providerConfig?.BaseUrl))
-                return providerConfig.BaseUrl;
-        }
-
-        return null;
+        var providerConfig = SelectProviderConfig(provider);
+        return string.IsNullOrWhiteSpace(providerConfig?.BaseUrl) ? null : providerConfig.BaseUrl;
     }
 
     /// <summary>
@@ -183,38 +153,38 @@ public sealed class GatewayAuthManager
     public CopilotAccountCredential? ResolveCopilotAccountCredential(string instance)
     {
         if (string.IsNullOrWhiteSpace(instance) || instance.Length > 128) return null;
-        var selected = instance.Trim();
-        var providers = _platformConfig.CurrentValue.Providers;
-        ProviderConfig? config = null;
-        if (providers is not null)
+        lock (_sync)
         {
-            var match = providers.FirstOrDefault(p => string.Equals(p.Key, selected, StringComparison.OrdinalIgnoreCase));
-            if (match.Value is null && IsCopilotType(selected))
-            {
-                var alias = string.Equals(selected, "copilot", StringComparison.OrdinalIgnoreCase) ? "github-copilot" : "copilot";
-                match = providers.FirstOrDefault(p => string.Equals(p.Key, alias, StringComparison.OrdinalIgnoreCase));
-            }
-            if (match.Value is not null) { selected = match.Key; config = match.Value; }
+            return CreateCopilotAccountCredential(instance, SelectCredential(instance));
         }
-        var canonical = string.Equals(selected, "copilot", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(selected, "github-copilot", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private CopilotAccountCredential? CreateCopilotAccountCredential(string instance, CredentialSelection selection)
+    {
+        var selected = instance;
+        var config = SelectProviderConfig(selected);
+        var canonical = IsCopilotType(selected);
         if (config is null && !canonical) return null;
         if (config is not null && (!config.Enabled ||
             !IsCopilotType(config.Type ?? selected) || !IsPublicCopilotEndpoint(config.BaseUrl))) return null;
-        var authKey = canonical ? "copilot" : selected;
-        if (config?.ApiKey is not null)
-        {
-            if (!config.ApiKey.StartsWith("auth:", StringComparison.OrdinalIgnoreCase)) return null;
-            authKey = config.ApiKey[5..].Trim();
-            if (authKey.Length == 0) return null;
-        }
-        LoadAuthEntries();
-        if (!TryGetAuthEntry(authKey, out var entry) ||
+        var entry = selection.Entry;
+        if (entry is null || selection.AuthKey is null || entry.AttributionUnavailable ||
             !string.Equals(entry.Type, "oauth", StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrWhiteSpace(entry.Refresh) || !IsPublicCopilotEndpoint(entry.Endpoint)) return null;
+        if (canonical)
+        {
+            var alias = string.Equals(selected, "copilot", StringComparison.OrdinalIgnoreCase) ? "github-copilot" : "copilot";
+            var other = SelectCredential(alias);
+            // Both aliases share one quota/header scope. Distinct OAuth snapshots cannot prove
+            // a single supplier, even with equal refresh text (their auth-key generations differ).
+            // Keep inference exact-first; only account/header attribution fails closed.
+            if (other.Entry is { } otherEntry && !ReferenceEquals(entry, otherEntry) &&
+                string.Equals(otherEntry.Type, "oauth", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(otherEntry.Refresh)) return null;
+        }
         var scope = canonical ? "github-copilot" : selected.ToLowerInvariant();
         var generation = Convert.ToHexString(System.Security.Cryptography.HMACSHA256.HashData(
-            _quotaGenerationKey, System.Text.Encoding.UTF8.GetBytes(authKey + "\n" + entry.Refresh)));
+            _quotaGenerationKey, System.Text.Encoding.UTF8.GetBytes(selection.AuthKey.ToLowerInvariant() + "\n" + entry.Refresh)));
         return new CopilotAccountCredential(scope, generation, entry.Refresh);
     }
 
@@ -224,7 +194,8 @@ public sealed class GatewayAuthManager
 
     private static bool IsPublicCopilotEndpoint(string? endpoint) => string.IsNullOrWhiteSpace(endpoint) ||
         (Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
-         (uri.Host == "api.githubcopilot.com" || uri.Host == "api.individual.githubcopilot.com") &&
+         (uri.Host == "api.githubcopilot.com" || uri.Host == "api.individual.githubcopilot.com" ||
+          uri.Host == "api.business.githubcopilot.com" || uri.Host == "api.enterprise.githubcopilot.com") &&
          uri.IsDefaultPort && string.IsNullOrEmpty(uri.UserInfo));
 
     // #1797: the individual/fallback GitHub Copilot MCP host. Distinct from the chat BaseUrl host
@@ -274,29 +245,8 @@ public sealed class GatewayAuthManager
     /// </summary>
     public async Task<string?> GetApiKeyAsync(string provider, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(provider))
-        {
-            return null;
-        }
-
-        var authKey = await GetApiKeyFromAuthEntryAsync(provider, cancellationToken).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(authKey))
-        {
-            return authKey;
-        }
-
-        // #2807/#4043: ambient admission is gated on whether provider configuration declared a
-        // credential, not whether that declaration happened to resolve to a usable value. Keep the
-        // declaration bit when auth: lookup is empty, missing, unusable, or refresh-failed so those
-        // states cannot silently substitute an unrelated process credential.
-        var configuredCredential = await ResolveProviderConfigApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
-        var credential = ProviderCredentialResolver.Resolve(
-            provider,
-            configuredCredential.IsDeclared ? configuredCredential.ApiKey ?? string.Empty : null,
-            _logger);
-        return credential.Source == CredentialSource.Declared
-            ? credential.Value
-            : credential.HasValue ? credential.Value : null;
+        var resolved = await ResolveSelectedCredentialAsync(provider, cancellationToken).ConfigureAwait(false);
+        return resolved.ApiKey;
     }
 
     /// <summary>
@@ -313,7 +263,8 @@ public sealed class GatewayAuthManager
         ProviderExecutionOptions? baseOptions = null,
         CancellationToken cancellationToken = default)
     {
-        var apiKey = await GetApiKeyAsync(provider, cancellationToken).ConfigureAwait(false);
+        var resolved = await ResolveSelectedCredentialAsync(provider, cancellationToken).ConfigureAwait(false);
+        var apiKey = resolved.ApiKey;
         var options = baseOptions ?? new ProviderExecutionOptions();
         if (options.StreamIdleTimeoutMs is null)
             options = options with { StreamIdleTimeoutMs = ResolveStreamIdleTimeoutMs(provider) };
@@ -323,32 +274,22 @@ public sealed class GatewayAuthManager
         // Never retain caller attribution after resolving a different credential. Unsupported or
         // ambiguous paths are explicitly unavailable, not legacy calls attributed to the default.
         metadata[BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderScope.MetadataKey] =
-            (object?)ResolveHeaderScope(provider, options.ApiKey) ??
+            (object?)ResolveHeaderScope(provider, resolved) ??
             BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderAttribution.Unavailable;
         return options with { Metadata = metadata };
     }
-    private BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderScope? ResolveHeaderScope(string provider, string? apiKey)
+    private BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderScope? ResolveHeaderScope(string provider, CredentialResolution resolved)
     {
-        if (string.IsNullOrWhiteSpace(apiKey)) return null;
-        var account = ResolveCopilotAccountCredential(provider);
-        if (account is null) return null;
-        var providers = _platformConfig.CurrentValue.Providers;
-        ProviderConfig? config = null;
-        if (providers is not null) TryGetProviderConfig(providers, provider, out config);
-        var authKey = config?.ApiKey?.StartsWith("auth:", StringComparison.OrdinalIgnoreCase) == true
-            ? config.ApiKey[5..].Trim()
-            : IsCopilotType(provider) ? "copilot" : provider;
+        if (string.IsNullOrWhiteSpace(resolved.ApiKey) || resolved.Supplier?.Entry is null) return null;
         lock (_sync)
         {
-            if (!TryGetAuthEntry(authKey, out var selected) ||
-                !string.Equals(selected.Access, apiKey, StringComparison.Ordinal) ||
-                !string.Equals(selected.Refresh, account.OAuthToken, StringComparison.Ordinal)) return null;
-            // GetApiKeyAsync gives an exact auth entry precedence over a configured auth: reference.
-            // Even equal access tokens cannot prove the selected OAuth account supplied the key.
-            if (TryGetAuthEntry(provider, out var exact) && !string.IsNullOrWhiteSpace(exact.Access) &&
-                (!string.Equals(exact.Access, apiKey, StringComparison.Ordinal) ||
-                 !string.Equals(exact.Refresh, selected.Refresh, StringComparison.Ordinal))) return null;
-            return new(account.Instance, account.Generation);
+            var current = SelectCredential(provider);
+            // Identity, not equal token text, proves which auth snapshot supplied this call.
+            // A refresh superseded by an external rotation has no attributable supplier.
+            if (!ReferenceEquals(current.Entry, resolved.Supplier.Entry) ||
+                !string.Equals(current.AuthKey, resolved.Supplier.AuthKey, StringComparison.OrdinalIgnoreCase)) return null;
+            var account = CreateCopilotAccountCredential(provider, current);
+            return account is null ? null : new(account.Instance, account.Generation);
         }
     }
 
@@ -411,113 +352,100 @@ public sealed class GatewayAuthManager
         return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
     }
 
-    private async Task<ConfiguredCredentialResolution> ResolveProviderConfigApiKeyAsync(
-        string provider,
-        CancellationToken cancellationToken)
-    {
-        if (_platformConfig.CurrentValue.Providers is null ||
-            !TryGetProviderConfig(_platformConfig.CurrentValue.Providers, provider, out var providerConfig) ||
-            providerConfig?.ApiKey is null)
-        {
-            return ConfiguredCredentialResolution.Undeclared;
-        }
-
-        // Declaration presence is policy state independent of credential resolution. In particular,
-        // an auth: reference remains declared when its target is blank, absent, unusable, or cannot
-        // be refreshed; the caller must not reinterpret any of those outcomes as permission to use
-        // ambient credentials.
-        if (string.IsNullOrWhiteSpace(providerConfig.ApiKey))
-        {
-            return ConfiguredCredentialResolution.Declared(providerConfig.ApiKey);
-        }
-
-        const string AuthPrefix = "auth:";
-        if (providerConfig.ApiKey.StartsWith(AuthPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            var referenceProvider = providerConfig.ApiKey[AuthPrefix.Length..].Trim();
-            if (string.IsNullOrWhiteSpace(referenceProvider))
-            {
-                return ConfiguredCredentialResolution.Declared(apiKey: null);
-            }
-
-            var outcome = await ResolveAuthEntryCredentialAsync(referenceProvider, cancellationToken).ConfigureAwait(false);
-            return ConfiguredCredentialResolution.Declared(outcome.ApiKey);
-        }
-
-        return ConfiguredCredentialResolution.Declared(providerConfig.ApiKey);
-    }
-
-    private readonly record struct ConfiguredCredentialResolution(bool IsDeclared, string? ApiKey)
-    {
-        public static ConfiguredCredentialResolution Undeclared => new(false, null);
-
-        public static ConfiguredCredentialResolution Declared(string? apiKey) => new(true, apiKey);
-    }
-
-    private async Task<string?> GetApiKeyFromAuthEntryAsync(string provider, CancellationToken cancellationToken)
-    {
-        var outcome = await ResolveAuthEntryCredentialAsync(provider, cancellationToken).ConfigureAwait(false);
-        return outcome.ApiKey;
-    }
-
-    /// <summary>
-    /// Resolves a credential from <c>auth.json</c> and reports <em>why</em> the attempt ended as it
-    /// did (#3281).
-    ///
-    /// <para>
-    /// This method exists because the previous shape returned a bare <c>null</c> for three unrelated
-    /// conditions - no auth entry, a failed refresh, and an absent credential - which made an upstream
-    /// outage indistinguishable from a provider nobody had configured. The failure was logged and then
-    /// discarded at this exact seam, so no caller could ever react to it. Returning the reason is what
-    /// makes a provider-health signal possible at all.
-    /// </para>
-    ///
-    /// <para>
-    /// Only a <em>refresh failure</em> is reported to the health observer. A missing auth entry is a
-    /// steady state, not an outage, and reporting it as one would fire a degraded-health event on every
-    /// host that simply does not use a given provider.
-    /// </para>
-    /// </summary>
-    private async Task<ProviderCredentialOutcome> ResolveAuthEntryCredentialAsync(string provider, CancellationToken cancellationToken)
+    // The supplier decision is shared by inference, account discovery and header attribution.
+    // An unusable exact entry may fall through, but a raw/blank declaration never becomes ambient.
+    private CredentialSelection SelectCredential(string provider, bool skipExact = false)
     {
         LoadAuthEntries();
-
-        if (!TryGetAuthEntry(provider, out var entry))
+        lock (_sync)
         {
-            return ProviderCredentialOutcome.NotConfigured();
-        }
+            if (!skipExact && TryGetAuthEntry(provider, out var exactKey, out var exact) && IsUsable(exact))
+                return new(exactKey, exact, true, null);
 
+            var config = SelectProviderConfig(provider);
+            if (config?.ApiKey is not { } declaration) return new(null, null, false, null);
+            if (!declaration.StartsWith("auth:", StringComparison.OrdinalIgnoreCase))
+                return new(null, null, true, declaration);
+            var reference = declaration[5..].Trim();
+            if (reference.Length > 0 && TryGetAuthEntry(reference, out var authKey, out var entry) && IsUsable(entry))
+                return new(authKey, entry, true, null);
+            return new(null, null, true, string.Empty);
+        }
+    }
+
+    // Exact config wins; only canonical Copilot names may fall back to each other's config.
+    // Credentials, endpoints and attribution must all apply the same policy.
+    private ProviderConfig? SelectProviderConfig(string provider)
+    {
+        var providers = _platformConfig.CurrentValue.Providers;
+        if (providers is null) return null;
+        TryGetProviderConfig(providers, provider, out var config);
+        if (config is null && IsCopilotType(provider))
+        {
+            var alias = string.Equals(provider, "copilot", StringComparison.OrdinalIgnoreCase) ? "github-copilot" : "copilot";
+            TryGetProviderConfig(providers, alias, out config);
+        }
+        return config;
+    }
+
+    private static bool IsUsable(AuthEntry entry) => !string.IsNullOrWhiteSpace(entry.Access) || NeedsRefresh(entry);
+
+    private sealed record CredentialSelection(string? AuthKey, AuthEntry? Entry, bool IsDeclared, string? ApiKey);
+    private sealed record CredentialResolution(string? ApiKey, CredentialSelection? Supplier, ProviderCredentialOutcome Outcome);
+
+    private async Task<CredentialResolution> ResolveSelectedCredentialAsync(
+        string provider, CancellationToken cancellationToken, bool stopOnRefreshFailure = false)
+    {
+        if (string.IsNullOrWhiteSpace(provider)) return new(null, null, ProviderCredentialOutcome.NotConfigured());
+        var selection = SelectCredential(provider);
+        if (selection.Entry is not null && selection.AuthKey is not null)
+        {
+            var resolved = await ResolveAuthEntryCredentialAsync(selection, cancellationToken).ConfigureAwait(false);
+            if (stopOnRefreshFailure || !string.IsNullOrWhiteSpace(resolved.ApiKey)) return resolved;
+            // GetApiKey falls through on both refresh failure and successful-but-blank refresh.
+            // ResolveCredential keeps the original refresh outcome, including successful blanks.
+            var attemptedEntry = selection.Entry;
+            selection = SelectCredential(provider, skipExact: true);
+            if (selection.Entry is not null && selection.AuthKey is not null && !ReferenceEquals(selection.Entry, attemptedEntry))
+            {
+                resolved = await ResolveAuthEntryCredentialAsync(selection, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(resolved.ApiKey)) return resolved;
+            }
+        }
+        var credential = ProviderCredentialResolver.Resolve(provider,
+            selection.IsDeclared ? selection.ApiKey ?? string.Empty : null, _logger);
+        var apiKey = credential.Source == CredentialSource.Declared || credential.HasValue ? credential.Value : null;
+        return new(apiKey, null, string.IsNullOrWhiteSpace(apiKey)
+            ? ProviderCredentialOutcome.NotConfigured() : ProviderCredentialOutcome.Success(apiKey));
+    }
+
+    private async Task<CredentialResolution> ResolveAuthEntryCredentialAsync(CredentialSelection selection, CancellationToken cancellationToken)
+    {
+        var entry = selection.Entry ?? throw new InvalidOperationException("Missing credential supplier.");
+        var provider = selection.AuthKey ?? throw new InvalidOperationException("Missing credential supplier key.");
         if (!NeedsRefresh(entry))
-        {
-            return string.IsNullOrWhiteSpace(entry.Access)
-                ? ProviderCredentialOutcome.NotConfigured()
-                : ProviderCredentialOutcome.Success(entry.Access);
-        }
-
+            return new(entry.Access, selection, ProviderCredentialOutcome.Success(entry.Access));
         try
         {
             var refreshed = await _refreshEntry(entry, cancellationToken).ConfigureAwait(false);
-            UpdateEntry(provider, refreshed);
+            var updated = UpdateEntry(provider, entry, refreshed);
             var success = ProviderCredentialOutcome.Success(refreshed.Access);
             await NotifyHealthObserverAsync(provider, success, cancellationToken).ConfigureAwait(false);
-            return success;
+            return new(refreshed.Access, updated ? selection with { Entry = refreshed } : null, success);
         }
         catch (OperationCanceledException)
         {
-            // Caller-driven cancellation is not a provider fault and must not be reported as one.
             throw;
         }
         catch (Exception ex)
         {
+            // Keep inference retry/fallback semantics, but never expose this failed snapshot as
+            // the account behind a later call. State is bounded by the snapshot's own lifetime.
+            lock (_sync) entry.AttributionUnavailable = true;
             _logger.LogWarning(ex, "Failed refreshing auth credentials for provider '{Provider}'.", provider);
-
-            var failure = ProviderCredentialOutcome.Failed(
-                ex.GetType().Name,
-                ExtractStatusCode(ex),
-                ex.Message);
-
+            var failure = ProviderCredentialOutcome.Failed(ex.GetType().Name, ExtractStatusCode(ex), ex.Message);
             await NotifyHealthObserverAsync(provider, failure, cancellationToken).ConfigureAwait(false);
-            return failure;
+            return new(null, null, failure);
         }
     }
 
@@ -592,22 +520,37 @@ public sealed class GatewayAuthManager
         };
     }
 
-    private bool TryGetAuthEntry(string provider, out AuthEntry entry)
+    private bool TryGetAuthEntry(string provider, out string authKey, out AuthEntry entry)
     {
         lock (_sync)
         {
-            return _entries.TryGetValue(provider, out entry!) ||
-                   (string.Equals(provider, "copilot", StringComparison.OrdinalIgnoreCase) &&
-                    _entries.TryGetValue("github-copilot", out entry!));
+            authKey = provider;
+            if (_entries.TryGetValue(provider, out entry!)) return true;
+            if (IsCopilotType(provider))
+            {
+                authKey = string.Equals(provider, "copilot", StringComparison.OrdinalIgnoreCase) ? "github-copilot" : "copilot";
+                if (_entries.TryGetValue(authKey, out entry!)) return true;
+            }
+            return false;
         }
     }
 
-    private void UpdateEntry(string provider, AuthEntry entry)
+    private bool UpdateEntry(string provider, AuthEntry expected, AuthEntry entry)
     {
         lock (_sync)
         {
+            LoadAuthEntries();
+            // Never overwrite a login/rotation that completed while the old refresh was in flight.
+            if (!_entries.TryGetValue(provider, out var current) || !ReferenceEquals(current, expected))
+            {
+                expected.AttributionUnavailable = true;
+                return false;
+            }
+            expected.AttributionUnavailable = true;
+            entry.AttributionUnavailable = false;
             _entries[provider] = entry;
             SaveAuthEntries();
+            return true;
         }
     }
 
@@ -829,6 +772,11 @@ public sealed class GatewayAuthManager
     /// </summary>
     internal sealed class AuthEntry
     {
+        // Process-local provenance only: never persisted, never changes inference selection.
+        // Replacement/reload naturally discards it; successful refresh restores attribution.
+        [JsonIgnore]
+        internal bool AttributionUnavailable { get; set; }
+
         [JsonPropertyName("type")]
         public string Type { get; set; } = "oauth";
 
