@@ -1534,7 +1534,13 @@ public sealed class ConversationsController : ControllerBase
 
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null) return NotFound();
+        // Retain the scalar observation before writing; store-returned aggregates can be mutable.
+        var wasPinned = conversation.IsPinned;
         await _conversations.PinAsync(ConversationId.From(conversationId), true, cancellationToken);
+        var updated = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (updated is null) return NotFound();
+        if (wasPinned != updated.IsPinned)
+            await PublishConversationUpdatedBestEffortAsync(updated, [nameof(Conversation.IsPinned)], cancellationToken);
         await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
         return NoContent();
     }
@@ -1552,7 +1558,13 @@ public sealed class ConversationsController : ControllerBase
 
         var conversation = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
         if (conversation is null) return NotFound();
+        // The pre-read is an observation, not an atomic before-image of the narrow write.
+        var wasPinned = conversation.IsPinned;
         await _conversations.PinAsync(ConversationId.From(conversationId), false, cancellationToken);
+        var updated = await _conversations.GetAsync(ConversationId.From(conversationId), cancellationToken);
+        if (updated is null) return NotFound();
+        if (wasPinned != updated.IsPinned)
+            await PublishConversationUpdatedBestEffortAsync(updated, [nameof(Conversation.IsPinned)], cancellationToken);
         await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
         return NoContent();
     }
