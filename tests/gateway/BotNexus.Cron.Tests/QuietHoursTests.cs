@@ -13,7 +13,8 @@ public sealed class QuietHoursTests
     [Fact]
     public async Task ExecuteAsync_DuringQuietHours_SkipsExecution()
     {
-        var action = new HeartbeatAction();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero));
+        var action = new HeartbeatAction(clock);
         var trigger = new Mock<IInternalTrigger>();
         var registry = new Mock<IAgentRegistry>();
         var descriptor = CreateDescriptor(new QuietHoursConfig
@@ -71,6 +72,98 @@ public sealed class QuietHoursTests
         context.SessionId!.Value.ShouldBe(sessionId);
     }
 
+    [Theory]
+    [InlineData("09:00", "17:00", "08:59:59", false)]
+    [InlineData("09:00", "17:00", "09:00:00", true)]
+    [InlineData("09:00", "17:00", "16:59:59", true)]
+    [InlineData("09:00", "17:00", "17:00:00", false)]
+    [InlineData("22:00", "06:00", "21:59:59", false)]
+    [InlineData("22:00", "06:00", "22:00:00", true)]
+    [InlineData("22:00", "06:00", "23:59:59", true)]
+    [InlineData("22:00", "06:00", "00:00:00", true)]
+    [InlineData("22:00", "06:00", "05:59:59", true)]
+    [InlineData("22:00", "06:00", "06:00:00", false)]
+    [InlineData("00:00", "23:59", "00:00:00", true)]
+    [InlineData("00:00", "23:59", "23:58:59", true)]
+    [InlineData("00:00", "23:59", "23:59:00", false)]
+    [InlineData("00:00", "23:59", "23:59:59", false)]
+    public Task ExecuteAsync_QuietHoursBoundary_UsesStartInclusiveEndExclusive(
+        string start, string end, string utcTime, bool shouldSkip)
+        => AssertQuietHoursAsync(new QuietHoursConfig
+        {
+            Enabled = true,
+            Start = start,
+            End = end,
+            Timezone = "UTC"
+        }, utcTime, shouldSkip);
+
+    [Theory]
+    [InlineData(true, "12:00", "12:00", "11:59:59")]
+    [InlineData(true, "12:00", "12:00", "12:00:00")]
+    [InlineData(true, "12:00", "12:00", "12:00:01")]
+    [InlineData(false, "09:00", "17:00", "12:00:00")]
+    [InlineData(true, "invalid", "17:00", "12:00:00")]
+    [InlineData(true, "09:00", "invalid", "12:00:00")]
+    public Task ExecuteAsync_EmptyDisabledOrInvalidQuietHours_ExecutesNormally(
+        bool enabled, string start, string end, string utcTime)
+        => AssertQuietHoursAsync(new QuietHoursConfig
+        {
+            Enabled = enabled,
+            Start = start,
+            End = end,
+            Timezone = "UTC"
+        }, utcTime, shouldSkip: false);
+
+    [Theory]
+    [InlineData("Asia/Tokyo", "UTC", "00:00:00", true)]
+    [InlineData("Asia/Tokyo", "UTC", "08:00:00", false)]
+    [InlineData(null, "Asia/Tokyo", "00:00:00", true)]
+    [InlineData(null, "Asia/Tokyo", "08:00:00", false)]
+    [InlineData(null, null, "09:00:00", true)]
+    [InlineData(null, null, "17:00:00", false)]
+    [InlineData("Invalid/Timezone", "Asia/Tokyo", "09:00:00", true)]
+    [InlineData("Invalid/Timezone", "Asia/Tokyo", "17:00:00", false)]
+    public Task ExecuteAsync_QuietHoursTimezone_PreservesExplicitSoulAndUtcFallback(
+        string? timezone, string? soulTimezone, string utcTime, bool shouldSkip)
+        => AssertQuietHoursAsync(new QuietHoursConfig
+        {
+            Enabled = true,
+            Start = "09:00",
+            End = "17:00",
+            Timezone = timezone
+        }, utcTime, shouldSkip, soulTimezone);
+
+    private static async Task AssertQuietHoursAsync(
+        QuietHoursConfig quietHours, string utcTime, bool shouldSkip, string? soulTimezone = null)
+    {
+        var instant = DateTimeOffset.Parse($"2026-01-01T{utcTime}Z", System.Globalization.CultureInfo.InvariantCulture);
+        var action = new HeartbeatAction(new ManualTimeProvider(instant));
+        var trigger = new Mock<IInternalTrigger>();
+        var registry = new Mock<IAgentRegistry>();
+        var descriptor = CreateDescriptor(quietHours, soulTimezone);
+        var sessionId = SessionId.From("cron:heartbeat:fixed-clock");
+
+        trigger.SetupGet(value => value.Type).Returns(TriggerType.Cron);
+        trigger.Setup(value => value.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .ReturnsAsync(sessionId);
+        registry.Setup(value => value.Get(AgentId.From("agent-a"))).Returns(descriptor);
+        using var services = new ServiceCollection()
+            .AddSingleton(trigger.Object)
+            .AddSingleton(registry.Object)
+            .BuildServiceProvider();
+        var context = CreateHeartbeatContext(services);
+
+        await action.ExecuteAsync(context);
+
+        trigger.Verify(value => value.CreateSessionAsync(
+            It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()),
+            shouldSkip ? Times.Never() : Times.Once());
+        if (shouldSkip)
+            context.SessionId.ShouldBeNull();
+        else
+            context.SessionId.ShouldBe(sessionId);
+    }
+
     private static CronExecutionContext CreateHeartbeatContext(IServiceProvider services)
         => new()
         {
@@ -93,13 +186,14 @@ public sealed class QuietHoursTests
             Services = services
         };
 
-    private static AgentDescriptor CreateDescriptor(QuietHoursConfig quietHours)
+    private static AgentDescriptor CreateDescriptor(QuietHoursConfig quietHours, string? soulTimezone = null)
         => new()
         {
             AgentId = AgentId.From("agent-a"),
             DisplayName = "Agent A",
             ModelId = "test-model",
             ApiProvider = "test-provider",
+            Soul = soulTimezone is null ? null : new SoulAgentConfig { Enabled = true, Timezone = soulTimezone },
             Heartbeat = new HeartbeatAgentConfig
             {
                 Enabled = true,

@@ -15,8 +15,10 @@ namespace BotNexus.Cron.Actions;
 /// Dedicated cron action for system heartbeat jobs (actionType = "heartbeat").
 /// Handles quiet-hours gating, HEARTBEAT.md emptiness pre-check, and heartbeat-specific trigger routing.
 /// </summary>
-public sealed class HeartbeatAction : ICronAction
+public sealed class HeartbeatAction(TimeProvider? timeProvider = null) : ICronAction
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
     /// <inheritdoc/>
     public string ActionType => "heartbeat";
 
@@ -210,10 +212,10 @@ public sealed class HeartbeatAction : ICronAction
                 "No suitable internal trigger found for heartbeat action (heartbeat, soul, or cron).");
     }
 
-    private static bool IsInQuietHours(QuietHoursConfig config, string timezoneId)
+    private bool IsInQuietHours(QuietHoursConfig config, string timezoneId)
     {
         var tz = CronTimeZoneResolver.Resolve(timezoneId);
-        var localNow = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, tz);
+        var localNow = TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), tz);
         var currentTime = localNow.TimeOfDay;
 
         if (!TimeSpan.TryParse(config.Start, out var start) ||
