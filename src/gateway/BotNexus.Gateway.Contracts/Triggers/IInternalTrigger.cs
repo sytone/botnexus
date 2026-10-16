@@ -44,6 +44,29 @@ public sealed record InternalTriggerRequest
     /// </summary>
     public string? ModelOverride { get; init; }
 
+    /// <summary>Original winning cron model token; null for non-scheduler callers.</summary>
+    public string? CronRequestedModel { get; init; }
+
+    /// <summary>Winning cron precedence layer, used for session audit.</summary>
+    public string? CronModelSource { get; init; }
+
+    /// <summary>Stamps occurrence-local routing audit onto the trigger's in-memory session before execution.</summary>
+    public void ApplyCronModelMetadata(GatewaySession session)
+    {
+        if (CronModelSource is null || string.IsNullOrWhiteSpace(ModelOverride))
+        {
+            foreach (var key in new[] { "cronModelOverride", "cronRequestedModel", "cronModelSource", "cronEffectiveProvider", "cronEffectiveModel" })
+                session.Metadata.Remove(key);
+            return;
+        }
+        var separator = ModelOverride.LastIndexOf('/');
+        session.Metadata["cronModelOverride"] = ModelOverride;
+        session.Metadata["cronRequestedModel"] = CronRequestedModel;
+        session.Metadata["cronModelSource"] = CronModelSource;
+        session.Metadata["cronEffectiveProvider"] = separator > 0 ? ModelOverride[..separator] : null;
+        session.Metadata["cronEffectiveModel"] = separator > 0 ? ModelOverride[(separator + 1)..] : ModelOverride;
+    }
+
     /// <summary>
     /// Optional explicit conversation ID to route this trigger run into.
     /// When null, the trigger determines the conversation (e.g. per-job stable conversation for cron).

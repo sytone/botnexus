@@ -64,11 +64,17 @@ public sealed class AgentConverseCronAction : ICronAction
             TargetId = AgentId.From(targetAgentId),
             Message = message,
             Objective = objective,
+            ModelOverride = context.EffectiveModel?.QualifiedModel ?? context.Job.Model,
+            CronRequestedModel = context.EffectiveModel?.RequestedModel,
+            CronModelSource = context.EffectiveModel?.Source,
             MaxTurns = maxTurns,
             CallChain = [initiatorAgentId]
         };
 
         var result = await exchangeService.ConverseAsync(request, cancellationToken).ConfigureAwait(false);
+        await context.RecordSessionIdAsync(result.SessionId, cancellationToken).ConfigureAwait(false);
+        if (result.ConversationId is { } conversationId)
+            context.RecordConversationId(conversationId);
 
         logger?.LogInformation(
             "AgentConverseCronAction: job '{JobId}' completed. Status={Status}, Turns={Turns}.",

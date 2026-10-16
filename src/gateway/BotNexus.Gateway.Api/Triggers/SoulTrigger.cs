@@ -81,6 +81,7 @@ public sealed class SoulTrigger(
             session.Metadata.Remove("modelOverride");
         else
             session.Metadata["modelOverride"] = request!.ModelOverride;
+        request?.ApplyCronModelMetadata(session);
 
         if (request?.CronJobId is null)
             session.Metadata.Remove("cronJobId");
@@ -97,6 +98,8 @@ public sealed class SoulTrigger(
             Trigger = TriggerType.Soul
         });
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
+        if (request?.SessionCreatedAsync is not null)
+            await request.SessionCreatedAsync(sessionId, ct).ConfigureAwait(false);
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
         var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
 

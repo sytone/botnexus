@@ -193,7 +193,8 @@ public sealed class SqliteCronStore(
         "tool_call_count INTEGER NULL",
         "duration_ms INTEGER NULL",
         "prompt_tokens INTEGER NULL",
-        "completion_tokens INTEGER NULL"
+        "completion_tokens INTEGER NULL",
+        "effective_model_json TEXT NULL"
     ];
 
     /// <summary>
@@ -202,7 +203,7 @@ public sealed class SqliteCronStore(
     /// </summary>
     private const string RunColumns =
         "id, job_id, started_at, completed_at, status, error, session_id, " +
-        "turn_count, tool_call_count, duration_ms, prompt_tokens, completion_tokens";
+        "turn_count, tool_call_count, duration_ms, prompt_tokens, completion_tokens, effective_model_json";
 
     public async Task InitializeAsync(CancellationToken ct = default)
     {
@@ -967,6 +968,24 @@ public sealed class SqliteCronStore(
         }
     }
 
+    /// <inheritdoc />
+    public async Task RecordRunModelAsync(RunId runId, CronModelSelection selection, CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE cron_runs SET effective_model_json = COALESCE(effective_model_json, $model) WHERE id = $id";
+            command.Parameters.AddWithValue("$model", JsonSerializer.Serialize(selection, JsonOptions));
+            command.Parameters.AddWithValue("$id", runId.Value);
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally { _writeLock.Release(); }
+    }
+
     public async Task RecordRunSessionAsync(
         RunId runId,
         SessionId sessionId,
@@ -1395,6 +1414,7 @@ public sealed class SqliteCronStore(
             Status = reader.GetString(4),
             Error = reader.IsDBNull(5) ? null : reader.GetString(5),
             SessionId = reader.IsDBNull(6) ? null : SessionId.From(reader.GetString(6)),
+            EffectiveModel = reader.IsDBNull(12) ? null : JsonSerializer.Deserialize<CronModelSelection>(reader.GetString(12), JsonOptions),
 
             // #2641: every cost column reads NULL as "not measured". No `?? 0` anywhere on this
             // path - a coerced zero here would be indistinguishable from a genuinely free run and

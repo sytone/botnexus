@@ -20,7 +20,8 @@ public sealed class CronController(
     CronScheduler scheduler,
     IOptionsMonitor<CronOptions> cronOptions,
     ILogger<CronController> logger,
-    ICronAlertTargetResolver? alertTargetResolver = null) : ControllerBase
+    ICronAlertTargetResolver? alertTargetResolver = null,
+    BotNexus.Agent.Providers.Core.Registry.ModelRegistry? modelRegistry = null) : ControllerBase
 {
     // The year 9000 is chosen as a practical "absurdly far future" ceiling.
     // DateTimeOffset.MaxValue is year 9999, but any NextRunAt beyond year 9000
@@ -99,6 +100,7 @@ public sealed class CronController(
         return Ok(merged.Values
             .Where(IsCallerAuthorizedFor)
             .OrderByDescending(job => job.CreatedAt)
+            .Select(job => CronModelRouting.Project(job, cronOptions.CurrentValue?.DefaultModel))
             .ToList());
     }
 
@@ -125,7 +127,7 @@ public sealed class CronController(
         if (!IsCallerAuthorizedFor(job))
             return StatusCode(StatusCodes.Status403Forbidden, new { error = ForbiddenMessage });
 
-        return Ok(job);
+        return Ok(CronModelRouting.Project(job, cronOptions.CurrentValue?.DefaultModel));
     }
 
     /// <summary>Creates a cron job.</summary>
@@ -179,6 +181,10 @@ public sealed class CronController(
             WebhookUrl = normalizedWebhookUrl,
             CreatedAt = request.CreatedAt == default ? DateTimeOffset.UtcNow : request.CreatedAt
         };
+
+        if (CronModelRouting.UsesModel(toCreate.ActionType)
+            && CronModelPreflight.ClassifyRejection(modelRegistry, toCreate.Model) is { } modelError)
+            return BadRequest(modelError);
 
         var created = await store.CreateAsync(toCreate, cancellationToken);
         logger.LogInformation("Cron job created via API: {JobId} ({ActionType})", created.Id.Value, created.ActionType);
@@ -279,6 +285,10 @@ public sealed class CronController(
             // actually changed.
             ScheduleActivatedAt = existing.ScheduleActivatedAt
         };
+
+        if (request.Model.IsSet && CronModelRouting.UsesModel(updated.ActionType)
+            && CronModelPreflight.ClassifyRejection(modelRegistry, updated.Model) is { } modelError)
+            return BadRequest(modelError);
 
         // #2133: a controller definition update is a narrow write that never touches
         // scheduler-owned runtime bookkeeping (LastRun*/NextRunAt) or the CAS-pinned

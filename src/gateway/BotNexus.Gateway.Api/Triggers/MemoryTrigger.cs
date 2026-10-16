@@ -81,6 +81,7 @@ public sealed class MemoryTrigger(
             session.Metadata.Remove("modelOverride");
         else
             session.Metadata["modelOverride"] = request!.ModelOverride;
+        request?.ApplyCronModelMetadata(session);
 
         // Write-ahead save so the agent handle binds to the right conversation and model before the
         // turn runs. The user entry is added AFTER PromptAsync so the handle does not load the flush
@@ -89,6 +90,8 @@ public sealed class MemoryTrigger(
 
         try
         {
+            if (request?.SessionCreatedAsync is not null)
+                await request.SessionCreatedAsync(sessionId, ct).ConfigureAwait(false);
             var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
             var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
 

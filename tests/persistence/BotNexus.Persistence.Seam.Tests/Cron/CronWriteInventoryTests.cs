@@ -65,6 +65,11 @@ public sealed class CronWriteInventoryTests
             "Conditional UPDATE by run id and running status; terminal outcome and cost columns are "
             + "not rewritten."),
 
+        new("cron runs", nameof(ICronStore.RecordRunModelAsync), WriteClassification.NarrowPatch,
+            "effective_model_json of one running cron_runs row",
+            "UPDATE by run id with COALESCE preserves the first selection; definition, session "
+            + "ownership, terminal outcome and cost columns are not rewritten."),
+
         new("cron runs", nameof(ICronStore.RecordRunCompleteAsync), WriteClassification.NarrowPatch,
             "terminal outcome and optional session/cost columns of one cron_runs row",
             "Narrow UPDATE by run id; COALESCE preserves previously measured optional session and "
