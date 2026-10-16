@@ -2,6 +2,286 @@
   "schemaVersion": "1.0.0",
   "releases": [
     {
+      "version": "0.50.1",
+      "tag": "v0.50.1",
+      "commit": "570a22c19402bf1073004f49813e1830c0f85db8",
+      "releasedAt": "2026-10-16",
+      "releaseUrl": "https://github.com/sytone/botnexus/releases/tag/v0.50.1",
+      "documentationUrl": "https://sytone.github.io/botnexus/releases/v0.50.1/",
+      "categories": [
+        {
+          "name": "Features",
+          "changes": [
+            {
+              "summary": "**cron:** Add conversation-bound loop chat commands (#4838)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Add scoped compaction token ceilings (#4899)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Add bounded structured diagnostic previews (#4845)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Review and apply agent proposals (#4602)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Expose fresh compaction policy diagnostics (#4920)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**commands:** Show fresh compaction policy in context diagnostics (#4927)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Measure legacy payload cleanup batches (#4931)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Notify readers after durable cursor advances (#4932)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Bug Fixes",
+          "changes": [
+            {
+              "summary": "**gateway:** Make askuser timeout coverage deterministic (#4868)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**browser:** Fail closed without destination enforcement (#4832)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tools:** Keep timeout fixtures alive until cancellation (#4872)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Preserve progress from opaque success receipts (#4847)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Terminate command processes on caller cancellation (#4844)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Preserve unsuccessful terminal safety and block order (#4849)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**trailguide:** Bound atomic workspace refresh contention (#4887)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Show complete activity titles and cron job names (#4890)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**anthropic:** Complete streams when cancelled before scheduling (#4894)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Handle disappearing proc stat in stop fixture (#4896)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**conversations:** Acquire binding move locks by stripe (#4842)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Stop one hung/slow agent turn starving every scheduled job (#4731)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Complete canceled completions streams (#4904)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Settle canceled responses producers (#4903)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**copilot:** Settle messages streams canceled before dispatch (#4906)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Classify integration mock cancellation as aborted (#4905)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sqlite:** Service pooled connection ownership in pr 4837 (#4837)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Sanitize auth-file staleness diagnostics (#4875)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Capture audit cancellation before deferred append (#4873)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**deps:** Patch pkcs and signalr security dependencies (#4912)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**extensions:** Reconcile generated guide asset inventory (#4877)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Report running binary provenance in version endpoint (#4869)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Share active log reads and isolate file errors (#4870)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Report payload-free sqlite capacity observations (#4878)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**skills:** Publish shared prompts atomically (#4866)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Verify conversation menu top-layer rendering (#4907)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**buildtest:** Preserve bounded test hang evidence (#4853)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tooling:** Verify worktree prune before cleanup success (#4900)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Reject config writes targeting missing agents (#4918)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**skills:** Publish example skill seeds atomically (#4914)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Watchdog must detect cron dispatch stalls (#4689) (#4732)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**build:** Await diagnostic ownership cleanup completion (#4935)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Make heartbeat quiet-hours tests clock-independent (#4924)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Accept watcher reloads before notifying options (#4929)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Repair copilot usage attribution and refresh (#4930)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Documentation",
+          "changes": [
+            {
+              "summary": "**extensions:** Correct repository lifecycle guidance (#4880)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**platform:** Reconcile heartbeat thinking and memory contracts (#4851)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Performance",
+          "changes": [
+            {
+              "summary": "**sessions:** Retain ordering benchmark and non-adoption evidence (#4913)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Refactor",
+          "changes": [
+            {
+              "summary": "**gateway:** Publish binding removal facts (#4874)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**streaming:** Make completions usage parsing an extension (#4871)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Publish rest override update facts (#4925)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Testing",
+          "changes": [
+            {
+              "summary": "**webhooks:** Coordinate processor readiness and deadline dispatch (#4828)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Assert definitive locked audit failure (#4841)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Make audit telemetry success fixture deterministic (#4833)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Make post-run saturation assertions deterministic (#4830)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Enforce shared icon asset ownership (#4834)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Pin dictionary schema metadata parity (#4835)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**webtools:** Coordinate dns cancellation deterministically (#4820)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Control pid identity startup child lifetime (#4895)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**buildtest:** Prove child completion independently of startup (#4852)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Coordinate caller-abort cancellation deterministically (#4909)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tests:** Isolate atomic publication fixture within existing guard (#4921)",
+              "documentationUrls": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.50.0",
       "tag": "v0.50.0",
       "commit": "e3381fad932ec73570e269192687fe2af0785fad",
