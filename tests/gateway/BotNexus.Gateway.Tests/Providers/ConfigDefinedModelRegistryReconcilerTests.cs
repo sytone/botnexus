@@ -131,6 +131,58 @@ public sealed class ConfigDefinedModelRegistryReconcilerTests
     }
 
     [Fact]
+    public async Task Reload_DuplicateModelIdsAcrossProviders_UpdatesOnlyChangedProvider()
+    {
+        var initial = ConfigWithProvider(
+            "provider-a",
+            enabled: true,
+            baseUrl: "https://a.example/v1",
+            api: "openai-responses",
+            models: ["shared-model"]);
+        initial.Providers.ShouldNotBeNull();
+        initial.Providers["provider-b"] = new ProviderConfig
+        {
+            Enabled = true,
+            BaseUrl = "https://b.example/v1",
+            Chat = new ProviderChatConfig { Api = "openai-responses", Models = ["shared-model"] }
+        };
+        var monitor = new TestOptionsMonitor<PlatformConfig>(initial);
+        var registry = new ModelRegistry();
+        using var reconciler = new ConfigDefinedModelRegistryReconciler(
+            monitor,
+            registry,
+            NullLogger<ConfigDefinedModelRegistryReconciler>.Instance);
+
+        await reconciler.StartAsync(CancellationToken.None);
+
+        var initialA = registry.GetModel("provider-a", "shared-model");
+        initialA.ShouldNotBeNull();
+        initialA.BaseUrl.ShouldBe("https://a.example/v1");
+        var initialB = registry.GetModel("provider-b", "shared-model");
+        initialB.ShouldNotBeNull();
+        initialB.BaseUrl.ShouldBe("https://b.example/v1");
+
+        var updated = ConfigWithProvider(
+            "provider-a",
+            enabled: true,
+            baseUrl: "https://a-updated.example/v1",
+            api: "openai-responses",
+            models: ["shared-model"]);
+        updated.Providers.ShouldNotBeNull();
+        updated.Providers["provider-b"] = initial.Providers["provider-b"];
+        monitor.RaiseChanged(updated);
+
+        var updatedA = registry.GetModel("provider-a", "shared-model");
+        updatedA.ShouldNotBeNull();
+        updatedA.BaseUrl.ShouldBe("https://a-updated.example/v1");
+        var unchangedB = registry.GetModel("provider-b", "shared-model");
+        unchangedB.ShouldNotBeNull();
+        unchangedB.BaseUrl.ShouldBe("https://b.example/v1");
+        registry.GetModels("provider-a").Select(model => model.Id).ShouldBe(["shared-model"]);
+        registry.GetModels("provider-b").Select(model => model.Id).ShouldBe(["shared-model"]);
+    }
+
+    [Fact]
     public async Task Reload_InvalidOpenAiCompletionsProvider_KeepsLastKnownGoodCatalogue()
     {
         var monitor = new TestOptionsMonitor<PlatformConfig>(ConfigWithProvider(
