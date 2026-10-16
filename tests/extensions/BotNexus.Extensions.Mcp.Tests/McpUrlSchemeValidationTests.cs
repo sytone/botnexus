@@ -288,79 +288,34 @@ public sealed class McpUrlSchemeValidationTests
     [Fact]
     public async Task DefaultHandler_DoesNotReplayAuthorizationHeaderToRedirectTarget()
     {
-        // Behavioural proof, not just a property assertion: stand up two real loopback listeners
-        // on different hosts. The first 302s to the second; with the framework default
-        // (AllowAutoRedirect = true) the handler would follow it and resend Authorization.
-        using var origin = new HttpListener();
-        using var target = new HttpListener();
-        var originPort = GetFreePort();
-        var targetPort = GetFreePort();
-        origin.Prefixes.Add($"http://127.0.0.1:{originPort}/");
-        target.Prefixes.Add($"http://localhost:{targetPort}/");
-
-        try
-        {
-            origin.Start();
-            target.Start();
-        }
-        catch (HttpListenerException)
-        {
-            return; // No permission to bind — environment limitation, not a contract failure.
-        }
-
-        string? replayedAuthorization = null;
-        var targetHit = false;
-
-        var originLoop = Task.Run(async () =>
-        {
-            var ctx = await origin.GetContextAsync();
-            ctx.Response.StatusCode = 302;
-            ctx.Response.Headers["Location"] = $"http://localhost:{targetPort}/mcp";
-            ctx.Response.Close();
-        });
-
-        var targetLoop = Task.Run(async () =>
-        {
-            var ctx = await target.GetContextAsync();
-            targetHit = true;
-            replayedAuthorization = ctx.Request.Headers["Authorization"];
-            ctx.Response.StatusCode = 200;
-            ctx.Response.Close();
-        });
+        await using var target = new LoopbackHttpFixture();
+        await using var origin = new LoopbackHttpFixture(redirect: target.Address);
+        origin.Endpoint.ShouldNotBe(target.Endpoint);
+        origin.Address.Port.ShouldNotBe(target.Address.Port);
 
         using var client = new HttpClient(HttpSseMcpTransport.CreateDefaultHandler(), disposeHandler: true);
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{originPort}/mcp");
-        request.Headers.TryAddWithoutValidation("Authorization", "Bearer super-secret-provider-key");
+        using var request = new HttpRequestMessage(HttpMethod.Get, origin.Address);
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer test-provider-key");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var response = await client.SendAsync(request, deadline.Token);
 
-        var response = await client.SendAsync(request);
-
-        // The redirect is surfaced, not followed.
+        // SendAsync has completed all handler activity (including any automatic redirect).
+        // Stop and drain both acceptors before taking the negative counter snapshot.
+        await origin.DisposeAsync();
+        await target.DisposeAsync();
         response.StatusCode.ShouldBe(HttpStatusCode.Found);
-
-        await originLoop;
-        // Give any (incorrect) follow-up request a chance to land before asserting it did not.
-        var raced = await Task.WhenAny(targetLoop, Task.Delay(TimeSpan.FromSeconds(2)));
-
-        origin.Stop();
-        target.Stop();
-
-        raced.ShouldNotBe((Task)targetLoop, "the redirect target must never be contacted");
-        targetHit.ShouldBeFalse();
-        replayedAuthorization.ShouldBeNull();
+        origin.RequestCount.ShouldBe(1);
+        origin.Authorization.ShouldBe("Bearer test-provider-key");
+        target.RequestCount.ShouldBe(0, "the redirect target must never be contacted");
+        target.Accepted.IsCompleted.ShouldBeFalse("even an incomplete connection to the target is forbidden");
+        target.Authorization.ShouldBeNull();
+        origin.Completion.IsCompletedSuccessfully.ShouldBeTrue();
+        target.Completion.IsCompletedSuccessfully.ShouldBeTrue();
     }
 
     // ---------------------------------------------------------------------
     // helpers
     // ---------------------------------------------------------------------
-
-    private static int GetFreePort()
-    {
-        using var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
-    }
 
     private static McpExtensionConfig BuildConfig(string id, string url, string auth)
         => new()
