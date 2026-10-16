@@ -1,5 +1,6 @@
 // @ts-check
 import { readFileSync } from "node:fs";
+import { evaluateUsability } from "./contributor-usability.mjs";
 
 const CONTRACT = JSON.parse(readFileSync(new URL("../pr-contract.json", import.meta.url), "utf8"));
 /**
@@ -375,6 +376,8 @@ export function evaluate({ title, body, changedPaths, openCriteriaIssues }) {
     );
   }
 
+  // Additive warning-only contract; never part of the blocking requiredSections.
+  violations.push(...evaluateUsability(visibleBody, changedPaths));
   return { violations, uiPaths };
 }
 

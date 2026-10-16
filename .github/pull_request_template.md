@@ -85,3 +85,23 @@ Closes #
      surface, parallel-merge safety vs other open PRs, and anything deliberately left out of scope. -->
 
 -
+
+<!-- BEGIN GENERATED CONTRIBUTOR USABILITY -->
+## Contributor usability
+
+<!-- Advisory checklist v1. Fill the labelled lines; remove this comment.
+Consumers: Name the consumers and supported platforms (Windows and Linux, or an explicit Windows-only/Linux-only scope).
+Setup: Describe public setup/configuration and prerequisites; link the user documentation and any single-platform limitation.
+Validation: Record clean temporary-home or hermetic-fixture validation, exact commands in backticks, and numeric results for each supported platform.
+Private prerequisites: State 'none'. No author-private skills, personal paths, or preseeded databases may be required; path redaction alone is not reuse.
+Docs-only: give a concrete reason runtime provisioning does not apply. Only documentation-file diffs qualify, regardless of PR title; do not claim an unperformed clean-install check.
+-->
+
+Consumers:
+
+Setup:
+
+Validation:
+
+Private prerequisites:
+<!-- END GENERATED CONTRIBUTOR USABILITY -->
