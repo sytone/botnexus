@@ -5,11 +5,10 @@ namespace BotNexus.Agent.Core.ExtensionPoints.ToolResults;
 /// </summary>
 /// <param name="context">The tool-result transformation context.</param>
 /// <param name="cancellationToken">The cancellation token.</param>
-/// <returns>An optional post-processing result.</returns>
+/// <returns>Replacement fields, or null to retain the original result and error flag.</returns>
 /// <remarks>
-/// Use to transform, filter, or override tool results before they reach the LLM.
-/// Return ToolResultTransformResult to replace Content, Details, or IsError.
-/// Must not throw — exceptions are logged and ignored.
+/// Only non-null Content, Details, and IsError fields replace their original values.
+/// Non-cancellation exceptions retain the original result and error flag; cancellation propagates.
 /// </remarks>
 public delegate Task<ToolResultTransformResult?> ToolResultTransformer(
     ToolResultTransformContext context,

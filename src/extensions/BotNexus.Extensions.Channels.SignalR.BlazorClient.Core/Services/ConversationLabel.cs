@@ -138,6 +138,18 @@ public static class ConversationLabel
         return Truncate(normalized);
     }
 
+    /// <summary>
+    /// Returns the complete human title for wrapping activity tables. Empty and opaque routing
+    /// identifiers retain the same readable derived fallback as compact conversation labels.
+    /// </summary>
+    public static string FullDisplayTitle(this string? title, string? conversationId, string? owningAgentId)
+    {
+        var normalized = PortalText.SingleLine(title);
+        return normalized.Length == 0 || IsOpaqueIdentifier(normalized)
+            ? DisplayTitle(title, conversationId, owningAgentId)
+            : normalized;
+    }
+
     /// <summary>Last meaningful 8 characters of an identifier, ignoring the scheme prefix.</summary>
     private static string ShortId(string id)
     {

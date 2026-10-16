@@ -12,7 +12,7 @@ COPY --from=dotnet10 /usr/share/dotnet /usr/share/dotnet
 # one explicitly. Without it the gate reports 8 failures that have nothing to do with the
 # change under test.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git tar gzip \
+    && apt-get install -y --no-install-recommends ca-certificates curl git tar gzip util-linux \
     && curl -fsSL https://deb.nodesource.com/setup_20.x -o /tmp/nodesource_setup.sh \
     && bash /tmp/nodesource_setup.sh \
     && apt-get install -y --no-install-recommends nodejs \
@@ -28,13 +28,13 @@ RUN apt-get update \
     && mkdir -p /work /cache/nuget \
     && chmod 0777 /work /cache/nuget
 
-COPY entrypoint.ps1 RunnerResult.ps1 RunnerTimeout.ps1 RunnerCost.ps1 RunnerBuild.ps1 /runner/
+COPY entrypoint.ps1 RunnerResult.ps1 RunnerTimeout.ps1 RunnerCost.ps1 RunnerBuild.ps1 RunnerDiagnostic.ps1 DiagnosticOwnedCommand.ps1 DiagnosticContainment.cs /runner/
 WORKDIR /work
 
 # Fail the IMAGE BUILD, not a later test run, if a hard runner dependency is missing.
 # A missing `node` previously surfaced as 8 unrelated test failures inside the gate, which
 # reads as "the change under test broke markdown rendering" rather than "the image is
 # incomplete". Asserting it here makes the image the thing that fails when the image is wrong.
-RUN node --version && dotnet --version && pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+RUN setsid --version && node --version && dotnet --version && pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
 ENTRYPOINT ["pwsh", "-NoProfile", "-File", "/runner/entrypoint.ps1"]

@@ -228,6 +228,30 @@ Assert-Equal $true $hang.TimedOut '21: an overrunning process was not reported a
 Assert-True ($hang.ElapsedSeconds -lt 60) "21: the bound did not actually cut the run short ($($hang.ElapsedSeconds)s)"
 Assert-True ($hang.ElapsedSeconds -ge 3) "21: returned before the deadline could have expired ($($hang.ElapsedSeconds)s)"
 
+# 22. The real child process must receive a collector value containing spaces as ONE token.
+#     PowerShell's -File binder splits --collect:<value> itself, so use a probe token without
+#     the option prefix to isolate the process-launch boundary (the actual runner uses dotnet).
+#     Start-Process's string-array API flattens unquoted tokens on Windows.
+$probePath = Join-Path $root 'argv-probe.ps1'
+Set-Content -LiteralPath $probePath -Value '$args | ConvertTo-Json -Compress' -Encoding utf8
+$argvLog = Join-Path $root 'argv.log'
+$filter = 'FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E'
+$argvRun = Invoke-BoundedProcess -FilePath $pwshPath `
+    -ArgumentList @('-NoProfile', '-File', $probePath, 'collector:XPlat Code Coverage', '--filter', $filter) `
+    -LogPath $argvLog -TimeoutSeconds 60 -PollMilliseconds 100
+Assert-Equal 0 $argvRun.ExitCode '22: argv probe did not exit successfully.'
+try {
+    $observedArguments = @(Get-Content -LiteralPath $argvLog -Raw | ConvertFrom-Json)
+    Assert-Equal 3 $observedArguments.Count '22: collector or filter was split into multiple arguments.'
+    if ($observedArguments.Count -ge 3) {
+        Assert-Equal 'collector:XPlat Code Coverage' $observedArguments[0] '22: collector name did not survive as one argument.'
+        Assert-Equal '--filter' $observedArguments[1] '22: filter switch was lost.'
+        Assert-Equal $filter $observedArguments[2] '22: filter value changed at the child boundary.'
+    }
+} catch {
+    $script:failures += "22: argv probe did not emit parseable JSON: $($_.Exception.Message)"
+}
+
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 
 if ($script:failures.Count) {

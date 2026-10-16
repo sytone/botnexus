@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
+using BotNexus.Persistence.Sqlite;
 
 namespace BotNexus.Gateway.Sessions;
 
@@ -25,24 +26,52 @@ public static class LegacyToolInvocationBackfill
         if (batchSize < 1)
             throw new ArgumentOutOfRangeException(nameof(batchSize), "Batch size must be positive.");
 
-        using var connection = new SqliteConnection(connectionString);
-        connection.Open();
-        using var transaction = commit ? connection.BeginTransaction() : null;
-        var rows = ReadBatch(connection, transaction, batchSize);
-        var invocationCount = rows.Select(row => (row.SessionId, row.ToolCallId)).Distinct().Count();
-        var hasMore = HasMore(connection, transaction, rows.Count == 0 ? null : rows[^1].Id);
+        List<LegacyRow> rows;
+        bool hasMore;
+        using (var readConnection = SqliteConnectionFactory.Create(connectionString))
+        {
+            try
+            {
+                readConnection.Open();
+                rows = ReadBatch(readConnection, transaction: null, batchSize);
+                hasMore = HasMore(readConnection, transaction: null, rows.Count == 0 ? null : rows[^1].Id);
+            }
+            catch (SqliteException ex) when (SqliteCapacityDiagnostics.ObserveFailure(readConnection, ex))
+            {
+                throw;
+            }
+        }
 
+        var invocationCount = rows.Select(row => (row.SessionId, row.ToolCallId)).Distinct().Count();
         if (!commit)
             return new LegacyToolInvocationBackfillReport(rows.Count, 0, invocationCount, hasMore, false);
 
-        foreach (var group in rows.GroupBy(row => (row.SessionId, row.ToolCallId)))
+        using var writeConnection = SqliteConnectionFactory.Create(connectionString);
+        try
         {
-            UpsertInvocation(connection, transaction!, group);
-            LinkRows(connection, transaction!, group);
-        }
+            writeConnection.Open();
+            using var transaction = writeConnection.BeginTransaction();
+            foreach (var group in rows.GroupBy(row => (row.SessionId, row.ToolCallId)))
+            {
+                UpsertInvocation(writeConnection, transaction, group);
+                LinkRows(writeConnection, transaction, group);
+            }
 
-        transaction!.Commit();
-        return new LegacyToolInvocationBackfillReport(rows.Count, rows.Count, invocationCount, hasMore, true);
+            transaction.Commit();
+            return new LegacyToolInvocationBackfillReport(rows.Count, rows.Count, invocationCount, hasMore, true);
+        }
+        catch (SqliteException ex) when (SqliteCapacityDiagnostics.ObserveFailure(writeConnection, ex))
+        {
+            throw;
+        }
+    }
+
+    private static string LegacyCorrelationPredicate(SqliteConnection connection, SqliteTransaction? transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('session_history') WHERE name='agent_run_id'";
+        return Convert.ToInt64(command.ExecuteScalar()) == 0 ? "1=1" : "agent_run_id IS NULL";
     }
 
     private static List<LegacyRow> ReadBatch(SqliteConnection connection, SqliteTransaction? transaction, int batchSize)
@@ -55,6 +84,7 @@ public static class LegacyToolInvocationBackfill
             FROM session_history
             WHERE tool_invocation_id IS NULL
               AND tool_call_id IS NOT NULL
+              AND ({LegacyCorrelationPredicate(connection, transaction)})
               AND ({ToolRowPredicate})
             ORDER BY id
             LIMIT $batchSize
@@ -87,6 +117,7 @@ public static class LegacyToolInvocationBackfill
                 SELECT 1 FROM session_history
                 WHERE tool_invocation_id IS NULL
                   AND tool_call_id IS NOT NULL
+              AND ({LegacyCorrelationPredicate(connection, transaction)})
                   AND ({ToolRowPredicate})
                   AND ($lastId IS NULL OR id > $lastId))
             """;

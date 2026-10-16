@@ -7,6 +7,12 @@ using BotNexus.Gateway.Api.ReleaseHistory;
 using BotNexus.Gateway.Api.Triggers;
 using BotNexus.Gateway.Api.Workspace;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Api.Services;
+using BotNexus.Gateway.Contracts.Agents;
+using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Cron;
+using BotNexus.Gateway.Webhooks;
+using BotNexus.Agent.Providers.Copilot.Discovery;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -31,6 +37,14 @@ public static class GatewayApiServiceCollectionExtensions
         // registered here would never be attached and the buffer stayed empty (issue #2390).
         services.AddGatewayRecentLogStore();
         services.TryAddSingleton<LocalReleaseHistoryService>();
+        services.TryAddSingleton<TimeProvider>(_ => TimeProvider.System);
+        services.TryAddSingleton<AgentLifecycleService>();
+        services.TryAddSingleton<AgentProposalRejectionNotifier>();
+        services.TryAddSingleton<AgentProposalReviewService>();
+        services.AddHttpClient<CopilotDiscoveryClient>();
+        services.TryAddSingleton<CopilotQuotaService>();
+        services.TryAddSingleton<BotNexus.Agent.Providers.Copilot.Headers.CopilotHeaderQuotaStore>();
+        services.TryAddSingleton<ProviderUsageDetailsService>();
 
         // #3528: the file-per-secret store behind SecretsController. Distinct from the
         // ISecretProvider set the gateway registers - those RESOLVE a declared credential reference

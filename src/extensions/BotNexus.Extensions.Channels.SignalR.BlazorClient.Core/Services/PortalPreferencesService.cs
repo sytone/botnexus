@@ -75,6 +75,14 @@ public sealed class PortalPreferencesService : IPortalPreferencesService
     }
 
     /// <inheritdoc/>
+    public async Task SetAnimateActiveRunIndicatorAsync(bool enabled)
+    {
+        _current.AnimateActiveRunIndicator = enabled;
+        await SaveAsync();
+        OnChanged.Invoke();
+    }
+
+    /// <inheritdoc/>
     public async Task SetArchiveConfirmAsync(bool enabled)
     {
         _current.ArchiveConfirmEnabled = enabled;

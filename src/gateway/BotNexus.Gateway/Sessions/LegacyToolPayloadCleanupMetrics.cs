@@ -19,7 +19,8 @@ internal sealed class LegacyToolPayloadCleanupMetrics
     private readonly Counter<long>? _clearedBytes;
     private readonly Counter<long>? _protectedInvocations;
     private readonly ObservableGauge<long>? _remainingInvocations;
-    private long _remaining;
+    // No successful count has been reported yet; zero would falsely imply no remaining work.
+    private long _remaining = -1;
 
     internal LegacyToolPayloadCleanupMetrics(IMetrics? metrics)
     {
@@ -28,8 +29,8 @@ internal sealed class LegacyToolPayloadCleanupMetrics
         _cleanedInvocations = metrics.CreateCounter<long>(CleanedInvocationsInstrumentName, unit: "{invocation}", description: "Invocations cleaned after normalized evidence parity.");
         _cleanedRows = metrics.CreateCounter<long>(CleanedRowsInstrumentName, unit: "{row}", description: "Legacy history rows cleaned.");
         _clearedBytes = metrics.CreateCounter<long>(ClearedBytesInstrumentName, unit: "By", description: "Logical UTF-8 payload bytes cleared.");
-        _protectedInvocations = metrics.CreateCounter<long>(ProtectedInvocationsInstrumentName, unit: "{invocation}", description: "Protected invocations observed in committed cleanup batches.");
-        _remainingInvocations = metrics.CreateObservableGauge<long>(RemainingInvocationsInstrumentName, () => Interlocked.Read(ref _remaining), unit: "{invocation}", description: "Invocations retaining legacy payload after the latest committed batch.");
+        _protectedInvocations = metrics.CreateCounter<long>(ProtectedInvocationsInstrumentName, unit: "{invocation}", description: "Reported protected invocation observations in committed cleanup batches; uncounted reports are omitted.");
+        _remainingInvocations = metrics.CreateObservableGauge<long>(RemainingInvocationsInstrumentName, () => Interlocked.Read(ref _remaining), unit: "{invocation}", description: "Reported invocations retaining legacy payload after the latest committed batch; -1 means not counted, including before the first report.");
     }
 
     internal void RecordCommitted(LegacyToolPayloadCleanupReport report)
@@ -38,7 +39,10 @@ internal sealed class LegacyToolPayloadCleanupMetrics
         _cleanedInvocations?.Add(report.CleanedInvocations);
         _cleanedRows?.Add(report.CleanedRows);
         _clearedBytes?.Add(report.ClearedBytes);
-        _protectedInvocations?.Add(report.ProtectedInvocations);
+        // Bounded cleanup reports -1 when this count was not computed. A sentinel is not
+        // a measurement and must never decrement a monotonic counter.
+        if (report.ProtectedInvocations >= 0)
+            _protectedInvocations?.Add(report.ProtectedInvocations);
         Interlocked.Exchange(ref _remaining, report.RemainingInvocations);
     }
 

@@ -123,6 +123,9 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -173,7 +176,8 @@ jobs:
         uses: codecov/codecov-action@v4
         if: always()
         with:
-          fail_ci_if_error: false
+          use_oidc: true
+          fail_ci_if_error: true
 
   # Browser-emulated E2E is quarantined from automatic CI while #3601 is reviewed.
   # The projects and explicit `Invoke-AzureBuildTest.ps1 -Mode playwright|full` diagnostic paths

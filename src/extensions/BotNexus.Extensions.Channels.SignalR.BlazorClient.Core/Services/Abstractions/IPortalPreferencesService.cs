@@ -23,6 +23,9 @@ public interface IPortalPreferencesService
     /// <summary>Update the debug-mode preference and persist.</summary>
     Task SetDebugModeAsync(bool enabled);
 
+    /// <summary>Update decorative active-run motion and persist.</summary>
+    Task SetAnimateActiveRunIndicatorAsync(bool enabled);
+
     /// <summary>Update the archive-confirmation preference and persist.</summary>
     Task SetArchiveConfirmAsync(bool enabled);
 

@@ -17,6 +17,7 @@ public sealed class CopilotAuthLoaderTests : IDisposable
             ["github-copilot"] = Entry("default-refresh", "default-access", "https://api.individual.githubcopilot.com"),
             ["copilot-work"] = Entry("work-refresh", "work-access", "https://api.enterprise.githubcopilot.com")
         });
+        await WriteCopilotProviderAsync("copilot-work");
 
         var auth = await CopilotAuthLoader.LoadAsync(_home, "copilot-work");
 
@@ -43,6 +44,52 @@ public sealed class CopilotAuthLoaderTests : IDisposable
         auth.CopilotSessionToken.ShouldBe("default-access");
     }
 
+    [Fact]
+    public async Task LoadAsync_NamedInstance_RequiresConfiguredCopilotProviderType()
+    {
+        Directory.CreateDirectory(_home);
+        await WriteEntriesAsync(new Dictionary<string, ProviderCommand.AuthFileEntry>
+        {
+            ["work-account"] = Entry("work-refresh", "work-access", "https://api.enterprise.githubcopilot.com")
+        });
+        await File.WriteAllTextAsync(Path.Combine(_home, "config.json"), """
+            {
+              "providers": {
+                "work-account": {
+                  "type": "openai",
+                  "enabled": true,
+                  "apiKey": "auth:work-account"
+                }
+              }
+            }
+            """);
+
+        var exception = await Should.ThrowAsync<InvalidOperationException>(
+            () => CopilotAuthLoader.LoadAsync(_home, "work-account"));
+
+        exception.Message.ShouldContain("work-account");
+        exception.Message.ShouldContain("github-copilot");
+        exception.Message.ShouldNotContain("work-refresh");
+        exception.Message.ShouldNotContain("work-access");
+    }
+
+    [Fact]
+    public async Task LoadAsync_NamedInstance_AcceptsConfiguredCopilotProviderType()
+    {
+        Directory.CreateDirectory(_home);
+        await WriteEntriesAsync(new Dictionary<string, ProviderCommand.AuthFileEntry>
+        {
+            ["copilot-work"] = Entry("work-refresh", "work-access", "https://api.enterprise.githubcopilot.com")
+        });
+        await WriteCopilotProviderAsync("copilot-work");
+
+        var auth = await CopilotAuthLoader.LoadAsync(_home, "copilot-work");
+
+        auth.ShouldNotBeNull();
+        auth.GitHubToken.ShouldBe("work-refresh");
+        auth.CopilotSessionToken.ShouldBe("work-access");
+    }
+
     private async Task WriteEntriesAsync(Dictionary<string, ProviderCommand.AuthFileEntry> entries)
     {
         var json = JsonSerializer.Serialize(entries, new JsonSerializerOptions
@@ -51,6 +98,19 @@ public sealed class CopilotAuthLoaderTests : IDisposable
         });
         await File.WriteAllTextAsync(Path.Combine(_home, "auth.json"), json);
     }
+
+    private Task WriteCopilotProviderAsync(string instance)
+        => File.WriteAllTextAsync(Path.Combine(_home, "config.json"), $$"""
+            {
+              "providers": {
+                "{{instance}}": {
+                  "type": "github-copilot",
+                  "enabled": true,
+                  "apiKey": "auth:{{instance}}"
+                }
+              }
+            }
+            """);
 
     private static ProviderCommand.AuthFileEntry Entry(string refresh, string access, string endpoint) => new()
     {

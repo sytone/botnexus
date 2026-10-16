@@ -28,46 +28,44 @@ public static class SkillsSeeder
         string? globalSkillsDir,
         IFileSystem? fileSystem = null,
         ILogger? logger = null)
+        => EnsureGlobalSkillsSeed(globalSkillsDir, fileSystem ?? new FileSystem(), logger, TimeProvider.System, Thread.Sleep);
+
+    internal static void EnsureGlobalSkillsSeed(
+        string? globalSkillsDir,
+        IFileSystem fs,
+        ILogger? logger,
+        TimeProvider timeProvider,
+        Action<TimeSpan> delay)
     {
         if (string.IsNullOrWhiteSpace(globalSkillsDir))
             return;
 
-        var fs = fileSystem ?? new FileSystem();
-
-        // Create the global skills directory if it doesn't exist yet.
-        var directoryCreated = false;
+        var retry = new AtomicSeedFile.SharingRetry(timeProvider, delay);
         if (!fs.Directory.Exists(globalSkillsDir))
-        {
-            fs.Directory.CreateDirectory(globalSkillsDir);
-            directoryCreated = true;
-        }
+            retry.Execute(() => fs.Directory.CreateDirectory(globalSkillsDir));
 
-        // Only seed when no skills exist yet (directory was just created or is empty of skill subdirs).
-        // "Has skills" = at least one subdirectory containing a SKILL.md file.
-        if (!directoryCreated && HasExistingSkills(fs, globalSkillsDir))
+        // Always discover existing skills, even if this caller observed a missing directory.
+        if (HasExistingSkills(fs, globalSkillsDir))
             return;
 
-        var exampleDir = Path.Combine(globalSkillsDir, ExampleSkillName);
-        var skillFilePath = Path.Combine(exampleDir, SkillFileName);
-
-        // Idempotent: don't overwrite an existing example skill.
-        if (fs.File.Exists(skillFilePath))
-            return;
-
-        fs.Directory.CreateDirectory(exampleDir);
-        fs.File.WriteAllText(skillFilePath, BuildExampleSkillContent());
-
-        logger?.LogInformation(
-            "Skills: created example skill at '{SkillPath}'. " +
-            "Use this as a template to create your own skills.",
-            skillFilePath);
+        var exampleDir = fs.Path.Combine(globalSkillsDir, ExampleSkillName);
+        var skillFilePath = fs.Path.Combine(exampleDir, SkillFileName);
+        if (AtomicSeedFile.EnsureSeed(fs, exampleDir, skillFilePath, BuildExampleSkillContent,
+            logger, timeProvider, delay, retry,
+            () => HasExistingSkills(fs, globalSkillsDir, exampleDir)))
+            logger?.LogInformation(
+                "Skills: created example skill at '{SkillPath}'. " +
+                "Use this as a template to create your own skills.", skillFilePath);
     }
 
-    private static bool HasExistingSkills(IFileSystem fs, string skillsDir)
+    private static bool HasExistingSkills(IFileSystem fs, string skillsDir, string? excludedDirectory = null)
     {
         foreach (var subDir in fs.Directory.GetDirectories(skillsDir))
         {
-            var skillFile = Path.Combine(subDir, SkillFileName);
+            if (string.Equals(subDir, excludedDirectory,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                continue;
+            var skillFile = fs.Path.Combine(subDir, SkillFileName);
             if (fs.File.Exists(skillFile))
                 return true;
         }

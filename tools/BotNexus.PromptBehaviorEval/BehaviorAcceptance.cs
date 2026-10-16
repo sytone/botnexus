@@ -10,7 +10,7 @@ public sealed record BehaviorAcceptance(
     IReadOnlyList<string> ExpectedOperationOrder,
     IReadOnlyList<AcceptanceCheck> Checks)
 {
-    /// <summary>Evaluates common checklist/order requirements and the GPT-only narration maximum.</summary>
+    /// <summary>Evaluates common checklist/order requirements and the shared narration maximum.</summary>
     public static BehaviorAcceptance Evaluate(
         PromptGuidanceRung rung,
         IReadOnlyList<string> actualOrder,
@@ -30,8 +30,7 @@ public sealed record BehaviorAcceptance(
             new("noRejectedTodoTransitions", rejectedTodoTransitionCount == 0, rejectedTodoTransitionCount.ToString()),
             new("noRejectedOperations", rejectedOperationCount == 0, rejectedOperationCount.ToString()),
         };
-        if (rung == PromptGuidanceRung.Gpt)
-            checks.Add(new("gptNarrationSpacing", maximumSilentToolCallSpacing <= 10, maximumSilentToolCallSpacing.ToString()));
+        checks.Add(new("narrationSpacing", maximumSilentToolCallSpacing <= 10, maximumSilentToolCallSpacing.ToString()));
 
         var failed = checks.Where(check => !check.Passed).Select(check => check.Name).ToArray();
         return new BehaviorAcceptance(failed.Length == 0, failed, expectedOrder.ToArray(), checks);

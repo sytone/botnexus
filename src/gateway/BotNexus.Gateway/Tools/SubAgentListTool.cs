@@ -43,7 +43,7 @@ public sealed class SubAgentListTool(
         AgentToolUpdateCallback? onUpdate = null)
     {
         var subAgents = await subAgentManager.ListAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        var projected = subAgents.Select(info => SubAgentRunDetail.FromLive(info)).ToArray();
+        var projected = subAgents.Select(info => SubAgentRunDetail.FromLive(info) with { ResultSummary = null, Result = null }).ToArray();
 
         var result = JsonSerializer.Serialize(new { SubAgents = projected }, JsonOptions);
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, result)]);

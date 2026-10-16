@@ -238,11 +238,11 @@ public sealed class PlatformConfigWriter
                 //    symmetric restore walks the same paths RedactSecrets uses.
                 var existingWrapper = new JsonObject { [sectionName] = existing.DeepClone() };
                 var incomingWrapper = new JsonObject { [sectionName] = incoming.DeepClone() };
-                ConfigSecretMerge.RestoreSecrets(existingWrapper, incomingWrapper);
+                existingWrapper.RestoreSecrets(incomingWrapper);
                 var restoredIncoming = incomingWrapper[sectionName] as JsonObject ?? incoming;
 
                 // 2) Deep-merge restored payload over existing so omitted subtrees survive.
-                ConfigSecretMerge.DeepMerge(merged, restoredIncoming);
+                merged.DeepMerge(restoredIncoming);
 
                 root[sectionName] = merged;
             },
@@ -524,11 +524,11 @@ public sealed class PlatformConfigWriter
                 // Apply to a candidate first: a failure part-way through must not leave the live
                 // root half-mutated, because MutateCoreAsync's guard compares against it.
                 var candidate = root.DeepClone().AsObject();
-                var applyError = ConfigPatchApplier.Apply(candidate, operations);
+                var applyError = candidate.Apply(operations);
                 if (applyError is not null)
                     return Task.FromResult<string?>(applyError);
 
-                ConfigSecretMerge.RestoreSecrets(root, candidate);
+                root.RestoreSecrets(candidate);
 
                 root.Clear();
                 foreach (var kvp in candidate)
@@ -611,11 +611,11 @@ public sealed class PlatformConfigWriter
             {
                 var existingWrapper = new JsonObject { [sectionName] = new JsonObject { [key] = existing.DeepClone() } };
                 var incomingWrapper = new JsonObject { [sectionName] = new JsonObject { [key] = incoming.DeepClone() } };
-                ConfigSecretMerge.RestoreSecrets(existingWrapper, incomingWrapper);
+                existingWrapper.RestoreSecrets(incomingWrapper);
                 var restoredIncoming = incomingWrapper[sectionName]![key] as JsonObject ?? incoming;
 
                 var merged = existing.DeepClone().AsObject();
-                ConfigSecretMerge.DeepMerge(merged, restoredIncoming);
+                merged.DeepMerge(restoredIncoming);
                 section[key] = merged;
             }
             else
@@ -798,6 +798,12 @@ public sealed class PlatformConfigWriter
                     return additionalErrors;
             }
 
+            // Ceiling constraints apply even to legacy raw mutation paths. Validate only this
+            // new policy here; unrelated legacy configuration remains load-tolerated.
+            var ceilingErrors = ValidateCompactionCeilings(root);
+            if (ceilingErrors.Count > 0)
+                return ceilingErrors;
+
             if (validateCandidate)
             {
                 // Validate the complete candidate document, not just the mutated fragment: a
@@ -815,6 +821,47 @@ public sealed class PlatformConfigWriter
         finally
         {
             WriteLock.Release();
+        }
+    }
+
+    private static IReadOnlyList<string> ValidateCompactionCeilings(JsonObject root)
+    {
+        List<string> errors = [];
+        var worlds = Matches(root, "world");
+        var agentSections = Matches(root, "agents");
+        // Reject scope ambiguity only when this policy is present (including explicit null).
+        // Unrelated legacy duplicate casing remains load-tolerated on raw mutation paths.
+        if (worlds.Length > 1 && worlds.Any(entry => HasCeiling(entry.Value)))
+            errors.Add("world has ambiguous case-insensitive duplicate keys for compactionTokenCeiling policy.");
+        if (agentSections.Length > 1 && agentSections.Any(entry =>
+                entry.Value is JsonObject agents && agents.Any(agent => HasCeiling(agent.Value))))
+            errors.Add("agents has ambiguous case-insensitive duplicate keys for compactionTokenCeiling policy.");
+        foreach (var entry in worlds)
+            if (entry.Value is JsonObject world)
+                Check(world, entry.Key);
+        foreach (var section in agentSections)
+            if (section.Value is JsonObject agents)
+                foreach (var entry in agents)
+                    if (entry.Value is JsonObject agent)
+                        Check(agent, section.Key + "." + entry.Key);
+        return errors;
+
+        static KeyValuePair<string, JsonNode?>[] Matches(JsonObject scope, string name)
+            => scope.Where(entry => string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+        static bool HasCeiling(JsonNode? node)
+            => node is JsonObject scope && Matches(scope, "compactionTokenCeiling").Length > 0;
+
+        void Check(JsonObject scope, string path)
+        {
+            var ceilings = Matches(scope, "compactionTokenCeiling");
+            if (ceilings.Length > 1)
+                errors.Add(path + ".compactionTokenCeiling has ambiguous case-insensitive duplicate keys.");
+            // Validate all occurrences: null or a valid first key must not hide an invalid alias.
+            foreach (var entry in ceilings)
+                if (entry.Value is { } value
+                    && (value is not JsonValue scalar || !scalar.TryGetValue<int>(out var tokens) || tokens <= 0))
+                    errors.Add(path + "." + entry.Key + " must be a positive 32-bit integer or null.");
         }
     }
 

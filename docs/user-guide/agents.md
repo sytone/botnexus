@@ -637,10 +637,19 @@ help the user operate BotNexus and discover relevant capabilities. Trailguide do
 generic `BOOTSTRAP.md` or `IDENTITY.md`; its curated files already define its identity and
 first-turn behavior.
 
-The two canonical files are platform-owned and refreshed from the installed repository whenever
-BotNexus resolves the Trailguide workspace. Trailguide is instructed never to edit them. This lets
-an update correct or improve the default agent for every installation without maintaining a chain
-of historical content hashes.
+BotNexus manages five files in the Trailguide workspace: `AGENTS.md`, `SOUL.md`,
+`skills/trailguide-documentation/SKILL.md`, `skills/trailguide-troubleshooting/SKILL.md`,
+and `DOCUMENTATION_ROOT.md`. It refreshes them whenever it resolves the workspace.
+Trailguide is instructed never to edit the canonical instruction files. This lets an update
+improve the default agent without maintaining a chain of historical content hashes.
+
+Unchanged files are not rewritten. For each changed file, BotNexus writes and closes a
+complete temporary file in the same folder, then atomically publishes it: readers see
+complete old or new contents, not a partly written file. Files are updated individually,
+not as one transaction across all five files. Sharing or file-lock conflicts receive up
+to five publication attempts with bounded waits. Waiting for another in-process refresh
+is also bounded. If contention persists, Reports returns a temporary unavailable result
+(HTTP 503). Close the program holding the file open, then try Reports again later.
 
 Put installation-specific or user-requested standing customization in
 `TRAILGUIDE.custom.md` in the Trailguide workspace. The prompt loader includes that file after the

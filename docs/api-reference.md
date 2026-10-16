@@ -2825,17 +2825,19 @@ The timeout is a configuration setting, not a field in this response.
 **Endpoint:** `GET /api/providers`
 
 Returns `200 OK` with an array from the model filter's available-provider list.
-This is a discovery call, not a credential or reachability test. Each row contains
-three strings with the same provider identifier:
+This is a discovery call, not a credential or reachability test. Each row identifies
+the selectable provider instance and its non-secret built-in provider type:
 
 | Field | Meaning |
 |-------|---------|
-| `name` | The provider identifier, not a separate friendly display name. |
-| `providerId` | The provider identifier. |
+| `name` | The provider-instance identifier, not a separate friendly display name. |
+| `providerId` | The provider-instance identifier used for model selection. |
 | `id` | An alias of `providerId`. |
+| `type` | The built-in provider type backing the instance. Canonical instances use their own identifier; the `copilot` alias reports `github-copilot`. |
 
-For example, a returned row may be
-`{ "name": "anthropic", "providerId": "anthropic", "id": "anthropic" }`.
+For example, a named instance backed by GitHub Copilot may be returned as
+`{ "name": "copilot-work", "providerId": "copilot-work", "id": "copilot-work", "type": "github-copilot" }`.
+The response does not include provider credentials.
 The endpoint uses normal [gateway authentication](#authentication). As an MVC
 `OkObjectResult`, it supports [sparse fieldsets](#sparse-fieldsets-fields), unlike
 `/api/version`, `/api/uptime`, and `/api/world`.
@@ -3359,6 +3361,77 @@ different parameters is one row, not 400. `hours` is clamped to `1-168`, `pageSi
 
 ---
 
+### Diagnostics: Structured Events (read-only)
+
+**Experimental developer API; partial [#4010](https://github.com/sytone/botnexus/issues/4010).**
+Use this separate safe-preview surface to integrate structured diagnostic review. It does not
+change the existing `log-patterns` response. Source: `StructuredDiagnosticsController`,
+`StructuredDiagnosticPreview`, and `LogDiagnosticsRingBuffer` in the gateway projects.
+
+```http
+GET /api/diagnostics/events?hours=24&page=0&pageSize=50&severity=Warning&category=Gateway.Skills&agentId=agent-a
+GET /api/diagnostics/events/0123456789ABCDEF?hours=24
+```
+
+The usual gateway authentication applies. Both reads additionally require a resolved
+administrator identity and return `403` without it, including when identity is missing.
+Administrators can review all agents; these are not per-agent authorization endpoints.
+
+| Query parameter | Default | Contract |
+| --- | --- | --- |
+| `hours` | `24` | Clamped to `1–168`; applies to both routes. |
+| `page` | `0` | Zero-based, clamped to zero or greater; overflow-safe offset. List only. |
+| `pageSize` | `50` | Clamped to `1–200`. List only. |
+| `severity` | omitted | Exact named level, case-insensitive: `Warning`, `Error`, or `Critical`. Numeric/unknown values return `400`. List only. |
+| `category` | omitted | Exact case-sensitive validated logger category. List only. |
+| `agentId` | omitted | Exact case-sensitive validated identity from retained occurrence evidence. List only. |
+
+Malformed category/agent filters return `400` and are not echoed. Identifiers are 1–128 ASCII
+letters, digits, underscores, dots, colons, or hyphens, start with a letter/digit, and exclude
+`..`. A detail fingerprint must be exactly 16 hexadecimal characters (case-insensitive lookup);
+malformed fingerprints return `400`. Missing, evicted, expired, or outside-window records return
+`404`. A disabled buffer also returns `404`.
+
+The list returns `events`, `total`, `hours`, `page`, and `pageSize`. Each summary has
+`fingerprint`, `severity`, nullable `category`, `count`, `firstSeen`, and `lastSeen`. Ordering is
+newest aggregate first, with fingerprint as a stable tie-breaker. `total` counts matching aggregates
+before pagination. Filters must match the same retained occurrence; they never infer an old agent
+from historical cardinalities. `count` and timestamps describe the aggregate since creation or
+retention reset, not the selected window or agent's occurrence count.
+
+Detail returns the summary fields plus `recentOccurrences`, newest first, capped at **20** even
+if a custom ring retains more. Each occurrence has `timestamp`, nullable `category`, `eventId`,
+nullable `eventName`, and a fixed-schema `properties` object. The schema includes origin identifiers
+(`AgentId`, `ConversationId`, `SessionId`, `RunId`, `ToolCallId`, parent and instance identifiers),
+finding identifiers, `SkillName`, `SkillScope`, `RuleId`, `FindingSeverity`, `RelativePath`,
+`FindingLine`, `ScannerVersion`, `ScannerFindingId`, `FileSha256`, `EvidenceStatus`, `MissingReason`,
+`Channel`, `TraceId`, `SpanId`, `CorrelationId`, `DiagnosticSource`, `DiagnosticCategory`,
+`DiagnosticOriginKind`, and `DiagnosticTrigger`. Property keys retain these declared names.
+Missing or invalid values are null; identifiers are never filled through correlation or inference.
+
+No template, rendered/sample message, raw source/prompt, arbitrary property, or arbitrary reason
+text is exported. Relative paths use forward slashes and conservative ASCII segments; absolute,
+encoded, backslash, empty, dot, and traversal paths are rejected. SHA-256 values require 64 hex
+characters; trace/span values require 32/16 nonzero hex characters. Lines must be positive integers.
+Scanner versions are numeric three-part versions (optional prerelease) or `skill-security-scanner/1`.
+Fixed vocabularies are: scope `Global`/`Agent`/`Workspace`/`Plugin`; finding severity
+`Info`/`Warn`/`Critical`; origin kind `DescriptorOnly`/`Execution`; trigger
+`PromptConstruction`/`ToolInvocation`/`prompt-discovery`. `EvidenceStatus` preserves
+`complete` or `incomplete`; incomplete evidence has a fixed `MissingReason` of
+`invalid-relative-path`, `file-hash-unavailable`, `invalid-line`, or `unknown`. The producer's
+`EvidenceReason` field itself is never exported. These previews are diagnostic evidence, not an
+approval or execution identity.
+
+The in-memory ring retains at most 1000 aggregates and 20 occurrences each by default. Capacity
+eviction can happen sooner than seven days. Capture and reads physically prune evidence older
+than seven days, including stale samples and origin cardinalities of active patterns; after such
+an active-pattern reset, the count describes its remaining bounded evidence. No background expiry
+timer or persistence is added, so an idle buffer is pruned on its next capture/read and restart
+loses its contents. There are **no notice, dismissal, acknowledgement, or approval endpoints**
+in this slice; those identity and mutation decisions remain unresolved in #4010.
+
+---
+
 ### Diagnostics: Memory Pressure
 
 ```http
@@ -3367,6 +3440,73 @@ GET /api/diagnostics/memory-pressure
 
 Returns a point-in-time memory snapshot with both raw byte counts and human-readable forms, GC
 collection counts per generation, a pressure percentage, a `level`, and operator `guidance`.
+
+The response also includes these diagnostic fields:
+
+| Field | Meaning |
+| --- | --- |
+| `privateMemoryBytes`, `privateMemoryReadable` | Process-private memory at capture time, in bytes and readable form. This is not the same as the resident working set. |
+| `gcHeapSizeBytes` | Managed heap size reported by the last garbage collection (GC), including fragmentation. |
+| `gcFragmentedBytes` | Fragmentation reported by that GC. This is not a current live-object census. |
+| `gcCollectionIndex` | Index of the GC supplying these values. Zero means no GC information is available yet. |
+| `lastGcCollection` | Immutable characteristics of that GC: `generation` (Int32), `compacted` and `concurrent` (booleans), `pinnedObjectsCount` and `finalizationPendingCount` (Int64 object counts). `null` when the collection index is zero or a stored snapshot has no observation. |
+| `gcGenerations` | Array of up to five ordinal runtime slots from the same last GC as `gcCollectionIndex`. Empty (`[]`) when the index is zero. Each entry has `slot` (zero-based integer), `sizeBeforeBytes`, `fragmentationBeforeBytes`, `sizeAfterBytes`, and `fragmentationAfterBytes` (Int64 byte counts). |
+| `sqliteConnections` | Immutable observations of logical connections explicitly created by `SqliteConnectionFactory` or attached through its policy: `currentObservedOpenConnections`, `peakObservedOpenConnections`, `openTransitions`, `closeTransitions`, `poolingEnabledObservedOpenConnections`, and `poolingDisabledObservedOpenConnections` (Int64 counts). `null` only for a stored snapshot without this observation. |
+| `sqliteAllocatorAvailable` | Whether the SQLite raw provider was available at capture. If false, both allocator byte counters are `null`, not zero. |
+| `sqliteAllocatorCurrentBytes` | Current bytes reported by the current SQLite native library allocator, as an Int64; `null` when unavailable. An available zero is valid. |
+| `sqliteAllocatorPeakBytes` | Peak allocator bytes since the native library's last high-water reset, as an Int64, read without resetting; `null` when unavailable. |
+| `unattributedPrivateBytesAboveLastGcCommitment` | `max(0, privateMemoryBytes - gcCommittedBytes)`. The process and last-GC measurements are not atomic or necessarily contemporaneous. This difference does not identify native allocations, SQLite caches, or retained transcripts. |
+
+`gcCommittedBytes` and the other GC memory values describe the last collection, not current
+allocation ownership. `gcGenerations` copies the runtime's `GenerationInfo` slots in their original
+order, with sizes and fragmentation on entry to and exit from that collection. Slots are ordinal
+identifiers, not generation labels. These readings are not a current live-object count and are not
+atomic with current process-private memory. Both endpoints return this additive field; history
+preserves the immutable stored readings without resampling GC. No additional sampling timer or
+collection is introduced. See the [.NET 10 GC memory information source](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/GCMemoryInfo.cs)
+for the five-slot and before/after field contract.
+
+`lastGcCollection` comes from the same `GCMemoryInfo` sample as `gcCollectionIndex` and
+`gcGenerations`. `generation` identifies the collected generation, including younger generations;
+`concurrent` identifies a background GC. The pinned-object and ready-for-finalization counts are
+what that collection observed, not a current pinned-object population, live-object census, or
+finalization queue size. An available zero count is distinct from a missing (`null`) observation.
+`compacted` identifies a compacting GC but does not prove that process-private memory was reclaimed
+or returned to the operating system. Both endpoints preserve the immutable observation; history
+mapping does not resample GC. These fields help interpret collection and fragmentation readings,
+not identify the cause of retained memory. See the [.NET GC collection characteristics](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/GCMemoryInfo.cs).
+
+Capture does not force a collection. The pressure percentage and level
+continue to use GC commitment; the extra fields do not change alert thresholds or establish a
+safe memory bound. Use repeated samples and allocation profiling to investigate a peak.
+
+`sqliteConnections` is a coherent process-local observation captured under one lock, not an
+inventory of native handles. It excludes idle pooled native connections, connections that bypass
+the shared factory/policy, and other processes. Pooling counts describe the connection-string
+setting at entry into Open, not whether a particular database is actually pooled. An already-open
+connection begins observation as one open transition when attached. Open events are counted
+before open policy runs, including a policy failure or unavailable native handle; a later observed
+close/dispose balances them. Opens failing before an Open event are excluded. An abandoned open
+connection with no observed close cannot be reconciled by garbage collection, so the current count
+means observed opens not yet balanced by observed closes, not guaranteed currently live resources.
+Peak and transition counts cover the process lifetime, not the history window. Both endpoints
+preserve stored observations; reading history does not resample connections. No path, connection
+string, provider initialization, extra database query, pool clearing, or cache-policy change is
+introduced. These counts do not attribute the process-private memory gap or establish a safe bound.
+
+SQLite allocator counters cover only the current SQLite native library's allocator, not all
+SQLite mappings or page-cache memory, connection counts, or all process-native allocations.
+They do not establish that SQLite owns the private-minus-GC gap. Current and peak are separate,
+non-atomic reads; the peak is not scoped to the history window. Capture does not
+initialize or change the SQLite provider, open a database, release memory, or reset the peak.
+Both memory-pressure endpoints expose these fields; history returns the stored readings without
+resampling SQLite. These counters include SQLite allocator overhead but exclude underlying
+system-allocator overhead. SQLite memory-status collection can be disabled by its build or
+configuration; an available zero does not prove the absence of SQLite allocations. The sampler
+does not enable memory-status collection or change library configuration. See the SQLite
+[allocator statistics](https://www.sqlite.org/c3ref/memory_highwater.html) and
+[memory-status configuration](https://www.sqlite.org/c3ref/c_config_covering_index_scan.html#sqliteconfigmemstatus)
+contracts.
 
 ```json
 {

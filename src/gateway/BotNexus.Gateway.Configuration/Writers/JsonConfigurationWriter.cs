@@ -82,7 +82,7 @@ public sealed class JsonConfigurationWriter : IConfigurationWriter
 
         var current = await ReadDocumentAsync(cancellationToken).ConfigureAwait(false);
         var next = current ?? [];
-        ConfigDocumentPatcher.Apply(next, changes);
+        next.Apply(changes);
         await WriteAsync(next, reason, cancellationToken).ConfigureAwait(false);
     }
 

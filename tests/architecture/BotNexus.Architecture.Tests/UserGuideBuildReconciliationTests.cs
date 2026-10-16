@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+using System.Xml.Linq;
 
 namespace BotNexus.Architecture.Tests;
 
@@ -55,17 +57,85 @@ public sealed class UserGuideBuildReconciliationTests : ArchitectureTest, IDispo
             ignoreOrder: false);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResolveProjectStaticWebAssets_RegistersOnlyCurrentGuideSourcesOnce(bool warmOutput)
+    {
+        var sourceRoot = Path.Combine(_root, "docs");
+        var guideSource = Path.Combine(sourceRoot, "user-guide");
+        Directory.CreateDirectory(Path.Combine(guideSource, "nested"));
+        await File.WriteAllTextAsync(Path.Combine(guideSource, "legacy.md"), "legacy");
+        await File.WriteAllTextAsync(Path.Combine(guideSource, "nested", "current.md"), "current");
+        await File.WriteAllTextAsync(Path.Combine(guideSource, "guide-index.json"), "{}");
+        await File.WriteAllTextAsync(Path.Combine(sourceRoot, "skills.md"), "skills");
+
+        var outputRoot = Path.Combine(_root, "wwwroot");
+        Directory.CreateDirectory(outputRoot);
+        await File.WriteAllTextAsync(Path.Combine(outputRoot, "sentinel.txt"), "preserve me");
+        if (warmOutput)
+            await RunCopyTargetAsync(sourceRoot, outputRoot);
+        File.Delete(Path.Combine(guideSource, "legacy.md"));
+        await File.WriteAllTextAsync(Path.Combine(guideSource, "renamed.md"), "renamed");
+
+        // Keep the production SDK, properties, item declarations and targets. Remove only
+        // dependencies: resolving project assets needs neither compilation nor a restore.
+        // An isolated project directory prevents parallel tests from mutating real wwwroot.
+        var fixture = XDocument.Load(ClientProject);
+        var project = fixture.Root;
+        project.ShouldNotBeNull();
+        foreach (var dependency in project.Descendants()
+                     .Where(node => node.Name.LocalName is "PackageReference" or "ProjectReference" or "ServiceWorker")
+                     .ToArray())
+            dependency.Remove();
+        project.Add(new XElement("PropertyGroup",
+            new XElement("TargetFramework", "net10.0"),
+            new XElement("UserGuideSourceRoot", sourceRoot),
+            new XElement("UserGuideOutputRoot", outputRoot),
+            new XElement("WasmEnableHotReload", "false")));
+        var fixturePath = Path.Combine(_root, "guide-assets.csproj");
+        fixture.Save(fixturePath);
+
+        // Each invocation reevaluates Content, just like a project-reference build followed
+        // by SignalR's nested publish. Check both the first inventory and the cached repeat.
+        for (var invocation = 0; invocation < 2; invocation++)
+        {
+            var output = await RunMsBuildAsync(fixturePath,
+                "-t:ResolveProjectStaticWebAssets", "-getItem:StaticWebAsset");
+            using var inventory = JsonDocument.Parse(output);
+            var assets = inventory.RootElement.GetProperty("Items").GetProperty("StaticWebAsset")
+                .EnumerateArray().ToArray();
+            var guideAssets = assets.Where(asset =>
+                asset.GetProperty("RelativePath").GetString()?.StartsWith("guide/", StringComparison.Ordinal) == true)
+                .ToArray();
+            guideAssets.Select(asset => Path.GetRelativePath(outputRoot,
+                    asset.GetProperty("Identity").GetString() ?? string.Empty).Replace('\\', '/'))
+                .OrderBy(path => path, StringComparer.Ordinal).ToArray()
+                .ShouldBe(new[] { "guide/guide-index.json", "guide/nested/current.md", "guide/renamed.md", "guide/skills.md" },
+                    "clean, warm and repeated SDK discovery must register each current guide asset exactly once");
+            guideAssets.ShouldAllBe(asset => asset.GetProperty("AssetKind").GetString() == "All");
+            assets.Count(asset => asset.GetProperty("Identity").GetString() == Path.Combine(outputRoot, "sentinel.txt"))
+                .ShouldBe(1, "unrelated static assets must retain their SDK registration");
+            File.Exists(Path.Combine(outputRoot, "guide", "legacy.md")).ShouldBeFalse();
+        }
+    }
+
+    private string ClientProject => Repository.Path(
+        "src", "extensions", "BotNexus.Extensions.Channels.SignalR.BlazorClient",
+        "BotNexus.Extensions.Channels.SignalR.BlazorClient.csproj");
+
     private static string[] RelativeInventory(string root) =>
         Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
             .Select(path => Path.GetRelativePath(root, path).Replace('\\', '/'))
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToArray();
 
-    private async Task RunCopyTargetAsync(string sourceRoot, string outputRoot)
+    private async Task RunCopyTargetAsync(string sourceRoot, string outputRoot) =>
+        _ = await RunMsBuildAsync(ClientProject, "-t:CopyUserGuide",
+            $"-p:UserGuideSourceRoot={sourceRoot}", $"-p:UserGuideOutputRoot={outputRoot}");
+
+    private static async Task<string> RunMsBuildAsync(string project, params string[] arguments)
     {
-        var project = Repository.Path(
-            "src", "extensions", "BotNexus.Extensions.Channels.SignalR.BlazorClient",
-            "BotNexus.Extensions.Channels.SignalR.BlazorClient.csproj");
         var start = new ProcessStartInfo("dotnet")
         {
             RedirectStandardOutput = true,
@@ -75,11 +145,10 @@ public sealed class UserGuideBuildReconciliationTests : ArchitectureTest, IDispo
         };
         start.ArgumentList.Add("msbuild");
         start.ArgumentList.Add(project);
-        start.ArgumentList.Add("-t:CopyUserGuide");
         start.ArgumentList.Add("-nologo");
         start.ArgumentList.Add("-v:q");
-        start.ArgumentList.Add($"-p:UserGuideSourceRoot={sourceRoot}");
-        start.ArgumentList.Add($"-p:UserGuideOutputRoot={outputRoot}");
+        foreach (var argument in arguments)
+            start.ArgumentList.Add(argument);
 
         using var process = Process.Start(start);
         process.ShouldNotBeNull("dotnet msbuild must start for the guide target regression");
@@ -89,6 +158,7 @@ public sealed class UserGuideBuildReconciliationTests : ArchitectureTest, IDispo
         var output = await standardOutput;
         var error = await standardError;
 
-        process.ExitCode.ShouldBe(0, $"CopyUserGuide failed.{Environment.NewLine}{output}{Environment.NewLine}{error}");
+        process.ExitCode.ShouldBe(0, $"Guide MSBuild target failed.{Environment.NewLine}{output}{Environment.NewLine}{error}");
+        return output;
     }
 }

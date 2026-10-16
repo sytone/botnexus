@@ -1383,38 +1383,87 @@ Both shapes must fail with the resolved missing path. Neither shape may search a
 
 ### Register the repository
 
-> [!WARNING]
-> A compiled extension runs inside the gateway with full gateway trust and the gateway process's operating-system permissions. Registration is not a sandbox or code-signing decision. Review the repository, dependencies and requested revision before enabling it.
+**Main branch:** the lifecycle below is implemented on `main` at `a753ffe23` (including [#4505](https://github.com/Sytone/botnexus/pull/4505)). Check that your installed version includes it before using these commands.
 
-The current CLI stores repository metadata through the shared extension registry:
+> [!WARNING]
+> A compiled extension runs inside the gateway with full gateway trust and the gateway process's operating-system permissions. Its build can also execute repository-defined MSBuild tasks with the build process's permissions. Registration is not a sandbox or code-signing decision. Review the repository, dependencies and requested revision before enabling it. Enabled registrations participate in later lifecycle operations, not only an explicit sync.
+
+#### Before you start
+
+- Install Git and the .NET SDK required by the BotNexus checkout and the extension project. The reconciler invokes `git` and `dotnet` on the host and passes the resolved BotNexus checkout as `BotNexusRepoRoot` to extension builds.
+- Make the repository reachable from that host. For a private repository, configure Git credentials or SSH authentication for the operating-system account that runs the CLI or gateway. Git operations set `GIT_TERMINAL_PROMPT=0`; arrange noninteractive authentication, including any SSH host-key trust, before syncing. A portal session or an agent's GitHub tool credentials do not configure host Git authentication. Do not put credentials in the repository URL.
+- Use a compatible extension revision and keep a record of the requested ref and resolved commit. The registration ID identifies a source repository; each deployed extension uses its own manifest `id`.
+
+#### CLI method
+
+The URL below is fictional. Replace it with a repository you have reviewed and can access. Run these commands on the BotNexus host, using the same BotNexus home as the gateway:
 
 ```powershell
-botnexus extensions add --id reference-extension --url https://github.com/example/reference-extension.git --ref main
+# Save repository metadata; this does not fetch or execute repository content.
+botnexus extensions add --id reference-extension --url https://git.example.com/extensions/reference-extension.git --ref main
 botnexus extensions list
-botnexus extensions update --id reference-extension --ref v1.0.0
-botnexus extensions disable --id reference-extension
-botnexus extensions enable --id reference-extension
-botnexus extensions reconcile
-botnexus extensions remove --id reference-extension
+
+# Clone/update, resolve the ref, build and deploy all enabled registrations.
+botnexus extensions sync
+
+# Restart interrupts active gateway work and loads the deployed assemblies.
+botnexus gateway restart
 ```
 
-`--ref` accepts the branch, tag or commit the operator intends to reconcile. A commit gives the most reproducible registration; a tag is readable but can be moved by a repository owner; a branch follows future commits. Use `--no-updates` when the registration must not move automatically. The Configuration page exposes the same registry and requires an explicit trust acknowledgement.
+`extensions reconcile` is an alias for `extensions sync`. Adding, updating, enabling, disabling or removing a registration changes metadata only; synchronization is a separate operation. To review a registration before it participates in lifecycle work, add it with `--disabled` and enable it later with `botnexus extensions enable --id reference-extension`.
 
-`extensions reconcile` materializes every enabled registration under the managed BotNexus home. It clones a missing repository, fetches an existing clean clone when updates are enabled, resolves the requested branch, tag or commit to an exact SHA, and checks out that commit detached. The command records the clone path, attempted time, resolved SHA and bounded failure details in the shared registry. It returns a non-zero exit code when any enabled registration fails.
+`--ref` accepts a branch, tag or commit. A commit gives the most reproducible registration; a tag is readable but can be moved by a repository owner; a branch follows future commits. Use `--no-updates` on `add` or `update` to stop fetching an existing clone; it does not disable builds or deployment, and a missing clone is still cloned. Use `update --updates` to restore fetching. For example:
 
-Reconciliation is deliberately non-destructive. It does not reset, clean or delete a clone. A dirty clone, a local checkout that has diverged from the requested revision, a missing `origin`, or an invalid reference produces a named failure for the operator to resolve. When updates are disabled, an existing clone is inspected without fetching; an absent clone is still cloned so the registration can be materialized for the first time.
+```powershell
+botnexus extensions update --id reference-extension --ref v1.0.0
+botnexus extensions sync
+botnexus gateway restart
+```
 
-Registration and clone reconciliation do not build, deploy, load or grant the extension to an agent. Those lifecycle stages and Configuration-page **Sync Now** remain separate ordered work under [#3844](https://github.com/Sytone/botnexus/issues/3844).
+#### UI method
+
+The Configuration page exposes the same registry and requires an explicit trust acknowledgement when adding a repository. **Sync Now** is available for enabled registrations and runs the shared clone/ref/build/deploy pipeline for the selected repository. Deployment still reconciles all enabled repository sources and in-tree sources, using previous staged output for repositories not rebuilt by that request. Sync does not restart the running gateway or grant tools to an agent.
 
 ### Lifecycle, failure and removal
 
-The current reconciler owns only the managed source clone and persisted reconciliation status. Later build and deployment stages must validate a candidate before replacing a last-known-good deployment; a failed candidate must not stop the platform from restarting.
+#### What synchronization does
 
-Disabling a registration excludes it from clone reconciliation. Removing a registration removes its metadata only. Neither action deletes a managed clone because a dirty working tree may contain operator data; deletion requires a separate explicit action.
+`ExtensionLifecycleReconciler` performs these steps under a lock scoped to the BotNexus home. A process-local semaphore and an exclusive file lock serialize overlapping CLI and API passes across processes.
 
-Until build and deployment reconciliation are delivered, use the template's package and local-install scripts for development only. A later `botnexus serve`, gateway deployment or update can prune that manual deployment as stale. Keep the source repository and package so it can be rebuilt and installed again.
+1. **Materialize source.** Clone a missing repository under `<BotNexus home>/extension-repositories/<registration-id>/repository`. For an existing clean clone, fetch when updates are enabled, resolve the requested branch, tag or commit to an exact SHA, and check out that commit detached.
+2. **Discover and build.** Recursively find every `.csproj` with a `botnexus-extension.json` in the same directory. A repository can contain multiple extension projects; test or helper projects without an adjacent manifest are not selected. Build each selected project in `Release`, with `BotNexusRepoRoot` and a separate output directory inside a candidate generation. No selected projects is a named failure.
+3. **Validate and deploy.** Once all selected projects build, validate their outputs and reconcile them with in-tree outputs and other enabled registered sources into `<BotNexus home>/extensions/<manifest-id>`. Deployment checks manifests, entry assemblies and extension-ID collisions before activation. Each extension directory uses atomic replacement with retry/rollback handling; this is not an all-repositories atomic switch.
+4. **Record the result.** Promote the candidate to the repository's `staged` directory and record lifecycle success only after deployment is accepted for that repository. The registry also stores the clone path, attempt time, resolved commit and bounded named failure details.
 
-After deployment and gateway restart, verify `GET /api/extensions`, the intended agent's available tools, and one fresh conversation. A directory on disk proves only that files were copied.
+The same pipeline runs from `botnexus build`, `botnexus update`, `botnexus serve`, and gateway start/restart. Where those paths build BotNexus, reconciliation follows a successful platform build. Repository failures are reported but do not by themselves fail the platform build or prevent update/startup from continuing. Explicit `extensions sync` returns a non-zero exit code if an enabled repository fails; the API reports a failed selected sync to the caller.
+
+#### Failure and last-known-good output
+
+Source reconciliation never resets, cleans or deletes the managed clone. A dirty clone, a current commit that is not an ancestor of the requested commit, a missing or mismatched `origin`, or an invalid ref produces a named failure. With `--no-updates`, an existing clone resolves refs from locally available Git objects without fetching. Preserve local work and resolve the reported condition explicitly rather than expecting sync to discard it.
+
+A clone or build failure does not promote a partial candidate generation: the previous staged generation remains a deployment source for an enabled registration. Registered-source validation failures preserve source-owned last-known-good live directories when available. Activation failures attempt to restore the previous live directory; rollback can also fail, so inspect the named diagnostic before relying on that deployment. Other repositories can continue. A first-time failure has no previous deployment to fall back to, and a successful pass can remove obsolete output. Last-known-good handling is not a guarantee of extension compatibility or a backup of operator data.
+
+Registered output is included in normal deployment reconciliation; it is not treated as an unrelated manual installation and blindly pruned on the next serve or update. Unregistered manual package installations can still be pruned as stale. Keep the source and package if using the template's local-install scripts for development.
+
+#### Disable or remove
+
+```powershell
+# Retain metadata but exclude this repository from future builds/deployment sources.
+botnexus extensions disable --id reference-extension
+botnexus extensions sync
+botnexus gateway restart
+
+# Alternatively, remove its registration metadata.
+botnexus extensions remove --id reference-extension
+```
+
+Disable/remove does not immediately unload code, delete the managed clone, or delete its staged files. A later deployment pass excludes disabled or removed registrations and can prune their live extension directories. When at least one registration remains (even if all are disabled), maintenance sync runs that deployment pass. If removing the final registration leaves the registry empty, `extensions sync` and `botnexus build` perform no deployment work. Host-startup reconciliation used by serve, update and gateway start/restart still refreshes in-tree deployment and prunes stale live output with an empty registry. Restart is required to stop using assemblies already loaded in a running gateway. Delete preserved clone/staging data only as a separate explicit action after checking for local work.
+
+#### Configure, grant and verify
+
+Registration, deployment, loading, extension configuration and an agent's tool grants are separate decisions. Configure values by each manifest `id` in its declared [configuration scopes](#explicit-extension-configuration-scopes), and grant the intended tool IDs through the agent's [tool configuration](user-guide/agents.md). A successful sync does not supply extension secrets, change tool grants, or hot-reload assemblies in the running gateway.
+
+After deployment and gateway restart, verify `GET /api/extensions`, the intended agent's available tools, and one fresh conversation. Check the persisted reconciliation status and gateway logs when something is missing. A directory on disk proves only that files were copied; a resolved SHA alone does not prove the latest build and deployment succeeded.
 
 ---
 

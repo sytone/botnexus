@@ -1,9 +1,13 @@
+using BotNexus.Gateway.Abstractions.Conversations;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Cron;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Api.Models;
+using BotNexus.Gateway.Api.Services;
+using BotNexus.Gateway.Contracts.Agents;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Extensions;
 using BotNexus.Gateway.Abstractions.Extensions;
@@ -23,6 +27,9 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/[controller]")]
 public sealed class AgentsController : ControllerBase
 {
+    private readonly ISessionCompactionDiagnostics? _compactionDiagnostics;
+    private readonly ISessionStore? _sessions;
+    private readonly IConversationStore? _conversations;
     private readonly IAgentRegistry _registry;
     private readonly IAgentSupervisor _supervisor;
     private readonly IAgentConfigurationWriter _configurationWriter;
@@ -30,9 +37,8 @@ public sealed class AgentsController : ControllerBase
     private readonly IHeartbeatProvisioner? _heartbeatProvisioner;
     private readonly ISkillReviewProvisioner? _skillReviewProvisioner;
     private readonly IAgentWebhookProvisioner? _webhookProvisioner;
-    private readonly ModelRegistry? _modelRegistry;
-    private readonly IExtensionLoader? _extensionLoader;
     private readonly ILogger<AgentsController> _logger;
+    private readonly AgentLifecycleService _lifecycle;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentsController"/> class.
@@ -47,8 +53,14 @@ public sealed class AgentsController : ControllerBase
         ModelRegistry? modelRegistry = null,
         ILogger<AgentsController>? logger = null,
         IAgentWebhookProvisioner? webhookProvisioner = null,
-        IExtensionLoader? extensionLoader = null)
+        IExtensionLoader? extensionLoader = null,
+        ISessionStore? sessions = null,
+        IConversationStore? conversations = null,
+        ISessionCompactionDiagnostics? compactionDiagnostics = null)
     {
+        _compactionDiagnostics = compactionDiagnostics;
+        _sessions = sessions;
+        _conversations = conversations;
         _registry = registry;
         _supervisor = supervisor;
         _configurationWriter = configurationWriter;
@@ -56,9 +68,8 @@ public sealed class AgentsController : ControllerBase
         _heartbeatProvisioner = heartbeatProvisioner;
         _skillReviewProvisioner = skillReviewProvisioner;
         _webhookProvisioner = webhookProvisioner;
-        _modelRegistry = modelRegistry;
-        _extensionLoader = extensionLoader;
         _logger = logger ?? NullLogger<AgentsController>.Instance;
+        _lifecycle = new AgentLifecycleService(registry, configurationWriter, _agentChangeNotifiers, heartbeatProvisioner, skillReviewProvisioner, webhookProvisioner, NullLogger<AgentLifecycleService>.Instance, modelRegistry, extensionLoader);
     }
 
     /// <summary>
@@ -154,79 +165,12 @@ public sealed class AgentsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult> Register([FromBody] AgentDescriptor descriptor, CancellationToken cancellationToken)
     {
-        // Defaults are materialized by the server from agents.defaults and are never client-owned.
-        descriptor = descriptor with { DefaultExtensionConfig = new Dictionary<string, System.Text.Json.JsonElement>() };
-
-        if (descriptor.Kind == AgentKind.SubAgent)
-        {
-            return BadRequest(new
-            {
-                error = "Kind = SubAgent is reserved for runtime-spawned sub-agents and may not be registered via the REST API."
-            });
-        }
-
-        // #2065: reject incomplete descriptors up front. A descriptor missing DisplayName/ModelId/
-        // ApiProvider/IsolationStrategy would, once persisted, clear those properties on the next
-        // config reload. Validation happens before any registry or disk mutation.
-        var validationErrors = BotNexus.Gateway.Agents.AgentDescriptorValidator.ValidateForConfig(descriptor, null, _modelRegistry);
-        if (validationErrors.Count > 0)
-            return BadRequest(new { error = string.Join(" ", validationErrors) });
-        var extensionScopeErrors = ValidateExtensionConfigurationScopes(null, descriptor);
-        if (extensionScopeErrors.Count > 0)
-            return BadRequest(new { error = string.Join(" ", extensionScopeErrors) });
-
-        var agentId = descriptor.AgentId;
-        if (_registry.Contains(agentId))
-            return Conflict(new { error = $"Agent '{agentId.Value}' is already registered." });
-
-        // 1) Persist config first. If the disk write fails, nothing has touched the registry.
         try
         {
-            await _configurationWriter.SaveAsync(descriptor, cancellationToken);
+            var applied = await _lifecycle.ApplyAsync(AgentProposalKind.Create, descriptor, cancellationToken);
+            return CreatedAtAction(nameof(Get), new { agentId = applied.AgentId }, applied);
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to persist config for new agent {AgentId}; registry not modified.", agentId.Value);
-            return Problem(
-                detail: $"Failed to persist agent configuration: {ex.Message}",
-                statusCode: StatusCodes.Status500InternalServerError);
-        }
-
-        // 2) Commit the registry. A duplicate here is a race - surface as a conflict.
-        try
-        {
-            _registry.Register(descriptor);
-        }
-        catch (InvalidOperationException ex)
-        {
-            await CompensateConfigDeleteAsync(agentId, cancellationToken);
-            return Conflict(new { error = ex.Message });
-        }
-
-        // 3) Provision downstream side effects. On failure, roll back both registry and config.
-        try
-        {
-            if (_heartbeatProvisioner is not null)
-                await _heartbeatProvisioner.ProvisionAsync(descriptor, cancellationToken);
-            if (_skillReviewProvisioner is not null)
-                await _skillReviewProvisioner.ProvisionAsync(descriptor, cancellationToken);
-            // #3523: the webhook binding is part of what makes a newly created agent usable, so it
-            // shares the create path's rollback semantics rather than being best-effort.
-            if (_webhookProvisioner is not null)
-                await _webhookProvisioner.ProvisionAsync(descriptor, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Provisioning failed for new agent {AgentId}; rolling back registry and config.", agentId.Value);
-            _registry.Unregister(agentId);
-            await CompensateConfigDeleteAsync(agentId, cancellationToken);
-            return Problem(
-                detail: $"Failed to provision agent side effects: {ex.Message}",
-                statusCode: StatusCodes.Status500InternalServerError);
-        }
-
-        await NotifyAgentsChangedBestEffortAsync("added", agentId.Value, cancellationToken);
-        return CreatedAtAction(nameof(Get), new { agentId = descriptor.AgentId }, descriptor);
+        catch (AgentLifecycleException ex) { return LifecycleError(ex); }
     }
 
     /// <summary>
@@ -313,91 +257,20 @@ public sealed class AgentsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<AgentDescriptor>> Update(string agentId, [FromBody] AgentDescriptor descriptor, CancellationToken cancellationToken)
     {
-        if (!TryParseAgentId(agentId, out _, out var routeError))
-            return BadRequest(new { error = routeError });
-
+        if (!TryParseAgentId(agentId, out _, out var routeError)) return BadRequest(new { error = routeError });
         if (!string.Equals(agentId, descriptor.AgentId.Value, StringComparison.OrdinalIgnoreCase))
-        {
-            return BadRequest(new
-            {
-                error = $"Route agentId '{agentId}' does not match payload agentId '{descriptor.AgentId}'."
-            });
-        }
-
-        if (descriptor.Kind == AgentKind.SubAgent)
-        {
-            return BadRequest(new
-            {
-                error = "Kind = SubAgent is reserved for runtime-spawned sub-agents and may not be set via the REST API."
-            });
-        }
-
-        var typedAgentId = AgentId.From(agentId);
-        var previous = _registry.Get(typedAgentId);
-        if (previous is null)
-            return NotFound();
-
-        // Defaults are materialized by the server from agents.defaults and are never client-owned.
-        descriptor = descriptor with { DefaultExtensionConfig = previous.DefaultExtensionConfig };
-
-        // #2065: reject incomplete descriptors before any mutation so an update cannot silently
-        // clear persisted required properties.
-        var validationErrors = BotNexus.Gateway.Agents.AgentDescriptorValidator.ValidateForConfig(descriptor, null, _modelRegistry);
-        if (validationErrors.Count > 0)
-            return BadRequest(new { error = string.Join(" ", validationErrors) });
-
-        var extensionScopeErrors = ValidateExtensionConfigurationScopes(previous, descriptor);
-        if (extensionScopeErrors.Count > 0)
-            return BadRequest(new { error = string.Join(" ", extensionScopeErrors) });
-
-        // 1) Persist config first. On failure the registry still holds the previous descriptor.
-        try
-        {
-            await _configurationWriter.SaveAsync(descriptor, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to persist config for updated agent {AgentId}; registry unchanged.", agentId);
-            return Problem(
-                detail: $"Failed to persist agent configuration: {ex.Message}",
-                statusCode: StatusCodes.Status500InternalServerError);
-        }
-
-        // 2) Commit the registry.
-        var wasUpdated = _registry.Update(typedAgentId, descriptor);
-        if (!wasUpdated)
-        {
-            // Concurrently removed between the Get and the Update; restore config to match.
-            await CompensateConfigDeleteAsync(typedAgentId, cancellationToken);
-            return NotFound();
-        }
-
-        // 3) Provision downstream side effects. On failure, restore registry and config to previous.
-        try
-        {
-            if (_heartbeatProvisioner is not null)
-                await _heartbeatProvisioner.ProvisionAsync(descriptor, cancellationToken);
-            if (_skillReviewProvisioner is not null)
-                await _skillReviewProvisioner.ProvisionAsync(descriptor, cancellationToken);
-            // #3523: a display-name change must reach the downstream target, otherwise it shows a
-            // stale name indefinitely. ProvisionAsync is create-or-leave-alone, so this re-sends
-            // the existing binding rather than re-keying it.
-            if (_webhookProvisioner is not null)
-                await _webhookProvisioner.ProvisionAsync(descriptor, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Provisioning failed for updated agent {AgentId}; rolling back to previous descriptor.", agentId);
-            _registry.Update(typedAgentId, previous);
-            await CompensateConfigSaveAsync(previous, cancellationToken);
-            return Problem(
-                detail: $"Failed to provision agent side effects: {ex.Message}",
-                statusCode: StatusCodes.Status500InternalServerError);
-        }
-
-        await NotifyAgentsChangedBestEffortAsync("updated", descriptor.AgentId.Value, cancellationToken);
-        return Ok(descriptor);
+            return BadRequest(new { error = $"Route agentId '{agentId}' does not match payload agentId '{descriptor.AgentId}'." });
+        try { return Ok(await _lifecycle.ApplyAsync(AgentProposalKind.Update, descriptor, cancellationToken)); }
+        catch (AgentLifecycleException ex) { return LifecycleError(ex); }
     }
+
+    private ActionResult LifecycleError(AgentLifecycleException ex) => ex.Kind switch
+    {
+        AgentLifecycleFailureKind.Validation => BadRequest(new { error = ex.Message }),
+        AgentLifecycleFailureKind.Conflict => Conflict(new { error = ex.Message }),
+        AgentLifecycleFailureKind.NotFound => NotFound(),
+        _ => Problem(detail: ex.Message, statusCode: StatusCodes.Status500InternalServerError),
+    };
 
     /// <summary>
     /// Unregisters an agent.
@@ -540,6 +413,13 @@ public sealed class AgentsController : ControllerBase
     [HttpPost("{agentId}/sessions/{sessionId}/stop")]
     public async Task<ActionResult> StopInstance(string agentId, string sessionId, CancellationToken cancellationToken)
     {
+        if (_sessions is null)
+            return NotFound();
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(sessionId), cancellationToken), AgentId.From(agentId), cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var typedAgentId = AgentId.From(agentId);
         var typedSessionId = SessionId.From(sessionId);
         await _supervisor.StopAsync(typedAgentId, typedSessionId, cancellationToken);
@@ -569,6 +449,21 @@ public sealed class AgentsController : ControllerBase
     /// </para>
     /// </remarks>
     [HttpGet("{agentId}/sessions/{sessionId}/context")]
+    public async Task<ActionResult> GetContextAsync(string agentId, string sessionId, CancellationToken cancellationToken = default)
+    {
+        var handle = GetAgentHandle(agentId, sessionId);
+        if (handle is null) return NotFound(NoActiveHandleMessage);
+        var inspector = handle as IAgentHandleInspector;
+        var diag = inspector?.GetContextDiagnostics();
+        if (diag is null) return NotFound("Handle does not support diagnostics.");
+        var policy = _compactionDiagnostics is null ? null
+            : await _compactionDiagnostics.ResolveAsync(AgentId.From(agentId), SessionId.From(sessionId), cancellationToken);
+        return Ok(BuildContextResponse(agentId, sessionId, diag, inspector?.GetContextWindowTokens(),
+            inspector?.GetContextBudgetDiagnostics(), policy));
+    }
+
+    /// <summary>Legacy synchronous helper for direct callers; HTTP uses fresh asynchronous policy resolution.</summary>
+    [NonAction]
     public ActionResult GetContext(string agentId, string sessionId)
     {
         var handle = GetAgentHandle(agentId, sessionId);
@@ -576,7 +471,8 @@ public sealed class AgentsController : ControllerBase
         var diag = (handle as IAgentHandleInspector)?.GetContextDiagnostics();
         if (diag is null) return NotFound("Handle does not support diagnostics.");
         var window = (handle as IAgentHandleInspector)?.GetContextWindowTokens();
-        return Ok(BuildContextResponse(agentId, sessionId, diag, window));
+        var budget = (handle as IAgentHandleInspector)?.GetContextBudgetDiagnostics();
+        return Ok(BuildContextResponse(agentId, sessionId, diag, window, budget));
     }
 
     /// <summary>
@@ -630,18 +526,29 @@ public sealed class AgentsController : ControllerBase
     /// <param name="contextWindowTokens">
     /// The resolved context window in tokens, or <see langword="null"/> when unresolvable.
     /// </param>
+    /// <param name="compactionPolicy">Fresh token trigger policy; null when unavailable.</param>
+    /// <param name="contextBudget">
+    /// The handle's source-backed binding snapshot, when available. Its working budget is the
+    /// denominator; the legacy window remains supported for inspectors without provenance.
+    /// </param>
     public static object BuildContextResponse(
         string agentId,
         string sessionId,
         ContextDiagnostics diag,
-        int? contextWindowTokens = null)
+        int? contextWindowTokens = null,
+        ContextBudgetDiagnostics? contextBudget = null,
+        CompactionPolicyDiagnostics? compactionPolicy = null)
     {
+        if (contextBudget is not null)
+            contextWindowTokens = contextBudget.EffectiveWorkingBudgetTokens;
         return new
         {
             agentId,
             sessionId,
             totalEstimatedTokens = diag.TotalEstimatedTokens,
             contextWindowTokens,
+            contextBudget,
+            compactionPolicy,
             usagePercent = contextWindowTokens is > 0
                 ? Math.Round((double)diag.TotalEstimatedTokens / contextWindowTokens.Value * 100, 1)
                 : (double?)null,
@@ -732,48 +639,6 @@ public sealed class AgentsController : ControllerBase
         var typedSessionId = SessionId.From(sessionId);
         var supervisorImpl = _supervisor as BotNexus.Gateway.Agents.DefaultAgentSupervisor;
         return supervisorImpl?.GetHandle(typedAgentId, typedSessionId);
-    }
-
-    // Compensation: best-effort delete of a just-written config entry when a later lifecycle step
-    // fails. A failure to compensate is logged but cannot itself surface a new error - the caller
-    // is already returning a 500 for the primary failure.
-    private async Task CompensateConfigDeleteAsync(AgentId agentId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await _configurationWriter.DeleteAsync(agentId, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Rollback failed: could not delete persisted config for agent {AgentId} after a lifecycle failure.", agentId.Value);
-        }
-    }
-
-    // Compensation: best-effort restore of the previous descriptor to config when an update's
-    // provisioning step fails after the config was already overwritten.
-    private async Task CompensateConfigSaveAsync(AgentDescriptor previous, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await _configurationWriter.SaveAsync(previous, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Rollback failed: could not restore previous config for agent {AgentId} after a lifecycle failure.", previous.AgentId.Value);
-        }
-    }
-
-    private IReadOnlyList<string> ValidateExtensionConfigurationScopes(
-        AgentDescriptor? previous,
-        AgentDescriptor candidate)
-    {
-        if (_extensionLoader is null)
-            return [];
-
-        return ExtensionConfigurationScopeValidator.ValidateAgentChanges(
-            previous,
-            candidate,
-            _extensionLoader.GetLoaded());
     }
 
     private async Task NotifyAgentsChangedBestEffortAsync(string changeType, string? agentId, CancellationToken cancellationToken)

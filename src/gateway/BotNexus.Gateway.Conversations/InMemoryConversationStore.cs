@@ -69,6 +69,8 @@ public sealed class InMemoryConversationStore : IConversationStore
 
     public Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
+        if (conversation.CompactionTokenCeiling is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(conversation), "CompactionTokenCeiling must be positive or null.");
         StampWorldId(conversation);
         if (!_conversations.TryAdd(conversation.ConversationId.Value, conversation))
             throw new InvalidOperationException($"A conversation with id '{conversation.ConversationId}' already exists.");
@@ -78,6 +80,8 @@ public sealed class InMemoryConversationStore : IConversationStore
     /// <inheritdoc />
     public Task SaveAsync(Conversation conversation, CancellationToken ct = default)
     {
+        if (conversation.CompactionTokenCeiling is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(conversation), "CompactionTokenCeiling must be positive or null.");
         if (conversation.Status == ConversationStatus.Archived && conversation.ActiveSessionId is not null)
             throw new InvalidOperationException($"Conversation '{conversation.ConversationId}' cannot be archived while an active session is assigned.");
         StampWorldId(conversation);
@@ -89,14 +93,43 @@ public sealed class InMemoryConversationStore : IConversationStore
     /// <inheritdoc />
     public Task ArchiveAsync(ConversationId conversationId, CancellationToken ct = default)
     {
-        if (_conversations.TryGetValue(conversationId.Value, out var existing))
-            _conversations[conversationId.Value] = existing with
+        _ = TryArchiveCore(conversationId);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task<bool> TryArchiveAsync(
+        ConversationId conversationId,
+        string source,
+        string? correlationId,
+        string actor,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(TryArchiveCore(conversationId));
+    }
+
+    private bool TryArchiveCore(ConversationId conversationId)
+    {
+        while (_conversations.TryGetValue(conversationId.Value, out var existing))
+        {
+            if (existing.Status != ConversationStatus.Active)
+                return false;
+
+            var archived = existing with
             {
                 Status = ConversationStatus.Archived,
                 ActiveSessionId = null,
-                UpdatedAt = DateTimeOffset.UtcNow
+                UpdatedAt = DateTimeOffset.UtcNow,
+                Version = existing.Version + 1
             };
-        return Task.CompletedTask;
+            if (_conversations.TryUpdate(conversationId.Value, archived, existing))
+                return true;
+        }
+
+        return false;
     }
 
     /// <inheritdoc />
@@ -273,6 +306,8 @@ public sealed class InMemoryConversationStore : IConversationStore
     public async Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(patch);
+        if (patch.CompactionTokenCeiling.IsSet && patch.CompactionTokenCeiling.Value is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(patch), "CompactionTokenCeiling must be positive or null.");
         var conversationLock = GetParticipantLock(conversationId.Value);
         await conversationLock.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -284,6 +319,7 @@ public sealed class InMemoryConversationStore : IConversationStore
                 ModelOverride = patch.Model.IsSet ? patch.Model.Value : existing.ModelOverride,
                 ThinkingOverride = patch.Thinking.IsSet ? patch.Thinking.Value : existing.ThinkingOverride,
                 ContextWindowOverride = patch.ContextWindow.IsSet ? patch.ContextWindow.Value : existing.ContextWindowOverride,
+                CompactionTokenCeiling = patch.CompactionTokenCeiling.IsSet ? patch.CompactionTokenCeiling.Value : existing.CompactionTokenCeiling,
                 ToolOverrideJson = patch.ToolOverrideJson.IsSet ? patch.ToolOverrideJson.Value : existing.ToolOverrideJson,
                 UpdatedAt = DateTimeOffset.UtcNow
             };
@@ -325,6 +361,25 @@ public sealed class InMemoryConversationStore : IConversationStore
             .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
             .Select(ToSummary)];
         return Task.FromResult(summaries);
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<ConversationRetentionCandidate>> GetRetentionCandidatesAsync(
+        ConversationSource? source = null,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        IReadOnlyList<ConversationRetentionCandidate> candidates = [.. _conversations.Values
+            .Where(c => c.Status == ConversationStatus.Active && (!source.HasValue || c.Source == source.Value))
+            .OrderBy(c => c.UpdatedAt)
+            .Select(c => new ConversationRetentionCandidate(
+                c.ConversationId,
+                c.AgentId,
+                c.UpdatedAt,
+                c.IsPinned,
+                c.Source,
+                c.SourceId))];
+        return Task.FromResult(candidates);
     }
 
     /// <inheritdoc />

@@ -14,7 +14,7 @@ public sealed class SchemaFormFocusCssTests
     [Fact]
     public void Keyboard_focus_retains_the_global_outline_for_schema_controls()
     {
-        var css = File.ReadAllText(s_cssPath);
+        var css = File.ReadAllText(s_cssPath).Replace("\r\n", "\n", StringComparison.Ordinal);
         var focusRule = FindRule(css,
             ".schema-field-control > input:focus,\n.schema-field-control > select:focus");
 

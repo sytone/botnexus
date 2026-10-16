@@ -376,6 +376,11 @@ public sealed class CronBackoffNotStaleTests
         var task = method!.Invoke(scheduler, [CancellationToken.None]) as Task;
         Assert.NotNull(task);
         await task!;
+
+        // #4688: the tick now dispatches and returns, so completion must be awaited explicitly.
+        // These suites assert on executed runs and their persisted bookkeeping, not on dispatch
+        // latency, so draining here preserves their original intent.
+        await scheduler.WaitForInFlightAsync();
     }
 
     private static CronScheduler CreateScheduler(

@@ -59,6 +59,7 @@ public static class AgentDescriptorConfigMapping
         nameof(AgentDescriptor.CacheRetentionMode),
         nameof(AgentDescriptor.Thinking),
         nameof(AgentDescriptor.ContextWindow),
+        nameof(AgentDescriptor.CompactionTokenCeiling),
         nameof(AgentDescriptor.MaxConcurrentSessions),
         nameof(AgentDescriptor.Metadata),
         nameof(AgentDescriptor.IsolationOptions),

@@ -19,6 +19,10 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/AgentsController.cs`.
 | POST | `/api/agents` | Register a new agent. |
 | PUT | `/api/agents/{agentId}` | Update an existing agent descriptor. |
 | DELETE | `/api/agents/{agentId}` | Unregister an agent. |
+| GET | `/api/agent-proposals` | List governed agent proposals (operator-facing surface only). |
+| GET | `/api/agent-proposals/{proposalId}` | Get one proposal and its audit/application state (operator-facing surface only). |
+| POST | `/api/agent-proposals/{proposalId}/review` | Approve or reject one proposal (operator-facing surface only). |
+| POST | `/api/agent-proposals/{proposalId}/reconcile` | Record evidence resolving an ambiguous application (operator-facing surface only). |
 | GET | `/api/agents/instances` | List all active agent instances. |
 | GET | `/api/agents/{agentId}/health` | Runtime health across an agent's instances. |
 | GET | `/api/agents/{agentId}/sessions/{sessionId}/status` | Status of one running instance. |
@@ -108,6 +112,54 @@ Returns `204 No Content`, or `500` when config deletion fails.
 > Successful create, update, and delete each publish an `AgentsChanged` notification
 > (`changeType` = `added` / `updated` / `removed`) to registered change notifiers — see the
 > [SignalR hub reference](signalr.md#agentschangedpayload).
+
+---
+
+## Governed proposal review
+
+The proposal review API is an **operator-action** boundary, not a human administrator role. It
+uses the same optional access policy as the rest of the gateway: keyless deployments remain valid,
+while deployments configured with API keys require one through normal gateway middleware. Proposal
+actions additionally require server-stamped unrestricted caller provenance. Agent-scoped API keys
+and satellite credentials return `403` without reading or changing proposal state. The request body
+cannot promote itself to operator provenance, and no proposal-review tool is exposed to agents.
+
+`GET /api/agent-proposals` accepts an optional `status` query (`Pending`, `Approved`, or
+`Rejected`). `GET /api/agent-proposals/{proposalId}` returns the complete stored candidate, first
+review decision, append-only review history, and durable application outcome.
+
+`POST /api/agent-proposals/{proposalId}/review` accepts:
+
+```json
+{ "decision": "Approved", "reason": "optional human rationale" }
+```
+
+Reviewer identity is derived from the server-stamped operator request provenance and cannot be
+supplied in the request. The first terminal decision wins. Repeating or racing a review returns `409` and cannot
+replace the reviewer, decision, reason, or history. Rejection changes neither agent configuration nor the runtime registry. For an agent proposer, it
+appends a durable `Notification` transcript row to the proposer's most recently updated active
+persisted conversation/session. This does not start an agent run. If no such persisted destination
+exists, the review request fails rather than claiming notification succeeded. Approval applies only
+the complete descriptor stored in the proposal ledger through the same canonical lifecycle service
+used by direct REST create/update, including server-owned `defaultExtensionConfig`, extension-scope
+validation, configuration writer, registry, provisioners, compensation, and change notifications.
+
+Approved proposals retain a durable application status: `Pending`, `Applying`, `Applied`, `Failed`,
+`ReconciledApplied`, or `ReconciledNotApplied`, together with attempt count, completion time, and
+recoverable evidence text. An application failure returns `500` and is never reported as success.
+An identical approval may explicitly retry a `Failed` or `ReconciledNotApplied` application.
+`Applying`, `Applied`, and `ReconciledApplied` proposals cannot be applied again.
+
+A process crash can leave `Applying`, which deliberately means the lifecycle effect might already
+have committed. The gateway never reclaims or retries that state automatically. The operator
+must verify configuration/runtime state externally, then call
+`POST /api/agent-proposals/{proposalId}/reconcile` with either `Applied` or `NotApplied` and required
+free-text evidence. Reconciliation only records that conclusion; it never invokes lifecycle work.
+`Applied` closes the proposal. `NotApplied` makes a later explicit identical approval eligible for a
+new attempt.
+
+The review API does **not** enable governed proposal rollout by itself. Direct create/update tools
+remain unchanged until the separately owned proposal-tool and bypass-restriction work lands.
 
 ---
 

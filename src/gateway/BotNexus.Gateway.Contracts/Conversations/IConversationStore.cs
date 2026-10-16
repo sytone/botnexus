@@ -123,6 +123,19 @@ public interface IConversationStore
         => ArchiveAsync(conversationId, ct);
 
     /// <summary>
+    /// Atomically archives an active conversation and records lifecycle provenance.
+    /// Returns <see langword="true"/> only when this caller performed the Active-to-Archived
+    /// transition; missing or already archived conversations return <see langword="false"/>.
+    /// </summary>
+    Task<bool> TryArchiveAsync(
+        ConversationId conversationId,
+        string source,
+        string? correlationId,
+        string actor,
+        CancellationToken ct = default)
+        => throw new NotSupportedException("This conversation store does not implement atomic archive transitions.");
+
+    /// <summary>
     /// Resolves an active conversation for the given agent and channel binding details.
     /// Returns <c>null</c> if no matching conversation exists.
     /// </summary>
@@ -247,6 +260,26 @@ public interface IConversationStore
     /// </remarks>
     /// <param name="ct">Cancellation token.</param>
     Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns active retention candidates using only lifecycle, ownership, timestamp, pin, and
+    /// source provenance fields. Implementations must not hydrate bindings, participants, or blobs.
+    /// </summary>
+    async Task<IReadOnlyList<ConversationRetentionCandidate>> GetRetentionCandidatesAsync(
+        ConversationSource? source = null,
+        CancellationToken ct = default)
+    {
+        var conversations = await ListAsync(ct: ct).ConfigureAwait(false);
+        return [.. conversations
+            .Where(c => c.Status == ConversationStatus.Active && (!source.HasValue || c.Source == source.Value))
+            .Select(c => new ConversationRetentionCandidate(
+                c.ConversationId,
+                c.AgentId,
+                c.UpdatedAt,
+                c.IsPinned,
+                c.Source,
+                c.SourceId))];
+    }
 
     /// <summary>
     /// Returns every conversation that currently holds a non-empty durable pending <c>ask_user</c>

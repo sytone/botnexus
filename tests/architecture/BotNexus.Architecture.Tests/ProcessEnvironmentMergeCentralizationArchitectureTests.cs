@@ -80,9 +80,13 @@ public sealed class ProcessEnvironmentMergeCentralizationArchitectureTests : Arc
         {
             var source = File.ReadAllText(ResolvePath(relative));
 
-            source.Contains("ProcessEnvironment.Merge", StringComparison.Ordinal).ShouldBeTrue(
-                $"{relative} must apply caller-supplied environment overrides through the shared " +
-                "ProcessEnvironment.Merge helper (#2892).");
+            var seam = relative.Contains("ExecTool", StringComparison.Ordinal)
+                ? "LocalChildEnvironment.Apply" : "ProcessEnvironment.Merge";
+            source.Contains(seam, StringComparison.Ordinal).ShouldBeTrue(
+                $"{relative} must apply caller-supplied environment overrides through {seam} (#2892, #4749).");
+            if (seam == "LocalChildEnvironment.Apply")
+                File.ReadAllText(ResolvePath("src/agent/BotNexus.Agent.Core/Tools/LocalChildEnvironment.cs"))
+                    .ShouldContain("ProcessEnvironment.Merge");
         }
     }
 

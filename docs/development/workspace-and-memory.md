@@ -677,42 +677,19 @@ Memory consolidation is the process of distilling daily notes into long-term mem
 
 ### Consolidation Trigger
 
-- **Interval**: Configurable via `MemoryConsolidationIntervalHours` (default: 24)
-- **Mechanism**: Cron service — runs as a `maintenance` job with `consolidate-memory` action (see [Cron and Scheduling Guide](../cron-and-scheduling.md))
-- **Manual**: Not yet available — Wave 5 consolidation will provide a dedicated mechanism
+**Main branch:** source-verified at `08ae4a8c353ce8a6ecfa6d866c53b70be86a8310`. `MemoryDreamingCronAction` is implemented and registered; it is not an unimplemented future feature. Configure a cron job with action type `memory-dreaming`, an `agentId`, and a schedule. There is no registered automatic dreaming provisioner or `MemoryConsolidationIntervalHours` setting. The [cron guide](../cron-and-scheduling.md#_8-4-memory-dreaming) owns job fields, metadata defaults, and an example schedule.
 
 ### Consolidation Process
 
-Consolidation is a **future capability** (Wave 5). During normal turns, `MEMORY.md` is read-only — only daily notes under `memory/` are writable via `memory_save`.
+The action reads recent daily notes and existing workspace `MEMORY.md`, builds an LLM prompt, and dispatches a cron-triggered session. It skips when there are no recent notes. `MarkdownAgentMemory.ConsolidateAsync` does not provide a separate manual consolidation implementation.
 
-When consolidation is implemented, the planned flow is:
+During normal turns, treat workspace `MEMORY.md` as read-only. Use `memory_save` for append-only notes under the configured memory root (normally `memory/`), not as an arbitrary workspace writer. The tool's file path is relative to that root and cannot escape it. This is also an instruction/policy boundary, not a claim that every general-purpose file tool technically prevents workspace edits. A human can maintain the workspace file, but should coordinate edits with any explicitly authorized writer.
 
-1. A dedicated consolidation agent reviews daily-note files through a file-reading tool or searches indexed entries with `memory_search(query="...")`
-2. The consolidation agent identifies patterns and durable learnings
-3. The consolidation agent writes updated content to `MEMORY.md` (using a privileged write path not available during normal turns)
-4. The scaffolded `AGENTS.md` template reminds agents to use `MEMORY.md` for stable facts and `memory/YYYY-MM-DD.md` for active work context
-
-**Example of what consolidation will produce**:
-```text
-Daily Notes (memory/2026-04-02.md):
-User prioritizes concise summaries, max 100 words
-Architecture has 17 projects with clean inversion
-Build command: dotnet build dirs.proj
-Confirmed user timezone is Pacific Time
-
-Consolidation → MEMORY.md updated by consolidation agent:
-- Pattern: User prefers concise summaries (max 100 words) before detail
-- User timezone is Pacific Time
-```
+**Current limitation:** The dreaming prompt requests a `MEMORY.md` append using `memory_save`, but with the default root an explicit `file_path="MEMORY.md"` targets `memory/MEMORY.md`, not workspace `MEMORY.md` consumed by prompt context. Without an explicit path it writes a daily note. [#4818](https://github.com/sytone/botnexus/issues/4818) tracks the persistence mismatch. A successful dispatch does not prove the intended long-term file changed. Do not recommend a root override or a permission bypass to make the prompt work.
 
 ### Future Consolidation (Planned)
 
-Phase 3 of the workspace/memory initiative includes:
-
-- **IMemoryConsolidator** interface for pluggable consolidation strategies
-- **LLM-based consolidation**: Call a model to distill daily notes
-- **Cron-based trigger**: Consolidation runs on schedule via the centralized cron service (`consolidate-memory` maintenance action)
-- **Configurable model**: `ConsolidationModel` config for consolidation LLM (can differ from agent's primary model)
+As of 2026-10-10, [#1803](https://github.com/sytone/botnexus/issues/1803) owns the future canonical per-agent memory architecture. [#3843](https://github.com/sytone/botnexus/issues/3843) owns verified Markdown migration and authority cutover; [#3890](https://github.com/sytone/botnexus/issues/3890) owns bounded long-term curation and recent context. These are planned delivery boundaries, not proof that SQL authority or completed long-term consolidation has shipped.
 
 ---
 

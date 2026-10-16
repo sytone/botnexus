@@ -73,7 +73,7 @@ public sealed class GitHubPullRequestListTool : GitHubToolBase
         if (!response.IsSuccess || response.Body is not { ValueKind: JsonValueKind.Array } array)
             return ErrorResult(Name, repository, response);
 
-        var items = array.EnumerateArray().Select(GitHubProjections.PullRequest).ToArray();
+        var items = array.EnumerateArray().Select(pullRequest => pullRequest.PullRequest()).ToArray();
 
         return StructuredResult(new
         {

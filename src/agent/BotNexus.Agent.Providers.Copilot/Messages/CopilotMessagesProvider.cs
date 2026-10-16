@@ -24,7 +24,7 @@ namespace BotNexus.Agent.Providers.Copilot.Messages;
 /// Optional secret redactor applied to a non-2xx error body before it is interpolated into an
 /// exception message that the agent loop persists as the session-visible <c>ErrorMessage</c> (#2881).
 /// </param>
-public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecretRedactor? secretRedactor = null) : IApiProvider
+public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecretRedactor? secretRedactor = null, Headers.ICopilotHeaderSink? headerSink = null) : IApiProvider
 {
     private const string ApiVersion = "2023-06-01";
     public const string ApiId = "github-copilot-messages";
@@ -38,6 +38,10 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
 
     private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
     private readonly CopilotEffortCapabilityCache _effortCapabilities = new();
+
+    // Instance-local seam lets tests control queued dispatch without thread-pool timing.
+    internal Func<Func<Task>, CancellationToken, Task> ScheduleProducer { get; init; }
+        = static (producer, token) => Task.Run(producer, token);
 
     public string Api => ApiId;
 
@@ -54,10 +58,13 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
 
     public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
     {
+        var capture = Headers.CopilotHeaderCapture.Begin(headerSink, model, options);
         var stream = new LlmStream();
         var ct = options?.CancellationToken ?? CancellationToken.None;
 
-        _ = Task.Run(async () =>
+        // The producer owns terminal completion even when cancellation precedes dispatch.
+        // Never let scheduling cancellation prevent its protected cancellation handler from running.
+        _ = ScheduleProducer(async () =>
         {
             var usage = Usage.Empty();
             string? responseId = null;
@@ -70,7 +77,8 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
 
             try
             {
-                await StreamCoreAsync(model, context, options, stream,
+                ct.ThrowIfCancellationRequested();
+                await StreamCoreAsync(model, context, options, capture, stream,
                     contentBlocks, usage,
                     updatedUsage => usage = updatedUsage,
                     id => responseId = id,
@@ -95,7 +103,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
                 stream.End(msg);
                 activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             }
-        }, ct);
+        }, CancellationToken.None);
 
         return stream;
     }
@@ -171,7 +179,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
 
     private async Task StreamCoreAsync(
         LlmModel model, Context context, StreamOptions? options,
-        LlmStream stream, List<ContentBlock> contentBlocks, Usage initialUsage,
+        Headers.CopilotHeaderCapture capture, LlmStream stream, List<ContentBlock> contentBlocks, Usage initialUsage,
         Action<Usage> setUsage,
         Action<string?> setResponseId, Action<StopReason> setStopReason,
         CancellationToken ct)
@@ -229,6 +237,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
                 response = await _httpClient.SendAsync(
                     httpRequest, HttpCompletionOption.ResponseHeadersRead, effectiveCt);
 
+                capture.Observe(response);
                 Headers.CopilotResponseHeaders.EmitToActivity(response, Activity.Current);
                 if (response.IsSuccessStatusCode)
                     break;
@@ -272,7 +281,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
                 }
                 : null;
 
-            var (usage, responseId, stopReason) = await CopilotMessagesStreamParser.ProcessStreamAsync(
+            var result = await CopilotMessagesStreamParser.ProcessStreamAsync(
                 responseStream,
                 model,
                 stream,
@@ -285,9 +294,13 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
                 StreamIdleTimeout.Resolve(options),
                 secretRedactor);
 
-            setUsage(usage);
-            setResponseId(responseId);
-            setStopReason(stopReason);
+            // Publish parsed metadata before reporting incomplete EOF so the terminal error
+            // retains the response identity and usage, rather than losing parser-local state.
+            setUsage(result.Usage);
+            setResponseId(result.ResponseId);
+            setStopReason(result.StopReason);
+            if (!result.MessageStopped)
+                throw new InvalidOperationException("Copilot streaming error: stream ended before message_stop.");
         }
         finally
         {

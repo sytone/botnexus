@@ -107,6 +107,8 @@ public sealed class FileConversationStore : IConversationStore
 
     public async Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
+        if (conversation.CompactionTokenCeiling is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(conversation), "CompactionTokenCeiling must be positive or null.");
         StampWorldId(conversation);
 
         await _lock.WaitAsync(ct).ConfigureAwait(false);
@@ -124,6 +126,8 @@ public sealed class FileConversationStore : IConversationStore
     /// <inheritdoc />
     public async Task SaveAsync(Conversation conversation, CancellationToken ct = default)
     {
+        if (conversation.CompactionTokenCeiling is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(conversation), "CompactionTokenCeiling must be positive or null.");
         if (conversation.Status == ConversationStatus.Archived && conversation.ActiveSessionId is not null)
             throw new InvalidOperationException($"Conversation '{conversation.ConversationId}' cannot be archived while an active session is assigned.");
         StampWorldId(conversation);
@@ -135,16 +139,39 @@ public sealed class FileConversationStore : IConversationStore
 
     /// <inheritdoc />
     public async Task ArchiveAsync(ConversationId conversationId, CancellationToken ct = default)
+        => _ = await TryArchiveCoreAsync(conversationId, ct).ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public Task<bool> TryArchiveAsync(
+        ConversationId conversationId,
+        string source,
+        string? correlationId,
+        string actor,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actor);
+        return TryArchiveCoreAsync(conversationId, ct);
+    }
+
+    private async Task<bool> TryArchiveCoreAsync(ConversationId conversationId, CancellationToken ct)
     {
         await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var conversation = await FindByConversationIdAsync(conversationId, ct).ConfigureAwait(false);
-            if (conversation is null)
-                return;
+            if (conversation?.Status != ConversationStatus.Active)
+                return false;
             await WriteFileAsync(
-                conversation with { Status = ConversationStatus.Archived, ActiveSessionId = null, UpdatedAt = DateTimeOffset.UtcNow },
+                conversation with
+                {
+                    Status = ConversationStatus.Archived,
+                    ActiveSessionId = null,
+                    UpdatedAt = DateTimeOffset.UtcNow,
+                    Version = conversation.Version + 1
+                },
                 ct).ConfigureAwait(false);
+            return true;
         }
         finally { _lock.Release(); }
     }
@@ -320,6 +347,8 @@ public sealed class FileConversationStore : IConversationStore
     public async Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(patch);
+        if (patch.CompactionTokenCeiling.IsSet && patch.CompactionTokenCeiling.Value is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(patch), "CompactionTokenCeiling must be positive or null.");
         await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -332,6 +361,8 @@ public sealed class FileConversationStore : IConversationStore
                 conversation.ThinkingOverride = patch.Thinking.Value;
             if (patch.ContextWindow.IsSet)
                 conversation.ContextWindowOverride = patch.ContextWindow.Value;
+            if (patch.CompactionTokenCeiling.IsSet)
+                conversation.CompactionTokenCeiling = patch.CompactionTokenCeiling.Value;
             if (patch.ToolOverrideJson.IsSet)
                 conversation.ToolOverrideJson = patch.ToolOverrideJson.Value;
             conversation.UpdatedAt = DateTimeOffset.UtcNow;
@@ -375,6 +406,24 @@ public sealed class FileConversationStore : IConversationStore
             .ThenByDescending(c => c.UpdatedAt)
             .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
             .Select(ToSummary)];
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ConversationRetentionCandidate>> GetRetentionCandidatesAsync(
+        ConversationSource? source = null,
+        CancellationToken ct = default)
+    {
+        var all = await ListAsync(null, ct).ConfigureAwait(false);
+        return [.. all
+            .Where(c => c.Status == ConversationStatus.Active && (!source.HasValue || c.Source == source.Value))
+            .OrderBy(c => c.UpdatedAt)
+            .Select(c => new ConversationRetentionCandidate(
+                c.ConversationId,
+                c.AgentId,
+                c.UpdatedAt,
+                c.IsPinned,
+                c.Source,
+                c.SourceId))];
     }
 
     /// <inheritdoc />

@@ -66,11 +66,24 @@ public sealed class InterruptedTurnNotificationServiceTests
     private static Mock<ISessionStore> CreateStore(params GatewaySession[] sessions)
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListAsync(It.IsAny<AgentId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((AgentId? agentId, CancellationToken _) =>
-                sessions.Where(s => !agentId.HasValue || s.AgentId == agentId.Value).ToList());
-        store.Setup(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+        store.Setup(s => s.ListUnresolvedCrashSentinelsAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((int limit, string? cursor, CancellationToken _) =>
+            {
+                var page = sessions
+                    .Where(session => session.History.Any(entry => entry.IsCrashSentinel))
+                    .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
+                    .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
+                    .Take(limit)
+                    .ToList();
+                return new UnresolvedCrashSentinelPage(page.Select(session => new UnresolvedCrashSentinelRow(session.SessionId, session.AgentId)).ToList(), null);
+            });
+        store.Setup(s => s.GetAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SessionId id, CancellationToken _) =>
+                sessions.SingleOrDefault(session => session.SessionId == id));
+        store.Setup(s => s.SaveAsync(
+                It.IsAny<GatewaySession>(), It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SessionSaveOutcome.Persisted);
         return store;
     }
 
@@ -115,7 +128,7 @@ public sealed class InterruptedTurnNotificationServiceTests
             e.Content.Contains("gateway was restarted"));
 
         // Session should have been persisted
-        store.Verify(s => s.SaveAsync(session, It.IsAny<CancellationToken>()), Times.Once);
+        store.Verify(s => s.SaveAsync(session, It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -128,7 +141,7 @@ public sealed class InterruptedTurnNotificationServiceTests
         await service.StartedAsync(CancellationToken.None);
 
         session.History.ShouldNotContain(e => e.Role == MessageRole.Notification);
-        store.Verify(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<CancellationToken>()), Times.Never);
+        store.Verify(s => s.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -161,8 +174,8 @@ public sealed class InterruptedTurnNotificationServiceTests
 
         await service.StartedAsync(CancellationToken.None);
 
-        store.Verify(s => s.SaveAsync(interrupted, It.IsAny<CancellationToken>()), Times.Once);
-        store.Verify(s => s.SaveAsync(clean, It.IsAny<CancellationToken>()), Times.Never);
+        store.Verify(s => s.SaveAsync(interrupted, It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()), Times.Once);
+        store.Verify(s => s.SaveAsync(clean, It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -226,7 +239,7 @@ public sealed class InterruptedTurnNotificationServiceTests
         var session = CreateSession("sess-save-fails", "agent-save-fails", withSentinel: true);
         session.ConversationId = ConversationId.From("conv-save-fails");
         var store = CreateStore(session);
-        store.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
+        store.Setup(s => s.SaveAsync(session, It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IOException("save failed"));
         var publisher = new Mock<IConversationEventPublisher>();
         var service = CreateService(store.Object, CreateRegistry("agent-save-fails"), eventPublisher: publisher.Object);

@@ -15,86 +15,99 @@ namespace BotNexus.Gateway.Tests.Agents;
 public sealed class SubAgentCompletionWakeUpTests
 {
     [Fact]
-    public async Task OnCompleted_DispatchesWakeUpMessage()
+    public async Task OnCompleted_WaitReturnsTerminalResultWithoutInboundTurn()
     {
-        var manager = CreateManager(parentIsRunning: false, out var parentHandle, out _, out var dispatcher);
+        var manager = CreateManager(parentIsRunning: false, out var parentHandle, out var supervisor, out var dispatcher);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
-        var summary = "Completed investigation and found root cause.";
-
-        await manager.OnCompletedAsync(spawned.SubAgentId, summary);
-
+        var waiting = manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId);
+        waiting.IsCompleted.ShouldBeFalse();
+        await manager.OnCompletedAsync(spawned.SubAgentId, "Completed investigation and found root cause.");
+        var terminal = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+        terminal.SubAgentId.ShouldBe(spawned.SubAgentId);
+        terminal.ParentSessionId.ShouldBe(spawned.ParentSessionId);
+        terminal.ChildSessionId.ShouldBe(spawned.ChildSessionId);
+        terminal.Status.ShouldBe(SubAgentStatus.Completed);
+        terminal.ResultSummary.ShouldBe("Completed investigation and found root cause.");
         parentHandle.Verify(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()), Times.Never);
-        dispatcher.Verify(d => d.DispatchAsync(
-                It.Is<InboundMessage>(message =>
-                    message.ChannelType.Value == "internal" &&
-                    message.SenderId.StartsWith("subagent:", StringComparison.Ordinal) &&
-                    message.Content.Contains(summary, StringComparison.Ordinal) &&
-                    message.Metadata.ContainsKey("messageType") &&
-                    string.Equals(message.Metadata["messageType"] as string, "subagent-completion", StringComparison.Ordinal) &&
-                    message.RoutingHints != null &&
-                    message.RoutingHints.RequestedSessionId != null && message.RoutingHints.RequestedSessionId.Value.Value == "parent-session" &&
-                    message.RoutingHints.RequestedAgentId != null && message.RoutingHints.RequestedAgentId.Value.Value == "parent-agent"),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        supervisor.Verify(s => s.StopAsync(It.IsAny<AgentId>(), spawned.ChildSessionId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task OnCompleted_WhenParentRunning_DispatchesWakeUpMessage()
+    public async Task OnCompleted_WhenParentRunning_JoinsWithoutInboundTurn()
     {
-        var manager = CreateManager(parentIsRunning: true, out var parentHandle, out _, out var dispatcher);
+        var manager = CreateManager(parentIsRunning: true, out var parentHandle, out var supervisor, out var dispatcher);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
-
-        await manager.OnCompletedAsync(spawned.SubAgentId, "Done");
-
-        parentHandle.Verify(h => h.FollowUpAsync(
-                It.IsAny<AgentTranscriptMessage>(),
-                It.IsAny<CancellationToken>()),
-            Times.Never);
-        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+        var waiting = manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId);
+        waiting.IsCompleted.ShouldBeFalse();
+        await manager.OnCompletedAsync(spawned.SubAgentId, "Completed investigation and found root cause.");
+        var terminal = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+        terminal.SubAgentId.ShouldBe(spawned.SubAgentId);
+        terminal.ParentSessionId.ShouldBe(spawned.ParentSessionId);
+        terminal.ChildSessionId.ShouldBe(spawned.ChildSessionId);
+        terminal.Status.ShouldBe(SubAgentStatus.Completed);
+        terminal.ResultSummary.ShouldBe("Completed investigation and found root cause.");
+        parentHandle.Verify(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        supervisor.Verify(s => s.StopAsync(It.IsAny<AgentId>(), spawned.ChildSessionId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task OnCompleted_WhenDispatchFails_LogsWarningAndContinues()
+    public async Task OnCompleted_UnavailableDispatcher_DoesNotAffectJoin()
     {
-        var manager = CreateManager(parentIsRunning: false, out _, out _, out var dispatcher);
+        var manager = CreateManager(parentIsRunning: false, out var parentHandle, out var supervisor, out var dispatcher);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
-        dispatcher
-            .Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("dispatch failed"));
-
-        Func<Task> act = () => manager.OnCompletedAsync(spawned.SubAgentId, "Done");
-
-        await act.ShouldNotThrowAsync();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("dispatch failed"));
+        var waiting = manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId);
+        waiting.IsCompleted.ShouldBeFalse();
+        await manager.OnCompletedAsync(spawned.SubAgentId, "Completed investigation and found root cause.");
+        var terminal = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+        terminal.SubAgentId.ShouldBe(spawned.SubAgentId);
+        terminal.ParentSessionId.ShouldBe(spawned.ParentSessionId);
+        terminal.ChildSessionId.ShouldBe(spawned.ChildSessionId);
+        terminal.Status.ShouldBe(SubAgentStatus.Completed);
+        terminal.ResultSummary.ShouldBe("Completed investigation and found root cause.");
+        parentHandle.Verify(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        supervisor.Verify(s => s.StopAsync(It.IsAny<AgentId>(), spawned.ChildSessionId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task OnCompleted_WakeUpMessage_ContainsCorrectSubAgentId()
+    public async Task OnCompleted_WaitRetainsCorrectSubAgentIdentity()
     {
-        var manager = CreateManager(parentIsRunning: false, out _, out _, out var dispatcher);
+        var manager = CreateManager(parentIsRunning: false, out var parentHandle, out var supervisor, out var dispatcher);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
-
-        await manager.OnCompletedAsync(spawned.SubAgentId, "Done");
-
-        dispatcher.Verify(d => d.DispatchAsync(
-                It.Is<InboundMessage>(message =>
-                    message.Metadata.ContainsKey("subAgentId") &&
-                    string.Equals(message.Metadata["subAgentId"] as string, spawned.SubAgentId, StringComparison.Ordinal)),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+        var waiting = manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId);
+        waiting.IsCompleted.ShouldBeFalse();
+        await manager.OnCompletedAsync(spawned.SubAgentId, "Completed investigation and found root cause.");
+        var terminal = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+        terminal.SubAgentId.ShouldBe(spawned.SubAgentId);
+        terminal.ParentSessionId.ShouldBe(spawned.ParentSessionId);
+        terminal.ChildSessionId.ShouldBe(spawned.ChildSessionId);
+        terminal.Status.ShouldBe(SubAgentStatus.Completed);
+        terminal.ResultSummary.ShouldBe("Completed investigation and found root cause.");
+        parentHandle.Verify(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        supervisor.Verify(s => s.StopAsync(It.IsAny<AgentId>(), spawned.ChildSessionId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task OnCompleted_WakeUpMessage_UsesInternalChannelType()
+    public async Task OnCompleted_WaitLeavesInternalChannelIdle()
     {
-        var manager = CreateManager(parentIsRunning: false, out _, out _, out var dispatcher);
+        var manager = CreateManager(parentIsRunning: false, out var parentHandle, out var supervisor, out var dispatcher);
         var spawned = await manager.SpawnAsync(CreateSpawnRequest());
-
-        await manager.OnCompletedAsync(spawned.SubAgentId, "Done");
-
-        dispatcher.Verify(d => d.DispatchAsync(
-                It.Is<InboundMessage>(message => message.ChannelType.Value == "internal"),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+        var waiting = manager.WaitAsync(spawned.SubAgentId, spawned.ParentSessionId);
+        waiting.IsCompleted.ShouldBeFalse();
+        await manager.OnCompletedAsync(spawned.SubAgentId, "Completed investigation and found root cause.");
+        var terminal = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+        terminal.SubAgentId.ShouldBe(spawned.SubAgentId);
+        terminal.ParentSessionId.ShouldBe(spawned.ParentSessionId);
+        terminal.ChildSessionId.ShouldBe(spawned.ChildSessionId);
+        terminal.Status.ShouldBe(SubAgentStatus.Completed);
+        terminal.ResultSummary.ShouldBe("Completed investigation and found root cause.");
+        parentHandle.Verify(h => h.FollowUpAsync(It.IsAny<AgentTranscriptMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+        supervisor.Verify(s => s.StopAsync(It.IsAny<AgentId>(), spawned.ChildSessionId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private static DefaultSubAgentManager CreateManager(

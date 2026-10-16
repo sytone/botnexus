@@ -83,21 +83,36 @@ The adapter binds directly from the `channels:agent365` section (it does **not**
 | `agentId` | yes | no | BotNexus agent ID inbound messages route to. |
 | `inboundRoute` | no | no | HTTP route the message endpoint is hosted on. Defaults to `/agent365/messages`. |
 
-## Microsoft.Agents.* packages and the Microsoft.Extensions.* pin
+## SDK dependencies and host sharing
 
-> **Design note (for maintainers).** The Microsoft 365 Agents SDK packages
-> (`Microsoft.Agents.Builder` / `Connector` / `Core` / `Authentication.Msal`, pinned to `1.6.150`)
-> depend transitively on the **stable** `Microsoft.Extensions.* 10.0.7` line, whereas BotNexus
-> centrally pins the `10.0.0-preview.3` line for the `Microsoft.Extensions.*` packages it references
-> **directly**. Because this extension does **not** add a direct `PackageReference` to any
-> `Microsoft.Extensions.*` package, Central Package Management imposes no constraint on the SDK's
-> transitive `10.0.7` closure and there is **no NU1605 downgrade** (`10.0.7 > preview.3`, so nothing
-> is downgraded). Nothing project-references this extension — it is loaded dynamically through the
-> `AssemblyLoadContext` extension loader into its own ALC at runtime — so the newer
-> `Microsoft.Extensions.*` stays isolated to this leaf and the Cli/Gateway/Scenarios build graphs keep
-> the pinned preview line untouched. If a future SDK bump reintroduces a **direct** `Microsoft.Extensions.*`
-> reference on this project, expect NU1605 and resolve it with a scoped `VersionOverride` rather than a
-> repo-wide pin change.
+The Microsoft 365 Agents SDK packages are pinned to `1.6.150`. Their restore graph is not
+an isolation boundary: `ExtensionAssemblyLoadContext` shares every assembly simple name shipped
+by the host, even when the extension carries a newer private copy. `CopyLocalLockFileAssemblies`
+is still required for dependencies absent from the host, but cannot repair a host downgrade.
+
+The central package pins and explicit host references satisfy the following built SDK consumers:
+
+| Host dependency | Selected package | Evidence from built assembly metadata or package manifest |
+|---|---|---|
+| Microsoft.Identity.Client | 4.83.3 | Authentication.Msal requests assembly 4.83.3.0. |
+| Azure.Core | 1.50.0 | Authentication and Authentication.Msal request assembly 1.50.0.0. |
+| System.Memory.Data | 10.0.7 | Builder requests assembly 10.0.0.7. |
+| Microsoft.IdentityModel.Abstractions | 8.15.0 | Authentication.Msal and private IdentityModel consumers request assembly 8.15.0.0. |
+| System.ClientModel | 1.8.0 (explicit host reference) | Azure.Core 1.50.0's nuspec requires 1.8.0; Storage consumers request assembly 1.6.1.0. |
+
+The SDK also restores stable `Microsoft.Extensions.* 10.0.7` packages. Its assembly references
+request `10.0.0.0`, supplied by the host's `Microsoft.AspNetCore.App` framework reference. This
+does not require a global update of the existing preview package pins. Package versions and
+assembly versions are different contracts; verify actual artifacts when updating either graph.
+
+`ExtensionHostDependencyCompatibilityArchitectureTests` builds every manifest-bearing extension
+without importing its package closure into testhost, and scans private managed consumers against
+the real gateway output. It checks version, culture and public-key token, not API compatibility.
+`Agent365HostInitializationArchitectureTests` additionally runs a gateway-free probe with the
+production gateway deps/runtimeconfig and real extension loader, constructs SDK MSAL auth and an
+Azure token credential using fake values, and verifies host assembly identity. It never acquires
+a token or sends a request. These checks do not prove tenant onboarding, inbound JWT validation,
+or a live Microsoft 365 message round-trip.
 
 ## Registration
 

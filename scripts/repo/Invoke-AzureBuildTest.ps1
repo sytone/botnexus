@@ -10,8 +10,10 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('strict', 'impacted', 'full', 'core', 'playwright')]
+    [ValidateSet('strict', 'impacted', 'full', 'core', 'playwright', 'diagnostic')]
     [string]$Mode = 'strict',
+    [string]$DiagnosticProject,
+    [ValidateRange(1, 600)][int]$DiagnosticHangSeconds = 120,
 
     # Must track replicaTimeout in infra/buildtest/main.bicep. Kept as a parameter so the
     # reported budget cannot silently drift from the deployed one when either is retuned.
@@ -53,6 +55,12 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
     throw "WorktreePath is not inside a git repository: $WorktreePath"
 }
 $repoRoot = $repoRoot.Trim()
+if ($Mode -eq 'diagnostic') {
+    . (Join-Path $repoRoot 'infra/buildtest/runner/RunnerDiagnostic.ps1')
+    Resolve-DiagnosticProject -SourceRoot $repoRoot -Project $DiagnosticProject | Out-Null
+    $KeepRemoteArtifacts = $true
+}
+elseif ($DiagnosticProject) { throw 'DiagnosticProject is only valid with -Mode diagnostic.' }
 Import-Module (Join-Path $PSScriptRoot 'AzureBuildTestArtifacts.psm1') -Force
 $fingerprintScript = Join-Path $PSScriptRoot 'Get-WorktreeValidationFingerprint.ps1'
 Import-Module (Join-Path $PSScriptRoot 'SourceSnapshot.psm1') -Force
@@ -123,6 +131,7 @@ try {
     # WARN, never throw. A mismatch is legitimate while an infra change is being rolled out, and a
     # hard failure would make the gate unusable during exactly the window an operator needs it. What
     # matters is that a gate result can no longer be silently unattributable to a commit.
+    $provenance = $null
     try {
         . (Join-Path $PSScriptRoot '..' '..' 'infra' 'buildtest' 'RunnerImageProvenance.ps1')
         $deployedIdentity = if ($container.image -match '@(?<digest>sha256:[0-9a-f]{64})$') {
@@ -163,6 +172,10 @@ try {
         Write-Verbose "Runner image provenance check skipped: $($_.Exception.Message)"
     }
 
+    if ($Mode -eq 'diagnostic' -and ($null -eq $provenance -or $provenance.Verdict -ne 'match')) {
+        throw 'Diagnostic requires a runner image matching these sources; an old image cannot prove this mode. No job was started.'
+    }
+
     $managedIdentityClientId = ($container.env | Where-Object name -eq 'AZURE_CLIENT_ID' | Select-Object -First 1).value
     if ([string]::IsNullOrWhiteSpace($managedIdentityClientId)) { throw 'The job template does not expose its managed-identity client ID.' }
     $container.env = @(
@@ -171,6 +184,9 @@ try {
         @{ name = 'SOURCE_BLOB_URL'; value = $sourceUrl }
         @{ name = 'ARTIFACT_BLOB_URL'; value = $artifactUrl }
         @{ name = 'TEST_MODE'; value = $Mode }
+        @{ name = 'DIAGNOSTIC_PROJECT'; value = [string]$DiagnosticProject }
+        @{ name = 'DIAGNOSTIC_HANG_SECONDS'; value = [string]$DiagnosticHangSeconds }
+        @{ name = 'RUNNER_IMAGE'; value = $container.image }
         @{ name = 'BASE_REF'; value = $BaseRef }
         # #3305: the runner sets its own deadline strictly inside this budget so it ends the
         # run on a path it controls and still has time to upload artifacts. Passed in rather
@@ -258,18 +274,27 @@ try {
 
     $playwrightArtifact = Get-ChildItem -Path $OutputPath -Filter playwright.log -Recurse | Select-Object -First 1
     $requiredArtifactsPresent = $Mode -ne 'strict' -or $null -ne $playwrightArtifact
+    if ($Mode -eq 'diagnostic') {
+        $evidencePath = Join-Path $OutputPath 'diagnostic-evidence.json'
+        $evidence = if (Test-Path -LiteralPath $evidencePath) { Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json } else { $null }
+        $requiredArtifactsPresent = $null -ne $evidence -and $evidence.mode -eq 'diagnostic' -and
+            $evidence.eventEvidenceComplete -eq $true -and $evidence.hangEvidenceComplete -eq $true -and $evidence.project -ceq $DiagnosticProject -and
+            $evidence.runnerImage -ceq $container.image -and $evidence.qualifiesForCoreReceipt -eq $false
+        if ($null -ne $evidence -and $null -ne $result) { Assert-DiagnosticSourceProof -Result $result -Evidence $evidence -Digest $fingerprint.sourceSnapshot.digest -RunId $runId }
+        Write-Warning "Private diagnostic artifacts retained at $OutputPath and remote prefix $runId. No validation receipt is issued. Do not publish raw dumps or traces."
+    }
 
     # BEGIN EXACT SOURCE RECEIPT GUARD
     # Failed executions retain the established diagnostic/cleanup path below. Only a
     # prospective success may reach the proof check and receipt writer.
-    if ($status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0 -and $requiredArtifactsPresent) {
+    if ($Mode -ne 'diagnostic' -and $status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0 -and $requiredArtifactsPresent) {
         Assert-SourceSnapshotResult -Result $result -Digest $fingerprint.sourceSnapshot.digest -RunId $runId -Mode $Mode
         $current = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef
         if ($current.fingerprint -cne $fingerprint.fingerprint) { throw 'Source changed before receipt; validation cannot certify this worktree.' }
     }
     # END EXACT SOURCE RECEIPT GUARD
 
-    if ($status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0 -and $requiredArtifactsPresent) {
+    if ($Mode -ne 'diagnostic' -and $status.properties.status -eq 'Succeeded' -and $null -ne $result -and $result.exitCode -eq 0 -and $requiredArtifactsPresent) {
         $gitDirectory = (& git -C $repoRoot rev-parse --git-dir).Trim()
         if (-not [IO.Path]::IsPathRooted($gitDirectory)) { $gitDirectory = Join-Path $repoRoot $gitDirectory }
         $receiptDirectory = Join-Path $gitDirectory 'botnexus-validation'
@@ -312,7 +337,8 @@ try {
         throw "Azure validation failed. Execution status: $($status.properties.status).$artifactFailure$timeoutNote$testSummary Artifacts: $OutputPath"
     }
 
-    Write-Host "Azure validation passed. Artifacts: $OutputPath" -ForegroundColor Green
+    if ($Mode -eq 'diagnostic') { Write-Host "Azure diagnostic completed (not CORE validation). Private artifacts: $OutputPath" }
+    else { Write-Host "Azure validation passed. Artifacts: $OutputPath" -ForegroundColor Green }
 }
 finally {
     # #3805: a failing gate is the case where the artifacts matter MOST. If anything threw between

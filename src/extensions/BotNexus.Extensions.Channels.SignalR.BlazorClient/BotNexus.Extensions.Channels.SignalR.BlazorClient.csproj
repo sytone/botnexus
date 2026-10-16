@@ -35,12 +35,17 @@
     only publishes files that physically live under wwwroot. The destination is gitignored; it is
     build output, not source.
 
-    Runs before ResolveStaticWebAssetsInputs so the files exist by the time that pipeline enumerates
-    wwwroot; BeforeBuild alone is too late for a WASM project.
+    ResolveProjectStaticWebAssets consumes Content items evaluated before targets run, rather than
+    enumerating wwwroot. Reconcile and refresh the owned Content inventory before that target so
+    clean and incremental builds register the same assets, including removed or renamed sources.
   -->
-  <Target Name="CopyUserGuide" BeforeTargets="ResolveStaticWebAssetsInputs;BeforeBuild">
+  <Target Name="CopyUserGuide" BeforeTargets="ResolveProjectStaticWebAssets;BeforeBuild">
     <!-- wwwroot/guide is generated and exclusively owned by this target. Recreate only that
          bounded directory so removed or renamed sources cannot survive incremental builds. -->
+    <ItemGroup>
+      <!-- Remove evaluated items while stale files still exist for wildcard expansion. -->
+      <Content Remove="$([MSBuild]::MakeRelative('$(MSBuildProjectDirectory)', '$(UserGuideOutputRoot)'))\guide\**" />
+    </ItemGroup>
     <RemoveDir Directories="$(UserGuideOutputRoot)\guide" />
     <ItemGroup>
       <UserGuideDoc Include="$(UserGuideSourceRoot)\user-guide\**\*.md" />
@@ -56,6 +61,12 @@
     <Copy SourceFiles="@(UserGuideIndex)"
           DestinationFolder="$(UserGuideOutputRoot)\guide"
           SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <!-- Replace evaluation-time entries, never append a second registration. Keep paths
+           project-relative so the SDK's wwwroot/** discovery pattern and removal agree. -->
+      <Content Include="$([MSBuild]::MakeRelative('$(MSBuildProjectDirectory)', '$(UserGuideOutputRoot)'))\guide\**"
+               CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
   </Target>
 
 </Project>

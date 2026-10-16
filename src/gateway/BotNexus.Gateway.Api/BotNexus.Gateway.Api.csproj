@@ -24,6 +24,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- #4778: explicit host-shared convergence. Private extension copies cannot satisfy
+         a higher reference when ExtensionAssemblyLoadContext unifies with the host. -->
+    <PackageReference Include="Azure.Core" />
+    <PackageReference Include="System.ClientModel" />
+    <PackageReference Include="System.Memory.Data" />
+    <PackageReference Include="Microsoft.Identity.Client" />
+    <PackageReference Include="Microsoft.IdentityModel.Abstractions" />
     <PackageReference Include="OpenTelemetry" />
     <PackageReference Include="OpenTelemetry.Exporter.Console" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
@@ -52,6 +59,7 @@
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Anthropic\BotNexus.Agent.Providers.Anthropic.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.Copilot\BotNexus.Agent.Providers.Copilot.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.OpenAI\BotNexus.Agent.Providers.OpenAI.csproj" />
+    <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.MicrosoftFoundry\BotNexus.Agent.Providers.MicrosoftFoundry.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.OpenAICompat\BotNexus.Agent.Providers.OpenAICompat.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.GitHubModels\BotNexus.Agent.Providers.GitHubModels.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Providers.IntegrationMock\BotNexus.Agent.Providers.IntegrationMock.csproj" />

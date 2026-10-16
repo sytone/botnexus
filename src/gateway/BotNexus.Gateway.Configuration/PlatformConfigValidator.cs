@@ -301,6 +301,9 @@ public static class PlatformConfigValidator
 
         List<string> errors = [];
 
+        if (config.World?.CompactionTokenCeiling is <= 0)
+            errors.Add("world.compactionTokenCeiling must be positive or null.");
+
         var listenUrl = config.Gateway?.ListenUrl;
         if (!string.IsNullOrWhiteSpace(listenUrl))
         {
@@ -347,6 +350,10 @@ public static class PlatformConfigValidator
         ValidatePromptTemplates(config.PromptTemplates, errors);
         ValidateCron(config.Cron, errors);
         ValidateSecretRedaction(config.Gateway?.SecretRedaction, errors);
+        if (config.Gateway?.LocalChildEnvironmentPassThrough is { } passThrough
+            && passThrough.Any(name => string.IsNullOrWhiteSpace(name)
+                || name.Any(c => char.IsWhiteSpace(c) || c is '\0' or '=' or '*' or '?' or '[' or ']')))
+            errors.Add("gateway.localChildEnvironmentPassThrough must contain exact environment variable names, not patterns or assignments.");
 
         return errors;
     }
@@ -668,6 +675,9 @@ public static class PlatformConfigValidator
                     "Use spawn_subagent(archetype: ...) to delegate work to it.");
                 continue;
             }
+
+            if (agentConfig.CompactionTokenCeiling is <= 0)
+                errors.Add($"agents.{agentId}.compactionTokenCeiling must be positive or null.");
 
             if (string.IsNullOrWhiteSpace(agentConfig.Provider))
                 errors.Add($"agents.{agentId}.provider is required (example: 'copilot').");

@@ -11,19 +11,23 @@ public sealed class MobileComposerActiveStateCssTests
         "mobile.css");
 
     [Fact]
-    public void Mobile_active_composer_has_non_intercepting_perimeter_and_accessibility_fallbacks()
+    public void Mobile_active_composer_has_non_intercepting_bottom_edge_pulse_and_accessibility_fallbacks()
     {
         var content = File.ReadAllText(s_cssPath);
 
         content.ShouldContain(".bottom-bar.composer-active::before");
         content.ShouldContain("pointer-events: none");
-        content.ShouldContain("offset-path: inset");
-        content.ShouldContain("offset-distance: 100%");
-        content.ShouldContain("animation: mobile-composer-perimeter-travel");
+        content.ShouldContain("bottom: 4px");
+        content.ShouldContain("height: 2px");
+        content.ShouldContain("animation: mobile-composer-bottom-edge-pulse");
+        content.ShouldNotContain("offset-path:");
+        content.ShouldNotContain("offset-distance:");
+        content.ShouldNotContain("mobile-composer-perimeter-travel");
         content.ShouldContain("@media (prefers-reduced-motion: reduce)");
         content.ShouldContain("animation: none");
         content.ShouldContain("@media (forced-colors: active)");
-        content.ShouldContain("outline: 2px solid Highlight");
+        content.ShouldContain("background: Highlight");
+        content.ShouldContain(".composer-active.composer-motion-disabled::before");
     }
 
     private static string FindRepositoryFile(params string[] segments)

@@ -6,6 +6,7 @@ using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Agents;
 using BotNexus.Agent.Providers.Core.Models;
 
 namespace BotNexus.Gateway.Tools;
@@ -66,9 +67,7 @@ public sealed class ListAgentsTool(
         var capability = ReadString(arguments, "capability");
 
         var callerDescriptor = agentRegistry.Get(callerAgentId);
-        var subAgentIds = callerDescriptor?.SubAgentIds ?? [];
-        var subAgentRoles = callerDescriptor?.SubAgentRoles ?? [];
-        var isOpenPolicy = exchangeOptions?.IsOpen ?? true;
+        var peerOptions = exchangeOptions ?? new AgentExchangeOptions();
 
         var agents = agentRegistry.GetAll()
             .Where(d => MatchesFilter(d, filter))
@@ -80,9 +79,7 @@ public sealed class ListAgentsTool(
                 Summary: d.Summary,
                 Emoji: d.Emoji,
                 Capabilities: ResolveCapabilities(d),
-                CanConverse: isOpenPolicy
-                    || subAgentIds.Contains(d.AgentId.Value, StringComparer.OrdinalIgnoreCase)
-                    || IsRoleGranted(subAgentRoles, d)))
+                CanConverse: PeerAccessPolicy.IsAllowed(peerOptions, callerDescriptor, d.AgentId, d)))
             .OrderBy(e => e.AgentId, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -129,22 +126,6 @@ public sealed class ListAgentsTool(
                 return [single];
         }
         return [];
-    }
-
-    private static bool IsRoleGranted(IReadOnlyList<string> subAgentRoles, AgentDescriptor target)
-    {
-        if (subAgentRoles.Count == 0)
-            return false;
-
-        if (!target.Metadata.TryGetValue("role", out var roleRaw) || roleRaw is null)
-            return false;
-
-        var targetRole = roleRaw is JsonElement je
-            ? je.GetString()
-            : roleRaw.ToString();
-
-        return !string.IsNullOrWhiteSpace(targetRole)
-            && subAgentRoles.Contains(targetRole, StringComparer.OrdinalIgnoreCase);
     }
 
     private static string? ReadString(IReadOnlyDictionary<string, object?> args, string key)

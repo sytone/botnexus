@@ -51,8 +51,13 @@ internal sealed class ToolAuditWriteAhead(
     AgentId agentId,
     SessionId sessionId,
     ILogger logger,
-    TimeSpan? persistenceDeadline = null)
+    TimeSpan? persistenceDeadline = null,
+    Func<Func<Task<SessionAppendMutationResult>>, Task<SessionAppendMutationResult>>? dispatchReadAppend = null)
 {
+    // Instance-local dispatch allows deadline fixtures to control entry without depending on
+    // thread-pool availability. Production retains the same uncancellable Task.Run dispatch.
+    private readonly Func<Func<Task<SessionAppendMutationResult>>, Task<SessionAppendMutationResult>> _dispatchReadAppend =
+        dispatchReadAppend ?? (static append => Task.Run(append, CancellationToken.None));
     /// <summary>
     /// Tools whose execution can change the world outside the transcript. A durability failure on
     /// one of these fails CLOSED: the call is refused rather than executed unrecorded.
@@ -70,6 +75,12 @@ internal sealed class ToolAuditWriteAhead(
     private readonly ConcurrentDictionary<string, InFlightCall> _inFlight = new(StringComparer.Ordinal);
 
     private int _interruptionRecorded;
+    private AgentRunId? _runId;
+    public void BeginRun(AgentRunId? runId)
+    {
+        _runId = runId;
+        Interlocked.Exchange(ref _interruptionRecorded, 0);
+    }
 
     /// <summary>
     /// Persists the redacted invocation before the tool is invoked, and does not return until the
@@ -105,7 +116,7 @@ internal sealed class ToolAuditWriteAhead(
             }
         }
 
-        _inFlight[toolCallId] = new InFlightCall(toolName, serializedArguments);
+        _inFlight[toolCallId] = new InFlightCall(toolName, serializedArguments, _runId);
         var deadline = persistenceDeadline ?? DefaultPersistenceDeadline;
         using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadlineCts.CancelAfter(deadline);
@@ -114,7 +125,7 @@ internal sealed class ToolAuditWriteAhead(
         {
             var store = sessionStore
                 ?? throw new InvalidOperationException("Session persistence is unavailable.");
-            var entry = auditSink.ProjectStart(toolCallId, toolName, serializedArguments);
+            var entry = auditSink.ProjectStart(toolCallId, toolName, serializedArguments) with { AgentRunId = _runId, PersistenceKey = DefaultToolAuditSink.GetToolStartPersistenceKey(toolCallId, _runId) };
             SessionAppendMutationResult result;
             using (var persist = StartStage("audit.persist", toolCallId, toolName))
             {
@@ -142,9 +153,11 @@ internal sealed class ToolAuditWriteAhead(
                         // Read-only tools preserve #2615 best-effort availability for stores that do
                         // not provide a definitive bounded append. Task.Run also bounds a store
                         // implementation that blocks before returning its Task.
-                        var appendTask = Task.Run(
-                            () => store.AppendEntriesAsync(sessionId, [entry], deadlineCts.Token),
-                            CancellationToken.None);
+                        // A queued append may enter after this method disposes the source. Capture
+                        // the token now; its cancellation state remains observable after disposal.
+                        var appendToken = deadlineCts.Token;
+                        var appendTask = _dispatchReadAppend(
+                            () => store.AppendEntriesAsync(sessionId, [entry], appendToken));
                         try
                         {
                             result = await appendTask.WaitAsync(deadline, cancellationToken).ConfigureAwait(false);
@@ -318,7 +331,7 @@ internal sealed class ToolAuditWriteAhead(
                 if (!_inFlight.TryRemove(toolCallId, out _))
                     continue;
 
-                session.AddEntry(auditSink.ProjectIncomplete(toolCallId, call.ToolName, call.SerializedArguments));
+                session.AddEntry(auditSink.ProjectIncomplete(toolCallId, call.ToolName, call.SerializedArguments) with { AgentRunId = call.RunId });
             }
 
             await sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
@@ -334,5 +347,5 @@ internal sealed class ToolAuditWriteAhead(
         }
     }
 
-    private sealed record InFlightCall(string ToolName, string SerializedArguments);
+    private sealed record InFlightCall(string ToolName, string SerializedArguments, AgentRunId? RunId);
 }

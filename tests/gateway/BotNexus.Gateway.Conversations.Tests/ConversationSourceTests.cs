@@ -255,12 +255,13 @@ public sealed class ConversationSourceTests
                 NULL AS pending_ask_user_json,
                 NULL AS model_override,
                 NULL AS thinking_override,
-                NULL AS context_window_override
+                NULL AS context_window_override,
+                NULL AS compaction_token_ceiling
             """;
         using var reader = command.ExecuteReader();
         reader.Read().ShouldBeTrue();
 
-        ConversationRowMapper.MapConversation(reader).Source.ShouldBe(expected);
+        reader.MapConversation().Source.ShouldBe(expected);
     }
 
     [Fact]
@@ -294,11 +295,12 @@ public sealed class ConversationSourceTests
                 NULL AS pending_ask_user_json,
                 NULL AS model_override,
                 NULL AS thinking_override,
-                NULL AS context_window_override
+                NULL AS context_window_override,
+                NULL AS compaction_token_ceiling
             """;
         using var reader = command.ExecuteReader();
         reader.Read().ShouldBeTrue();
 
-        ConversationRowMapper.MapConversation(reader).Source.ShouldBe(ConversationSource.Channel);
+        reader.MapConversation().Source.ShouldBe(ConversationSource.Channel);
     }
 }

@@ -154,6 +154,8 @@ public static class GatewayServiceCollectionExtensions
         // Core services. AddPlatformConfiguration replaces this inert default with a verified home
         // rooted at the already-resolved configuration directory (#3411).
         services.TryAddSingleton<IFileSystem, FileSystem>();
+        services.TryAddSingleton(serviceProvider =>
+            new SqliteWalMaintenance(serviceProvider.GetRequiredService<IFileSystem>()));
         services.TryAddSingleton<BotNexusHome>();
 
         // Credential resolution. Providers are registered per scheme with TryAddEnumerable so a
@@ -330,6 +332,8 @@ public static class GatewayServiceCollectionExtensions
         // #2896: scope the auto-compaction budget to the agent's / conversation's own context window
         // instead of the process-global CompactionOptions.ContextWindowTokens.
         services.TryAddSingleton<ISessionContextWindowResolver, SessionContextWindowResolver>();
+        services.TryAddSingleton<ISessionCompactionCeilingResolver, SessionCompactionCeilingResolver>();
+        services.TryAddSingleton<ISessionCompactionDiagnostics, SessionCompactionDiagnostics>();
         // #3535: turns a context-exhausted empty completion from a silent blank turn into an
         // explicit MessageRole.Notification, discriminated against the SAME scope-resolved window.
         services.TryAddSingleton<IContextExhaustionNotifier, ContextExhaustionNotifier>();
@@ -501,6 +505,8 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddSingleton<IChannelDispatcher>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.TryAddSingleton<IInboundMessageProcessor>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.TryAddSingleton<IInboundMessageOrchestrator>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>().Orchestrator);
+        services.TryAddSingleton<IInboundAdmissionControl>(serviceProvider =>
+            (IInboundAdmissionControl)serviceProvider.GetRequiredService<GatewayHost>().Orchestrator);
         services.AddSingleton<IHostedService>(serviceProvider => serviceProvider.GetRequiredService<GatewayHost>());
         services.AddSingleton<IHostedService>(serviceProvider =>
             serviceProvider.GetRequiredService<SessionWarmupService>());
@@ -513,7 +519,8 @@ public static class GatewayServiceCollectionExtensions
             sp.GetService<IInboundMessageOrchestrator>(),
             sp.GetService<IOptions<GatewayOptions>>(),
             sp.GetService<IConversationStore>(),
-            sp.GetService<SessionLifecycleEvents>()));
+            sp.GetService<SessionLifecycleEvents>(),
+            sp.GetService<Diagnostics.CleanShutdownMarker>()));
         services.AddHostedService<SessionCleanupService>();
         // Session/conversation consistency monitor + safe auto-heal path (#2046).
         services.TryAddSingleton<Sessions.SessionConsistencyChecker>();
@@ -533,6 +540,11 @@ public static class GatewayServiceCollectionExtensions
         // Liveness watchdog: monitors gateway activity and logs warnings on stalls
         services.AddSingleton<IActivityTracker, ActivityTracker>();
         services.AddSingleton<IThreadPoolProbe, ThreadPoolProbe>();
+        // #4689: real dispatch evidence (due-but-unfired cron jobs), not another liveness proxy.
+        services.AddSingleton<IDispatchFreshnessProbe>(sp => new CronDispatchFreshnessProbe(
+            sp,
+            sp.GetService<TimeProvider>() ?? TimeProvider.System,
+            sp.GetService<ILogger<CronDispatchFreshnessProbe>>()));
         services.AddHostedService<LivenessWatchdogService>();
 
         // Satellite registry and stale detection
@@ -932,7 +944,8 @@ public static class GatewayServiceCollectionExtensions
                         connectionString,
                         serviceProvider.GetRequiredService<ILogger<SqliteSessionStore>>(),
                         serviceProvider.GetRequiredService<IConversationStore>(),
-                        storeMetrics: serviceProvider.GetService<StoreMetrics>()),
+                        storeMetrics: serviceProvider.GetService<StoreMetrics>(),
+                        journalModeMaintenance: serviceProvider.GetRequiredService<SqliteWalMaintenance>()),
                     serviceProvider);
             }));
             return;
@@ -1020,7 +1033,8 @@ public static class GatewayServiceCollectionExtensions
                     connectionString,
                     serviceProvider.GetRequiredService<ILogger<SqliteConversationStore>>(),
                     serviceProvider.GetService<IWorldContext>(),
-                    storeMetrics: serviceProvider.GetService<StoreMetrics>());
+                    storeMetrics: serviceProvider.GetService<StoreMetrics>(),
+                    journalModeMaintenance: serviceProvider.GetRequiredService<SqliteWalMaintenance>());
             }));
 
             services.AddSingleton<IConversationAuditLog>(

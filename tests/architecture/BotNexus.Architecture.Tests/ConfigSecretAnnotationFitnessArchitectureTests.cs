@@ -67,6 +67,17 @@ public sealed class ConfigSecretAnnotationFitnessArchitectureTests
         "CompactionOptions.TokenThresholdRatio",
         "CompactionOptions.ContextWindowTokens",
 
+        // #4888: nullable positive token-count trigger ceilings, not authentication tokens.
+        // All three scopes must remain numeric and unmasked for schema-driven editing and
+        // inspection. ConfigSchemaMetadataFitnessTests pins numeric metadata and redaction.
+        "CompactionOptions.CompactionTokenCeiling",
+        "WorldSettingsConfig.CompactionTokenCeiling",
+        "AgentDefinitionConfig.CompactionTokenCeiling",
+
+        // Numeric output-token capacity, not an authentication token or credential. The value must
+        // remain visible and round-trip unmasked so operators can inspect their declared limit.
+        "ProviderModelCapacityConfig.MaxTokens",
+
         // A container: Dictionary<string, ApiKeyConfig>. The dictionary itself is not a secret value;
         // the actual secret is the nested ApiKeyConfig.ApiKey property, which IS annotated
         // [ConfigField(Secret = true)] and is reached (and redacted) by the ConfigSecretMerge walk

@@ -116,6 +116,15 @@ public interface IAgentHandle : IAsyncDisposable
     IDisposable? ObserveTurns(Action onTurnCompleted) => null;
 
     /// <summary>
+    /// Observes authoritative completed-tool and turn-boundary activity for no-progress policy.
+    /// Producers must derive fixed-size identities from normalized tool/result evidence internally,
+    /// never from model narration, and must not expose arguments or result payloads. Observations
+    /// are ordered; completed tools precede their turn boundary. Callbacks must be fast and not throw.
+    /// </summary>
+    /// <returns>A disposable subscription, or null when authoritative activity is unavailable.</returns>
+    IDisposable? ObserveActivity(Action<AgentActivityObservation> onActivity) => null;
+
+    /// <summary>
     /// Aborts the current agent execution, if any.
     /// </summary>
     Task AbortAsync(CancellationToken cancellationToken = default);

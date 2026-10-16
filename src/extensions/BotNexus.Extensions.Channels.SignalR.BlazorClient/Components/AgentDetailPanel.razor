@@ -69,7 +69,7 @@
                     <label>Emoji</label>
                     <input class="cfg-input" maxlength="4" value="@_model.Emoji" @oninput="OnEmojiInput" />
 
-                    <label>Provider</label>
+                    <label>Provider instance</label>
                     <div>
                         @if (_providers.Count > 0)
                         {
@@ -77,7 +77,7 @@
                                 <option value="">- select provider -</option>
                                 @foreach (var p in _providers)
                                 {
-                                    <option value="@p.Id">@p.Name</option>
+                                    <option value="@p.Id">@p.DisplayName</option>
                                 }
                             </select>
                         }
@@ -647,7 +647,12 @@
         public List<string> Denied { get; set; } = [];
     }
 
-    private record ProviderItem(string Id, string Name);
+    private sealed record ProviderItem(string Id, string Name, string? Type = null)
+    {
+        public string DisplayName => string.IsNullOrWhiteSpace(Type) || string.Equals(Id, Type, StringComparison.Ordinal)
+            ? Name
+            : $"{Name} ({Type})";
+    }
     private record ModelItem(string ModelId, string Name, List<string>? SupportedThinkingLevels = null, List<int>? SupportedContextSizes = null);
 
     // ── State ─────────────────────────────────────────────────────────────

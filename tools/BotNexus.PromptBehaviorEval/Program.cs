@@ -1,5 +1,6 @@
 using System.Text.Json;
 using BotNexus.Agent.Core.Configuration;
+using BotNexus.Agent.Core.ExtensionPoints.Messages;
 using BotNexus.Agent.Core.Loop;
 using BotNexus.Agent.Core.Tools;
 using BotNexus.Agent.Core.Types;
@@ -13,13 +14,8 @@ using BotNexus.PromptBehaviorEval;
 
 if (args.Length == 1 && args[0] is "--help" or "-h")
 {
-    Console.WriteLine("Usage: dotnet run --project tools/BotNexus.PromptBehaviorEval -- --config <path>");
+    Console.WriteLine("Usage: dotnet run --project tools/BotNexus.PromptBehaviorEval -- --config <path> | --report <result.json> [more result.json files]");
     return 0;
-}
-if (args.Length != 2 || args[0] != "--config")
-{
-    Console.Error.WriteLine("A single --config <path> argument is required. Use --help for details.");
-    return 2;
 }
 
 var jsonOptions = new JsonSerializerOptions
@@ -28,6 +24,29 @@ var jsonOptions = new JsonSerializerOptions
     WriteIndented = true,
     Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
 };
+if (args.Length >= 2 && args[0] == "--report")
+{
+    try
+    {
+        var runs = new List<BehaviorEvalResult>();
+        foreach (var path in args.Skip(1))
+            runs.Add(JsonSerializer.Deserialize<BehaviorEvalResult>(await File.ReadAllTextAsync(path), jsonOptions)
+                ?? throw new InvalidOperationException($"Empty evaluation result: {path}"));
+        var report = BehaviorMatrixReport.Summarize(runs);
+        Console.WriteLine(JsonSerializer.Serialize(report, jsonOptions));
+        return report.FailedRequirements.Count == 0 ? 0 : 1;
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or JsonException)
+    {
+        Console.Error.WriteLine($"Invalid evaluation evidence: {ex.Message}");
+        return 2;
+    }
+}
+if (args.Length != 2 || args[0] != "--config")
+{
+    Console.Error.WriteLine("Use --config <path> for one paid run or --report <result.json> [more result.json files] for offline analysis.");
+    return 2;
+}
 BehaviorEvalConfiguration configuration;
 try
 {
@@ -73,14 +92,14 @@ var llmClient = new LlmClient(providers, new ModelRegistry());
 var loopConfiguration = new AgentLoopConfig(
     Model: model,
     LlmClient: llmClient,
-    ConvertToLlm: DefaultMessageConverter.Create(),
-    TransformContext: null,
-    GetProviderExecutionOptions: (_, _) => Task.FromResult<ProviderExecutionOptions?>(new() { ApiKey = apiKey }),
-    GetSteeringMessages: null,
-    GetFollowUpMessages: null,
+    ProviderMessageTransformer: DefaultProviderMessageTransformer.Create(),
+    AgentContextTransformer: null,
+    ProviderExecutionOptionsProvider: (_, _) => Task.FromResult<ProviderExecutionOptions?>(new() { ApiKey = apiKey }),
+    SteeringMessageProvider: null,
+    FollowUpMessageProvider: null,
     ToolExecutionMode: ToolExecutionMode.Sequential,
-    BeforeToolCall: null,
-    AfterToolCall: null,
+    ToolExecutionPolicy: null,
+    ToolResultTransformer: null,
     GenerationSettings: new SimpleStreamOptions { MaxTokens = configuration.MaxTokens });
 
 var startedAt = DateTimeOffset.UtcNow;

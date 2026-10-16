@@ -24,6 +24,10 @@
     <PackageVersion Include="coverlet.collector" Version="8.0.1" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0-preview.3.25172.1" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="Microsoft.TestPlatform.ObjectModel" Version="17.14.1" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.0.0" />
+    <!-- Syntax-aware architecture fences use the same parser version as the source-generator tests. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
     <PackageVersion Include="Moq" Version="4.20.72" />
     <PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
     <!--
@@ -80,13 +84,20 @@
     <!-- ASP.NET / Blazor / SignalR -->
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.6" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.6" />
-    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.6" />
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.13" />
 
     <!-- Data -->
-    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.0-preview.3.25171.6" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.13" />
 
     <!-- Azure / identity -->
-    <PackageVersion Include="Azure.Core" Version="1.44.1" />
+    <!-- #4778: the host unifies extension references by simple name. Keep the shared
+         Azure/identity closure at least as new as every deployable extension requires.
+         These versions take effect through direct references, not global transitive pinning. -->
+    <PackageVersion Include="Azure.Core" Version="1.50.0" />
+    <PackageVersion Include="System.ClientModel" Version="1.8.0" />
+    <PackageVersion Include="System.Memory.Data" Version="10.0.7" />
+    <PackageVersion Include="Microsoft.Identity.Client" Version="4.83.3" />
+    <PackageVersion Include="Microsoft.IdentityModel.Abstractions" Version="8.15.0" />
     <PackageVersion Include="Azure.Identity" Version="1.13.2" />
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
     <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.18.0" />
@@ -97,6 +108,8 @@
     <PackageVersion Include="OpenTelemetry.Api" Version="1.15.3" />
     <!-- Parser-only use: Parser.ParseInput for the inline-command preflight (#3576). -->
     <PackageVersion Include="System.Management.Automation" Version="7.6.5" />
+    <!-- Override the parser's vulnerable transitive dependency; keep NuGet auditing enabled. -->
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <PackageVersion Include="OpenTelemetry.Exporter.Console" Version="1.15.3" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />

@@ -13,12 +13,14 @@ public sealed class ConversationActionMenuTests : IDisposable
     public void Dispose() => _ctx.Dispose();
 
     [Fact]
-    public void Overflow_trigger_opens_an_accessible_menu()
+    public void Overflow_trigger_opens_an_accessible_menu_in_the_browser_top_layer()
     {
         var cut = RenderMenu([new("rename", "Rename", () => Task.CompletedTask)]);
 
         cut.Find("[data-testid='conversation-actions-trigger']").Click();
 
+        var overlay = cut.Find("[data-testid='conversation-action-overlay']");
+        Assert.Equal("manual", overlay.GetAttribute("popover"));
         Assert.Equal("menu", cut.Find("[data-testid='conversation-action-menu']").GetAttribute("role"));
         Assert.Equal("menuitem", cut.Find("[data-action-id='rename']").GetAttribute("role"));
     }

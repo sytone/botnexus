@@ -60,7 +60,7 @@ public sealed class SqliteExtensionStateStore(
                 """;
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
-            SqliteSchemaMigrator.Apply(connection, CurrentSchemaVersion, Migrations);
+            connection.Apply( CurrentSchemaVersion, Migrations);
 
             _initialized = true;
             _logger.LogDebug("Extension state store initialized at {DbPath}.", _dbPath);

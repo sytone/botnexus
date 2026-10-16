@@ -147,6 +147,11 @@ internal static class SandboxProcessGuard
     /// <param name="familyRoot">e.g. <c>{temp}/botnexus-e2e</c>.</param>
     /// <param name="now">Injectable clock, for tests.</param>
     public static int ReapStaleSandboxes(string familyRoot, DateTime? now = null)
+        => ReapStaleSandboxes(familyRoot, now, OpenRecordedProcess);
+
+    // Per-call injection avoids shared mutable test hooks and never falls back to real PIDs.
+    internal static int ReapStaleSandboxes(
+        string familyRoot, DateTime? now, Func<int, IRecordedProcess> openProcess)
     {
         if (!Directory.Exists(familyRoot))
             return 0;
@@ -161,10 +166,11 @@ internal static class SandboxProcessGuard
                 if (utcNow - SandboxCreatedUtc(sandbox) < MinimumAgeBeforeReaping)
                     continue;
 
-                if (!IsAbandoned(sandbox))
+                if (!IsAbandoned(sandbox, openProcess))
                     continue;
 
-                KillRecordedGateway(sandbox);
+                if (!TryStopRecordedGateway(sandbox, openProcess))
+                    continue;
                 Directory.Delete(sandbox, recursive: true);
                 reaped++;
             }
@@ -223,35 +229,66 @@ internal static class SandboxProcessGuard
     /// True when the sandbox's owning test host is no longer running. A sandbox with no readable
     /// marker is treated as abandoned - it is past the age floor, so it predates this run.
     /// </summary>
-    private static bool IsAbandoned(string sandbox)
+    private static bool IsAbandoned(string sandbox, Func<int, IRecordedProcess> openProcess)
     {
         var marker = ReadMarker(sandbox);
         if (marker is null)
             return true;
 
-        return !IsProcessAlive(
+        return !IsOwnerPossiblyAlive(
             GetInt(marker, "ownerPid"),
-            GetLong(marker, "ownerStartTimeUtcTicks"));
+            GetLong(marker, "ownerStartTimeUtcTicks"), openProcess);
     }
 
-    private static void KillRecordedGateway(string sandbox)
+    // True means the recorded child is gone, not merely that a kill was attempted.
+    private static bool TryStopRecordedGateway(string sandbox, Func<int, IRecordedProcess> openProcess)
     {
         var marker = ReadMarker(sandbox);
         var pid = GetInt(marker, "gatewayPid");
-        if (pid is null)
-            return;
+        if (pid is null or <= 0)
+            return true;
 
-        if (!IsProcessAlive(pid, GetLong(marker, "gatewayStartTimeUtcTicks")))
-            return;
-
+        IRecordedProcess gateway;
         try
         {
-            using var gateway = Process.GetProcessById(pid.Value);
-            gateway.Kill(entireProcessTree: true);
-            gateway.WaitForExit(milliseconds: 5000);
+            gateway = openProcess(pid.Value);
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException)
+        catch (ArgumentException)
         {
+            return true; // No such process. This is the only PID-lookup failure proving absence.
+        }
+        catch (Exception ex) when (IsProcessInspectionFailure(ex))
+        {
+            return false;
+        }
+
+        using (gateway)
+        {
+            try
+            {
+                if (gateway.HasExited)
+                    return true;
+
+                var recordedStart = GetLong(marker, "gatewayStartTimeUtcTicks");
+                if (recordedStart is null or <= 0)
+                    return false;
+
+                var actualStart = gateway.StartTimeUtcTicks;
+                if (actualStart is null or <= 0)
+                    return false;
+                if (actualStart != recordedStart)
+                    return true; // Original child is gone; never signal the recycled PID's occupant.
+
+                // Identity verification and signaling use this same opened process, with no PID reopen.
+                gateway.Kill();
+                return gateway.WaitForExit(milliseconds: 5000);
+            }
+            catch (Exception ex) when (IsProcessInspectionFailure(ex) || ex is AggregateException)
+            {
+                // Tree kills can aggregate failures from individual processes. Preserve the
+                // sandbox even if part of the tree was stopped, and continue with other sandboxes.
+                return false; // Unknown identity, failed signal or unconfirmed exit: keep evidence for retry.
+            }
         }
     }
 
@@ -275,31 +312,84 @@ internal static class SandboxProcessGuard
     /// for the original process - which here would mean sparing a dead run's sandbox forever, or
     /// worse, killing an unrelated process that inherited the id.
     /// </summary>
-    private static bool IsProcessAlive(int? pid, long? startTimeUtcTicks)
+    private static bool IsOwnerPossiblyAlive(
+        int? pid, long? startTimeUtcTicks, Func<int, IRecordedProcess> openProcess)
     {
         if (pid is null or <= 0)
             return false;
 
+        IRecordedProcess process;
         try
         {
-            using var process = Process.GetProcessById(pid.Value);
-            if (process.HasExited)
-                return false;
-
-            if (startTimeUtcTicks is null)
-                return true;   // Nothing to compare; assume alive rather than risk deleting a live run.
-
-            var actual = SafeStartTimeTicks(process);
-            return actual is null || actual == startTimeUtcTicks;
+            process = openProcess(pid.Value);
         }
         catch (ArgumentException)
         {
-            return false;      // No such process.
+            return false; // No such process.
         }
-        catch (InvalidOperationException)
+        catch (Exception ex) when (IsProcessInspectionFailure(ex))
         {
-            return false;
+            return true;
         }
+
+        using (process)
+        {
+            try
+            {
+                if (process.HasExited)
+                    return false;
+                if (startTimeUtcTicks is null or <= 0)
+                    return true;
+
+                var actual = process.StartTimeUtcTicks;
+                return actual is null or <= 0 || actual == startTimeUtcTicks;
+            }
+            catch (Exception ex) when (IsProcessInspectionFailure(ex))
+            {
+                return true; // An unreadable owner must never make a live sandbox look abandoned.
+            }
+        }
+    }
+
+    private static bool IsProcessInspectionFailure(Exception ex)
+        => ex is InvalidOperationException or NotSupportedException
+            or System.ComponentModel.Win32Exception or UnauthorizedAccessException;
+
+    // Narrow OS boundary: verification and signaling use one Process instance. Windows binds
+    // its native handle; Unix signals remain PID-based, so this reduces but cannot eliminate races.
+    internal interface IRecordedProcess : IDisposable
+    {
+        bool HasExited { get; }
+        long? StartTimeUtcTicks { get; }
+        void Kill();
+        bool WaitForExit(int milliseconds);
+    }
+
+    private static IRecordedProcess OpenRecordedProcess(int pid)
+    {
+        var process = Process.GetProcessById(pid);
+        try
+        {
+            // On Windows, bind the native process handle before reading identity so Kill cannot
+            // defer opening a different occupant of a recycled PID. Unix .NET still signals by PID;
+            // keeping one Process instance avoids our own reopen but is not an atomic identity kill.
+            _ = process.Handle;
+            return new RecordedProcess(process);
+        }
+        catch
+        {
+            process.Dispose();
+            throw;
+        }
+    }
+
+    private sealed class RecordedProcess(Process process) : IRecordedProcess
+    {
+        public bool HasExited => process.HasExited;
+        public long? StartTimeUtcTicks => SafeStartTimeTicks(process);
+        public void Kill() => process.Kill(entireProcessTree: true);
+        public bool WaitForExit(int milliseconds) => process.WaitForExit(milliseconds);
+        public void Dispose() => process.Dispose();
     }
 
     private static long? SafeStartTimeTicks(Process process)
@@ -328,12 +418,12 @@ internal static class SandboxProcessGuard
 
     private static int? GetInt(Dictionary<string, JsonElement>? marker, string key)
         => marker is not null && marker.TryGetValue(key, out var e) && e.ValueKind == JsonValueKind.Number
-            ? e.GetInt32()
+            && e.TryGetInt32(out var value) ? value
             : null;
 
     private static long? GetLong(Dictionary<string, JsonElement>? marker, string key)
         => marker is not null && marker.TryGetValue(key, out var e) && e.ValueKind == JsonValueKind.Number
-            ? e.GetInt64()
+            && e.TryGetInt64(out var value) ? value
             : null;
 
     private static void InstallHooks()

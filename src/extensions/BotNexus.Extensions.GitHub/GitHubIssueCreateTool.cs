@@ -66,7 +66,7 @@ public sealed class GitHubIssueCreateTool : GitHubToolBase
             repository,
             ok = true,
             identity = Config.Identity,
-            issue = GitHubProjections.Issue(created),
+            issue = created.Issue(),
         });
     }
 }

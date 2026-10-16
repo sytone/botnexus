@@ -120,12 +120,14 @@ internal static class AgentExecCommand
     /// <param name="stdout">Output sink; defaults to <see cref="Console.Out"/>. Injected by tests.</param>
     /// <param name="stderr">Diagnostic sink; defaults to <see cref="Console.Error"/>. Injected by tests.</param>
     /// <param name="handler">Optional transport for tests. Owned by the resolved client.</param>
+    /// <param name="timeProvider">Clock for the command deadline; defaults to the system clock.</param>
     public static async Task<int> ExecuteAsync(
         AgentExecRequest request,
         CancellationToken cancellationToken,
         TextWriter? stdout = null,
         TextWriter? stderr = null,
-        HttpMessageHandler? handler = null)
+        HttpMessageHandler? handler = null,
+        TimeProvider? timeProvider = null)
     {
         var output = stdout ?? Console.Out;
         var diagnostics = stderr ?? Console.Error;
@@ -152,12 +154,7 @@ internal static class AgentExecCommand
 
         // The credential policy lives in exactly one place (#2747). A remote --url without an
         // explicit --token is refused here rather than sent unauthenticated.
-        var resolution = GatewayClientFactory.Resolve(
-            request.BaseUrl,
-            timeout,
-            request.Token,
-            GatewayClientFactory.DefaultCredentialSource(),
-            handler);
+        var resolution = ResolveClient(request, handler);
 
         if (resolution.IsRefused)
         {
@@ -173,7 +170,7 @@ internal static class AgentExecCommand
         // A dedicated linked source so a timeout is distinguishable from a Ctrl-C: HttpClient's own
         // timeout surfaces as a bare TaskCanceledException that cannot be told apart from user
         // cancellation, which is precisely the ambiguity that would make the timeout exit code lie.
-        using var timeoutSource = new CancellationTokenSource(timeout);
+        using var timeoutSource = new CancellationTokenSource(timeout, timeProvider ?? TimeProvider.System);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
 
         HttpResponseMessage response;
@@ -271,6 +268,17 @@ internal static class AgentExecCommand
             return AgentExecExitCode.Success;
         }
     }
+
+    // The dedicated command source must be the sole deadline owner. A competing HttpClient
+    // timer can cancel first and be misclassified as caller cancellation (exit 1, not timeout 3).
+    // This synchronous boundary lets tests verify that invariant without racing real timers.
+    internal static GatewayClientResolution ResolveClient(AgentExecRequest request, HttpMessageHandler? handler = null)
+        => GatewayClientFactory.Resolve(
+            request.BaseUrl,
+            Timeout.InfiniteTimeSpan,
+            request.Token,
+            GatewayClientFactory.DefaultCredentialSource(),
+            handler);
 
     private static string? Normalise(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

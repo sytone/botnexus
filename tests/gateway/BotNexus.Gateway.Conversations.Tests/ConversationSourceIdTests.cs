@@ -282,13 +282,14 @@ public sealed class ConversationSourceIdTests
                 NULL AS pending_ask_user_json,
                 NULL AS model_override,
                 NULL AS thinking_override,
-                NULL AS context_window_override
+                NULL AS context_window_override,
+                NULL AS compaction_token_ceiling
             """;
 
         using var reader = command.ExecuteReader();
         reader.Read().ShouldBeTrue();
 
-        var mapped = ConversationRowMapper.MapConversation(reader);
+        var mapped = reader.MapConversation();
         mapped.SourceId.ShouldBeNull();
         mapped.Source.ShouldBe(ConversationSource.Cron);
     }
@@ -326,13 +327,14 @@ public sealed class ConversationSourceIdTests
                 NULL AS pending_ask_user_json,
                 NULL AS model_override,
                 NULL AS thinking_override,
-                NULL AS context_window_override
+                NULL AS context_window_override,
+                NULL AS compaction_token_ceiling
             """;
 
         using var reader = command.ExecuteReader();
         reader.Read().ShouldBeTrue();
 
-        ConversationRowMapper.MapConversation(reader).SourceId.ShouldBe(expected);
+        reader.MapConversation().SourceId.ShouldBe(expected);
     }
 
     // ---------------------------------------------------------------------

@@ -117,7 +117,15 @@ public sealed class MemorySessionReconcilerTests
             [.. sessionIds.Select(id => new GatewaySession { SessionId = SessionId.From(id), AgentId = AgentId.From("agent-a") })];
 
         public virtual Task<IReadOnlyList<GatewaySession>> ListAsync(AgentId? agentId = null, CancellationToken cancellationToken = default)
-            => Task.FromResult(_sessions);
+            => throw new InvalidOperationException("full transcript enumeration is forbidden for reconciliation");
+
+        public virtual Task<IReadOnlyList<SessionSummary>> ListSummariesAsync(
+            DateTimeOffset updatedAfter,
+            int? limit = null,
+            int offset = 0,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<SessionSummary>>(
+                [.. _sessions.Select(SessionSummary.FromSession)]);
 
         public Task<GatewaySession?> GetAsync(SessionId sessionId, CancellationToken cancellationToken = default)
             => Task.FromResult(_sessions.FirstOrDefault(s => s.SessionId == sessionId));
@@ -138,7 +146,11 @@ public sealed class MemorySessionReconcilerTests
 
     private sealed class ThrowingSessionStore : StubSessionStore
     {
-        public override Task<IReadOnlyList<GatewaySession>> ListAsync(AgentId? agentId = null, CancellationToken cancellationToken = default)
+        public override Task<IReadOnlyList<SessionSummary>> ListSummariesAsync(
+            DateTimeOffset updatedAfter,
+            int? limit = null,
+            int offset = 0,
+            CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("session corpus unavailable");
     }
 }

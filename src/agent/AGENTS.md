@@ -2,7 +2,13 @@
 
 ## Dependency boundary
 
-Projects in `src/agent/` must **never** depend on projects outside this folder. The agent layer is self-contained — it defines the core agent runtime and LLM provider abstractions. The gateway, extensions, and other layers depend on the agent layer, not the other way around.
+Projects in `src/agent/` must not add dependencies outside this folder. The agent layer defines the core agent runtime and LLM provider abstractions. The gateway, extensions, and other layers depend on the agent layer, not the other way around.
+
+The sole existing exception is `BotNexus.Agent.Providers.Core` →
+`BotNexus.Domain.Wire`, a dependency-free leaf exposing the secret-redaction seam
+used by provider error handling. Do not broaden this exception to other projects
+or move host behavior into Wire. Architecture tests fence this exact edge and
+separately require Wire to remain dependency-free.
 
 **Allowed dependencies:**
 - Other projects within `src/agent/` (e.g., providers reference `Agent.Providers.Core`)
@@ -48,6 +54,12 @@ These rules are mandatory for changes to `BotNexus.Agent.Core`:
 	during a layout refactor; do not add raw callbacks for named domain responsibilities.
 - The loop owns execution, control-flow decisions, and mutable agent state.
 	Policies return decisions, transformers return data, and observers report facts.
+	Informational diagnostic callbacks must use the shared diagnostic dispatcher:
+	isolate each multicast subscriber's exceptions (including subscriber cancellation)
+	without recursively reporting through the failing sink. Do not swallow operation
+	cancellation or apply diagnostic isolation to authoritative callbacks. The current
+	`ToolExecutionDecisionObserver` also supports host write-ahead accounting; its
+	exception behavior must remain unchanged until that responsibility is separated.
 	Reuse an existing policy point when its question and contracts fit. Before adding
 	contributors, follow the family-specific ordering, aggregation, failure, and
 	evidence rules in [Extension-point composition](../../docs/development/agent-core-extension-points.md#define-composition-per-policy-family).
@@ -67,6 +79,18 @@ These rules are mandatory for changes to `BotNexus.Agent.Core`:
 - Behavior changes require failing tests first, then implementation and remote
 	authoritative validation under the root rules. Mirror focused unit tests under
 	the same family; keep cross-cutting security scenarios in `Security/`.
+
+`AgentExtensionLayoutArchitectureTests` checks public extension declarations with
+the C# syntax parser, including matching files, namespaces, responsibility folders,
+and retired buckets. `AgentProjectBoundaryArchitectureTests` checks declared project
+references, including conditional references and ancestor `Directory.Build.*`
+inputs. References must use literal paths; explicit imports fail closed until their
+build-input graph is covered. Conditional C# branches are checked across symbol
+combinations (bounded to eight symbols per file; extend the inspector beyond that).
+Extend their synthetic regression
+cases when changing organization rules; do not replace them with formatting regexes
+or freeze an exhaustive type inventory. `AgentToolUpdateCallback` remains an exact
+runtime-data exception under `Types/`; it does not authorize other callbacks there.
 
 ## Adding a new provider
 

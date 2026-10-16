@@ -8,6 +8,7 @@ param(
     [ValidatePattern('^/[A-Za-z0-9_./-]*$')][string]$PagePath = '/chat/evidence-agent',
     [string[]]$Selectors = @('[data-testid="streaming-badge"]','[data-testid="chat-abort-btn"]'),
     [string[]]$AccessibleNames = @(),
+    [switch]$CaptureMatrix,
     [ValidateSet('docker','podman')][string]$ContainerRuntime,
     [string]$NuGetPackagesPath = $env:NUGET_PACKAGES
 )
@@ -55,8 +56,9 @@ $image = "botnexus-ui-evidence:$runId"
 $container = "botnexus-ui-evidence-$runId"
 $volume = "botnexus-ui-evidence-output-$runId"
 $scenario = [ordered]@{
-    name = 'active-stream'
+    name = if ($CaptureMatrix) { 'active-composer-matrix' } else { 'active-stream' }
     promptKey = $PromptKey
+    captureMatrix = [bool]$CaptureMatrix
     pagePath = $PagePath
     viewport = [ordered]@{ width = $ViewportWidth; height = $ViewportHeight }
     selectors = $Selectors

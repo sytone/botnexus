@@ -92,7 +92,7 @@ public sealed class ModelGuidanceSectionGptRungTests
     [Fact]
     public void Gpt_CarriesANarrationRule_ExpressedAsACountNotAJudgement()
     {
-        var text = TextOf(ModelGuidanceSection.Rules.NarrationThreshold);
+        var text = SharedTextOf(ModelGuidanceSection.Rules.NarrationThreshold);
 
         // A digit or a spelled-out cardinal: the point is that the trigger is countable.
         text.ShouldMatch(@"\b(\d+|one|two|three|five|ten|twenty)\b");
@@ -111,10 +111,11 @@ public sealed class ModelGuidanceSectionGptRungTests
     }
 
     [Fact]
-    public void UnknownFamily_ReceivesNoGptRule()
+    public void UnknownFamily_ReceivesSharedNarrationButNoGptSpecificRule()
     {
         var lines = ModelGuidanceSection.Create().Build(ContextFor("some-model-nobody-has-heard-of"));
 
+        lines.ShouldContain(SharedTextOf(ModelGuidanceSection.Rules.NarrationThreshold));
         foreach (var rule in ModelGuidanceSection.Gpt())
         {
             lines.ShouldNotContain(rule.Text!);
@@ -166,16 +167,26 @@ public sealed class ModelGuidanceSectionGptRungTests
     // ---- AC7: the other rungs are untouched ----
 
     [Fact]
-    public void ClaudeAndGemini_ReceiveNoGptRule()
+    public void ClaudeAndGemini_InheritNarrationButReceiveNoGptSpecificRule()
     {
         var claude = ModelGuidanceSection.Create().Build(ContextFor("claude-opus-4-20250514"));
         var gemini = ModelGuidanceSection.Create().Build(ContextFor("gemini-2.5-pro"));
 
+        claude.ShouldContain(SharedTextOf(ModelGuidanceSection.Rules.NarrationThreshold));
+        gemini.ShouldContain(SharedTextOf(ModelGuidanceSection.Rules.NarrationThreshold));
         foreach (var rule in ModelGuidanceSection.Gpt())
         {
             claude.ShouldNotContain(rule.Text!);
             gemini.ShouldNotContain(rule.Text!);
         }
+    }
+
+    private static string SharedTextOf(string ruleId)
+    {
+        var rule = ModelGuidanceSection.Default().SingleOrDefault(r => string.Equals(r.Id, ruleId, StringComparison.OrdinalIgnoreCase));
+        rule.ShouldNotBeNull($"The default rung must declare a rule with id '{ruleId}'.");
+        rule.Text.ShouldNotBeNullOrWhiteSpace();
+        return rule.Text!;
     }
 
     private static string TextOf(string ruleId)

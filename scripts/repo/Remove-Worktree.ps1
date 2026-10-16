@@ -393,15 +393,37 @@ function Remove-WorktreeSafely {
         }
     }
 
-    # Directory removal succeeded -> safe to prune.
-    & $GitInvoker @('-C', $RepoRoot, 'worktree', 'prune') | Out-Null
-    $pruned = $true
+    # Directory removal succeeded -> safe to attempt prune, not yet to delete
+    # the branch. A failed prune or retained metadata must fail closed (#4856).
+    $pruneResult = & $GitInvoker @('-C', $RepoRoot, 'worktree', 'prune')
+    $pruned = ($pruneResult.exitCode -eq 0)
 
     # Verify .git/worktrees/<name> metadata is gone.
     $metadataGone = $true
     if ($metadataName) {
         $metaPath = Join-Path (Join-Path (Join-Path $RepoRoot '.git') 'worktrees') $metadataName
         $metadataGone = -not (Test-Path $metaPath)
+    }
+
+    if (-not $pruned -or -not $metadataGone) {
+        return @{
+            outcome          = 'error'
+            path             = $WorktreePath
+            branch           = $branch
+            metadataName     = $metadataName
+            attempts         = $attempts
+            ownerState       = $ownerState
+            reclaimed        = $false
+            reclaimAttempted = $reclaimAttempted
+            pruned           = $pruned
+            metadataGone     = $metadataGone
+            branchDeleted    = $false
+            lastError        = if (-not $pruned) {
+                "git worktree prune failed (exit code $($pruneResult.exitCode)): $($pruneResult.output)".Trim()
+            } else {
+                "Worktree metadata still present after prune: $metaPath"
+            }
+        }
     }
 
     # Only now, after fully successful removal, optionally delete the branch.

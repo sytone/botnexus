@@ -11,16 +11,20 @@ public sealed class ComposerActiveStateCssTests
         "app.css");
 
     [Fact]
-    public void Desktop_active_composer_uses_non_intercepting_perimeter_animation()
+    public void Desktop_active_composer_uses_non_intercepting_bottom_edge_pulse()
     {
         var content = File.ReadAllText(s_cssPath);
         var activeRule = RuleBlock(content, ".chat-input-area.composer-active::before {");
 
         activeRule.ShouldContain("pointer-events: none");
-        activeRule.ShouldContain("offset-path: inset");
-        activeRule.ShouldContain("animation: composer-perimeter-travel");
-        content.ShouldContain("@keyframes composer-perimeter-travel");
-        content.ShouldContain("offset-distance: 100%");
+        activeRule.ShouldContain("bottom: 0.3rem");
+        activeRule.ShouldContain("height: 2px");
+        activeRule.ShouldContain("background: var(--accent)");
+        activeRule.ShouldContain("animation: composer-bottom-edge-pulse");
+        content.ShouldContain("@keyframes composer-bottom-edge-pulse");
+        content.ShouldNotContain("offset-path:");
+        content.ShouldNotContain("offset-distance:");
+        content.ShouldNotContain("composer-perimeter-travel");
     }
 
     [Fact]
@@ -32,7 +36,8 @@ public sealed class ComposerActiveStateCssTests
         content.ShouldContain(".chat-input-area.composer-active::before");
         content.ShouldContain("animation: none");
         content.ShouldContain("@media (forced-colors: active)");
-        content.ShouldContain("outline: 2px solid Highlight");
+        content.ShouldContain("background: Highlight");
+        content.ShouldContain(".composer-active.composer-motion-disabled::before");
     }
 
     private static string RuleBlock(string content, string selector)

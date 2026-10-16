@@ -151,6 +151,11 @@ public sealed class CronTickFanOutIsolationTests
         var task = method!.Invoke(scheduler, [CancellationToken.None]) as Task;
         Assert.NotNull(task);
         await task!;
+
+        // #4688: the tick now dispatches and returns, so completion must be awaited explicitly.
+        // These suites assert on executed runs and their persisted bookkeeping, not on dispatch
+        // latency, so draining here preserves their original intent.
+        await scheduler.WaitForInFlightAsync();
     }
 
     private sealed class StaticOptionsMonitor<T>(T currentValue) : IOptionsMonitor<T>
@@ -250,6 +255,9 @@ public sealed class CronTickFanOutIsolationTests
 
         public Task<IReadOnlyList<CronJobCostRollup>> GetJobCostRollupsAsync(IReadOnlyCollection<JobId> jobIds, int windowDays = 7, CancellationToken ct = default)
             => inner.GetJobCostRollupsAsync(jobIds, windowDays, ct);
+
+        public Task<CronRun?> GetRunAsync(RunId runId, CancellationToken ct = default)
+            => inner.GetRunAsync(runId, ct);
 
         public Task<IReadOnlyList<CronRun>> GetRunHistoryAsync(JobId jobId, int limit = 20, CancellationToken ct = default)
             => inner.GetRunHistoryAsync(jobId, limit, ct);

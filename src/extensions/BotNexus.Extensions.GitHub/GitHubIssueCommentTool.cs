@@ -83,7 +83,7 @@ public sealed class GitHubIssueCommentTool : GitHubToolBase
             ok = true,
             number,
             identity = Config.Identity,
-            comment = GitHubProjections.Comment(created),
+            comment = created.Comment(),
         });
     }
 }

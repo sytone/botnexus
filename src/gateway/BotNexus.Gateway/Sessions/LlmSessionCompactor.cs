@@ -296,7 +296,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         CompactionTokenMeasurement measurement,
         CompactionOptions options)
     {
-        var threshold = (int)(options.ContextWindowTokens * options.TokenThresholdRatio);
+        var threshold = CompactionThreshold.Resolve(options);
         var estimateTrigger = measurement.EstimatedTokens > threshold;
         var providerTrigger = measurement.ProviderPromptTokens is int provider && provider > threshold;
         return (estimateTrigger, providerTrigger, threshold);
@@ -350,7 +350,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // unchanged.
         const string template =
             "ShouldCompact check for session {SessionId}: estimated {EstimatedTokens} tokens " +
-            "(estimateTrigger {EstimateTrigger}), threshold {Threshold} (window {Window} * ratio {Ratio}), " +
+            "(estimateTrigger {EstimateTrigger}), threshold {Threshold} (window {Window} * ratio {Ratio}, ceiling {Ceiling}), " +
             "largestVisibleEntry {LargestBytes} bytes (byteThreshold {ByteThreshold}, bloatTrigger {BloatTrigger}), " +
             "providerPromptTokens {ProviderPromptTokens} (providerTrigger {ProviderTrigger}), " +
             "providerToEstimateRatio {TokenRatio}, result: {ShouldCompact}";
@@ -366,6 +366,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             threshold,
             options.ContextWindowTokens,
             options.TokenThresholdRatio,
+            options.CompactionTokenCeiling,
             largestEntryBytes,
             options.LargestEntryBytesThreshold,
             bloatTrigger,
@@ -1305,7 +1306,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// here as a literal divide by four. Units are summed across all entries and converted once, so
     /// no per-entry remainder is discarded.
     /// </remarks>
-    private static int EstimateVisibleTokenCount(Session session)
+    internal static int EstimateVisibleTokenCount(Session session)
         => EstimateVisibleTokenCountFromEntries(session.History);
 
     /// <inheritdoc cref="EstimateVisibleTokenCount"/>
