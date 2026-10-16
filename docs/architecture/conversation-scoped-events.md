@@ -152,8 +152,8 @@ conversation after the write. A missing post-write conversation returns HTTP 404
 or read emits no success fact.
 
 When the observed boolean differs from the reloaded value, the action uses
-`PublishConversationUpdatedBestEffortAsync` instead of the legacy change notifier. The
-`ConversationUpdatedEvent` carries the reloaded agent and conversation identifiers, `UpdatedAt`
+`PublishConversationUpdatedBestEffortAsync` alongside the legacy change notifier as a transitional
+compatibility measure. The `ConversationUpdatedEvent` carries the reloaded agent and conversation identifiers, `UpdatedAt`
 as `OccurredAt`, detached immutable binding snapshots, and exactly `IsPinned` in `ChangedFields`.
 An unchanged boolean emits no event, even if the store refreshes pin timestamps. The pre-read and
 reload are observations, not an atomic before/after result; concurrent changes can affect them.
@@ -164,9 +164,14 @@ response. Delivery is best effort, not a durable outbox. Consumers must reload d
 state after a missed notification or reconnect. `ConversationsControllerPinEventTests` covers both
 actions with real in-memory and SQLite stores and the real publisher, fresh SQLite reads during
 consumption and afterward, detached snapshots, timestamps, narrow-field preservation, no-op and
-guard behavior, and store/publisher failures without legacy notifications.
+guard behavior, and store/publisher failures. Every successful HTTP 204 operation also calls the
+legacy change notifier once with `updated` and the owning agent and conversation identifiers,
+after the typed-event publication or no-op branch. This includes unchanged pin state and typed
+publisher rejection or exceptions. Rejected guards, store failures, and missing post-write state
+call neither notification path.
 
 This does not establish end-to-end Portal delivery: `SignalRChannelAdapter.OnConversationEventAsync`
 currently ignores facts that are not `ConversationAgentEvent`, including `ConversationUpdatedEvent`.
-The consumer remains unchanged. Move, auto-title, other lifecycle producers, and the wider #2088
-migration are outside this slice.
+The consumer remains unchanged, so the legacy notification is retained to preserve existing live
+invalidation until consumers migrate to typed update facts. Move, auto-title, other lifecycle
+producers, and the wider #2088 migration are outside this slice.

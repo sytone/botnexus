@@ -1541,6 +1541,7 @@ public sealed class ConversationsController : ControllerBase
         if (updated is null) return NotFound();
         if (wasPinned != updated.IsPinned)
             await PublishConversationUpdatedBestEffortAsync(updated, [nameof(Conversation.IsPinned)], cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
         return NoContent();
     }
 
@@ -1564,6 +1565,7 @@ public sealed class ConversationsController : ControllerBase
         if (updated is null) return NotFound();
         if (wasPinned != updated.IsPinned)
             await PublishConversationUpdatedBestEffortAsync(updated, [nameof(Conversation.IsPinned)], cancellationToken);
+        await NotifyConversationChangedBestEffortAsync("updated", conversation.AgentId.Value, conversationId, cancellationToken);
         return NoContent();
     }
 

@@ -21,7 +21,7 @@ public sealed class ConversationsControllerPinEventTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task Pin_PublishesDetachedCommittedSnapshot_WithoutLegacyNotification(bool sqlite, bool pin)
+    public async Task Pin_PublishesDetachedCommittedSnapshot_WithCompatibilityNotification(bool sqlite, bool pin)
     {
         using var fixture = new StoreFixture(sqlite);
         var conversation = await SeedAsync(fixture.Store, !pin);
@@ -29,6 +29,8 @@ public sealed class ConversationsControllerPinEventTests
         var sink = new CapturingSink(fixture, pin);
         await using var publisher = new ConversationEventPublisher([sink]);
         var notifier = new Mock<IConversationChangeNotifier>(MockBehavior.Strict);
+        notifier.Setup(n => n.NotifyConversationChangedAsync("updated", conversation.AgentId.Value,
+            conversation.ConversationId.Value, CancellationToken.None)).Returns(Task.CompletedTask);
         var controller = CreateController(fixture.Store, publisher, notifier.Object);
 
         (await MutateAsync(controller, conversation.ConversationId, pin)).ShouldBeOfType<NoContentResult>();
@@ -47,6 +49,8 @@ public sealed class ConversationsControllerPinEventTests
         persisted.ChannelBindings.ShouldHaveSingleItem().ChannelAddress = ChannelAddress.From("mutated-after-publication");
         persisted.ChannelBindings.Clear();
         fact.Bindings.ShouldHaveSingleItem().ChannelAddress.ShouldBe(ChannelAddress.From("pin-address"));
+        notifier.Verify(n => n.NotifyConversationChangedAsync("updated", conversation.AgentId.Value,
+            conversation.ConversationId.Value, CancellationToken.None), Times.Once);
         notifier.VerifyNoOtherCalls();
     }
 
@@ -62,12 +66,16 @@ public sealed class ConversationsControllerPinEventTests
         var sink = new CapturingSink(fixture, pin);
         await using var publisher = new ConversationEventPublisher([sink]);
         var notifier = new Mock<IConversationChangeNotifier>(MockBehavior.Strict);
+        notifier.Setup(n => n.NotifyConversationChangedAsync("updated", conversation.AgentId.Value,
+            conversation.ConversationId.Value, CancellationToken.None)).Returns(Task.CompletedTask);
         var controller = CreateController(fixture.Store, publisher, notifier.Object);
 
         (await MutateAsync(controller, conversation.ConversationId, pin)).ShouldBeOfType<NoContentResult>();
         await publisher.WaitForDrainAsync();
         AssertState((await fixture.ReadDurableAsync(conversation.ConversationId)).ShouldNotBeNull(), pin);
         sink.Events.ShouldBeEmpty();
+        notifier.Verify(n => n.NotifyConversationChangedAsync("updated", conversation.AgentId.Value,
+            conversation.ConversationId.Value, CancellationToken.None), Times.Once);
         notifier.VerifyNoOtherCalls();
     }
 
@@ -100,6 +108,9 @@ public sealed class ConversationsControllerPinEventTests
         var sink = new CapturingSink();
         await using var publisher = new ConversationEventPublisher([sink]);
         var notifier = new Mock<IConversationChangeNotifier>(MockBehavior.Strict);
+        if (failure == "unchanged-post-state")
+            notifier.Setup(n => n.NotifyConversationChangedAsync("updated", conversation.AgentId.Value,
+                conversation.ConversationId.Value, CancellationToken.None)).Returns(Task.CompletedTask);
         var controller = CreateController(store.Object, publisher, notifier.Object);
 
         if (failure.EndsWith("throws", StringComparison.Ordinal))
@@ -112,6 +123,9 @@ public sealed class ConversationsControllerPinEventTests
         await publisher.WaitForDrainAsync();
         sink.Events.ShouldBeEmpty();
         conversation.IsPinned.ShouldBe(!pin);
+        notifier.Verify(n => n.NotifyConversationChangedAsync("updated", conversation.AgentId.Value,
+            conversation.ConversationId.Value, CancellationToken.None),
+            failure == "unchanged-post-state" ? Times.Once() : Times.Never());
         notifier.VerifyNoOtherCalls();
         store.VerifyAll();
     }
@@ -131,11 +145,15 @@ public sealed class ConversationsControllerPinEventTests
         var conversation = await SeedAsync(fixture.Store, !pin);
         var publisher = new FailingPublisher(throws);
         var notifier = new Mock<IConversationChangeNotifier>(MockBehavior.Strict);
+        notifier.Setup(n => n.NotifyConversationChangedAsync("updated", conversation.AgentId.Value,
+            conversation.ConversationId.Value, CancellationToken.None)).Returns(Task.CompletedTask);
         var controller = CreateController(fixture.Store, publisher, notifier.Object);
 
         (await MutateAsync(controller, conversation.ConversationId, pin)).ShouldBeOfType<NoContentResult>();
         AssertState((await fixture.ReadDurableAsync(conversation.ConversationId)).ShouldNotBeNull(), pin);
         publisher.Calls.ShouldBe(1);
+        notifier.Verify(n => n.NotifyConversationChangedAsync("updated", conversation.AgentId.Value,
+            conversation.ConversationId.Value, CancellationToken.None), Times.Once);
         notifier.VerifyNoOtherCalls();
     }
 
