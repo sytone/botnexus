@@ -22,13 +22,14 @@ my-plugin/
   .mcp.json
 ```
 
-The manifest lives at `.botnexus-plugin/plugin.json`. A directory without that file is not a
-plugin and is rejected rather than treated as an empty one.
+The native manifest lives at `.botnexus-plugin/plugin.json`. The lifecycle also accepts a
+bounded, experimental Claude import from `.claude-plugin/plugin.json`, as described below.
+A directory without either manifest is rejected; manifestless import remains deferred.
 
 ## The manifest
 
-The manifest adopts the Claude Code field set so plugins authored for that ecosystem port with
-no translation layer. Only `name` is required:
+The native manifest uses a strict subset of Claude-style metadata and component fields. This
+is not full Claude Code compatibility. Only `name` is required:
 
 ```json
 { "name": "hello-world" }
@@ -36,12 +37,45 @@ no translation layer. Only `name` is required:
 
 That single-field manifest is valid and complete. Components are **discovered by convention**
 at the plugin root, so a well-laid-out plugin never needs to enumerate its own paths. The
-explicit path fields (`skills`, `agents`, `commands`, `hooks`, `mcpServers`) exist only as an
-override for plugins with a non-conventional layout.
+native schema accepts explicit path fields (`skills`, `agents`, `commands`, `hooks`,
+`mcpServers`), but schema acceptance does not mean every runtime consumer implements an
+override. `PluginSkillRootResolver` uses only `skills/`; `PluginAgentConfigurationSource`
+independently loads conventional `agents/*.json`. The MCP reader supports its explicit path
+and otherwise probes `.botnexus-plugin/mcp.json`, then `.mcp.json`.
 
 This distinction is load-bearing in the parsed model: an omitted component field deserialises
 to `null`, meaning *discover by convention*. It is never normalised to an empty collection,
 which would instead mean *this plugin deliberately has none*.
+
+## Experimental Claude import: conventional skills only
+
+This first implementation stage is for plugin authors and maintainers who need conventional
+skills to enter the existing install, update, trust-catalog and exact-file removal lifecycle.
+`PluginImportAdapter` validates fetched content in staging, before any file is promoted. It
+does not execute plugin scripts, rewrite source manifests, or create a synthetic native
+manifest. Original plugin files remain part of the installed file receipt.
+
+| Input or capability | First-stage support |
+| --- | --- |
+| Native `.botnexus-plugin/plugin.json` only | Existing strict schema and lifecycle behavior, unchanged. |
+| Claude `.claude-plugin/plugin.json` only | Required native-compatible `name`; optional `description`, `version`, `author`, `homepage`, `repository`, `license`, `keywords`, validated against native metadata rules. Unknown fields and duplicate fields, including nested duplicates, fail. |
+| Conventional `skills/` | Supported through the existing skill-root resolver and skill discovery. |
+| Claude `skills` declaration | Omitted, `"./skills"`, `"skills"`, or a one-element array containing either path. Empty, custom, additional or escaping paths fail rather than being ignored. |
+| Claude hooks, commands, agents, MCP or LSP declarations | Rejected, even when the declared value is empty. All offending fields are reported. |
+| Discovered behavior beside a Claude manifest | `hooks`, `commands`, `agents`, `lsp`, `.mcp.json`, `.lsp.json` and `.botnexus-plugin/mcp.json` paths are rejected, whether files or directories. Omitting declarations cannot bypass the check. |
+| Both manifests | Native whole-manifest authority, with no metadata inheritance. Both manifests must stay within conventional skills; native unsupported component declarations or custom skill paths fail too. Claude content must pass the bounded checks and declare the same identity. A malformed present native manifest fails; there is no Claude fallback. |
+| Missing both manifests | Rejected. Manifestless import is deferred. |
+| Marketplace, consent, UI or extra component execution | No expansion in this stage; unsupported content fails rather than producing partial success. |
+
+The installed receipt stores `manifestFormat` as `"Native"` or `"Claude"` for the selected
+manifest. Older receipts without that field default to `Native`. Successful updates refresh
+the format along with the manifest version and file set. A rejected candidate revision leaves
+the installed content and receipt untouched. Format selection does not grant trust: the
+existing skill validation and content-trust policies still apply.
+
+The strict native schema and `PluginManifestParser.ParsePluginDirectory` remain native-only.
+The separate adapter is a lifecycle import boundary, not a general Claude manifest parser or
+a promise that arbitrary Claude plugins work in BotNexus.
 
 ## Marketplaces
 
@@ -60,7 +94,7 @@ and `plugins[]`; each entry requires a `name` and a `source`.
 
 ## Schema is the single source of truth
 
-Two JSON Schema files define the contract:
+Two JSON Schema files define the native manifest and marketplace contracts:
 
 - `src/extensions/BotNexus.Extensions.Plugins/Schemas/plugin-manifest.schema.json`
 - `src/extensions/BotNexus.Extensions.Plugins/Schemas/marketplace.schema.json`
