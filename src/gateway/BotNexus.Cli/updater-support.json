@@ -1,0 +1,5 @@
+{
+  "supportedContractSchemas": [1],
+  "supportedUpdaterCapabilities": ["planned-shutdown-v1", "readiness-v1", "immutable-target-preflight-v1"],
+  "requiredTargetCapabilities": ["planned-shutdown-v1", "readiness-v1"]
+}

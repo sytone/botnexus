@@ -33,22 +33,16 @@ public sealed class UpdateNoOpRebuildSkipTests
     }
 
     /// <summary>
-    /// Drives the full <c>ExecuteAsync</c> pipeline with a scripted pull result so a test can
+    /// Drives the full <c>ExecuteAsync</c> pipeline with a compatible immutable release so a test can
     /// observe whether the gateway was bounced and the build ran at all.
     /// </summary>
     private sealed class ScriptedPipelineCommand(
         IGatewayProcessManager processManager,
         bool pullWasNoOp,
         UpdateCommand.WorkingTreeCleanliness cleanliness)
-        : UpdateCommand(processManager)
+        : CompatibleUpdateFixture(processManager, pullWasNoOp)
     {
         public int BuildAndDeployCalls { get; private set; }
-
-        protected override Task<int> RunGitPullStepAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
-        {
-            LastPullWasNoOp = pullWasNoOp;
-            return Task.FromResult(0);
-        }
 
         protected override Task<WorkingTreeCleanliness> GetWorkingTreeCleanlinessAsync(
             string repoRoot, CancellationToken cancellationToken)
