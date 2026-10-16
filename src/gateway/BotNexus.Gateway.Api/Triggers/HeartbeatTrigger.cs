@@ -47,7 +47,9 @@ public sealed class HeartbeatTrigger(
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
 
         var descriptor = registry.Get(agentId);
-        if (descriptor?.Soul?.Enabled == true)
+        // A scheduled model selection must not mutate the shared interactive soul session
+        // or its cached handle. Pinned occurrences use the existing isolated heartbeat path.
+        if (descriptor?.Soul?.Enabled == true && string.IsNullOrWhiteSpace(request?.ModelOverride))
             return await RunInSoulSessionAsync(agentId, prompt, descriptor, request, ct).ConfigureAwait(false);
 
         return await RunInHeartbeatSessionAsync(agentId, prompt, descriptor, request, ct).ConfigureAwait(false);
@@ -105,16 +107,6 @@ public sealed class HeartbeatTrigger(
         session.ConversationId = conversation.ConversationId;
         session.Metadata["triggerType"] = Type.Value;
 
-        if (string.IsNullOrWhiteSpace(request?.ModelOverride))
-            session.Metadata.Remove("modelOverride");
-        else
-            session.Metadata["modelOverride"] = request!.ModelOverride;
-
-        if (request?.CronJobId is null)
-            session.Metadata.Remove("cronJobId");
-        else
-            session.Metadata["cronJobId"] = request.CronJobId.Value.Value;
-
         if (conversation.ActiveSessionId != sessionId)
         {
             conversation.ActiveSessionId = sessionId;
@@ -139,6 +131,18 @@ public sealed class HeartbeatTrigger(
     {
         var session = preloadedSession
             ?? await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
+
+        // Both the stable heartbeat and active soul paths must publish the occurrence's
+        // selection before the supervisor resolves or reuses its handle.
+        if (string.IsNullOrWhiteSpace(request?.ModelOverride))
+            session.Metadata.Remove("modelOverride");
+        else
+            session.Metadata["modelOverride"] = request!.ModelOverride;
+        request?.ApplyCronModelMetadata(session);
+        if (request?.CronJobId is null)
+            session.Metadata.Remove("cronJobId");
+        else
+            session.Metadata["cronJobId"] = request.CronJobId.Value.Value;
 
         // --- Phase 2 (race-safe ack-prune, #573) ---------------------------
         // The soul path shares its session with concurrent flows (interactive
@@ -176,6 +180,8 @@ public sealed class HeartbeatTrigger(
         var preHeartbeatUpdatedAt = appendResult.PriorUpdatedAt;
         await sessions.SaveAsync(session, ct).ConfigureAwait(false);
 
+        if (request?.SessionCreatedAsync is not null)
+            await request.SessionCreatedAsync(sessionId, ct).ConfigureAwait(false);
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
         var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
 

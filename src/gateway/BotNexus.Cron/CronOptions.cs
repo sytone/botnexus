@@ -6,6 +6,9 @@ public sealed class CronOptions
 {
     public const string SectionName = "cron";
 
+    /// <summary>Opt-in model for model-running cron jobs without an explicit job model. Null preserves inheritance.</summary>
+    public string? DefaultModel { get; set; }
+
     public bool Enabled { get; set; } = true;
     public int TickIntervalSeconds { get; set; } = 60;
     public int DefaultJobTimeoutSeconds { get; set; } = 3600;

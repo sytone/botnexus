@@ -32,6 +32,29 @@
 
 BotNexus provides a **centralized cron service** (`CronScheduler`) that schedules and executes jobs on a fixed tick interval. Unlike per-agent scheduling (legacy `AgentConfig.CronJobs`), all jobs are registered in a single, global configuration section: the `cron` section of `config.json`.
 
+### Optional global model routing
+
+Configure `cron.defaultModel` through the installed CLI's canonical configuration writer, not by editing JSON files. It is absent/null by default; no model is chosen by price, speed, or name.
+
+**CLI:** In a terminal with the installed `botnexus` command, run:
+
+```shell
+botnexus config set cron.defaultModel openai/gpt-4.1-mini
+botnexus config get cron.defaultModel
+```
+
+Choose a model registered in your installation and permitted for the jobs' agents. Use your normal `--target` option when managing a non-default installation. The existing `config set` path type-checks the value and uses `CliConfigMutation` and the canonical writer factory; it preserves unrelated configuration. The change is durable configuration, not a live-runtime override.
+
+**UI:** The schema-driven Cron settings expose **Default cron model**. Save through the normal settings writer, then restart the gateway.
+
+To roll back, run `botnexus config set cron.defaultModel null` and restart. Existing job model pins remain intact; clear a job's `model` through its API/tool update only when you want it to inherit the global setting.
+
+For model-running actions (`agent-prompt`, `heartbeat`, `skill-review`, `memory-dreaming`, and `agent-converse`), each occurrence selects **explicit job model > global default > standing conversation model > agent fallback**. `command` and `webhook` ignore this setting. System-provisioned, declarative, API-authored, and tool-authored jobs use the same dispatch path.
+
+A selection is resolved against the registered models and agent model permissions before dispatch. An invalid or forbidden explicit/global model fails the run; it does not silently fall back. The selected model applies only to that occurrence and never changes the conversation's durable model override. Job JSON exposes `modelRoutingIndicator`; run history exposes `effectiveModel` with the requested token, resolved provider/model, and winning layer. Historical runs and deterministic actions retain null model audit values. Session metadata carries the same selection. Listings also expose `configuredDefaultModel` and distinguish `global-default` from `job-override`. Pinned heartbeats use a separate heartbeat execution session, including for soul-enabled agents, so an occurrence cannot leave its model or cached handle on the shared interactive soul session. With no explicit/global pin, heartbeats retain their actual execution conversation's inheritance and exchanges retain their participant-specific model defaults and remote target routing; their single-model audit remains unknown. A pinned exchange requires a local target so both participants' model permissions can be verified. Minimal hosts without a model registry retain legacy unset behavior; a configured global default requires registry validation.
+
+Cron options are captured from startup configuration. **Restart the gateway after changing `cron.defaultModel`**; the configuration file watcher alone does not refresh this startup snapshot. A change does not retarget an occurrence already dispatched. Unset or clear the setting to restore normal conversation/agent inheritance. Thinking and context-window parity are separate work (#4636).
+
 ### Key Characteristics
 
 - **Centralized**: All config-defined jobs in one place (`cron.jobs`), merged at runtime with jobs created through the `cron` tool and the REST API

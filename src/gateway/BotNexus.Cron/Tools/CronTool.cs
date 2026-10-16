@@ -110,7 +110,7 @@ public sealed class CronTool(
                   "description": "Template parameter values for templateName (for create/update).",
                   "additionalProperties": { "type": "string" }
                 },
-                "model": { "type": "string", "description": "Optional model override for agent-prompt jobs. Supports model-id or provider/model-id. Validated against the model registry at create/update time; an unknown id is rejected with the available models." },
+                "model": { "type": ["string", "null"], "description": "Optional explicit model for model-running jobs. Beats cron.defaultModel, standing conversation, then agent fallback. Supports model-id or provider/model-id. Null or empty on update clears the job override. Ignored by command/webhook. Validated against the model registry; unknown IDs are rejected." },
                 "enabled": { "type": "boolean", "description": "Whether the job is enabled." },
                 "deleteJobAfterRun": { "type": "boolean", "description": "One-shot lifecycle. When true, the SCHEDULER deletes this job itself after its first terminal run (success, timeout, error, or abort alike). Use this instead of writing 'delete this cron job after running' into the prompt - a prompt instruction has no enforcement and no retry if the turn ends early. Distinct from 'deleteAfterRun', which only removes the run's SESSION; this removes the JOB. Pair it with 'expiresAt' when a time-boxed job should also be removed after its final run. Default: false." },
                 "expiresAt": { "type": "string", "description": "Optional hard expiry instant (ISO-8601, e.g. '2026-12-31T00:00:00Z'). From that instant on the job stops executing: the scheduler suppresses the fire and never invokes the action. The job is NOT deleted or disabled, so it stays visible for a human to extend - expiry suppresses execution only and never mutates the job. If the job should actually be REMOVED after its final run, set 'deleteJobAfterRun': true alongside it; 'deleteAfterRun' only cleans up run sessions and will leave the expired job in place. Omit for no expiry (the default, identical to today's behaviour); pass an empty string on update to clear an existing expiry." },
@@ -152,7 +152,9 @@ public sealed class CronTool(
         CopyString(arguments, prepared, "shellCommand");
         if (TryReadStringMap(arguments, "templateParameters", out var templateParameters))
             prepared["templateParameters"] = templateParameters;
-        CopyString(arguments, prepared, "model");
+        // Omitted preserves the pin; explicit null/empty clears it. CopyString drops blanks.
+        if (arguments.ContainsKey("model"))
+            prepared["model"] = ReadString(arguments, "model");
 
         if (arguments.TryGetValue("enabled", out var enabled) && enabled is not null)
             prepared["enabled"] = ReadBool(enabled, "enabled");
@@ -238,7 +240,7 @@ public sealed class CronTool(
                 string.Equals(job.CreatedBy, _agentId.Value, StringComparison.OrdinalIgnoreCase)
                 || (job.AgentId.HasValue && job.AgentId.Value == _agentId)).ToList();
 
-        return TextResult(JsonSerializer.Serialize(visible, JsonOptions));
+        return TextResult(JsonSerializer.Serialize(visible.Select(job => CronModelRouting.Project(job, _cronOptions?.DefaultModel)), JsonOptions));
     }
 
     private async Task<AgentToolResult> CreateAsync(IReadOnlyDictionary<string, object?> arguments, CancellationToken cancellationToken)
@@ -272,7 +274,7 @@ public sealed class CronTool(
         catch { /* invalid schedule — will be caught by scheduler */ }
 
         var model = ReadString(arguments, "model");
-        EnsureModelResolvable(model);
+        if (CronModelRouting.UsesModel(actionType)) EnsureModelResolvable(model);
 
         var targetAgentIdString = ReadString(arguments, "agentId");
         var targetAgentId = ResolveTargetAgentId(targetAgentIdString, _agentId);
@@ -384,7 +386,8 @@ public sealed class CronTool(
         // not be blocked by a pre-existing bad value, or a job whose model was decommissioned
         // after creation could never be edited (not even to fix the model itself).
         var requestedModel = ReadString(arguments, "model");
-        EnsureModelResolvable(requestedModel);
+        if (CronModelRouting.UsesModel(ReadString(arguments, "actionType") ?? existing.ActionType))
+            EnsureModelResolvable(requestedModel);
 
         var newAgentIdString = ReadString(arguments, "agentId");
         var newAgentId = string.IsNullOrWhiteSpace(newAgentIdString)
@@ -412,7 +415,7 @@ public sealed class CronTool(
             Message = newMessage,
             TemplateName = newTemplateName,
             TemplateParameters = newTemplateParameters,
-            Model = requestedModel ?? existing.Model,
+            Model = arguments.ContainsKey("model") ? requestedModel : existing.Model,
             AgentId = newAgentId,
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : existing.Enabled,
             // #2634: an omitted lifecycle field leaves the stored value alone, so an unrelated edit

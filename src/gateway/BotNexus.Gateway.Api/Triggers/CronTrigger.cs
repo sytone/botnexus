@@ -81,6 +81,7 @@ public sealed class CronTrigger(
             session.Metadata.Remove("modelOverride");
         else
             session.Metadata["modelOverride"] = request!.ModelOverride;
+        request?.ApplyCronModelMetadata(session);
 
         if (request?.CronJobId is null)
             session.Metadata.Remove("cronJobId");

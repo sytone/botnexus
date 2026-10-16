@@ -160,6 +160,18 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             conversationOverrideLayer = conversationOverrideLayer with { Thinking = runThinking };
         }
 
+        // The scheduler already resolved and validated this occurrence. Overlay ONLY model,
+        // leaving conversation thinking/context behavior to its existing authority (#4636).
+        if (context.Parameters.TryGetValue("cronModelOverride", out var cronModelRaw)
+            && cronModelRaw is string cronModel && !string.IsNullOrWhiteSpace(cronModel))
+        {
+            var separator = cronModel.LastIndexOf('/');
+            conversationOverrideLayer = conversationOverrideLayer with
+            {
+                Model = separator >= 0 ? cronModel[(separator + 1)..] : cronModel
+            };
+        }
+
         var effectiveModel = ModelOverrideResolver.Resolve(
             modelDefaults: default,
             agent: new ModelOverrideLayer(
