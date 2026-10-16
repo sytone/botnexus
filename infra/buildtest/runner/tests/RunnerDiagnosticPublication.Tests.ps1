@@ -11,6 +11,51 @@ function Require([bool]$ok,[string]$message) { if (-not $ok) { throw $message } 
 function Clear-Journals { Get-ChildItem $root -Filter 'events-*.jsonl' | Remove-Item }
 function Run([string]$script,[string[]]$prefix=@(),$fixture) { Invoke-DiagnosticProcess -FilePath 'pwsh' -ArgumentList @('-NoProfile','-File',$script,$root,(Join-Path $PSScriptRoot 'DiagnosticFixtureClock.ps1')) -LogPath (Join-Path $root 'run.log') -TimeoutSeconds 6 -EvidenceRoot $root -CaptureReserveSeconds 3 -DumpTimeoutSeconds 1 -KillReserveSeconds 1 -PollMilliseconds 50 -DumpFilePath 'pwsh' -DumpArgumentPrefix $prefix -ElapsedSecondsProvider $fixture.Provider }
 try {
+    # Execute the candidate Stop function with only its native signal binding replaced.
+    # Model anchor exit independently from live membership: Kill is not completion.
+    $stopSource=(Get-Command Stop-DiagnosticOwnedProcess).ScriptBlock.ToString().Replace('[DiagnosticContainment]::KillGroup($Owner.GroupId)','$Owner.Job.Kill()')
+    $stopCandidate=[scriptblock]::Create($stopSource)
+    function New-CleanupModel([int]$liveReads) {
+        $state=@{Killed=$false; Reads=0; LiveReads=$liveReads; AnchorExited=$true}
+        $job=[pscustomobject]@{State=$state}
+        $job | Add-Member ScriptMethod Kill { $this.State.Killed=$true }
+        $job | Add-Member ScriptProperty Active { $this.State.Reads++; if ($this.State.Reads -le $this.State.LiveReads) { return 2 }; return 0 }
+        return [pscustomobject]@{Job=$job; State=$state; Process=[pscustomobject]@{HasExited=$true}; GroupId=2147483647; Stopped=$false}
+    }
+    # Linux uses live /proc membership; Windows uses the job's active count. Both
+    # test doubles retain members until explicitly observed exited, not anchor exit.
+    function Get-DiagnosticOwnedMembers($Owner) { if ($Owner.Job.Active -gt 0) { return @(101,102) }; return @() }
+    Case 'stop waits beyond anchor exit until every owned member exits' {
+        $owner=New-CleanupModel 2
+        & $stopCandidate -Owner $owner -WaitTimeoutMilliseconds 500
+        Require ($owner.State.Killed -and $owner.Stopped) 'Ownership kill was not sent.'
+        Require ($owner.State.AnchorExited -and $owner.State.Reads -ge 3) 'Stop accepted anchor exit while descendants were still live.'
+    }
+    Case 'stop waits for anchor exit after live membership reaches zero' {
+        $owner=New-CleanupModel 0
+        $owner.State.AnchorReads=0
+        $anchor=[pscustomobject]@{State=$owner.State}
+        $anchor | Add-Member ScriptProperty HasExited { $this.State.AnchorReads++; return $this.State.AnchorReads -ge 3 }
+        $owner.Process=$anchor
+        & $stopCandidate -Owner $owner -WaitTimeoutMilliseconds 500
+        Require ($owner.State.AnchorReads -ge 3) 'Stop accepted empty live membership before anchor exit was observed.'
+    }
+    Case 'stop fails boundedly while owned descendants remain live' {
+        $owner=New-CleanupModel ([int]::MaxValue)
+        $watch=[Diagnostics.Stopwatch]::StartNew(); $message=''
+        try { & $stopCandidate -Owner $owner -WaitTimeoutMilliseconds 30 } catch { $message=$_.Exception.Message }
+        Require ($owner.State.Killed -and $owner.Stopped) 'Ownership kill was not sent before waiting.'
+        Require ($message -match 'Owned processes still live at cleanup deadline') 'Live descendants did not produce the explicit cleanup-deadline failure.'
+        Require ($owner.State.Reads -gt 1 -and $watch.Elapsed.TotalMilliseconds -ge 30 -and $watch.Elapsed.TotalSeconds -lt 2) 'Cleanup did not honor its single absolute deadline.'
+    }
+    Case 'default stop remains nonblocking for shared supervisor deadline' {
+        $owner=New-CleanupModel ([int]::MaxValue)
+        & $stopCandidate -Owner $owner
+        Require ($owner.State.Killed -and $owner.Stopped -and $owner.State.Reads -eq 0) 'Default stop acquired a per-owner wait.'
+    }
+    Remove-Item Function:Get-DiagnosticOwnedMembers
+    # Restore the real production membership query for all native publication cases.
+    . (Join-Path $PSScriptRoot '../RunnerDiagnostic.ps1')
     foreach ($scenario in @(@{Name='success'; Code=0},@{Name='nonzero'; Code=23},@{Name='launch failure'; Code=1})) {
         Case "owned completion is atomic: $($scenario.Name)" {
             $directory=Join-Path $root ([guid]::NewGuid().ToString('N'))
@@ -46,8 +91,8 @@ try {
                 "PROOF partialVisible=False publishedExitCode=$published"
             } finally {
                 [IO.File]::WriteAllText("$result.continue",'go')
-                Stop-DiagnosticOwnedProcess $owner
-                Require ($owner.Process.WaitForExit(5000)) 'Publication containment anchor survived cleanup.'
+                Stop-DiagnosticOwnedProcess $owner -WaitTimeoutMilliseconds 5000
+                Require ($owner.Process.HasExited) 'Publication containment anchor survived cleanup.'
                 if ($IsWindows) { Require ($owner.Job.Active -eq 0) 'Publication descendants survived cleanup.' }
                 else { Require (@(Get-DiagnosticOwnedMembers $owner).Count -eq 0) 'Publication descendants survived cleanup.' }
                 $owner.Process.Dispose(); if ($null -ne $owner.Job) { $owner.Job.Dispose() }
