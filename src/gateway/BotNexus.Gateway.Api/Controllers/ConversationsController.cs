@@ -47,6 +47,7 @@ public sealed class ConversationsController : ControllerBase
     private readonly IAgentRegistry? _agentRegistry;
     private readonly IConversationReadStateStore? _readStateStore;
     private readonly IWorldContext? _worldContext;
+    private readonly IReadOnlyList<IConversationReadStateChangeNotifier> _readStateChangeNotifiers;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
@@ -68,6 +69,7 @@ public sealed class ConversationsController : ControllerBase
     /// <param name="readStateStore">Optional durable per-reader conversation cursor store.</param>
     /// <param name="worldContext">Optional current-world authority used to scope cursor keys.</param>
     /// <param name="conversationEventPublisher">Publishes channel-neutral conversation facts after their backing store mutation commits. Optional only for legacy direct-construction test harnesses; production DI supplies it.</param>
+    /// <param name="readStateChangeNotifiers">Publishes best-effort, reader-scoped invalidations after a durable cursor version advances.</param>
     public ConversationsController(
         IConversationStore conversations,
         ISessionStore sessions,
@@ -81,7 +83,8 @@ public sealed class ConversationsController : ControllerBase
         IAgentRegistry? agentRegistry = null,
         IConversationReadStateStore? readStateStore = null,
         IWorldContext? worldContext = null,
-        IConversationEventPublisher? conversationEventPublisher = null)
+        IConversationEventPublisher? conversationEventPublisher = null,
+        IEnumerable<IConversationReadStateChangeNotifier>? readStateChangeNotifiers = null)
     {
         _conversations = conversations;
         _sessions = sessions;
@@ -99,6 +102,7 @@ public sealed class ConversationsController : ControllerBase
         _agentRegistry = agentRegistry;
         _readStateStore = readStateStore;
         _worldContext = worldContext;
+        _readStateChangeNotifiers = readStateChangeNotifiers?.ToArray() ?? [];
     }
 
     /// <summary>Returns this caller's durable read cursor for one authorized conversation.</summary>
@@ -138,13 +142,17 @@ public sealed class ConversationsController : ControllerBase
         if (access.Failure is not null)
             return access.Failure;
 
-        var state = await _readStateStore!.AdvanceAsync(
+        var outcome = await _readStateStore!.AdvanceWithResultAsync(
             _worldContext!.CurrentWorldId,
             access.ReaderId!.Value,
             access.ConversationId!.Value,
             request.Position,
             cancellationToken).ConfigureAwait(false);
-        return Ok(ToReadStateResponse(state));
+
+        if (outcome.Changed)
+            await NotifyReadStateChangedBestEffortAsync(outcome.State, cancellationToken).ConfigureAwait(false);
+
+        return Ok(ToReadStateResponse(outcome.State));
     }
 
     private async Task<ReadStateAccess> ResolveReadStateAccessAsync(
@@ -1009,6 +1017,31 @@ public sealed class ConversationsController : ControllerBase
     }
 
     // ΓöÇΓöÇ Notification helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+    private async Task NotifyReadStateChangedBestEffortAsync(
+        ConversationReadState state,
+        CancellationToken cancellationToken)
+    {
+        foreach (var notifier in _readStateChangeNotifiers)
+        {
+            try
+            {
+                await notifier.NotifyReadStateChangedAsync(
+                    state.ReaderId, state.ConversationId, state.Position, state.Version, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // The cursor is already durable. A transport outage must not turn its successful
+                // PUT into a failure; clients can always recover by reading the persisted state.
+                _logger.LogWarning(
+                    ex,
+                    "Failed to publish read-state change for conversation {ConversationId} via notifier {NotifierType}.",
+                    state.ConversationId,
+                    notifier.GetType().FullName);
+            }
+        }
+    }
 
     private async Task PublishConversationCreatedBestEffortAsync(
         Conversation created,
