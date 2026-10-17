@@ -414,6 +414,43 @@ Content-Type: application/json
 
 ---
 
+### Edit authored agent configuration
+
+**Endpoints:** `GET /api/agents/{agentId}/configuration` and
+`PATCH /api/agents/{agentId}/configuration`
+
+Use this operator-edit contract instead of round-tripping the runtime descriptor.
+GET reads the canonical configuration writer and returns only supported editor
+fields. It excludes opaque metadata, extension settings, and unknown nested keys;
+those values remain stored and are not replaced by an edit. `enabled` is returned
+as read-only state; enabled-state lifecycle changes remain separate (#4964).
+
+PATCH accepts a typed batch of changed fields. For example:
+
+```json
+{
+  "toolTimeoutSeconds": 120,
+  "sessionAccess": { "level": "allowlist", "allowedAgents": ["peer"] },
+  "conversationAccess": { "level": "own" },
+  "toolPolicy": { "alwaysApprove": ["read"], "neverApprove": [], "denied": ["shell"] }
+}
+```
+
+| Input | Stored result |
+| --- | --- |
+| Omitted field | Existing value and presence are unchanged. |
+| Empty list | Explicit empty list; clears that list only. |
+| Explicit `null` | Retains an explicit-null key. Effective behavior uses the current runtime fallback. |
+| `{"inherit":["toolPolicy.denied"]}` | Removes the named supported key. This does not enable merging `agents.defaults`; that runtime merge remains retired. |
+
+Access levels are `own`, `allowlist`, and `all`. Timeout must be positive or null.
+Nested edits preserve unedited sibling keys. A path cannot be both edited and
+removed in one batch. Unknown request fields, invalid values, and invalid candidate
+model capabilities return HTTP 400 without persisting the batch. Missing agents
+and the reserved `defaults` entry return HTTP 404. Successful persistence returns
+`{"saved":true}`; this is not a provider-authentication or in-flight-work receipt.
+The full editor submits one changed-field batch and leaves failed edits dirty.
+
 ### Delete Agent
 
 **Endpoint:** `DELETE /api/agents/{agentId}`
