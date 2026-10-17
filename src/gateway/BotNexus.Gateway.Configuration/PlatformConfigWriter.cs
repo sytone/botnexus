@@ -136,6 +136,33 @@ public sealed class PlatformConfigWriter
         _writer = writer ?? new Writers.JsonConfigurationWriter(configPath, fileSystem, backup);
     }
 
+    // Identity bootstrap must detect an unwritable mount before the timed writer lock. File
+    // attributes cannot detect a Linux read-only bind mount. Probe only a unique sibling, never
+    // the existing configuration; the real write still goes through the canonical pipeline.
+    internal void EnsurePersistenceWritable(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var directory = _fileSystem.Path.GetDirectoryName(_configPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            _fileSystem.Directory.CreateDirectory(directory);
+
+        var probePath = _configPath + "." + Guid.NewGuid().ToString("N") + ".write-probe";
+        var created = false;
+        try
+        {
+            using var probe = _fileSystem.FileStream.New(
+                probePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            created = true;
+        }
+        finally
+        {
+            // Do not delete a pre-existing file if CreateNew failed (including a name collision).
+            if (created)
+                _fileSystem.File.Delete(probePath);
+        }
+        ct.ThrowIfCancellationRequested();
+    }
+
     /// <summary>
     /// Reads the config as a canonical-path <see cref="ConfigDocument"/> - the surface consumers
     /// outside this project use (#2887). Note this read is outside the writer lock and is therefore

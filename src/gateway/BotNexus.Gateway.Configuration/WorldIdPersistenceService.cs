@@ -4,7 +4,8 @@ using Microsoft.Extensions.Logging;
 namespace BotNexus.Gateway.Configuration;
 
 /// <summary>
-/// Persists the resolved <see cref="WorldId"/> into <c>config.json</c> on first start.
+/// Persists the resolved <see cref="WorldId"/> through the canonical configuration writer on
+/// first start. Startup fails if the generated identity cannot be made durable.
 /// </summary>
 /// <remarks>
 /// <para>The identity is resolved once at DI-registration time (see the <see cref="WorldId"/>
@@ -41,6 +42,7 @@ public sealed class WorldIdPersistenceService : IHostedService
 
         try
         {
+            _writer.EnsurePersistenceWritable(cancellationToken);
             await _writer.MutateAsync(
                 root => root[WorldIdResolver.ConfigPropertyName] = _identity.Value,
                 "world-identity-bootstrap",
@@ -49,17 +51,18 @@ public sealed class WorldIdPersistenceService : IHostedService
             // Creating a world identity happens exactly once in a home's lifetime - notable enough
             // for information level, and quiet on every subsequent start because we return above.
             _logger.LogInformation(
-                "Created world identity {WorldId} and persisted it to config.json.",
+                "Created world identity {WorldId} and persisted it to configuration.",
                 _identity.Value);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // A read-only config mount must not prevent the gateway from starting; the resolved
-            // identity is still valid for this process, it just will not survive a restart.
-            _logger.LogWarning(
-                ex,
-                "Could not persist world identity {WorldId} to config.json; continuing with an in-memory identity.",
-                _identity.Value);
+            // A process-only identity would orphan stores on the next restart. This includes
+            // failures after a successful probe (disk full, replacement denied, backend failure).
+            throw new InvalidOperationException(
+                "Cannot start with a generated worldId because it could not be persisted to configuration. " +
+                "Make configuration writable for the first start, or pre-provision a stable worldId " +
+                "in the authoritative configuration before mounting it read-only. Keep that same " +
+                "worldId when reusing existing data; writable data alone is not sufficient.", ex);
         }
     }
 
