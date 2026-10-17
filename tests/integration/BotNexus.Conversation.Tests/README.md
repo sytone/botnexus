@@ -1,46 +1,50 @@
-# BotNexus Conversation Tests
+# Conversation HTTP and SignalR seam tests
 
-Live integration tests for the Conversation Model feature. Requires the dev gateway to be running.
+These developer tests run the candidate `Program` through ASP.NET Core `TestServer`.
+They do not connect to a developer gateway, open a TCP listener, or require model credentials.
 
-## Running
+## Run the gate
 
-Start the gateway first:
-```
-dotnet run --project src/gateway/BotNexus.Gateway.Api -- --urls http://0.0.0.0:5006
-```
+From an isolated repository worktree, use remote CORE validation:
 
-Then run all tests:
-```
-dotnet test tests/BotNexus.ConversationTests
+```powershell
+scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>
 ```
 
-Run only Wave 2 tests:
-```
-dotnet test tests/BotNexus.ConversationTests --filter "Phase=Wave2"
-```
+Do not run a test host on a machine hosting the live gateway. A local `dotnet build`
+of this project is safe, but it is not a behavior verdict.
 
-Run only Wave 3 tests:
-```
-dotnet test tests/BotNexus.ConversationTests --filter "Phase=Wave3"
-```
+## Boundary and isolation
 
-Run only currently-passing tests (skip future-phase tests):
-```
-dotnet test tests/BotNexus.ConversationTests --filter "Phase!=Wave2&Phase!=Wave3"
-```
+`CandidateGatewayFixture` uses `WebApplicationFactory<Program>` and a SignalR client
+with `factory.Server.CreateHandler()` and long polling. HTTP controllers, hub methods,
+routing, production in-memory conversation/session stores, and SignalR adapter delivery
+are real. Deterministic inbound execution replaces only agent/provider work outside
+this seam. This does not test durable SQLite restart behavior or socket transport.
 
-If gateway is not running, all tests skip cleanly.
+The fixture creates a unique disposable home and configuration, restores its process
+environment, disables hosted background services and isolation strategies, closes host
+and bootstrap logging, and removes its home. It never reads the operator's configuration.
+Each mutating REST test registers a fresh agent. First-send tests use fresh agents and
+sessions; separate seeded history supplies explicit user/tool/assistant rows.
 
-## Test Classes
+Startup failure fails collection initialization. There is no availability flag or
+precondition skip. All 28 former live-gateway cases remain represented; two vacuous
+future-state probes now assert actual conversation identities. A further candidate-host
+regression checks in-process transport and the candidate version endpoint.
 
-| File | Description | Phase |
-|------|-------------|-------|
-| `ConversationRestApiTests.cs` | REST API for `/api/conversations` | Wave 3 |
-| `ConversationSignalRTests.cs` | SignalR hub behavior + conversation routing | Current + Wave 2 |
-| `ConversationBindingTests.cs` | Channel binding CRUD | Wave 2 |
+| Test class | Boundary |
+| --- | --- |
+| `ConversationRestApiTests` | Creation, listing, updates, missing resources and history |
+| `ConversationBindingTests` | Binding CRUD, composite addresses and projections |
+| `ConversationSignalRTests` | Snapshot, first-send routing, identity stamping and stream event delivery |
+| `ProbeRound2Tests` | Independent conversations and seeded session/history projections |
+| `CandidateHostRegressionTests` | Candidate host and transport ownership |
 
-## Phase Traits
+## Read evidence honestly
 
-- No `Phase` trait → tests existing gateway behavior (run always)
-- `[Trait("Phase", "Wave2")]` → requires Wave 2 routing to be live
-- `[Trait("Phase", "Wave3")]` → requires Wave 3 REST endpoints (Fry)
+Inspect each project's TRX results, not only the aggregate green status. For this
+project every discovered test must execute and pass, with zero skipped results.
+CORE still reports separate intentional credential/platform skips in other projects;
+those are not passes. The runner no longer accepts `Dev gateway not running at` as a
+deliberate skip reason. Browser-emulated E2E quarantine is separate (#3601).
