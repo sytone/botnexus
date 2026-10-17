@@ -19,6 +19,15 @@
     <IsExcludedFromBuild Condition="'$(SkipCli)' == 'true'">true</IsExcludedFromBuild>
   </PropertyGroup>
 
+  <!-- Keep release identity in the separately installed updater, not just in the gateway. -->
+  <PropertyGroup>
+    <SourceRevisionId Condition="'$(BotNexusSourceRevisionId)' != ''">$(BotNexusSourceRevisionId)</SourceRevisionId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="updater-support.json" LogicalName="BotNexus.UpdaterCompatibility" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Cli.Tests" />
   </ItemGroup>

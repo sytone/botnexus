@@ -268,6 +268,7 @@ public sealed class ReleaseSelectorTests : IDisposable
             RunGit(_source, "config commit.gpgsign false");
             RunGit(_source, "config tag.gpgsign false");
 
+            Commit(_source, UpdaterCompatibility.ContractPath, UpdaterContractTests.Contract(), "compatible release metadata");
             Commit(_source, "stable-one.txt", "stable one", "stable one");
             _firstStableCommit = ReadCommit(_source, "HEAD");
             if (RunGit(_source, "tag v1.0.0") != 0)

@@ -11,28 +11,21 @@ namespace BotNexus.Cli.Tests.Commands;
 public class UpdateCommandTests
 {
     /// <summary>
-    /// Test subclass that bypasses git pull and build steps so unit tests
+    /// Test subclass with a compatible immutable release and stubbed build so unit tests
     /// can focus on the stop/restart logic without running real git/dotnet build.
     /// </summary>
     private sealed class NoOpPreStopUpdateCommand(IGatewayProcessManager processManager)
-        : UpdateCommand(processManager)
+        : CompatibleUpdateFixture(processManager)
     {
-        protected override Task<int> RunGitPullStepAsync(
-            string repoRoot, bool verbose, CancellationToken cancellationToken)
-            => Task.FromResult(0);
-
         protected override Task<int> RunBuildAndDeployAsync(
             string repoRoot, string home, bool verbose, CancellationToken cancellationToken)
             => Task.FromResult(0);
     }
 
     private sealed class DeploymentFailureUpdateCommand(IGatewayProcessManager processManager)
-        : UpdateCommand(processManager)
+        : CompatibleUpdateFixture(processManager)
     {
         internal bool RestartCalled { get; private set; }
-        protected override Task<int> RunGitPullStepAsync(
-            string repoRoot, bool verbose, CancellationToken cancellationToken)
-            => Task.FromResult(0);
 
         protected override Task<bool> CanSkipRebuildAsync(string repoRoot, CancellationToken cancellationToken)
             => Task.FromResult(false);
@@ -270,7 +263,7 @@ public class UpdateCommandTests
             .Returns(new GatewayStopResult(true, null));
         pm.StartAsync(Arg.Any<GatewayStartOptions>(), Arg.Any<CancellationToken>())
             .Returns(new GatewayStartResult(false, null, "not expected in this test"));
-        var cmd = new UpdateCommand(pm);
+        var cmd = new UpdateCommand(pm) { ReleaseRequest = BotNexus.Gateway.Contracts.Updates.ReleaseTargetRequest.Latest };
 
         var tempDir = Path.Combine(Path.GetTempPath(), $"botnexus-update-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
@@ -296,7 +289,7 @@ public class UpdateCommandTests
     public async Task Update_WhenCancelledBeforeGitPull_ReturnsCancelledExitCodeAndSkipsGatewaySteps()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
-        var cmd = new UpdateCommand(pm);
+        var cmd = new UpdateCommand(pm) { ReleaseRequest = BotNexus.Gateway.Contracts.Updates.ReleaseTargetRequest.Latest };
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
