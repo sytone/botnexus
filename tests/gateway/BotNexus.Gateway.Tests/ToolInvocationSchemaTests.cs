@@ -166,6 +166,8 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = result, ToolName = "read", ToolCallId = "safe", ToolArgs = "duplicate", Kind = MessageKind.ToolResult, Timestamp = completedAt });
         await store.SaveAsync(session);
 
+        // Seed the pre-cutover duplicated layout explicitly: live writes are narrow now.
+        await RestoreLegacyPayloadsAsync("cleanup");
         var first = store.CleanupLegacyToolPayloads(10);
         var second = store.CleanupLegacyToolPayloads(10);
 
@@ -216,6 +218,7 @@ public sealed class ToolInvocationSchemaTests : IDisposable
             session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = result, ToolName = "read", ToolCallId = call, ToolArgs = duplicate, Kind = MessageKind.ToolResult, Timestamp = startedAt.AddSeconds(2) });
         }
         await store.SaveAsync(session);
+        await RestoreLegacyPayloadsAsync("restart");
         await using var connection = await OpenAsync();
         var originalHistory = await ReadTableBytesAsync(connection, "session_history");
         var originalInvocations = await ReadTableBytesAsync(connection, "tool_invocations");
@@ -703,6 +706,20 @@ public sealed class ToolInvocationSchemaTests : IDisposable
             command.CommandText = sql;
             await Should.ThrowAsync<SqliteException>(() => command.ExecuteNonQueryAsync());
         }
+    }
+
+    private async Task RestoreLegacyPayloadsAsync(string sessionId)
+    {
+        await using var connection = await OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE session_history AS h SET
+                tool_args=CASE WHEN h.message_kind='tool-start' THEN i.arguments_json ELSE h.tool_args END,
+                content=CASE WHEN h.message_kind='tool-result' THEN i.result_content ELSE h.content END
+            FROM tool_invocations i WHERE h.tool_invocation_id=i.id AND h.session_id=$session
+            """;
+        command.Parameters.AddWithValue("$session", sessionId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private SqliteSessionStore CreateStore() => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance, _conversations);
