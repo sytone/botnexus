@@ -96,9 +96,13 @@ The tool respects the agent's workspace directory as the default working directo
   is written while output drains and stdin is closed to signal EOF.
 - There is no automatic completion wake in this implementation. Use `process status`/`output` to inspect
   work and `process kill` for explicit cleanup. Kill requests target the tree before the root disappears;
-  unconfirmed kills remain tracked and re-killable. OS root exit does not prove every descendant exited.
-  Completed entries are retained up to a shared cap of 100, oldest first; live and unconfirmed-kill entries
-  are never evicted. Registrations are in-memory and are not reattached after a gateway restart.
+  unconfirmed kills remain pinned and retryable only while the owned root is running. OS root exit does
+  not prove every descendant exited. After an unconfirmed kill and root exit, the result is **termination
+  unresolved** and requires operator intervention, never a success or a retry against an arbitrary PID.
+  Cleanup releases the OS handle and all redirected streams/stdin, cancels held drains, and preserves
+  captured output with an incomplete-capture diagnostic. Exited unresolved diagnostics count towards the
+  same shared cap of 100 as completed entries, oldest first; running roots are never evicted. Diagnostic
+  eviction does not confirm termination. Registrations are in-memory and are not reattached after a gateway restart.
 - `No tracked process` means absent or not owned by this agent, not proof that a command never ran or
   that its OS process has died. Never launch a duplicate side effect based only on that message.
 - On Windows, the tool resolves `.exe`, `.cmd`, `.bat` and `.ps1` files from `PATH` automatically when the
