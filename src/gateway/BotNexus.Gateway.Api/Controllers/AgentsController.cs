@@ -39,6 +39,7 @@ public sealed class AgentsController : ControllerBase
     private readonly IAgentWebhookProvisioner? _webhookProvisioner;
     private readonly ILogger<AgentsController> _logger;
     private readonly AgentLifecycleService _lifecycle;
+    private readonly ModelRegistry? _modelRegistry;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentsController"/> class.
@@ -58,6 +59,7 @@ public sealed class AgentsController : ControllerBase
         IConversationStore? conversations = null,
         ISessionCompactionDiagnostics? compactionDiagnostics = null)
     {
+        _modelRegistry = modelRegistry;
         _compactionDiagnostics = compactionDiagnostics;
         _sessions = sessions;
         _conversations = conversations;
@@ -262,6 +264,38 @@ public sealed class AgentsController : ControllerBase
             return BadRequest(new { error = $"Route agentId '{agentId}' does not match payload agentId '{descriptor.AgentId}'." });
         try { return Ok(await _lifecycle.ApplyAsync(AgentProposalKind.Update, descriptor, cancellationToken)); }
         catch (AgentLifecycleException ex) { return LifecycleError(ex); }
+    }
+
+    /// <summary>Reads authored operator configuration from the canonical store, not the runtime descriptor.</summary>
+    [HttpGet("{agentId}/configuration")]
+    public async Task<IActionResult> GetConfiguration(string agentId, [FromServices] PlatformConfigWriter writer, CancellationToken cancellationToken)
+    {
+        if (!TryParseAgentId(agentId, out var parsed, out var error)) return BadRequest(new { error });
+        var key = parsed.GetValueOrDefault().Value;
+        var document = await writer.ReadDocumentAsync(cancellationToken);
+        var storedKey = document.FindEntryKey("agents", key);
+        if (storedKey is null || storedKey.Equals("defaults", StringComparison.OrdinalIgnoreCase)) return NotFound();
+        var root = new System.Text.Json.Nodes.JsonObject
+        {
+            ["agents"] = new System.Text.Json.Nodes.JsonObject
+            {
+                [storedKey] = System.Text.Json.Nodes.JsonNode.Parse(document.DescribeEntry("agents", storedKey) ?? "{}")
+            }
+        };
+        return Content(root.ReadEditableConfiguration(AgentId.From(storedKey)).ToJsonString(), "application/json");
+    }
+
+    /// <summary>Atomically edits only explicitly supplied operator fields.</summary>
+    [HttpPatch("{agentId}/configuration")]
+    public async Task<IActionResult> PatchConfiguration(string agentId, [FromBody] AgentConfigurationPatch patch, [FromServices] PlatformConfigWriter writer, CancellationToken cancellationToken)
+    {
+        if (!TryParseAgentId(agentId, out var parsed, out var error)) return BadRequest(new { error });
+        var key = parsed.GetValueOrDefault().Value;
+        if (key.Equals("defaults", StringComparison.OrdinalIgnoreCase)) return NotFound();
+        var errors = await AgentConfigurationEditor.ApplyAsync(writer, parsed.GetValueOrDefault(), patch, cancellationToken, _modelRegistry);
+        if (errors.Contains("Agent not found.")) return NotFound();
+        if (errors.Count > 0) return BadRequest(new { errors });
+        return Ok(new { saved = true });
     }
 
     private ActionResult LifecycleError(AgentLifecycleException ex) => ex.Kind switch

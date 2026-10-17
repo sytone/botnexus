@@ -176,57 +176,8 @@ public sealed class PlatformConfigAgentSource(
                 // distinguish "key absent" from "key explicitly null", and with nothing merging there
                 // is no inheritance for that distinction to affect.
                 var effectiveConfig = agentConfig;
-                var metadata = new Dictionary<string, object?>(ConvertObject(effectiveConfig.Metadata), StringComparer.OrdinalIgnoreCase);
-                metadata["toolTimeoutSeconds"] = effectiveConfig.ToolTimeoutSeconds
-                    ?? AgentDefaultsConfig.DefaultToolTimeoutSeconds;
-
-                var descriptor = new AgentDescriptor
-                {
-                    AgentId = AgentId.From(agentId),
-                    DisplayName = effectiveConfig.DisplayName ?? agentId,
-                    Emoji = effectiveConfig.Emoji,
-                    Description = effectiveConfig.Description,
-                    Summary = effectiveConfig.Summary,
-                    ModelId = effectiveConfig.Model ?? string.Empty,
-                    ApiProvider = effectiveConfig.Provider ?? string.Empty,
-                    ToolIds = effectiveConfig.ToolIds?.ToArray() ?? [],
-                    AllowedModelIds = effectiveConfig.AllowedModels?.ToArray() ?? [],
-                    SubAgentIds = effectiveConfig.SubAgents?.ToArray() ?? [],
-                    SubAgentRoles = effectiveConfig.SubAgentRoles?.ToArray() ?? [],
-                    IsolationStrategy = string.IsNullOrWhiteSpace(effectiveConfig.IsolationStrategy)
-                    ? "in-process"
-                    : effectiveConfig.IsolationStrategy,
-                    CacheRetentionMode = effectiveConfig.CacheRetention.HasValue
-                    ? effectiveConfig.CacheRetention.Value.ToString().ToLowerInvariant()
-                    : null,
-                    Thinking = effectiveConfig.Thinking,
-                    ContextWindow = effectiveConfig.ContextWindow,
-                    CompactionTokenCeiling = effectiveConfig.CompactionTokenCeiling,
-                    MaxConcurrentSessions = effectiveConfig.MaxConcurrentSessions ?? 0,
-                    Metadata = metadata,
-                    IsolationOptions = ConvertObject(effectiveConfig.IsolationOptions),
-                    Memory = CloneMemoryConfig(effectiveConfig.Memory),
-                    Soul = CloneSoulConfig(effectiveConfig.Soul),
-                    Heartbeat = CloneHeartbeatConfig(effectiveConfig.Heartbeat),
-                    DateTimeInjection = effectiveConfig.DateTimeInjection,
-                    SessionAccessLevel = effectiveConfig.SessionAccess?.Level ?? "own",
-                    SessionAllowedAgents = effectiveConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
-                    ConversationAccessLevel = effectiveConfig.ConversationAccess?.Level ?? effectiveConfig.SessionAccess?.Level ?? "own",
-                    ConversationAllowedAgents = effectiveConfig.ConversationAccess?.AllowedAgents?.ToArray()
-                    ?? effectiveConfig.SessionAccess?.AllowedAgents?.ToArray()
-                    ?? [],
-                    FileAccess = MapFileAccessPolicy(effectiveConfig.FileAccess, platformConfig.Gateway?.FileAccess),
-                    // #3515: the agent's own extension config, unmerged with world defaults.
-                    //
-                    // Nulls are stripped rather than passed through. `"someExtension": null` means
-                    // "do not inherit this", so with nothing to inherit it means nothing at all - and
-                    // a null JsonElement reaching an extension's own binder is not an absent key, it
-                    // is a malformed value. Passing them through 500s agent registration.
-                    ExtensionConfig = StripNullExtensionEntries(effectiveConfig.Extensions),
-                    DefaultExtensionConfig = StripNullExtensionEntries(platformConfig.AgentDefaults?.Extensions),
-                    Kind = effectiveConfig.Kind ?? AgentKind.Named,
-                    ShellCommand = effectiveConfig.ShellCommand
-                };
+                var descriptor = CreateDescriptor(AgentId.From(agentId), effectiveConfig, platformConfig,
+                    MapFileAccessPolicy(effectiveConfig.FileAccess, platformConfig.Gateway?.FileAccess));
 
                 var validationErrors = AgentDescriptorValidator.ValidateForConfig(descriptor, modelRegistry: _modelRegistry);
                 if (validationErrors.Count > 0)
@@ -250,6 +201,73 @@ public sealed class PlatformConfigAgentSource(
         }
 
         return descriptors;
+    }
+
+    /// <summary>
+    /// Validates an authored candidate with the runtime projection and model capability rules,
+    /// including disabled agents. This projection is validation-only: persist the lossless document.
+    /// </summary>
+    public static IReadOnlyList<string> ValidateCandidate(PlatformConfig config, AgentId agentId, ModelRegistry? modelRegistry = null)
+    {
+        if (config.Agents is null || !config.Agents.TryGetValue(agentId.Value, out var agent))
+            return ["Agent not found."];
+        return AgentDescriptorValidator.ValidateForConfig(CreateDescriptor(agentId, agent, config), modelRegistry: modelRegistry);
+    }
+
+    private static AgentDescriptor CreateDescriptor(AgentId agentId, AgentDefinitionConfig effectiveConfig,
+        PlatformConfig platformConfig, FileAccessPolicy? fileAccess = null)
+    {
+        var metadata = new Dictionary<string, object?>(ConvertObject(effectiveConfig.Metadata), StringComparer.OrdinalIgnoreCase);
+        metadata["toolTimeoutSeconds"] = effectiveConfig.ToolTimeoutSeconds
+            ?? AgentDefaultsConfig.DefaultToolTimeoutSeconds;
+
+        return new AgentDescriptor
+        {
+            AgentId = agentId,
+            DisplayName = effectiveConfig.DisplayName ?? agentId.Value,
+            Emoji = effectiveConfig.Emoji,
+            Description = effectiveConfig.Description,
+            Summary = effectiveConfig.Summary,
+            ModelId = effectiveConfig.Model ?? string.Empty,
+            ApiProvider = effectiveConfig.Provider ?? string.Empty,
+            ToolIds = effectiveConfig.ToolIds?.ToArray() ?? [],
+            AllowedModelIds = effectiveConfig.AllowedModels?.ToArray() ?? [],
+            SubAgentIds = effectiveConfig.SubAgents?.ToArray() ?? [],
+            SubAgentRoles = effectiveConfig.SubAgentRoles?.ToArray() ?? [],
+            IsolationStrategy = string.IsNullOrWhiteSpace(effectiveConfig.IsolationStrategy)
+            ? "in-process"
+            : effectiveConfig.IsolationStrategy,
+            CacheRetentionMode = effectiveConfig.CacheRetention.HasValue
+            ? effectiveConfig.CacheRetention.Value.ToString().ToLowerInvariant()
+            : null,
+            Thinking = effectiveConfig.Thinking,
+            ContextWindow = effectiveConfig.ContextWindow,
+            CompactionTokenCeiling = effectiveConfig.CompactionTokenCeiling,
+            MaxConcurrentSessions = effectiveConfig.MaxConcurrentSessions ?? 0,
+            Metadata = metadata,
+            IsolationOptions = ConvertObject(effectiveConfig.IsolationOptions),
+            Memory = CloneMemoryConfig(effectiveConfig.Memory),
+            Soul = CloneSoulConfig(effectiveConfig.Soul),
+            Heartbeat = CloneHeartbeatConfig(effectiveConfig.Heartbeat),
+            DateTimeInjection = effectiveConfig.DateTimeInjection,
+            SessionAccessLevel = effectiveConfig.SessionAccess?.Level ?? "own",
+            SessionAllowedAgents = effectiveConfig.SessionAccess?.AllowedAgents?.ToArray() ?? [],
+            ConversationAccessLevel = effectiveConfig.ConversationAccess?.Level ?? effectiveConfig.SessionAccess?.Level ?? "own",
+            ConversationAllowedAgents = effectiveConfig.ConversationAccess?.AllowedAgents?.ToArray()
+            ?? effectiveConfig.SessionAccess?.AllowedAgents?.ToArray()
+            ?? [],
+            FileAccess = fileAccess,
+            // #3515: the agent's own extension config, unmerged with world defaults.
+            //
+            // Nulls are stripped rather than passed through. `"someExtension": null` means
+            // "do not inherit this", so with nothing to inherit it means nothing at all - and
+            // a null JsonElement reaching an extension's own binder is not an absent key, it
+            // is a malformed value. Passing them through 500s agent registration.
+            ExtensionConfig = StripNullExtensionEntries(effectiveConfig.Extensions),
+            DefaultExtensionConfig = StripNullExtensionEntries(platformConfig.AgentDefaults?.Extensions),
+            Kind = effectiveConfig.Kind ?? AgentKind.Named,
+            ShellCommand = effectiveConfig.ShellCommand
+        };
     }
 
     private static AgentDefaultsConfig? ExtractInlineAgentDefaults(IReadOnlyDictionary<string, AgentDefinitionConfig> agents)
