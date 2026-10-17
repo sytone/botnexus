@@ -81,6 +81,7 @@ else
                         <th>Display Name</th>
                         <th>Provider</th>
                         <th>Model</th>
+                        <th>Status</th>
                         <th><span class="sr-only">Actions</span></th>
                     </tr>
                 </thead>
@@ -92,6 +93,7 @@ else
                             <td>@agent.DisplayName</td>
                             <td>@agent.ApiProvider</td>
                             <td>@agent.ModelId</td>
+                            <td>@(agent.Enabled ? "Enabled" : "Disabled")</td>
                             <td class="agents-actions">
                                 <button class="agents-btn-edit" @onclick="() => EditAgent(agent)" title="Edit @agent.AgentId" aria-label="Edit @agent.AgentId"><Icon Name="edit" Size="14" Class="bn-icon-inherit" /></button>
                                 <button class="agents-btn-clone" @onclick="() => CloneAgent(agent)" title="Clone @agent.AgentId" aria-label="Clone @agent.AgentId"><Icon Name="copy" Size="14" Class="bn-icon-inherit" /></button>
@@ -125,7 +127,8 @@ else
         string DisplayName,
         string? Description,
         string ApiProvider,
-        string ModelId);
+        string ModelId,
+        bool Enabled = true);
 
     private List<AgentRow> _agents = [];
     private bool _loading = true;
@@ -197,7 +200,7 @@ else
 
         try
         {
-            var apiUrl = Nav.BaseUri.TrimEnd('/') + "/api/agents";
+            var apiUrl = Nav.BaseUri.TrimEnd('/') + "/api/agents?includeDisabled=true";
             var rows = await Http.GetFromJsonAsync<List<AgentRow>>(apiUrl,
                 new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             _agents = rows ?? [];
