@@ -37,7 +37,7 @@ public sealed class ProcessTool : IAgentTool
 
     public Tool Definition => new(
         Name,
-        "Manage background processes launched by this agent through exec. List, inspect, send input, read output, or kill registered children. Unknown PIDs are never attached. No automatic completion wake is provided.",
+        "Manage background processes launched by this agent through exec. List, inspect, send input, read output, or kill registered children. Unknown PIDs are never attached. Exited roots after an unconfirmed kill are unresolved, not successful termination; operator intervention is required. No automatic completion wake is provided.",
         JsonDocument.Parse("""
             {
               "type": "object",
@@ -136,7 +136,7 @@ public sealed class ProcessTool : IAgentTool
         sb.AppendLine("--- | ------- | ------ | ------- | ---------");
         foreach (var p in processes)
         {
-            var status = p.IsRunning ? "running" : p.OutputCaptureIncomplete ? "exited (output incomplete)" : "exited";
+            var status = p.Status + (p.OutputCaptureIncomplete ? " (output incomplete)" : string.Empty);
             var exitCode = p.ExitCode?.ToString() ?? "-";
             sb.AppendLine($"{p.Pid} | {p.Command} | {status} | {p.StartedAt:u} | {exitCode}");
         }
@@ -158,7 +158,7 @@ public sealed class ProcessTool : IAgentTool
         // alias with identical millisecond semantics (issue #2955).
         // The cancellable async wait occurs before dispatch; status formatting never blocks.
 
-        var status = process.IsRunning ? "running" : "exited";
+        var status = process.Status;
         var exitCode = process.ExitCode;
 
         var sb = new StringBuilder();
@@ -238,13 +238,15 @@ public sealed class ProcessTool : IAgentTool
             return TextResult($"Process {pid} already exited (code {code}).");
         }
 
-        // Only report termination when exit was actually observed; an unconfirmed kill may have
-        // left descendants running, and the entry deliberately stays tracked so it can be retried.
+        // Retry is safe only through the still-owned live root, never by attaching to a stale PID.
         if (!process.Kill())
         {
             return TextResult(
                 $"Process {pid} ({process.ProcessName}) did NOT confirm termination within the grace period. " +
-                "Part of its process tree may still be running; the process remains tracked and can be killed again.");
+                (process.IsUnresolved
+                    ? "Termination is unresolved: the root exited, but descendants may still be running. " +
+                      "Operator intervention is required; this bounded diagnostic cannot be killed again or reattached by PID."
+                    : "Part of its process tree may still be running; the live root remains tracked and can be killed again."));
         }
 
         var exitCode = process.ExitCode;
