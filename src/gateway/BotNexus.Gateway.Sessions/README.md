@@ -125,3 +125,33 @@ services.AddSingleton<ISessionStore, RedisSessionStore>();
 ### ConfigureAwait Pattern
 
 This library uses `ConfigureAwait(false)` on all awaited tasks to prevent deadlocks when consumed by callers with a synchronization context. This is intentional — see the source comment in `FileSessionStore.cs` for the rationale.
+
+## Legacy inventory preflight
+
+`LegacyAggregateInventory.InspectAsync(sessionDirectory, dataDirectory, cancellationToken)`
+provides a **read-only byte inventory**, not a migration command. Pass the already resolved
+File session directory and writable data directory explicitly. It is not registered at startup
+and does not change the selected backend.
+
+Use only against a quiesced, offline source. The inspector fingerprints the same bytes it
+validates, but does not acquire an aggregate writer lock or guarantee a consistent snapshot
+while another process replaces files. A successful inventory is **not import-readiness
+certification**.
+
+The inventory covers paired session sidecars and ordered JSONL (including archived generations
+and retained sub-agent consumption markers), nested conversations/read state, retained sub-agent
+details, and spawn indexes. Results contain relative paths, categories, byte lengths, record
+counts and SHA-256 fingerprints, never transcript contents. The separate `sections.sqlite` path
+is reported for later aggregate handling; this inspector neither opens nor verifies that database.
+No audit history is inferred or invented.
+
+Unsupported files, duplicate JSON members, malformed or unsupported wire shapes, unmatched
+session files and selected identity conflicts fail the whole inspection. Documents and individual
+JSONL records are limited to 4 MiB and nesting depth 64; histories are streamed rather than loaded
+as one document. Nonempty polymorphic content-part shapes unsupported by the existing file
+serializer are refused rather than guessed. File descriptors and identity indexes scale with the
+number of source files.
+
+Automatic startup import, complete relationship validation, concurrent-writer exclusion, durable
+restart progress, destination conflict handling, verified activation and recovery remain tracked
+by #4962. Retain source files; this preflight never imports, deletes, repairs or rewrites them.
