@@ -162,9 +162,6 @@ public sealed class PlatformConfigAgentSource(
                 continue;
             }
 
-            if (!agentConfig.Enabled)
-                continue;
-
             try
             {
                 // #3515: no merge. The agent block is used exactly as authored, so `agents.defaults`
@@ -183,6 +180,7 @@ public sealed class PlatformConfigAgentSource(
                 var descriptor = new AgentDescriptor
                 {
                     AgentId = AgentId.From(agentId),
+                    Enabled = effectiveConfig.Enabled,
                     DisplayName = effectiveConfig.DisplayName ?? agentId,
                     Emoji = effectiveConfig.Emoji,
                     Description = effectiveConfig.Description,

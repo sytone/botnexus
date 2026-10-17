@@ -64,10 +64,12 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
 
         lock (_sync)
         {
-            if (!_agents.ContainsKey(agentId.Value))
+            if (!_agents.TryGetValue(agentId.Value, out var previous))
                 return false;
 
-            _agents[agentId.Value] = descriptor;
+            _agents[agentId.Value] = descriptor.Enabled is null && previous.Enabled is not null
+                ? descriptor with { Enabled = previous.Enabled }
+                : descriptor;
             _logger.LogInformation("Updated agent '{AgentId}' ({DisplayName})", descriptor.AgentId, descriptor.DisplayName);
             PublishActivity(
                 GatewayActivityType.AgentConfigChanged,
@@ -79,19 +81,30 @@ public sealed class DefaultAgentRegistry : IAgentRegistry
     }
 
     /// <inheritdoc />
-    public AgentDescriptor? Get(AgentId agentId)
+    public AgentDescriptor? Get(AgentId agentId) => Get(agentId, includeDisabled: false);
+
+    /// <inheritdoc />
+    public AgentDescriptor? Get(AgentId agentId, bool includeDisabled)
     {
-        lock (_sync) return _agents.GetValueOrDefault(agentId.Value);
+        lock (_sync)
+        {
+            var descriptor = _agents.GetValueOrDefault(agentId.Value);
+            return includeDisabled || descriptor?.Enabled != false ? descriptor : null;
+        }
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<AgentDescriptor> GetAll()
+    public IReadOnlyList<AgentDescriptor> GetAll() => GetAll(includeDisabled: false);
+
+    /// <inheritdoc />
+    public IReadOnlyList<AgentDescriptor> GetAll(bool includeDisabled)
     {
         lock (_sync)
         {
             // Sort rule: agents with Order set come first (ascending Order, then DisplayName).
             // Agents with no Order set follow (sorted by DisplayName).
             return [.. _agents.Values
+                .Where(a => includeDisabled || a.Enabled != false)
                 .OrderBy(a => a.Order.HasValue ? 0 : 1)
                 .ThenBy(a => a.Order ?? int.MaxValue)
                 .ThenBy(a => a.DisplayName, StringComparer.OrdinalIgnoreCase)];

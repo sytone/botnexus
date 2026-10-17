@@ -156,6 +156,10 @@ public sealed class AgentExchangeService : IAgentExchangeService
         // the policy (and the call chain, budget, conversation and supervisor handle) all evaluate
         // against the RESOLVED agent. Display-name addressing therefore cannot bypass a whitelist.
         var isLocalTarget = _registry.Contains(request.TargetId);
+        // Exact registration wins even when disabled: do not fall through to a display-name
+        // match or reinterpret a local id as federation, and reject before any state is minted.
+        if (isLocalTarget && _registry.Get(request.TargetId, includeDisabled: true)?.Enabled == false)
+            throw new KeyNotFoundException($"Target agent '{request.TargetId}' is disabled.");
         var hasCrossWorldTarget = CrossWorldAgentReference.TryParse(request.TargetId, out var parsedCrossWorldTarget);
         if (!isLocalTarget && !hasCrossWorldTarget)
         {

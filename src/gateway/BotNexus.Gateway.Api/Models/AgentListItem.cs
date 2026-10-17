@@ -51,6 +51,7 @@ using BotNexus.Gateway.Abstractions.Models;
 /// default so an existing consumer of this DTO keeps binding unchanged, and omitted from the JSON
 /// when null so an agent that has never written one costs the list payload nothing.
 /// </param>
+/// <param name="Enabled">Admission state shown in the agent-management grid.</param>
 public sealed record AgentListItem(
     string AgentId,
     string DisplayName,
@@ -64,7 +65,8 @@ public sealed record AgentListItem(
     // boot payload nothing.
     [property: System.Text.Json.Serialization.JsonIgnore(
         Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    string? Summary = null)
+    string? Summary = null,
+    bool Enabled = true)
 {
     /// <summary>
     /// Projects a full <see cref="AgentDescriptor"/> down to its list-view fields.
@@ -81,5 +83,6 @@ public sealed record AgentListItem(
         descriptor.IsBuiltIn,
         descriptor.ApiProvider,
         descriptor.ModelId,
-        descriptor.Summary);
+        descriptor.Summary,
+        descriptor.Enabled ?? true);
 }

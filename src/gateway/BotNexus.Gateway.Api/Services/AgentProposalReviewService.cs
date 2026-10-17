@@ -74,7 +74,7 @@ public sealed class AgentLifecycleService(
     public async Task<AgentDescriptor> ApplyAsync(AgentProposalKind kind, AgentDescriptor submitted, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(submitted);
-        var previous = registry.Get(submitted.AgentId);
+        var previous = registry.Get(submitted.AgentId, includeDisabled: true);
         if (kind is AgentProposalKind.Create && previous is not null)
             throw new AgentLifecycleException(AgentLifecycleFailureKind.Conflict, $"Agent '{submitted.AgentId.Value}' is already registered.");
         if (kind is AgentProposalKind.Update && previous is null)
@@ -85,12 +85,23 @@ public sealed class AgentLifecycleService(
         // Server-owned defaults are canonical for every caller, including proposal application.
         var descriptor = submitted with
         {
+            Enabled = submitted.Enabled ?? previous?.Enabled ?? true,
             DefaultExtensionConfig = previous?.DefaultExtensionConfig
                 ?? new Dictionary<string, System.Text.Json.JsonElement>()
         };
         var validationErrors = BotNexus.Gateway.Agents.AgentDescriptorValidator.ValidateForConfig(descriptor, null, modelRegistry);
         if (validationErrors.Count > 0)
             throw new AgentLifecycleException(AgentLifecycleFailureKind.Validation, string.Join(" ", validationErrors));
+        // Explicit activation must resolve before any durable or runtime mutation. Ordinary
+        // edits retain config validation's permissive treatment of setup-state descriptors.
+        if (submitted.Enabled == true && (previous is null || previous.Enabled == false)
+            && modelRegistry is not null
+            && ModelPreflight.Resolve(modelRegistry, descriptor.ApiProvider, descriptor.ModelId).Kind != ModelPreflightKind.Resolved)
+        {
+            var error = BotNexus.Gateway.Agents.AgentModelPreflight.ValidateResolvable(descriptor, modelRegistry)
+                ?? "Cannot enable agent: the API provider/model pair is not registered in the runtime model registry.";
+            throw new AgentLifecycleException(AgentLifecycleFailureKind.Validation, error);
+        }
         if (extensionLoader is not null)
         {
             var extensionErrors = ExtensionConfigurationScopeValidator.ValidateAgentChanges(previous, descriptor, extensionLoader.GetLoaded());
@@ -167,8 +178,11 @@ public sealed class AgentLifecycleService(
             }
             else if (restorePrevious && previous is not null)
             {
-                registry.Update(agentId, previous);
-                await configurationWriter.SaveAsync(previous, CancellationToken.None).ConfigureAwait(false);
+                // Rollback restores effective state, not patch omission. A legacy null meant
+                // enabled before application; passing it back would preserve the failed disable.
+                var restored = previous with { Enabled = previous.Enabled ?? true };
+                registry.Update(agentId, restored);
+                await configurationWriter.SaveAsync(restored, CancellationToken.None).ConfigureAwait(false);
             }
             else
             {
