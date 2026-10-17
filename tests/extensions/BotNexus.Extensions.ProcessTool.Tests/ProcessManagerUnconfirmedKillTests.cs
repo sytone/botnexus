@@ -128,8 +128,8 @@ public sealed class ProcessManagerUnconfirmedKillTests : IDisposable
         protected override bool KillCore() { Attempts++; return false; }
         public void ExitRoot()
         {
+            // The managed exit callback owns disposal; do not wait on its raw Process afterward.
             _root.Kill(entireProcessTree: true);
-            _root.WaitForExit(5_000).ShouldBeTrue();
         }
     }
 
@@ -151,6 +151,7 @@ public sealed class ProcessManagerUnconfirmedKillTests : IDisposable
         }
         finally { managed.ExitRoot(); }
         await managed.WaitForCompletionAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        managed.IsRunning.ShouldBeFalse("managed completion must observe root exit before reaping");
         manager.Reap();
         manager.Get(managed.Pid).ShouldBeNull();
         managed.KillState.ShouldBe(ProcessKillState.Unconfirmed);
