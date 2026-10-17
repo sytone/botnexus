@@ -4,14 +4,10 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="Xunit.SkippableFact" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
   </ItemGroup>
-  <!--
-    Referenced for HubEvents.All only: the harness subscribes to the generated inventory rather
-    than a hand-written copy of it (#3318), so an event added to IGatewayHubClient is observable
-    here without a second edit.
-  -->
   <ItemGroup>
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Api\BotNexus.Gateway.Api.csproj" />
     <ProjectReference Include="..\..\..\src\extensions\BotNexus.Extensions.Channels.SignalR\BotNexus.Extensions.Channels.SignalR.csproj" />
   </ItemGroup>
   <ItemGroup>
