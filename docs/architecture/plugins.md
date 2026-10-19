@@ -14,7 +14,7 @@ privilege fence.
 ```
 my-plugin/
   .botnexus-plugin/
-    plugin.json        # the manifest - the only required file
+    plugin.json        # the native manifest - its only required file
   skills/              # discovered by convention
   agents/
   commands/
@@ -24,7 +24,8 @@ my-plugin/
 
 The native manifest lives at `.botnexus-plugin/plugin.json`. The lifecycle also accepts a
 bounded, experimental Claude import from `.claude-plugin/plugin.json`, as described below.
-A directory without either manifest is rejected; manifestless import remains deferred.
+Without either manifest, only conventional skills content with an explicit operator-supplied
+`PluginInstallRequest.Name` is accepted. The source URL and directory name never supply identity.
 
 ## The manifest
 
@@ -49,26 +50,33 @@ which would instead mean *this plugin deliberately has none*.
 
 ## Experimental Claude import: conventional skills only
 
-This first implementation stage is for plugin authors and maintainers who need conventional
+This bounded implementation is for plugin authors and maintainers who need conventional
 skills to enter the existing install, update, trust-catalog and exact-file removal lifecycle.
 `PluginImportAdapter` validates fetched content in staging, before any file is promoted. It
 does not execute plugin scripts, rewrite source manifests, or create a synthetic native
 manifest. Original plugin files remain part of the installed file receipt.
 
-| Input or capability | First-stage support |
+| Input or capability | Bounded support |
 | --- | --- |
-| Native `.botnexus-plugin/plugin.json` only | Existing strict schema and lifecycle behavior, unchanged. |
+| Native `.botnexus-plugin/plugin.json` only | Existing strict schema and ordinary lifecycle behavior remain supported. Linked metadata files or directories, including dangling links, are now rejected by staging preflight. |
 | Claude `.claude-plugin/plugin.json` only | Required native-compatible `name`; optional `description`, `version`, `author`, `homepage`, `repository`, `license`, `keywords`, validated against native metadata rules. Unknown fields and duplicate fields, including nested duplicates, fail. |
 | Conventional `skills/` | Supported through the existing skill-root resolver and skill discovery. |
 | Claude `skills` declaration | Omitted, `"./skills"`, `"skills"`, or a one-element array containing either path. Empty, custom, additional or escaping paths fail rather than being ignored. |
 | Claude hooks, commands, agents, MCP or LSP declarations | Rejected, even when the declared value is empty. All offending fields are reported. |
-| Discovered behavior beside a Claude manifest | `hooks`, `commands`, `agents`, `lsp`, `.mcp.json`, `.lsp.json` and `.botnexus-plugin/mcp.json` paths are rejected, whether files or directories. Omitting declarations cannot bypass the check. |
+| Discovered behavior in a Claude or manifestless import | `hooks`, `commands`, `agents`, `lsp`, `.mcp.json`, `.lsp.json` and `.botnexus-plugin/mcp.json` paths are rejected, whether files or directories. Omitting declarations cannot bypass the check. |
 | Both manifests | Native whole-manifest authority, with no metadata inheritance. Both manifests must stay within conventional skills; native unsupported component declarations or custom skill paths fail too. Claude content must pass the bounded checks and declare the same identity. A malformed present native manifest fails; there is no Claude fallback. |
-| Missing both manifests | Rejected. Manifestless import is deferred. |
+| Missing both manifests | Requires an explicit `PluginInstallRequest.Name` validated by the native identity schema and at least one regular `skills/<skill>/SKILL.md` file with canonical spelling. Missing or empty skills, a loose root `SKILL.md`, and nested-only skill files do not qualify. No manifest is written to disk. |
+| Missing or invalid manifestless identity | Rejected. No identity is inferred from the source, checkout directory, or skill name. |
+| Present malformed or linked metadata | Rejected, never reinterpreted as manifestless content. Native manifest validation remains authoritative when present. |
+| Claude and manifestless path safety | Staging preflight rejects symbolic links and reparse points (including dangling links), nonportable names, case-insensitive destination collisions, and noncanonical conventional root names. Manifestless skill entry files must be spelled `SKILL.md`. |
 | Marketplace, consent, UI or extra component execution | No expansion in this stage; unsupported content fails rather than producing partial success. |
 
 The installed receipt stores `manifestFormat` as `"Native"` or `"Claude"` for the selected
-manifest. Older receipts without that field default to `Native`. Successful updates refresh
+manifest, including `"Claude"` for accepted manifestless imports. Manifestless receipts keep the
+operator-supplied name and have no manifest version. Updates pass the recorded name back to
+staging validation; a later manifest cannot silently rename the installed plugin. Removal uses
+the existing exact-file receipt and preserves unowned files. Older receipts without the format
+field default to `Native`. Successful updates refresh
 the format along with the manifest version and file set. A rejected candidate revision leaves
 the installed content and receipt untouched. Format selection does not grant trust: the
 existing skill validation and content-trust policies still apply.
