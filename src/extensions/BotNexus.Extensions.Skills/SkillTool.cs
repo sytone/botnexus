@@ -376,6 +376,16 @@ public sealed class SkillTool(
 
         var candidatePath = Path.Combine(skill.SourcePath, relPath);
 
+        // Static/cached discovery does not authorize a subsequently linked installation.
+        try
+        {
+            SkillInstallationValidator.CollectFiles(skill.SourcePath, _fileSystem);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            return TextResult($"Error: skill installation could not be validated: {ex.Message}");
+        }
+
         // Reuse the shared symlink/boundary validator: resolved path must stay inside the skill dir.
         if (!SkillPathValidator.TryValidate(candidatePath, SkillPath.CreateRoot(skill.SourcePath, _fileSystem), _fileSystem, out var validated, out var symlinkError))
             return TextResult($"Error: {symlinkError}");
