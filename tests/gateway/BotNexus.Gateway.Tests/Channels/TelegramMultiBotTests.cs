@@ -8,10 +8,11 @@ using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
+using Xunit.Abstractions;
 
 namespace BotNexus.Gateway.Tests.Channels;
 
-public sealed class TelegramMultiBotTests
+public sealed class TelegramMultiBotTests(ITestOutputHelper output)
 {
     /// <summary>
     /// When two bots are configured, messages from each arrive with the correct
@@ -104,7 +105,7 @@ public sealed class TelegramMultiBotTests
 
         await RunPollingScenarioAsync(adapter, dispatcher.Object, async () =>
         {
-            var message = await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var message = await WaitForLegacyDispatchAsync(dispatched.Task, adapter, handler);
             var hints = message.RoutingHints.ShouldNotBeNull();
             hints.RequestedAgentId.ShouldNotBeNull().Value.ShouldBe("legacy-agent");
             message.Content.ShouldBe("legacy message");
@@ -344,6 +345,216 @@ public sealed class TelegramMultiBotTests
             await adapter.StopAsync(CancellationToken.None);
         }
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(12)]
+    public async Task LegacyDispatchWait_WhenTimedOut_SnapshotsBeforeCleanupAndPreservesException(int extraRequests)
+    {
+        using var handler = new PollingHandler(MakeUpdate(10, 42, "private message"));
+        using var http = new HttpClient(handler, disposeHandler: false);
+        var api = new TelegramBotApiClient(http, "legacy-token", NullLogger.Instance);
+        for (var i = 0; i < extraRequests; i++) await api.DeleteWebhookAsync();
+        var adapter = new TelegramChannelAdapter(
+            NullLogger<TelegramChannelAdapter>.Instance,
+            Options.Create(new TelegramGatewayOptions { BotToken = "legacy-token", AllowedChatIds = { 42 }, PollingTimeoutSeconds = 1 }),
+            new StubHttpClientFactory(_ => new HttpClient(handler, disposeHandler: false)));
+        var expected = new TimeoutException("injected deadline sentinel, not a reproduced dispatch timeout");
+        var dispatchTask = Task.FromException<InboundMessage>(expected);
+        Task? pollingTask = null;
+        string? beforeCleanup = null;
+        string? beforeCleanupPollingStatus = null;
+        var runningBeforeCleanup = false;
+        var emitted = new List<string>();
+        var recordingOutput = new Mock<ITestOutputHelper>();
+        recordingOutput.Setup(helper => helper.WriteLine(It.IsAny<string>())).Callback<string>(text =>
+        {
+            adapter.IsRunning.ShouldBeTrue("diagnostics must be emitted before cleanup");
+            handler.CancelledPoll.Task.IsCompleted.ShouldBeFalse();
+            emitted.Add(text);
+            output.WriteLine(text);
+        });
+        var fixture = new TelegramMultiBotTests(recordingOutput.Object);
+
+        var actual = await Should.ThrowAsync<TimeoutException>(() =>
+            RunPollingScenarioAsync(adapter, Mock.Of<IChannelDispatcher>(), async () =>
+            {
+                await handler.PendingPoll.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                pollingTask = adapter.GetPollingTask("default").ShouldNotBeNull();
+                try
+                {
+                    await fixture.WaitForLegacyDispatchAsync(dispatchTask, adapter, handler);
+                }
+                finally
+                {
+                    beforeCleanup = expected.Data[LegacyDispatchSnapshotKey] as string;
+                    beforeCleanupPollingStatus = pollingTask.Status.ToString();
+                    runningBeforeCleanup = adapter.IsRunning;
+                }
+            }));
+
+        actual.ShouldBeSameAs(expected);
+        runningBeforeCleanup.ShouldBeTrue();
+        adapter.IsRunning.ShouldBeFalse();
+        pollingTask.ShouldNotBeNull().IsCompletedSuccessfully.ShouldBeTrue();
+        handler.CancelledPoll.Task.IsCompletedSuccessfully.ShouldBeTrue();
+        var snapshot = beforeCleanup.ShouldNotBeNull();
+        actual.Data[LegacyDispatchSnapshotKey].ShouldBe(snapshot);
+        emitted.ShouldHaveSingleItem().ShouldBe(snapshot);
+        snapshot.ShouldNotContain("legacy-token");
+        snapshot.ShouldNotContain("private message");
+        snapshot.ShouldNotContain("https:");
+        using var document = JsonDocument.Parse(snapshot);
+        var root = document.RootElement;
+        root.GetProperty("DispatchStatus").GetString().ShouldBe("Faulted");
+        root.GetProperty("AdapterRunning").GetBoolean().ShouldBeTrue();
+        root.GetProperty("PollingStatus").GetString().ShouldBe(beforeCleanupPollingStatus.ShouldNotBeNull());
+        root.GetProperty("PollCount").GetInt32().ShouldBe(2);
+        root.GetProperty("PendingPollReady").GetBoolean().ShouldBeTrue();
+        root.GetProperty("PollCancelled").GetBoolean().ShouldBeFalse();
+        var operations = root.GetProperty("Operations").EnumerateArray().ToArray();
+        operations.Length.ShouldBe(Math.Min(extraRequests + 3, 8));
+        operations[0].GetProperty("Operation").GetString().ShouldBe("deleteWebhook");
+        operations[^2].GetProperty("Offset").ValueKind.ShouldBe(JsonValueKind.Null);
+        operations[^1].GetProperty("Operation").GetString().ShouldBe("getUpdates");
+        operations[^1].GetProperty("Offset").GetInt64().ShouldBe(11);
+        operations[^1].GetProperty("Timeout").GetInt32().ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task LegacyDispatchWait_WhenSuccessful_ReturnsOriginalMessage()
+    {
+        using var handler = new PollingHandler(MakeUpdate(10, 42, "unused"));
+        var adapter = new TelegramChannelAdapter(
+            NullLogger<TelegramChannelAdapter>.Instance,
+            Options.Create(new TelegramGatewayOptions { BotToken = "legacy-token" }),
+            new StubHttpClientFactory(_ => new HttpClient(handler, disposeHandler: false)));
+        var expected = new InboundMessage
+        {
+            ChannelType = ChannelKey.From("telegram"),
+            ChannelAddress = TelegramChannelAddress.Encode(42, null),
+            SenderId = "42",
+            Sender = BotNexus.Domain.World.CitizenId.Of(UserId.From("42")),
+            Content = "success"
+        };
+        var actual = await WaitForLegacyDispatchAsync(Task.FromResult(expected), adapter, handler);
+        actual.ShouldBeSameAs(expected);
+        handler.Requests.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task LegacyDispatchWait_WhenNotTimeout_DoesNotAttachDiagnostics()
+    {
+        using var handler = new PollingHandler(MakeUpdate(10, 42, "unused"));
+        var adapter = new TelegramChannelAdapter(
+            NullLogger<TelegramChannelAdapter>.Instance,
+            Options.Create(new TelegramGatewayOptions { BotToken = "legacy-token" }),
+            new StubHttpClientFactory(_ => new HttpClient(handler, disposeHandler: false)));
+        var expected = new InvalidOperationException("non-timeout sentinel");
+        var actual = await Should.ThrowAsync<InvalidOperationException>(() =>
+            WaitForLegacyDispatchAsync(Task.FromException<InboundMessage>(expected), adapter, handler));
+        actual.ShouldBeSameAs(expected);
+        actual.Data.Count.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LegacyDispatchSnapshot_WhenDispatchPending_CapturesPollingBoundary(bool startPolling)
+    {
+        // This update is outside the allow-list, so the real dispatch signal stays pending
+        // even after the adapter has consumed the update and reached its next long poll.
+        var dispatched = new TaskCompletionSource<InboundMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var handler = new PollingHandler(MakeUpdate(10, 43, "private message"));
+        var adapter = new TelegramChannelAdapter(
+            NullLogger<TelegramChannelAdapter>.Instance,
+            Options.Create(new TelegramGatewayOptions { BotToken = "legacy-token", AllowedChatIds = { 42 }, PollingTimeoutSeconds = 1 }),
+            new StubHttpClientFactory(_ => new HttpClient(handler, disposeHandler: false)));
+        var dispatcher = new Mock<IChannelDispatcher>();
+        dispatcher.Setup(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<InboundMessage, CancellationToken>((message, _) => dispatched.TrySetResult(message));
+        Task? pollingTask = null;
+        try
+        {
+            if (startPolling)
+            {
+                await adapter.StartAsync(dispatcher.Object, CancellationToken.None);
+                await handler.PendingPoll.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                pollingTask = adapter.GetPollingTask("default").ShouldNotBeNull();
+                pollingTask.IsCompleted.ShouldBeFalse();
+            }
+
+            dispatched.Task.IsCompleted.ShouldBeFalse();
+            var snapshot = CaptureLegacyDispatchSnapshot(dispatched.Task, adapter, handler);
+            using var document = JsonDocument.Parse(snapshot);
+            var root = document.RootElement;
+            root.GetProperty("DispatchStatus").GetString().ShouldBe(dispatched.Task.Status.ToString());
+            root.GetProperty("AdapterRunning").GetBoolean().ShouldBe(startPolling);
+            root.GetProperty("PollingStatus").GetString().ShouldBe(pollingTask?.Status.ToString() ?? "NotStarted");
+            root.GetProperty("PollCount").GetInt32().ShouldBe(startPolling ? 2 : 0);
+            root.GetProperty("PendingPollReady").GetBoolean().ShouldBe(startPolling);
+            root.GetProperty("PollCancelled").GetBoolean().ShouldBeFalse();
+            root.GetProperty("Operations").GetArrayLength().ShouldBe(startPolling ? 3 : 0);
+            snapshot.ShouldNotContain("legacy-token");
+            snapshot.ShouldNotContain("private message");
+            snapshot.ShouldNotContain("https:");
+        }
+        finally
+        {
+            await adapter.StopAsync(CancellationToken.None);
+        }
+        adapter.IsRunning.ShouldBeFalse();
+        if (startPolling)
+        {
+            pollingTask.ShouldNotBeNull().IsCompletedSuccessfully.ShouldBeTrue();
+            handler.CancelledPoll.Task.IsCompletedSuccessfully.ShouldBeTrue();
+        }
+    }
+
+    private const string LegacyDispatchSnapshotKey = "TelegramLegacyDispatchSnapshot";
+
+    private async Task<InboundMessage> WaitForLegacyDispatchAsync(
+        Task<InboundMessage> dispatchTask, TelegramChannelAdapter adapter, PollingHandler handler)
+    {
+        try
+        {
+            return await dispatchTask.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException exception)
+        {
+            // Capture observations before RunPollingScenarioAsync's finally stops the poller.
+            // These states do not establish why dispatch missed its deadline. Never serialize
+            // request URIs (which contain bot tokens), message bodies, or arbitrary log text.
+            var snapshot = CaptureLegacyDispatchSnapshot(dispatchTask, adapter, handler);
+            exception.Data[LegacyDispatchSnapshotKey] = snapshot;
+            output.WriteLine(snapshot);
+            throw;
+        }
+    }
+
+    // A synchronous observation seam lets boundary tests inspect genuinely pending dispatch
+    // without waiting for, shortening, or replacing the real five-second deadline.
+    private static string CaptureLegacyDispatchSnapshot(
+        Task<InboundMessage> dispatchTask, TelegramChannelAdapter adapter, PollingHandler handler) =>
+        JsonSerializer.Serialize(new
+        {
+            DispatchStatus = dispatchTask.Status.ToString(),
+            AdapterRunning = adapter.IsRunning,
+            PollingStatus = adapter.GetPollingTask("default")?.Status.ToString() ?? "NotStarted",
+            PollCount = handler.Polls,
+            PendingPollReady = handler.PendingPoll.Task.IsCompletedSuccessfully,
+            PollCancelled = handler.CancelledPoll.Task.IsCompletedSuccessfully,
+            Operations = handler.Requests.TakeLast(8).Select(request => new
+            {
+                Operation = request.Uri.EndsWith("/getUpdates", StringComparison.Ordinal) ? "getUpdates"
+                    : request.Uri.EndsWith("/deleteWebhook", StringComparison.Ordinal) ? "deleteWebhook" : "other",
+                Offset = request.Body.TryGetProperty("offset", out var offset) && offset.ValueKind == JsonValueKind.Number && offset.TryGetInt64(out var offsetValue)
+                    ? (long?)offsetValue : null,
+                Timeout = request.Body.TryGetProperty("timeout", out var timeout) && timeout.ValueKind == JsonValueKind.Number && timeout.TryGetInt32(out var timeoutValue)
+                    ? (int?)timeoutValue : null
+            }).ToArray()
+        });
 
     private static async Task RunPollingScenarioAsync(
         TelegramChannelAdapter adapter, IChannelDispatcher dispatcher, Func<Task> scenario)
