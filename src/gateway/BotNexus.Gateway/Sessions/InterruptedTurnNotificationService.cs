@@ -166,19 +166,29 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
                     if (!registeredAgents.Contains(row.AgentId))
                         continue;
 
-                    var session = await _sessions.GetAsync(row.SessionId, cancellationToken).ConfigureAwait(false);
-                    if (session is null || !session.History.Any(static entry => entry.IsCrashSentinel))
-                        continue;
+                    try
+                    {
+                        var session = await _sessions.GetAsync(row.SessionId, cancellationToken).ConfigureAwait(false);
+                        if (session is null || !session.History.Any(static entry => entry.IsCrashSentinel))
+                            continue;
 
-                    _logger.LogInformation(
-                        "Session {SessionId} (agent {AgentId}) has unresolved crash sentinels - notifying user",
-                        row.SessionId.Value, row.AgentId.Value);
-                    var isAgentOnlyConversation = await IsAgentOnlyConversationAsync(session, cancellationToken)
-                        .ConfigureAwait(false);
-                    var didReplay = await RecoverSessionAsync(
-                        session, row.AgentId, isAgentOnlyConversation, cancellationToken).ConfigureAwait(false);
-                    if (didReplay) replayed++;
-                    notified++;
+                        _logger.LogInformation(
+                            "Session {SessionId} (agent {AgentId}) has unresolved crash sentinels - notifying user",
+                            row.SessionId.Value, row.AgentId.Value);
+                        var isAgentOnlyConversation = await IsAgentOnlyConversationAsync(session, cancellationToken)
+                            .ConfigureAwait(false);
+                        var didReplay = await RecoverSessionAsync(
+                            session, row.AgentId, isAgentOnlyConversation, cancellationToken).ConfigureAwait(false);
+                        if (didReplay) replayed++;
+                        notified++;
+                    }
+                    catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        _logger.LogWarning(
+                            ex,
+                            "Interrupted-turn recovery failed for session {SessionId} (agent {AgentId}); continuing with later candidates",
+                            row.SessionId.Value, row.AgentId.Value);
+                    }
                 }
                 cursor = page.NextCursor;
             } while (cursor is not null);
