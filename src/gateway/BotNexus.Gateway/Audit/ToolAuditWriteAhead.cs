@@ -52,7 +52,8 @@ internal sealed class ToolAuditWriteAhead(
     SessionId sessionId,
     ILogger logger,
     TimeSpan? persistenceDeadline = null,
-    Func<Func<Task<SessionAppendMutationResult>>, Task<SessionAppendMutationResult>>? dispatchReadAppend = null)
+    Func<Func<Task<SessionAppendMutationResult>>, Task<SessionAppendMutationResult>>? dispatchReadAppend = null,
+    TimeProvider? timeProvider = null)
 {
     // Instance-local dispatch allows deadline fixtures to control entry without depending on
     // thread-pool availability. Production retains the same uncancellable Task.Run dispatch.
@@ -118,8 +119,11 @@ internal sealed class ToolAuditWriteAhead(
 
         _inFlight[toolCallId] = new InFlightCall(toolName, serializedArguments, _runId);
         var deadline = persistenceDeadline ?? DefaultPersistenceDeadline;
-        using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadlineCts.CancelAfter(deadline);
+        // Both the append token and the independent read wait share one scheduler. Bounded
+        // stores still own their definitive deadline; production uses the system provider.
+        var clock = timeProvider ?? TimeProvider.System;
+        using var timeoutCts = new CancellationTokenSource(deadline, clock);
+        using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
         try
         {
@@ -160,7 +164,7 @@ internal sealed class ToolAuditWriteAhead(
                             () => store.AppendEntriesAsync(sessionId, [entry], appendToken));
                         try
                         {
-                            result = await appendTask.WaitAsync(deadline, cancellationToken).ConfigureAwait(false);
+                            result = await appendTask.WaitAsync(deadline, clock, cancellationToken).ConfigureAwait(false);
                         }
                         catch (TimeoutException) when (!cancellationToken.IsCancellationRequested)
                         {
