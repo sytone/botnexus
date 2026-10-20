@@ -1570,8 +1570,10 @@ public sealed class CrossWorldFederationControllerTests
     // before the catch-all so caller cancellation rethrows without touching session.Status.
     // The `when` filter is essential — OCEs from unrelated tokens still seal.
 
-    [Fact]
-    public async Task RelayAsync_WhenCallerCancelsDuringPromptAsync_RethrowsOce_AndDoesNotSealSession()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RelayAsync_WhenCallerCancelsDuringPromptAsync_RethrowsOce_AndDoesNotSealSession(bool partialInterruption)
     {
         using var cts = new CancellationTokenSource();
         var sessions = new InMemorySessionStore();
@@ -1581,9 +1583,14 @@ public sealed class CrossWorldFederationControllerTests
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns((string _, CancellationToken ct) =>
             {
-                // Cancel the caller's token then throw OCE bound to that same token, simulating
-                // a caller HTTP timeout / abort that propagates into PromptAsync.
+                // Exercise both cancellation before admission and a captured partial run.
                 cts.Cancel();
+                if (partialInterruption)
+                    throw new AgentPromptInterruptedException(new AgentResponse
+                    {
+                        Content = string.Empty,
+                        ToolCalls = [new("partial-4101", "read", true, "{}", null, IsIncomplete: true)]
+                    }, ct);
                 ct.ThrowIfCancellationRequested();
                 throw new InvalidOperationException("unreachable");
             });
@@ -1614,6 +1621,9 @@ public sealed class CrossWorldFederationControllerTests
         session.Metadata.ContainsKey("error").ShouldBeFalse(
             "The 'error' metadata key is written exclusively by the seal-on-error catch-all. " +
             "If it's present after caller cancellation, the OCE rethrow path took the wrong branch.");
+        if (partialInterruption)
+            session.GetHistorySnapshot().Where(row => row.ToolCallId == "partial-4101")
+                .ShouldHaveSingleItem().ToolIsIncomplete.ShouldBeTrue();
     }
 
     [Fact]
