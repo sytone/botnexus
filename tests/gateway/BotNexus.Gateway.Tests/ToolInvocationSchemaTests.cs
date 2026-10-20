@@ -423,6 +423,9 @@ public sealed class ToolInvocationSchemaTests : IDisposable
             session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = result, ToolName = "read", ToolCallId = call, ToolArgs = duplicate, Kind = MessageKind.ToolResult, Timestamp = startedAt.AddSeconds(2) });
         }
         await store.SaveAsync(session);
+        // This fixture exercises historical duplicate cleanup, not the normalized-only live
+        // writer. Restore the pre-cutover payload layout before applying each protection.
+        await RestoreLegacyPayloadsAsync("disposition");
         await using var connection = await OpenAsync();
         await using (var change = connection.CreateCommand())
         {
