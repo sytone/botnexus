@@ -2361,14 +2361,16 @@ public sealed class CronScheduler(
         int? timeoutSeconds,
         CancellationToken ct)
     {
-        var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        // #2904: null is unlimited: keep ambient cancellation, but arm no deadline. Use the
+        // scheduler clock for the timer as well as duration, so cancellation is deterministic when
+        // a caller supplies a timer-aware TimeProvider (#4102).
+        using var deadlineCts = timeoutSeconds is int armedTimeout
+            ? new CancellationTokenSource(TimeSpan.FromSeconds(armedTimeout), _timeProvider)
+            : null;
+        var timeoutCts = deadlineCts is null
+            ? CancellationTokenSource.CreateLinkedTokenSource(ct)
+            : CancellationTokenSource.CreateLinkedTokenSource(ct, deadlineCts.Token);
         var retainTimeoutSource = false;
-
-        // #2904: a null timeout is the explicit "unlimited" sentinel. Arming no CancelAfter is the
-        // whole point - the linked source still exists so the ambient token (gateway shutdown /
-        // explicit cancel) cancels the run promptly, but nothing else can end it (AC2).
-        if (timeoutSeconds is int armedTimeout)
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(armedTimeout));
 
         // #2641 AC2: the scheduler owns the run clock. Stamped in a finally so it is recorded on
         // EVERY exit - success, timeout, and host/operator cancellation alike - because a run that
@@ -2380,6 +2382,7 @@ public sealed class CronScheduler(
             if (timeoutSeconds is null)
             {
                 await actionTask.ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
                 return new ActionExecutionResult(null, null);
             }
 
@@ -2390,6 +2393,11 @@ public sealed class CronScheduler(
                 // Host/operator cancellation keeps its established semantics: wait for the action
                 // to observe cancellation so teardown and active-run cancellation remain ordered.
                 await actionTask.ConfigureAwait(false);
+                // #4102: returning normally is not proof of success: actions may swallow
+                // cancellation. Reconcile provenance before resolving ok/no_tool_calls. Ambient
+                // host/operator intent wins if observed here, even when the deadline fired first.
+                ct.ThrowIfCancellationRequested();
+                timeoutCts.Token.ThrowIfCancellationRequested();
                 return new ActionExecutionResult(null, null);
             }
 
@@ -2408,10 +2416,19 @@ public sealed class CronScheduler(
                     // Expected per-job timeout cancellation.
                 }
 
+                ct.ThrowIfCancellationRequested();
                 _logger.LogWarning(
                     "Cron job timed out after {TimeoutSeconds}s. JobId: {JobId}, ActionType: {ActionType}",
                     timeoutSeconds, context.Job.Id, context.Job.ActionType);
                 return new ActionExecutionResult($"Job exceeded {timeoutSeconds}s timeout", null);
+            }
+
+            if (ct.IsCancellationRequested)
+            {
+                // Preserve ambient cancellation's ordered teardown if it arrived during the
+                // cooperative window, rather than attributing that cancellation to the deadline.
+                await actionTask.ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
             }
 
             _logger.LogWarning(
