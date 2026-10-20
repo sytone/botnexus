@@ -73,6 +73,7 @@ internal static class AgentDescriptorFingerprint
     private static void AppendDescriptor(StringBuilder builder, AgentDescriptor d)
     {
         builder.Append(d.AgentId.Value).Append('\u001f');
+        builder.Append(d.Enabled ?? true).Append('\u001f');
         builder.Append(d.DisplayName).Append('\u001f');
         builder.Append(d.Kind).Append('\u001f');
         builder.Append(d.Emoji).Append('\u001f');

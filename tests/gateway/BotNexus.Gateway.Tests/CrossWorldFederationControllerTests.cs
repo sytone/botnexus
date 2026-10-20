@@ -70,6 +70,33 @@ public sealed class CrossWorldFederationControllerTests
         payload.SessionId.ShouldNotBeNullOrWhiteSpace();
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("existing-session")]
+    public async Task RelayAsync_DisabledTargetRejectsBeforeStateOrSupervisorAccess(string? remoteSessionId)
+    {
+        var sessions = new Mock<ISessionStore>(MockBehavior.Strict);
+        var conversations = new Mock<IConversationStore>(MockBehavior.Strict);
+        var supervisor = new Mock<IAgentSupervisor>(MockBehavior.Strict);
+        // The fixture retains registration while exposing the explicit disabled state.
+        var registry = new Mock<IAgentRegistry>();
+        var descriptor = new AgentDescriptor
+        {
+            AgentId = AgentId.From(TargetAgentId), DisplayName = "Disabled", ModelId = "m", ApiProvider = "p", Enabled = false
+        };
+        registry.Setup(r => r.Contains(descriptor.AgentId)).Returns(true);
+        registry.Setup(r => r.Get(descriptor.AgentId, true)).Returns(descriptor);
+        var controller = BuildControllerCore(sessions.Object, conversations.Object, supervisor.Object, new SessionWriteLock(), registry.Object);
+        SetApiKeyHeader(controller, SharedApiKey);
+
+        var result = await controller.RelayAsync(BuildRequest(remoteSessionId: remoteSessionId), CancellationToken.None);
+
+        result.Result.ShouldBeOfType<NotFoundObjectResult>();
+        sessions.VerifyNoOtherCalls();
+        conversations.VerifyNoOtherCalls();
+        supervisor.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task RelayAsync_WithInvalidApiKey_ReturnsUnauthorized()
     {
@@ -1833,7 +1860,8 @@ public sealed class CrossWorldFederationControllerTests
         ISessionStore sessions,
         IConversationStore conversations,
         IAgentSupervisor supervisor,
-        ISessionWriteLock sessionWriteLock)
+        ISessionWriteLock sessionWriteLock,
+        IAgentRegistry? registryOverride = null)
     {
         var platformConfig = new PlatformConfig
         {
@@ -1866,7 +1894,7 @@ public sealed class CrossWorldFederationControllerTests
         var monitor = new StaticOptionsMonitor<PlatformConfig>(platformConfig);
 
         return new CrossWorldFederationController(
-            registry.Object,
+            registryOverride ?? registry.Object,
             supervisor,
             sessions,
             conversations,

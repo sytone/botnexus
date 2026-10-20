@@ -97,8 +97,11 @@ public sealed class CrossWorldFederationController(
         if (!inboundAuthService.TryAuthorize(request.SourceWorldId, targetAgentId, presentedApiKey, out var authError))
             return Unauthorized(new { error = authError });
 
-        if (!registry.Contains(targetAgentId))
-            return NotFound(new { error = $"Target agent '{request.TargetAgentId}' is not registered." });
+        // Registration includes disabled agents for management, but relay admission must not
+        // create or mutate sessions for them. Keep this check after authentication.
+        if (!registry.Contains(targetAgentId)
+            || registry.Get(targetAgentId, includeDisabled: true)?.Enabled == false)
+            return NotFound(new { error = $"Target agent '{request.TargetAgentId}' is not registered or is disabled." });
 
         // Per-session lock holds across resolve → write → prompt → reload → save → (seal-on-error).
         // The single critical race that motivated #551 is two concurrent senders supplying the

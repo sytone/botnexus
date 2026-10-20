@@ -304,14 +304,17 @@ public sealed class ScopedCompactionCeilingTests
         var id = AgentId.From("ceiling-api-agent");
         var original = new AgentDescriptor { AgentId = id, DisplayName = "A", ModelId = "m", ApiProvider = "p", CompactionTokenCeiling = 1000 };
         registry.Setup(r => r.Get(id)).Returns(original);
+        registry.Setup(r => r.Get(id, true)).Returns(original);
         var supervisor = new Mock<BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor>();
-        var controller = new BotNexus.Gateway.Api.Controllers.AgentsController(registry.Object, supervisor.Object, Mock.Of<IAgentConfigurationWriter>());
+        var writer = new Mock<IAgentConfigurationWriter>();
+        var controller = new BotNexus.Gateway.Api.Controllers.AgentsController(registry.Object, supervisor.Object, writer.Object);
         foreach (var invalid in new[] { 0, -1 })
         {
             var result = await controller.Update(id.Value, original with { CompactionTokenCeiling = invalid }, CancellationToken.None);
             result.Result.ShouldBeOfType<Microsoft.AspNetCore.Mvc.BadRequestObjectResult>();
         }
         registry.Verify(r => r.Update(It.IsAny<AgentId>(), It.IsAny<AgentDescriptor>()), Times.Never);
+        writer.Verify(w => w.SaveAsync(It.IsAny<AgentDescriptor>(), It.IsAny<CancellationToken>()), Times.Never);
         foreach (var invalid in new[] { "1.5", "2147483648", "\"1000\"" })
             Should.Throw<JsonException>(() => JsonSerializer.Deserialize<AgentDescriptor>("{\"agentId\":\"a\",\"displayName\":\"A\",\"modelId\":\"m\",\"apiProvider\":\"p\",\"compactionTokenCeiling\":" + invalid + "}", new JsonSerializerOptions(JsonSerializerDefaults.Web)));
     }

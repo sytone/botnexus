@@ -107,6 +107,40 @@ public sealed class DefaultMessageRouterTests
         route.ShouldHaveSingleItem().ShouldBe("agent-default");
     }
 
+    [Theory]
+    [InlineData("explicit")]
+    [InlineData("session")]
+    [InlineData("default")]
+    public async Task ResolveAsync_DisabledAgentIsNotRoutable_AtEveryPriority(string priority)
+    {
+        var registry = CreateRegistryWithAgents("disabled");
+        registry.Update(AgentId.From("disabled"), CreateDescriptor("disabled") with { Enabled = false }).ShouldBeTrue();
+        var sessions = new InMemorySessionStore();
+        if (priority == "session")
+            await sessions.GetOrCreateAsync(SessionId.From("existing"), AgentId.From("disabled"));
+        var router = CreateRouter(registry, sessions, "disabled");
+
+        var route = await router.ResolveAsync(CreateMessage(
+            targetAgentId: priority == "explicit" ? "disabled" : null,
+            sessionId: priority == "session" ? "existing" : null));
+
+        route.ShouldBeEmpty();
+        registry.Contains(AgentId.From("disabled")).ShouldBeTrue("registration remains visible for administration");
+    }
+
+    [Fact]
+    public async Task ResolveAsync_DisabledSessionBindingFallsBackToEnabledDefault()
+    {
+        var registry = CreateRegistryWithAgents("disabled", "active");
+        registry.Update(AgentId.From("disabled"), CreateDescriptor("disabled") with { Enabled = false }).ShouldBeTrue();
+        var sessions = new InMemorySessionStore();
+        await sessions.GetOrCreateAsync(SessionId.From("existing"), AgentId.From("disabled"));
+        var router = CreateRouter(registry, sessions, "active");
+
+        (await router.ResolveAsync(CreateMessage(sessionId: "existing"))).ShouldHaveSingleItem().ShouldBe("active");
+        (await router.ResolveAsync(CreateMessage(targetAgentId: "disabled"))).ShouldBeEmpty("an explicit disabled target must not fall through");
+    }
+
     private static DefaultAgentRegistry CreateRegistryWithAgents(params string[] agentIds)
     {
         var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);

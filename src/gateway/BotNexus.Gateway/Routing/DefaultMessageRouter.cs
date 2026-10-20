@@ -57,7 +57,7 @@ public sealed class DefaultMessageRouter : IMessageRouter
         // Priority 1: Explicit target
         if (hints.RequestedAgentId is { } targetAgentId)
         {
-            if (_registry.Contains(targetAgentId))
+            if (_registry.Get(targetAgentId) is not null)
                 return Complete([targetAgentId.Value]);
 
             _logger.LogWarning("Explicit target agent '{AgentId}' not found", targetAgentId.Value);
@@ -70,7 +70,7 @@ public sealed class DefaultMessageRouter : IMessageRouter
             using var sessionActivity = GatewayDiagnostics.Source.StartActivity("session.get", ActivityKind.Internal);
             sessionActivity?.SetTag("botnexus.session.id", requestedSessionId.Value);
             var session = await _sessions.GetAsync(requestedSessionId, cancellationToken);
-            if (session is not null && _registry.Contains(session.AgentId))
+            if (session is not null && _registry.Get(session.AgentId) is not null)
                 return Complete([session.AgentId.Value]);
         }
 
@@ -79,7 +79,7 @@ public sealed class DefaultMessageRouter : IMessageRouter
         if (!string.IsNullOrWhiteSpace(defaultAgentId))
         {
             var typedDefaultAgentId = AgentId.From(defaultAgentId);
-            if (_registry.Contains(typedDefaultAgentId))
+            if (_registry.Get(typedDefaultAgentId) is not null)
                 return Complete([typedDefaultAgentId.Value]);
         }
 

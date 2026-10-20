@@ -88,6 +88,7 @@ public sealed class AgentsController : ControllerBase
     /// reviewer, writer, analyst). These are spawn/converse targets rather than top-level
     /// user-created agents and are hidden by default.
     /// </param>
+    /// <param name="includeDisabled">Include disabled registrations for management, not runtime picking.</param>
     /// <remarks>
     /// #2755: this endpoint returns the lean <see cref="AgentListItem"/> projection, not the full
     /// <see cref="AgentDescriptor"/>. The domain model was previously serialised directly, putting 36
@@ -99,9 +100,10 @@ public sealed class AgentsController : ControllerBase
     [HttpGet]
     public ActionResult<IReadOnlyList<AgentListItem>> List(
         [FromQuery] bool includeSubAgents = false,
-        [FromQuery] bool includeBuiltin = false)
+        [FromQuery] bool includeBuiltin = false,
+        [FromQuery] bool includeDisabled = false)
     {
-        var agents = _registry.GetAll()
+        var agents = _registry.GetAll(includeDisabled)
             .Where(a => includeSubAgents || a.Kind != AgentKind.SubAgent)
             .Where(a => includeBuiltin || !a.IsBuiltIn)
             .Select(AgentListItem.FromDescriptor)
@@ -115,7 +117,7 @@ public sealed class AgentsController : ControllerBase
     {
         if (!TryParseAgentId(agentId, out var typedAgentId, out var error))
             return BadRequest(new { error });
-        var descriptor = _registry.Get(typedAgentId!.Value);
+        var descriptor = _registry.Get(typedAgentId!.Value, includeDisabled: true);
         return descriptor is not null ? Ok(descriptor) : NotFound();
     }
 
@@ -195,7 +197,7 @@ public sealed class AgentsController : ControllerBase
         if (config.ValueKind != System.Text.Json.JsonValueKind.Object)
             return BadRequest(new { error = "Extension configuration must be a JSON object." });
 
-        var previous = _registry.Get(typedAgentId!.Value);
+        var previous = _registry.Get(typedAgentId!.Value, includeDisabled: true);
         if (previous is null)
             return NotFound();
 
@@ -228,7 +230,7 @@ public sealed class AgentsController : ControllerBase
         if (string.IsNullOrWhiteSpace(extensionId) || extensionId.Length > 128)
             return BadRequest(new { error = "Extension ID must be between 1 and 128 characters." });
 
-        var previous = _registry.Get(typedAgentId!.Value);
+        var previous = _registry.Get(typedAgentId!.Value, includeDisabled: true);
         if (previous is null)
             return NotFound();
 
@@ -287,7 +289,7 @@ public sealed class AgentsController : ControllerBase
             return BadRequest(new { error = routeError });
 
         var typedAgentId = parsedAgentId!.Value;
-        var existingDescriptor = _registry.Get(typedAgentId);
+        var existingDescriptor = _registry.Get(typedAgentId, includeDisabled: true);
 
         // 1) Delete config first. If this fails the registry still holds the agent (no divergence).
         try
@@ -386,7 +388,7 @@ public sealed class AgentsController : ControllerBase
     public async Task<ActionResult<AgentHealthResponse>> GetHealth(string agentId, CancellationToken cancellationToken)
     {
         var typedAgentId = AgentId.From(agentId);
-        if (_registry.Get(typedAgentId) is null)
+        if (_registry.Get(typedAgentId, includeDisabled: true) is null)
             return NotFound();
         var instances = (_supervisor.GetAllInstances() ?? [])
             .Where(instance => string.Equals(instance.AgentId.Value, agentId, StringComparison.OrdinalIgnoreCase))

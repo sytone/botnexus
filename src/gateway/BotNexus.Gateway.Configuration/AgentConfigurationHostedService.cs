@@ -43,7 +43,7 @@ internal sealed class AgentConfigurationHostedService(
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        _codeBasedAgentIds = _registry.GetAll()
+        _codeBasedAgentIds = _registry.GetAll(includeDisabled: true)
             .Select(descriptor => descriptor.AgentId.Value)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -248,7 +248,7 @@ internal sealed class AgentConfigurationHostedService(
                 //
                 // Only (b) gets the warning, and it names the observation (a shape mismatch) rather than
                 // inferring a "non-config source" that, in case (a), does not exist.
-                var registeredDescriptor = _registry.Get(typedId);
+                var registeredDescriptor = _registry.Get(typedId, includeDisabled: true);
                 if (registeredDescriptor is not null && DescriptorsEqual(registeredDescriptor, descriptor))
                 {
                     _appliedConfigDescriptors[agentId] = descriptor;

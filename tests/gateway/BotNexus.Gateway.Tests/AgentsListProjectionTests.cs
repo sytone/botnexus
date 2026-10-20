@@ -60,6 +60,7 @@ public sealed class AgentsListProjectionTests
         "isBuiltIn",
         "apiProvider",
         "modelId",
+        "enabled", // Management grid admission-state column (#4964).
     ];
 
     // ── AC1: the list response carries only list-view fields ────────────────────
