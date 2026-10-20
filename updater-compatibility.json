@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "minimumUpdaterVersion": "0.50.2",
+  "requiredUpdaterCapabilities": ["planned-shutdown-v1", "readiness-v1", "immutable-target-preflight-v1"],
+  "providedTargetCapabilities": ["planned-shutdown-v1", "readiness-v1"]
+}

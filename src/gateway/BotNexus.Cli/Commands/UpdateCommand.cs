@@ -15,6 +15,7 @@ namespace BotNexus.Cli.Commands;
 internal class UpdateCommand
 {
     internal const int ExtensionDeploymentFailureExitCode = 2;
+    internal const int UpdaterCompatibilityFailureExitCode = 4;
     private const int CancelledExitCode = 130;
 
     /// <summary>
@@ -209,14 +210,20 @@ internal class UpdateCommand
     {
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
+        // No caller may enter the lifecycle pipeline without an immutable, checked target.
+        if (_releaseRequest is null)
+        {
+            AnsiConsole.MarkupLine("[red]Updater compatibility refused (exit 4): a release request is required. No update mutation was performed.[/]");
+            return 4;
+        }
+
         // Resolve the immutable target before dirty-tree handling, checkout mutation, or stopping
-        // the gateway. The command-tree path always supplies a request; the null branch preserves
-        // the existing internal test seam while callers migrate to release selection.
-        if (_releaseRequest is not null)
+        // the gateway.
         {
             ReleaseUpdateStatus status;
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 status = await ResolveReleaseStatusAsync(repoRoot, _releaseRequest, cancellationToken);
             }
             catch (OperationCanceledException)
@@ -227,6 +234,18 @@ internal class UpdateCommand
             {
                 AnsiConsole.MarkupLine($"[red]x[/] {CliText.SafeDisplay(ex.Message)}");
                 return 2;
+            }
+
+            try
+            {
+                var compatibility = await CheckUpdaterCompatibilityAsync(repoRoot, status.Target, cancellationToken);
+                if (compatibility != 0)
+                    return compatibility;
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException)
+            {
+                return CancelledExitCode;
             }
 
             var preflight = await EnsureWorkingTreeReadyAsync(repoRoot, cancellationToken);
@@ -258,12 +277,6 @@ internal class UpdateCommand
             {
                 AnsiConsole.MarkupLine($"[green]√[/] Already at [dim]{CliText.SafeDisplay(status.Target.SourceName)}[/].");
             }
-        }
-        else
-        {
-            var pullResult = await RunGitPullStepAsync(repoRoot, verbose, cancellationToken);
-            if (pullResult != 0)
-                return pullResult;
         }
 
         // Step 1b: if the pull genuinely changed nothing, there is nothing to build and no
@@ -377,6 +390,45 @@ internal class UpdateCommand
         // turn a recoverable update failure into an outage. Preserve the nonzero update result.
         var restartResult = await RunRestartAsync(home, port, repoRoot, cancellationToken);
         return restartResult != 0 ? restartResult : buildResult;
+    }
+
+    protected virtual UpdaterDescriptor GetUpdaterDescriptor() => UpdaterCompatibility.Running;
+
+    protected virtual Task<string?> ReadTargetFileAsync(string repoRoot, ResolvedReleaseTarget target, string path, CancellationToken cancellationToken)
+        => ReleaseTargetGitResolver.ReadTargetFileAsync(repoRoot, target, path, cancellationToken);
+
+    private async Task<int> CheckUpdaterCompatibilityAsync(string repoRoot, ResolvedReleaseTarget target, CancellationToken cancellationToken)
+    {
+        var contract = await ReadTargetFileAsync(repoRoot, target, UpdaterCompatibility.ContractPath, cancellationToken);
+        var cli = GetUpdaterDescriptor();
+        var reason = UpdaterCompatibility.Evaluate(cli, contract);
+        if (reason is null)
+            return 0;
+
+        var props = await ReadTargetFileAsync(repoRoot, target, "Directory.Build.props", cancellationToken);
+        var version = target.Version ?? UpdaterCompatibility.ReadPackageVersion(props);
+        // Plain output deliberately avoids Spectre wrapping long paths onto separate command lines.
+        Console.WriteLine($"Updater compatibility refused (exit {UpdaterCompatibilityFailureExitCode}).");
+        Console.WriteLine($"Running CLI: {CliText.SafePlainDisplay(cli.PackageVersion)}+{CliText.SafePlainDisplay(cli.Revision)}");
+        Console.WriteLine($"Selected target: {CliText.SafePlainDisplay(version)}+{CliText.SafePlainDisplay(target.CommitSha)} ({CliText.SafePlainDisplay(target.SourceName)})");
+        Console.WriteLine(CliText.SafePlainDisplay(reason));
+        Console.WriteLine($"Supported contract schemas: {string.Join(", ", cli.SupportedSchemas)}; updater capabilities: {string.Join(", ", cli.SupportedCapabilities)}; required target capabilities: {string.Join(", ", cli.RequiredTargetCapabilities)}.");
+        Console.WriteLine("No checkout, dirty-tree handling, shutdown, build, deployment, or restart was performed by this update.");
+        Console.WriteLine("Public feed (if a compatible CLI has been published and the feed is reachable):");
+        Console.WriteLine("  dotnet tool update -g BotNexus.Cli");
+        Console.WriteLine("Local package (use a checkout containing a compatible released CLI; the current checkout may not yet contain it):");
+        var path = Path.GetFullPath(repoRoot);
+        Console.WriteLine("PowerShell:");
+        Console.WriteLine($"  Set-Location -LiteralPath {UpdaterCompatibility.QuoteSource(path, powershell: true)}");
+        Console.WriteLine("  dotnet pack src/gateway/BotNexus.Cli -c Release -o ./artifacts");
+        Console.WriteLine("  dotnet tool update -g BotNexus.Cli --source ./artifacts");
+        Console.WriteLine("bash:");
+        Console.WriteLine($"  cd -- {UpdaterCompatibility.QuoteSource(path, powershell: false)}");
+        Console.WriteLine("  dotnet pack src/gateway/BotNexus.Cli -c Release -o ./artifacts");
+        Console.WriteLine("  dotnet tool update -g BotNexus.Cli --source ./artifacts");
+        Console.WriteLine("A compatible CLI is not guaranteed to be available through either channel. Do not retry with an incompatible package.");
+        Console.WriteLine("After installing a compatible global tool, rerun the original botnexus update command with the same options. Source-side CLI changes are not active in this process.");
+        return UpdaterCompatibilityFailureExitCode;
     }
 
     protected virtual Task<ReleaseUpdateStatus> ResolveReleaseStatusAsync(

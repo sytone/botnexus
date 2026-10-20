@@ -26,17 +26,11 @@ public sealed class UpdateGatewayLivenessTests
         bool pullWasNoOp,
         UpdateCommand.WorkingTreeCleanliness cleanliness,
         bool portFree = true)
-        : UpdateCommand(processManager)
+        : CompatibleUpdateFixture(processManager, pullWasNoOp)
     {
         public int BuildAndDeployCalls { get; private set; }
 
         public int RestartCalls { get; private set; }
-
-        protected override Task<int> RunGitPullStepAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
-        {
-            LastPullWasNoOp = pullWasNoOp;
-            return Task.FromResult(0);
-        }
 
         protected override Task<WorkingTreeCleanliness> GetWorkingTreeCleanlinessAsync(
             string repoRoot, CancellationToken cancellationToken)
