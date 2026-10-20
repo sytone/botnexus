@@ -1037,7 +1037,7 @@ public sealed partial class FileSessionStore : SessionStoreBase
     private string GetHistoryPath(SessionId sessionId) => Path.Combine(_storePath, SessionFileNames.HistoryFileName(sessionId.Value));
     private string GetMetaPath(SessionId sessionId) => Path.Combine(_storePath, SessionFileNames.MetadataFileName(sessionId.Value));
 
-    private sealed record SessionMeta(
+    internal sealed record SessionMeta(
         // P9-I (#674): AgentId is now NULLABLE. New writes ALWAYS pass null — durable
         // agent ownership lives on Conversation.AgentId post-P9-I and is hydrated on
         // load via Conversation.AgentId. The legacy field is retained for back-compat
