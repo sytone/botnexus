@@ -318,7 +318,21 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 AgentExchangeCompletionGate.PrepareTurn(session.Metadata, exchangeId);
                 await _sessionStore.SaveAsync(session, ct).ConfigureAwait(false);
 
-                var response = await targetHandle.PromptAsync(message, ct).ConfigureAwait(false);
+                AgentResponse response;
+                try
+                {
+                    response = await targetHandle.PromptAsync(message, ct).ConfigureAwait(false);
+                }
+                catch (AgentPromptInterruptedException interrupted)
+                {
+                    // The engine has already added the user row. Keep partial tool evidence, not
+                    // unfinished assistant prose, and persist with a token independent of the run.
+                    foreach (var entry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(interrupted.PartialResponse)))
+                        session.AddEntry(entry);
+                    await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+                    throw new OperationCanceledException("Agent exchange turn was interrupted.", interrupted,
+                        ct.IsCancellationRequested ? ct : interrupted.CancellationToken);
+                }
                 var responseText = response.Content ?? string.Empty;
                 // #2614 AC4: capture the tool timeline this turn executed and hand it to the shared
                 // loop, which persists it between the user and assistant rows.

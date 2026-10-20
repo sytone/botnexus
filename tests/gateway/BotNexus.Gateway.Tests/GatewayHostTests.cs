@@ -368,6 +368,43 @@ public sealed partial class GatewayHostTests
     }
 
     [Fact]
+    public async Task ProcessAsync_BlockingInterruptedRun_PersistsToolsWithoutErrorActivity()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>())).ReturnsAsync(["agent-a"]);
+        using var caller = new CancellationTokenSource();
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Returns((AgentUserMessage _, CancellationToken ct) =>
+            {
+                caller.Cancel();
+                throw new AgentPromptInterruptedException(new AgentResponse
+                {
+                    Content = "unfinished", ToolCalls = [new("partial-4101", "read", true, "{}", null, IsIncomplete: true)]
+                }, ct);
+            });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var sessions = new InMemorySessionStore();
+        var activity = new RecordingActivityBroadcaster();
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions, activity, CreateChannelManager(channel.Object));
+
+        // Transport DispatchAsync intentionally detaches its worker from caller cancellation.
+        // Exercise the processor boundary that actually owns the run's cancellation token.
+        await host.ProcessAsync(CreateMessage("work", sessionId: "session-1"), caller.Token);
+
+        caller.IsCancellationRequested.ShouldBeTrue();
+        var session = (await sessions.GetAsync(SessionId.From("session-1"))).ShouldNotBeNull();
+        session.GetHistorySnapshot().Where(row => row.ToolCallId == "partial-4101").ShouldHaveSingleItem().ToolIsIncomplete.ShouldBeTrue();
+        session.GetHistorySnapshot().ShouldNotContain(row => row.Role == MessageRole.Assistant && row.Content == "unfinished");
+        activity.Activities.ShouldNotContain(value => value.Type == GatewayActivityType.Error);
+    }
+
+    [Fact]
     public async Task DispatchAsync_WhenAgentThrows_PublishesErrorActivity()
     {
         var router = new Mock<IMessageRouter>();

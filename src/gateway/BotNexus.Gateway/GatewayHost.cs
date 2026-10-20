@@ -822,6 +822,15 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         // measurement and the unit normalisation degrades to a no-op.
                         ProviderTokenUsageRecorder.Record(session, response.Usage);
                     }
+                    catch (AgentPromptInterruptedException interrupted)
+                    {
+                        foreach (var entry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(interrupted.PartialResponse)))
+                            session.AddEntry(entry);
+                        ProviderTokenUsageRecorder.Record(session, interrupted.PartialResponse.Usage);
+                        await _sessions.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+                        throw new OperationCanceledException("Blocking agent turn was interrupted.", interrupted,
+                            cancellationToken.IsCancellationRequested ? cancellationToken : interrupted.CancellationToken);
+                    }
                     finally
                     {
                         _activeLoopTracker?.TrackEnd(blockingLoopRegistration);

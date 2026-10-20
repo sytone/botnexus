@@ -198,7 +198,19 @@ public sealed class CrossWorldFederationController(
             await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
             var handle = await supervisor.GetOrCreateAsync(session.AgentId, sessionId, cancellationToken).ConfigureAwait(false);
-            var response = await handle.PromptAsync(request.Message, cancellationToken).ConfigureAwait(false);
+            AgentResponse response;
+            try
+            {
+                response = await handle.PromptAsync(request.Message, cancellationToken).ConfigureAwait(false);
+            }
+            catch (AgentPromptInterruptedException interrupted)
+            {
+                foreach (var entry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(interrupted.PartialResponse)))
+                    session.AddEntry(entry);
+                await sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+                throw new OperationCanceledException("Relay turn was interrupted.", interrupted,
+                    cancellationToken.IsCancellationRequested ? cancellationToken : interrupted.CancellationToken);
+            }
             // #2614 AC4: the cross-world RECEIVER is a blocking PromptAsync boundary. The tools a
             // remote peer's request caused to execute locally are exactly the ones an operator most
             // needs a durable record of, and before this slice the receiver session recorded only
