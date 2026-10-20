@@ -44,6 +44,7 @@ public static class AgentDescriptorConfigMapping
     public static readonly IReadOnlySet<string> Persisted = new HashSet<string>(StringComparer.Ordinal)
     {
         nameof(AgentDescriptor.AgentId),
+        nameof(AgentDescriptor.Enabled),
         nameof(AgentDescriptor.DisplayName),
         nameof(AgentDescriptor.Kind),
         nameof(AgentDescriptor.Emoji),

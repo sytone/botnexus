@@ -175,3 +175,70 @@ currently ignores facts that are not `ConversationAgentEvent`, including `Conver
 The consumer remains unchanged, so the legacy notification is retained to preserve existing live
 invalidation until consumers migrate to typed update facts. Move, auto-title, other lifecycle
 producers, and the wider #2088 migration are outside this slice.
+
+
+## REST binding-move producer facts
+
+For developers integrating lifecycle consumers, `ConversationsController.MoveBinding` adds a
+producer-only pair of existing binding facts for issue #2088. After the transactional
+`MoveBindingAsync` succeeds and the existing `binding_moved` audit call completes, the controller
+reloads each conversation separately. It publishes `ConversationBindingRemovedEvent` for the
+source if the binding is absent, then `ConversationBindingAddedEvent` for the target if the
+binding is present. A failed store write or rejected request emits neither success fact.
+
+The removed binding snapshot comes from the pre-move source read. The added binding snapshot
+comes from the reloaded target. Both carry the existing event contract's binding identity,
+channel type, adapter ID, address, binding mode, and threading mode. Display prefix and bound-at timestamp remain part of
+the unchanged store/HTTP binding behavior, not this event payload. Each fact carries its owning agent and conversation identifiers,
+that conversation's reloaded `UpdatedAt` as `OccurredAt`, and a detached immutable snapshot of
+its complete reloaded binding set. The source set excludes the moved binding; the target set
+includes it.
+
+These reloads are post-commit observations, not an atomic before/after pair. A concurrent move,
+removal, or attachment can already be visible. A missing conversation or a binding presence
+inconsistent with the expected side suppresses that side's fact rather than inventing state.
+Publication is attempted source-first, but the real publisher orders only within one conversation;
+consumers must not assume delivery order across the two conversations.
+
+Reload exceptions, publisher exceptions, and publisher rejection are isolated per side. They do
+not undo the committed move, change the HTTP 200 response, suppress the other side's attempt, or
+suppress the two existing legacy `updated` notifications (source, then target). Delivery is best
+effort, not a durable outbox or an exactly-once move history. After reconnect or a missed fact,
+consumers must reload authoritative conversation state rather than replay an old binding set or
+retry an already successful move.
+
+This slice changes no consumer and makes no end-to-end Portal delivery claim. Both legacy
+notifications remain unchanged for compatibility. `ConversationsControllerMoveBindingEventTests`
+uses real in-memory and SQLite stores and the real publisher, fresh SQLite-store reads inside
+the sink, and tests detached snapshots, both sides, guards, write failures, and per-side
+publication/reload failure isolation.
+
+## Auto-title producer facts
+
+For developers integrating lifecycle consumers, both provisional and final/refinement saves in
+`ConversationAutoTitleService` add the existing `ConversationUpdatedEvent` after `SaveAsync`
+completes. `GatewayHost` passes its existing publisher; the service's final constructor parameter
+is optional for legacy callers. The guards, model/auth calls, save behavior, and legacy `updated`
+notification remain unchanged. This is a producer-only #2088 slice, not a consumer migration or
+an end-to-end Portal delivery claim.
+
+`ChangedFields` contains `Title` when the ordinal title value changes, followed by `Metadata`
+when the provisional metadata entry changes. Removing an existing false/null entry also counts;
+replacing a string flag with a boolean counts, while an existing JSON boolean true does not.
+An unchanged title and flag emits no typed fact, but still performs the original save and legacy
+notification. Other metadata is not part of this write set.
+
+Because `SaveAsync` returns no aggregate and stores update timestamps on copies, the service
+reloads after saving. The fact uses the reloaded owning identifiers, `UpdatedAt` as `OccurredAt`,
+and detached `ConversationBindingSnapshot.FromMany` bindings, with the default system origin
+`ConversationEventOrigin.None`. The pre-save comparison and reload are not an atomic before/after
+pair: concurrent writes may already be visible. Fields are reconciliation hints, not a complete
+change history. Missing post-save state suppresses the fact rather than inventing a snapshot.
+
+Reload failure, publisher rejection, or publisher exceptions do not undo a successful save or
+suppress the legacy notification. Guards, missing pre-save state, model failures, empty model
+output, and failed saves emit no success fact. Delivery remains best effort, not a durable outbox;
+consumers must reload authoritative conversation state after reconnect or a missed notification.
+`ConversationAutoTitleEventTests` covers both paths with real memory/SQLite stores and the real
+publisher, fresh SQLite reads inside the sink, detached snapshots, deterministic field selection,
+no-op writes, and failure isolation.

@@ -90,6 +90,7 @@ public sealed class AgentsController : ControllerBase
     /// reviewer, writer, analyst). These are spawn/converse targets rather than top-level
     /// user-created agents and are hidden by default.
     /// </param>
+    /// <param name="includeDisabled">Include disabled registrations for management, not runtime picking.</param>
     /// <remarks>
     /// #2755: this endpoint returns the lean <see cref="AgentListItem"/> projection, not the full
     /// <see cref="AgentDescriptor"/>. The domain model was previously serialised directly, putting 36
@@ -101,9 +102,10 @@ public sealed class AgentsController : ControllerBase
     [HttpGet]
     public ActionResult<IReadOnlyList<AgentListItem>> List(
         [FromQuery] bool includeSubAgents = false,
-        [FromQuery] bool includeBuiltin = false)
+        [FromQuery] bool includeBuiltin = false,
+        [FromQuery] bool includeDisabled = false)
     {
-        var agents = _registry.GetAll()
+        var agents = _registry.GetAll(includeDisabled)
             .Where(a => includeSubAgents || a.Kind != AgentKind.SubAgent)
             .Where(a => includeBuiltin || !a.IsBuiltIn)
             .Select(AgentListItem.FromDescriptor)
@@ -117,7 +119,7 @@ public sealed class AgentsController : ControllerBase
     {
         if (!TryParseAgentId(agentId, out var typedAgentId, out var error))
             return BadRequest(new { error });
-        var descriptor = _registry.Get(typedAgentId!.Value);
+        var descriptor = _registry.Get(typedAgentId!.Value, includeDisabled: true);
         return descriptor is not null ? Ok(descriptor) : NotFound();
     }
 
@@ -197,7 +199,7 @@ public sealed class AgentsController : ControllerBase
         if (config.ValueKind != System.Text.Json.JsonValueKind.Object)
             return BadRequest(new { error = "Extension configuration must be a JSON object." });
 
-        var previous = _registry.Get(typedAgentId!.Value);
+        var previous = _registry.Get(typedAgentId!.Value, includeDisabled: true);
         if (previous is null)
             return NotFound();
 
@@ -230,7 +232,7 @@ public sealed class AgentsController : ControllerBase
         if (string.IsNullOrWhiteSpace(extensionId) || extensionId.Length > 128)
             return BadRequest(new { error = "Extension ID must be between 1 and 128 characters." });
 
-        var previous = _registry.Get(typedAgentId!.Value);
+        var previous = _registry.Get(typedAgentId!.Value, includeDisabled: true);
         if (previous is null)
             return NotFound();
 
@@ -321,7 +323,7 @@ public sealed class AgentsController : ControllerBase
             return BadRequest(new { error = routeError });
 
         var typedAgentId = parsedAgentId!.Value;
-        var existingDescriptor = _registry.Get(typedAgentId);
+        var existingDescriptor = _registry.Get(typedAgentId, includeDisabled: true);
 
         // 1) Delete config first. If this fails the registry still holds the agent (no divergence).
         try
@@ -420,7 +422,7 @@ public sealed class AgentsController : ControllerBase
     public async Task<ActionResult<AgentHealthResponse>> GetHealth(string agentId, CancellationToken cancellationToken)
     {
         var typedAgentId = AgentId.From(agentId);
-        if (_registry.Get(typedAgentId) is null)
+        if (_registry.Get(typedAgentId, includeDisabled: true) is null)
             return NotFound();
         var instances = (_supervisor.GetAllInstances() ?? [])
             .Where(instance => string.Equals(instance.AgentId.Value, agentId, StringComparison.OrdinalIgnoreCase))
@@ -553,6 +555,14 @@ public sealed class AgentsController : ControllerBase
     /// JSON <c>null</c> rather than as a plausible-looking constant, because a consumer can detect an
     /// absent number and cannot detect a wrong one.
     /// </para>
+    /// <para>
+    /// Only counts are exposed, never prompt, schema, tool description or history content.
+    /// <c>userAssistant</c> and <c>toolResult</c> subdivide <c>conversationHistory</c>; they must not
+    /// be added to that parent. Independent integer truncation can leave a 0–2 token gap between
+    /// the three top-level sections and total, or 0–1 between history and its two children
+    /// (below integer saturation). Embedded skills remain in their enclosing category, not a
+    /// separately inferred skills charge.
+    /// </para>
     /// </remarks>
     /// <param name="agentId">The agent the session belongs to.</param>
     /// <param name="sessionId">The session being reported on.</param>
@@ -590,7 +600,10 @@ public sealed class AgentsController : ControllerBase
             {
                 systemPrompt = new { tokens = diag.SystemPromptTokens, chars = diag.SystemPromptChars },
                 toolDefinitions = new { tokens = diag.ToolDefinitionTokens, toolCount = diag.ToolCount },
-                conversationHistory = new { tokens = diag.HistoryTokens, entryCount = diag.HistoryEntryCount }
+                conversationHistory = new { tokens = diag.HistoryTokens, entryCount = diag.HistoryEntryCount },
+                // These are children of conversationHistory, not additional top-level consumption.
+                userAssistant = new { tokens = diag.UserAssistantTokens, chars = diag.UserAssistantChars },
+                toolResult = new { tokens = diag.ToolResultTokens, chars = diag.ToolResultChars }
             }
         };
     }

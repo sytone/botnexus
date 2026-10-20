@@ -58,10 +58,7 @@
                     </div>
 
                     <label>Enabled</label>
-                    <div>
-                        <input type="checkbox" checked="@_model.Enabled" disabled aria-label="Agent enabled (read-only)" />
-                        <span class="agents-field-loading">Enabled changes are unavailable pending #4964.</span>
-                    </div>
+                    <input type="checkbox" checked="@_model.Enabled" @onchange="OnEnabledChange" />
 
                     <label>Display Name</label>
                     <input class="cfg-input" value="@_model.DisplayName" @oninput="OnDisplayNameInput" />
@@ -714,6 +711,7 @@
 
     // ── Input handlers ────────────────────────────────────────────────────
     private void OnAgentIdInput(ChangeEventArgs e) { _model!.AgentId = e.Value?.ToString() ?? ""; MarkDirty(); }
+    private void OnEnabledChange(ChangeEventArgs e) { _model!.Enabled = (bool)(e.Value ?? false); MarkDirty(); }
     private void OnDisplayNameInput(ChangeEventArgs e) { _model!.DisplayName = e.Value?.ToString() ?? ""; MarkDirty(); }
     private void OnDescriptionInput(ChangeEventArgs e) { _model!.Description = e.Value?.ToString(); MarkDirty(); }
     private void OnEmojiInput(ChangeEventArgs e) { _model!.Emoji = e.Value?.ToString(); MarkDirty(); }
@@ -1128,6 +1126,10 @@
 
     private static System.Text.Json.Nodes.JsonObject? DefaultObject(string name)
     {
+        // New objects inherit persisted defaults, not the editor's rendered fallbacks.
+        // Include differing fallback leaves so creating a sibling cannot enable polling
+        // or silently change the displayed interval/quiet-hours start. Existing objects
+        // still compare against their original snapshot and remain leaf-only patches.
         object? defaults = name switch
         {
             "toolPolicy" => new ToolPolicyEditModel(),
@@ -1138,8 +1140,10 @@
             "search" => new MemorySearchEditModel(),
             "temporalDecay" => new TemporalDecayEditModel(),
             "soul" => new SoulEditModel(),
-            "heartbeat" => new HeartbeatEditModel(),
-            "quietHours" => new QuietHoursEditModel(),
+            // Mirror HeartbeatAgentConfig/QuietHoursConfig without adding server-domain
+            // dependencies to WASM; component tests deserialize patches into those types.
+            "heartbeat" => new HeartbeatEditModel { Enabled = true, IntervalMinutes = 30 },
+            "quietHours" => new QuietHoursEditModel { Start = "23:00" },
             _ => null
         };
         return defaults is null ? null : JsonSerializer.SerializeToNode(defaults, new JsonSerializerOptions(JsonSerializerDefaults.Web))?.AsObject();
@@ -1179,7 +1183,9 @@
             }
             _originalJson = JsonSerializer.Serialize(_model);
             _explicitLeaves.Clear();
-            SetStatus(Mode == "edit" ? "Agent saved." : "Agent created.", "success");
+            SetStatus(_model.Enabled
+                ? "Configuration saved. Enabled for new work; provider authentication is checked when work starts."
+                : "Configuration saved. Disabled for new work; existing work is not cancelled.", "success");
             await OnSaved.InvokeAsync();
         }
         catch (Exception ex)

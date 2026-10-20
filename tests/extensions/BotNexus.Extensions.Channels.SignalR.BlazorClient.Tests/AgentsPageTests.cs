@@ -70,6 +70,17 @@ public sealed class AgentsPageTests : IDisposable
     }
 
     [Fact]
+    public void Management_list_requests_disabled_agents_and_displays_their_state()
+    {
+        _httpHandler.SetupResponse("/api/agents?includeDisabled=true",
+            """[{"agentId":"disabled-bot","displayName":"Disabled Bot","apiProvider":"copilot","modelId":"gpt-4.1","enabled":false}]""");
+        var cut = _ctx.Render<Agents>();
+        cut.WaitForState(() => cut.Markup.Contains("disabled-bot"));
+        cut.Find("tbody tr").TextContent.ShouldContain("Disabled");
+        cut.Find("button.agents-btn-edit").ShouldNotBeNull();
+    }
+
+    [Fact]
     public void Add_button_shows_full_editor_in_create_mode()
     {
         _httpHandler.SetupResponse("/api/agents", "[]");

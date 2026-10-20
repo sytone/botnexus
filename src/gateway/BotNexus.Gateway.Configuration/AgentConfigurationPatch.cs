@@ -22,6 +22,8 @@ public abstract class ConfigurationPatch
 [JsonNumberHandling(JsonNumberHandling.Strict)]
 public sealed class AgentConfigurationPatch : ConfigurationPatch
 {
+    /// <summary>Admission state for new work; omission preserves state and removal restores the enabled code default. Null is not a valid state.</summary>
+    public bool? Enabled { get => Get<bool?>("enabled"); set => Changes["enabled"] = value; }
     /// <summary>Human-readable name; null uses the agent ID at runtime. Omission leaves the authored value unchanged.</summary>
     public string? DisplayName { get => Get<string?>("displayName"); set => Changes["displayName"] = value; }
     /// <summary>Optional description of the agent purpose. Omission leaves the authored value unchanged.</summary>
@@ -168,7 +170,7 @@ public static class AgentConfigurationEditor
 
     /// <summary>
     /// Redacts through ConfigController's whole-document seam, then returns only supported editor
-    /// fields and read-only enabled state. Opaque metadata, extensions and future nested keys are
+    /// fields, including enabled admission state. Opaque metadata, extensions and future nested keys are
     /// excluded because their secret schemas are not known to this editor.
     /// </summary>
     public static JsonObject ReadEditableConfiguration(this JsonObject root, AgentId agentId)
@@ -176,7 +178,6 @@ public static class AgentConfigurationEditor
         root.Redact();
         var source = root["agents"]?[agentId.Value] as JsonObject ?? new JsonObject();
         var result = Project(source, typeof(AgentConfigurationPatch));
-        if (source.ContainsKey("enabled")) result["enabled"] = source["enabled"]?.DeepClone();
         return result;
     }
 

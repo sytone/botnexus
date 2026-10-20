@@ -422,8 +422,11 @@ Content-Type: application/json
 Use this operator-edit contract instead of round-tripping the runtime descriptor.
 GET reads the canonical configuration writer and returns only supported editor
 fields. It excludes opaque metadata, extension settings, and unknown nested keys;
-those values remain stored and are not replaced by an edit. `enabled` is returned
-as read-only state; enabled-state lifecycle changes remain separate (#4964).
+those values remain stored and are not replaced by an edit. `enabled` accepts an
+explicit boolean: false blocks new work without cancelling existing work; true
+restores admission, with provider authentication checked when work starts. Omission
+preserves the authored state; removing `enabled` restores the enabled code default.
+Explicit null is invalid for this non-nullable state.
 
 PATCH accepts a typed batch of changed fields. For example:
 

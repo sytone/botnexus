@@ -175,6 +175,22 @@ public static class SkillSecurityScanner
         maxFiles = Math.Max(1, maxFiles);
         maxFileBytes = Math.Max(1, maxFileBytes);
 
+        // Management scans after writing. Validation failures must be critical results,
+        // not exceptions that bypass the caller's existing rollback branch.
+        try
+        {
+            return ScanValidatedDirectory(dirPath, maxFiles, maxFileBytes, fs);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            return new ScanSummary(0, 1, 0, 0,
+                [new ScanFinding("invalid-installation", ScanSeverity.Critical, dirPath, 0,
+                    "Skill installation could not be safely validated or read. Check root, child links, access, and installation limits.", string.Empty)]);
+        }
+    }
+
+    private static ScanSummary ScanValidatedDirectory(string dirPath, int maxFiles, int maxFileBytes, IFileSystem fs)
+    {
         var files = CollectScannableFiles(dirPath, maxFiles, fs);
         var allFindings = new List<ScanFinding>();
         int scannedFiles = 0;
@@ -182,19 +198,12 @@ public static class SkillSecurityScanner
 
         foreach (var file in files)
         {
-            var fileInfo = fs.FileInfo.New(file);
+            var resolvedFile = SkillInstallationValidator.ResolveContainedPath(file, dirPath, fs);
+            var fileInfo = fs.FileInfo.New(resolvedFile);
             if (!fileInfo.Exists || fileInfo.Length > maxFileBytes)
                 continue;
 
-            string source;
-            try
-            {
-                source = fs.File.ReadAllText(file);
-            }
-            catch
-            {
-                continue;
-            }
+            var source = fs.File.ReadAllText(resolvedFile);
 
             scannedFiles++;
             var findings = ScanSource(source, file);
@@ -458,43 +467,23 @@ public static class SkillSecurityScanner
     {
         var files = new List<string>();
         if (!fileSystem.Directory.Exists(dirPath))
-            return files;
+            throw new InvalidDataException("Skill installation directory does not exist or cannot be accessed.");
 
-        var stack = new Stack<string>();
-        stack.Push(dirPath);
-
-        while (stack.Count > 0 && files.Count < maxFiles)
+        // Validate the entire installation before reading any source, even files outside
+        // the scan budget or excluded directories. The public API reports validation failures as critical.
+        var installationFiles = SkillInstallationValidator.CollectFiles(dirPath, fileSystem);
+        foreach (var entry in installationFiles)
         {
-            var currentDir = stack.Pop();
-            try
-            {
-                foreach (var entry in fileSystem.Directory.EnumerateFileSystemEntries(currentDir))
-                {
-                    if (files.Count >= maxFiles)
-                        break;
+            var parts = fileSystem.Path.GetRelativePath(dirPath, entry).Split(
+                [fileSystem.Path.DirectorySeparatorChar, fileSystem.Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Any(name => name.StartsWith('.') || string.Equals(name, "node_modules", StringComparison.OrdinalIgnoreCase)))
+                continue;
 
-                    var name = Path.GetFileName(entry);
-
-                    // Skip hidden dirs and node_modules
-                    if (name.StartsWith('.') || string.Equals(name, "node_modules", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    if (fileSystem.Directory.Exists(entry))
-                    {
-                        stack.Push(entry);
-                    }
-                    else if (fileSystem.File.Exists(entry) && IsScannable(entry))
-                    {
-                        files.Add(entry);
-                    }
-                }
-            }
-            catch
-            {
-                // Permission denied or similar — skip this directory
-            }
+            if (IsScannable(entry))
+                files.Add(entry);
+            if (files.Count >= maxFiles)
+                break;
         }
 
         return files;

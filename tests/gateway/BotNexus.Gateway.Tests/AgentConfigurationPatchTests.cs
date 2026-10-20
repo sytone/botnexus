@@ -178,7 +178,7 @@ public sealed class AgentConfigurationPatchTests
     public async Task Patch_RejectsUnknownFieldsAndConflictingInherit_AndNormalizesAgentIdCasing()
     {
         var requestType = typeof(AgentsController).GetMethod("PatchConfiguration")?.GetParameters()[1].ParameterType ?? throw new InvalidOperationException();
-        foreach (var json in new[] { """{"metadata":{"unknown":"overwrite"}}""", """{"toolPolicy":{"unknown":[]}}""", """{"toolTimeoutSeconds":"91"}""", """{"enabled":false}""", """{"systemPrompt":"retired"}""", """{"memory":{"search":{"defaultTopK":"10"}}}""" })
+        foreach (var json in new[] { """{"metadata":{"unknown":"overwrite"}}""", """{"toolPolicy":{"unknown":[]}}""", """{"toolTimeoutSeconds":"91"}""", """{"enabled":"false"}""", """{"systemPrompt":"retired"}""", """{"memory":{"search":{"defaultTopK":"10"}}}""" })
             Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(json, requestType, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         await WithConfig(async (writer, path) =>
         {
@@ -270,6 +270,40 @@ public sealed class AgentConfigurationPatchTests
                 var descriptor = Assert.Single(await source.LoadAsync());
                 Assert.Equal(AgentDefaultsConfig.DefaultToolTimeoutSeconds, descriptor.Metadata["toolTimeoutSeconds"]);
             }
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Patch_EnabledLifecycle_PreservesOmissionsAndProjectsDisabledDescriptors(bool enabled)
+    {
+        await WithConfig(async (writer, path) =>
+        {
+            Assert.IsType<OkObjectResult>(await Patch(writer, enabled ? """{"enabled":true}""" : """{"enabled":false}"""));
+            Assert.IsType<OkObjectResult>(await Patch(writer, """{"description":"unrelated"}"""));
+            var config = await writer.ReadPlatformConfigAsync();
+            Assert.Equal(enabled, (config.Agents ?? throw new InvalidOperationException())["sample"].Enabled);
+            var monitor = new Mock<Microsoft.Extensions.Options.IOptionsMonitor<PlatformConfig>>();
+            monitor.Setup(m => m.CurrentValue).Returns(config);
+            var source = new PlatformConfigAgentSource(monitor.Object, Path.GetDirectoryName(path) ?? throw new InvalidOperationException(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<PlatformConfigAgentSource>.Instance);
+            var descriptor = Assert.Single(await source.LoadAsync());
+            Assert.Equal(enabled, descriptor.Enabled);
+            Assert.Equal(30, descriptor.Metadata["toolTimeoutSeconds"]);
+            var registry = new BotNexus.Gateway.Agents.DefaultAgentRegistry(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<BotNexus.Gateway.Agents.DefaultAgentRegistry>.Instance);
+            registry.Register(descriptor);
+            Assert.Equal(enabled, registry.Get(descriptor.AgentId) is not null);
+            Assert.NotNull(registry.Get(descriptor.AgentId, includeDisabled: true));
+            var before = await File.ReadAllTextAsync(path);
+            Assert.IsType<BadRequestObjectResult>(await Patch(writer, """{"enabled":true,"thinking":"not-a-level"}"""));
+            Assert.Equal(before, await File.ReadAllTextAsync(path));
+            Assert.IsType<BadRequestObjectResult>(await Patch(writer, """{"enabled":null}"""));
+            Assert.Equal(before, await File.ReadAllTextAsync(path));
+            Assert.IsType<OkObjectResult>(await Patch(writer, """{"inherit":["enabled"]}"""));
+            Assert.False(Assert.IsType<JsonObject>((await writer.ReadAsync())["agents"]?["sample"]).ContainsKey("enabled"));
+            Assert.True(( (await writer.ReadPlatformConfigAsync()).Agents ?? throw new InvalidOperationException())["sample"].Enabled);
         });
     }
 

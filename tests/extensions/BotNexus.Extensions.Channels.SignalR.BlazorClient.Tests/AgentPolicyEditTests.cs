@@ -1,5 +1,7 @@
 using System.Net;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using BotNexus.Gateway.Abstractions.Models;
 using Bunit;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using Microsoft.Extensions.DependencyInjection;
@@ -172,18 +174,112 @@ public sealed class AgentPolicyEditTests : IDisposable
     }
 
     [Fact]
-    public void UnsupportedControls_AreNotEditable_AndLoadingDoesNotClearCapabilities()
+    public void EnabledControl_IsEditable_AndUnrelatedSavePreservesStateAndCapabilities()
     {
         _handler.Config = """{"displayName":"Sample","provider":"test","model":"test","thinking":"high","contextWindow":128000,"enabled":false}""";
         var cut = Render();
-        Assert.True(cut.Find("input[type=checkbox]").HasAttribute("disabled"));
-        Assert.Contains("#4964", cut.Markup);
+        Assert.False(cut.Find("input[type=checkbox]").HasAttribute("disabled"));
+        Assert.False(cut.Find("input[type=checkbox]").HasAttribute("checked"));
+        Assert.DoesNotContain("pending #4964", cut.Markup);
         Assert.DoesNotContain("System Prompt</summary>", cut.Markup);
         Assert.True(cut.Find("button.primary").HasAttribute("disabled"));
         cut.Find("input[value='Sample']").Input("Renamed");
         cut.Find("button.primary").Click();
         cut.WaitForAssertion(() => Assert.Single(_handler.Writes));
         Assert.Equal("""{"displayName":"Renamed"}""", _handler.Writes.Single().Json);
+    }
+
+    [Theory]
+    [InlineData(false, "prompt")]
+    [InlineData(true, "prompt")]
+    [InlineData(false, "intervalMinutes")]
+    [InlineData(true, "intervalMinutes")]
+    public void NewHeartbeat_PromptOrIntervalEdit_PreservesRenderedDisabledState(bool explicitNull, string field)
+    {
+        _handler.Config = explicitNull ? """{"displayName":"Sample","heartbeat":null}""" : """{"displayName":"Sample"}""";
+        var cut = Render();
+        var section = cut.FindAll("details").Single(e => e.QuerySelector("summary")?.TextContent == "Heartbeat");
+        Assert.False(section.QuerySelector("input[type=checkbox]")?.HasAttribute("checked"));
+        Assert.Equal("60", section.QuerySelector("input[type=number]")?.GetAttribute("value"));
+        Assert.True(cut.Find("button.primary").HasAttribute("disabled"));
+        if (field == "prompt")
+            section.QuerySelectorAll("textarea").Single().Input("Check tasks");
+        else
+            section.QuerySelectorAll("input[type=number]").Single().Input("45");
+        cut.Find("button.primary").Click();
+        cut.WaitForAssertion(() => Assert.Single(_handler.Writes));
+        var body = JsonNode.Parse(_handler.Writes.Single().Json)?.AsObject() ?? throw new InvalidOperationException();
+        Assert.Single(body);
+        var heartbeat = Assert.IsType<JsonObject>(body["heartbeat"]);
+        Assert.False(Assert.IsAssignableFrom<JsonValue>(heartbeat["enabled"]).GetValue<bool>());
+        Assert.Equal(field == "prompt" ? 3 : 2, heartbeat.Count);
+        var persisted = heartbeat.Deserialize<HeartbeatAgentConfig>(new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException();
+        Assert.False(persisted.Enabled);
+        Assert.Equal(field == "prompt" ? 60 : 45, persisted.IntervalMinutes);
+        Assert.Equal(field == "prompt" ? "Check tasks" : null, persisted.Prompt);
+        Assert.True(cut.Find("button.primary").HasAttribute("disabled"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NewHeartbeat_Enable_PreservesRenderedInterval(bool explicitNull)
+    {
+        _handler.Config = explicitNull ? """{"displayName":"Sample","heartbeat":null}""" : """{"displayName":"Sample"}""";
+        var cut = Render();
+        var section = cut.FindAll("details").Single(e => e.QuerySelector("summary")?.TextContent == "Heartbeat");
+        section.QuerySelectorAll("input[type=checkbox]")[0].Change(true);
+        cut.Find("button.primary").Click();
+        cut.WaitForAssertion(() => Assert.Single(_handler.Writes));
+        var body = JsonNode.Parse(_handler.Writes.Single().Json)?.AsObject() ?? throw new InvalidOperationException();
+        Assert.Single(body);
+        var heartbeat = Assert.IsType<JsonObject>(body["heartbeat"]);
+        Assert.Equal(60, heartbeat["intervalMinutes"]?.GetValue<int>());
+        var persisted = heartbeat.Deserialize<HeartbeatAgentConfig>(new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException();
+        Assert.True(persisted.Enabled);
+        Assert.Equal(60, persisted.IntervalMinutes);
+    }
+
+    [Theory]
+    [InlineData("""{"enabled":false,"intervalMinutes":75}""")]
+    [InlineData("""{"enabled":false,"intervalMinutes":75,"quietHours":null}""")]
+    public void NewQuietHours_TimezoneEdit_PreservesRenderedStart(string heartbeatJson)
+    {
+        _handler.Config = "{\"displayName\":\"Sample\",\"heartbeat\":" + heartbeatJson + "}";
+        var cut = Render();
+        var section = cut.FindAll("details").Single(e => e.QuerySelector("summary")?.TextContent == "Heartbeat");
+        Assert.Equal("22:00", section.QuerySelector("input[placeholder='HH:mm']")?.GetAttribute("value"));
+        section.QuerySelectorAll("input.cfg-input").Last().Input("Europe/London");
+        cut.Find("button.primary").Click();
+        cut.WaitForAssertion(() => Assert.Single(_handler.Writes));
+        var body = JsonNode.Parse(_handler.Writes.Single().Json)?.AsObject() ?? throw new InvalidOperationException();
+        Assert.Single(body);
+        var heartbeat = Assert.IsType<JsonObject>(body["heartbeat"]);
+        Assert.Single(heartbeat);
+        var quietHours = Assert.IsType<JsonObject>(heartbeat["quietHours"]);
+        Assert.Equal(2, quietHours.Count);
+        var persisted = quietHours.Deserialize<QuietHoursConfig>(new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException();
+        Assert.False(persisted.Enabled);
+        Assert.Equal("22:00", persisted.Start);
+        Assert.Equal("07:00", persisted.End);
+        Assert.Equal("Europe/London", persisted.Timezone);
+    }
+
+    [Fact]
+    public void ExistingHeartbeatAndQuietHours_EditsRemainLeafOnly()
+    {
+        _handler.Config = """{"displayName":"Sample","heartbeat":{"enabled":false,"intervalMinutes":75,"ackMaxChars":333,"future":"keep","quietHours":{"enabled":true,"start":"21:00","end":"06:00","timezone":"UTC","future":"keep"}}}""";
+        var cut = Render();
+        var section = cut.FindAll("details").Single(e => e.QuerySelector("summary")?.TextContent == "Heartbeat");
+        section.QuerySelectorAll("textarea").Single().Input("Check tasks");
+        section.QuerySelectorAll("input.cfg-input").Last().Input("Europe/London");
+        cut.Find("button.primary").Click();
+        cut.WaitForAssertion(() => Assert.Single(_handler.Writes));
+        var body = JsonNode.Parse(_handler.Writes.Single().Json)?.AsObject() ?? throw new InvalidOperationException();
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""{"heartbeat":{"prompt":"Check tasks","quietHours":{"timezone":"Europe/London"}}}"""), body));
     }
 
     private IRenderedComponent<AgentDetailPanel> Render()

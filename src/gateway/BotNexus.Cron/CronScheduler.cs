@@ -376,8 +376,14 @@ public sealed class CronScheduler(
     internal const string PlannedRestartReason =
         "Cron run interrupted by a planned gateway restart; this occurrence was terminalized and was not reported as successful.";
 
+    /// <summary>
+    /// Executes a manual occurrence inline, rejecting new admission during planned shutdown.
+    /// A run whose durable start write has begun retains its normal execution lifecycle.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Planned shutdown has closed cron admission.</exception>
     public async Task<CronRun> RunNowAsync(JobId jobId, CancellationToken cancellationToken = default)
     {
+        ThrowIfPlannedShutdown();
         await _cronStore.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         var job = await _cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
@@ -394,14 +400,19 @@ public sealed class CronScheduler(
     /// write). Once the run identity exists, execution uses the scheduler lifetime instead. The
     /// existing <see cref="RunActionAsync"/> path still owns the normal timeout or unlimited
     /// sentinel, active-run registration, operator cancellation, and same-job serialization.
+    /// Planned shutdown rejects new admission without a run row; it does not retrospectively
+    /// reject an accepted run or an in-progress durable start write.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">Planned shutdown has closed cron admission.</exception>
     public async Task<CronRun> AcceptRunNowAsync(JobId jobId, CancellationToken cancellationToken = default)
     {
+        ThrowIfPlannedShutdown();
         await _cronStore.InitializeAsync(cancellationToken).ConfigureAwait(false);
 
         var job = await _cronStore.GetAsync(jobId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"Cron job '{jobId}' was not found.");
         var triggeredAt = _timeProvider.GetUtcNow();
+        ThrowIfPlannedShutdown();
 
         // Preserve the authoritative expiry gate before writing a run row. An expired job is not
         // accepted as background work, matching RunNowAsync's existing suppression behaviour.
@@ -745,6 +756,9 @@ public sealed class CronScheduler(
 
     private async Task ProcessTickAsync(CancellationToken ct)
     {
+        if (IsPlannedShutdown)
+            return;
+
         // #2410: the reaper is periodic as well as startup-bound - a run can be orphaned by a crash
         // of a sibling process while this scheduler keeps ticking. Failures here must never abort the
         // tick, so they are logged and swallowed.
@@ -757,7 +771,13 @@ public sealed class CronScheduler(
             _logger.LogWarning(ex, "Orphaned cron run reaping failed during tick.");
         }
 
+        if (IsPlannedShutdown)
+            return;
+
         var jobs = await _cronStore.ListAsync(ct: ct).ConfigureAwait(false);
+        if (IsPlannedShutdown)
+            return;
+
         var now = _timeProvider.GetUtcNow();
 
         // Phase 1 (sequential): resolve NextRunAt for uninitialised or stale jobs.
@@ -765,6 +785,9 @@ public sealed class CronScheduler(
         var dueJobs = new List<(CronJob Job, CronExpression Expression)>();
         foreach (var job in jobs.Where(j => j.Enabled))
         {
+            if (IsPlannedShutdown)
+                return;
+
             // #2634 (schedule time): an expired job is dropped from the due scan entirely, so it
             // never even reaches the execute phase. This is the cheap early-out; it is NOT the
             // authoritative gate (see IsExpired's call site in RunActionAsync) because a manual
@@ -821,6 +844,9 @@ public sealed class CronScheduler(
                 ? floor
                 : correctedNextRun;
 
+            if (IsPlannedShutdown)
+                return;
+
             if (effectiveNextRun > now)
                 continue;
 
@@ -860,9 +886,9 @@ public sealed class CronScheduler(
 
             // #4688: claim the job BEFORE launching. TryAdd is the atomic guard that stops a later
             // tick from re-dispatching a job that is still running.
-            if (_stopping)
+            if (_stopping || IsPlannedShutdown)
             {
-                _logger.LogDebug("Cron scheduler is stopping; not dispatching job '{JobId}'.", job.Id);
+                _logger.LogDebug("Cron scheduler admission is closed; not dispatching job '{JobId}'.", job.Id);
                 break;
             }
 
@@ -907,11 +933,11 @@ public sealed class CronScheduler(
             // even cancelled _dispatchCts) while it was in flight. The _stopping check above ran
             // BEFORE that await, so re-check here: dispatching now would launch a run on an
             // already-cancelled token that escapes the drain snapshot and stamps a doomed run row.
-            if (_stopping || _disposed)
+            if (_stopping || _disposed || IsPlannedShutdown)
             {
                 _inFlight.TryRemove(job.Id.Value, out _);
                 _logger.LogWarning(
-                    "Cron job '{JobId}' was claimed but skipped due to scheduler shutdown; it will run at its next scheduled time.",
+                    "Cron job '{JobId}' was rescheduled but not admitted due to scheduler shutdown; it will run at its next scheduled time.",
                     job.Id);
                 break;
             }
@@ -959,6 +985,7 @@ public sealed class CronScheduler(
             {
                 await slots.WaitAsync(ct).ConfigureAwait(false);
                 acquired = true;
+                ThrowIfPlannedShutdown();
 
                 // #4731 review P1: RE-READ the job after the (possibly long) wait for a slot and
                 // revalidate against the fresh row. The due-scan snapshot is stale by now: the job
@@ -975,6 +1002,12 @@ public sealed class CronScheduler(
                 }
 
                 await RunActionAsync(current, CronTriggerType.Scheduled, triggeredAt, ct, acceptedRun: null, dispatch: queued).ConfigureAwait(false);
+            }
+            catch (PlannedShutdownAdmissionException)
+            {
+                // No durable run was admitted. This is suppression, not an action failure;
+                // do not invent terminal history or cancel work that was already admitted.
+                _logger.LogDebug("Cron admission closed for queued job '{JobId}' during planned shutdown.", job.Id);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -1152,6 +1185,9 @@ public sealed class CronScheduler(
         CronRun? acceptedRun,
         QueuedCronDispatch? dispatch = null)
     {
+        if (acceptedRun is null)
+            ThrowIfPlannedShutdown();
+
         // #2634 (fire time -- the AUTHORITATIVE expiry gate). Checked BEFORE the run row is stamped
         // so an expired job produces no run at all and, critically, never invokes its action.
         //
@@ -2325,14 +2361,16 @@ public sealed class CronScheduler(
         int? timeoutSeconds,
         CancellationToken ct)
     {
-        var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        // #2904: null is unlimited: keep ambient cancellation, but arm no deadline. Use the
+        // scheduler clock for the timer as well as duration, so cancellation is deterministic when
+        // a caller supplies a timer-aware TimeProvider (#4102).
+        using var deadlineCts = timeoutSeconds is int armedTimeout
+            ? new CancellationTokenSource(TimeSpan.FromSeconds(armedTimeout), _timeProvider)
+            : null;
+        var timeoutCts = deadlineCts is null
+            ? CancellationTokenSource.CreateLinkedTokenSource(ct)
+            : CancellationTokenSource.CreateLinkedTokenSource(ct, deadlineCts.Token);
         var retainTimeoutSource = false;
-
-        // #2904: a null timeout is the explicit "unlimited" sentinel. Arming no CancelAfter is the
-        // whole point - the linked source still exists so the ambient token (gateway shutdown /
-        // explicit cancel) cancels the run promptly, but nothing else can end it (AC2).
-        if (timeoutSeconds is int armedTimeout)
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(armedTimeout));
 
         // #2641 AC2: the scheduler owns the run clock. Stamped in a finally so it is recorded on
         // EVERY exit - success, timeout, and host/operator cancellation alike - because a run that
@@ -2344,6 +2382,7 @@ public sealed class CronScheduler(
             if (timeoutSeconds is null)
             {
                 await actionTask.ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
                 return new ActionExecutionResult(null, null);
             }
 
@@ -2354,6 +2393,11 @@ public sealed class CronScheduler(
                 // Host/operator cancellation keeps its established semantics: wait for the action
                 // to observe cancellation so teardown and active-run cancellation remain ordered.
                 await actionTask.ConfigureAwait(false);
+                // #4102: returning normally is not proof of success: actions may swallow
+                // cancellation. Reconcile provenance before resolving ok/no_tool_calls. Ambient
+                // host/operator intent wins if observed here, even when the deadline fired first.
+                ct.ThrowIfCancellationRequested();
+                timeoutCts.Token.ThrowIfCancellationRequested();
                 return new ActionExecutionResult(null, null);
             }
 
@@ -2372,10 +2416,19 @@ public sealed class CronScheduler(
                     // Expected per-job timeout cancellation.
                 }
 
+                ct.ThrowIfCancellationRequested();
                 _logger.LogWarning(
                     "Cron job timed out after {TimeoutSeconds}s. JobId: {JobId}, ActionType: {ActionType}",
                     timeoutSeconds, context.Job.Id, context.Job.ActionType);
                 return new ActionExecutionResult($"Job exceeded {timeoutSeconds}s timeout", null);
+            }
+
+            if (ct.IsCancellationRequested)
+            {
+                // Preserve ambient cancellation's ordered teardown if it arrived during the
+                // cooperative window, rather than attributing that cancellation to the deadline.
+                await actionTask.ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
             }
 
             _logger.LogWarning(
@@ -2612,11 +2665,27 @@ public sealed class CronScheduler(
         }
     }
 
+    private bool IsPlannedShutdown => _plannedShutdownState?.CurrentShutdownIsPlanned == true;
+
+    private sealed class PlannedShutdownAdmissionException()
+        : InvalidOperationException("Cron run admission is closed during planned shutdown.");
+
+    private void ThrowIfPlannedShutdown()
+    {
+        if (IsPlannedShutdown)
+            throw new PlannedShutdownAdmissionException();
+    }
+
     private async Task<CronRun> RecordLocallyAdmittedRunStartAsync(JobId jobId, CancellationToken ct)
     {
         await _runReconciliationGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Recheck after waiting for the existing admission/reconciliation gate. Once this
+            // write begins, retain ownership through completion even if shutdown is then marked.
+            // The gateway marker does not share this gate: this is a process-local state check,
+            // not an atomic cross-process shutdown fence or a rollback of an in-progress write.
+            ThrowIfPlannedShutdown();
             var run = await _cronStore.RecordRunStartAsync(jobId, ct).ConfigureAwait(false);
             if (!_startupCohortCaptured)
                 _runsAdmittedBeforeCohortCapture.Add(run.Id);

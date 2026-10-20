@@ -43,6 +43,8 @@ Source: `src/gateway/BotNexus.Gateway.Api/Controllers/AgentsController.cs`.
 | `includeSubAgents` | query | bool | `false` | Include runtime-spawned sub-agent descriptors (e.g. "Farnsworth (coder)"). These are ephemeral children created via `spawn_subagent` and are hidden by default. |
 | `includeBuiltin` | query | bool | `false` | Include built-in platform archetype agents (researcher, coder, planner, reviewer, writer, analyst). They are spawn/converse targets rather than top-level user-created agents. |
 
+`includeDisabled` is an additional boolean query parameter, defaulting to `false`. Set it to `true` for administration; it does not grant runtime admission. The Agents management page opts in, while runtime pickers use the enabled-only default.
+
 Returns `200 OK` with an array of `AgentListItem` - a **lean list projection**, not the full
 `AgentDescriptor` (#2755). The domain model was previously serialised directly, putting 36
 properties per agent on the portal's cold-boot path where consumers read at most seven, and
@@ -58,13 +60,22 @@ unauthenticated by default. Clients needing the full shape use `GET /api/agents/
 | `isBuiltIn` | bool | Whether this is a built-in platform archetype agent. |
 | `apiProvider` | string | Provider instance key. |
 | `modelId` | string | Model identifier. |
+| `enabled` | bool | Whether the agent admits new runtime work. |
 
 By default only first-class, user-facing agents are returned, so the portal agent picker is not
 cluttered with infrastructure descriptors.
 
 ### `GET /api/agents/{agentId}`
 
-Returns `200 OK` with the `AgentDescriptor`, or `404 Not Found`.
+Returns `200 OK` with the `AgentDescriptor`, including disabled registrations, or `404 Not Found`.
+
+### Enabled-state save contract
+
+`AgentDescriptor.Enabled` is nullable: omission or `null` on an update preserves the previous effective state; omission on create defaults to enabled. Explicit `false` disables new work but retains the registration for management. Already-admitted work and existing handles are not cancelled. Normal registry `Get`/`GetAll` calls exclude disabled agents; administrative callers opt into the `includeDisabled` overloads. `Contains` still reports registration, not runtime eligibility.
+
+Before persistence, an explicit enabled create or a disabled-to-enabled update must resolve the submitted provider/model pair when a runtime `ModelRegistry` is supplied (as in the gateway's DI configuration). An empty registry rejects these requests too. Callers without a model registry retain compatibility behavior, and an omitted-enable create retains the previous config-validation contract. Ordinary edits do not acquire this stricter activation check.
+
+A successful save confirms durable configuration, not provider authentication or a running instance. Authentication and cold-start runtime validation occur when work starts. See `AgentLifecycleService` in `src/gateway/BotNexus.Gateway.Api/Services/AgentProposalReviewService.cs` for the shared REST/proposal application path.
 
 ### `POST /api/agents`
 
