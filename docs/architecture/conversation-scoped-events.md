@@ -212,3 +212,33 @@ notifications remain unchanged for compatibility. `ConversationsControllerMoveBi
 uses real in-memory and SQLite stores and the real publisher, fresh SQLite-store reads inside
 the sink, and tests detached snapshots, both sides, guards, write failures, and per-side
 publication/reload failure isolation.
+
+## Auto-title producer facts
+
+For developers integrating lifecycle consumers, both provisional and final/refinement saves in
+`ConversationAutoTitleService` add the existing `ConversationUpdatedEvent` after `SaveAsync`
+completes. `GatewayHost` passes its existing publisher; the service's final constructor parameter
+is optional for legacy callers. The guards, model/auth calls, save behavior, and legacy `updated`
+notification remain unchanged. This is a producer-only #2088 slice, not a consumer migration or
+an end-to-end Portal delivery claim.
+
+`ChangedFields` contains `Title` when the ordinal title value changes, followed by `Metadata`
+when the provisional metadata entry changes. Removing an existing false/null entry also counts;
+replacing a string flag with a boolean counts, while an existing JSON boolean true does not.
+An unchanged title and flag emits no typed fact, but still performs the original save and legacy
+notification. Other metadata is not part of this write set.
+
+Because `SaveAsync` returns no aggregate and stores update timestamps on copies, the service
+reloads after saving. The fact uses the reloaded owning identifiers, `UpdatedAt` as `OccurredAt`,
+and detached `ConversationBindingSnapshot.FromMany` bindings, with the default system origin
+`ConversationEventOrigin.None`. The pre-save comparison and reload are not an atomic before/after
+pair: concurrent writes may already be visible. Fields are reconciliation hints, not a complete
+change history. Missing post-save state suppresses the fact rather than inventing a snapshot.
+
+Reload failure, publisher rejection, or publisher exceptions do not undo a successful save or
+suppress the legacy notification. Guards, missing pre-save state, model failures, empty model
+output, and failed saves emit no success fact. Delivery remains best effort, not a durable outbox;
+consumers must reload authoritative conversation state after reconnect or a missed notification.
+`ConversationAutoTitleEventTests` covers both paths with real memory/SQLite stores and the real
+publisher, fresh SQLite reads inside the sink, detached snapshots, deterministic field selection,
+no-op writes, and failure isolation.

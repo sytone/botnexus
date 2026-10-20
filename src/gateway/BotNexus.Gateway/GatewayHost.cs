@@ -181,7 +181,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 llmClient,
                 _logger,
                 conversationChangeNotifier,
-                _authManager);
+                _authManager,
+                conversationEventPublisher);
         }
         // The coordinator is the single source of truth for compaction (PR #602
         // followup). Tests that construct GatewayHost directly may not provide
