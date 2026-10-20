@@ -749,6 +749,12 @@ public sealed class ConversationsController : ControllerBase
             $"{DescribeBinding(binding)} on {request.TargetConversationId}",
             cancellationToken);
 
+        // Reuse attachment/detachment facts for the two changed aggregates. Each reload and
+        // publication is isolated: losing one best-effort fact must not suppress the other or
+        // either existing legacy notification.
+        await PublishMovedBindingBestEffortAsync(sourceId, binding, removed: true, cancellationToken);
+        await PublishMovedBindingBestEffortAsync(targetId, binding, removed: false, cancellationToken);
+
         // Both aggregates changed, so both are announced — announcing only the target would leave
         // the source pane showing a binding that no longer exists there.
         await NotifyConversationChangedBestEffortAsync("updated", source.AgentId.Value, conversationId, cancellationToken);
@@ -1140,6 +1146,32 @@ public sealed class ConversationsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to publish archive event for conversation {ConversationId}; clients must reconcile from durable conversation state.", archived.ConversationId);
+        }
+    }
+
+    private async Task PublishMovedBindingBestEffortAsync(
+        ConversationId conversationId, ChannelBinding binding, bool removed, CancellationToken cancellationToken)
+    {
+        if (_conversationEventPublisher is null)
+            return;
+
+        try
+        {
+            // MoveBindingAsync returns only success. These are post-commit observations, not
+            // an atomic pair of before/after images; a later move may already be reflected.
+            var updated = await _conversations.GetAsync(conversationId, cancellationToken);
+            if (updated is null)
+                return;
+
+            var containsBinding = updated.ChannelBindings.Any(b => b.BindingId == binding.BindingId);
+            if (removed && !containsBinding)
+                await PublishConversationBindingRemovedBestEffortAsync(updated, binding, cancellationToken);
+            else if (!removed && containsBinding)
+                await PublishConversationBindingAddedBestEffortAsync(updated, binding.BindingId, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to reload binding move state for conversation {ConversationId}; clients must reconcile from durable conversation state.", conversationId);
         }
     }
 

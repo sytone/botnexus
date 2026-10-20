@@ -95,6 +95,8 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
             if (!HasHigherPrecedenceValue(providers, rawProviderIndex, "gateway:extensionLoader:enabled"))
                 config.Gateway.ExtensionLoader.Enabled = rawLoader.Enabled;
         }
+
+        CollectionShapeConfiguration.Apply(providers, config);
     }
 
     private static bool HasHigherPrecedenceValue(
@@ -186,8 +188,6 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
             if (agentConfig.IsolationOptions.HasValue && agentConfig.IsolationOptions.Value.ValueKind == JsonValueKind.Undefined)
                 agentConfig.IsolationOptions = null;
             NullifyInvalidExtensionBag(agentConfig.Extensions);
-            if (agentConfig.Extensions is { Count: 0 })
-                agentConfig.Extensions = null;
         }
     }
 }
