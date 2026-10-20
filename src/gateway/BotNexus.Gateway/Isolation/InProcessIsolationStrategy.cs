@@ -1429,12 +1429,20 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     {
         var state = _agent.State;
         var systemPromptChars = state.SystemPrompt?.Length ?? 0;
-        var toolDefinitions = state.Tools
-            .Select(static t => new ToolDiagInfo(
-                t.Name,
-                t.Definition.Description,
-                t.Definition.Parameters.GetRawText().Length))
-            .ToList();
+        var toolDefinitions = new List<ToolDiagInfo>(state.Tools.Count);
+        var toolDefinitionChars = 0;
+        var toolDefinitionUnits = 0L;
+        foreach (var tool in state.Tools)
+        {
+            var definition = tool.Definition;
+            var schema = definition.Parameters.GetRawText();
+            toolDefinitions.Add(new ToolDiagInfo(tool.Name, definition.Description, schema.Length));
+            toolDefinitionChars += tool.Name.Length + (definition.Description?.Length ?? 0) + schema.Length;
+            // JSON syntax is ASCII, but schema descriptions and property names need not be.
+            toolDefinitionUnits += TokenEstimator.WeightedCharUnits(tool.Name)
+                + TokenEstimator.WeightedCharUnits(definition.Description)
+                + TokenEstimator.WeightedCharUnits(schema);
+        }
         var historyEntries = state.Messages.Count;
 
         var userAssistantChars = state.Messages.Sum(static message => message switch
@@ -1471,12 +1479,12 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         });
 
         var systemPromptUnits = TokenEstimator.WeightedCharUnits(state.SystemPrompt);
-        var toolDefinitionChars = toolDefinitions.Sum(static t => t.SchemaChars);
         var historyChars = userAssistantChars + toolResultChars;
         var historyUnits = userAssistantUnits + toolResultUnits;
-        var totalUnits = systemPromptUnits
-            + ((long)toolDefinitions.Sum(static t => t.SchemaChars + t.Name.Length + (t.Description?.Length ?? 0)))
-            + historyUnits;
+        // Embedded skills stay in their enclosing prompt/history category: no separate attribution
+        // or second charge. Convert summed units once for each subtotal and once for the total;
+        // independent truncation means the displayed integer subtotals need not sum exactly.
+        var totalUnits = systemPromptUnits + toolDefinitionUnits + historyUnits;
         var estimatedTokens = TokenEstimator.TokensFromUnits(totalUnits);
 
         return new ContextDiagnostics
@@ -1485,9 +1493,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             SystemPromptTokens = TokenEstimator.TokensFromUnits(systemPromptUnits),
             ToolCount = state.Tools.Count,
             ToolDefinitionChars = toolDefinitionChars,
-            // Tool schemas are JSON emitted by the runtime: structurally ASCII, so the script-blind
-            // ratio is the right estimate and inspecting them would cost a scan for no accuracy.
-            ToolDefinitionTokens = TokenEstimator.EstimateTokensFromCharCount(toolDefinitionChars),
+            ToolDefinitionTokens = TokenEstimator.TokensFromUnits(toolDefinitionUnits),
             Tools = toolDefinitions,
             HistoryEntryCount = historyEntries,
             HistoryChars = historyChars,

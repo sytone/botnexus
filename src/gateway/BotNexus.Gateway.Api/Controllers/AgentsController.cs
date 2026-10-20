@@ -519,6 +519,14 @@ public sealed class AgentsController : ControllerBase
     /// JSON <c>null</c> rather than as a plausible-looking constant, because a consumer can detect an
     /// absent number and cannot detect a wrong one.
     /// </para>
+    /// <para>
+    /// Only counts are exposed, never prompt, schema, tool description or history content.
+    /// <c>userAssistant</c> and <c>toolResult</c> subdivide <c>conversationHistory</c>; they must not
+    /// be added to that parent. Independent integer truncation can leave a 0–2 token gap between
+    /// the three top-level sections and total, or 0–1 between history and its two children
+    /// (below integer saturation). Embedded skills remain in their enclosing category, not a
+    /// separately inferred skills charge.
+    /// </para>
     /// </remarks>
     /// <param name="agentId">The agent the session belongs to.</param>
     /// <param name="sessionId">The session being reported on.</param>
@@ -556,7 +564,10 @@ public sealed class AgentsController : ControllerBase
             {
                 systemPrompt = new { tokens = diag.SystemPromptTokens, chars = diag.SystemPromptChars },
                 toolDefinitions = new { tokens = diag.ToolDefinitionTokens, toolCount = diag.ToolCount },
-                conversationHistory = new { tokens = diag.HistoryTokens, entryCount = diag.HistoryEntryCount }
+                conversationHistory = new { tokens = diag.HistoryTokens, entryCount = diag.HistoryEntryCount },
+                // These are children of conversationHistory, not additional top-level consumption.
+                userAssistant = new { tokens = diag.UserAssistantTokens, chars = diag.UserAssistantChars },
+                toolResult = new { tokens = diag.ToolResultTokens, chars = diag.ToolResultChars }
             }
         };
     }
