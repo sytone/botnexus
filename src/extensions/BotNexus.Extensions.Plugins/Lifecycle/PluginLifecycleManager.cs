@@ -413,7 +413,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                     $"Plugin source '{source}' did not report a resolved version."));
             }
 
-            var parse = _importer.ParseDirectory(staging);
+            var parse = _importer.ParseDirectory(staging, expectedName);
             if (!parse.IsValid)
             {
                 TryDeleteDirectory(staging);
