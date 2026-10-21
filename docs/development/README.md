@@ -56,6 +56,7 @@ These are deeper explanations, also grouped under **Architecture → Runtime and
 
 - **[code-standards.md](code-standards.md)** - XML comment standard, naming, dependency boundaries, and testing conventions
 - **[pr-and-commit-conventions.md](pr-and-commit-conventions.md)** — Required PR body and squash-commit format, and the reviewer inspection order for agent-authored changes
+- **[test-taxonomy.md](test-taxonomy.md)** — Choose a test category, preserve source mirrors, and distinguish real seam coverage from virtual scenarios and E2E stubs
 - **[running-tests.md](running-tests.md)** — Impacted-test selection and Windows testhost firewall pre-authorization
 - **[persistence-seam-testing.md](persistence-seam-testing.md)** — Write classification and deterministic lost-update seam tests for aggregate stores
 - **[azure-build-test-runner.md](azure-build-test-runner.md)** — Selectable strict validation and optional Azure Container Apps execution
