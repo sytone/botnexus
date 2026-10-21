@@ -35,14 +35,14 @@ public sealed class RalphIterationRunnerTests
         return handle;
     }
 
-    private sealed class StubSupervisor(Func<string> reply) : IAgentSupervisor
+    private sealed class StubSupervisor(Func<string> reply, IAgentHandle? fixedHandle = null) : IAgentSupervisor
     {
         public List<SessionId> Sessions { get; } = [];
 
         public Task<IAgentHandle> GetOrCreateAsync(AgentId agentId, SessionId sessionId, CancellationToken cancellationToken = default)
         {
             Sessions.Add(sessionId);
-            return Task.FromResult(StubHandle(agentId, sessionId, reply()));
+            return Task.FromResult(fixedHandle ?? StubHandle(agentId, sessionId, reply()));
         }
 
         public Task StopAsync(AgentId agentId, SessionId sessionId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -54,6 +54,38 @@ public sealed class RalphIterationRunnerTests
         public IReadOnlyList<AgentInstance> GetAllInstances() => [];
 
         public Task StopAllAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task RunIterationAsync_InterruptedPrompt_PersistsToolsAndRethrowsCancellation()
+    {
+        var conversations = new InMemoryConversationStore();
+        var sessions = new InMemorySessionStore();
+        using var cancellation = new CancellationTokenSource();
+        var handle = Substitute.For<IAgentHandle>();
+        handle.PromptAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(_ =>
+        {
+            cancellation.Cancel();
+            return Task.FromException<AgentResponse>(new AgentPromptInterruptedException(new AgentResponse
+            {
+                Content = string.Empty,
+                ToolCalls = [new("interrupted-4101", "read", true, "{}", null, IsIncomplete: true)]
+            }, cancellation.Token));
+        });
+        var supervisor = new StubSupervisor(() => "unused", handle);
+        var runner = new RalphIterationRunner(supervisor, sessions, conversations, NullLogger<RalphIterationRunner>.Instance);
+        var conversation = ConversationFactory.CreateForRalph(ConversationId.From("conv:ralph-cancel"), Agent, "work");
+        await conversations.CreateAsync(conversation);
+
+        var exception = await Should.ThrowAsync<OperationCanceledException>(() =>
+            runner.RunIterationAsync(conversation, "work", 1, cancellation.Token));
+
+        exception.CancellationToken.ShouldBe(cancellation.Token);
+        var stored = (await sessions.GetAsync(conversation.ActiveSessionId.ShouldNotBeNull())).ShouldNotBeNull();
+        stored.GetHistorySnapshot().Where(row => row.Role == MessageRole.User).ShouldHaveSingleItem();
+        stored.GetHistorySnapshot().Where(row => row.ToolCallId == "interrupted-4101")
+            .ShouldHaveSingleItem().ToolIsIncomplete.ShouldBeTrue();
+        stored.GetHistorySnapshot().ShouldNotContain(row => row.Role == MessageRole.Assistant);
     }
 
     [Fact]

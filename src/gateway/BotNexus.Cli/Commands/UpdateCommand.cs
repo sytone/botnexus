@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Diagnostics;
 using System.Reflection;
+using System.IO.Abstractions;
 using System.Xml.Linq;
 using BotNexus.Cli.Services;
 using BotNexus.Gateway.Configuration;
@@ -25,7 +26,9 @@ internal class UpdateCommand
     internal const int DirtyWorkingTreeExitCode = 3;
 
     private readonly IGatewayProcessManager _processManager;
+    private readonly IFileSystem _fileSystem;
     private ReleaseTargetRequest? _releaseRequest;
+    private bool _gatewayBuildFailed;
 
     internal ReleaseTargetRequest? ReleaseRequest
     {
@@ -40,9 +43,10 @@ internal class UpdateCommand
     /// </summary>
     internal DirtyTreeMode DirtyTreeHandling { get; set; } = DirtyTreeMode.Abort;
 
-    public UpdateCommand(IGatewayProcessManager processManager)
+    public UpdateCommand(IGatewayProcessManager processManager, IFileSystem? fileSystem = null)
     {
         _processManager = processManager;
+        _fileSystem = fileSystem ?? new FileSystem();
     }
 
     public Command Build(Option<bool> verboseOption, Option<string?> targetOption)
@@ -325,7 +329,7 @@ internal class UpdateCommand
         // was found and then seen gone; "no gateway found" is a distinct, non-claiming line.
         switch (stopResult.Outcome)
         {
-            case GatewayStopOutcome.Stopped:
+            case GatewayStopOutcome.Stopped when stopResult.Success:
                 AnsiConsole.MarkupLine("[green]\u2713[/] Gateway stopped");
                 break;
             case GatewayStopOutcome.NotRunning:
@@ -367,16 +371,94 @@ internal class UpdateCommand
             return 1;
         }
 
+        // Preserve before the build can replace even one file. Only an observed successful stop
+        // authorizes automatic recovery; NotRunning and contradictory/failed results do not.
+        using var snapshot = stopResult.Success && stopResult.Outcome == GatewayStopOutcome.Stopped
+            && StoppedDeploymentMatches(stopResult.VerifiedGatewayBinaryPath, gatewayBinary)
+            && !cancellationToken.IsCancellationRequested
+            ? TryPreserveGateway(gatewayBinary)
+            : null;
+
         // Steps 3 & 4: Build and deploy (gateway is now stopped, no file locks)
+        _gatewayBuildFailed = false;
         var buildResult = await RunBuildAndDeployAsync(repoRoot, home, verbose, cancellationToken);
-        if (buildResult != 0 && buildResult != ExtensionDeploymentFailureExitCode)
+        if (buildResult != 0 && (buildResult != ExtensionDeploymentFailureExitCode || _gatewayBuildFailed))
+        {
+            AnsiConsole.MarkupLine($"[red]✗[/] Update build failed (exit code {buildResult}); the update was not applied.");
+            if (buildResult != CancelledExitCode && !cancellationToken.IsCancellationRequested)
+            {
+                if (snapshot is not null)
+                    await RecoverPriorGatewayAsync(snapshot, gatewayBinary, home, gatewayUrl, cancellationToken);
+                else
+                    AnsiConsole.MarkupLine("[yellow]⚠[/] Automatic recovery unavailable: no verified prior output or confirmed stop. Check gateway status before starting it manually.");
+            }
             return buildResult;
+        }
+
+        if (cancellationToken.IsCancellationRequested)
+            return buildResult == 0 ? CancelledExitCode : buildResult;
 
         // Step 5: Start even after a controlled deployment failure. Atomic reconciliation has
         // preserved or restored the usable deployment; leaving the stopped gateway offline would
         // turn a recoverable update failure into an outage. Preserve the nonzero update result.
         var restartResult = await RunRestartAsync(home, port, repoRoot, cancellationToken);
         return restartResult != 0 ? restartResult : buildResult;
+    }
+
+    private static bool StoppedDeploymentMatches(string? stoppedBinary, string gatewayBinary)
+    {
+        if (string.IsNullOrWhiteSpace(stoppedBinary) || !Path.IsPathFullyQualified(stoppedBinary))
+            return false;
+        return GatewayProcessManager.BuildGatewayPathCandidates(gatewayBinary).Contains(
+            Path.GetFullPath(stoppedBinary), OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    }
+
+    private GatewayBuildSnapshot? TryPreserveGateway(string gatewayBinary)
+    {
+        try
+        {
+            return GatewayBuildSnapshot.Capture(_fileSystem, gatewayBinary);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AnsiConsole.MarkupLine($"[yellow]⚠[/] Could not preserve prior gateway output; automatic build-failure recovery is unavailable: {CliText.SafeDisplay(ex.Message)}");
+            return null;
+        }
+    }
+
+    private async Task RecoverPriorGatewayAsync(GatewayBuildSnapshot snapshot, string gatewayBinary,
+        string home, string gatewayUrl, CancellationToken cancellationToken)
+    {
+        using var recoveryCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        recoveryCancellation.CancelAfter(TimeSpan.FromSeconds(60));
+        try
+        {
+            await snapshot.RestoreAsync(recoveryCancellation.Token);
+            recoveryCancellation.Token.ThrowIfCancellationRequested();
+            AnsiConsole.MarkupLine("[blue][[update]][/] Prior gateway output restored; attempting recovery once...");
+            var result = await _processManager.StartAsync(new GatewayStartOptions(
+                ExecutablePath: gatewayBinary,
+                Arguments: $"--urls \"{gatewayUrl}\" --environment Development --contentRoot \"{_fileSystem.Path.GetDirectoryName(gatewayBinary)}\"",
+                Attached: false,
+                HomePath: home,
+                HealthUrl: gatewayUrl + "/health",
+                ReadinessTimeout: TimeSpan.FromSeconds(60)), recoveryCancellation.Token);
+            if (result is { Success: true, Pid: not null })
+                AnsiConsole.MarkupLine($"[green]✓[/] Prior gateway recovered (PID {result.Pid}); update still failed.");
+            else
+                AnsiConsole.MarkupLine($"[red]✗[/] Prior gateway recovery failed: {CliText.SafeDisplay(result?.Message ?? "no result")}. Check gateway status and logs before retrying.");
+        }
+        catch (OperationCanceledException)
+        {
+            AnsiConsole.MarkupLine("[yellow]⚠[/] Prior gateway recovery cancelled or timed out. Check gateway status and logs before retrying; update still failed.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            var preserved = snapshot.RetainedForManualRecovery
+                ? $" Preserved output: {CliText.SafeDisplay(snapshot.PreservedDirectory)}."
+                : " Prior output was restored at its original deployment path.";
+            AnsiConsole.MarkupLine($"[red]✗[/] Prior gateway recovery refused or failed: {CliText.SafeDisplay(ex.Message)}.{preserved} Check gateway status and logs before manual recovery.");
+        }
     }
 
     protected virtual Task<ReleaseUpdateStatus> ResolveReleaseStatusAsync(
@@ -513,18 +595,21 @@ internal class UpdateCommand
                 .SpinnerStyle(Style.Parse("blue"))
                 .StartAsync("Building...", async ctx =>
                 {
-                    capturedBuild = await BuildCommand.BuildSolutionAsync(repoRoot, verbose, cancellationToken);
+                    capturedBuild = await RunGatewayBuildAsync(repoRoot, verbose, cancellationToken);
                 });
             buildResult = capturedBuild;
         }
         else
         {
             AnsiConsole.MarkupLine("[blue][[update]][/] Building...");
-            buildResult = await BuildCommand.BuildSolutionAsync(repoRoot, verbose, cancellationToken);
+            buildResult = await RunGatewayBuildAsync(repoRoot, verbose, cancellationToken);
         }
 
         if (buildResult != 0)
         {
+            // Compiler exits can collide with the legacy deployment-failure code (2).
+            // Only a completed build may use that code to authorize normal candidate startup.
+            _gatewayBuildFailed = true;
             AnsiConsole.MarkupLine("[red]✗[/] Build failed.");
             return buildResult;
         }
@@ -536,6 +621,9 @@ internal class UpdateCommand
         await ServeCommand.ReconcileLifecycleAsync(repoRoot, home, verbose, cancellationToken, "update");
         return 0;
     }
+
+    protected virtual Task<int> RunGatewayBuildAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
+        => BuildCommand.BuildSolutionAsync(repoRoot, verbose, cancellationToken);
 
     internal static int DeploymentExitCode(ExtensionDeploymentResult result)
         => result.Failures.Count == 0 ? 0 : ExtensionDeploymentFailureExitCode;

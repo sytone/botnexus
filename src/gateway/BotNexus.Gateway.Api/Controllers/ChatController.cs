@@ -126,6 +126,16 @@ public sealed class ChatController : ControllerBase
             {
                 response = await handle.PromptAsync(request.Message, CancellationToken.None);
             }
+            catch (AgentPromptInterruptedException interrupted)
+            {
+                var partialSession = await _sessions.GetOrCreateAsync(typedSessionId, typedAgentId, CancellationToken.None);
+                partialSession.SessionType = SessionType.UserAgent;
+                partialSession.AddEntry(new SessionEntry { Role = MessageRole.User, Content = request.Message });
+                foreach (var entry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(interrupted.PartialResponse)))
+                    partialSession.AddEntry(entry);
+                await _sessions.SaveAsync(partialSession, CancellationToken.None);
+                throw new OperationCanceledException("Chat turn was interrupted.", interrupted, interrupted.CancellationToken);
+            }
             catch (InvalidOperationException ex) when (ex.Message.Contains("already running", StringComparison.OrdinalIgnoreCase))
             {
                 await handle.FollowUpAsync(request.Message, CancellationToken.None);

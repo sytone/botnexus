@@ -1,4 +1,6 @@
 using BotNexus.Domain.Text;
+using System.Collections.Immutable;
+using BotNexus.Gateway.Abstractions.Events;
 using System.Text.Json;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
@@ -43,6 +45,7 @@ public sealed class ConversationAutoTitleService
 
     private readonly IConversationStore _store;
     private readonly IConversationChangeNotifier? _notifier;
+    private readonly IConversationEventPublisher? _conversationEventPublisher;
     private readonly LlmClient _llmClient;
     private readonly ILogger _logger;
     private readonly GatewayAuthManager? _authManager;
@@ -57,12 +60,14 @@ public sealed class ConversationAutoTitleService
         LlmClient llmClient,
         ILogger logger,
         IConversationChangeNotifier? notifier = null,
-        GatewayAuthManager? authManager = null)
+        GatewayAuthManager? authManager = null,
+        IConversationEventPublisher? conversationEventPublisher = null)
     {
         _store = store;
         _llmClient = llmClient;
         _logger = logger;
         _notifier = notifier;
+        _conversationEventPublisher = conversationEventPublisher;
         // #1639: the titling model is resolved from the registry, which already carries the correct
         // per-provider endpoint (enterprise vs individual GitHub Copilot resolved at registration),
         // so no endpoint override is threaded through here anymore.
@@ -216,11 +221,13 @@ public sealed class ConversationAutoTitleService
             return null;
         }
 
+        var changedFields = GetChangedFields(conversation, title, provisional: true);
         conversation.Title = title;
         // Mark provisional so the post-response path may refine exactly once (refine-once policy).
         conversation.Metadata[ProvisionalTitleMetadataKey] = true;
         await _store.SaveAsync(conversation, ct).ConfigureAwait(false);
 
+        await PublishUpdatedBestEffortAsync(conversationId, changedFields, ct).ConfigureAwait(false);
         await NotifyChangedAsync(agentId, conversationId, ct).ConfigureAwait(false);
 
         _logger.LogInformation(
@@ -300,12 +307,14 @@ public sealed class ConversationAutoTitleService
             return null;
         }
 
+        var changedFields = GetChangedFields(conversation, title, provisional: false);
         conversation.Title = title;
         // Refine-once (#2126): once the post-response path titles/refines, the title is final, so
         // clear the provisional flag. A subsequent turn then hits the standard custom-title guard.
         conversation.Metadata.Remove(ProvisionalTitleMetadataKey);
         await _store.SaveAsync(conversation, ct).ConfigureAwait(false);
 
+        await PublishUpdatedBestEffortAsync(conversationId, changedFields, ct).ConfigureAwait(false);
         await NotifyChangedAsync(agentId, conversationId, ct).ConfigureAwait(false);
 
         _logger.LogInformation(
@@ -403,6 +412,51 @@ public sealed class ConversationAutoTitleService
         }
 
         return title;
+    }
+
+    private static ImmutableArray<string> GetChangedFields(Conversation conversation, string title, bool provisional)
+    {
+        var fields = ImmutableArray.CreateBuilder<string>();
+        if (!string.Equals(conversation.Title, title, StringComparison.Ordinal))
+            fields.Add(nameof(Conversation.Title));
+        var hasFlag = conversation.Metadata.TryGetValue(ProvisionalTitleMetadataKey, out var flag);
+        // Compare persisted JSON values, not just eligibility: removing false/null or replacing
+        // the string "true" with a boolean also changes the metadata that this write owns.
+        var alreadyTrue = flag is true || flag is JsonElement { ValueKind: JsonValueKind.True };
+        if (provisional ? !hasFlag || !alreadyTrue : hasFlag)
+            fields.Add(nameof(Conversation.Metadata));
+        return fields.ToImmutable();
+    }
+
+    private async Task PublishUpdatedBestEffortAsync(
+        ConversationId conversationId, ImmutableArray<string> changedFields, CancellationToken ct)
+    {
+        if (_conversationEventPublisher is null || changedFields.IsEmpty)
+            return;
+
+        try
+        {
+            // SaveAsync returns no aggregate and stores replace UpdatedAt on a copy. Reload to
+            // publish durable timestamps and bindings, without changing the existing save contract.
+            var updated = await _store.GetAsync(conversationId, ct).ConfigureAwait(false);
+            if (updated is null)
+                return;
+            var accepted = await _conversationEventPublisher.PublishAsync(new ConversationUpdatedEvent
+            {
+                AgentId = updated.AgentId,
+                ConversationId = updated.ConversationId,
+                ChangedFields = changedFields,
+                Bindings = ConversationBindingSnapshot.FromMany(updated.ChannelBindings),
+                OccurredAt = updated.UpdatedAt
+            }, ct).ConfigureAwait(false);
+            if (!accepted)
+                _logger.LogWarning("Auto-title: event publisher rejected update for conversation '{ConversationId}'; clients must reconcile from durable state", conversationId);
+        }
+        catch (Exception ex)
+        {
+            // A missed typed fact must neither undo the save nor suppress legacy invalidation.
+            _logger.LogWarning(ex, "Auto-title: failed to publish update for conversation '{ConversationId}'; clients must reconcile from durable state", conversationId);
+        }
     }
 
     private async Task NotifyChangedAsync(AgentId agentId, ConversationId conversationId, CancellationToken ct)

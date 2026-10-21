@@ -17,6 +17,16 @@ namespace BotNexus.Gateway.Abstractions.Agents;
 /// For in-process isolation, this wraps a <c>BotNexus.Agent.Core.Agent</c> directly.
 /// For container or remote isolation, this would be a gRPC/HTTP proxy.
 /// </para>
+/// <para>
+/// Blocking prompt methods report cancellation or timeout through
+/// <see cref="AgentPromptInterruptedException"/>. Its partial response contains only the interrupted
+/// run's tool timeline and provider measurements; unmeasured usage remains null, and runtime-generated
+/// abort markers do not count as model turns. Calls cancelled before admission contain no run evidence.
+/// The exception carries the caller token when cancelled, otherwise the signalled run token. Internal
+/// abort does not cancel the caller's source. In-flight audited tools are closed as incomplete before
+/// interruption propagates. Streaming retains event-based completion and ordinary enumeration
+/// cancellation; it does not throw the blocking partial-response exception.
+/// </para>
 /// </remarks>
 public interface IAgentHandle : IAsyncDisposable
 {

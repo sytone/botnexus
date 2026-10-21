@@ -18,22 +18,24 @@ public sealed class MissedRunIdempotencyTests
     {
         await using var context = await CronStoreTestContext.CreateAsync();
 
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 6, 11, 12, 4, 59, TimeSpan.Zero));
         var job = CronStoreTestContext.CreateJob("dup-job") with
         {
             Schedule = "*/5 * * * *",
-            LastRunAt = DateTimeOffset.UtcNow.AddMinutes(-32)
+            TimeZone = "UTC",
+            LastRunAt = clock.GetUtcNow().AddMinutes(-32)
         };
         await context.Store.CreateAsync(job);
 
         var service = new MissedRunDetectionService(
-            context.Store, null!, NullLogger<MissedRunDetectionService>.Instance);
+            context.Store, null!, NullLogger<MissedRunDetectionService>.Instance, clock);
 
         await service.StartAsync(CancellationToken.None);
         var afterFirst = (await context.Store.GetRunHistoryAsync(JobId.From("dup-job"), limit: 500))
             .Where(r => r.Status == MissedRunDetectionService.MissedStatus)
             .ToList();
 
-        // Simulate a second gateway startup scanning the same window.
+        // The injected clock keeps both startups on exactly the same scan window.
         await service.StartAsync(CancellationToken.None);
         var afterSecond = (await context.Store.GetRunHistoryAsync(JobId.From("dup-job"), limit: 500))
             .Where(r => r.Status == MissedRunDetectionService.MissedStatus)
@@ -42,6 +44,53 @@ public sealed class MissedRunIdempotencyTests
         afterFirst.Count.ShouldBeGreaterThan(0);
         afterSecond.Count.ShouldBe(afterFirst.Count);
         afterSecond.Select(r => r.StartedAt).Distinct().Count().ShouldBe(afterSecond.Count);
+    }
+
+    [Theory]
+    [InlineData(0, 6)]
+    [InlineData(1, 6)]
+    [InlineData(2, 7)]
+    public async Task StartAsync_AdvancingScanWindow_RecordsOnlyNewOccurrences(int advanceSeconds, int expectedCount)
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var scanTime = new DateTimeOffset(2026, 6, 11, 12, 4, 59, TimeSpan.Zero);
+        var clock = new ManualTimeProvider(scanTime);
+        var job = CronStoreTestContext.CreateJob("boundary-job") with
+        {
+            Schedule = "*/5 * * * *",
+            TimeZone = "UTC",
+            LastRunAt = scanTime.AddMinutes(-32)
+        };
+        await context.Store.CreateAsync(job);
+        var service = new MissedRunDetectionService(
+            context.Store, null!, NullLogger<MissedRunDetectionService>.Instance, clock);
+
+        await service.StartAsync(CancellationToken.None);
+        var original = (await context.Store.GetRunHistoryAsync(job.Id, limit: 500))
+            .Where(r => r.Status == MissedRunDetectionService.MissedStatus).ToList();
+        original.Count.ShouldBe(6);
+
+        // The scan ceiling is exclusive: 12:05 is missed only after that instant.
+        clock.Advance(TimeSpan.FromSeconds(advanceSeconds));
+        await service.StartAsync(CancellationToken.None);
+        var advanced = (await context.Store.GetRunHistoryAsync(job.Id, limit: 500))
+            .Where(r => r.Status == MissedRunDetectionService.MissedStatus).ToList();
+        advanced.Count.ShouldBe(expectedCount);
+        advanced.Select(r => r.StartedAt).Distinct().Count().ShouldBe(expectedCount);
+        foreach (var run in original)
+        {
+            advanced.ShouldContain(r => r.Id == run.Id && r.StartedAt == run.StartedAt);
+        }
+        advanced.Select(r => r.StartedAt.ToUniversalTime()).OrderBy(t => t)
+            .ShouldBe(Enumerable.Range(0, expectedCount)
+                .Select(i => new DateTimeOffset(2026, 6, 11, 11, 35, 0, TimeSpan.Zero).AddMinutes(i * 5)));
+
+        await service.StartAsync(CancellationToken.None);
+        var replayed = (await context.Store.GetRunHistoryAsync(job.Id, limit: 500))
+            .Where(r => r.Status == MissedRunDetectionService.MissedStatus).ToList();
+        replayed.Count.ShouldBe(expectedCount);
+        replayed.Select(r => r.Id).OrderBy(id => id.Value)
+            .ShouldBe(advanced.Select(r => r.Id).OrderBy(id => id.Value));
     }
 
     [Fact]

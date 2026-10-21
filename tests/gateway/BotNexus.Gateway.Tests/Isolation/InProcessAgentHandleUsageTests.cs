@@ -96,6 +96,29 @@ public sealed class InProcessAgentHandleUsageTests
     }
 
     [Fact]
+    public async Task PromptWhenAvailableAsync_CallerCancelsAfterCompletedAgentEnd_PreservesLateCancellationAndEvidence()
+    {
+        var (agent, handle) = CreateHandle(new ScriptedProvider(new Turn("settled answer", LastUsage)));
+        await using var lifetime = handle;
+        using var cancellation = new CancellationTokenSource();
+        using var subscription = agent.Subscribe((evt, _) =>
+        {
+            if (evt is AgentEndEvent) cancellation.Cancel();
+            return Task.CompletedTask;
+        });
+
+        var interrupted = await Should.ThrowAsync<AgentPromptInterruptedException>(() =>
+            handle.PromptWhenAvailableAsync(new AgentUserMessage("hello"), () => Task.CompletedTask, cancellation.Token));
+
+        interrupted.CancellationToken.ShouldBe(cancellation.Token);
+        interrupted.PartialResponse.Content.ShouldBe("settled answer");
+        interrupted.PartialResponse.Completion.ShouldNotBeNull().Status.ShouldBe("Completed");
+        interrupted.PartialResponse.TurnCount.ShouldBe(1);
+        AssertUsage(interrupted.PartialResponse.Usage, 17, 13, 211, 31);
+        AssertAggregate(interrupted.PartialResponse, 259, 13);
+    }
+
+    [Fact]
     public async Task PromptAsync_ProviderReportedZero_RemainsMeasuredWithAbsentCacheFields()
     {
         var (_, handle) = CreateHandle(new ScriptedProvider(new Turn("free", Usage.Empty())));

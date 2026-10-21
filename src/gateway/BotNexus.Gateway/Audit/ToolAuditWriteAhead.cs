@@ -335,7 +335,11 @@ internal sealed class ToolAuditWriteAhead(
                 if (!_inFlight.TryRemove(toolCallId, out _))
                     continue;
 
-                session.AddEntry(auditSink.ProjectIncomplete(toolCallId, call.ToolName, call.SerializedArguments) with { AgentRunId = call.RunId });
+                session.AddEntry(auditSink.ProjectIncomplete(toolCallId, call.ToolName, call.SerializedArguments) with
+                {
+                    AgentRunId = call.RunId,
+                    PersistenceKey = DefaultToolAuditSink.GetInterruptedToolPersistenceKey(toolCallId, call.RunId)
+                });
             }
 
             await sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);

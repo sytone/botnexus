@@ -36,7 +36,9 @@ public sealed class AgentRunCorrelation4796Tests
         var task = handle.PromptAsync("go", cancellation.Token);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         cancellation.Cancel();
-        var response = await task.WaitAsync(TimeSpan.FromSeconds(10));
+        var interrupted = await Should.ThrowAsync<AgentPromptInterruptedException>(() => task.WaitAsync(TimeSpan.FromSeconds(10)));
+        interrupted.CancellationToken.ShouldBe(cancellation.Token);
+        var response = interrupted.PartialResponse;
         var end = terminal.ShouldNotBeNull();
         Id(response).ShouldBe(Id(end));
         response.Completion.ShouldNotBeNull().Status.ShouldBe("Cancelled");

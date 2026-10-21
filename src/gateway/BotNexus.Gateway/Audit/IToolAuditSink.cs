@@ -112,6 +112,14 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
             : $"{ToolStartPersistenceKeyPrefix}{toolCallId}";
 
     /// <summary>
+    /// Stable run-scoped result identity shared by terminal write-ahead and blocking projection.
+    /// Without run identity, retain legacy behavior rather than merging reused provider call IDs.
+    /// </summary>
+    public static string? GetInterruptedToolPersistenceKey(string? toolCallId, BotNexus.Domain.Primitives.AgentRunId? agentRunId)
+        => agentRunId is null ? null : GetToolStartPersistenceKey(toolCallId, agentRunId)?.Replace(
+            ToolStartPersistenceKeyPrefix, "tool-result:", StringComparison.Ordinal);
+
+    /// <summary>
     /// The canonical serialization of "this tool was invoked with no arguments" (#2906). Persisting
     /// this instead of <c>null</c> is what makes "no args" distinguishable from "args lost" in the
     /// session store, which is the whole point of the issue.
@@ -204,7 +212,11 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
         foreach (var record in invocations)
         {
             rows.Add(record.IsIncomplete
-                ? ProjectIncomplete(record.ToolCallId, record.ToolName, record.Arguments) with { AgentRunId = record.AgentRunId }
+                ? ProjectIncomplete(record.ToolCallId, record.ToolName, record.Arguments) with
+                {
+                    AgentRunId = record.AgentRunId,
+                    PersistenceKey = GetInterruptedToolPersistenceKey(record.ToolCallId, record.AgentRunId)
+                }
                 : ProjectResult(
                     record.ToolCallId,
                     record.ToolName,
