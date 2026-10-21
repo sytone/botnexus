@@ -10,6 +10,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Temporary residual dependency for #3040 AC6, not an implementation-facing exemption.
+         AgentToolContribution.Tools still carries IReadOnlyList<IAgentTool> (including the generated
+         constructor and Deconstruct); IAgentToolContributor itself returns that contribution record.
+         Migration owner: #3446, the remaining tool cluster under #3251.
+         Remove this reference when that migration leaves it unused; do not widen the existing
+         ten-member equality IL fence in GatewayAbstractionCoreLeakFenceArchitectureTests.
+         Tracking: https://github.com/sytone/botnexus/issues/3040
+                   https://github.com/sytone/botnexus/issues/3251
+                   https://github.com/sytone/botnexus/issues/3446 -->
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\BotNexus.Gateway.Contracts\BotNexus.Gateway.Contracts.csproj" />
