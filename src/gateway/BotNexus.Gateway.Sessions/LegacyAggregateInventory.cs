@@ -38,15 +38,27 @@ public sealed class LegacyAggregateInventory(IFileSystem fileSystem)
     /// indexes. sections.sqlite is reported under the separate data directory but never accessed.
     /// Any unsupported file, malformed record or unresolved inventory identity fails the whole call.
     /// </summary>
-    public async Task<LegacyInventoryResult> InspectAsync(string sessionDirectory, string dataDirectory,
-        CancellationToken cancellationToken = default)
+    public Task<LegacyInventoryResult> InspectAsync(string sessionDirectory, string dataDirectory,
+        CancellationToken cancellationToken = default) => InspectCoreAsync(sessionDirectory, dataDirectory, false, cancellationToken);
+    /// <summary>
+    /// Opts into explicit active-session, metadata-agent, cursor-target and retained-run identity
+    /// checks in the same byte-inventory pass. Runs are checked only against their recorded
+    /// conversation's agent when both exist, never against current session bindings. Missing
+    /// historical targets and parent conversation links are not checked. This is not complete
+    /// import-readiness certification.
+    /// No runtime store, SQLite connection, directory creation or source mutation is involved.
+    /// </summary>
+    public Task<LegacyInventoryResult> InspectRelationshipsAsync(string sessionDirectory, string dataDirectory,
+        CancellationToken cancellationToken = default) => InspectCoreAsync(sessionDirectory, dataDirectory, true, cancellationToken);
+    private async Task<LegacyInventoryResult> InspectCoreAsync(string sessionDirectory, string dataDirectory,
+        bool inspectRelationships, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionDirectory);
         ArgumentException.ThrowIfNullOrWhiteSpace(dataDirectory);
         cancellationToken.ThrowIfCancellationRequested();
         var root = fileSystem.Path.GetFullPath(sessionDirectory);
         if (!fileSystem.Directory.Exists(root)) throw new DirectoryNotFoundException("Legacy session directory does not exist.");
-        var state = new InventoryState();
+        var state = new InventoryState(inspectRelationships);
         var files = new List<LegacyInventoryFile>();
         foreach (var path in Enumerate(root, cancellationToken))
         {
@@ -65,6 +77,7 @@ public sealed class LegacyAggregateInventory(IFileSystem fileSystem)
             }
         }
         state.Validate();
+        state.Relationships?.Validate(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         return new LegacyInventoryResult(files.OrderBy(f => f.RelativePath, StringComparer.Ordinal).ToArray(),
             fileSystem.Path.Combine(fileSystem.Path.GetFullPath(dataDirectory), "sections.sqlite"));
@@ -201,6 +214,7 @@ public sealed class LegacyAggregateInventory(IFileSystem fileSystem)
                 if (meta.CreatedAt == default || meta.UpdatedAt == default ||
                     (meta.AgentId is null && legacyBinding is null)) throw Invalid(path);
                 if (!state.Metadata.TryAdd((source.Identity, source.Archive), legacyBinding?.Value)) throw Invalid(path);
+                state.Relationships?.AddMetadata(source, meta);
                 break;
             case "conversation":
                 Require(json, "conversationId", JsonValueKind.String, path);
@@ -208,14 +222,17 @@ public sealed class LegacyAggregateInventory(IFileSystem fileSystem)
                 var conversation = json.Deserialize<Conversation>(Options) ?? throw Invalid(path);
                 if (conversation.ConversationId.Value != source.Identity || conversation.AgentId.Value != source.Owner ||
                     !state.Conversations.Add(source.Identity)) throw Invalid(path);
+                state.Relationships?.AddConversation(conversation);
                 break;
             case "subagent-detail":
                 var detail = json.Deserialize<SubAgentRunDetail>(Options) ?? throw Invalid(path);
                 if (detail.SubAgentId != source.Identity || !Enum.IsDefined(detail.Status) ||
                     !state.Runs.TryAdd(detail.SubAgentId, (detail.ParentSessionId, detail.SpawningToolCallId))) throw Invalid(path);
+                state.Relationships?.AddRun(detail);
                 break;
             case "read-state":
-                ValidateReadState(json, source.Identity, path);
+                var cursorConversation = ValidateReadState(json, source.Identity, path);
+                state.Relationships?.CursorTargets.Add(cursorConversation);
                 break;
             default: throw Invalid(path);
         }
@@ -249,7 +266,7 @@ public sealed class LegacyAggregateInventory(IFileSystem fileSystem)
 
     // FileConversationReadStateStore's five-field wire record lives in Gateway.Conversations,
     // which is deliberately not a Sessions dependency. Validate its exact primitive wire shape.
-    private static void ValidateReadState(JsonElement json, string identity, string path)
+    private static string ValidateReadState(JsonElement json, string identity, string path)
     {
         var persisted = json.Deserialize<PersistedReadState>(Options) ?? throw Invalid(path);
         var world = persisted.WorldId;
@@ -261,6 +278,7 @@ public sealed class LegacyAggregateInventory(IFileSystem fileSystem)
         _ = ConversationId.From(conversation);
         var expected = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{world}\0{reader}\0{conversation}")));
         if (identity != expected) throw Invalid(path);
+        return conversation;
     }
 
     // This DTO describes persisted cursor data, never runtime configuration or world derivation.
@@ -296,8 +314,72 @@ public sealed class LegacyAggregateInventory(IFileSystem fileSystem)
 
     private static InvalidDataException Invalid(string path) => new($"Unsupported or invalid legacy source: {path}");
 
-    private sealed class InventoryState
+    // Only scalar identities survive record validation. Never retain decoded conversations,
+    // run summaries/results, cursor reader identities or transcript entries in these indexes.
+    private sealed record SessionBinding(string? Conversation, string? Agent);
+    private sealed record ConversationBinding(string Agent, string? ActiveSession);
+    private sealed record RunEndpoint(string? Conversation, string? Agent);
+    private sealed class RelationshipState
     {
+        private readonly Dictionary<string, SessionBinding> activeSessions = new(StringComparer.Ordinal);
+        private readonly List<SessionBinding> metadata = [];
+        private readonly Dictionary<string, ConversationBinding> conversations = new(StringComparer.Ordinal);
+        private readonly List<RunEndpoint> endpoints = [];
+        public HashSet<string> CursorTargets { get; } = new(StringComparer.Ordinal);
+        public void AddMetadata(Source source, FileSessionStore.SessionMeta meta)
+        {
+            var legacyBinding = meta.ConversationId;
+            var binding = new SessionBinding(legacyBinding?.Value, meta.AgentId?.Value);
+            metadata.Add(binding);
+            if (source.Archive is null) activeSessions.Add(source.Identity, binding);
+        }
+        public void AddConversation(Conversation conversation) => conversations.Add(conversation.ConversationId.Value,
+            new ConversationBinding(conversation.AgentId.Value, conversation.ActiveSessionId?.Value));
+        public void AddRun(SubAgentRunDetail run)
+        {
+            endpoints.Add(new RunEndpoint(run.ParentConversationId, run.ParentAgentId));
+            endpoints.Add(new RunEndpoint(run.ChildConversationId, run.ChildAgentId));
+        }
+        public void Validate(CancellationToken ct)
+        {
+            foreach (var pair in conversations)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (pair.Value.ActiveSession is { } session &&
+                    (!activeSessions.TryGetValue(session, out var binding) || binding.Conversation != pair.Key))
+                    throw Conflict();
+            }
+            foreach (var binding in metadata)
+            {
+                ct.ThrowIfCancellationRequested();
+                CheckAgent(binding.Conversation, binding.Agent);
+            }
+            foreach (var target in CursorTargets)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!conversations.ContainsKey(target)) throw Conflict();
+            }
+            foreach (var endpoint in endpoints)
+            {
+                ct.ThrowIfCancellationRequested();
+                // RebindSessionsAsync/SaveAsync can change a session's binding without
+                // rewriting retained runs; deletion/archive can remove the target entirely.
+                // Only the explicitly recorded conversation/agent pair is comparable:
+                // Conversation.AgentId is immutable, unlike the session's current binding.
+                CheckAgent(endpoint.Conversation, endpoint.Agent);
+            }
+        }
+        private void CheckAgent(string? conversation, string? agent)
+        {
+            if (conversation is not null && agent is not null &&
+                conversations.TryGetValue(conversation, out var binding) && agent != binding.Agent) throw Conflict();
+        }
+        // Identity strings and source content must not escape through diagnostics.
+        private static InvalidDataException Conflict() => new("Contradictory or unresolved explicit legacy relationship.");
+    }
+    private sealed class InventoryState(bool inspectRelationships)
+    {
+        public RelationshipState? Relationships { get; } = inspectRelationships ? new() : null;
         public HashSet<(string Id, string? Archive)> Histories { get; } = [];
         public Dictionary<(string Id, string? Archive), string?> Metadata { get; } = [];
         public HashSet<string> Conversations { get; } = new(StringComparer.Ordinal);

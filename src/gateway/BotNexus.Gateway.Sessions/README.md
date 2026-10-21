@@ -155,3 +155,43 @@ number of source files.
 Automatic startup import, complete relationship validation, concurrent-writer exclusion, durable
 restart progress, destination conflict handling, verified activation and recovery remain tracked
 by #4962. Retain source files; this preflight never imports, deletes, repairs or rewrites them.
+
+### Opt-in explicit relationship checks (developer API)
+Call `InspectRelationshipsAsync(sessionDirectory, dataDirectory, cancellationToken)` explicitly
+for the same byte inventory plus these checks during the same streaming pass:
+
+- Every explicit `Conversation.ActiveSessionId` resolves to an **active** history/metadata pair
+  whose metadata `ConversationId` exactly matches that conversation. An archived pair cannot
+  satisfy this link, and missing metadata binding is not inferred from an agent or session name.
+- An explicit legacy metadata `AgentId`, when accompanied by a conversation binding, agrees
+  with that conversation's agent. This includes archived metadata. Legacy agent-only metadata
+  is not assigned an inferred conversation.
+- Every read cursor references an existing conversation. World and reader values remain part
+  of the existing cursor filename hash; no local-world derivation or cross-world merging occurs.
+- For each retained sub-agent parent and child, an explicit recorded conversation/agent pair
+  must agree with that conversation's agent when the conversation still exists. Conversation
+  ownership is immutable. Missing optional identities are not filled in or inferred from a
+  session's current metadata.
+
+`InspectAsync` retains its byte-inventory behavior; none of these additional checks run there.
+Both methods return the same paths, byte lengths, record counts and SHA-256 values for a valid
+source. The opt-in indexes retain only scalar identities, scale with source records, and never
+retain transcripts, run results, summaries, or decoded conversation payloads.
+
+Retained run session identifiers are **historical references, not foreign keys to current session
+bindings**. `SessionStoreBase.RebindSessionsAsync` changes and saves a session's conversation without
+rewriting retained runs; the same session may therefore have a different current conversation or
+agent. The inspector never compares a run's recorded conversation or agent with current session
+metadata, even if that session still exists. An omitted run conversation is not inferred from it.
+Retained run references are also **not existence constraints**: `FileSessionStore.DeleteAsync`
+removes only the session files, and `ArchiveAsync` moves them out of active lookup without removing
+retained run details. Missing parent/child sessions or recorded conversations do not fail this
+check. A recorded conversation/agent mismatch still fails when the conversation exists, even if
+its run's session is gone. Archived generations are not used to guess a run's historical binding.
+Conversation `ParentConversationId` links are also excluded: the file conversation store accepts
+creation without requiring the parent target. This preflight does not impose a stronger graph rule.
+
+This is a dormant developer API, not a CLI command, startup hook, importer, configuration switch,
+writer lock, or SQLite operation. It does not certify the complete graph or activate a destination.
+Use a quiesced offline source and retain it unchanged; ordinary remote validation and independent
+review remain necessary before integrating any later migration stage.
