@@ -264,6 +264,7 @@ builder.Services.Configure<CronOptions>(options =>
                 Model = ResolveCronModel(pair.Value),
                 WebhookUrl = pair.Value.WebhookUrl,
                 ShellCommand = pair.Value.ShellCommand,
+                PreconditionCommand = pair.Value.PreconditionCommand,
                 Enabled = pair.Value.Enabled,
                 CreatedBy = pair.Value.CreatedBy,
                 Metadata = pair.Value.Metadata?.ToDictionary(entry => entry.Key, entry => (object?)entry.Value)

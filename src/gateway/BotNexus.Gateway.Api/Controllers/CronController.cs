@@ -87,6 +87,7 @@ public sealed class CronController(
                     Model = configured.Model,
                     WebhookUrl = configured.WebhookUrl,
                     ShellCommand = configured.ShellCommand,
+                    PreconditionCommand = configured.PreconditionCommand,
                     Enabled = configured.Enabled,
                     System = configured.System,
                     TimeZone = configured.TimeZone,
@@ -181,6 +182,9 @@ public sealed class CronController(
             WebhookUrl = normalizedWebhookUrl,
             CreatedAt = request.CreatedAt == default ? DateTimeOffset.UtcNow : request.CreatedAt
         };
+
+        if (toCreate.PreconditionCommand is not null && toCreate.ActionType != "agent-prompt")
+            return BadRequest("preconditionCommand is only supported for agent-prompt jobs.");
 
         if (CronModelRouting.UsesModel(toCreate.ActionType)
             && CronModelPreflight.ClassifyRejection(modelRegistry, toCreate.Model) is { } modelError)
