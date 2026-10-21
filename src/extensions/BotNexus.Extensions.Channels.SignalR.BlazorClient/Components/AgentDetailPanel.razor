@@ -996,9 +996,9 @@
 
         if (el.TryGetProperty("heartbeat", out p) && p.ValueKind == JsonValueKind.Object)
         {
-            var hb = new HeartbeatEditModel { Enabled = GetBool(p, "enabled", false), IntervalMinutes = GetInt(p, "intervalMinutes", 60), Prompt = GetStr(p, "prompt") };
+            var hb = new HeartbeatEditModel { Enabled = GetBool(p, "enabled", true), IntervalMinutes = GetInt(p, "intervalMinutes", 30), Prompt = GetStr(p, "prompt") };
             if (p.TryGetProperty("quietHours", out var qh) && qh.ValueKind == JsonValueKind.Object)
-                hb.QuietHours = new QuietHoursEditModel { Enabled = GetBool(qh, "enabled", false), Start = GetStr(qh, "start") ?? "22:00", End = GetStr(qh, "end") ?? "07:00", Timezone = GetStr(qh, "timezone") };
+                hb.QuietHours = new QuietHoursEditModel { Enabled = GetBool(qh, "enabled", false), Start = GetStr(qh, "start") ?? "23:00", End = GetStr(qh, "end") ?? "07:00", Timezone = GetStr(qh, "timezone") };
             m.Heartbeat = hb;
         }
 

@@ -269,6 +269,47 @@ public sealed class AgentPolicyEditTests : IDisposable
     }
 
     [Fact]
+    public void ExistingSparseHeartbeat_PromptEdit_DisplaysRuntimeDefaultsAndRemainsLeafOnly()
+    {
+        _handler.Config = """{"displayName":"Sample","heartbeat":{}}""";
+        var cut = Render();
+        var section = cut.FindAll("details").Single(e => e.QuerySelector("summary")?.TextContent == "Heartbeat");
+        section.QuerySelectorAll("input[type=checkbox]")[0].HasAttribute("checked").ShouldBeTrue();
+        section.QuerySelector("input[type=number]")?.GetAttribute("value").ShouldBe("30");
+        cut.Find("button.primary").HasAttribute("disabled").ShouldBeTrue();
+
+        section.QuerySelectorAll("textarea").Single().Input("Check tasks");
+        cut.Find("button.primary").Click();
+        cut.WaitForAssertion(() => _handler.Writes.Count.ShouldBe(1));
+        var (method, path, json) = _handler.Writes.Single();
+        method.ShouldBe("PATCH");
+        path.ShouldBe("/api/agents/sample/configuration");
+        JsonNode.DeepEquals(JsonNode.Parse("""{"heartbeat":{"prompt":"Check tasks"}}"""), JsonNode.Parse(json)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ExistingSparseQuietHours_TimezoneEdit_DisplaysRuntimeDefaultsAndRemainsLeafOnly()
+    {
+        _handler.Config = """{"displayName":"Sample","heartbeat":{"quietHours":{}}}""";
+        var cut = Render();
+        var section = cut.FindAll("details").Single(e => e.QuerySelector("summary")?.TextContent == "Heartbeat");
+        section.QuerySelectorAll("input[type=checkbox]")[0].HasAttribute("checked").ShouldBeTrue();
+        section.QuerySelector("input[type=number]")?.GetAttribute("value").ShouldBe("30");
+        section.QuerySelectorAll("input[type=checkbox]")[1].HasAttribute("checked").ShouldBeFalse();
+        section.QuerySelectorAll("input[placeholder='HH:mm']")[0].GetAttribute("value").ShouldBe("23:00");
+        section.QuerySelectorAll("input[placeholder='HH:mm']")[1].GetAttribute("value").ShouldBe("07:00");
+        cut.Find("button.primary").HasAttribute("disabled").ShouldBeTrue();
+
+        section.QuerySelectorAll("input.cfg-input").Last().Input("Europe/London");
+        cut.Find("button.primary").Click();
+        cut.WaitForAssertion(() => _handler.Writes.Count.ShouldBe(1));
+        var (method, path, json) = _handler.Writes.Single();
+        method.ShouldBe("PATCH");
+        path.ShouldBe("/api/agents/sample/configuration");
+        JsonNode.DeepEquals(JsonNode.Parse("""{"heartbeat":{"quietHours":{"timezone":"Europe/London"}}}"""), JsonNode.Parse(json)).ShouldBeTrue();
+    }
+
+    [Fact]
     public void ExistingHeartbeatAndQuietHours_EditsRemainLeafOnly()
     {
         _handler.Config = """{"displayName":"Sample","heartbeat":{"enabled":false,"intervalMinutes":75,"ackMaxChars":333,"future":"keep","quietHours":{"enabled":true,"start":"21:00","end":"06:00","timezone":"UTC","future":"keep"}}}""";
