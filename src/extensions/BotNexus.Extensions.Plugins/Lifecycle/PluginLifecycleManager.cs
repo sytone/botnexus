@@ -28,7 +28,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
 {
     private readonly PluginStateStore _store;
     private readonly IPluginSourceFetcher _fetcher;
-    private readonly PluginManifestParser _parser;
+    private readonly PluginImportAdapter _importer;
     private readonly TimeProvider _timeProvider;
     private readonly IPluginInstallObserver? _installObserver;
     private readonly ILogger<PluginLifecycleManager> _logger;
@@ -55,7 +55,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _fetcher = fetcher ?? throw new ArgumentNullException(nameof(fetcher));
-        _parser = parser ?? new PluginManifestParser();
+        _importer = new PluginImportAdapter(parser ?? new PluginManifestParser());
         _timeProvider = timeProvider ?? TimeProvider.System;
         _installObserver = installObserver;
         _logger = logger ?? NullLogger<PluginLifecycleManager>.Instance;
@@ -138,6 +138,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 Reference = request.Reference,
                 ResolvedVersion = staged.ResolvedVersion!,
                 ManifestVersion = manifest.Version,
+                ManifestFormat = staged.Format,
                 UpdatesEnabled = request.UpdatesEnabled,
                 InstalledAtUtc = _timeProvider.GetUtcNow(),
                 Files = files,
@@ -259,6 +260,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
             {
                 ResolvedVersion = staged.ResolvedVersion!,
                 ManifestVersion = staged.Manifest!.Version,
+                ManifestFormat = staged.Format,
                 InstalledAtUtc = _timeProvider.GetUtcNow(),
                 Files = files,
             };
@@ -367,7 +369,8 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
         string? Directory,
         string? ResolvedVersion,
         PluginManifest? Manifest,
-        PluginOperationResult? Failure);
+        PluginOperationResult? Failure,
+        PluginManifestFormat Format = PluginManifestFormat.Native);
 
     // Fetch and validate in a scratch directory under the OS temp root. Nothing here is inside
     // the plugin root, so a fault at any point in this method leaves the plugin root untouched -
@@ -420,14 +423,15 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                     "Plugin source did not report a resolved version."));
             }
 
-            var parse = _parser.ParsePluginDirectory(staging);
+            var parse = _importer.ParseDirectory(staging, expectedName);
             if (!parse.IsValid)
             {
                 TryDeleteDirectory(staging);
                 return new StagedPlugin(null, null, null, PluginOperationResult.Failure(reportName, parse.Errors));
             }
 
-            var manifest = parse.Value!;
+            var imported = parse.Value!;
+            var manifest = imported.Manifest;
             if (expectedName is not null && !string.Equals(expectedName, manifest.Name, StringComparison.Ordinal))
             {
                 TryDeleteDirectory(staging);
@@ -437,7 +441,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                     $"Plugin manifest declares name '{manifest.Name}', which does not match the requested '{expectedName}'."));
             }
 
-            return new StagedPlugin(staging, fetch.ResolvedVersion, manifest, null);
+            return new StagedPlugin(staging, fetch.ResolvedVersion, manifest, null, imported.Format);
         }
         catch
         {

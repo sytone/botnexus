@@ -59,14 +59,29 @@ public enum FilePermissionOutcome
 /// regardless, so denying them buys no security and only breaks service startup. The
 /// security win here is the removal of *inherited* grants to unprivileged groups.</para>
 ///
-/// <para><b>Never throws.</b> Securing a file is defence-in-depth; failing to secure it must
-/// never take down a running gateway or fail a CLI command that otherwise succeeded. Every
-/// entry point returns an outcome and swallows platform exceptions.</para>
+/// <para><b>Best-effort secret restriction.</b> Securing a file is defence-in-depth; failing to
+/// secure it must never take down a running gateway or fail a CLI command that otherwise succeeded.
+/// Restriction entry points return an outcome and swallow platform exceptions. In contrast,
+/// <see cref="CopyUnixFileMode"/> preserves executable output and propagates failures so recovery
+/// cannot silently accept a copy with different permissions.</para>
 /// </summary>
 public static class SecureFilePermissions
 {
     /// <summary>POSIX 0600 - owner read/write, nothing for group or other.</summary>
     public const UnixFileMode OwnerOnlyMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+    /// <summary>
+    /// Copies the complete Unix mode from an existing source file to its copy, preserving apphost
+    /// execute bits and group/other access. This is not a secret-file restriction. On Windows it
+    /// does nothing and leaves the destination ACL untouched. Unix errors propagate to the caller
+    /// so a recovery snapshot cannot be accepted after a failed permission copy.
+    /// </summary>
+    public static void CopyUnixFileMode(IFileSystem fileSystem, string sourcePath, string destinationPath)
+    {
+        ArgumentNullException.ThrowIfNull(fileSystem);
+        if (!OperatingSystem.IsWindows())
+            fileSystem.File.SetUnixFileMode(destinationPath, fileSystem.File.GetUnixFileMode(sourcePath));
+    }
 
     /// <summary>
     /// Restricts <paramref name="path"/> to owner-only access using the physical filesystem.

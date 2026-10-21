@@ -72,7 +72,7 @@ config-json|src/gateway/BotNexus.Gateway.Configuration/SecureFilePermissions.cs|
 config-json|src/gateway/BotNexus.Gateway.Configuration/Store/SqliteConfigStore.cs|1
 config-json|src/gateway/BotNexus.Gateway.Configuration/Validation/AgentDescriptorValidator.cs|1
 config-json|src/gateway/BotNexus.Gateway.Configuration/WorldId.cs|4
-config-json|src/gateway/BotNexus.Gateway.Configuration/WorldIdPersistenceService.cs|4
+config-json|src/gateway/BotNexus.Gateway.Configuration/WorldIdPersistenceService.cs|1
 config-json|src/gateway/BotNexus.Gateway.Configuration/Writers/ConfigWriterFactory.cs|2
 config-json|src/gateway/BotNexus.Gateway.Configuration/Writers/JsonConfigurationWriter.cs|1
 config-json|src/gateway/BotNexus.Gateway.Webhooks/WebhookRegistration.cs|1

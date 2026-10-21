@@ -90,6 +90,15 @@ try {
     Assert-Equal 0 $result.fixtureFailures 'Declared skips are not fixture failures.'
     Assert-Equal $true $result.isComplete 'Declared skips must not fail the gate.'
 
+    # #4624: an absent developer gateway is not an external credential requirement.
+    # Conversation coverage must execute on its candidate fixture, never certify dormant tests.
+    $dormant = Join-Path $temp 'dormant-conversation.trx'
+    Write-TrxWithResults $dormant 30 2 2 (@('Dev gateway not running at localhost:5006') * 28)
+    $result = Get-RunnerTestResult -TrxPaths @($dormant) -RequireZeroSkipped
+    Assert-Equal 28 $result.fixtureFailures 'All dormant conversation tests must fail certification.'
+    Assert-Equal $false $result.isComplete 'An absent candidate gateway cannot certify CORE.'
+    Assert-Equal 'fixture-failures' $result.failureReason 'Dormant conversation classification.'
+
     # A CRASHED FIXTURE is a build failure wearing a skip's clothing. xUnit marks every
     # dependent test NotExecuted, so failed=0 and the run reads green (2026-08-06: 265 E2E
     # tests hidden behind exit 0).
@@ -180,8 +189,8 @@ try {
     $result = Get-RunnerTestResult -TrxPaths @($collapsed) -RequireZeroSkipped -MinimumTotal 1
     Assert-Equal $true $result.isComplete 'A run meeting its floor must still pass.'
 
-    # AC6 (parity): every deliberate skip reason observed in the last green core run must still
-    # be recognised. These four messages account for all 38 skips in run 20260806211507-8a39b1d4.
+    # Retain the historical 38-skip shape: #4624 deliberately revokes its green verdict.
+    # Credential/platform skips remain recognized; all 28 dormant gateway cases fail closed.
     $green = Join-Path $temp 'green-parity.trx'
     $greenSkips = @()
     $greenSkips += ,'Dev gateway not running at localhost:5006' * 28
@@ -191,8 +200,8 @@ try {
     Write-TrxWithResults $green 12802 12764 12764 $greenSkips
     $result = Get-RunnerTestResult -TrxPaths @($green) -RequireZeroSkipped -MinimumTotal 12000
     Assert-Equal 38 $result.skipped 'Green-run parity: skipped count.'
-    Assert-Equal 0 $result.fixtureFailures 'Green-run parity: no skip may be reclassified as a crash.'
-    Assert-Equal $true $result.isComplete 'Green-run parity: the last green core run must stay green.'
+    Assert-Equal 28 $result.fixtureFailures 'Historical parity: dormant gateway skips are not coverage.'
+    Assert-Equal $false $result.isComplete 'Historical dormant coverage must no longer certify green.'
 
     # #3639: LocalCliCopilotSetupTests skips on a runner with no egress to github.com. The
     # reason was absent from the allow-list, so run 33208723818 was rejected with
@@ -224,8 +233,8 @@ try {
     Write-TrxWithResults $observed 17783 17744 17744 $observedSkips
     $result = Get-RunnerTestResult -TrxPaths @($observed) -RequireZeroSkipped -MinimumTotal 12000
     Assert-Equal 39 $result.skipped 'Rejected-run repro: skipped count matches the observed run.'
-    Assert-Equal 0 $result.fixtureFailures 'Rejected-run repro: every skip is now explained.'
-    Assert-Equal $true $result.isComplete 'Rejected-run repro: the run must certify green.'
+    Assert-Equal 28 $result.fixtureFailures 'Rejected-run repro: device-code recognition cannot excuse dormant gateway coverage.'
+    Assert-Equal $false $result.isComplete 'Rejected-run repro: dormant conversation tests still fail certification.'
 
     Write-Host 'RunnerResult.Tests.ps1: PASS'
 }

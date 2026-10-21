@@ -20,6 +20,28 @@ This guide helps you diagnose and resolve common issues with BotNexus.
 
 ## Build Failures
 
+### An update build fails after stopping the gateway
+
+`botnexus update` preserves the complete prior gateway output before building when it
+has confirmed that it stopped a running gateway. If the build fails, it verifies and
+restores that output at its original location, then makes one recovery start attempt
+using the same BotNexus home and gateway endpoint. Readiness is limited to 60 seconds.
+The update still returns the original nonzero build exit code, even if recovery succeeds.
+
+Automatic recovery is not attempted after cancellation, when no running gateway was
+found, or when shutdown was not confirmed. Missing dependencies or a missing, incomplete,
+or changed preserved copy also prevent recovery. Candidate files left by a partial build
+are never used as a substitute for verified prior output.
+
+1. Keep the build error and recovery messages; a recovery message does not mean the update succeeded.
+2. Run `botnexus gateway status` for the same installation to check whether recovery started the gateway.
+3. If recovery failed or was refused, inspect the gateway logs and fix the reported build or
+   preservation problem before retrying. Do not repeatedly start a process that may already be running.
+   A failed restore reports the preserved output path for manual investigation.
+
+This recovery covers gateway binaries and output content only. It does not undo source
+changes or roll back configuration, extensions, or database schemas.
+
 ### Error: SDK Not Found
 
 **Symptom:**

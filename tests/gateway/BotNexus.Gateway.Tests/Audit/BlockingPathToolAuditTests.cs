@@ -110,7 +110,24 @@ public sealed class BlockingPathToolAuditTests
         session!.GetHistorySnapshot().ShouldNotContain(e => e.Role.Equals(MessageRole.Tool));
     }
 
-    private static (ChatController Controller, InMemorySessionStore Store) CreateChatController(AgentResponse response)
+    [Fact]
+    public async Task RestChatPath_InterruptedRun_PersistsPartialAuditWithoutFinalAssistant()
+    {
+        var partial = ResponseWithTools();
+        var (controller, store) = CreateChatController(partial, interrupted: true);
+
+        await Should.ThrowAsync<OperationCanceledException>(() =>
+            controller.Send(new ChatRequest("agent-a", "work", "session-1"), CancellationToken.None));
+
+        var history = (await store.GetAsync(SessionId.From("session-1"))).ShouldNotBeNull().GetHistorySnapshot();
+        history.Where(row => row.Role == MessageRole.User).ShouldHaveSingleItem().Content.ShouldBe("work");
+        history.Where(row => row.Role == MessageRole.Tool).Select(row => row.ToolCallId)
+            .ShouldBe(new[] { "call-a", "call-b", "call-c" });
+        history.ShouldNotContain(row => row.Role == MessageRole.Assistant);
+        history.Last().ToolIsIncomplete.ShouldBeTrue();
+    }
+
+    private static (ChatController Controller, InMemorySessionStore Store) CreateChatController(AgentResponse response, bool interrupted = false)
     {
         var store = new InMemorySessionStore();
         var handle = new Mock<IAgentHandle>();
@@ -118,6 +135,9 @@ public sealed class BlockingPathToolAuditTests
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(s => s.GetOrCreateAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
+        if (interrupted)
+            handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new AgentPromptInterruptedException(response, new CancellationToken(true)));
         return (new ChatController(supervisor.Object, store), store);
     }
 

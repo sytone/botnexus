@@ -183,7 +183,21 @@ public sealed class HeartbeatTrigger(
         if (request?.SessionCreatedAsync is not null)
             await request.SessionCreatedAsync(sessionId, ct).ConfigureAwait(false);
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
-        var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+        AgentResponse response;
+        try
+        {
+            response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+        }
+        catch (AgentPromptInterruptedException interrupted)
+        {
+            foreach (var entry in TriggerToolAuditProjector.ProjectToolEntries(interrupted.PartialResponse))
+                session.AddEntry(entry);
+            TriggerRunCostRecorder.Record(request, interrupted.PartialResponse);
+            ProviderTokenUsageRecorder.Record(session, interrupted.PartialResponse.Usage);
+            await sessions.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+            throw new OperationCanceledException("Trigger run was interrupted.", interrupted,
+                ct.IsCancellationRequested ? ct : interrupted.CancellationToken);
+        }
 
         // #2522 residual: stamp the provider's reported prompt-token count on the blocking path so
         // the compactor's unit normalisation has a real ratio to work with (parity with the

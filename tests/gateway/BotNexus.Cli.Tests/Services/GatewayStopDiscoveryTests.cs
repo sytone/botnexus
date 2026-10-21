@@ -96,6 +96,47 @@ public sealed class GatewayStopDiscoveryTests : IDisposable
 
     private string PidFilePath => Path.Combine(_home, "gateway.pid");
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StopAsync_CarriesLiveLaunchIdentityBeforeProcessExits(bool graceful)
+    {
+        var image = GatewayApphostExe;
+        var gateway = new ExitingIdentityHandle(8181, image, graceful);
+        var result = await NewManager(gateway).StopAsync(_home, GatewayDll);
+        result.Success.ShouldBeTrue();
+        result.VerifiedGatewayBinaryPath.ShouldBe(image);
+        gateway.ExecutablePath.ShouldBeNull();
+    }
+
+    private sealed class ExitingIdentityHandle(int id, string image, bool graceful) : IGatewayProcessHandle
+    {
+        private bool _exited;
+        public int Id => id;
+        public string? ExecutablePath => _exited ? null : image;
+        public bool RequestGracefulStop() => graceful;
+        public void Kill() => _exited = true;
+        public bool WaitForExit(int milliseconds) { _exited = true; return true; }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("dotnet")]
+    [InlineData("foreign")]
+    [InlineData("deployment-A")]
+    public void RecoveryIdentity_IsLiveAndNeverSubstitutesRequestedDeployment(string? image)
+    {
+        var path = image switch
+        {
+            null => null,
+            "dotnet" => Path.Combine(_home, "dotnet.exe"),
+            "foreign" => Path.Combine(_home, "other.exe"),
+            _ => Path.Combine(_home, "deployment-A", "BotNexus.Gateway.Api.exe")
+        };
+        var observed = GatewayProcessManager.GetVerifiedGatewayBinaryPath(new FakeProcessHandle(8182, path));
+        observed.ShouldBe(image == "deployment-A" ? path : null);
+    }
+
     // -------------------------------------------------------------------------------------
     // AC1: the two outcomes are distinguishable at the manager boundary.
     // -------------------------------------------------------------------------------------

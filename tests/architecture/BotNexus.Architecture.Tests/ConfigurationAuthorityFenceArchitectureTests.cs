@@ -11,11 +11,13 @@ public sealed class ConfigurationAuthorityFenceArchitectureTests : ArchitectureT
 {
     private const string BaselineFileName = "ConfigurationAuthorityBaseline.baseline";
     private const int ExpectedBaselineEntryCount = 89;
-    private const int ExpectedBaselineOccurrenceCount = 218;
+    private const int ExpectedBaselineOccurrenceCount = 215;
 
     private static readonly Rule[] Rules =
     [
-        new("config-json", new Regex(@"config\.json", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)),
+        // Require the filename start, not a suffix such as .runtimeconfig.json. Keep tracking
+        // config.json sidecars (e.g. the reviewed config.json.lock authority) conservatively.
+        new("config-json", new Regex(@"(?<![\w.-])config\.json\b", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)),
         new("direct-writer", new Regex(@"\bnew\s+(?:JsonConfigurationWriter|SqliteConfigurationWriter|PlatformConfigWriter|FanOutConfigurationWriter)\s*\(", RegexOptions.Compiled | RegexOptions.CultureInvariant)),
         new("backend-selector", new Regex(@"\b(?:preserveStoreOnly|writeJson|useSqlite)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)),
     ];
@@ -74,6 +76,24 @@ public sealed class ConfigurationAuthorityFenceArchitectureTests : ArchitectureT
         FindRules("IPlatformConfigAccessor accessor = services.GetRequiredService<IPlatformConfigAccessor>();").ShouldBeEmpty();
         FindRules("IConfigurationWriter writer = services.GetRequiredService<IConfigurationWriter>();").ShouldBeEmpty();
         FindRules("var context = BotNexusHome.ResolveHomePath();").ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("\"config.json\"", true)]
+    [InlineData("\"/opt/botnexus/config.json\"", true)]
+    [InlineData("\"C:\\botnexus\\config.json\"", true)]
+    [InlineData("\"../CONFIG.JSON\"", true)]
+    [InlineData("/// <c>config.json</c>", true)]
+    [InlineData("\".runtimeconfig.json\"", false)]
+    [InlineData("\"BotNexus.Gateway.Api.runtimeconfig.json\"", false)]
+    [InlineData("\"/output/BotNexus.Gateway.Api.runtimeconfig.json\"", false)]
+    [InlineData("\"myconfig.json\"", false)]
+    [InlineData("\"config.json.lock\"", true)]
+    [InlineData("\"config.json.backup\"", true)]
+    [InlineData("\"config.jsonOther\"", false)]
+    public void ConfigJsonRule_MatchesActualFileName_NotManifestSuffix(string source, bool expected)
+    {
+        FindRules(source).Contains("config-json").ShouldBe(expected);
     }
 
     [Fact]

@@ -373,6 +373,9 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
                 Outcome: GatewayStopOutcome.NotRunning);
         }
 
+        // PID identity proves which process may be stopped, not which deployment it ran.
+        // Read the live image BEFORE signalling: after exit the path may be unavailable.
+        var verifiedGatewayBinaryPath = GetVerifiedGatewayBinaryPath(handle);
         var pid = discoveredByPath ? handle.Id : record!.Pid;
         var source = discoveredByPath ? "discovered by binary path" : "from PID file";
         var escalated = false;
@@ -393,7 +396,8 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
                     return new GatewayStopResult(
                         Success: true,
                         Message: $"Gateway stopped gracefully (PID {pid})",
-                        Outcome: GatewayStopOutcome.Stopped);
+                        Outcome: GatewayStopOutcome.Stopped,
+                        VerifiedGatewayBinaryPath: verifiedGatewayBinaryPath);
                 }
 
                 escalated = true;
@@ -414,7 +418,8 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
                     return new GatewayStopResult(
                         Success: true,
                         Message: $"Gateway stopped (PID {pid})",
-                        Outcome: GatewayStopOutcome.Stopped);
+                        Outcome: GatewayStopOutcome.Stopped,
+                        VerifiedGatewayBinaryPath: verifiedGatewayBinaryPath);
                 }
 
                 escalated = true;
@@ -433,7 +438,8 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             return new GatewayStopResult(
                 Success: true,
                 Message: $"Gateway process {pid} already exited",
-                Outcome: GatewayStopOutcome.Stopped);
+                Outcome: GatewayStopOutcome.Stopped,
+                VerifiedGatewayBinaryPath: verifiedGatewayBinaryPath);
         }
         catch (Win32Exception ex)
         {
@@ -469,7 +475,8 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
             Message: escalated
                 ? $"Gateway stopped (PID {pid}) after graceful timeout {_gracefulStopTimeout.TotalSeconds}s and forced kill"
                 : $"Gateway stopped (PID {pid})",
-            Outcome: GatewayStopOutcome.Stopped);
+            Outcome: GatewayStopOutcome.Stopped,
+            VerifiedGatewayBinaryPath: verifiedGatewayBinaryPath);
     }
 
     /// <summary>
@@ -530,6 +537,28 @@ public sealed class GatewayProcessManager : IGatewayProcessManager
         }
 
         return null;
+    }
+
+    internal static string? GetVerifiedGatewayBinaryPath(IGatewayProcessHandle handle)
+    {
+        try
+        {
+            var image = handle.ExecutablePath;
+            if (string.IsNullOrWhiteSpace(image) || !Path.IsPathFullyQualified(image))
+                return null;
+            // A shared dotnet host's image does not identify the managed entry point. Do not
+            // substitute the caller's binary or stale PID metadata when that identity is unknown.
+            var name = Path.GetFileName(image);
+            if (!string.Equals(name, "BotNexus.Gateway.Api", PathComparison)
+                && !string.Equals(name, "BotNexus.Gateway.Api.exe", PathComparison)
+                && !string.Equals(name, "BotNexus.Gateway.Api.dll", PathComparison))
+                return null;
+            return Path.GetFullPath(image);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            return null;
+        }
     }
 
     private static StringComparison PathComparison =>

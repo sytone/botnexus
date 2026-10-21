@@ -52,15 +52,7 @@ public sealed class FixtureSuccessSkipArchitectureTests : ArchitectureTest
     /// recorded reason. Adding an entry here is a deliberate, reviewable act.
     /// </summary>
     private static readonly IReadOnlyDictionary<string, string> EnvironmentGatedFixtures =
-        new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["LiveGatewayFixture"] =
-                "BotNexus.Conversation.Tests probes a DEVELOPER-RUN gateway at localhost:5006 that no " +
-                "CI or container gate starts. Asserting IsAvailable would fail every unattended run. " +
-                "Recorded finding (#2491 AC4): this suite is permanently dark in CI - its ~28 tests " +
-                "have never contributed gate signal and should be either re-hosted on a self-provisioned " +
-                "fixture or removed from the gate scope.",
-        };
+        new Dictionary<string, string>(StringComparer.Ordinal);
 
     /// <summary>
     /// Public boolean fixture properties that act as a collection-wide kill switch. Matched on the

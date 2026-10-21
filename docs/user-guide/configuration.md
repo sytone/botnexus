@@ -259,6 +259,14 @@ botnexus config set agents.assistant.toolPolicy.neverApprove '[]'
 botnexus config set agents.assistant.toolPolicy.denied '[]'
 ```
 
+### Enable or disable new work
+
+The `enabled` setting defaults to `true`. Set it to `false` to prevent new work without deleting the agent. Already-admitted work is not cancelled.
+
+In the web interface, open **Agents**, edit the agent, change **Enabled**, and select **Save Changes**. Disabled agents remain in this management list so you can edit or re-enable them; runtime pickers exclude them.
+
+A successful save confirms that the configuration was saved, not that the provider is signed in or an agent instance is running. Explicitly enabling through the editor checks that the provider/model pair is registered. Provider authentication and cold-start runtime validation still happen when work starts.
+
 ### Sub-agent Workspace Root
 
 Each background sub-agent runs in an isolated temporary workspace. By default these are created under `<OS temp>/botnexus-subagent-workspaces`. Set `gateway.subAgents.workspaceRoot` to relocate them - for example to a larger or faster volume:

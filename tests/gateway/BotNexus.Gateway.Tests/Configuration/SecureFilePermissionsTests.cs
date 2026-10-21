@@ -49,6 +49,54 @@ public sealed class SecureFilePermissionsTests : IDisposable
         return path;
     }
 
+    [Theory]
+    [InlineData(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute)]
+    [InlineData(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead)]
+    public void CopyUnixFileMode_RealFiles_PreservesModeOrLeavesWindowsAclUnchanged(UnixFileMode mode)
+    {
+        var source = NewFile("apphost");
+        var destination = NewFile("apphost-copy");
+        var fileSystem = new FileSystem();
+        var originalContent = File.ReadAllText(destination);
+
+        if (OperatingSystem.IsWindows())
+        {
+            var before = new FileInfo(destination).GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+
+            SecureFilePermissions.CopyUnixFileMode(fileSystem, source, destination);
+
+            new FileInfo(destination).GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.Access)
+                .ShouldBe(before, "Copying Unix mode must not narrow a Windows apphost's ACL.");
+        }
+        else
+        {
+            File.SetUnixFileMode(source, mode);
+            File.SetUnixFileMode(destination, SecureFilePermissions.OwnerOnlyMode);
+
+            SecureFilePermissions.CopyUnixFileMode(fileSystem, source, destination);
+
+            File.GetUnixFileMode(source).ShouldBe(mode);
+            File.GetUnixFileMode(destination).ShouldBe(mode,
+                "Preserve the entire source mode, including execute and group/other bits, rather than applying secret-file mode 0600.");
+        }
+
+        File.ReadAllText(destination).ShouldBe(originalContent);
+    }
+
+    [Fact]
+    public void CopyUnixFileMode_MissingSource_ThrowsOnUnixRatherThanSilentlyLosingMode()
+    {
+        var destination = NewFile("apphost-copy");
+        var missing = Path.Combine(_root, "missing-apphost");
+        Action copy = () => SecureFilePermissions.CopyUnixFileMode(new FileSystem(), missing, destination);
+
+        if (OperatingSystem.IsWindows())
+            Should.NotThrow(copy);
+        else
+            Should.Throw<FileNotFoundException>(copy);
+    }
+
     /// <summary>
     /// The core guarantee: the restriction is genuinely applied on the platform under test, and
     /// reading the permission state back proves it. This test has no OS guard on the assertion

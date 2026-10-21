@@ -101,7 +101,21 @@ public sealed class SoulTrigger(
         if (request?.SessionCreatedAsync is not null)
             await request.SessionCreatedAsync(sessionId, ct).ConfigureAwait(false);
         var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
-        var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+        AgentResponse response;
+        try
+        {
+            response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+        }
+        catch (AgentPromptInterruptedException interrupted)
+        {
+            foreach (var entry in TriggerToolAuditProjector.ProjectToolEntries(interrupted.PartialResponse))
+                session.AddEntry(entry);
+            TriggerRunCostRecorder.Record(request, interrupted.PartialResponse);
+            ProviderTokenUsageRecorder.Record(session, interrupted.PartialResponse.Usage);
+            await sessions.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+            throw new OperationCanceledException("Trigger run was interrupted.", interrupted,
+                ct.IsCancellationRequested ? ct : interrupted.CancellationToken);
+        }
 
         // #2985: report the turn's tool-invocation count back to the caller. AgentPromptAction
         // routes soul-enabled agents through THIS trigger rather than CronTrigger, so without
@@ -154,7 +168,19 @@ public sealed class SoulTrigger(
                 var reflectionPrompt = soulConfig.ReflectionPrompt!;
                 previousSession.AddEntry(new SessionEntry { Role = MessageRole.User, Content = reflectionPrompt });
                 var reflectionHandle = await supervisor.GetOrCreateAsync(agentId, previousSession.SessionId, ct).ConfigureAwait(false);
-                var reflectionResponse = await reflectionHandle.PromptAsync(reflectionPrompt, ct).ConfigureAwait(false);
+                AgentResponse reflectionResponse;
+                try
+                {
+                    reflectionResponse = await reflectionHandle.PromptAsync(reflectionPrompt, ct).ConfigureAwait(false);
+                }
+                catch (AgentPromptInterruptedException interrupted)
+                {
+                    foreach (var entry in TriggerToolAuditProjector.ProjectToolEntries(interrupted.PartialResponse))
+                        previousSession.AddEntry(entry);
+                    await sessions.SaveAsync(previousSession, CancellationToken.None).ConfigureAwait(false);
+                    throw new OperationCanceledException("Soul reflection was interrupted.", interrupted,
+                        ct.IsCancellationRequested ? ct : interrupted.CancellationToken);
+                }
                 // #2127: reflection-on-seal is a blocking run too - record its tool timeline durably.
                 foreach (var toolEntry in TriggerToolAuditProjector.ProjectToolEntries(reflectionResponse))
                     previousSession.AddEntry(toolEntry);

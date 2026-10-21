@@ -95,7 +95,9 @@ public static class SkillDiscovery
             var dirName = Path.GetFileName(skillDir);
             try
             {
-                var skillFileInfo = fileSystem.FileInfo.New(skillMdPath);
+                var installationFiles = SkillInstallationValidator.CollectFiles(skillDir, fileSystem);
+                var resolvedSkillMdPath = SkillInstallationValidator.ResolveContainedPath(skillMdPath, skillDir, fileSystem);
+                var skillFileInfo = fileSystem.FileInfo.New(resolvedSkillMdPath);
                 if (skillFileInfo.Length > MaxSkillFileBytes)
                 {
                     logger?.LogWarning(
@@ -104,7 +106,7 @@ public static class SkillDiscovery
                     continue;
                 }
 
-                var content = fileSystem.File.ReadAllText(skillMdPath);
+                var content = fileSystem.File.ReadAllText(resolvedSkillMdPath);
                 var skill = SkillParser.Parse(dirName, content, skillDir, source);
 
                 if (!TryValidate(skill, dirName, skillDir, logger, out var reason))
@@ -168,7 +170,7 @@ public static class SkillDiscovery
 
                 // Enrich the skill with its bundled support files so they can be surfaced
                 // as load-on-demand context without injecting the entire directory.
-                skills[skill.Name] = skill with { LinkedFiles = DiscoverLinkedFiles(skillDir, fileSystem) };
+                skills[skill.Name] = skill with { LinkedFiles = DiscoverLinkedFiles(skillDir, installationFiles, fileSystem) };
             }
             catch (Exception ex)
             {
@@ -224,7 +226,7 @@ public static class SkillDiscovery
     /// (references/, templates/, scripts/, assets/) for a single skill. Paths are returned
     /// relative to the skill directory with forward slashes for cross-platform stability.
     /// </summary>
-    private static IReadOnlyList<SkillLinkedFile> DiscoverLinkedFiles(string skillDir, IFileSystem fileSystem)
+    private static IReadOnlyList<SkillLinkedFile> DiscoverLinkedFiles(string skillDir, IReadOnlyList<string> installationFiles, IFileSystem fileSystem)
     {
         var linked = new List<SkillLinkedFile>();
 
@@ -234,7 +236,8 @@ public static class SkillDiscovery
             if (!fileSystem.Directory.Exists(groupDir))
                 continue;
 
-            foreach (var file in fileSystem.Directory.GetFiles(groupDir, "*", SearchOption.AllDirectories))
+            foreach (var file in installationFiles.Where(file =>
+                         Path.GetRelativePath(skillDir, file).Replace('\\', '/').StartsWith(group + "/", StringComparison.OrdinalIgnoreCase)))
             {
                 var relative = Path.GetRelativePath(skillDir, file).Replace('\\', '/');
                 long size = 0;
