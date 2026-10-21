@@ -98,6 +98,15 @@ public sealed record SubAgentInfo
     /// </summary>
     public string? ResultSummary { get; init; }
 
+    /// <summary>True when cold reconstruction could not recover a full summary copy; never promote the bounded fallback on persistence.</summary>
+    public bool RetainedResultFullCopyUnavailable { get; init; }
+
+    /// <summary>Original retained summary length when this info came from a bounded cold projection.</summary>
+    public int? RetainedResultOriginalLength { get; init; }
+
+    /// <summary>Whether the retained cold projection omitted summary characters.</summary>
+    public bool RetainedResultSummaryTruncated { get; init; }
+
     /// <summary>
     /// Gets the structured result retained when a bounded run stops before ordinary completion.
     /// Narrated summary text is explicitly unverified; tool-backed evidence is projected separately.

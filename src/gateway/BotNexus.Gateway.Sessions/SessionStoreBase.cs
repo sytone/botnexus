@@ -504,6 +504,10 @@ public abstract class SessionStoreBase : ISessionStore
         => Task.FromResult<SubAgentRunDetail?>(null);
 
     /// <inheritdoc />
+    public virtual Task<string?> GetSubAgentResultSummaryAsync(string subAgentId, CancellationToken cancellationToken = default)
+        => Task.FromResult<string?>(null);
+
+    /// <inheritdoc />
     public virtual Task<SubAgentRunDetail?> GetSubAgentSessionAsync(string subAgentId, CancellationToken cancellationToken = default)
         => Task.FromResult<SubAgentRunDetail?>(null);
 

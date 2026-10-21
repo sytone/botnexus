@@ -3263,12 +3263,24 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var cmd = conn.CreateCommand();
+        // An immediate transaction makes identity validation and the replacement one boundary.
+        await using var transaction = conn.BeginTransaction(deferred: false);
+        cmd.Transaction = transaction;
+        cmd.CommandText = "SELECT id,parent_session_id,parent_agent_id,child_agent_id,archetype,started_at,ended_at,status,detail_json FROM sub_agent_sessions WHERE id=@id";
+        cmd.Parameters.AddWithValue("@id", info.SubAgentId);
+        await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) return;
+            SubAgentAdmissionIdentity.EnsureUnchanged(reader.MapSubAgentSession(), info);
+        }
+        cmd.Parameters.Clear();
         cmd.CommandText = "UPDATE sub_agent_sessions SET ended_at=@endedAt, status=@status, detail_json=@detail WHERE id=@id";
         cmd.Parameters.AddWithValue("@id", info.SubAgentId);
         cmd.Parameters.AddWithValue("@endedAt", info.CompletedAt.HasValue ? info.CompletedAt.Value.ToString("O") : DBNull.Value);
         cmd.Parameters.AddWithValue("@status", info.Status.ToString());
-        cmd.Parameters.AddWithValue("@detail", JsonSerializer.Serialize(SubAgentRunDetail.FromLive(info), JsonOptions));
+        cmd.Parameters.AddWithValue("@detail", (_redactor?.Redact(JsonSerializer.Serialize(SubAgentRetainedRun.Create(info), JsonOptions)) ?? JsonSerializer.Serialize(SubAgentRetainedRun.Create(info), JsonOptions)));
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -3283,6 +3295,19 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         command.Parameters.AddWithValue("$call", toolCallId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         return await reader.ReadAsync(cancellationToken).ConfigureAwait(false) ? reader.MapSubAgentSession() : null;
+    }
+
+    /// <inheritdoc />
+    public override async Task<string?> GetSubAgentResultSummaryAsync(string subAgentId, CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT detail_json FROM sub_agent_sessions WHERE id=$id";
+        command.Parameters.AddWithValue("$id", subAgentId);
+        var json = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
+        return json is null ? null : JsonSerializer.Deserialize<SubAgentRetainedRun>(json, JsonOptions)?.FullResultSummary;
     }
 
     /// <inheritdoc />
@@ -3396,7 +3421,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private static void BindSubAgent(SqliteCommand cmd, SubAgentInfo info)
+    private void BindSubAgent(SqliteCommand cmd, SubAgentInfo info)
     {
         cmd.Parameters.AddWithValue("@id", info.SubAgentId);
         cmd.Parameters.AddWithValue("@parentSessionId", info.ParentSessionId.Value);
@@ -3406,7 +3431,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         cmd.Parameters.AddWithValue("@spawnCall", (object?)info.SpawningToolCallId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@startedAt", info.StartedAt.ToString("O"));
         cmd.Parameters.AddWithValue("@status", info.Status.ToString());
-        cmd.Parameters.AddWithValue("@detail", JsonSerializer.Serialize(SubAgentRunDetail.FromLive(info), JsonOptions));
+        cmd.Parameters.AddWithValue("@detail", (_redactor?.Redact(JsonSerializer.Serialize(SubAgentRetainedRun.Create(info), JsonOptions)) ?? JsonSerializer.Serialize(SubAgentRetainedRun.Create(info), JsonOptions)));
     }
 
     /// <inheritdoc />
