@@ -111,10 +111,21 @@ public sealed class AwaitedToolParentLoopTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task PromptAsync_CancelledWhileAwaitingTool_StopsWithoutSecondProviderCall()
+    public Task PromptAsync_CancelledWhileAwaitingTool_StopsWithoutSecondProviderCall()
+        => AssertCancellationAsync(holdLinkedPropagation: false);
+
+    [Fact]
+    public Task PromptAsync_CancelledBeforeLinkedPropagation_CancelsToolBeforeParentStops()
+        => AssertCancellationAsync(holdLinkedPropagation: true);
+
+    [Fact]
+    public Task PromptAsync_CancelledBeforeLinkedPropagation_ThrowingToolCallbackStillAborts()
+        => AssertCancellationAsync(holdLinkedPropagation: true, throwOnCancellation: true);
+
+    private async Task AssertCancellationAsync(bool holdLinkedPropagation, bool throwOnCancellation = false)
     {
         var api = $"awaited-tool-cancel-{Guid.NewGuid():N}";
-        var tool = new AwaitedResultTool();
+        var tool = new AwaitedResultTool { ThrowOnCancellation = throwOnCancellation };
         var providerCalls = 0;
         using var provider = TestHelpers.RegisterProvider(new TestApiProvider(
             api,
@@ -127,15 +138,48 @@ public sealed class AwaitedToolParentLoopTests(ITestOutputHelper output)
         var initial = new AgentInitialState(Model: model, Tools: [tool], Messages: []);
         var agent = new BotNexus.Agent.Core.Agent(TestHelpers.CreateTestOptions(initial, model));
         using var cancellation = new CancellationTokenSource();
+        using var releasePropagation = new ManualResetEventSlim();
+        var callbackEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationTokenRegistration propagationBarrier = default;
+        Task cancel = Task.CompletedTask;
+        if (holdLinkedPropagation)
+        {
+            tool.BeforeAwait = () => propagationBarrier = tool.AmbientToken.Register(() =>
+            {
+                // Registered after the tool's linked source but before the executor's WaitAsync.
+                // Hold the older linked callback until the parent has reached its terminal boundary.
+                callbackEntered.TrySetResult(true);
+                releasePropagation.Wait(DiagnosticDeadline).ShouldBeTrue();
+            });
+        }
         var elapsed = Stopwatch.StartNew();
         var run = agent.PromptAsync("await child", cancellation.Token);
         await WithFailureDiagnosticsAsync(async () =>
         {
             await tool.Entered.Task.WaitAsync(DiagnosticDeadline);
-            cancellation.Cancel();
+            if (holdLinkedPropagation)
+            {
+                cancel = Task.Run(() => cancellation.Cancel());
+                await callbackEntered.Task.WaitAsync(DiagnosticDeadline);
+                _ = await run.WaitAsync(DiagnosticDeadline);
+                output.WriteLine(JsonSerializer.Serialize(new
+                {
+                    AmbientCancelled = tool.AmbientToken.IsCancellationRequested,
+                    ExecutionCancelled = tool.ExecutionToken.IsCancellationRequested,
+                    ParentCompleted = run.IsCompleted,
+                    LinkedPropagationHeld = !releasePropagation.IsSet
+                }));
+                tool.AmbientToken.IsCancellationRequested.ShouldBeTrue();
+                tool.ExecutionToken.IsCancellationRequested.ShouldBeTrue();
+            }
+            else
+            {
+                cancellation.Cancel();
+            }
             await tool.Cancelled.Task.WaitAsync(DiagnosticDeadline);
             var messages = await run.WaitAsync(DiagnosticDeadline);
 
+            tool.ThrowingCallbackCalls.ShouldBe(throwOnCancellation ? 1 : 0);
             providerCalls.ShouldBe(1);
             tool.Executions.ShouldBe(1);
             messages.OfType<ToolResultAgentMessage>().ShouldBeEmpty();
@@ -147,6 +191,9 @@ public sealed class AwaitedToolParentLoopTests(ITestOutputHelper output)
         snapshot => output.WriteLine(snapshot),
         async () =>
         {
+            releasePropagation.Set();
+            await cancel.WaitAsync(DiagnosticDeadline);
+            propagationBarrier.Dispose();
             cancellation.Cancel();
             tool.Complete("cleanup");
             _ = await run.WaitAsync(DiagnosticDeadline);
@@ -317,11 +364,17 @@ public sealed class AwaitedToolParentLoopTests(ITestOutputHelper output)
         private readonly TaskCompletionSource<string> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _executions;
         private int _argumentsPrepared;
+        private int _throwingCallbackCalls;
 
+        public bool ThrowOnCancellation { get; init; }
+        public int ThrowingCallbackCalls => Volatile.Read(ref _throwingCallbackCalls);
         public TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<bool> Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Executions => Volatile.Read(ref _executions);
         public int ArgumentsPrepared => Volatile.Read(ref _argumentsPrepared);
+        public CancellationToken AmbientToken { get; private set; }
+        public CancellationToken ExecutionToken { get; private set; }
+        public Action? BeforeAwait { get; set; }
         public string Name => "await_child_result";
         public string Label => "Await child result";
         public Tool Definition => new(Name, "Signal-driven awaited result test seam", Schema);
@@ -332,6 +385,7 @@ public sealed class AwaitedToolParentLoopTests(ITestOutputHelper output)
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _argumentsPrepared);
+            AmbientToken = cancellationToken;
             return Task.FromResult(arguments);
         }
 
@@ -342,10 +396,22 @@ public sealed class AwaitedToolParentLoopTests(ITestOutputHelper output)
             AgentToolUpdateCallback? onUpdate = null)
         {
             Interlocked.Increment(ref _executions);
+            ExecutionToken = cancellationToken;
+            BeforeAwait?.Invoke();
+            var pendingResult = _result.Task.WaitAsync(cancellationToken);
+            // Register last so cancellation invokes this before completing the tool's wait;
+            // otherwise the resumed tool could dispose the callback before it is invoked.
+            using var throwingCallback = ThrowOnCancellation
+                ? cancellationToken.Register(() =>
+                {
+                    Interlocked.Increment(ref _throwingCallbackCalls);
+                    throw new InvalidOperationException("tool cancellation callback failed");
+                })
+                : default;
             Entered.TrySetResult(true);
             try
             {
-                var result = await _result.Task.WaitAsync(cancellationToken);
+                var result = await pendingResult;
                 return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, result)]);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
