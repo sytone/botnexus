@@ -120,12 +120,14 @@ public sealed class McpServerManager : IAsyncDisposable
         string serverId,
         McpServerConfig serverConfig,
         bool useToolPrefix = true,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool requireStarted = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         if (!TryCreateTransport(serverConfig, out var transport, out var transportError))
         {
+            if (requireStarted) throw new InvalidOperationException($"MCP server '{serverId}' could not start: {transportError}");
             _logger.LogWarning(
                 "MCP server '{ServerId}' has an insecure or invalid url: {ErrorMessage} Skipping server.",
                 serverId,
@@ -134,9 +136,14 @@ public sealed class McpServerManager : IAsyncDisposable
         }
 
         if (transport is null)
+        {
+            if (requireStarted) throw new InvalidOperationException($"MCP server '{serverId}' has no transport configuration.");
             return [];
+        }
 
         var client = new McpClient(transport, serverId, _logger);
+        // Track strict starts before initialization so failed cleanup remains retryable.
+        if (requireStarted) { lock (_clients) { _clients.Add(client); } }
 
         using var initCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         initCts.CancelAfter(serverConfig.InitTimeoutMs);
@@ -147,7 +154,9 @@ public sealed class McpServerManager : IAsyncDisposable
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            await client.DisposeAsync().ConfigureAwait(false);
+            if (requireStarted) await client.StopAsync().ConfigureAwait(false);
+            else await client.DisposeAsync().ConfigureAwait(false);
+            if (requireStarted) { lock (_clients) { _clients.Remove(client); } throw; }
             _logger.LogWarning(
                 "MCP server '{ServerId}' did not initialize within {TimeoutMs}ms. Skipping server.",
                 serverId, serverConfig.InitTimeoutMs);
@@ -155,17 +164,16 @@ public sealed class McpServerManager : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            await client.DisposeAsync().ConfigureAwait(false);
+            if (requireStarted) await client.StopAsync().ConfigureAwait(false);
+            else await client.DisposeAsync().ConfigureAwait(false);
+            if (requireStarted) { lock (_clients) { _clients.Remove(client); } throw; }
             _logger.LogWarning(ex,
                 "MCP server '{ServerId}' failed to initialize: {ErrorMessage}. Skipping server.",
                 serverId, ex.Message);
             return [];
         }
 
-        lock (_clients)
-        {
-            _clients.Add(client);
-        }
+        if (!requireStarted) { lock (_clients) { _clients.Add(client); } }
 
         var mcpTools = await client.ListToolsAsync(ct).ConfigureAwait(false);
 
@@ -206,27 +214,26 @@ public sealed class McpServerManager : IAsyncDisposable
         lock (_clients)
         {
             matched = _clients.Where(c => predicate(c.ServerId)).ToList();
-            foreach (var client in matched)
-            {
-                _clients.Remove(client);
-            }
         }
 
         var stopped = new List<string>(matched.Count);
+        var failures = new List<Exception>();
         foreach (var client in matched)
         {
-            stopped.Add(client.ServerId);
+            ct.ThrowIfCancellationRequested();
             try
             {
-                await client.DisposeAsync().ConfigureAwait(false);
+                await client.StopAsync(ct).ConfigureAwait(false);
+                lock (_clients) { _clients.Remove(client); }
+                stopped.Add(client.ServerId);
             }
-            catch
+            catch (Exception ex)
             {
-                // Best-effort cleanup — the client is already off the roster either way, so a
-                // faulting dispose must not leave a stopped server still looking registered.
+                // Keep failed connections on the manager's roster so teardown is retryable.
+                failures.Add(ex);
             }
         }
-
+        if (failures.Count > 0) throw new AggregateException("MCP server teardown failed.", failures);
         return stopped;
     }
 

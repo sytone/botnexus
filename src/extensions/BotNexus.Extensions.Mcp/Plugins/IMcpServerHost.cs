@@ -52,7 +52,7 @@ public sealed class McpServerManagerHost(McpServerManager manager) : IMcpServerH
         McpServerConfig serverConfig,
         bool useToolPrefix,
         CancellationToken cancellationToken = default)
-        => _manager.StartSingleServerAsync(serverId, serverConfig, useToolPrefix, cancellationToken);
+        => _manager.StartSingleServerAsync(serverId, serverConfig, useToolPrefix, cancellationToken, requireStarted: true);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<string>> StopServersAsync(

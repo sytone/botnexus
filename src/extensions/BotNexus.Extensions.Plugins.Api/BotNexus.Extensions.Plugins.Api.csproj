@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BotNexus.Extensions.Plugins\BotNexus.Extensions.Plugins.csproj" />
+    <ProjectReference Include="..\BotNexus.Extensions.Mcp\BotNexus.Extensions.Mcp.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
   </ItemGroup>
 

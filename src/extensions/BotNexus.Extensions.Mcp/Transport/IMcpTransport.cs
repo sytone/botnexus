@@ -19,6 +19,13 @@ public interface IMcpTransport : IAsyncDisposable
     /// <summary>Receive a JSON-RPC response from the server.</summary>
     Task<JsonRpcResponse> ReceiveAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// Confirms teardown or throws without relinquishing resources needed for retry.
+    /// Unknown transports fail closed; best-effort DisconnectAsync remains compatible.
+    /// </summary>
+    Task DisconnectStrictAsync(CancellationToken ct = default) =>
+        Task.FromException(new NotSupportedException("Transport does not support confirmed teardown."));
+
     /// <summary>Disconnect from the MCP server.</summary>
     Task DisconnectAsync(CancellationToken ct = default);
 }

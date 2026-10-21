@@ -273,8 +273,14 @@ public sealed class HttpSseMcpTransport : IMcpTransport
     }
 
     /// <inheritdoc />
-    public async Task DisconnectAsync(CancellationToken ct = default)
+    public Task DisconnectAsync(CancellationToken ct = default) => DisconnectCoreAsync(false, ct);
+
+    /// <inheritdoc />
+    public Task DisconnectStrictAsync(CancellationToken ct = default) => DisconnectCoreAsync(true, ct);
+
+    private async Task DisconnectCoreAsync(bool strict, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         _connected = false;
 
         if (_sseCts is not null)
@@ -288,8 +294,8 @@ public sealed class HttpSseMcpTransport : IMcpTransport
             {
                 await _sseTask.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
             }
-            catch (TimeoutException) { }
-            catch (OperationCanceledException) { }
+            catch (TimeoutException) when (!strict) { }
+            catch (OperationCanceledException) when (!strict) { }
         }
 
         // Attempt session termination per MCP spec
@@ -297,10 +303,16 @@ public sealed class HttpSseMcpTransport : IMcpTransport
         {
             try
             {
-                var request = CreateRequest(HttpMethod.Delete);
-                await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
+                using var request = CreateRequest(HttpMethod.Delete);
+                using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
+                // MCP permits 405 (client termination unsupported); 404 means already expired.
+                // https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#session-management
+                if (strict && response.StatusCode is not HttpStatusCode.MethodNotAllowed and not HttpStatusCode.NotFound)
+                    response.EnsureSuccessStatusCode();
+                if (response.IsSuccessStatusCode || response.StatusCode is HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotFound)
+                    _sessionId = null;
             }
-            catch
+            catch when (!strict)
             {
                 // Best-effort cleanup
             }

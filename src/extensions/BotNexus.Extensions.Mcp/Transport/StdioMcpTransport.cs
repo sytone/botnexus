@@ -106,12 +106,25 @@ public sealed class StdioMcpTransport : IMcpTransport
 
         var startInfo = BuildStartInfo();
 
-        _process = new Process { StartInfo = startInfo };
-        if (!_process.Start())
+        var process = new Process { StartInfo = startInfo };
+        try
         {
-            throw new InvalidOperationException($"Failed to start MCP server process: {_command}");
+            if (!process.Start())
+            {
+                throw new InvalidOperationException($"Failed to start MCP server process: {_command}");
+            }
+        }
+        catch
+        {
+            // No OS process was started, so HasExited cannot confirm termination. Do not
+            // publish this wrapper to strict cleanup or retain ownership of a failed launch.
+            process.Dispose();
+            throw;
         }
 
+        // Retain every successfully started process before accessing its streams: failures
+        // from here on still require strict, confirmed termination and retry ownership.
+        _process = process;
         _writer = _process.StandardInput;
         _reader = _process.StandardOutput;
 
@@ -190,8 +203,16 @@ public sealed class StdioMcpTransport : IMcpTransport
     /// </summary>
     internal static readonly TimeSpan DefaultTerminationGrace = TimeSpan.FromSeconds(1);
 
+    // The production defaults bind directly to Process; tests replace only these OS operations.
+    internal (Func<bool> HasExited, Func<CancellationToken, Task> WaitForExit, Action Kill)? TerminationBoundary { get; set; }
+
     /// <inheritdoc />
-    public async Task DisconnectAsync(CancellationToken ct = default)
+    public Task DisconnectStrictAsync(CancellationToken ct = default) => DisconnectCoreAsync(true, ct);
+
+    /// <inheritdoc />
+    public Task DisconnectAsync(CancellationToken ct = default) => DisconnectCoreAsync(false, ct);
+
+    private async Task DisconnectCoreAsync(bool strict, CancellationToken ct = default)
     {
         if (_readLoopCts is not null)
         {
@@ -204,11 +225,11 @@ public sealed class StdioMcpTransport : IMcpTransport
             {
                 await _readLoopTask.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
             }
-            catch (TimeoutException) { }
-            catch (OperationCanceledException) { }
+            catch (TimeoutException) when (!strict) { }
+            catch (OperationCanceledException) when (!strict) { }
         }
 
-        await TerminateProcessAsync().ConfigureAwait(false);
+        await TerminateCoreAsync(null, strict, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -219,41 +240,38 @@ public sealed class StdioMcpTransport : IMcpTransport
     /// (issue #2723). This method never throws.
     /// </summary>
     /// <param name="graceWindow">Grace period allowed after stdin close. Defaults to one second.</param>
-    public async Task TerminateProcessAsync(TimeSpan? graceWindow = null)
+    public Task TerminateProcessAsync(TimeSpan? graceWindow = null) => TerminateCoreAsync(graceWindow, false, CancellationToken.None);
+
+    private async Task TerminateCoreAsync(TimeSpan? graceWindow, bool strict, CancellationToken ct)
     {
         var process = _process;
-        if (process is null)
-        {
-            return;
-        }
-
-        // Graceful signal: closing stdin is how a well-behaved stdio MCP server learns to shut down.
+        var boundary = TerminationBoundary;
+        if (boundary is null && process is null) return;
+        var hasExited = boundary?.HasExited ?? (() => process!.HasExited);
+        var waitForExit = boundary?.WaitForExit ?? (token => process!.WaitForExitAsync(token));
+        var kill = boundary?.Kill ?? (() => process!.Kill(entireProcessTree: true));
         try
         {
-            _writer?.Close();
-        }
-        catch { }
-
-        var grace = graceWindow ?? DefaultTerminationGrace;
-        if (grace > TimeSpan.Zero)
-        {
-            try
+            ct.ThrowIfCancellationRequested();
+            try { _writer?.Close(); } catch { } // still attempt kill if stdin close failed
+            if (hasExited()) return;
+            var grace = graceWindow ?? DefaultTerminationGrace;
+            if (grace > TimeSpan.Zero)
             {
-                using var graceCts = new CancellationTokenSource(grace);
-                await process.WaitForExitAsync(graceCts.Token).ConfigureAwait(false);
+                using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                graceCts.CancelAfter(grace);
+                try { await waitForExit(graceCts.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
             }
-            catch { }
+            if (hasExited()) return;
+            try { kill(); }
+            catch when (hasExited()) { } // benign exit racing Kill
+            using var killCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            killCts.CancelAfter(TimeSpan.FromSeconds(5));
+            await waitForExit(killCts.Token).ConfigureAwait(false);
+            if (!hasExited()) throw new IOException("MCP process termination was not confirmed.");
         }
-
-        TryKillProcess();
-
-        // Bounded wait so callers observe a genuinely dead process rather than a pending kill.
-        try
-        {
-            using var killCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await process.WaitForExitAsync(killCts.Token).ConfigureAwait(false);
-        }
-        catch { }
+        catch when (!strict) { } // existing best-effort contract
     }
 
     /// <inheritdoc />
@@ -334,18 +352,6 @@ public sealed class StdioMcpTransport : IMcpTransport
         return new InvalidOperationException(
             "MCP server stdin pipe is closed; unable to send message.",
             innerException);
-    }
-
-    private void TryKillProcess()
-    {
-        try
-        {
-            if (_process is not null && !_process.HasExited)
-            {
-                _process.Kill(entireProcessTree: true);
-            }
-        }
-        catch { }
     }
 
     /// <summary>

@@ -141,6 +141,46 @@ plugin directories can report all bad manifests in one pass.
 directory holding one subdirectory per installed plugin, plus an `installed-plugins.json`
 state document recording what is installed.
 
+### Awaited runtime integration
+
+Core `BotNexus.Extensions.Plugins` owns an `IPluginLifecycleParticipant` contract, not an MCP
+project reference. Its context carries the installed identity and source/version receipt, the
+parsed manifest, and the materialised directory. `BotNexus.Extensions.Plugins.Api` is the
+production composition root: it references Plugins and Mcp and supplies
+`PluginMcpLifecycleParticipant` over the existing `PluginMcpServerRegistrar` and
+`McpServerManagerHost`. It does not create a second transport implementation or server registry.
+The existing optional `IPluginInstallObserver` still provisions cron after successful install;
+it is not the activation contract.
+
+Install awaits activation after promotion and catalog generation. Update awaits old-server
+teardown before replacing files and then awaits new activation. Removal awaits teardown before
+it deletes any recorded file or receipt. `RemoveAsync` is the asynchronous entry point; legacy
+`Remove` callers synchronously wait for the same contract rather than launching background work.
+Mutations remain serialized by the lifecycle manager.
+
+The adapter passes `manifest.McpServers` unchanged, including `null` for convention discovery.
+No declaration is a successful no-op. Server names remain plugin-scoped, and teardown selects
+only that scope. Trust is evaluated before startup through the existing `PluginTrustGate` and
+content catalog verifier. Composition defaults to the existing Disabled posture; an injected
+gate or evaluator can select Warn or Enforce. Enforce refusal is an activation failure, never a
+successful install with silently absent servers. This stage does not add a trust configuration
+surface, session tool refresh, or restart-time rehydration of installed servers.
+
+Activation refusal, startup failure and cancellation trigger compensation. Install stops any
+partial servers and removes its recorded files/receipt. Update snapshots the old recorded files
+before retirement, removes candidate files, restores the old receipt/content, and reactivates the
+last known good declaration. User-owned files outside the recorded set are preserved. Cleanup
+uses a fresh 30-second cancellation budget rather than the cancelled request token. A failed
+compensation is explicitly reported as failure: potentially active content retains its recovery
+receipt, and a failed update retains a recovery snapshot whose location is in the failure detail.
+There is no crash-atomic transaction across processes, files and the state document.
+
+The registrar records attempted ownership before each startup await and drops ownership only
+after successful teardown. The manager host requires startup to actually complete (ordinary
+best-effort configured-server startup is unchanged). Selective manager teardown propagates
+failures and keeps failed connections available for retry. Neither partial activation nor failed
+teardown is reported as a successful lifecycle operation.
+
 ### Transport
 
 The transport is `git clone`, a settled decision in #2623: it supplies private-repository
