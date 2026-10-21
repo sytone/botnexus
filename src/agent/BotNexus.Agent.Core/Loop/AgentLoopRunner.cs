@@ -943,8 +943,9 @@ public static class AgentLoopRunner
                 }
 
                 var stream = config.LlmClient.StreamSimple(config.Model, providerContext, generationOptions, executionOptions);
+                var attemptFailure = new ProviderAttemptFailure();
                 var assistantMessage = await StreamAccumulator
-                    .AccumulateAsync(stream, emit, cancellationToken, messages)
+                    .AccumulateAsync(stream, emit, cancellationToken, messages, attemptFailure)
                     .ConfigureAwait(false);
                 if (assistantMessage.FinishReason == StopReason.Error
                     && ContextOverflowDetector.IsContextOverflow(assistantMessage.ErrorMessage)
@@ -961,8 +962,29 @@ public static class AgentLoopRunner
                     continue;
                 }
 
-                recoveryLease?.ReportSuccess();
-                if (attempt > 0)
+                var providerFailed = assistantMessage.FinishReason is StopReason.Error or StopReason.Aborted;
+                if (providerFailed)
+                {
+                    if (attemptFailure.DiagnosticDetail is { } detail)
+                        DiagnosticNotification.Report(config.DiagnosticObserver, detail);
+                    if (attemptFailure.Classification == ProviderFailureClass.Transient)
+                        recoveryLease?.ReportTransientFailure(null);
+                    else
+                        recoveryLease?.ReportNonTransientFailure();
+                    // Unsafe-to-replay partials still carry authoritative exhaustion evidence.
+                    // Keep their transcript while protecting subsequent turns on this profile.
+                    if (attemptFailure.Classification == ProviderFailureClass.Exhausted)
+                        config.SuspensionRegistry?.Suspend(
+                            config.Model.Provider,
+                            config.AuthProfile ?? string.Empty,
+                            ProviderSuspensionRegistry.DefaultDuration,
+                            assistantMessage.ErrorMessage ?? "Provider exhausted after partial output.");
+                }
+                else
+                {
+                    recoveryLease?.ReportSuccess();
+                }
+                if (attempt > 0 && !providerFailed)
                 {
                     await EmitRecoveryAsync(AttemptObservation(ProviderRecoveryStage.Recovered, attempt + 1))
                         .ConfigureAwait(false);
@@ -993,6 +1015,7 @@ public static class AgentLoopRunner
             catch (ProviderAuthenticationException) when
                 (!authenticationRecovered && config.CredentialInvalidationService is not null)
             {
+                recoveryLease?.ReportNonTransientFailure();
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 authenticationRecovered = true;
                 await config.CredentialInvalidationService(config.Model.Provider, cancellationToken)
@@ -1003,6 +1026,8 @@ public static class AgentLoopRunner
             }
             catch (Exception ex) when (ClassifyFailure(ex) == ProviderFailureClass.Exhausted)
             {
+                if (ex is ProviderInBandFailureException inBand)
+                    DiagnosticNotification.Report(config.DiagnosticObserver, inBand.DiagnosticDetail);
                 recoveryLease?.ReportNonTransientFailure();
                 // #3015 -- the non-transient exhaustion lane. Quota exhausted / billing disabled /
                 // credential rejected will not clear by waiting, so spending the remaining three
@@ -1027,6 +1052,8 @@ public static class AgentLoopRunner
             catch (Exception ex) when (ClassifyFailure(ex) == ProviderFailureClass.Transient && attempt < maxAttempts - 1)
             {
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
+                if (ex is ProviderInBandFailureException inBand)
+                    DiagnosticNotification.Report(config.DiagnosticObserver, inBand.DiagnosticDetail);
                 var retryAfterDelay = (ex as ProviderRateLimitException)?.RetryAfter;
                 recoveryLease?.ReportTransientFailure(retryAfterDelay);
                 var delayMs = ComputeRetryDelayMs(backoffMs, retryAfterDelay, config);
@@ -1042,6 +1069,8 @@ public static class AgentLoopRunner
             }
             catch (Exception ex)
             {
+                if (ex is ProviderInBandFailureException inBand)
+                    DiagnosticNotification.Report(config.DiagnosticObserver, inBand.DiagnosticDetail);
                 if (ClassifyFailure(ex) == ProviderFailureClass.Transient)
                 {
                     recoveryLease?.ReportTransientFailure((ex as ProviderRateLimitException)?.RetryAfter);
@@ -1114,5 +1143,7 @@ public static class AgentLoopRunner
     /// second, divergent copy of the classification rules.
     /// </summary>
     private static ProviderFailureClass ClassifyFailure(Exception exception)
-        => TransientErrorClassifier.Classify(exception);
+        => exception is ProviderInBandFailureException inBand
+            ? inBand.FailureClass
+            : TransientErrorClassifier.Classify(exception);
 }
