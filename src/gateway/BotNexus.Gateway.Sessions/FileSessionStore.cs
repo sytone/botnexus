@@ -184,10 +184,96 @@ public sealed partial class FileSessionStore : SessionStoreBase
         await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            _cache[session.SessionId] = session;
-            await PersistSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            await SaveUnderLockAsync(session, cancellationToken).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public override async Task<SessionSaveOutcome> SaveAsync(
+        GatewaySession session,
+        SessionWriteFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        // Match ordinary save's resolver ordering; never acquire the conversation resolver
+        // while holding the store lock just to prepare a candidate for persistence.
+        await EnsureConversationIdStampedAsync(session, cancellationToken).ConfigureAwait(false);
+
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Cache state includes a reset that has already sealed its retained aggregate.
+            // On a cold store, read the durable aggregate under this same lock. Neither a
+            // regular save nor delete/archive may slip between this check and the write.
+            var current = _cache.GetValueOrDefault(fence.ExpectedSessionId)
+                ?? await LoadFromFileAsync(fence.ExpectedSessionId, cancellationToken).ConfigureAwait(false);
+            if (!SessionFenceEvaluator.Passes(fence, current))
+                return SessionSaveOutcome.Rebound;
+            if (fence.ExpectedContentFingerprint is { } expected &&
+                (current is null || SessionWriteFence.ContentFingerprint(current) != expected))
+                return SessionSaveOutcome.Conflict;
+
+            await SaveUnderLockAsync(session, cancellationToken).ConfigureAwait(false);
+            return SessionSaveOutcome.Persisted;
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public override async Task<SessionAppendMutationResult> AppendEntriesAsync(SessionId sessionId,
+        IReadOnlyList<SessionEntry> entries, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var current = _cache.GetValueOrDefault(sessionId)
+                ?? await LoadFromFileAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (current is null)
+                return new SessionAppendMutationResult(SessionMutationOutcome.NotFound, 0);
+            if (SessionMutationPolicy.IsTerminal(current.Status))
+                return new SessionAppendMutationResult(SessionMutationOutcome.Conflict, 0);
+            if (entries.Count > 0)
+            {
+                current.AddEntries(entries);
+                current.UpdatedAt = DateTimeOffset.UtcNow;
+                await SaveUnderLockAsync(current, cancellationToken).ConfigureAwait(false);
+            }
+            return new SessionAppendMutationResult(SessionMutationOutcome.Applied, entries.Count);
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public override async Task<SessionMetadataMutationResult> PatchMetadataAsync(SessionId sessionId,
+        IReadOnlyDictionary<string, object?> patch, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+        await EnsureMigratedAsync(cancellationToken).ConfigureAwait(false);
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var current = _cache.GetValueOrDefault(sessionId)
+                ?? await LoadFromFileAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (current is null)
+                return SessionMetadataMutationResult.NotFound;
+            SessionMutationPolicy.ApplyMetadataPatch(current.Metadata, patch);
+            current.UpdatedAt = DateTimeOffset.UtcNow;
+            await SaveUnderLockAsync(current, cancellationToken).ConfigureAwait(false);
+            return new SessionMetadataMutationResult(SessionMutationOutcome.Applied,
+                new Dictionary<string, object?>(current.Metadata));
+        }
+        finally { _lock.Release(); }
+    }
+
+    // Both aggregate save overloads must hold _lock for the complete persistence operation.
+    private async Task SaveUnderLockAsync(GatewaySession session, CancellationToken cancellationToken)
+    {
+        await PersistSessionAsync(session, cancellationToken).ConfigureAwait(false);
+        _cache[session.SessionId] = session;
     }
 
     /// <inheritdoc />

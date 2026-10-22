@@ -128,6 +128,9 @@ public interface ISessionStore
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
+        // Detached content fences require an atomic check/write override, not this fallback.
+        if (fence.ExpectedContentFingerprint is not null)
+            return SessionSaveOutcome.Conflict;
 
         var current = await GetAsync(fence.ExpectedSessionId, cancellationToken).ConfigureAwait(false);
         if (!SessionFenceEvaluator.Passes(fence, current))
