@@ -233,8 +233,13 @@ public static class CopilotOAuth
         return (token, expiresAt, apiEndpoint);
     }
 
-    private static async Task<HttpResponseMessage> PostFormAsync(
+    private static Task<HttpResponseMessage> PostFormAsync(
         string url, IReadOnlyDictionary<string, string> fields, CancellationToken ct)
+        => PostFormAsync(SharedClient, url, fields, ct);
+
+    internal static async Task<HttpResponseMessage> PostFormAsync(
+        HttpClient client, string url, IReadOnlyDictionary<string, string> fields, CancellationToken ct,
+        TimeProvider? timeProvider = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
@@ -242,9 +247,98 @@ public static class CopilotOAuth
         };
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-        var response = await SharedClient.SendAsync(request, ct);
-        response.EnsureSuccessStatusCode();
-        return response;
+        // ResponseHeadersRead ends HttpClient's timeout at the headers. Keep the SAME
+        // whole-request budget over sending AND body consumption, not a fresh per-chunk
+        // or body-only timeout. Infinite client timeouts remain infinite.
+        using var deadline = new CancellationTokenSource(client.Timeout, timeProvider ?? TimeProvider.System);
+        using var operation = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        var readToken = operation.Token;
+        HttpResponseMessage? response = null;
+        try
+        {
+            // Read headers first so the cap applies before any unbounded buffering.
+            response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, readToken);
+            if (response.IsSuccessStatusCode)
+            {
+                // Buffer within the deadline before transferring ownership. This preserves the
+                // original content, bytes, charset and headers, and no network reads escape the
+                // request budget when callers subsequently parse the successful response.
+                await response.Content.LoadIntoBufferAsync(OAuthResponseMaxBytes, readToken);
+                readToken.ThrowIfCancellationRequested();
+                return response;
+            }
+
+            var code = await ReadRejectionCodeAsync(response.Content, readToken);
+            readToken.ThrowIfCancellationRequested();
+            // Only production-owned endpoint literals may enter diagnostics, never redirected
+            // RequestMessage URIs, reason phrases, headers, descriptions, or arbitrary error values.
+            var endpoint = url switch
+            {
+                DeviceCodeUrl => DeviceCodeUrl,
+                AccessTokenUrl => AccessTokenUrl,
+                _ => "the GitHub OAuth endpoint"
+            };
+            throw new HttpRequestException(
+                $"GitHub OAuth request to {endpoint} failed with HTTP {(int)response.StatusCode}: {code}.",
+                inner: null, statusCode: response.StatusCode);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            response?.Dispose();
+            // Do not expose the linked operation/idle token as the caller's identity.
+            ct.ThrowIfCancellationRequested();
+            throw;
+        }
+        catch (OperationCanceledException error) when (deadline.IsCancellationRequested)
+        {
+            response?.Dispose();
+            throw new TaskCanceledException("GitHub OAuth request exceeded the configured HttpClient timeout.",
+                new TimeoutException("The whole-request deadline elapsed.", error), readToken);
+        }
+        catch
+        {
+            // Until successful buffering completes, this method owns the response on ALL failures.
+            response?.Dispose();
+            throw;
+        }
+    }
+
+    private static async Task<string> ReadRejectionCodeAsync(HttpContent content, CancellationToken ct)
+    {
+        try
+        {
+            var body = await BoundedHttpContent.ReadStringWithLimitAsync(content, OAuthResponseMaxBytes, ct);
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("error", out var error) &&
+                error.ValueKind == JsonValueKind.String)
+            {
+                // Return fixed literals, not the peer string, even when it resembles an error code.
+                return error.GetString() switch
+                {
+                    "authorization_pending" => "authorization_pending",
+                    "slow_down" => "slow_down",
+                    "expired_token" => "expired_token",
+                    "unsupported_grant_type" => "unsupported_grant_type",
+                    "incorrect_client_credentials" => "incorrect_client_credentials",
+                    "incorrect_device_code" => "incorrect_device_code",
+                    "access_denied" => "access_denied",
+                    "device_flow_disabled" => "device_flow_disabled",
+                    _ => "unknown_error"
+                };
+            }
+        }
+        catch (JsonException)
+        {
+            // A malformed diagnostic body must not replace the original HTTP rejection.
+        }
+        catch (ResponseContentTooLargeException)
+        {
+            // Oversized diagnostics are discarded, not parsed as a potentially valid prefix.
+        }
+
+        // Cancellation and unrelated transport/read failures deliberately propagate unchanged.
+        return "unknown_error";
     }
 
     // All three OAuth reads funnel through this choke-point, so capping here bounds every
