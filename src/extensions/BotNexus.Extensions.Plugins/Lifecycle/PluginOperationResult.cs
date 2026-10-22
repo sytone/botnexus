@@ -85,6 +85,12 @@ public sealed record PluginInstallRequest
     /// </summary>
     public string? Name { get; init; }
 
+    /// <summary>
+    /// Explicit Claude or Copilot marketplace entry identity. When set, Source is the whole repository;
+    /// only this entry's safe relative source is imported. Null retains ordinary native behavior.
+    /// </summary>
+    public string? MarketplacePluginName { get; init; }
+
     /// <summary>Branch, tag or commit to check out, or <c>null</c> for the default branch.</summary>
     public string? Reference { get; init; }
 

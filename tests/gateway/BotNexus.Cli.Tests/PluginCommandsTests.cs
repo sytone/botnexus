@@ -59,6 +59,28 @@ public sealed class PluginCommandsTests
     }
 
     [Fact]
+    public async Task Install_forwards_explicit_marketplace_selection_without_changing_source()
+    {
+        var handler = new CapturingHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        var root = BuildRoot(new PluginCommands(http));
+
+        var exitCode = await root.InvokeAsync([
+            "plugin", "install", "https://example.test/catalog.git",
+            "--marketplace-plugin", "chosen", "--reference", "release", "--pin"]);
+
+        exitCode.ShouldBe(0);
+        var request = handler.Requests.ShouldHaveSingleItem();
+        request.Method.ShouldBe(HttpMethod.Post);
+        var payload = request.Body ?? throw new InvalidOperationException("missing install body");
+        using var body = System.Text.Json.JsonDocument.Parse(payload);
+        body.RootElement.GetProperty("source").GetString().ShouldBe("https://example.test/catalog.git");
+        body.RootElement.GetProperty("marketplacePluginName").GetString().ShouldBe("chosen");
+        body.RootElement.GetProperty("reference").GetString().ShouldBe("release");
+        body.RootElement.GetProperty("updatesEnabled").GetBoolean().ShouldBeFalse();
+    }
+
+    [Fact]
     public void Cli_project_keeps_the_extension_dependency_on_the_far_side_of_http()
     {
         var project = File.ReadAllText(Path.GetFullPath(Path.Combine(
