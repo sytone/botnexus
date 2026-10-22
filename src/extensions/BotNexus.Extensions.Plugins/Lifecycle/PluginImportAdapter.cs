@@ -21,6 +21,17 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
 
     public PluginParseResult<ImportedPlugin> ParseDirectory(string directory, string? expectedName = null)
     {
+        // Root legacy inputs are a separate dialect, including when native enhancement is present.
+        // Detect entries rather than File.Exists so dangling links and aliases cannot bypass preflight.
+        if (Directory.EnumerateFileSystemEntries(directory).Any(path =>
+            Path.GetFileName(path).Equals("plugin.json", StringComparison.OrdinalIgnoreCase)))
+        {
+            var legacySafetyErrors = ValidateImportTree(directory);
+            if (legacySafetyErrors.Count > 0)
+                return PluginParseResult<ImportedPlugin>.Failure(legacySafetyErrors);
+            return new LegacyPluginImportAdapter(parser).ParseDirectory(directory);
+        }
+
         // Inspect entry names, not File.Exists: a dangling metadata link still marks a
         // Claude input. Do not parse either manifest until the entire tree passes preflight.
         var hasClaudeInput = Directory.EnumerateFileSystemEntries(directory).Any(path =>
@@ -182,7 +193,7 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
             .Any(entry => Path.GetFileName(entry).Equals(PluginManifestParser.ManifestFileName, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static List<PluginValidationError> ValidateDiscoveredComponents(string directory)
+    internal static List<PluginValidationError> ValidateDiscoveredComponents(string directory)
     {
         var errors = new List<PluginValidationError>();
         foreach (var relative in new[] { "hooks", "commands", "agents", "lsp", ".mcp.json", ".lsp.json", ".botnexus-plugin/mcp.json" })
@@ -238,7 +249,8 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
                         foreach (var conventional in new[]
                         {
                             "skills", "hooks", "commands", "agents", "lsp", ".mcp.json", ".lsp.json",
-                            ".claude-plugin", ".botnexus-plugin",
+                            ".claude-plugin", ".botnexus-plugin", "plugin.json", "botnexus-plugin.json",
+                            "mcp.json", "com.github.copilot",
                         })
                         {
                             if (name.Equals(conventional, StringComparison.OrdinalIgnoreCase)
@@ -246,6 +258,10 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
                                 errors.Add(new(field, $"Claude import requires canonical spelling '{conventional}'."));
                         }
                     }
+                    if (Path.GetRelativePath(root, current) == PluginManifestParser.PluginMetadataDirectoryName
+                        && name.Equals(PluginManifestParser.ManifestFileName, StringComparison.OrdinalIgnoreCase)
+                        && !name.Equals(PluginManifestParser.ManifestFileName, StringComparison.Ordinal))
+                        errors.Add(new(field, "Import requires canonical spelling '.botnexus-plugin/plugin.json'."));
                     if ((attributes & FileAttributes.Directory) != 0)
                         pending.Push(entry);
                 }
@@ -279,7 +295,7 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
     private static bool IsConventionalSkillsPath(JsonElement value) =>
         value.ValueKind == JsonValueKind.String && value.GetString() is "./skills" or "skills";
 
-    private static void CheckDuplicates(JsonElement value, string path, List<PluginValidationError> errors)
+    internal static void CheckDuplicates(JsonElement value, string path, List<PluginValidationError> errors)
     {
         if (value.ValueKind == JsonValueKind.Object)
         {

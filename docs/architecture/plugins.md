@@ -24,7 +24,8 @@ my-plugin/
 
 The native manifest lives at `.botnexus-plugin/plugin.json`. The lifecycle also accepts a
 bounded, experimental Claude import from `.claude-plugin/plugin.json`, as described below.
-Without either manifest, only conventional skills content with an explicit operator-supplied
+A root legacy `plugin.json` also supports the bounded skills-only import described below.
+Without any supported manifest, only conventional skills content with an explicit operator-supplied
 `PluginInstallRequest.Name` is accepted. The source URL and directory name never supply identity.
 
 ## The manifest
@@ -47,6 +48,43 @@ and otherwise probes `.botnexus-plugin/mcp.json`, then `.mcp.json`.
 This distinction is load-bearing in the parsed model: an omitted component field deserialises
 to `null`, meaning *discover by convention*. It is never normalised to an empty collection,
 which would instead mean *this plugin deliberately has none*.
+
+## Legacy root import: conventional skills and additive metadata
+
+For maintainers importing a legacy portable skills package, the lifecycle accepts root
+`plugin.json` without requiring BotNexus metadata. This is a bounded subset, not full Agent
+Plugins 1.0 support. A `$schema` or `schemaVersion` declaration is rejected rather than
+silently interpreted as legacy. The native parser remains strict and native-only.
+
+The baseline requires a native-compatible `name` and accepts native metadata fields plus a
+string `displayName` (retained in the original file, not projected into native metadata).
+`skills` may be omitted, or name only `skills`, `./skills`, `skills/`, or `./skills/`, as a
+string or single-element array. Skills continue through `PluginSkillRootResolver` and the
+existing discovery and trust policies; this adds no second skill loader.
+
+Optional enhancement metadata is selected in this order:
+
+1. `.botnexus-plugin/plugin.json`
+2. `botnexus-plugin.json`
+
+The enhancement may omit identity and other baseline metadata. Missing fields inherit from
+the baseline; non-conflicting object fields merge recursively. Contradictory duplicate values
+fail with a diagnostic naming both files. The selected nested enhancement takes precedence
+over the root form; a malformed selected enhancement never falls back. Both source files stay
+in the exact-file ownership and trust catalog. Removing enhancement metadata on a subsequent
+update leaves the basic legacy package valid.
+
+This slice adds metadata only, not new executable capabilities. Explicit hooks, commands,
+agents, MCP and LSP declarations or discovered behavior paths are rejected before promotion,
+including `mcp.json`, `com.github.copilot`, and `.claude-plugin`. Native enhancements cannot
+add these behaviors or redirect/narrow the portable skills directory. Unknown fields, duplicate
+JSON fields, links, path aliases and case-insensitive collisions fail closed. Native-only and
+Claude-only inputs retain their existing behavior.
+
+Receipts record `manifestFormat: "Legacy"`; updates revalidate the source and removal uses the
+existing exact-file receipt, preserving unowned files. Versioned Agent Plugins manifests,
+portable MCP/agent projection, monorepo subpath selection, richer provenance receipts and
+private-source authentication acceptance remain outside this slice of #4726.
 
 ## Experimental Claude import: conventional skills only
 
