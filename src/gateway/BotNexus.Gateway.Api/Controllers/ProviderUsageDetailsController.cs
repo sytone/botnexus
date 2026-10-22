@@ -106,7 +106,8 @@ public sealed class ProviderUsageDetailsService(GatewayAuthManager authManager, 
                     {
                         State = account.LastSuccessAtUtc is null ? "unavailable" : account.IsStale ? "stale" : "fresh",
                         Snapshots = account.Snapshots.Take(3).ToImmutableArray(), LastSuccessAtUtc = account.LastSuccessAtUtc,
-                        LastAttemptAtUtc = account.LastAttemptAtUtc, NextRefreshAtUtc = account.NextRefreshAtUtc, AttemptState = account.AttemptState
+                        LastAttemptAtUtc = account.LastAttemptAtUtc, NextRefreshAtUtc = account.NextRefreshAtUtc, AttemptState = account.AttemptState,
+                        RefreshState = account.RefreshState, Reason = account.Reason
                     }, Headers = headers, LegacyUnattributedHeaderResponses = headerStore.LegacyUnattributedResponses
                 };
         }
@@ -186,6 +187,10 @@ public sealed record AccountUsageDetails
     public DateTimeOffset? NextRefreshAtUtc { get; init; }
     /// <summary>Sanitized local refresh status.</summary>
     public string AttemptState { get; init; } = "unavailable";
+    /// <summary>Current local refresh disposition, independent of retained success freshness and last attempt outcome.</summary>
+    public string RefreshState { get; init; } = "unavailable";
+    /// <summary>Fixed account diagnostic from CopilotQuotaState; identity-unavailable intentionally does not guess unsupported versus ambiguous identity.</summary>
+    public string Reason { get; init; } = "identity-unavailable";
 }
 
 /// <summary>Header-only facts; rem percentage is never treated as a count.</summary>

@@ -8,66 +8,93 @@ namespace BotNexus.Gateway.Sessions;
 /// <summary>Clears redundant legacy payload columns only after normalized evidence proves exact parity.</summary>
 public static class LegacyToolPayloadCleanup
 {
-    internal static LegacyToolPayloadCleanupReport RunConnectionString(string connectionString, int batchSize, long afterInvocationId = 0)
+    internal static LegacyToolPayloadCleanupReport RunConnectionString(string connectionString, int batchSize, long afterInvocationId = 0, Action<string>? invalidateSession = null)
     {
         if (batchSize < 1)
             throw new ArgumentOutOfRangeException(nameof(batchSize), "Batch size must be positive.");
 
         using var connection = SqliteConnectionFactory.Create(connectionString);
-        connection.Open();
-
-        var orphanedInvocationsDeleted = DeleteOrphanedInvocations(connection, batchSize);
-
-        // Candidate selection is deliberately read-only and bounded. The old query registered a
-        // managed sha256 SQLite function and reran it across the complete corpus while a write
-        // transaction was held after every 100-row batch. Read only the next bounded window here;
-        // parity hashing below is then proportional to batchSize, never database size.
-        var candidates = ReadCandidateWindow(connection, batchSize, afterInvocationId);
-        var eligible = candidates.Where(IsEligible).ToArray();
-
-        long bytes = 0;
-        var rows = 0;
-        if (eligible.Length > 0)
+        try
         {
-            using var transaction = connection.BeginTransaction();
-            foreach (var candidate in eligible)
+            connection.Open();
+
+            var orphanedInvocationsDeleted = DeleteOrphanedInvocations(connection, batchSize);
+
+            // Candidate selection is deliberately read-only and bounded. The old query registered a
+            // managed sha256 SQLite function and reran it across the complete corpus while a write
+            // transaction was held after every 100-row batch. Read only the next bounded window here;
+            // parity hashing below is then proportional to batchSize, never database size.
+            var candidates = ReadCandidateWindow(connection, batchSize, afterInvocationId);
+            var eligible = candidates.Where(IsEligible).ToArray();
+
+            long bytes = 0;
+            var rows = 0;
+            if (eligible.Length > 0)
             {
-                using var update = connection.CreateCommand();
-                update.Transaction = transaction;
-                update.CommandText = "UPDATE session_history SET tool_args=NULL, content=CASE WHEN message_kind='tool-result' THEN NULL ELSE content END WHERE tool_invocation_id=$id AND message_kind IN ('tool-start','tool-result')";
-                update.Parameters.AddWithValue("$id", candidate.Id);
-                rows += update.ExecuteNonQuery();
-                bytes += candidate.LegacyBytes;
+                using var transaction = connection.BeginTransaction();
+                foreach (var candidate in eligible)
+                {
+                    using var update = connection.CreateCommand();
+                    update.Transaction = transaction;
+                    update.CommandText = "UPDATE session_history SET tool_args=NULL, content=CASE WHEN message_kind='tool-result' THEN NULL ELSE content END WHERE tool_invocation_id=$id AND message_kind IN ('tool-start','tool-result')";
+                    update.Parameters.AddWithValue("$id", candidate.Id);
+                    rows += update.ExecuteNonQuery();
+                    bytes += candidate.LegacyBytes;
+                }
+
+                transaction.Commit();
+                foreach (var sessionId in eligible.Select(candidate => candidate.SessionId).Distinct(StringComparer.Ordinal))
+                    invalidateSession?.Invoke(sessionId);
             }
 
-            transaction.Commit();
+            // Progress is a bounded existence probe, not an exact whole-corpus count. Protected and
+            // remaining counts were telemetry conveniences whose exact computation caused the defect;
+            // -1 explicitly reports "not counted" rather than disguising an estimate as a fact.
+            var lastScannedId = candidates.Count == 0 ? afterInvocationId : candidates[^1].Id;
+            var hasMore = HasAnotherCandidate(connection, lastScannedId) || HasOrphanedInvocation(connection);
+            return new(eligible.Length, rows, bytes, -1, -1, hasMore, lastScannedId, candidates.Count, orphanedInvocationsDeleted);
         }
-
-        // Progress is a bounded existence probe, not an exact whole-corpus count. Protected and
-        // remaining counts were telemetry conveniences whose exact computation caused the defect;
-        // -1 explicitly reports "not counted" rather than disguising an estimate as a fact.
-        var lastScannedId = candidates.Count == 0 ? afterInvocationId : candidates[^1].Id;
-        var hasMore = HasAnotherCandidate(connection, lastScannedId) || HasOrphanedInvocation(connection);
-        return new(eligible.Length, rows, bytes, -1, -1, hasMore, lastScannedId, candidates.Count, orphanedInvocationsDeleted);
+        catch (SqliteException ex) when (SqliteCapacityDiagnostics.ObserveFailure(connection, ex))
+        {
+            throw;
+        }
     }
 
     private static int DeleteOrphanedInvocations(SqliteConnection connection, int limit)
     {
+        // The absent-session scan may traverse the corpus. Never hold the writer slot
+        // during discovery, and never acquire it for an empty maintenance batch.
+        var ids = new List<long>();
+        using (var select = connection.CreateCommand())
+        {
+            select.CommandText = """
+                SELECT i.id FROM tool_invocations i
+                LEFT JOIN sessions s ON s.id=i.session_id
+                WHERE s.id IS NULL ORDER BY i.id LIMIT $limit
+                """;
+            select.Parameters.AddWithValue("$limit", limit);
+            using var reader = select.ExecuteReader();
+            while (reader.Read()) ids.Add(reader.GetInt64(0));
+        }
+        if (ids.Count == 0)
+            return 0;
+
         using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        // Revalidate each selected identity: a session may have appeared since discovery.
+        // One id per statement also avoids SQLite's parameter-count limit for large batches.
         command.CommandText = """
             DELETE FROM tool_invocations
-            WHERE id IN (
-                SELECT i.id
-                FROM tool_invocations i
-                LEFT JOIN sessions s ON s.id=i.session_id
-                WHERE s.id IS NULL
-                ORDER BY i.id
-                LIMIT $limit)
+            WHERE id=$id AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.id=tool_invocations.session_id)
             """;
-        command.Parameters.AddWithValue("$limit", limit);
-        var deleted = command.ExecuteNonQuery();
+        var idParameter = command.Parameters.AddWithValue("$id", 0L);
+        var deleted = 0;
+        foreach (var id in ids)
+        {
+            idParameter.Value = id;
+            deleted += command.ExecuteNonQuery();
+        }
         transaction.Commit();
         return deleted;
     }
@@ -89,8 +116,22 @@ public static class LegacyToolPayloadCleanup
     private static List<Candidate> ReadCandidateWindow(SqliteConnection connection, int limit, long afterInvocationId)
     {
         using var command = connection.CreateCommand();
+        // Materialize IDs only: LIMIT must run before payload-bearing joins/aggregation.
+        // CROSS JOIN keeps the bounded window outermost even without planner statistics.
         command.CommandText = """
-            SELECT i.id, i.session_id, i.tool_call_id, i.arguments_json, i.started_at,
+            WITH candidate_ids AS MATERIALIZED (
+                SELECT i.id
+                FROM tool_invocations i
+                WHERE i.id > $afterInvocationId
+                  AND i.status='success' AND i.is_error=0 AND i.retention_state='hot'
+                  AND i.arguments_json IS NOT NULL AND i.result_content IS NOT NULL
+                  AND EXISTS(
+                      SELECT 1 FROM session_history payload
+                      WHERE payload.tool_invocation_id=i.id
+                        AND (payload.tool_args IS NOT NULL OR (payload.message_kind='tool-result' AND payload.content IS NOT NULL)))
+                ORDER BY i.id
+                LIMIT $limit)
+            SELECT i.id, i.session_id, COALESCE(i.provider_tool_call_id, i.tool_call_id), i.arguments_json, i.started_at,
                    i.completed_at, i.result_content, i.result_bytes, i.result_sha256,
                    COUNT(h.id) AS linked_count,
                    SUM(CASE WHEN h.message_kind='tool-start' THEN 1 ELSE 0 END) AS start_count,
@@ -108,22 +149,16 @@ public static class LegacyToolPayloadCleanup
                      + COALESCE(SUM(CASE WHEN h.message_kind='tool-result' THEN length(CAST(h.content AS BLOB)) ELSE 0 END),0) AS legacy_bytes,
                    EXISTS(
                        SELECT 1 FROM session_history u
-                       WHERE u.session_id=i.session_id AND u.tool_call_id=i.tool_call_id
+                       WHERE u.session_id=i.session_id AND u.tool_call_id=COALESCE(i.provider_tool_call_id, i.tool_call_id)
+                         AND u.agent_run_id IS i.agent_run_id
                          AND u.tool_invocation_id IS NULL
                          AND (u.message_kind IN ('tool-start','tool-result') OR (u.message_kind IS NULL AND u.role='tool'))
                    ) AS has_unlinked_sibling
-            FROM tool_invocations i
-            JOIN session_history h ON h.tool_invocation_id=i.id
-            WHERE i.id > $afterInvocationId
-              AND i.status='success' AND i.is_error=0 AND i.retention_state='hot'
-              AND i.arguments_json IS NOT NULL AND i.result_content IS NOT NULL
-              AND EXISTS(
-                  SELECT 1 FROM session_history payload
-                  WHERE payload.tool_invocation_id=i.id
-                    AND (payload.tool_args IS NOT NULL OR (payload.message_kind='tool-result' AND payload.content IS NOT NULL)))
+            FROM candidate_ids c
+            CROSS JOIN tool_invocations i ON i.id=c.id
+            CROSS JOIN session_history h ON h.tool_invocation_id=i.id
             GROUP BY i.id
             ORDER BY i.id
-            LIMIT $limit
             """;
         command.Parameters.AddWithValue("$afterInvocationId", afterInvocationId);
         command.Parameters.AddWithValue("$limit", limit);

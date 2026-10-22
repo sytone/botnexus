@@ -368,6 +368,43 @@ public sealed partial class GatewayHostTests
     }
 
     [Fact]
+    public async Task ProcessAsync_BlockingInterruptedRun_PersistsToolsWithoutErrorActivity()
+    {
+        var router = new Mock<IMessageRouter>();
+        router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>())).ReturnsAsync(["agent-a"]);
+        using var caller = new CancellationTokenSource();
+        var handle = new Mock<IAgentHandle>();
+        handle.SetupGet(h => h.AgentId).Returns(AgentId.From("agent-a"));
+        handle.SetupGet(h => h.SessionId).Returns(SessionId.From("session-1"));
+        handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+            .Returns((AgentUserMessage _, CancellationToken ct) =>
+            {
+                caller.Cancel();
+                throw new AgentPromptInterruptedException(new AgentResponse
+                {
+                    Content = "unfinished", ToolCalls = [new("partial-4101", "read", true, "{}", null, IsIncomplete: true)]
+                }, ct);
+            });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var sessions = new InMemorySessionStore();
+        var activity = new RecordingActivityBroadcaster();
+        var channel = CreateChannelAdapter("web", supportsStreaming: false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions, activity, CreateChannelManager(channel.Object));
+
+        // Transport DispatchAsync intentionally detaches its worker from caller cancellation.
+        // Exercise the processor boundary that actually owns the run's cancellation token.
+        await host.ProcessAsync(CreateMessage("work", sessionId: "session-1"), caller.Token);
+
+        caller.IsCancellationRequested.ShouldBeTrue();
+        var session = (await sessions.GetAsync(SessionId.From("session-1"))).ShouldNotBeNull();
+        session.GetHistorySnapshot().Where(row => row.ToolCallId == "partial-4101").ShouldHaveSingleItem().ToolIsIncomplete.ShouldBeTrue();
+        session.GetHistorySnapshot().ShouldNotContain(row => row.Role == MessageRole.Assistant && row.Content == "unfinished");
+        activity.Activities.ShouldNotContain(value => value.Type == GatewayActivityType.Error);
+    }
+
+    [Fact]
     public async Task DispatchAsync_WhenAgentThrows_PublishesErrorActivity()
     {
         var router = new Mock<IMessageRouter>();
@@ -1092,7 +1129,7 @@ public sealed partial class GatewayHostTests
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(value => value.GetOrCreateAsync(session.AgentId, session.SessionId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreatePromptHandle("agent-a", "session-1", "ok").Object);
-        var global = new CompactionOptions { ContextWindowTokens = 200_000, TokenThresholdRatio = 0.6 };
+        var global = new CompactionOptions { ContextWindowTokens = 200_000, TokenThresholdRatio = 0.6, CompactionTokenCeiling = 50_000 };
         var resolver = new Mock<ISessionContextWindowResolver>();
         resolver.Setup(value => value.ResolveAsync(session.AgentId, It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(128_000);
@@ -1116,10 +1153,41 @@ public sealed partial class GatewayHostTests
 
         decisionOptions.ShouldNotBeNull();
         decisionOptions.ContextWindowTokens.ShouldBe(128_000);
+        decisionOptions.CompactionTokenCeiling.ShouldBe(50_000);
         executionOptions.ShouldBeSameAs(decisionOptions);
         global.ContextWindowTokens.ShouldBe(200_000);
         coordinator.Verify(value => value.CompactAsync(session.AgentId, session, It.IsAny<CancellationToken>(),
             false, CompactionHandlePolicy.Evict, It.IsAny<CompactionOptions?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GatewayHost_CeilingFreshEachTurnAndPolicyFailureBlocksProvider()
+    {
+        var session = new GatewaySession { SessionId = SessionId.From("session-1"), AgentId = AgentId.From("agent-a") };
+        var router = new Mock<IMessageRouter>();
+        router.Setup(value => value.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>())).ReturnsAsync(["agent-a"]);
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(value => value.GetOrCreateAsync(session.SessionId, session.AgentId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.GetOrCreateAsync(session.AgentId, session.SessionId, It.IsAny<CancellationToken>())).ReturnsAsync(CreatePromptHandle("agent-a", "session-1", "ok").Object);
+        var resolver = new Mock<ISessionCompactionCeilingResolver>();
+        resolver.SetupSequence(value => value.ResolveAsync(session.AgentId, It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScopedCompactionCeiling(100, "world"))
+            .ReturnsAsync(new ScopedCompactionCeiling(200, "conversation"))
+            .ReturnsAsync(new ScopedCompactionCeiling(null, null))
+            .ThrowsAsync(new IOException("policy unavailable"))
+            .ReturnsAsync(new ScopedCompactionCeiling(0, "conversation"));
+        var observed = new List<int?>();
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(value => value.ShouldCompact(session.Session, It.IsAny<CompactionOptions>()))
+            .Callback<Session, CompactionOptions>((_, options) => observed.Add(options.CompactionTokenCeiling)).Returns(false);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions.Object, new RecordingActivityBroadcaster(), CreateChannelManager(), compactor: compactor.Object, compactionCeilingResolver: resolver.Object);
+        for (var turn = 0; turn < 3; turn++) await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1"));
+        (await Should.ThrowAsync<IOException>(async () => await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1")))).Message.ShouldContain("policy unavailable");
+        (await Should.ThrowAsync<InvalidOperationException>(async () => await host.DispatchAsync(CreateMessage("hello", sessionId: "session-1")))).Message.ShouldContain("ceiling");
+        observed.ShouldBe(new int?[] { 100, 200, null });
+        supervisor.Verify(value => value.GetOrCreateAsync(session.AgentId, session.SessionId, It.IsAny<CancellationToken>()), Times.Exactly(3));
+        resolver.Verify(value => value.ResolveAsync(session.AgentId, It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()), Times.Exactly(5));
     }
 
     [Fact]
@@ -1874,7 +1942,8 @@ public sealed partial class GatewayHostTests
         ISessionTurnTracker? turnTracker = null,
         IConversationChangeNotifier? conversationChangeNotifier = null,
         ISessionCompactionCoordinator? compactionCoordinator = null,
-        ISessionContextWindowResolver? contextWindowResolver = null)
+        ISessionContextWindowResolver? contextWindowResolver = null,
+        ISessionCompactionCeilingResolver? compactionCeilingResolver = null)
         => new(
             supervisor,
             router,
@@ -1894,7 +1963,8 @@ public sealed partial class GatewayHostTests
             turnTracker: turnTracker,
             conversationChangeNotifier: conversationChangeNotifier,
             compactionCoordinator: compactionCoordinator,
-            contextWindowResolver: contextWindowResolver);
+            contextWindowResolver: contextWindowResolver,
+            compactionCeilingResolver: compactionCeilingResolver);
 
     private static InboundMessage CreateMessage(
         string content,

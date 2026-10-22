@@ -197,7 +197,8 @@ public sealed class ProviderUsageDetailsPanelTests : IDisposable
         Assert.DoesNotContain("0.125 of 1.5", cut.Markup);
         Assert.DoesNotContain("12.5% remaining", cut.Markup);
         Assert.Equal(1, _handler.ActiveDetails);
-        Assert.DoesNotContain(_handler.Requests, x => x.Contains("instance=work-copilot", StringComparison.Ordinal));
+        Assert.DoesNotContain(_handler.Requests, x => x.StartsWith("GET", StringComparison.Ordinal) && x.Contains("instance=work-copilot", StringComparison.Ordinal));
+        Assert.Contains(_handler.Requests, x => x.StartsWith("POST", StringComparison.Ordinal) && x.Contains("instance=work-copilot", StringComparison.Ordinal) && x.Contains("force=false", StringComparison.Ordinal));
         _handler.ReleaseDetails.TrySetResult();
         await oldPoll.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Contains("0.125", _handler.HeldBodyReturned);
@@ -363,6 +364,94 @@ public sealed class ProviderUsageDetailsPanelTests : IDisposable
         Assert.Equal("github-copilot", cut.Find("[data-testid='copilot-instance-select']").GetAttribute("value"));
     }
 
+    [Theory]
+    [InlineData("not-requested", "not-yet-requested", "unavailable", "Account refresh has not yet been requested.")]
+    [InlineData("refreshing", "refresh-in-progress", "stale", "Account refresh is in progress.")]
+    [InlineData("throttled", "refresh-throttled", "stale", "Account refresh was throttled. Try again after the next refresh time.")]
+    [InlineData("unavailable", "identity-unavailable", "unavailable", "Local account identity is unavailable; no upstream refresh was performed.")]
+    [InlineData("unavailable", "capacity-unavailable", "unavailable", "Local account quota capacity is unavailable; no upstream refresh was performed.")]
+    [InlineData("error", "upstream-error", "stale", "Upstream account refresh failed. Retained observations may still be shown.")]
+    [InlineData("cancelled", "refresh-cancelled", "stale", "Account refresh was cancelled.")]
+    [InlineData("success", "success-empty", "fresh", "Account refresh succeeded, but returned no recognized quota dimensions.")]
+    [InlineData("success", "success-partial", "fresh", "Account refresh succeeded with partial quota data; some fields are unknown.")]
+    [InlineData("success", "success-stale", "stale", "Last successful account observation is stale; it is not current quota data.")]
+    [InlineData("success", "success", "fresh", "Account refresh succeeded with recognized quota data.")]
+    public async Task Explicit_refresh_diagnostics_are_not_masked_by_last_attempt(string refreshState, string reason, string state, string expected)
+    {
+        // Last attempt deliberately stays success even when local refresh disposition differs.
+        _handler.Account = $$"""{"state":"{{state}}","attemptState":"success","refreshState":"{{refreshState}}","reason":"{{reason}}","isPartial":true,"snapshots":[]}""";
+        var cut = await OpenAsync();
+        cut.WaitForAssertion(() => Assert.False(cut.Find("[data-testid='account-refresh']").HasAttribute("disabled")));
+        Assert.Equal(expected, cut.Find("[data-testid='account-diagnostic']").TextContent.Trim());
+        var expectedStatus = refreshState switch
+        {
+            "not-requested" => "not yet requested",
+            "refreshing" => "loading",
+            _ => refreshState
+        };
+        var displayedStatus = cut.Find("[data-testid='account-refresh-state']").TextContent;
+        Assert.Contains($"{expectedStatus} · {state}", displayedStatus);
+        if (refreshState != "success") Assert.DoesNotContain("success", displayedStatus);
+        if (reason == "success-empty")
+        {
+            Assert.DoesNotContain("Account identity and quota are unknown or unavailable", cut.Markup);
+            Assert.DoesNotContain("Local account identity is unavailable", cut.Markup);
+        }
+    }
+
+    [Theory]
+    [InlineData("success", "PRIVATE_DIAGNOSTIC <script>secret</script>")]
+    [InlineData("PRIVATE_REFRESH_STATE", "PRIVATE_DIAGNOSTIC")]
+    [InlineData("success", "identity-unavailable")]
+    public async Task Unknown_or_inconsistent_diagnostics_use_safe_fallback(string refreshState, string reason)
+    {
+        _handler.Account = $$"""{"state":"unavailable","attemptState":"PRIVATE_ATTEMPT","refreshState":"{{refreshState}}","reason":"{{reason}}","snapshots":[]}""";
+        var cut = await OpenAsync();
+        Assert.Equal("Account refresh diagnostic is unavailable.", cut.Find("[data-testid='account-diagnostic']").TextContent.Trim());
+        Assert.DoesNotContain("PRIVATE_", cut.Markup);
+        Assert.DoesNotContain("secret", cut.Markup);
+        Assert.DoesNotContain("no upstream refresh was performed", cut.Markup);
+        Assert.Contains("Account identity and quota are unknown or unavailable", cut.Markup);
+    }
+
+    [Theory]
+    [InlineData("unavailable", "identity-unavailable", "Local account identity is unavailable; no upstream refresh was performed.")]
+    [InlineData("throttled", "refresh-throttled", "Account refresh was throttled. Try again after the next refresh time.")]
+    public async Task Manual_local_rejection_is_visible_after_post_and_composite_reread(string state, string reason, string expected)
+    {
+        var cut = await OpenAsync();
+        cut.WaitForAssertion(() => Assert.False(cut.Find("[data-testid='account-refresh']").HasAttribute("disabled")));
+        _handler.AccountAfterPost = state == "throttled"
+            ? Account().Replace("\"state\":\"fresh\"", $"\"state\":\"stale\",\"refreshState\":\"{state}\",\"reason\":\"{reason}\"", StringComparison.Ordinal)
+            : $$"""{"state":"unavailable","attemptState":"unavailable","refreshState":"{{state}}","reason":"{{reason}}","snapshots":[]}""";
+        var reads = _handler.Requests.Count(x => x.Contains("/usage/details", StringComparison.Ordinal));
+        await cut.Find("[data-testid='account-refresh']").ClickAsync(new());
+        Assert.Equal(2, _handler.Requests.Count(x => x.StartsWith("POST", StringComparison.Ordinal)));
+        Assert.True(_handler.Requests.Count(x => x.Contains("/usage/details", StringComparison.Ordinal)) > reads);
+        Assert.Equal(expected, cut.Find("[data-testid='account-diagnostic']").TextContent.Trim());
+        Assert.DoesNotContain("refresh succeeded", cut.Find("[data-testid='account-diagnostic']").TextContent);
+        if (state == "throttled")
+        {
+            Assert.Contains("0.125 of 1.5", cut.Markup);
+            Assert.Contains("throttled · stale", cut.Find("[data-testid='account-refresh-state']").TextContent);
+            Assert.DoesNotContain("success", cut.Find("[data-testid='account-refresh-state']").TextContent);
+            Assert.Contains("Last success 2026-10-01 12:00:00 UTC", cut.Markup);
+        }
+        else Assert.DoesNotContain("0.125 of 1.5", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Local_post_loading_overrides_previous_success_diagnostic()
+    {
+        _handler.HoldRefresh = true;
+        _handler.Account = Account().Replace("\"attemptState\":\"success\"", "\"attemptState\":\"success\",\"refreshState\":\"success\",\"reason\":\"success\"", StringComparison.Ordinal);
+        var cut = await OpenAsync();
+        await _handler.RefreshEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal("Account refresh is in progress.", cut.Find("[data-testid='account-diagnostic']").TextContent.Trim());
+        Assert.True(cut.Find("[data-testid='account-refresh']").HasAttribute("disabled"));
+        Assert.Contains("0.125 of 1.5", cut.Markup);
+    }
+
     private (DateTimeOffset Start, DateTimeOffset End) LastInterval()
     {
         var request = _handler.Requests.Last(x => x.Contains("/usage/details", StringComparison.Ordinal));
@@ -405,6 +494,7 @@ public sealed class ProviderUsageDetailsPanelTests : IDisposable
         public List<string> Requests { get; } = [];
         public string Account { get; set; } = ProviderUsageDetailsPanelTests.Account();
         public string Scheduled { get; set; } = ProviderUsageDetailsPanelTests.Scheduled;
+        public string? AccountAfterPost { get; set; }
         public bool HoldRefresh { get; set; }
         public bool HoldDetails { get; set; }
         public bool FailDetails { get; set; }
@@ -429,6 +519,7 @@ public sealed class ProviderUsageDetailsPanelTests : IDisposable
                     try { await ReleaseRefresh.Task.WaitAsync(cancellationToken); }
                     catch (OperationCanceledException) { RefreshCancelled.TrySetResult(); throw; }
                 }
+                if (AccountAfterPost is { } updated) Account = updated;
                 return Json(Account);
             }
             if (request.RequestUri?.AbsolutePath == "/api/providers/usage/details")

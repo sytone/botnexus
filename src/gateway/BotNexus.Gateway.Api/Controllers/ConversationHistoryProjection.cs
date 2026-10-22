@@ -71,40 +71,13 @@ public static class ConversationHistoryProjection
                 });
             }
 
-            // Append all history entries from this session.
-            // Skip assistant entries whose content is exactly "NO_REPLY" (optionally padded with whitespace).
-            // These are deliberate cron no-ops that produced no user-facing output; including them in
-            // history would show blank turns in the portal for every cron wakeup that had nothing to say (#773).
+            // Keep stored-entry visibility independent of API projection so durable read-history
+            // queries can reuse the same exclusions without loading or constructing portal DTOs.
+            // Folded history remains reachable (#2936); visibility is not an unread-count policy.
             var snapshot = session.GetHistorySnapshot();
             foreach (var entry in snapshot)
             {
-                // #2936: folded entries (IsHistory) are NOT skipped. IsHistory answers "should this
-                // go to the LLM?", not "should this go to the UI?" - the flag's own contract says
-                // historical entries stay in the store for transcript fidelity and UI fold/collapse.
-                // Filtering them here removed them from the candidate set entirely, making up to 96%
-                // of a compacted transcript unreachable from every client. They are now emitted with
-                // IsFolded = true so the portal can render them collapsed under the boundary marker.
-                //
-                // Crash sentinels are genuinely non-content recovery placeholders and stay skipped.
-                if (entry.IsCrashSentinel)
-                    continue;
-
-                if (entry.Role == MessageRole.Assistant &&
-                    string.Equals(entry.Content?.Trim(), "NO_REPLY", StringComparison.Ordinal))
-                    continue;
-
-                // #2921: never replay a contentless assistant row as a chat bubble. The fix in
-                // StreamingSessionHelper stops NEW ghost rows being written, but the rows already
-                // in session_history would keep rendering as empty timestamped bubbles forever.
-                // A thinking-only entry (#1198/#656) is deliberately NOT skipped - it has thinking
-                // content to show and is a legitimate transcript entry.
-                if (entry.Role == MessageRole.Assistant
-                    && !entry.IsCompactionSummary
-                    && string.IsNullOrWhiteSpace(entry.Content)
-                    && string.IsNullOrWhiteSpace(entry.ThinkingContent)
-                    && entry.OriginalContentParts is not { Count: > 0 }
-                    && entry.ToolCallId is null
-                    && entry.ToolName is null)
+                if (!SessionEntryHistoryVisibility.IsVisible(entry))
                     continue;
 
                 // Emit compaction summaries as distinct boundary markers so the portal

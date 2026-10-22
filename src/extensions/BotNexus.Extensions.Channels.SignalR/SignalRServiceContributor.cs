@@ -32,6 +32,7 @@ public sealed class SignalRServiceContributor : IServiceContributor
         // Override SignalR's DefaultUserIdProvider (registered via TryAdd by AddSignalR) so the
         // hub's UserIdentifier is derived from authenticated claims rather than the connection id.
         services.AddSingleton<IUserIdProvider, ClaimsUserIdProvider>();
+        services.AddSingleton<IConversationReadStateChangeNotifier, SignalRConversationReadStateChangeNotifier>();
 
         // #3679: absorb client-driven connection aborts before SignalR's dispatcher logs them as
         // "Failed to invoke hub method" at Error. Registered as a GLOBAL filter so every hub verb

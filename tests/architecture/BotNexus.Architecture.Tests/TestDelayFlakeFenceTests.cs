@@ -18,8 +18,10 @@ public class TestDelayFlakeFenceTests : ArchitectureTest
     // #3820 ratchet: DefaultSubAgentManagerTimeoutTests' two finite waits (the 5s terminal-state
     // poll and the 2s diagnostic poll) were replaced with a single awaited dispatch signal, so its
     // entry was removed entirely too: 109 -> 108 files, 148 -> 146 waits.
-    private const int ExpectedBaselineEntryCount = 108;
-    private const int ExpectedBaselineViolationCount = 146;
+    // #4941 ratchet: redirect security now drains owned loopback sockets instead of sleeping.
+    // #4624 ratchet: candidate conversation tests use event signals, removing two files/four waits.
+    private const int ExpectedBaselineEntryCount = 105;
+    private const int ExpectedBaselineViolationCount = 141;
 
     /// <summary>
     /// Pins the lexical boundary so cancellation sentinels remain valid while finite sleeps are caught.

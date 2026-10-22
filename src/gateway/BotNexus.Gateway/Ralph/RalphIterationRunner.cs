@@ -106,9 +106,18 @@ public sealed class RalphIterationRunner(
             // the agent's own prose account of what it claims it did.
             foreach (var toolEntry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(response)))
                 session.AddEntry(toolEntry);
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            session.AddEntry(new SessionEntry { AgentRunId = response.AgentRunId, Role = MessageRole.Assistant, Content = response.Content });
             await sessions.SaveAsync(session, cancellationToken).ConfigureAwait(false);
             return true;
+        }
+        catch (AgentPromptInterruptedException interrupted)
+        {
+            session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt });
+            foreach (var entry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(interrupted.PartialResponse)))
+                session.AddEntry(entry);
+            await sessions.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+            throw new OperationCanceledException("Ralph iteration was interrupted.", interrupted,
+                cancellationToken.IsCancellationRequested ? cancellationToken : interrupted.CancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

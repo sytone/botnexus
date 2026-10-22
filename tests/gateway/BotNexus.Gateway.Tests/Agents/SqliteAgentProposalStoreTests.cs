@@ -236,6 +236,87 @@ public sealed class SqliteAgentProposalStoreTests : IDisposable
             Path.GetFullPath(Path.Combine(dataDirectory, "agent-proposals.sqlite")));
     }
 
+
+    [Fact]
+    public async Task VersionOnePopulatedDatabase_MigratesWithoutLosingProposalOrReview()
+    {
+        Directory.CreateDirectory(_directory);
+        var proposal = PendingUpdate();
+        var descriptorJson = JsonSerializer.Serialize(proposal.ProposedDescriptor);
+        var proposerJson = JsonSerializer.Serialize(proposal.ProposedBy);
+        var reviewer = CitizenId.Of(UserId.From("migration-reviewer"));
+        var reviewerJson = JsonSerializer.Serialize(reviewer);
+        var reviewedAt = new DateTimeOffset(2026, 9, 25, 8, 0, 0, TimeSpan.Zero);
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DatabasePath }.ToString()))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                PRAGMA user_version = 1;
+                CREATE TABLE store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO store_meta(key, value) VALUES ('schema_version', '1');
+                CREATE TABLE agent_proposal (
+                    proposal_id TEXT PRIMARY KEY, kind TEXT NOT NULL, target_agent_id TEXT NOT NULL,
+                    proposed_descriptor_json TEXT NOT NULL, justification TEXT NOT NULL,
+                    proposed_by_json TEXT NOT NULL, proposed_at TEXT NOT NULL, status TEXT NOT NULL,
+                    reviewed_by_json TEXT NULL, review_reason TEXT NULL, reviewed_at TEXT NULL);
+                CREATE TABLE agent_proposal_review (
+                    review_id INTEGER PRIMARY KEY AUTOINCREMENT, proposal_id TEXT NOT NULL,
+                    status TEXT NOT NULL, reviewer_json TEXT NOT NULL, reason TEXT NULL, reviewed_at TEXT NOT NULL);
+                INSERT INTO agent_proposal VALUES ($id, 'update', $target, $descriptor, $justification,
+                    $proposer, $proposedAt, 'approved', $reviewer, $reason, $reviewedAt);
+                INSERT INTO agent_proposal_review (proposal_id, status, reviewer_json, reason, reviewed_at)
+                    VALUES ($id, 'approved', $reviewer, $reason, $reviewedAt);
+                """;
+            command.Parameters.AddWithValue("$id", proposal.ProposalId.ToString("D"));
+            command.Parameters.AddWithValue("$target", proposal.TargetAgentId.Value);
+            command.Parameters.AddWithValue("$descriptor", descriptorJson);
+            command.Parameters.AddWithValue("$justification", proposal.Justification);
+            command.Parameters.AddWithValue("$proposer", proposerJson);
+            command.Parameters.AddWithValue("$proposedAt", proposal.ProposedAt.ToUniversalTime().ToString("O"));
+            command.Parameters.AddWithValue("$reviewer", reviewerJson);
+            command.Parameters.AddWithValue("$reason", "migration evidence");
+            command.Parameters.AddWithValue("$reviewedAt", reviewedAt.ToUniversalTime().ToString("O"));
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await using var store = new SqliteAgentProposalStore(DatabasePath);
+        var migrated = await store.GetAsync(proposal.ProposalId);
+
+        migrated.ShouldNotBeNull();
+        migrated.ProposedDescriptor.DisplayName.ShouldBe(proposal.ProposedDescriptor.DisplayName);
+        migrated.ProposedBy.ShouldBe(proposal.ProposedBy);
+        migrated.ReviewedBy.ShouldBe(reviewer);
+        migrated.ReviewReason.ShouldBe("migration evidence");
+        migrated.ReviewHistory.ShouldHaveSingleItem().Reviewer.ShouldBe(reviewer);
+        migrated.ApplicationStatus.ShouldBe(AgentProposalApplicationStatus.Pending);
+        migrated.ApplicationAttempts.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ApplyingAttempt_RequiresEvidenceReconciliationAndNeverBlindlyReclaims()
+    {
+        var proposal = PendingUpdate();
+        await using var store = new SqliteAgentProposalStore(DatabasePath);
+        await store.CreateAsync(proposal);
+        await store.ReviewAsync(proposal.ProposalId, AgentProposalStatus.Approved,
+            CitizenId.Of(UserId.From("reviewer")), null, DateTimeOffset.UtcNow);
+        (await store.TryBeginApplicationAsync(proposal.ProposalId)).Outcome.ShouldBe(AgentProposalApplicationClaimOutcome.Claimed);
+
+        (await store.TryBeginApplicationAsync(proposal.ProposalId)).Outcome.ShouldBe(AgentProposalApplicationClaimOutcome.NotClaimed);
+        var reconciled = await store.ReconcileApplicationAsync(
+            proposal.ProposalId, AgentProposalReconciliationDecision.NotApplied,
+            CitizenId.Of(UserId.From("operator")), "config and registry verified absent", DateTimeOffset.UtcNow);
+
+        reconciled.Outcome.ShouldBe(AgentProposalReconciliationOutcome.Reconciled);
+        reconciled.Proposal.ShouldNotBeNull();
+        reconciled.Proposal.ApplicationStatus.ShouldBe(AgentProposalApplicationStatus.ReconciledNotApplied);
+        var evidence = reconciled.Proposal.ApplicationError;
+        evidence.ShouldNotBeNull();
+        evidence.ShouldContain("config and registry verified absent");
+        (await store.TryBeginApplicationAsync(proposal.ProposalId)).Outcome.ShouldBe(AgentProposalApplicationClaimOutcome.Claimed);
+    }
+
     private static AgentProposal PendingUpdate() => new(
         Guid.NewGuid(),
         AgentProposalKind.Update,

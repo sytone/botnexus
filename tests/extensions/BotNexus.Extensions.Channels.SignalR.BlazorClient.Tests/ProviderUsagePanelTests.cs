@@ -237,7 +237,8 @@ public sealed class ProviderUsagePanelTests : IDisposable
 
         await cut.InvokeAsync(() => cut.Instance.OpenAsync());
 
-        Assert.Contains("No provider calls observed yet", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("No HTTP responses observed yet", cut.Markup, StringComparison.Ordinal);
+        Assert.Contains("WebSocket traffic is excluded", cut.Find("[data-testid='http-activity-scope']").TextContent, StringComparison.Ordinal);
         Assert.Contains("Copilot account quota", cut.Markup, StringComparison.Ordinal);
         Assert.Contains("250 of 500 provider quota units remaining", cut.Markup, StringComparison.Ordinal);
         Assert.Contains("Sources and units are not interchangeable", cut.Markup, StringComparison.Ordinal);
@@ -261,7 +262,7 @@ public sealed class ProviderUsagePanelTests : IDisposable
         Assert.Contains("Copilot account quota", cut.Markup, StringComparison.Ordinal);
         Assert.Contains("250 of 500 provider quota units remaining", cut.Markup, StringComparison.Ordinal);
         Assert.Contains("4 wire attempts", cut.Find(".usage-totals").TextContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("No provider calls observed yet", cut.Markup, StringComparison.Ordinal);
+        Assert.DoesNotContain("No HTTP responses observed yet", cut.Markup, StringComparison.Ordinal);
     }
 
     [Fact]

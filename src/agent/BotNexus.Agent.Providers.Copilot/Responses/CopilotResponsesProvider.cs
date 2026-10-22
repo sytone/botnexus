@@ -169,6 +169,7 @@ public sealed class CopilotResponsesProvider : IApiProvider
             {
                 capture.Observe(() => socket.ResponseHeaders);
             }
+            payload.EnforceToolFree(options?.ToolChoiceMode);
             await socket.SendAsync(payload.ToJsonString(), options?.CancellationToken ?? CancellationToken.None).ConfigureAwait(false);
 
             var normalized = new LlmStream();

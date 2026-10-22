@@ -27,6 +27,15 @@ public sealed record AgentExchangeRequest
     /// </summary>
     public string? Objective { get; init; }
 
+    /// <summary>Occurrence-local qualified model selection; null preserves interactive exchange behavior.</summary>
+    public string? ModelOverride { get; init; }
+
+    /// <summary>Winning scheduled model token, null for interactive exchanges.</summary>
+    public string? CronRequestedModel { get; init; }
+
+    /// <summary>Scheduled precedence layer, null for interactive exchanges.</summary>
+    public string? CronModelSource { get; init; }
+
     /// <summary>
     /// Maximum allowed back-and-forth turns.
     /// </summary>

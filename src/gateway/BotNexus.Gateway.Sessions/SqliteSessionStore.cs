@@ -31,7 +31,7 @@ namespace BotNexus.Gateway.Sessions;
 /// The global initialisation lock (<c>_initLock</c>) is only held during the one-time
 /// schema creation; all subsequent operations use per-session granularity.
 /// </summary>
-public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostReader, IBoundedSessionAppendStore
+public sealed partial class SqliteSessionStore : SessionStoreBase, IConversationCostReader, IBoundedSessionAppendStore, IAgentRunEvidenceStore
 {
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
 
@@ -191,10 +191,9 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
     /// <summary>Commits one bounded cleanup batch after legacy rows have been normalized.</summary>
     public LegacyToolPayloadCleanupReport CleanupLegacyToolPayloads(int batchSize, long afterInvocationId = 0)
     {
-        var report = LegacyToolPayloadCleanup.RunConnectionString(_connectionString, batchSize, afterInvocationId);
-        if (report.CleanedInvocations > 0)
-            _cache.Clear();
-        return report;
+        return LegacyToolPayloadCleanup.RunConnectionString(
+            _connectionString, batchSize, afterInvocationId,
+            sessionId => _cache.Remove(SessionId.From(sessionId)));
     }
 
     /// <inheritdoc />
@@ -505,7 +504,11 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         // an ambiguous commit and defeat the unique(session_id, persistence_key) idempotency guard.
         var redacted = RedactForAppend(entries);
         foreach (var entry in redacted)
+        {
+            if (entry.AgentRunId is { } runId && entry.IsToolStartRow() && entry.ToolCallId is { } providerId)
+                entry.PersistenceKey = "tool-start:" + NormalizedToolKey(providerId, runId.Value);
             entry.PersistenceKey ??= Guid.NewGuid().ToString("N");
+        }
 
         return await RetryOnTransientAsync(async () =>
         {
@@ -557,7 +560,11 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
             var redacted = RedactForAppend(entries);
             foreach (var entry in redacted)
-                entry.PersistenceKey ??= Guid.NewGuid().ToString("N");
+        {
+            if (entry.AgentRunId is { } runId && entry.IsToolStartRow() && entry.ToolCallId is { } providerId)
+                entry.PersistenceKey = "tool-start:" + NormalizedToolKey(providerId, runId.Value);
+            entry.PersistenceKey ??= Guid.NewGuid().ToString("N");
+        }
 
             var remaining = deadline - Stopwatch.GetElapsedTime(started);
             if (remaining <= TimeSpan.Zero)
@@ -1595,6 +1602,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 await spawnCallMigration.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
             await EnsureToolInvocationSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
+            await EnsureAgentRunSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
 
             // P9-I (#674): the legacy idx_sessions_conversation_agent index referenced
             // the (now-dropped) agent_id column. Migration below drops the old shape
@@ -1852,7 +1860,9 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                      // #3907: makes append retries idempotent even when a prior commit succeeded but
                      // the caller observed a transient I/O error before receiving RETURNING id.
                      ("persistence_key", "TEXT"),
-                     ("tool_invocation_id", "INTEGER")
+                     ("tool_invocation_id", "INTEGER"),
+                     ("agent_run_id", "TEXT"),
+                     ("tool_is_incomplete", "INTEGER NOT NULL DEFAULT 0")
                  })
         {
             await using var cmd = connection.CreateCommand();
@@ -1911,6 +1921,10 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             CREATE INDEX IF NOT EXISTS idx_tool_invocations_session_started ON tool_invocations(session_id, started_at, id);
             CREATE INDEX IF NOT EXISTS idx_tool_invocations_retention_completed ON tool_invocations(retention_state, completed_at) WHERE completed_at IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_session_history_tool_invocation_id ON session_history(tool_invocation_id) WHERE tool_invocation_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_session_history_unlinked_tool_sibling ON session_history(session_id, tool_call_id, agent_run_id)
+                WHERE tool_invocation_id IS NULL
+                  AND (message_kind IN ('tool-start', 'tool-result')
+                       OR (message_kind IS NULL AND role = 'tool'));
             CREATE INDEX IF NOT EXISTS idx_session_history_unlinked_tool_rows ON session_history(id)
                 WHERE tool_invocation_id IS NULL
                   AND tool_call_id IS NOT NULL
@@ -1936,6 +1950,15 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             BEGIN SELECT RAISE(ABORT, 'linked tool invocation cannot be deleted'); END;
             """;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var column in new[] { "agent_run_id", "provider_tool_call_id" })
+        {
+            await using var migration = connection.CreateCommand();
+            migration.CommandText = $"ALTER TABLE tool_invocations ADD COLUMN {column} TEXT";
+            await SqliteAdditiveMigration.ExecuteAsync(migration, cancellationToken).ConfigureAwait(false);
+        }
+        await using var runIndex = connection.CreateCommand();
+        runIndex.CommandText = "CREATE INDEX IF NOT EXISTS idx_tool_invocations_session_run ON tool_invocations(session_id, agent_run_id, id)";
+        await runIndex.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -2331,7 +2354,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                    h.timestamp, h.tool_name, h.tool_call_id, h.is_compaction_summary,
                    CASE WHEN h.tool_args IS NOT NULL THEN h.tool_args WHEN h.message_kind='tool-start' THEN i.arguments_json END AS tool_args,
                    h.tool_is_error, h.is_crash_sentinel, h.is_history, h.trigger_type, h.thinking_content,
-                   h.message_kind, h.sender_id, h.is_replay_banner
+                   h.message_kind, h.sender_id, h.is_replay_banner, h.agent_run_id, h.tool_is_incomplete
             FROM session_history h
             LEFT JOIN tool_invocations i ON i.id=h.tool_invocation_id AND i.session_id=h.session_id
             WHERE h.session_id = $sessionId
@@ -2460,17 +2483,26 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
 
         var entries = snapshot.Entries;
         var currentPersistedIds = new HashSet<long>();
+        var narrowPayloadRowIds = new HashSet<long>();
         var persistedIdsByKey = new Dictionary<string, long>(StringComparer.Ordinal);
         await using (var selectCommand = connection.CreateCommand())
         {
             selectCommand.Transaction = transaction;
-            selectCommand.CommandText = "SELECT id, persistence_key FROM session_history WHERE session_id = $sessionId";
+            selectCommand.CommandText = """
+                SELECT id, persistence_key,
+                       tool_invocation_id IS NOT NULL AND
+                       ((message_kind='tool-start' AND tool_args IS NULL)
+                         OR (message_kind='tool-result' AND content IS NULL))
+                FROM session_history WHERE session_id = $sessionId
+                """;
             selectCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
             await using var reader = await selectCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 var id = reader.GetInt64(0);
                 currentPersistedIds.Add(id);
+                if (!reader.IsDBNull(2) && reader.GetInt64(2) != 0)
+                    narrowPayloadRowIds.Add(id);
                 if (!reader.IsDBNull(1))
                     persistedIdsByKey.Add(reader.GetString(1), id);
             }
@@ -2536,7 +2568,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         // Replacement can change a persisted row's tool identity or material result fields.
         // Rebuild every live link from the resulting transcript while retaining unlinked invocation
         // rows for the independent retention policy.
-        await ReconcileNormalizedToolInvocationsAsync(connection, transaction, sessionId, cancellationToken).ConfigureAwait(false);
+        await ReconcileNormalizedToolInvocationsAsync(connection, transaction, sessionId, narrowPayloadRowIds, cancellationToken).ConfigureAwait(false);
 
         var acknowledgedRowIds = new Dictionary<long, long>(writeResult.AcknowledgedRowIds);
         foreach (var recoveredRowId in recoveredRowIds)
@@ -2553,6 +2585,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         SqliteConnection connection,
         SqliteTransaction transaction,
         SessionId sessionId,
+        HashSet<long> narrowPayloadRowIds,
         CancellationToken cancellationToken)
     {
         var rows = new List<NormalizedToolHistoryRow>();
@@ -2563,7 +2596,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 SELECT h.id, h.message_kind, h.role, h.tool_call_id, h.tool_name,
                        CASE WHEN h.tool_args IS NOT NULL THEN h.tool_args WHEN h.message_kind='tool-start' THEN i.arguments_json END,
                        COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END),
-                       h.timestamp, h.tool_is_error
+                       h.timestamp, h.tool_is_error, h.agent_run_id, h.tool_is_incomplete
                 FROM session_history h
                 LEFT JOIN tool_invocations i ON i.id=h.tool_invocation_id AND i.session_id=h.session_id
                 WHERE h.session_id = $sessionId
@@ -2587,10 +2620,15 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                     reader.IsDBNull(6) ? null : reader.GetString(6),
                     reader.IsDBNull(7) ? null : reader.GetString(7),
                     !reader.IsDBNull(8) && reader.GetInt64(8) != 0,
-                    isStart));
+                    isStart,
+                    reader.IsDBNull(9) ? null : reader.GetString(9),
+                    reader.GetInt64(10) != 0));
             }
         }
 
+        // Freeze the old projections before rebuilding a shared invocation. Earlier results
+        // may differ from the latest result, and must not follow its payload when it changes.
+        narrowPayloadRowIds.UnionWith(await MaterializeToolPayloadsAsync(connection, transaction, sessionId, cancellationToken).ConfigureAwait(false));
         await using (var unlink = connection.CreateCommand())
         {
             unlink.Transaction = transaction;
@@ -2599,7 +2637,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             await unlink.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        foreach (var group in rows.GroupBy(static row => row.ToolCallId, StringComparer.Ordinal))
+        foreach (var group in rows.GroupBy(static row => NormalizedToolKey(row.ToolCallId, row.AgentRunId), StringComparer.Ordinal))
         {
             var groupedRows = group.ToArray();
             var start = groupedRows.FirstOrDefault(static row => row.IsStart);
@@ -2611,7 +2649,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             var resultSha256 = resultContent is null
                 ? null
                 : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resultContent))).ToLowerInvariant();
-            var status = start is null ? "unknown" : result is null ? "incomplete" : result.IsError ? "error" : "success";
+            var status = result?.IsIncomplete == true || start is null ? "unknown" : result is null ? "incomplete" : result.IsError ? "error" : "success";
 
             await using (var upsert = connection.CreateCommand())
             {
@@ -2619,10 +2657,10 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 upsert.CommandText = """
                     INSERT INTO tool_invocations
                         (session_id, tool_call_id, tool_name, arguments_json, started_at, completed_at, status,
-                         is_error, result_content, result_bytes, result_sha256)
+                         is_error, result_content, result_bytes, result_sha256, agent_run_id, provider_tool_call_id)
                     VALUES
                         ($sessionId, $toolCallId, $toolName, $argumentsJson, $startedAt, $completedAt, $status,
-                         $isError, $resultContent, $resultBytes, $resultSha256)
+                         $isError, $resultContent, $resultBytes, $resultSha256, $agentRunId, $providerToolCallId)
                     ON CONFLICT(session_id, tool_call_id) DO UPDATE SET
                         tool_name = excluded.tool_name,
                         arguments_json = excluded.arguments_json,
@@ -2636,10 +2674,12 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                     """;
                 upsert.Parameters.AddWithValue("$sessionId", sessionId.Value);
                 upsert.Parameters.AddWithValue("$toolCallId", group.Key);
+                upsert.Parameters.AddWithValue("$agentRunId", (object?)groupedRows[0].AgentRunId ?? DBNull.Value);
+                upsert.Parameters.AddWithValue("$providerToolCallId", groupedRows[0].AgentRunId is null ? DBNull.Value : groupedRows[0].ToolCallId);
                 upsert.Parameters.AddWithValue("$toolName", (object?)toolName ?? DBNull.Value);
                 upsert.Parameters.AddWithValue("$argumentsJson", (object?)arguments ?? DBNull.Value);
                 upsert.Parameters.AddWithValue("$startedAt", (object?)start?.Timestamp ?? DBNull.Value);
-                upsert.Parameters.AddWithValue("$completedAt", (object?)result?.Timestamp ?? DBNull.Value);
+                upsert.Parameters.AddWithValue("$completedAt", result?.IsIncomplete == true ? DBNull.Value : (object?)result?.Timestamp ?? DBNull.Value);
                 upsert.Parameters.AddWithValue("$status", status);
                 upsert.Parameters.AddWithValue("$isError", result?.IsError == true ? 1 : 0);
                 upsert.Parameters.AddWithValue("$resultContent", (object?)resultContent ?? DBNull.Value);
@@ -2662,6 +2702,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             if (linkedCount != groupedRows.Length)
                 throw new InvalidOperationException("The reconciled tool history rows could not be linked to their invocation.");
         }
+        await NarrowToolPayloadsAsync(connection, transaction, sessionId, narrowPayloadRowIds, cancellationToken).ConfigureAwait(false);
     }
 
     private sealed record NormalizedToolHistoryRow(
@@ -2672,7 +2713,9 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         string? Content,
         string? Timestamp,
         bool IsError,
-        bool IsStart);
+        bool IsStart,
+        string? AgentRunId,
+        bool IsIncomplete);
 
     private static async Task<int> UpdateHistoryRowAsync(
         SqliteConnection connection,
@@ -2700,16 +2743,21 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                 message_kind = $messageKind,
                 sender_id = $senderId,
                 is_replay_banner = $isReplayBanner,
-                persistence_key = $persistenceKey
+                persistence_key = $persistenceKey,
+                agent_run_id = $agentRunId,
+                tool_is_incomplete = $toolIsIncomplete,
+                tool_invocation_id = NULL
             WHERE id = $id AND session_id = $sessionId
               AND (
                   role IS NOT $role OR
-                  content IS NOT $content OR
+                  COALESCE(content, CASE WHEN message_kind='tool-result' THEN
+                      (SELECT result_content FROM tool_invocations WHERE id=tool_invocation_id AND session_id=$sessionId) END) IS NOT $content OR
                   timestamp IS NOT $timestamp OR
                   tool_name IS NOT $toolName OR
                   tool_call_id IS NOT $toolCallId OR
                   is_compaction_summary IS NOT $isCompactionSummary OR
-                  tool_args IS NOT $toolArgs OR
+                  CASE WHEN tool_args IS NOT NULL THEN tool_args WHEN message_kind='tool-start' THEN
+                      (SELECT arguments_json FROM tool_invocations WHERE id=tool_invocation_id AND session_id=$sessionId) END IS NOT $toolArgs OR
                   tool_is_error IS NOT $toolIsError OR
                   is_crash_sentinel IS NOT $isCrashSentinel OR
                   is_history IS NOT $isHistory OR
@@ -2718,9 +2766,13 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
                   message_kind IS NOT $messageKind OR
                   sender_id IS NOT $senderId OR
                   is_replay_banner IS NOT $isReplayBanner OR
-                  persistence_key IS NOT $persistenceKey
+                  persistence_key IS NOT $persistenceKey OR
+                  agent_run_id IS NOT $agentRunId OR
+                  tool_is_incomplete IS NOT $toolIsIncomplete
               )
             """;
+        command.Parameters.AddWithValue("$agentRunId", (object?)entry.AgentRunId?.Value ?? DBNull.Value);
+        command.Parameters.AddWithValue("$toolIsIncomplete", entry.ToolIsIncomplete ? 1 : 0);
         command.Parameters.AddWithValue("$id", entry.PersistenceId!.Value);
         command.Parameters.AddWithValue("$sessionId", sessionId.Value);
         command.Parameters.AddWithValue("$role", entry.Role.Value);
@@ -2824,8 +2876,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         await using var insertCommand = connection.CreateCommand();
         insertCommand.Transaction = transaction;
         insertCommand.CommandText = """
-            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id, is_replay_banner, persistence_key)
-            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind, $senderId, $isReplayBanner, $persistenceKey)
+            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id, is_replay_banner, persistence_key, agent_run_id, tool_is_incomplete)
+            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind, $senderId, $isReplayBanner, $persistenceKey, $agentRunId, $toolIsIncomplete)
             ON CONFLICT(session_id, persistence_key) WHERE persistence_key IS NOT NULL DO NOTHING
             RETURNING id
             """;
@@ -2851,6 +2903,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         // #3046: gateway-authored restart-replay banner marker; 0 for every ordinary entry.
         var pIsReplayBanner = insertCommand.Parameters.AddWithValue("$isReplayBanner", 0);
         var pPersistenceKey = insertCommand.Parameters.AddWithValue("$persistenceKey", DBNull.Value);
+        var pAgentRunId = insertCommand.Parameters.AddWithValue("$agentRunId", DBNull.Value);
+        var pIncomplete = insertCommand.Parameters.AddWithValue("$toolIsIncomplete", 0);
 
         await using var existingIdCommand = connection.CreateCommand();
         existingIdCommand.Transaction = transaction;
@@ -2862,15 +2916,20 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         var insertedRowCount = 0;
         foreach (var entry in entries)
         {
-            entry.PersistenceKey = entry.Kind == MessageKind.ToolResult && (entry.ToolName is "spawn_subagent" or "manage_subagent") && entry.ToolCallId is { } callId
-                ? "tool-result:" + callId : entry.PersistenceKey ?? Guid.NewGuid().ToString("N");
+            if (entry.AgentRunId is { } runId && entry.IsToolStartRow() && entry.ToolCallId is { } providerId)
+                entry.PersistenceKey = "tool-start:" + NormalizedToolKey(providerId, runId.Value);
+            else if (entry.Kind == MessageKind.ToolResult && (entry.ToolName is "spawn_subagent" or "manage_subagent") && entry.ToolCallId is { } callId)
+                entry.PersistenceKey = "tool-result:" + NormalizedToolKey(callId, entry.AgentRunId?.Value);
+            entry.PersistenceKey ??= Guid.NewGuid().ToString("N");
             pRole.Value = entry.Role.Value;
-            pContent.Value = entry.Content;
+            pContent.Value = entry.Kind == MessageKind.ToolResult && entry.ToolCallId is not null
+                ? DBNull.Value : entry.Content;
             pTimestamp.Value = entry.Timestamp.ToString("O");
             pToolName.Value = (object?)entry.ToolName ?? DBNull.Value;
             pToolCallId.Value = (object?)entry.ToolCallId ?? DBNull.Value;
             pIsCompactionSummary.Value = entry.IsCompactionSummary ? 1 : 0;
-            pToolArgs.Value = (object?)entry.ToolArgs ?? DBNull.Value;
+            pToolArgs.Value = entry.Kind == MessageKind.ToolStart && entry.ToolCallId is not null
+                ? DBNull.Value : (object?)entry.ToolArgs ?? DBNull.Value;
             pToolIsError.Value = entry.ToolIsError ? 1 : 0;
             pIsCrashSentinel.Value = entry.IsCrashSentinel ? 1 : 0;
             pIsHistory.Value = entry.IsHistory ? 1 : 0;
@@ -2883,6 +2942,8 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             pSenderId.Value = (object?)entry.SenderId ?? DBNull.Value;
             pIsReplayBanner.Value = entry.IsReplayBanner ? 1 : 0;
             pPersistenceKey.Value = entry.PersistenceKey;
+            pAgentRunId.Value = (object?)entry.AgentRunId?.Value ?? DBNull.Value;
+            pIncomplete.Value = entry.ToolIsIncomplete ? 1 : 0;
             var insertedId = await insertCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
             long durableId;
             if (insertedId is long newId)
@@ -2900,18 +2961,24 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             if (entry.PersistenceId is { } priorId)
                 acknowledgedRowIds.Add(priorId, durableId);
 
-            await NormalizeToolInvocationAsync(connection, transaction, sessionId, durableId, cancellationToken).ConfigureAwait(false);
+            await NormalizeToolInvocationAsync(connection, transaction, sessionId, durableId, cancellationToken,
+                insertedId is long ? entry : null).ConfigureAwait(false);
         }
 
         return new HistoryWriteResult(acknowledgedRowIds, insertedRowCount);
     }
+
+    private static string NormalizedToolKey(string toolCallId, string? agentRunId)
+        => agentRunId is null ? toolCallId : "agent-run:" + Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes($"{agentRunId.Length}:{agentRunId}:{toolCallId}"))).ToLowerInvariant();
 
     private static async Task NormalizeToolInvocationAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
         SessionId sessionId,
         long historyRowId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SessionEntry? insertedEntry = null)
     {
         string? kind;
         string? role;
@@ -2922,11 +2989,13 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         string? timestamp;
         bool isError;
         long? linkedInvocationId;
+        string? agentRunId;
+        bool incomplete;
         await using (var select = connection.CreateCommand())
         {
             select.Transaction = transaction;
             select.CommandText = """
-                SELECT message_kind, role, tool_call_id, tool_name, tool_args, content, timestamp, tool_is_error, tool_invocation_id
+                SELECT message_kind, role, tool_call_id, tool_name, tool_args, content, timestamp, tool_is_error, tool_invocation_id, agent_run_id, tool_is_incomplete
                 FROM session_history WHERE id = $historyRowId AND session_id = $sessionId
                 """;
             select.Parameters.AddWithValue("$historyRowId", historyRowId);
@@ -2943,27 +3012,43 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             timestamp = reader.IsDBNull(6) ? null : reader.GetString(6);
             isError = !reader.IsDBNull(7) && reader.GetInt64(7) != 0;
             linkedInvocationId = reader.IsDBNull(8) ? null : reader.GetInt64(8);
+            agentRunId = reader.IsDBNull(9) ? null : reader.GetString(9);
+            incomplete = reader.GetInt64(10) != 0;
+        }
+        // Fresh typed rows were inserted as markers, not payload-bearing history rows.
+        // On a persistence-key retry, use only the durable evidence, never the retried input.
+        if (insertedEntry is not null)
+        {
+            toolArgs = insertedEntry.ToolArgs;
+            content = insertedEntry.Content;
         }
         var isToolStart = kind == "tool-start" || (kind is null && role == MessageRole.Tool.Value && toolArgs is not null);
         var isToolResult = kind == "tool-result" || (kind is null && role == MessageRole.Tool.Value && toolArgs is null);
         if (linkedInvocationId is not null || toolCallId is null || (!isToolStart && !isToolResult))
             return;
 
+        var normalizedKey = NormalizedToolKey(toolCallId, agentRunId);
+        // Before replacing shared evidence, preserve any older marker's distinct projection.
+        var narrowPayloadRowIds = await MaterializeToolPayloadsAsync(connection, transaction, sessionId, cancellationToken, normalizedKey).ConfigureAwait(false);
+        if (insertedEntry?.Kind == MessageKind.ToolStart || insertedEntry?.Kind == MessageKind.ToolResult)
+            narrowPayloadRowIds.Add(historyRowId);
         if (isToolStart)
         {
             await using var start = connection.CreateCommand();
             start.Transaction = transaction;
             start.CommandText = """
-                INSERT INTO tool_invocations (session_id, tool_call_id, tool_name, arguments_json, started_at, status)
-                VALUES ($sessionId, $toolCallId, $toolName, $argumentsJson, $startedAt, 'incomplete')
+                INSERT INTO tool_invocations (session_id, tool_call_id, tool_name, arguments_json, started_at, status, agent_run_id, provider_tool_call_id)
+                VALUES ($sessionId, $toolCallId, $toolName, $argumentsJson, $startedAt, 'incomplete', $agentRunId, $providerToolCallId)
                 ON CONFLICT(session_id, tool_call_id) DO UPDATE SET
                     tool_name = CASE WHEN tool_invocations.started_at IS NULL THEN COALESCE(excluded.tool_name, tool_invocations.tool_name) ELSE tool_invocations.tool_name END,
                     arguments_json = CASE WHEN tool_invocations.started_at IS NULL THEN COALESCE(excluded.arguments_json, tool_invocations.arguments_json) ELSE tool_invocations.arguments_json END,
                     started_at = COALESCE(tool_invocations.started_at, excluded.started_at),
-                    status = CASE WHEN tool_invocations.completed_at IS NULL THEN 'incomplete' WHEN tool_invocations.is_error = 1 THEN 'error' ELSE 'success' END
+                    status = CASE WHEN tool_invocations.completed_at IS NULL THEN tool_invocations.status WHEN tool_invocations.is_error = 1 THEN 'error' ELSE 'success' END
                 """;
             start.Parameters.AddWithValue("$sessionId", sessionId.Value);
-            start.Parameters.AddWithValue("$toolCallId", toolCallId);
+            start.Parameters.AddWithValue("$toolCallId", normalizedKey);
+            start.Parameters.AddWithValue("$agentRunId", (object?)agentRunId ?? DBNull.Value);
+            start.Parameters.AddWithValue("$providerToolCallId", agentRunId is null ? DBNull.Value : toolCallId);
             start.Parameters.AddWithValue("$toolName", (object?)toolName ?? DBNull.Value);
             start.Parameters.AddWithValue("$argumentsJson", (object?)toolArgs ?? DBNull.Value);
             start.Parameters.AddWithValue("$startedAt", (object?)timestamp ?? DBNull.Value);
@@ -2977,23 +3062,26 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             result.Transaction = transaction;
             result.CommandText = """
                 INSERT INTO tool_invocations
-                    (session_id, tool_call_id, tool_name, arguments_json, completed_at, status, is_error, result_content, result_bytes, result_sha256)
-                VALUES ($sessionId, $toolCallId, $toolName, $argumentsJson, $completedAt, 'unknown', $isError, $resultContent, $resultBytes, $resultSha256)
+                    (session_id, tool_call_id, tool_name, arguments_json, completed_at, status, is_error, result_content, result_bytes, result_sha256, agent_run_id, provider_tool_call_id)
+                VALUES ($sessionId, $toolCallId, $toolName, $argumentsJson, $completedAt, 'unknown', $isError, $resultContent, $resultBytes, $resultSha256, $agentRunId, $providerToolCallId)
                 ON CONFLICT(session_id, tool_call_id) DO UPDATE SET
                     tool_name = COALESCE(tool_invocations.tool_name, excluded.tool_name),
                     arguments_json = COALESCE(tool_invocations.arguments_json, excluded.arguments_json),
                     completed_at = excluded.completed_at,
-                    status = CASE WHEN tool_invocations.started_at IS NULL THEN 'unknown' WHEN excluded.is_error = 1 THEN 'error' ELSE 'success' END,
+                    status = CASE WHEN $incomplete = 1 OR tool_invocations.started_at IS NULL THEN 'unknown' WHEN excluded.is_error = 1 THEN 'error' ELSE 'success' END,
                     is_error = excluded.is_error,
                     result_content = excluded.result_content,
                     result_bytes = excluded.result_bytes,
                     result_sha256 = excluded.result_sha256
                 """;
             result.Parameters.AddWithValue("$sessionId", sessionId.Value);
-            result.Parameters.AddWithValue("$toolCallId", toolCallId);
+            result.Parameters.AddWithValue("$toolCallId", normalizedKey);
+            result.Parameters.AddWithValue("$agentRunId", (object?)agentRunId ?? DBNull.Value);
+            result.Parameters.AddWithValue("$providerToolCallId", agentRunId is null ? DBNull.Value : toolCallId);
+            result.Parameters.AddWithValue("$incomplete", incomplete ? 1 : 0);
             result.Parameters.AddWithValue("$toolName", (object?)toolName ?? DBNull.Value);
             result.Parameters.AddWithValue("$argumentsJson", (object?)toolArgs ?? DBNull.Value);
-            result.Parameters.AddWithValue("$completedAt", (object?)timestamp ?? DBNull.Value);
+            result.Parameters.AddWithValue("$completedAt", incomplete ? DBNull.Value : (object?)timestamp ?? DBNull.Value);
             result.Parameters.AddWithValue("$isError", isError ? 1 : 0);
             result.Parameters.AddWithValue("$resultContent", (object?)content ?? DBNull.Value);
             result.Parameters.AddWithValue("$resultBytes", resultBytes);
@@ -3005,14 +3093,78 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         link.Transaction = transaction;
         link.CommandText = """
             UPDATE session_history SET tool_invocation_id = (
-                SELECT id FROM tool_invocations WHERE session_id = $sessionId AND tool_call_id = $toolCallId)
+                SELECT id FROM tool_invocations WHERE session_id = $sessionId AND tool_call_id = $toolCallId),
+                tool_args = CASE WHEN message_kind='tool-start' AND $freshTypedStart=1 THEN
+                    CASE WHEN $arguments IS (SELECT arguments_json FROM tool_invocations WHERE session_id=$sessionId AND tool_call_id=$toolCallId)
+                         THEN NULL ELSE $arguments END ELSE tool_args END
             WHERE id = $historyRowId AND session_id = $sessionId
             """;
+        link.Parameters.AddWithValue("$freshTypedStart", insertedEntry?.Kind == MessageKind.ToolStart ? 1 : 0);
+        link.Parameters.AddWithValue("$arguments", (object?)toolArgs ?? DBNull.Value);
         link.Parameters.AddWithValue("$sessionId", sessionId.Value);
-        link.Parameters.AddWithValue("$toolCallId", toolCallId);
+        link.Parameters.AddWithValue("$toolCallId", normalizedKey);
         link.Parameters.AddWithValue("$historyRowId", historyRowId);
         if (await link.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
             throw new InvalidOperationException("The durable tool history row could not be linked to its invocation.");
+        await NarrowToolPayloadsAsync(connection, transaction, sessionId, narrowPayloadRowIds, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Equality permits re-narrowing only for rows that were already normalized markers,
+    // or fresh typed inserts. It is not authority to clean historical payloads: that belongs
+    // exclusively to LegacyToolPayloadCleanup's stricter gates. Capture provenance inside
+    // the existing transaction/scan, without a schema change or another session-wide pass.
+    private static async Task<HashSet<long>> MaterializeToolPayloadsAsync(
+        SqliteConnection connection, SqliteTransaction transaction, SessionId sessionId,
+        CancellationToken cancellationToken, string? normalizedKey = null)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        // Live writes seek one invocation before visiting its linked history. A nullable-key
+        // OR predicate instead makes SQLite walk the entire session under the writer lock.
+        var invocationFilter = normalizedKey is null ? "" : """
+            AND h.tool_invocation_id=(SELECT id FROM tool_invocations WHERE session_id=$sessionId AND tool_call_id=$key)
+            """;
+        command.CommandText = $"""
+            UPDATE session_history AS h SET
+                tool_args = CASE WHEN h.message_kind='tool-start' THEN COALESCE(h.tool_args, i.arguments_json) ELSE h.tool_args END,
+                content = CASE WHEN h.message_kind='tool-result' THEN COALESCE(h.content, i.result_content) ELSE h.content END
+            FROM tool_invocations i
+            WHERE h.session_id=$sessionId AND h.tool_invocation_id=i.id AND i.session_id=h.session_id
+              {invocationFilter}
+              AND ((h.message_kind='tool-start' AND h.tool_args IS NULL AND i.arguments_json IS NOT NULL)
+                OR (h.message_kind='tool-result' AND h.content IS NULL AND i.result_content IS NOT NULL))
+            RETURNING id
+            """;
+        command.Parameters.AddWithValue("$sessionId", sessionId.Value);
+        if (normalizedKey is not null)
+            command.Parameters.AddWithValue("$key", normalizedKey);
+        var materializedRowIds = new HashSet<long>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            materializedRowIds.Add(reader.GetInt64(0));
+        return materializedRowIds;
+    }
+
+    private static async Task NarrowToolPayloadsAsync(
+        SqliteConnection connection, SqliteTransaction transaction, SessionId sessionId,
+        IReadOnlyCollection<long> narrowPayloadRowIds, CancellationToken cancellationToken)
+    {
+        if (narrowPayloadRowIds.Count == 0)
+            return;
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            UPDATE session_history AS h SET
+                tool_args = CASE WHEN h.message_kind='tool-start' AND h.tool_args IS i.arguments_json THEN NULL ELSE h.tool_args END,
+                content = CASE WHEN h.message_kind='tool-result' AND h.content IS i.result_content THEN NULL ELSE h.content END
+            FROM tool_invocations i
+            WHERE h.session_id=$sessionId AND h.tool_invocation_id=i.id AND i.session_id=h.session_id
+              AND h.id IN ({string.Join(',', narrowPayloadRowIds)})
+              AND ((h.message_kind='tool-start' AND h.tool_args IS NOT NULL AND h.tool_args IS i.arguments_json)
+                OR (h.message_kind='tool-result' AND h.content IS NOT NULL AND h.content IS i.result_content))
+            """;
+        command.Parameters.AddWithValue("$sessionId", sessionId.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private SqliteConnection CreateConnection()
@@ -3155,6 +3307,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
         ArgumentException.ThrowIfNullOrWhiteSpace(result.ToolCallId);
         if (result.Kind != MessageKind.ToolResult) throw new ArgumentException("A receipt requires an original ToolResult row.");
         var entries = RedactForAppend([result]);
+        var receiptKey = NormalizedToolKey(result.ToolCallId, result.AgentRunId?.Value);
         return await RetryOnTransientAsync(async () =>
         {
             await using var connection = CreateConnection();
@@ -3177,7 +3330,7 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             if (receipt is null) throw new UnauthorizedAccessException("Sub-agent does not belong to this parent.");
             if (receipt is string consumed)
             {
-                if (consumed != result.ToolCallId) return null;
+                if (consumed != receiptKey) return null;
                 command.CommandText = "SELECT result_content FROM tool_invocations WHERE session_id=$parent AND tool_call_id=$call";
                 command.Parameters.AddWithValue("$call", consumed);
                 return (string?)await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)
@@ -3185,13 +3338,15 @@ public sealed class SqliteSessionStore : SessionStoreBase, IConversationCostRead
             }
             // Legacy history keys are not call identities. Check the indexed invocation and its
             // original result rows before normalization can overwrite an earlier result payload.
-            command.Parameters.AddWithValue("$call", result.ToolCallId);
+            command.Parameters.AddWithValue("$call", receiptKey);
+            command.Parameters.AddWithValue("$providerCall", result.ToolCallId);
+            command.Parameters.AddWithValue("$agentRunId", (object?)result.AgentRunId?.Value ?? DBNull.Value);
             command.CommandText = """
                 SELECT EXISTS (
                     SELECT 1 FROM session_history
                     WHERE tool_invocation_id IS NULL AND tool_call_id IS NOT NULL
                       AND (message_kind IN ('tool-start', 'tool-result') OR (message_kind IS NULL AND role='tool'))
-                      AND session_id=$parent AND tool_call_id=$call
+                      AND session_id=$parent AND tool_call_id=$providerCall AND agent_run_id IS $agentRunId
                       AND (message_kind='tool-result' OR (message_kind IS NULL AND role='tool' AND tool_args IS NULL)))
                 """;
             if ((long)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) ?? 0L) != 0)

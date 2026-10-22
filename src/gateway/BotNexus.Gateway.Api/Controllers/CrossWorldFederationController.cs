@@ -97,8 +97,11 @@ public sealed class CrossWorldFederationController(
         if (!inboundAuthService.TryAuthorize(request.SourceWorldId, targetAgentId, presentedApiKey, out var authError))
             return Unauthorized(new { error = authError });
 
-        if (!registry.Contains(targetAgentId))
-            return NotFound(new { error = $"Target agent '{request.TargetAgentId}' is not registered." });
+        // Registration includes disabled agents for management, but relay admission must not
+        // create or mutate sessions for them. Keep this check after authentication.
+        if (!registry.Contains(targetAgentId)
+            || registry.Get(targetAgentId, includeDisabled: true)?.Enabled == false)
+            return NotFound(new { error = $"Target agent '{request.TargetAgentId}' is not registered or is disabled." });
 
         // Per-session lock holds across resolve → write → prompt → reload → save → (seal-on-error).
         // The single critical race that motivated #551 is two concurrent senders supplying the
@@ -198,7 +201,19 @@ public sealed class CrossWorldFederationController(
             await sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
             var handle = await supervisor.GetOrCreateAsync(session.AgentId, sessionId, cancellationToken).ConfigureAwait(false);
-            var response = await handle.PromptAsync(request.Message, cancellationToken).ConfigureAwait(false);
+            AgentResponse response;
+            try
+            {
+                response = await handle.PromptAsync(request.Message, cancellationToken).ConfigureAwait(false);
+            }
+            catch (AgentPromptInterruptedException interrupted)
+            {
+                foreach (var entry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(interrupted.PartialResponse)))
+                    session.AddEntry(entry);
+                await sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+                throw new OperationCanceledException("Relay turn was interrupted.", interrupted,
+                    cancellationToken.IsCancellationRequested ? cancellationToken : interrupted.CancellationToken);
+            }
             // #2614 AC4: the cross-world RECEIVER is a blocking PromptAsync boundary. The tools a
             // remote peer's request caused to execute locally are exactly the ones an operator most
             // needs a durable record of, and before this slice the receiver session recorded only

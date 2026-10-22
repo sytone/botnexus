@@ -20,6 +20,8 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
     private volatile IReadOnlyDictionary<string, string> _activationFailures =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private IDisposable? _subscription;
+    private readonly object _reconcileLock = new();
+    private long _reconcileGeneration;
 
     public ConfigDefinedModelRegistryReconciler(
         IOptionsMonitor<PlatformConfig> config,
@@ -48,8 +50,8 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
     public Task StartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Apply(_config.CurrentValue);
-        _subscription ??= _config.OnChange((updated, _) => Apply(updated));
+        _subscription ??= _config.OnChange((_, _) => ReconcileCurrent());
+        ReconcileCurrent();
         return Task.CompletedTask;
     }
 
@@ -72,6 +74,21 @@ public sealed class ConfigDefinedModelRegistryReconciler : IHostedService, IDisp
     /// </summary>
     public string? GetActivationFailure(string providerName) =>
         _activationFailures.TryGetValue(providerName, out var failure) ? failure : null;
+
+    private void ReconcileCurrent()
+    {
+        lock (_reconcileLock)
+        {
+            // Notifications can arrive late or overlap startup. Read the current snapshot under
+            // the same lock rather than allowing an older callback to restore an old catalogue.
+            var generation = ++_reconcileGeneration;
+            var current = _config.CurrentValue;
+            // A synchronous notification during the read can re-enter this lock and already
+            // apply a newer snapshot. Do not overwrite that nested reconciliation on return.
+            if (generation == _reconcileGeneration)
+                Apply(current);
+        }
+    }
 
     private void Apply(PlatformConfig config)
     {

@@ -468,6 +468,84 @@ public sealed class AgentExchangeServiceCancelNoSealTests
         session.Metadata.ContainsKey("error").ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConverseAsync_InterruptedPrompt_PersistsPartialAuditAndPreservesCancellationCause(bool engineDeadline)
+    {
+        var initiator = AgentId.From("test-agent");
+        var target = AgentId.From("agent-c");
+        var registry = CreateRegistry(initiator, target, ["agent-c"]);
+        var sessionStore = new InMemorySessionStore();
+        var conversationStore = new InMemoryConversationStore();
+        using var caller = new CancellationTokenSource();
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        var runId = AgentRunId.From("run-4101");
+        var partial = new AgentResponse
+        {
+            AgentRunId = runId,
+            Content = "not a final answer",
+            ToolCalls = [
+                new("completed-4101", "read", false, "{}", "completed content") { AgentRunId = runId },
+                new("interrupted-4101", "read", true, "{}", null, IsIncomplete: true) { AgentRunId = runId }]
+        };
+        var handle = new Mock<IAgentHandle>();
+        handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string _, CancellationToken ct) =>
+            {
+                // Expire the engine-owned timer only after setup and prompt admission.
+                if (engineDeadline) clock.Advance(TimeSpan.FromMinutes(1));
+                else caller.Cancel();
+                var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                using var registration = ct.Register(() => cancelled.TrySetResult());
+                await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                throw new AgentPromptInterruptedException(partial, ct);
+            });
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(s => s.GetOrCreateAsync(target, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        var engine = new AgentExchangeTurnEngine(sessionStore, conversationStore,
+            NullLogger.Instance, null, clock);
+        var service = new AgentExchangeService(registry.Object, supervisor.Object, sessionStore,
+            conversationStore, Options.Create(new GatewayOptions()), NullLogger<AgentExchangeService>.Instance,
+            turnEngine: engine);
+
+        // Shouldly 4.3 ThrowAsync substitutes TaskCanceledException for every canceled task,
+        // losing the engine-owned exception type. Await directly to preserve the actual cause.
+        OperationCanceledException? cancellation = null;
+        try
+        {
+            await service.ConverseAsync(new AgentExchangeRequest
+            {
+                InitiatorId = initiator, TargetId = target, Message = "hello", MaxTurns = 3,
+                Deadline = engineDeadline ? clock.GetUtcNow().AddMinutes(1) : null
+            }, caller.Token);
+        }
+        catch (OperationCanceledException ex)
+        {
+            cancellation = ex;
+        }
+        var exception = cancellation.ShouldNotBeNull();
+
+        if (engineDeadline) exception.ShouldBeOfType<AgentExchangeDeadlineExceededException>();
+        else exception.CancellationToken.ShouldBe(caller.Token);
+        caller.IsCancellationRequested.ShouldBe(!engineDeadline);
+        var summaries = await sessionStore.GetExistenceAsync(initiator, new ExistenceQuery());
+        var session = (await sessionStore.GetAsync(summaries.ShouldHaveSingleItem().SessionId)).ShouldNotBeNull();
+        session.Status.ShouldBe(engineDeadline ? GatewaySessionStatus.Sealed : GatewaySessionStatus.Active);
+        session.Metadata.ContainsKey("error").ShouldBe(engineDeadline);
+        if (!engineDeadline) session.Metadata["exchangeOutcome"].ShouldBe("callerCancelled");
+        var history = session.GetHistorySnapshot();
+        history.Where(row => row.Role == MessageRole.User).ShouldHaveSingleItem().Content.ShouldBe("hello");
+        history.ShouldNotContain(row => row.Role == MessageRole.Assistant);
+        var tools = history.Where(row => row.Role == MessageRole.Tool).ToArray();
+        tools.Select(row => row.ToolCallId).ShouldBe(new[] { "completed-4101", "interrupted-4101" });
+        tools.ShouldAllBe(row => row.AgentRunId == runId);
+        tools[0].Content.ShouldContain("completed content");
+        tools[0].ToolIsIncomplete.ShouldBeFalse();
+        tools[1].ToolIsIncomplete.ShouldBeTrue();
+    }
+
     private static Mock<IAgentRegistry> CreateRegistry(AgentId initiator, AgentId target, IReadOnlyList<string> allowedTargets)
     {
         var registry = new Mock<IAgentRegistry>();

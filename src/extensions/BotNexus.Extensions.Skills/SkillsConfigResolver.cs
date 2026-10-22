@@ -52,17 +52,19 @@ public static class SkillsConfigResolver
             extension.ValueKind is not JsonValueKind.Object)
             return false;
 
+        // Match case-insensitive typed binding: the last authored boolean wins.
+        var found = false;
         foreach (var property in extension.EnumerateObject())
         {
             if (string.Equals(property.Name, "allowSharedSkillManagement", StringComparison.OrdinalIgnoreCase) &&
                 property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
             {
                 value = property.Value.GetBoolean();
-                return true;
+                found = true;
             }
         }
 
-        return false;
+        return found;
     }
 
     private static List<Security.SkillSecurityAcknowledgement>? Combine(

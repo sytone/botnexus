@@ -78,7 +78,16 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
         PopulateVersionFromRawJson(config, root);
         PlatformConfigLoader.ExtractAgentDefaults(config, root);
         var rawDefaultExtensions = config.AgentDefaults?.Extensions;
+        // Keep authored empty objects and their constructor defaults, but reset bindable lists:
+        // binding into lists populated by ExtractAgentDefaults would append duplicate items.
         config.AgentDefaults ??= new AgentDefaultsConfig();
+        config.AgentDefaults.ToolIds = null;
+        if (config.AgentDefaults.FileAccess is { } defaultFileAccess)
+        {
+            defaultFileAccess.AllowedReadPaths = null;
+            defaultFileAccess.AllowedWritePaths = null;
+            defaultFileAccess.DeniedPaths = null;
+        }
         configuration.GetSection("agents:defaults").Bind(config.AgentDefaults);
         config.AgentDefaults.Extensions = rawDefaultExtensions;
         PopulateJsonElementFields(config, root);
@@ -95,6 +104,8 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
             if (!HasHigherPrecedenceValue(providers, rawProviderIndex, "gateway:extensionLoader:enabled"))
                 config.Gateway.ExtensionLoader.Enabled = rawLoader.Enabled;
         }
+
+        CollectionShapeConfiguration.Apply(providers, config);
     }
 
     private static bool HasHigherPrecedenceValue(
@@ -186,8 +197,6 @@ public sealed class PlatformConfigPostConfigure(IConfiguration configuration, st
             if (agentConfig.IsolationOptions.HasValue && agentConfig.IsolationOptions.Value.ValueKind == JsonValueKind.Undefined)
                 agentConfig.IsolationOptions = null;
             NullifyInvalidExtensionBag(agentConfig.Extensions);
-            if (agentConfig.Extensions is { Count: 0 })
-                agentConfig.Extensions = null;
         }
     }
 }

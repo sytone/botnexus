@@ -41,6 +41,8 @@ public sealed class LogPatternEntry
     private readonly HashSet<string> _findingIds = new(StringComparer.Ordinal);
     private int _count = 1;
     private DateTimeOffset _lastSeen;
+    private DateTimeOffset _firstSeen;
+    private string _sampleMessage = string.Empty;
 
     /// <summary>Stable fingerprint derived from aggregate identity.</summary>
     public required string Fingerprint { get; init; }
@@ -55,7 +57,7 @@ public sealed class LogPatternEntry
     public int Count { get { lock (_gate) return _count; } }
 
     /// <summary>Timestamp of the first observation.</summary>
-    public required DateTimeOffset FirstSeen { get; init; }
+    public required DateTimeOffset FirstSeen { get { lock (_gate) return _firstSeen; } init => _firstSeen = value; }
 
     /// <summary>Timestamp of the most recent observation.</summary>
     public DateTimeOffset LastSeen { get { lock (_gate) return _lastSeen; } }
@@ -64,7 +66,7 @@ public sealed class LogPatternEntry
     internal DateTimeOffset InitialLastSeen { init => _lastSeen = value; }
 
     /// <summary>A sanitised sample message from the first observation.</summary>
-    public required string SampleMessage { get; init; }
+    public required string SampleMessage { get { lock (_gate) return _sampleMessage; } init => _sampleMessage = value; }
 
     /// <summary>Number of distinct retained agent identities observed for this pattern.</summary>
     public int DistinctAgentCount { get { lock (_gate) return _agentIds.Count; } }
@@ -104,6 +106,37 @@ public sealed class LogPatternEntry
             AddDistinct(_sessionIds, occurrence.Properties, "SessionId", maxDistinctValues);
             AddDistinct(_findingIds, occurrence.Properties, "FindingId", maxDistinctValues);
             _recentOccurrences.AddFirst(occurrence);
+        }
+    }
+
+    internal LogPatternSnapshot Snapshot(DateTimeOffset cutoff)
+    {
+        lock (_gate)
+            return new(Fingerprint, Severity, _count, _firstSeen, _lastSeen,
+                _recentOccurrences.Where(occurrence => occurrence.Timestamp >= cutoff).ToArray());
+    }
+
+    internal void PruneExpired(DateTimeOffset cutoff, int maxDistinctValues)
+    {
+        lock (_gate)
+        {
+            if (_firstSeen >= cutoff) return;
+            while (_recentOccurrences.Last is { } last && last.Value.Timestamp < cutoff)
+                _recentOccurrences.RemoveLast();
+            // Discard stale aggregate metadata too; do not preserve an expired sample or infer old origins.
+            if (_recentOccurrences.Last is not { } oldest) return;
+            _firstSeen = oldest.Value.Timestamp;
+            _sampleMessage = oldest.Value.RenderedMessage;
+            _count = _recentOccurrences.Count;
+            _agentIds.Clear();
+            _sessionIds.Clear();
+            _findingIds.Clear();
+            foreach (var occurrence in _recentOccurrences)
+            {
+                AddDistinct(_agentIds, occurrence.Properties, "AgentId", maxDistinctValues);
+                AddDistinct(_sessionIds, occurrence.Properties, "SessionId", maxDistinctValues);
+                AddDistinct(_findingIds, occurrence.Properties, "FindingId", maxDistinctValues);
+            }
         }
     }
 

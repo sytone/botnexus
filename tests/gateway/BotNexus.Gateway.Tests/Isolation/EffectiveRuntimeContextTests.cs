@@ -45,6 +45,20 @@ public sealed class EffectiveRuntimeContextTests
     private const string ConversationOverrideModel = "gpt-5.6-sol";
 
     [Fact]
+    public async Task CreateAsync_CronOccurrenceModel_BeatsStandingConversationModel()
+    {
+        var (strategy, sessionId) = await CreateSeamAsync(ConversationOverrideModel, null, null);
+        await using var handle = await strategy.CreateAsync(CreateDescriptor(), new AgentExecutionContext
+        {
+            SessionId = sessionId,
+            Parameters = new Dictionary<string, object?> { ["cronModelOverride"] = $"github-copilot/{AgentDefaultModel}" }
+        });
+        var prompt = handle.ShouldBeOfType<InProcessAgentHandle>().RenderedSystemPrompt.ShouldNotBeNull();
+        prompt.ShouldContain($"| model={AgentDefaultModel}");
+        prompt.ShouldNotContain($"| model={ConversationOverrideModel}");
+    }
+
+    [Fact]
     public async Task CreateAsync_WithConversationModelOverride_RuntimeBlockReportsOverrideModel()
     {
         var (strategy, sessionId) = await CreateSeamAsync(

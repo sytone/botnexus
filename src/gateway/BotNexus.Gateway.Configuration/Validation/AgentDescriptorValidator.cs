@@ -94,6 +94,8 @@ public static class AgentDescriptorValidator
         ModelRegistry? modelRegistry)
     {
         List<string> errors = [];
+        if (descriptor.CompactionTokenCeiling is <= 0)
+            errors.Add("CompactionTokenCeiling must be positive or null.");
 
         var hasThinking = !string.IsNullOrWhiteSpace(descriptor.Thinking);
         var hasContext = descriptor.ContextWindow is not null;

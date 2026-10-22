@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Domain.Primitives;
@@ -15,13 +16,14 @@ namespace BotNexus.Gateway.Commands;
 /// <summary>
 /// Provides built-in slash commands through the shared command contributor extension contract.
 /// </summary>
-internal sealed class BuiltInCommandContributor(
+internal sealed partial class BuiltInCommandContributor(
     IAgentRegistry agentRegistry,
     IAgentSupervisor agentSupervisor,
     ISessionStore sessionStore,
     IOptionsMonitor<CompactionOptions> compactionOptions,
     IServiceProvider serviceProvider,
-    ISessionCompactionCoordinator? compactionCoordinator = null) : ICommandContributor
+    ISessionCompactionCoordinator? compactionCoordinator = null,
+    ISessionCompactionDiagnostics? compactionDiagnostics = null) : ICommandContributor
 {
     /// <summary>
     /// Ceiling for the model-rejection text a slash command returns. Mirrors
@@ -32,6 +34,12 @@ internal sealed class BuiltInCommandContributor(
 
     private static readonly IReadOnlyList<CommandDescriptor> BuiltInCommands =
     [
+        new CommandDescriptor
+        {
+            Name = "/loop",
+            Description = "Create (/loop [interval] <prompt>), list (/loop status), or stop (/loop stop [name]) loops in this conversation.",
+            Category = "Session"
+        },
         new CommandDescriptor
         {
             Name = "/help",
@@ -108,11 +116,12 @@ internal sealed class BuiltInCommandContributor(
             "/agents" => Task.FromResult(ExecuteAgents()),
             "/new" => ExecuteNewSessionAsync(context, cancellationToken),
             "/reset" => Task.FromResult(ClientSideOnlyCommandResult()),
-            "/context" => Task.FromResult(ExecuteContext(context)),
+            "/context" => ExecuteContextAsync(context, cancellationToken),
             "/compact" => ExecuteCompactAsync(context, cancellationToken),
             "/model" => ExecuteModelOverrideAsync(context, cancellationToken),
             "/reasoning" => ExecuteReasoningOverrideAsync(context, cancellationToken),
             "/tools" => ExecuteToolOverrideAsync(context, cancellationToken),
+            "/loop" => ExecuteLoopAsync(context, cancellationToken),
             _ => Task.FromResult(new CommandResult
             {
                 Title = "Command Not Found",
@@ -252,7 +261,7 @@ internal sealed class BuiltInCommandContributor(
         };
     }
 
-    private CommandResult ExecuteContext(CommandExecutionContext context)
+    private async Task<CommandResult> ExecuteContextAsync(CommandExecutionContext context, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(context.AgentId) || string.IsNullOrWhiteSpace(context.SessionId))
         {
@@ -298,23 +307,64 @@ internal sealed class BuiltInCommandContributor(
             };
         }
 
-        var contextWindowTokens = compactionOptions.CurrentValue.ContextWindowTokens;
+        // Resolve only after the existing resident-handle guards. Never create a handle or
+        // replace missing/failed policy with a cached model binding or relaxed global policy.
+        var policy = compactionDiagnostics is null ? null
+            : await compactionDiagnostics.ResolveAsync(agentId, sessionId, cancellationToken).ConfigureAwait(false);
+        var contextWindowTokens = policy?.ScopedContextWindowTokens;
         var totalUsed = diag.TotalEstimatedTokens;
-        var remaining = contextWindowTokens - totalUsed;
-        var usedPct = contextWindowTokens > 0
-            ? Math.Round((double)totalUsed / contextWindowTokens * 100, 1)
-            : 0.0;
 
-        static string Pct(int tokens, int window)
-            => window > 0 ? $"{Math.Round((double)tokens / window * 100, 1),5:F1}%" : "  n/a%";
+        static string Pct(int tokens, int? window)
+            => window is > 0
+                ? ((double)tokens / window.Value * 100).ToString("F1", CultureInfo.InvariantCulture) + "%"
+                : "n/a";
 
-        static string Fmt(int n) => n.ToString("N0");
+        static string Fmt(int n) => n.ToString("N0", CultureInfo.InvariantCulture);
+        static string Ratio(double n) => n.ToString("0.###", CultureInfo.InvariantCulture);
 
         var separator = new string('-', 60);
         var sb = new StringBuilder();
-        sb.AppendLine($"Context Window Usage  ({usedPct}% of {Fmt(contextWindowTokens)} token window)");
+        sb.AppendLine("Context Window Usage");
+        if (policy is not null)
+        {
+            sb.AppendLine(contextWindowTokens is { } scopedWindow
+                ? $"Scoped working window: {Fmt(scopedWindow)} tokens"
+                : "Scoped working window: unavailable");
+            if (contextWindowTokens is null)
+                sb.AppendLine($"Compaction policy fallback window: {Fmt(policy.ContextWindowTokens)} tokens (not known model capacity)");
+            var ceilingSource = policy.CompactionTokenCeilingSource switch
+            {
+                "conversation" => "conversation",
+                "agent" => "agent",
+                "world" => "world",
+                _ => "none"
+            };
+            sb.AppendLine(policy.CompactionTokenCeiling is { } ceiling
+                ? $"Compaction ceiling: {Fmt(ceiling)} tokens (source: {ceilingSource})"
+                : "Compaction ceiling: none (source: none)");
+            sb.AppendLine($"Ratio safety threshold: {Fmt(policy.RatioSafetyThresholdTokens)} tokens (configured ratio: {Ratio(policy.TokenThresholdRatio)})");
+            sb.AppendLine($"Effective token trigger threshold: {Fmt(policy.EffectiveThresholdTokens)} tokens");
+            sb.AppendLine("Token pressure triggers above this threshold, not at equality; this is not a hard cap or a guarantee that compaction will succeed.");
+            sb.AppendLine($"Persisted LLM-visible history estimate: {Fmt(policy.LocalEstimatedTokens)} tokens");
+            sb.AppendLine("The persisted estimate excludes system instructions, tool definitions and injected workspace context.");
+            var measurementSource = policy.ProviderMeasurementSource == "lastProviderPromptTokens"
+                ? "lastProviderPromptTokens" : "unavailable";
+            sb.AppendLine(policy.ProviderPromptTokens is { } providerTokens
+                ? $"Last completed provider prompt: {Fmt(providerTokens)} tokens (source: {measurementSource})"
+                : "Last completed provider prompt: unavailable (source: unavailable)");
+            sb.AppendLine($"Provider / persisted estimate ratio: {(policy.ProviderToEstimateRatio is { } ratio ? Ratio(ratio) : "unavailable")}");
+            sb.AppendLine("Provider counts describe the last completed request, not a new request. Byte triggers and circuit-breaker state are not reported here.");
+        }
+        else
+        {
+            sb.AppendLine("Compaction policy: unavailable");
+            if (compactionDiagnostics is null)
+                sb.AppendLine($"Configured compaction fallback window: {Fmt(compactionOptions.CurrentValue.ContextWindowTokens)} tokens (not known model capacity)");
+        }
         sb.AppendLine();
-        sb.AppendLine($"{"Section",-28} {"~Tokens",9}  {"Chars",9}  {"  %",6}");
+        sb.AppendLine("Handle context breakdown (estimate) - separate from persisted compaction history");
+        sb.AppendLine();
+        sb.AppendLine($"{"Section",-28} {"~Tokens",9}  {"Chars",9}  {(contextWindowTokens is > 0 ? "%" : "n/a"),6}");
         sb.AppendLine(separator);
         sb.AppendLine($"{"System instructions",-28} {Fmt(diag.SystemPromptTokens),9}  {Fmt(diag.SystemPromptChars),9}  {Pct(diag.SystemPromptTokens, contextWindowTokens),6}");
         sb.AppendLine($"{"Tool definitions",-28} {Fmt(diag.ToolDefinitionTokens),9}  {Fmt(diag.ToolDefinitionChars),9}  {Pct(diag.ToolDefinitionTokens, contextWindowTokens),6}");
@@ -322,7 +372,6 @@ internal sealed class BuiltInCommandContributor(
         sb.AppendLine($"{"Tool results",-28} {Fmt(diag.ToolResultTokens),9}  {Fmt(diag.ToolResultChars),9}  {Pct(diag.ToolResultTokens, contextWindowTokens),6}");
         sb.AppendLine(separator);
         sb.AppendLine($"{"Total used",-28} {Fmt(totalUsed),9}  {"",9}  {Pct(totalUsed, contextWindowTokens),6}");
-        sb.AppendLine($"{"Remaining",-28} {Fmt(remaining),9}");
         sb.AppendLine();
         sb.AppendLine($"History: {diag.HistoryEntryCount} message(s)  |  Tools: {diag.ToolCount}");
         sb.AppendLine(

@@ -14,19 +14,20 @@ namespace BotNexus.Gateway.Configuration;
 /// <para>
 /// The startup guard in <c>BotNexus.Gateway.Api/Program.cs</c> (<c>IsValidJsonFile</c>) only runs
 /// once, before the source is added to the pipeline. Once registered with
-/// <c>reloadOnChange: true</c>, the framework's <see cref="FileConfigurationProvider"/> re-invokes
-/// <see cref="FileConfigurationProvider.Load()"/> from the file-watcher change-token callback. On a
-/// parse failure that method (a) <em>clears</em> <c>Data</c> and (b) rethrows the failure wrapped in
-/// an <see cref="InvalidDataException"/> — on a background thread, which terminates the process.
-/// So the startup guard genuinely does not protect the reload path, and neither does
-/// <see cref="PlatformConfigPostConfigure"/> (it catches <see cref="System.Text.Json.JsonException"/>,
-/// which the provider has already wrapped by then).
+/// <c>reloadOnChange: true</c>, the framework's <see cref="FileConfigurationProvider"/> invokes its
+/// private reload loader, which calls <see cref="FileConfigurationProvider.Load(Stream)"/> but
+/// bypasses the public parameterless override. With the stock JSON stream loader, a parse failure
+/// causes the private loader to clear <c>Data</c> and rethrow an <see cref="InvalidDataException"/>
+/// on the watcher thread. The startup guard and options post-configuration cannot protect that
+/// boundary. This provider's stream override instead consumes content failures before they reach
+/// that framework failure path.
 /// </para>
 /// <para>
-/// This provider therefore validates <em>before</em> applying: it snapshots the current data,
-/// delegates to the base loader, and on either a load/parse failure or a semantic validation
-/// failure restores the snapshot and reports the error through <see cref="OnLoadFailure"/> without
-/// rethrowing. Semantic validation reuses the existing startup validation surface
+/// Initial, explicit and watcher loads of <c>config.json</c> share the stream-loading acceptance hook, which parses and
+/// validates candidates and retains last-known-good data on rejection. It accepts both binding data
+/// and the raw document before returning
+/// to the framework, which then notifies consumers. Failures are reported through
+/// <see cref="OnLoadFailure"/> without rethrowing. Semantic validation reuses the existing startup validation surface
 /// (<see cref="PlatformConfigPostConfigure"/> normalisation followed by
 /// <see cref="PlatformConfigOptionsValidator"/>, which itself calls
 /// <see cref="PlatformConfigLoader.ValidateAnnotated"/> — the recursive graph walker added by
@@ -71,22 +72,14 @@ internal sealed class ResilientJsonConfigurationProvider(ResilientJsonConfigurat
 {
     private readonly ResilientJsonConfigurationSource _source = source;
     private ConfigDocument? _acceptedRawDocument;
-    private ConfigDocument? _candidateRawDocument;
 
     /// <summary>
-    /// Loads the file, keeping the last-known-good data when the candidate cannot be parsed or does
-    /// not pass platform validation. Never throws for a bad file: the whole point is that a corrupt
-    /// <c>config.json</c> must not take down a running host.
+    /// Retains the current configuration on explicit file-load failures. Watcher loads bypass this
+    /// override; parse protection and acceptance belong in the shared stream hook below.
     /// </summary>
     public override void Load()
     {
-        // Snapshot the currently applied data so a rejected candidate can be rolled back. The base
-        // loader assigns an EMPTY dictionary before rethrowing on a reload parse failure, so the
-        // snapshot has to be taken up-front.
-        var lastKnownGood = new Dictionary<string, string?>(Data, StringComparer.OrdinalIgnoreCase);
-        var lastKnownGoodRaw = _acceptedRawDocument;
-        _candidateRawDocument = null;
-
+        var lastKnownGood = Data;
         try
         {
             base.Load();
@@ -94,66 +87,82 @@ internal sealed class ResilientJsonConfigurationProvider(ResilientJsonConfigurat
         catch (Exception ex) when (ex is InvalidDataException or IOException or FormatException)
         {
             Data = lastKnownGood;
-            _acceptedRawDocument = lastKnownGoodRaw;
-            Report(
-                $"Failed to load configuration file '{_source.Path}'. The previous configuration is being retained; fix the JSON to apply changes.",
-                ex);
+            ReportLoadFailure(ex);
+        }
+    }
+
+    /// <summary>
+    /// Parses, validates and accepts both representations before the framework raises OnReload.
+    /// Handling bad content here also prevents its private watcher loader from clearing Data and
+    /// rethrowing on the watcher thread (#2358, #4919).
+    /// </summary>
+    public override void Load(Stream stream)
+    {
+        var lastKnownGood = Data;
+        var lastKnownGoodRaw = _acceptedRawDocument;
+        ConfigDocument candidate;
+        try
+        {
+            using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+            var json = reader.ReadToEnd();
+            try
+            {
+                candidate = ConfigDocument.Parse(json);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // JsonNode.AsObject rejects valid JSON with a non-object root. Handle only
+                // that parse boundary, not unrelated binding or validation operations.
+                Data = lastKnownGood;
+                ReportLoadFailure(ex);
+                return;
+            }
+            using var bindingStream = ExactModelCapacityConfiguration.CreateBindingStream(candidate);
+            base.Load(bindingStream);
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidDataException or IOException or FormatException)
+        {
+            Data = lastKnownGood;
+            ReportLoadFailure(ex);
             return;
         }
 
-        _acceptedRawDocument = _candidateRawDocument;
-        if (!_source.ValidatePlatformConfig)
-            return;
-
-        var validationError = TryValidateCandidate();
-        if (validationError is null)
-            return;
-
-        if (lastKnownGoodRaw is null)
+        var validationError = _source.ValidatePlatformConfig ? TryValidateCandidate(candidate) : null;
+        if (validationError is not null && lastKnownGoodRaw is not null)
         {
-            // There is no healthy state to roll back to during the first load. Keep the exact
-            // invalid candidate in the provider so explicit options access produces the existing,
-            // actionable OptionsValidationException instead of silently materialising defaults.
-            // Load itself still does not throw, so host composition can choose degraded startup.
+            Data = lastKnownGood;
             Report(
-                $"Configuration file '{_source.Path}' failed initial validation. The invalid configuration remains available for controlled options validation. {validationError}",
+                $"Configuration file '{_source.Path}' failed validation and was rejected. The previous configuration is being retained. {validationError}",
                 null);
             return;
         }
 
-        Data = lastKnownGood;
-        _acceptedRawDocument = lastKnownGoodRaw;
-        Report(
-            $"Configuration file '{_source.Path}' failed validation and was rejected. The previous configuration is being retained. {validationError}",
-            null);
+        // The raw shape must agree with Data when options callbacks synchronously bind and
+        // post-configure during the framework's ensuing OnReload, not after base.Load() returns.
+        _acceptedRawDocument = candidate;
+        if (validationError is not null)
+        {
+            // Preserve the existing degraded-startup contract: without a previous document,
+            // retain the invalid initial candidate for actionable explicit options validation.
+            Report(
+                $"Configuration file '{_source.Path}' failed initial validation. The invalid configuration remains available for controlled options validation. {validationError}",
+                null);
+        }
     }
 
-    /// <summary>
-    /// Binds the freshly loaded data to <see cref="PlatformConfig"/> exactly the way the options
-    /// pipeline does (bind, then <see cref="PlatformConfigPostConfigure"/> normalisation) and runs
-    /// the existing <see cref="PlatformConfigOptionsValidator"/> over it. Returns the joined error
-    /// text when the candidate must be rejected, or <see langword="null"/> when it is acceptable.
-    /// </summary>
-    public override void Load(Stream stream)
-    {
-        using var copy = new MemoryStream();
-        stream.CopyTo(copy);
-        var bytes = copy.ToArray();
-        _candidateRawDocument = ConfigDocument.Parse(System.Text.Encoding.UTF8.GetString(bytes));
-        using var bindingStream = ExactModelCapacityConfiguration.CreateBindingStream(_candidateRawDocument);
-        base.Load(bindingStream);
-    }
+    private void ReportLoadFailure(Exception exception)
+        => Report(
+            $"Failed to load configuration file '{_source.Path}'. The previous configuration is being retained; fix the JSON to apply changes.",
+            exception);
 
     ConfigDocument? IAcceptedRawConfigDocumentProvider.GetAcceptedRawDocument()
         => _acceptedRawDocument?.DeepClone();
 
-    private string? TryValidateCandidate()
+    private static string? TryValidateCandidate(ConfigDocument document)
     {
         try
         {
-            var candidate = _candidateRawDocument is null
-                ? new PlatformConfig()
-                : PlatformConfigLoader.MaterializeConfig(_candidateRawDocument.ToJsonString());
+            var candidate = PlatformConfigLoader.MaterializeConfig(document.ToJsonString());
             var result = new PlatformConfigOptionsValidator().Validate(Options.DefaultName, candidate);
             return result.Failed
                 ? string.Join("; ", result.Failures ?? [])

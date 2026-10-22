@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using BotNexus.Extensions.Channels.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Conversation.Tests;
@@ -20,23 +21,19 @@ public class TestSignalRClient : IAsyncDisposable
     private readonly HubConnection _connection;
     private readonly ConcurrentDictionary<string, List<ReceivedEvent>> _events = new();
     private readonly ConcurrentDictionary<string, bool> _streamingSessions = new();
+    private readonly ConcurrentDictionary<(string Session, string Event), TaskCompletionSource<ReceivedEvent>> _signals = new();
     private readonly TestLogger _log;
     private string? _activeSessionId;
 
-    public TestSignalRClient(string baseUrl, TestLogger log)
+    public TestSignalRClient(HttpMessageHandler handler, TestLogger log)
     {
         _log = log;
-
-        // Match WebUI hub.js:46-50
         _connection = new HubConnectionBuilder()
-            .WithUrl($"{baseUrl}/hub/gateway?clientVersion=integration-test")
-            .WithAutomaticReconnect([
-                TimeSpan.Zero,
-                TimeSpan.FromSeconds(1),
-                TimeSpan.FromSeconds(2),
-                TimeSpan.FromSeconds(5),
-                TimeSpan.FromSeconds(10),
-                TimeSpan.FromSeconds(30)])
+            .WithUrl("http://candidate.test/hub/gateway?clientVersion=integration-test", options =>
+            {
+                options.HttpMessageHandlerFactory = _ => handler;
+                options.Transports = HttpTransportType.LongPolling;
+            })
             .ConfigureLogging(logging => logging.SetMinimumLevel(LogLevel.Warning))
             .Build();
 
@@ -59,6 +56,7 @@ public class TestSignalRClient : IAsyncDisposable
                 var evt = new ReceivedEvent(method, DateTimeOffset.UtcNow, payload, contentDelta);
                 var eventList = _events.GetOrAdd(sessionId, _ => []);
                 lock (eventList) { eventList.Add(evt); }
+                _signals.GetOrAdd((sessionId, method), _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult(evt);
 
                 // Track streaming state per session (as the portal client does)
                 if (method == "MessageStart")
@@ -125,7 +123,7 @@ public class TestSignalRClient : IAsyncDisposable
             throw new InvalidOperationException($"Cannot send: connection state is {_connection.State}");
         }
 
-        var result = await _connection.InvokeAsync<JsonElement>("SendMessage", agentId, channelType, content, ct);
+        var result = await _connection.InvokeAsync<JsonElement>("SendMessage", agentId, channelType, content, (string?)null, ct);
         var sessionId = result.GetProperty("sessionId").GetString()
             ?? throw new Exception("No sessionId in SendMessage response");
         var returnedAgentId = result.TryGetProperty("agentId", out var aid) ? aid.GetString() : agentId;
@@ -176,44 +174,16 @@ public class TestSignalRClient : IAsyncDisposable
     public async Task<ReceivedEvent> WaitForEventAsync(string sessionId, string eventType,
         TimeSpan timeout, CancellationToken ct)
     {
-        _log.Write($"⏳ Waiting for '{eventType}' on sid={Truncate(sessionId, 12)}");
-        var deadline = DateTimeOffset.UtcNow + timeout;
-        while (DateTimeOffset.UtcNow < deadline && !ct.IsCancellationRequested)
-        {
-            var events = GetEvents(sessionId);
-            var match = events.FirstOrDefault(e => e.Method == eventType);
-            if (match is not null)
-                return match;
-            await Task.Delay(100, ct);
-        }
-
-        _log.Write($"⚠️  TIMEOUT: {eventType} on sid={Truncate(sessionId, 12)}");
-        _log.Write($"    Events: {GetEvents(sessionId).Count}");
-        foreach (var e in GetEvents(sessionId))
-            _log.Write($"      [{e.Method}] at {e.ReceivedAt:HH:mm:ss.fff}");
-        _log.Write($"    All sessions: {string.Join(", ", _events.Keys.Select(k => Truncate(k, 8)))}");
-
-        throw new TimeoutException($"Timed out waiting for {eventType} on session {Truncate(sessionId, 12)}");
+        var signal = _signals.GetOrAdd((sessionId, eventType), _ => new(TaskCreationOptions.RunContinuationsAsynchronously));
+        return await signal.Task.WaitAsync(timeout, ct);
     }
 
     public async Task<IReadOnlyList<ReceivedEvent>> WaitForMessageCompleteAsync(
         string sessionId, TimeSpan timeout, CancellationToken ct)
     {
-        _log.Write($"⏳ WaitForMessageComplete on sid={Truncate(sessionId, 12)}");
-        var deadline = DateTimeOffset.UtcNow + timeout;
-        while (DateTimeOffset.UtcNow < deadline && !ct.IsCancellationRequested)
-        {
-            var events = GetEvents(sessionId);
-            if (events.Any(e => e.Method == "MessageStart") &&
-                events.Any(e => e.Method is "MessageEnd" or "Error"))
-            {
-                _log.Write($"✅ MessageComplete sid={Truncate(sessionId, 12)} ({events.Count} events)");
-                return events;
-            }
-            await Task.Delay(100, ct);
-        }
-
-        throw new TimeoutException($"Message did not complete on session {Truncate(sessionId, 12)}");
+        await WaitForEventAsync(sessionId, "MessageStart", timeout, ct);
+        await WaitForEventAsync(sessionId, "MessageEnd", timeout, ct);
+        return GetEvents(sessionId);
     }
 
     public void AssertEventOrder(string sessionId, params string[] expectedOrder)

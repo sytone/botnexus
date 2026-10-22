@@ -13,6 +13,13 @@ public sealed record AgentDescriptor : ICitizen
     /// <summary>Unique agent identifier (e.g., "coding-agent", "chat-assistant").</summary>
     public required AgentId AgentId { get; init; }
 
+    /// <summary>
+    /// Whether new runtime work may be admitted. Null on a submitted update preserves the
+    /// current state; new registrations default to enabled. Disabled agents remain administrable
+    /// and already-admitted work is not cancelled.
+    /// </summary>
+    public bool? Enabled { get; init; }
+
     /// <summary>Human-readable display name.</summary>
     public required string DisplayName { get; init; }
 
@@ -185,6 +192,10 @@ public sealed record AgentDescriptor : ICitizen
         Order = 5)]
     [ConfigField(Widget = ConfigFieldWidget.Select, Group = "agent", Order = 5)]
     public int? ContextWindow { get; init; }
+
+    /// <summary>Optional positive compaction trigger ceiling in tokens; null inherits the enclosing scope. Not model capacity.</summary>
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
+    public int? CompactionTokenCeiling { get; init; }
 
     /// <summary>
     /// Maximum concurrent sessions allowed for this agent.

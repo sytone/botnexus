@@ -125,6 +125,35 @@ public sealed class Agent
     }
 
     /// <summary>
+    /// Gets a value indicating whether the agent will refuse to start a new run right now.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the predicate callers must use to decide "queue vs. send". It is defined as
+    /// <c>Status != AgentStatus.Idle</c> so that it agrees EXACTLY with the run guard in
+    /// <see cref="RunAsync"/>, which rejects any non-Idle status.
+    /// </para>
+    /// <para>
+    /// Testing <c>Status == AgentStatus.Running</c> instead leaves a hole: during
+    /// <see cref="AgentStatus.Aborting"/> such a test answers "not running" while the run guard
+    /// still throws <c>InvalidOperationException: Agent is already running.</c> Callers then take
+    /// the direct-send branch and the turn is lost. Because every soul/cron job for an agent shares
+    /// one Agent instance, a dropped turn there silently starves all of that agent's scheduled work
+    /// (upstream sytone/botnexus#4688).
+    /// </para>
+    /// </remarks>
+    public bool IsBusy
+    {
+        get
+        {
+            lock (_lifecycleLock)
+            {
+                return _status != AgentStatus.Idle;
+            }
+        }
+    }
+
+    /// <summary>
     /// Gets a value indicating whether steering or follow-up messages are queued.
     /// </summary>
     public bool HasQueuedMessages => _steeringQueue.HasItems || _followUpQueue.HasItems;
@@ -242,14 +271,7 @@ public sealed class Agent
                 cancellationToken)
             .ConfigureAwait(false);
 
-        if (result.OfType<AssistantAgentMessage>().Any())
-            return result;
-
-        lock (_stateLock)
-        {
-            var assistant = _state.Messages.OfType<AssistantAgentMessage>().LastOrDefault();
-            return assistant is null ? result : [assistant];
-        }
+        return result;
     }
 
     /// <summary>
@@ -295,6 +317,11 @@ public sealed class Agent
     /// <para>
     /// Throws InvalidOperationException if the agent is already running.
     /// Drains queued steering messages before starting the loop.
+    /// </para>
+    /// <para>
+    /// Admitted runs return <see cref="AgentRunMessages"/>, including cancellation evidence captured
+    /// before the run slot is released. Cancellation before admission throws without run evidence.
+    /// Synthetic runtime terminal messages are not provider turns; their usage remains unknown.
     /// </para>
     /// <para>
     /// All lifecycle events (agent_start, turn_start, message_start/update/end, tool_execution_start/end,
@@ -574,8 +601,53 @@ public sealed class Agent
             await priorRun.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        var agentRunId = AgentRunId.Create();
+        IReadOnlyList<GuardObservation> observedGuards = [];
+        var evidenceLock = new object();
+        var runMessages = new List<AgentMessage>();
+        var pendingToolCalls = new HashSet<string>(StringComparer.Ordinal);
+        RunCompletionResult? completion = null;
+        async Task EmitRunEventAsync(AgentEvent evt, CancellationToken token)
+        {
+            lock (evidenceLock)
+            {
+                switch (evt)
+                {
+                    case MessageEndEvent end:
+                        if (end.Message is not UserMessage)
+                            runMessages.Add(end.Message);
+                        break;
+                    case ToolExecutionStartEvent start:
+                        pendingToolCalls.Add(start.ToolCallId);
+                        break;
+                    case ToolExecutionEndEvent end:
+                        pendingToolCalls.Remove(end.ToolCallId);
+                        break;
+                    case AgentEndEvent end:
+                        completion = end.Completion;
+                        break;
+                }
+            }
+            await HandleEventAsync(evt with { AgentRunId = agentRunId }, token).ConfigureAwait(false);
+        }
+
+        AgentRunMessages Snapshot(IReadOnlyList<AgentMessage> messages, AssistantAgentMessage? synthetic = null,
+            IReadOnlyList<AgentMessage>? evidenceMessages = null)
+        {
+            var token = completion?.Status == RunCompletionStatus.Cancelled
+                ? cancellationToken.IsCancellationRequested ? cancellationToken
+                    : linkedCts.IsCancellationRequested ? linkedCts.Token : new CancellationToken(true)
+                : CancellationToken.None;
+            lock (evidenceLock)
+            {
+                return new AgentRunMessages(messages, agentRunId, completion, pendingToolCalls, token, synthetic, evidenceMessages);
+            }
+        }
+
         lock (_stateLock)
         {
+            _state.AgentRunId = agentRunId;
+            _state.RunStartIndex = _state.Messages.Count;
             _state.SetErrorMessage(null);
             _state.SetLastCompletion(null);
         }
@@ -587,12 +659,13 @@ public sealed class Agent
                 await onStartedAsync().ConfigureAwait(false);
             }
 
-            return await runner(
+            var messages = await runner(
                     BuildContextSnapshot(),
-                    BuildLoopConfig(),
-                    @event => HandleEventAsync(@event, linkedCts.Token),
+                    BuildLoopConfig() with { AgentRunId = agentRunId, GuardEvidenceObserver = guards => observedGuards = guards },
+                    @event => EmitRunEventAsync(@event, linkedCts.Token),
                     linkedCts.Token)
                 .ConfigureAwait(false);
+            return Snapshot(messages);
         }
         catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
         {
@@ -612,7 +685,7 @@ public sealed class Agent
 
             try
             {
-                await HandleEventAsync(
+                await EmitRunEventAsync(
                         new AgentEndEvent(
                             [abortedMessage],
                             null,
@@ -621,7 +694,7 @@ public sealed class Agent
                                 RunCompletionStatus.Cancelled,
                                 [],
                                 RunStopReason.Cancellation,
-                                "The run was cancelled.")),
+                                "The run was cancelled.") { GuardObservations = observedGuards }) { AgentRunId = agentRunId },
                         CancellationToken.None)
                     .ConfigureAwait(false);
             }
@@ -631,7 +704,8 @@ public sealed class Agent
                     DiagnosticNotification.Report(observer, $"Listener error during agent_end: {listenerEx.Message}");
             }
 
-            return [abortedMessage];
+            runMessages.Add(abortedMessage);
+            return Snapshot(runMessages, abortedMessage);
         }
         catch (Exception ex)
         {
@@ -651,7 +725,7 @@ public sealed class Agent
 
             try
             {
-                await HandleEventAsync(
+                await EmitRunEventAsync(
                         new AgentEndEvent(
                             [failureMessage],
                             null,
@@ -659,7 +733,7 @@ public sealed class Agent
                             new RunCompletionResult(
                                 RunCompletionStatus.Failed,
                                 [],
-                                Detail: ex.Message)),
+                                Detail: ex.Message) { GuardObservations = observedGuards }) { AgentRunId = agentRunId },
                         CancellationToken.None)
                     .ConfigureAwait(false);
             }
@@ -669,7 +743,10 @@ public sealed class Agent
                     DiagnosticNotification.Report(observer, $"Listener error during agent_end: {listenerEx.Message}");
             }
 
-            return [failureMessage];
+            runMessages.Add(failureMessage);
+            // Preserve the core failure return contract; the gateway can separately project the
+            // captured timeline without changing collection membership for existing core callers.
+            return Snapshot([failureMessage], failureMessage, runMessages);
         }
         finally
         {

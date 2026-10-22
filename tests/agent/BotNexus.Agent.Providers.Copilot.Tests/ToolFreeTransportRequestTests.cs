@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using BotNexus.Agent.Providers.Anthropic;
 using BotNexus.Agent.Providers.Copilot.Completions;
 using BotNexus.Agent.Providers.Copilot.Messages;
@@ -28,6 +29,65 @@ public sealed class ToolFreeTransportRequestTests
                 cases.Add(transport, historyOnly, simple);
             return cases;
         }
+    }
+
+    public static TheoryData<string, bool, bool> CustomizationCases
+    {
+        get
+        {
+            var cases = new TheoryData<string, bool, bool>();
+            foreach (var transport in Transports.Append("github-copilot-responses-websocket"))
+            foreach (var replacement in new[] { false, true })
+            foreach (var simple in new[] { false, true })
+                if (transport != "github-copilot-responses-websocket" || !simple)
+                    cases.Add(transport, replacement, simple);
+            return cases;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(CustomizationCases))]
+    public async Task Stream_None_CustomizationCannotRestoreTools(string transport, bool replacement, bool simple)
+    {
+        using var body = await CaptureAsync(transport, historyOnly: false, simple, disable: true, replacement: replacement);
+        var root = body.RootElement;
+        root.TryGetProperty("tools", out _).ShouldBeFalse();
+        root.TryGetProperty("tool_stream", out _).ShouldBeFalse();
+        if (transport.EndsWith("messages", StringComparison.Ordinal))
+            root.GetProperty("tool_choice").GetProperty("type").GetString().ShouldBe("none");
+        else
+            root.GetProperty("tool_choice").GetString().ShouldBe("none");
+        root.GetProperty("custom_marker").GetString().ShouldBe("preserved");
+        root.GetProperty(transport.Contains("responses", StringComparison.Ordinal) ? "input" : "messages")
+            .GetRawText().ShouldContain("previous-result");
+    }
+
+    [Theory]
+    [InlineData("openai-completions", false)]
+    [InlineData("openai-completions", true)]
+    [InlineData("github-copilot-completions", false)]
+    [InlineData("github-copilot-completions", true)]
+    [InlineData("openai-compat", false)]
+    [InlineData("openai-compat", true)]
+    public async Task Stream_None_CustomizationCannotRestoreUnsupportedChoice(string transport, bool replacement)
+    {
+        using var body = await CaptureAsync(transport, historyOnly: true, simple: false, disable: true,
+            supportsTools: false, replacement: replacement);
+        body.RootElement.TryGetProperty("tools", out _).ShouldBeFalse();
+        body.RootElement.TryGetProperty("tool_stream", out _).ShouldBeFalse();
+        body.RootElement.TryGetProperty("tool_choice", out _).ShouldBeFalse();
+        body.RootElement.GetProperty("custom_marker").GetString().ShouldBe("preserved");
+    }
+
+    [Theory]
+    [MemberData(nameof(CustomizationCases))]
+    public async Task Stream_Default_PreservesToolCustomization(string transport, bool replacement, bool simple)
+    {
+        using var body = await CaptureAsync(transport, historyOnly: false, simple, disable: false, replacement: replacement);
+        body.RootElement.GetProperty("tools").GetArrayLength().ShouldBe(1);
+        body.RootElement.GetProperty("tool_stream").GetBoolean().ShouldBeTrue();
+        body.RootElement.GetProperty("tool_choice").GetString().ShouldBe("required");
+        body.RootElement.GetProperty("custom_marker").GetString().ShouldBe("preserved");
     }
 
     private static readonly string[] Transports =
@@ -92,8 +152,12 @@ public sealed class ToolFreeTransportRequestTests
     }
 
     private static async Task<JsonDocument> CaptureAsync(
-        string transport, bool historyOnly, bool simple, bool disable, bool supportsTools = true)
+        string transport, bool historyOnly, bool simple, bool disable, bool supportsTools = true, bool? replacement = null)
     {
+        var webSocket = transport == "github-copilot-responses-websocket";
+        if (webSocket)
+            transport = "github-copilot-responses";
+        var socket = new RecordingWebSocket();
         using var handler = new RecordingHandler(transport);
         using var client = new HttpClient(handler);
         IApiProvider provider = transport switch
@@ -103,7 +167,9 @@ public sealed class ToolFreeTransportRequestTests
             "openai-compat" => new OpenAICompatProvider(client),
             "anthropic-messages" => new AnthropicProvider(client),
             "github-copilot-completions" => new CopilotCompletionsProvider(client, NullLogger<CopilotCompletionsProvider>.Instance),
-            "github-copilot-responses" => new CopilotResponsesProvider(client, NullLogger<CopilotResponsesProvider>.Instance),
+            "github-copilot-responses" => webSocket
+                ? new CopilotResponsesProvider(client, NullLogger<CopilotResponsesProvider>.Instance, socket)
+                : new CopilotResponsesProvider(client, NullLogger<CopilotResponsesProvider>.Instance),
             "github-copilot-messages" => new CopilotMessagesProvider(client),
             _ => throw new ArgumentOutOfRangeException(nameof(transport))
         };
@@ -130,12 +196,52 @@ public sealed class ToolFreeTransportRequestTests
             "github-copilot-messages" => new CopilotMessagesOptions { ApiKey = "test-key", ToolChoiceMode = mode, ToolChoice = new { type = "tool", name = "forbidden" } },
             _ => new StreamOptions { ApiKey = "test-key", ToolChoiceMode = mode }
         };
+        Func<object, LlmModel, Task<object?>>? customize = replacement is null ? null : (payload, _) =>
+        {
+            var original = payload.ShouldBeOfType<JsonObject>();
+            var customized = replacement == true ? original.DeepClone().AsObject() : original;
+            customized["tools"] = new JsonArray(new JsonObject { ["name"] = "forbidden" });
+            customized["tool_stream"] = true;
+            customized["tool_choice"] = "required";
+            customized["custom_marker"] = "preserved";
+            return Task.FromResult<object?>(replacement == true ? customized : null);
+        };
+        if (webSocket)
+            options = new CopilotResponsesOptions { ApiKey = "test-key", ToolChoiceMode = mode,
+                TransportPreference = CopilotResponsesTransportPreference.WebSocket };
+        options = options with { OnPayload = customize };
         var stream = simple
-            ? provider.StreamSimple(model, context, new SimpleStreamOptions { ApiKey = "test-key", ToolChoiceMode = mode })
+            ? provider.StreamSimple(model, context, new SimpleStreamOptions { ApiKey = "test-key", ToolChoiceMode = mode, OnPayload = customize })
             : provider.Stream(model, context, options);
         var result = await stream.GetResultAsync().WaitAsync(TimeSpan.FromSeconds(10));
         result.StopReason.ShouldBe(StopReason.Stop, result.ErrorMessage);
+        if (webSocket)
+        {
+            handler.Body.ShouldBeNull("a successful fake WebSocket must not fall back to HTTP");
+            return JsonDocument.Parse(socket.Body.ShouldNotBeNull());
+        }
         return JsonDocument.Parse(handler.Body.ShouldNotBeNull());
+    }
+
+    private sealed class RecordingWebSocket : ICopilotResponsesWebSocketTransport
+    {
+        public string? Body { get; private set; }
+        public CopilotResponsesCloseFrame? LastClose => null;
+        private bool _completed;
+        public ValueTask ConnectAsync(Uri uri, IReadOnlyDictionary<string, string> headers, CancellationToken cancellationToken)
+            => ValueTask.CompletedTask;
+        public ValueTask SendAsync(string payload, CancellationToken cancellationToken)
+        {
+            Body = payload;
+            return ValueTask.CompletedTask;
+        }
+        public ValueTask<string?> ReceiveAsync(CancellationToken cancellationToken)
+        {
+            if (_completed) return ValueTask.FromResult<string?>(null);
+            _completed = true;
+            return ValueTask.FromResult<string?>("{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}");
+        }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class RecordingHandler(string transport) : HttpMessageHandler

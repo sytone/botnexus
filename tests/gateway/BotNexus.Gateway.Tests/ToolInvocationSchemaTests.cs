@@ -24,9 +24,9 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         _ = await CreateStore().GetAsync(SessionId.From("probe"));
         await using var connection = await OpenAsync();
         var columns = await ReadStringsAsync(connection, "SELECT name FROM pragma_table_info('tool_invocations') ORDER BY cid");
-        columns.ShouldBe(["id", "session_id", "tool_call_id", "tool_name", "arguments_json", "started_at", "completed_at", "status", "is_error", "result_content", "result_bytes", "result_sha256", "retention_state"]);
-        var indexes = await ReadStringsAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_%tool_invocation%' OR name = 'idx_session_history_unlinked_tool_rows') ORDER BY name");
-        indexes.ShouldBe(["idx_session_history_tool_invocation_id", "idx_session_history_unlinked_tool_rows", "idx_tool_invocations_retention_completed", "idx_tool_invocations_session_started"]);
+        columns.ShouldBe(["id", "session_id", "tool_call_id", "tool_name", "arguments_json", "started_at", "completed_at", "status", "is_error", "result_content", "result_bytes", "result_sha256", "retention_state", "agent_run_id", "provider_tool_call_id"]);
+        var indexes = await ReadStringsAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_%tool_invocation%' OR name LIKE 'idx_session_history_unlinked_tool_%') ORDER BY name");
+        indexes.ShouldBe(["idx_session_history_tool_invocation_id", "idx_session_history_unlinked_tool_rows", "idx_session_history_unlinked_tool_sibling", "idx_tool_invocations_retention_completed", "idx_tool_invocations_session_run", "idx_tool_invocations_session_started"]);
 
         var plan = await ReadStringsAsync(connection, """
             EXPLAIN QUERY PLAN
@@ -53,6 +53,73 @@ public sealed class ToolInvocationSchemaTests : IDisposable
             command.CommandText = sql;
             await Should.ThrowAsync<SqliteException>(() => command.ExecuteNonQueryAsync());
         }
+    }
+
+    [Fact]
+    public async Task ExistingStore_AddsSeekableSiblingIndexIdempotently()
+    {
+        _ = await CreateStore().GetAsync(SessionId.From("probe"));
+        await using var connection = await OpenAsync();
+        await using var drop = connection.CreateCommand();
+        drop.CommandText = "DROP INDEX idx_session_history_unlinked_tool_sibling";
+        await drop.ExecuteNonQueryAsync();
+
+        _ = await CreateStore().GetAsync(SessionId.From("probe"));
+        _ = await CreateStore().GetAsync(SessionId.From("probe"));
+
+        // Reopen after another connection changes the schema; inspect the migrated schema,
+        // not this connection's cached schema/plan from before the index was restored.
+        await using var migrated = await OpenAsync();
+        (await ReadStringsAsync(migrated, "SELECT name FROM sqlite_master WHERE name='idx_session_history_unlinked_tool_sibling'")).ShouldBe(["idx_session_history_unlinked_tool_sibling"]);
+        var plan = await ReadStringsAsync(migrated, """
+            EXPLAIN QUERY PLAN SELECT 1 FROM session_history
+            WHERE session_id='s' AND tool_call_id='call' AND agent_run_id IS NULL
+              AND tool_invocation_id IS NULL
+              AND (message_kind IN ('tool-start','tool-result') OR (message_kind IS NULL AND role='tool'))
+            """, ordinal: 3);
+        plan.ShouldContain(detail => detail.Contains("idx_session_history_unlinked_tool_sibling (session_id=? AND tool_call_id=? AND agent_run_id=?)", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(null, null, "tool-start", true)]
+    [InlineData(null, null, null, true)]
+    [InlineData("run", "run", "tool-result", true)]
+    [InlineData("run", "other-run", "tool-result", false)]
+    [InlineData("run", null, "tool-result", false)]
+    [InlineData(null, "run", "tool-result", false)]
+    [InlineData("run", "run", "text", false)]
+    public async Task CleanupLegacyToolPayloads_SiblingProbePreservesProviderCallAndRunProtection(string? run, string? siblingRun, string? kind, bool protects)
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("sibling"), AgentId.From("agent"));
+        await store.SaveAsync(session);
+        await using var connection = await OpenAsync();
+        await using var seed = connection.CreateCommand();
+        seed.CommandText = """
+            INSERT INTO tool_invocations(session_id,tool_call_id,provider_tool_call_id,agent_run_id,arguments_json,started_at,completed_at,status,result_content,result_bytes,result_sha256)
+            VALUES('sibling','normalized-call','provider-call',$run,'{}','a','b','success','r',1,'454349e422f05297191ead13e21d3db520e5abef52055e4964b82fb213f593a1');
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,tool_args,message_kind,tool_invocation_id)
+            SELECT 'sibling','tool','start','a','provider-call','{}','tool-start',id FROM tool_invocations;
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,message_kind,tool_invocation_id)
+            SELECT 'sibling','tool','r','b','provider-call','tool-result',id FROM tool_invocations;
+            INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,message_kind,agent_run_id)
+            VALUES('sibling','tool','unlinked','b','provider-call',$kind,$siblingRun);
+            """;
+        seed.Parameters.AddWithValue("$run", (object?)run ?? DBNull.Value);
+        seed.Parameters.AddWithValue("$siblingRun", (object?)siblingRun ?? DBNull.Value);
+        seed.Parameters.AddWithValue("$kind", (object?)kind ?? DBNull.Value);
+        await seed.ExecuteNonQueryAsync();
+
+        var report = store.CleanupLegacyToolPayloads(1);
+
+        report.ScannedInvocations.ShouldBe(1);
+        report.LastScannedInvocationId.ShouldBe(await ScalarLongAsync(connection, "SELECT id FROM tool_invocations"));
+        report.HasMore.ShouldBeFalse();
+        report.CleanedInvocations.ShouldBe(protects ? 0 : 1);
+        report.CleanedRows.ShouldBe(protects ? 0 : 2);
+        report.ClearedBytes.ShouldBe(protects ? 0 : 3);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_invocation_id IS NOT NULL AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))")).ShouldBe(protects ? 2 : 0);
+        (await ReadStringsAsync(connection, "SELECT content FROM session_history WHERE tool_invocation_id IS NULL")).ShouldBe(["unlinked"]);
     }
 
     [Fact]
@@ -99,6 +166,8 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = result, ToolName = "read", ToolCallId = "safe", ToolArgs = "duplicate", Kind = MessageKind.ToolResult, Timestamp = completedAt });
         await store.SaveAsync(session);
 
+        // Seed the pre-cutover duplicated layout explicitly: live writes are narrow now.
+        await RestoreLegacyPayloadsAsync("cleanup");
         var first = store.CleanupLegacyToolPayloads(10);
         var second = store.CleanupLegacyToolPayloads(10);
 
@@ -125,6 +194,125 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         reloaded.ReplaceHistory(reloaded.GetHistorySnapshot());
         await reloadedStore.SaveAsync(reloaded);
         (await ReadInvocationAsync("cleanup", "safe")).ResultContent.ShouldBe(result);
+    }
+
+    [Fact]
+    public Task CleanupLegacyToolPayloads_MidBatchAbortRollsBackAndFreshStoreRetryConverges() =>
+        AssertCleanupRestartAsync(abortSecondInvocation: true);
+
+    [Fact]
+    public Task CleanupLegacyToolPayloads_CommittedBatchRemainsUnchangedAcrossFreshStores() =>
+        AssertCleanupRestartAsync(abortSecondInvocation: false);
+
+    private async Task AssertCleanupRestartAsync(bool abortSecondInvocation)
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("restart"), AgentId.From("agent"));
+        var startedAt = DateTimeOffset.Parse("2026-02-01T00:00:00Z");
+        const string arguments = "{\"path\":\"α.txt\"}";
+        const string result = "résult ✓";
+        const string duplicate = "duplicate β";
+        foreach (var call in new[] { "first", "second" })
+        {
+            session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "started", ToolName = "read", ToolCallId = call, ToolArgs = arguments, Kind = MessageKind.ToolStart, Timestamp = startedAt });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = result, ToolName = "read", ToolCallId = call, ToolArgs = duplicate, Kind = MessageKind.ToolResult, Timestamp = startedAt.AddSeconds(2) });
+        }
+        await store.SaveAsync(session);
+        await RestoreLegacyPayloadsAsync("restart");
+        await using var connection = await OpenAsync();
+        var originalHistory = await ReadTableBytesAsync(connection, "session_history");
+        var originalInvocations = await ReadTableBytesAsync(connection, "tool_invocations");
+        originalHistory.Count.ShouldBe(4);
+        originalInvocations.Count.ShouldBe(2);
+        var expectedHistory = await ReadTableBytesAsync(connection, "session_history", projectCleanup: true);
+        expectedHistory.ShouldNotBe(originalHistory);
+        var lastId = await ScalarLongAsync(connection, "SELECT MAX(id) FROM tool_invocations");
+
+        if (abortSecondInvocation)
+        {
+            await using (var trigger = connection.CreateCommand())
+            {
+                // The predicate also proves an earlier invocation's UPDATE completed before
+                // the injected statement abort. SQLite ABORT alone does not roll that back.
+                trigger.CommandText = """
+                    CREATE TRIGGER abort_second_cleanup BEFORE UPDATE ON session_history
+                    WHEN OLD.tool_call_id='second'
+                      AND EXISTS(SELECT 1 FROM session_history WHERE tool_call_id='first' AND message_kind='tool-result' AND content IS NULL AND tool_args IS NULL)
+                    BEGIN SELECT RAISE(ABORT, 'injected second invocation cleanup failure'); END;
+                    """;
+                await trigger.ExecuteNonQueryAsync();
+            }
+            var failure = Should.Throw<SqliteException>(() => store.CleanupLegacyToolPayloads(2));
+            failure.SqliteErrorCode.ShouldBe(19);
+            failure.Message.ShouldContain("injected second invocation cleanup failure");
+            (await ReadTableBytesAsync(connection, "session_history")).ShouldBe(originalHistory);
+            (await ReadTableBytesAsync(connection, "tool_invocations")).ShouldBe(originalInvocations);
+            await using var drop = connection.CreateCommand();
+            drop.CommandText = "DROP TRIGGER abort_second_cleanup";
+            await drop.ExecuteNonQueryAsync();
+        }
+
+        // A new instance has no cached session or progress from the failed/committed batch.
+        var restartedStore = CreateStore();
+        var cleaned = restartedStore.CleanupLegacyToolPayloads(2);
+        cleaned.ScannedInvocations.ShouldBe(2);
+        cleaned.CleanedInvocations.ShouldBe(2);
+        cleaned.CleanedRows.ShouldBe(4);
+        cleaned.ClearedBytes.ShouldBe(2L * (Encoding.UTF8.GetByteCount(arguments) + Encoding.UTF8.GetByteCount(result) + Encoding.UTF8.GetByteCount(duplicate)));
+        cleaned.OrphanedInvocationsDeleted.ShouldBe(0);
+        cleaned.LastScannedInvocationId.ShouldBe(lastId);
+        cleaned.HasMore.ShouldBeFalse();
+        (await ReadTableBytesAsync(connection, "session_history")).ShouldBe(expectedHistory);
+        (await ReadTableBytesAsync(connection, "tool_invocations")).ShouldBe(originalInvocations);
+
+        // Fail even a same-value UPDATE on a repeated cleanup, not just visible changes.
+        await using (var guard = connection.CreateCommand())
+        {
+            guard.CommandText = """
+                CREATE TRIGGER reject_history_rewrite BEFORE UPDATE ON session_history
+                BEGIN SELECT RAISE(ABORT, 'unexpected history rewrite'); END;
+                CREATE TRIGGER reject_evidence_rewrite BEFORE UPDATE ON tool_invocations
+                BEGIN SELECT RAISE(ABORT, 'unexpected evidence rewrite'); END;
+                """;
+            await guard.ExecuteNonQueryAsync();
+        }
+        for (var restart = 0; restart < 2; restart++)
+        {
+            var freshStore = CreateStore();
+            var reloaded = await freshStore.GetAsync(SessionId.From("restart"));
+            reloaded.ShouldNotBeNull();
+            reloaded.GetHistorySnapshot().Select(entry => (entry.ToolCallId, entry.Content, entry.ToolArgs, entry.Kind, entry.Timestamp)).ShouldBe([
+                ("first", "started", arguments, (MessageKind?)MessageKind.ToolStart, startedAt),
+                ("first", result, (string?)null, (MessageKind?)MessageKind.ToolResult, startedAt.AddSeconds(2)),
+                ("second", "started", arguments, (MessageKind?)MessageKind.ToolStart, startedAt),
+                ("second", result, (string?)null, (MessageKind?)MessageKind.ToolResult, startedAt.AddSeconds(2))]);
+            // Restart without a persisted cursor must also be a no-op.
+            var repeated = freshStore.CleanupLegacyToolPayloads(2);
+            repeated.ScannedInvocations.ShouldBe(0);
+            repeated.CleanedInvocations.ShouldBe(0);
+            repeated.CleanedRows.ShouldBe(0);
+            repeated.ClearedBytes.ShouldBe(0);
+            repeated.OrphanedInvocationsDeleted.ShouldBe(0);
+            repeated.LastScannedInvocationId.ShouldBe(0);
+            repeated.HasMore.ShouldBeFalse();
+            (await ReadTableBytesAsync(connection, "session_history")).ShouldBe(expectedHistory);
+            (await ReadTableBytesAsync(connection, "tool_invocations")).ShouldBe(originalInvocations);
+        }
+    }
+
+    private static async Task<List<string>> ReadTableBytesAsync(SqliteConnection connection, string table, bool projectCleanup = false, string predicate = "1=1")
+    {
+        // Snapshot every column, preserving NULL/type and exact SQLite payload bytes.
+        // ORDER BY id protects row/link/order evidence, not only the duplicate columns.
+        var columns = await ReadStringsAsync(connection, $"SELECT name FROM pragma_table_info('{table}') ORDER BY cid");
+        var values = columns.Select(column =>
+        {
+            var expression = projectCleanup && column == "tool_args" ? "NULL"
+                : projectCleanup && column == "content" ? "CASE WHEN message_kind='tool-result' THEN NULL ELSE content END"
+                : $"\"{column}\"";
+            return $"typeof({expression}),hex(CAST({expression} AS BLOB))";
+        });
+        return await ReadStringsAsync(connection, $"SELECT json_array({string.Join(',', values)}) FROM {table} WHERE {predicate} ORDER BY id");
     }
 
     [Theory]
@@ -190,6 +378,131 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         (await ReadStringsAsync(connection, protectedHistorySql)).ShouldBe(protectedHistory);
         (await ReadInvocationAsync("missing-result", "protected")).ShouldBe(protectedInvocation);
         (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_call_id='safe' AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))")).ShouldBe(0);
+    }
+
+    // These are the actual constrained schema values, not invented timeout/cancelled or
+    // external/access-denied retention policies. Each case changes only one safe pair.
+    [Theory]
+    [InlineData("status-error")]
+    [InlineData("status-incomplete")]
+    [InlineData("status-unknown")]
+    [InlineData("retention-warm")]
+    [InlineData("retention-cold")]
+    [InlineData("retention-expired")]
+    [InlineData("invocation-is-error")]
+    [InlineData("result-is-error")]
+    [InlineData("missing-arguments")]
+    [InlineData("incorrect-arguments")]
+    [InlineData("missing-start-arguments")]
+    [InlineData("incorrect-start-arguments")]
+    [InlineData("missing-result")]
+    [InlineData("incorrect-result")]
+    [InlineData("missing-hash")]
+    [InlineData("incorrect-hash")]
+    [InlineData("incorrect-bytes")]
+    [InlineData("incorrect-start-time")]
+    [InlineData("incorrect-result-time")]
+    [InlineData("incorrect-start-call")]
+    [InlineData("incorrect-result-call")]
+    [InlineData("duplicate-start")]
+    [InlineData("duplicate-result")]
+    [InlineData("missing-start-row")]
+    [InlineData("missing-result-row")]
+    [InlineData("unlinked-result")]
+    public async Task CleanupLegacyToolPayloads_ProtectedDispositionPreservesEveryEvidenceByte(string disposition)
+    {
+        const string arguments = "{\"path\":\"α.txt\"}";
+        const string result = "résult ✓";
+        const string duplicate = "duplicate β";
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("disposition"), AgentId.From("agent"));
+        var startedAt = DateTimeOffset.Parse("2026-02-01T00:00:00Z");
+        foreach (var call in new[] { "protected", "safe" })
+        {
+            session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "started", ToolName = "read", ToolCallId = call, ToolArgs = arguments, Kind = MessageKind.ToolStart, Timestamp = startedAt });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = result, ToolName = "read", ToolCallId = call, ToolArgs = duplicate, Kind = MessageKind.ToolResult, Timestamp = startedAt.AddSeconds(2) });
+        }
+        await store.SaveAsync(session);
+        // This fixture exercises historical duplicate cleanup, not the normalized-only live
+        // writer. Restore the pre-cutover payload layout before applying each protection.
+        await RestoreLegacyPayloadsAsync("disposition");
+        await using var connection = await OpenAsync();
+        await using (var change = connection.CreateCommand())
+        {
+            var mutation = disposition switch
+            {
+                "status-error" => "UPDATE tool_invocations SET status='error'",
+                "status-incomplete" => "UPDATE tool_invocations SET status='incomplete'",
+                "status-unknown" => "UPDATE tool_invocations SET status='unknown'",
+                "retention-warm" => "UPDATE tool_invocations SET retention_state='warm'",
+                "retention-cold" => "UPDATE tool_invocations SET retention_state='cold'",
+                "retention-expired" => "UPDATE tool_invocations SET retention_state='expired'",
+                "invocation-is-error" => "UPDATE tool_invocations SET is_error=1",
+                "result-is-error" => "UPDATE session_history SET tool_is_error=1 WHERE message_kind='tool-result' AND",
+                "missing-arguments" => "UPDATE tool_invocations SET arguments_json=NULL",
+                "incorrect-arguments" => "UPDATE tool_invocations SET arguments_json='different'",
+                "missing-start-arguments" => "UPDATE session_history SET tool_args=NULL WHERE message_kind='tool-start' AND",
+                "incorrect-start-arguments" => "UPDATE session_history SET tool_args='different' WHERE message_kind='tool-start' AND",
+                "missing-result" => "UPDATE tool_invocations SET result_content=NULL",
+                "incorrect-result" => "UPDATE session_history SET content='different' WHERE message_kind='tool-result' AND",
+                "missing-hash" => "UPDATE tool_invocations SET result_sha256=NULL",
+                "incorrect-hash" => "UPDATE tool_invocations SET result_sha256='different'",
+                "incorrect-bytes" => "UPDATE tool_invocations SET result_bytes=result_bytes+1",
+                "incorrect-start-time" => "UPDATE session_history SET timestamp='2026-02-02T00:00:00+00:00' WHERE message_kind='tool-start' AND",
+                "incorrect-result-time" => "UPDATE session_history SET timestamp='2026-02-02T00:00:00+00:00' WHERE message_kind='tool-result' AND",
+                "incorrect-start-call" => "UPDATE session_history SET tool_call_id='different' WHERE message_kind='tool-start' AND",
+                "incorrect-result-call" => "UPDATE session_history SET tool_call_id='different' WHERE message_kind='tool-result' AND",
+                "missing-start-row" => "DELETE FROM session_history WHERE message_kind='tool-start' AND",
+                "missing-result-row" => "DELETE FROM session_history WHERE message_kind='tool-result' AND",
+                "unlinked-result" => "UPDATE session_history SET tool_invocation_id=NULL WHERE message_kind='tool-result' AND",
+                "duplicate-start" or "duplicate-result" => """
+                    INSERT INTO session_history(session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id)
+                    SELECT session_id,role,content,timestamp,tool_name,tool_call_id,tool_args,tool_is_error,message_kind,tool_invocation_id
+                    FROM session_history WHERE message_kind=$kind AND
+                    """,
+                _ => throw new ArgumentOutOfRangeException(nameof(disposition), disposition, "Unknown protected disposition")
+            };
+            // Restrict by invocation link, so even the incorrect-call cases retain their row identity.
+            var predicate = mutation.Contains("tool_invocations SET", StringComparison.Ordinal)
+                ? "tool_call_id='protected'"
+                : "tool_invocation_id=(SELECT id FROM tool_invocations WHERE tool_call_id='protected')";
+            change.CommandText = mutation + (mutation.EndsWith("AND", StringComparison.Ordinal) ? " " : " WHERE ") + predicate;
+            if (disposition is "duplicate-start" or "duplicate-result")
+                change.Parameters.AddWithValue("$kind", disposition == "duplicate-start" ? "tool-start" : "tool-result");
+            (await change.ExecuteNonQueryAsync()).ShouldBe(1);
+        }
+
+        const string protectedHistory = "tool_invocation_id=(SELECT id FROM tool_invocations WHERE tool_call_id='protected') OR tool_call_id='protected' OR tool_call_id='different'";
+        var invocationBefore = await ReadTableBytesAsync(connection, "tool_invocations");
+        var historyBefore = await ReadTableBytesAsync(connection, "session_history", predicate: protectedHistory);
+        historyBefore.Count.ShouldBe(disposition is "duplicate-start" or "duplicate-result" ? 3 : disposition is "missing-start-row" or "missing-result-row" ? 1 : 2);
+        var safeExpected = await ReadTableBytesAsync(connection, "session_history", projectCleanup: true, predicate: "tool_call_id='safe'");
+        safeExpected.ShouldNotBe(await ReadTableBytesAsync(connection, "session_history", predicate: "tool_call_id='safe'"));
+
+        var report = store.CleanupLegacyToolPayloads(10);
+
+        // Check evidence before telemetry: a removed guard must fail on actual evidence loss.
+        (await ReadTableBytesAsync(connection, "tool_invocations")).ShouldBe(invocationBefore, disposition);
+        (await ReadTableBytesAsync(connection, "session_history", predicate: protectedHistory)).ShouldBe(historyBefore, disposition);
+        (await ReadTableBytesAsync(connection, "session_history", predicate: "tool_call_id='safe'")).ShouldBe(safeExpected);
+        report.CleanedInvocations.ShouldBe(1);
+        report.CleanedRows.ShouldBe(2);
+        report.ClearedBytes.ShouldBe(Encoding.UTF8.GetByteCount(arguments) + Encoding.UTF8.GetByteCount(result) + Encoding.UTF8.GetByteCount(duplicate));
+        report.OrphanedInvocationsDeleted.ShouldBe(0);
+        report.HasMore.ShouldBeFalse();
+
+        var freshStore = CreateStore();
+        (await freshStore.GetAsync(SessionId.From("disposition"))).ShouldNotBeNull();
+        var repeated = freshStore.CleanupLegacyToolPayloads(10);
+        repeated.CleanedInvocations.ShouldBe(0);
+        repeated.CleanedRows.ShouldBe(0);
+        repeated.ClearedBytes.ShouldBe(0);
+        repeated.OrphanedInvocationsDeleted.ShouldBe(0);
+        repeated.HasMore.ShouldBeFalse();
+        await using var reopened = await OpenAsync();
+        (await ReadTableBytesAsync(reopened, "tool_invocations")).ShouldBe(invocationBefore, disposition);
+        (await ReadTableBytesAsync(reopened, "session_history", predicate: protectedHistory)).ShouldBe(historyBefore, disposition);
+        (await ReadTableBytesAsync(reopened, "session_history", predicate: "tool_call_id='safe'")).ShouldBe(safeExpected);
     }
 
     [Fact]
@@ -270,6 +583,103 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         report.ScannedInvocations.ShouldBe((protectedCount + 1) % batchSize);
         (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_call_id='safe' AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))")).ShouldBe(0);
         (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_call_id LIKE 'protected-%' AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))")).ShouldBe(protectedCount * 2L);
+    }
+
+    [Theory]
+    [InlineData(512)]
+    [InlineData(4096)]
+    public async Task CleanupLegacyToolPayloads_CandidateReaderDoesNotAggregatePayloadsBeyondWindow(int invocationCount)
+    {
+        const int batchSize = 17;
+        const int payloadBytes = 8192;
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("discovery-cost"), AgentId.From("agent"));
+        await store.SaveAsync(session);
+        await using var connection = await OpenAsync();
+        await using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                WITH RECURSIVE sequence(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < $count)
+                INSERT INTO tool_invocations(session_id,tool_call_id,arguments_json,status,is_error,result_content,retention_state)
+                SELECT 'discovery-cost','call-' || value,'{}','success',0,$payload,'hot' FROM sequence;
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,tool_args,message_kind,tool_invocation_id)
+                SELECT session_id,'tool','start','a',tool_call_id,'{}','tool-start',id
+                FROM tool_invocations ORDER BY id DESC;
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,message_kind,tool_invocation_id)
+                SELECT session_id,'tool',$payload,'b',tool_call_id,'tool-result',id
+                FROM tool_invocations ORDER BY id DESC;
+                """;
+            seed.Parameters.AddWithValue("$count", invocationCount);
+            seed.Parameters.AddWithValue("$payload", new string('x', payloadBytes));
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        // Count actual payload aggregate work, not elapsed time or merely returned rows.
+        // Override only this connection's length(BLOB), preserving its SQLite semantics.
+        long measuredBytes = 0;
+        connection.CreateFunction<byte[]?, long?>("length", value =>
+        {
+            if (value is null) return null;
+            measuredBytes += value.Length;
+            return value.LongLength;
+        });
+        var readWindow = typeof(LegacyToolPayloadCleanup).GetMethod("ReadCandidateWindow",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        readWindow.ShouldNotBeNull();
+        // length(BLOB) observes only emitted aggregates: a GROUP BY sorter can already have
+        // copied the entire payload corpus. Count VM work on the real production command.
+        // Neither native callback re-enters SQLite or enumerates statement handles.
+        long vmSteps = 0;
+        var statements = new List<string>();
+        var handle = connection.Handle ?? throw new InvalidOperationException("SQLite connection must be open.");
+        SQLitePCL.raw.sqlite3_trace(handle,
+            new SQLitePCL.strdelegate_trace((_, sql) => statements.Add(sql)), null);
+        SQLitePCL.raw.sqlite3_progress_handler(handle, 1, _ => { vmSteps++; return 0; }, null);
+        object? window;
+        try
+        {
+            window = readWindow.Invoke(null, [connection, batchSize, 0L]);
+        }
+        finally
+        {
+            SQLitePCL.raw.sqlite3_progress_handler(handle, 0, null, null);
+            SQLitePCL.raw.sqlite3_trace(handle, (SQLitePCL.strdelegate_trace?)null, null);
+        }
+        var firstWindowSteps = vmSteps;
+        var candidates = window as System.Collections.ICollection
+            ?? throw new InvalidOperationException("Candidate reader must return a collection.");
+        candidates.Count.ShouldBe(batchSize);
+        measuredBytes.ShouldBe(batchSize * (payloadBytes + 2L),
+            "payload aggregate work must stop at the ID window even when the corpus grows");
+
+        measuredBytes = 0;
+        vmSteps = 0;
+        SQLitePCL.raw.sqlite3_progress_handler(handle, 1, _ => { vmSteps++; return 0; }, null);
+        try
+        {
+            window = readWindow.Invoke(null, [connection, batchSize, (long)invocationCount - 1]);
+        }
+        finally
+        {
+            SQLitePCL.raw.sqlite3_progress_handler(handle, 0, null, null);
+        }
+        var finalCandidates = window as System.Collections.ICollection
+            ?? throw new InvalidOperationException("Candidate reader must return a collection.");
+        finalCandidates.Count.ShouldBe(1);
+        measuredBytes.ShouldBe(payloadBytes + 2L, "the cursor must seek rather than reaggregate prior payloads");
+
+        // Explain the exact traced production statement, not a copied SQL approximation.
+        statements.Count.ShouldBe(1);
+        var plan = await ReadStringsAsync(connection, "EXPLAIN QUERY PLAN " + statements[0], ordinal: 3);
+        var diagnostic = $"corpus={invocationCount}, window={batchSize}, first-window VM steps={firstWindowSteps}, "
+            + $"cursor VM steps={vmSteps}; actual production plan: {string.Join("; ", plan)}";
+        // A generous per-candidate instruction budget tolerates planner/version differences,
+        // but rejects the whole-corpus payload sorter (about 195k/1.5m steps for these seeds).
+        // The budget depends only on the requested window, never on invocationCount.
+        firstWindowSteps.ShouldBeLessThanOrEqualTo(batchSize * 2000L,
+            "candidate discovery must bound payload-bearing work before aggregation; " + diagnostic);
+        vmSteps.ShouldBeLessThanOrEqualTo(2000L, "the cursor must seek with bounded VM work; " + diagnostic);
     }
 
     [Fact]
@@ -421,6 +831,20 @@ public sealed class ToolInvocationSchemaTests : IDisposable
             command.CommandText = sql;
             await Should.ThrowAsync<SqliteException>(() => command.ExecuteNonQueryAsync());
         }
+    }
+
+    private async Task RestoreLegacyPayloadsAsync(string sessionId)
+    {
+        await using var connection = await OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE session_history AS h SET
+                tool_args=CASE WHEN h.message_kind='tool-start' THEN i.arguments_json ELSE h.tool_args END,
+                content=CASE WHEN h.message_kind='tool-result' THEN i.result_content ELSE h.content END
+            FROM tool_invocations i WHERE h.tool_invocation_id=i.id AND h.session_id=$session
+            """;
+        command.Parameters.AddWithValue("$session", sessionId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private SqliteSessionStore CreateStore() => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance, _conversations);

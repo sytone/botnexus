@@ -137,6 +137,6 @@ public sealed class SkillPathValidatorTests
         var result = SkillPathValidator.TryValidate(target, Root(fs), fs, out var resolved, out var error);
 
         Assert.True(result, error);
-        Assert.Equal(target, resolved.Value);
+        Assert.Equal(fs.Path.GetFullPath(target), resolved.Value);
     }
 }

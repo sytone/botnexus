@@ -676,6 +676,14 @@ public sealed class ProviderEmbeddingsConfig
 /// <summary>Configuration owned by the singular BotNexus world.</summary>
 public sealed class WorldSettingsConfig
 {
+    /// <summary>Optional positive compaction trigger ceiling in tokens; null inherits the enclosing scope. Not model capacity.</summary>
+    [Range(1, int.MaxValue)]
+    [Display(Name = "Compaction token ceiling", Description = "Optional positive compaction trigger ceiling, not model capacity. Null inherits.")]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 0)]
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
+    public int? CompactionTokenCeiling { get; set; }
+
+
     /// <summary>World-scoped extension-owned runtime configuration, keyed by extension ID.</summary>
     [Display(
         Name = "World extensions",
@@ -1771,6 +1779,11 @@ public sealed class SecretRedactionConfig
 /// <summary>Cron scheduler configuration.</summary>
 public sealed class CronConfig
 {
+    /// <summary>Opt-in global model for model-running cron jobs; explicit job models take precedence.</summary>
+    [Display(Name = "Default cron model", Description = "Optional provider/model or registered model ID. Explicit job model overrides this; unset inherits conversation then agent. Restart the gateway after changing configuration.", GroupName = "Cron", Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron", Order = 4)]
+    public string? DefaultModel { get; set; }
+
     /// <summary>Whether the cron scheduler is enabled.</summary>
     [Display(
         Name = "Enable cron",
@@ -2046,6 +2059,14 @@ public sealed class ExtensionLoaderConfig
 /// <summary>Agent definition in platform config.</summary>
 public sealed class AgentDefinitionConfig
 {
+    /// <summary>Optional positive compaction trigger ceiling in tokens; null inherits the enclosing scope. Not model capacity.</summary>
+    [Range(1, int.MaxValue)]
+    [Display(Name = "Compaction token ceiling", Description = "Optional positive compaction trigger ceiling, not model capacity. Null inherits.")]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 0)]
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
+    public int? CompactionTokenCeiling { get; set; }
+
+
     /// <summary>Provider name (e.g. 'copilot').</summary>
     [Display(
         Name = "Provider",

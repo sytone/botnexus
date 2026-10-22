@@ -21,6 +21,13 @@ public sealed record CronJob
     /// </summary>
     public IReadOnlyDictionary<string, string?>? TemplateParameters { get; init; }
     public string? Model { get; init; }
+
+    /// <summary>Read-only projection of the configured cron default; never an authored job pin.</summary>
+    public string? ConfiguredDefaultModel { get; init; }
+
+    /// <summary>Operator-visible authored routing intent; actual provider/model is recorded per run.</summary>
+    public string ModelRoutingIndicator => !CronModelRouting.UsesModel(ActionType) ? "not-applicable"
+        : !string.IsNullOrWhiteSpace(Model) ? "job-override" : !string.IsNullOrWhiteSpace(ConfiguredDefaultModel) ? "global-default" : "inherits-conversation-agent";
     public string? WebhookUrl { get; init; }
     public string? ShellCommand { get; init; }
     public bool Enabled { get; init; } = true;

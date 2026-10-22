@@ -23,6 +23,7 @@ $runnerBuildScript = '/runner/RunnerBuild.ps1'
 . $runnerTimeoutScript
 . $runnerCostScript
 . $runnerBuildScript
+. '/runner/RunnerDiagnostic.ps1'
 
 # SELF-IMPOSED DEADLINE (#3305)
 #
@@ -159,9 +160,19 @@ Invoke-TimedPhase -Phase 'payload-extract' -Body {
 Push-Location $sourceRoot
 $exitCode = 0
 $testResult = $null
+$diagnosticRun = $null
+$diagnosticEvidence = $null
+$diagnosticProject = $env:DIAGNOSTIC_PROJECT
+$diagnosticHangSeconds = if ($env:DIAGNOSTIC_HANG_SECONDS) { [int]$env:DIAGNOSTIC_HANG_SECONDS } else { 120 }
+$diagnosticOuterSeconds = 0
 try {
     # Source proof was established before any restore/build command; do not manufacture a
     # pre-validation commit. Keep HEAD as history and populate the clone index for diff tools.
+    if ($mode -notin @('strict','impacted','full','core','playwright','diagnostic')) { throw "Unsupported runner mode: $mode" }
+    if ($mode -eq 'diagnostic') {
+        Resolve-DiagnosticProject -SourceRoot $sourceRoot -Project $diagnosticProject | Out-Null
+        if ([string]::IsNullOrWhiteSpace($env:RUNNER_IMAGE)) { throw 'Diagnostic runner image identity is required.' }
+    }
     git read-tree HEAD
     if ($LASTEXITCODE -ne 0) { throw 'Unable to initialize runner index.' }
 
@@ -257,9 +268,9 @@ try {
     # excluding it here would break the gate. SkipTests is a no-op against src/dirs.proj, which
     # holds no test projects. Do not copy the production argument string wholesale.
     #
-    # Skipped for modes that run neither fixture, so a playwright-only or impacted-only run does
-    # not pay for a Release compile it will never load.
-    $needsReleaseBuild = $mode -in @('full', 'core', 'playwright')
+    # Diagnostic can name a fixture-bearing project, so it also gets the production closure.
+    # Impacted/strict retain their existing build behavior.
+    $needsReleaseBuild = $mode -in @('full', 'core', 'playwright', 'diagnostic')
     if ($needsReleaseBuild) {
         # Debug and Release use configuration-specific bin/obj trees. Starting both after the
         # shared restore overlaps their critical paths while keeping independent logs and exit
@@ -319,6 +330,20 @@ try {
     $e2eProject = 'tests/integration/BotNexus.Integration.E2E.Tests/BotNexus.Integration.E2E.Tests.csproj'
     $testStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $run = switch ($mode) {
+        'diagnostic' {
+            # Unlike ordinary modes, never use the 30s floor after the deadline is spent.
+            $diagnosticOuterSeconds = [int][Math]::Floor($runDeadlineSeconds - $runStopwatch.Elapsed.TotalSeconds)
+            $collectorDirectory = Join-Path $sourceRoot 'tools/BotNexus.TestEventCollector/bin/Debug/net10.0'
+            if (-not (Test-Path -LiteralPath (Join-Path $collectorDirectory 'BotNexus.TestEventCollector.dll'))) { throw 'Candidate test event collector was not built.' }
+            $settingsPath = Join-Path $artifactsRoot 'diagnostic.runsettings'
+            New-DiagnosticSettings -SourceSettings (Join-Path (Split-Path -Parent (Join-Path $sourceRoot $diagnosticProject)) 'obj/botnexus.runsettings') -Destination $settingsPath -CollectorDirectory $collectorDirectory -EvidenceDirectory $resultsRoot
+            $arguments = @(Get-DiagnosticArguments -Project $diagnosticProject -ResultsRoot $resultsRoot -SettingsPath $settingsPath -OuterSeconds $diagnosticOuterSeconds -HangSeconds $diagnosticHangSeconds)
+            $testBudgetSeconds = $diagnosticOuterSeconds
+            # Settings generation consumes this same absolute phase budget, not a new one.
+            $remainingDiagnosticSeconds = [int][Math]::Floor($runDeadlineSeconds - $runStopwatch.Elapsed.TotalSeconds)
+            $diagnosticRun = Invoke-DiagnosticProcess -FilePath 'dotnet' -TimeoutSeconds $remainingDiagnosticSeconds -LogPath $testLog -ArgumentList $arguments -EvidenceRoot $resultsRoot
+            $diagnosticRun
+        }
         'full' {
             Invoke-BoundedProcess -FilePath 'dotnet' -TimeoutSeconds $testBudgetSeconds -LogPath $testLog -ArgumentList @(
                 'test', 'tests/dirs.proj', '--nologo', '--tl:off', '-c', 'Debug', '--no-build',
@@ -375,6 +400,7 @@ try {
             -Mode $mode `
             -ExpectedProjects $allExpected `
             -E2EProject ([IO.Path]::GetFileNameWithoutExtension($e2eProject)))
+        if ($mode -eq 'diagnostic') { $expectedForMode = @([IO.Path]::GetFileNameWithoutExtension($diagnosticProject)) }
         $unfinished = @(Get-UnfinishedTestProjects -ExpectedProjects $expectedForMode -CompletedAssemblies $completedAssemblies)
         $timeoutRecord = New-RunnerTimeoutRecord -Phase 'test' -ElapsedSeconds $testStopwatch.Elapsed.TotalSeconds -DeadlineSeconds $testBudgetSeconds -CompletedAssemblies $completedAssemblies -UnfinishedProjects $unfinished
         $exitCode = 1
@@ -439,6 +465,17 @@ finally {
     catch {
         # Deliberately swallowed: see the AC4 note at the top of this script.
         $projectCosts = @()
+    }
+
+    if ($mode -eq 'diagnostic') {
+        try {
+            $diagnosticEvidence = Write-DiagnosticEvidence -Root $artifactsRoot -Project $diagnosticProject -SourceSnapshot $sourceSnapshot -RunnerImage $env:RUNNER_IMAGE -RunnerDirectory '/runner' -Run $diagnosticRun -HangSeconds $diagnosticHangSeconds -OuterSeconds $diagnosticOuterSeconds
+            if (-not $diagnosticEvidence.eventEvidenceComplete -or -not $diagnosticEvidence.hangEvidenceComplete) { $exitCode = 1 }
+        }
+        catch {
+            $exitCode = 1
+            $_ | Out-String | Set-Content -LiteralPath (Join-Path $artifactsRoot 'diagnostic-error.log')
+        }
     }
 
     @{

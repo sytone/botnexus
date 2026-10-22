@@ -70,7 +70,76 @@ public sealed record AgentProposal(
     CitizenId? ReviewedBy,
     string? ReviewReason,
     DateTimeOffset? ReviewedAt,
-    IReadOnlyList<AgentProposalReview> ReviewHistory);
+    IReadOnlyList<AgentProposalReview> ReviewHistory)
+{
+    /// <summary>Durable application state for an approved proposal.</summary>
+    public AgentProposalApplicationStatus ApplicationStatus { get; init; } =
+        Status is AgentProposalStatus.Approved
+            ? AgentProposalApplicationStatus.Pending
+            : AgentProposalApplicationStatus.NotRequired;
+
+    /// <summary>Number of exclusive application attempts started.</summary>
+    public int ApplicationAttempts { get; init; }
+
+    /// <summary>Most recent application failure, retained for operator recovery.</summary>
+    public string? ApplicationError { get; init; }
+
+    /// <summary>When the most recent application attempt completed.</summary>
+    public DateTimeOffset? ApplicationCompletedAt { get; init; }
+}
+
+
+/// <summary>Durable outcome of applying an approved proposal to agent configuration and runtime state.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<AgentProposalApplicationStatus>))]
+public enum AgentProposalApplicationStatus
+{
+    /// <summary>No application is required because the proposal is pending or rejected.</summary>
+    NotRequired,
+    /// <summary>An approved proposal is eligible for its first application attempt.</summary>
+    Pending,
+    /// <summary>Lifecycle effects may be in progress or committed; an operator must reconcile before any retry.</summary>
+    Applying,
+    /// <summary>The exact stored descriptor was applied successfully.</summary>
+    Applied,
+    /// <summary>The attempt failed and may be retried explicitly.</summary>
+    Failed,
+    /// <summary>An operator verified that the ambiguous attempt committed successfully.</summary>
+    ReconciledApplied,
+    /// <summary>An operator verified that the ambiguous attempt did not commit; a retry is allowed.</summary>
+    ReconciledNotApplied,
+}
+
+/// <summary>Atomic claim result for proposal application.</summary>
+public enum AgentProposalApplicationClaimOutcome
+{
+    /// <summary>The caller exclusively owns the next application attempt.</summary>
+    Claimed,
+    /// <summary>The proposal is absent, unapproved, already applying, or already applied.</summary>
+    NotClaimed,
+}
+
+/// <summary>Result of an atomic application claim.</summary>
+public sealed record AgentProposalApplicationClaimResult(
+    AgentProposalApplicationClaimOutcome Outcome,
+    AgentProposal? Proposal);
+
+/// <summary>An explicit operator conclusion for an ambiguous Applying attempt.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<AgentProposalReconciliationDecision>))]
+public enum AgentProposalReconciliationDecision
+{
+    /// <summary>External evidence proves the exact lifecycle effect committed.</summary>
+    Applied,
+    /// <summary>External evidence proves the lifecycle effect did not commit.</summary>
+    NotApplied,
+}
+
+/// <summary>Result of reconciling an ambiguous application attempt.</summary>
+public enum AgentProposalReconciliationOutcome { Reconciled, NotFound, NotApplying }
+
+/// <summary>Authoritative result of an explicit reconciliation.</summary>
+public sealed record AgentProposalReconciliationResult(
+    AgentProposalReconciliationOutcome Outcome,
+    AgentProposal? Proposal);
 
 /// <summary>Outcome of an atomic attempt to move a pending proposal to a terminal state.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<AgentProposalReviewOutcome>))]
@@ -121,5 +190,30 @@ public interface IAgentProposalStore
         CitizenId reviewer,
         string? reason,
         DateTimeOffset reviewedAt,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Exclusively claims an approved pending or failed attempt.</summary>
+    Task<AgentProposalApplicationClaimResult> TryBeginApplicationAsync(
+        Guid proposalId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Durably completes the caller-owned application attempt.</summary>
+    Task CompleteApplicationAsync(
+        Guid proposalId,
+        bool succeeded,
+        string? error,
+        DateTimeOffset completedAt,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves an ambiguous Applying state from external operator evidence. This method records
+    /// the evidence only; it never invokes or retries lifecycle effects.
+    /// </summary>
+    Task<AgentProposalReconciliationResult> ReconcileApplicationAsync(
+        Guid proposalId,
+        AgentProposalReconciliationDecision decision,
+        CitizenId reconciledBy,
+        string evidence,
+        DateTimeOffset reconciledAt,
         CancellationToken cancellationToken = default);
 }

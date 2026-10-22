@@ -160,6 +160,18 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             conversationOverrideLayer = conversationOverrideLayer with { Thinking = runThinking };
         }
 
+        // The scheduler already resolved and validated this occurrence. Overlay ONLY model,
+        // leaving conversation thinking/context behavior to its existing authority (#4636).
+        if (context.Parameters.TryGetValue("cronModelOverride", out var cronModelRaw)
+            && cronModelRaw is string cronModel && !string.IsNullOrWhiteSpace(cronModel))
+        {
+            var separator = cronModel.LastIndexOf('/');
+            conversationOverrideLayer = conversationOverrideLayer with
+            {
+                Model = separator >= 0 ? cronModel[(separator + 1)..] : cronModel
+            };
+        }
+
         var effectiveModel = ModelOverrideResolver.Resolve(
             modelDefaults: default,
             agent: new ModelOverrideLayer(
@@ -554,6 +566,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var compactor = _serviceProvider.GetService<ISessionCompactor>();
         var compactionCoordinator = _serviceProvider.GetService<ISessionCompactionCoordinator>();
         var compactionOptions = _serviceProvider.GetService<IOptionsMonitor<CompactionOptions>>();
+        var compactionCeilingResolver = _serviceProvider.GetService<ISessionCompactionCeilingResolver>();
         if (compactor is not null && compactionCoordinator is not null && compactionOptions is not null && sessionStore is not null)
         {
             var compactSessionId = context.SessionId;
@@ -565,21 +578,46 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             var scopedContextWindow = contextBudget.EffectiveWorkingBudgetTokens;
             maybeCompactAsync = async cancellationToken =>
             {
-                var scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
                 GatewaySession? liveSession = null;
                 for (var attempt = 0; attempt < 2; attempt++)
                 {
-                    liveSession = await sessionStore.GetAsync(compactSessionId, cancellationToken).ConfigureAwait(false);
-                    if (liveSession is null)
+                    // The live session supplies policy identity, so its lookup is part of the
+                    // fail-closed policy boundary, including conflict retries. Ordinary store
+                    // failures must not escape as best-effort compaction errors in AgentLoopRunner.
+                    CompactionOptions scopedOptions;
+                    try
                     {
-                        if (attempt == 0)
+                        liveSession = await sessionStore.GetAsync(compactSessionId, cancellationToken).ConfigureAwait(false);
+                        if (liveSession is null)
                         {
-                            return null;
+                            // Preserve the legacy no-op only for directly constructed callers
+                            // without the production ceiling resolver.
+                            if (attempt == 0 && compactionCeilingResolver is null)
+                                return null;
+
+                            throw new InvalidOperationException(attempt == 0
+                                ? "Required proactive compaction session state is missing."
+                                : "Required proactive compaction could not refresh the session after a conflict.");
                         }
 
+                        // Resolve EVERY check from the live conversation; never cache a ceiling.
+                        scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
+                        if (compactionCeilingResolver is not null)
+                        {
+                            var ceiling = await compactionCeilingResolver.ResolveAsync(
+                                compactAgentId, liveSession.ConversationId, cancellationToken).ConfigureAwait(false);
+                            scopedOptions = scopedOptions with { CompactionTokenCeiling = ceiling.Tokens };
+                        }
+                        _ = CompactionThreshold.Resolve(scopedOptions);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
                         throw new ProactiveCompactionException(
-                            "Required proactive compaction could not refresh the session after a conflict.",
-                            retryable: true);
+                            "Required proactive compaction policy could not be resolved.", retryable: true, ex);
                     }
 
                     if (!compactor.ShouldCompact(liveSession.Session, scopedOptions))
@@ -825,7 +863,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // Resolved from the same effectiveModel/model pair that configures the run below, so the
             // reported window cannot drift from the executed one (same single-derivation rule as #2796).
             contextWindowTokens: contextBudget.EffectiveWorkingBudgetTokens,
-            contextBudget: contextBudget)
+            contextBudget: contextBudget,
+            agentRunEvidenceStore: _serviceProvider.GetService<ISessionStore>() as IAgentRunEvidenceStore)
         {
             RenderedSystemPrompt = resumeSystemPrompt
         };
@@ -1230,6 +1269,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// result. Optional so unit tests can construct the handle without the gateway DI graph.
     /// </summary>
     private readonly ToolAuditWriteAhead? _toolWriteAhead;
+    private readonly IDisposable? _disposableRunAudit;
 
     /// <summary>
     /// The THIRD deliberate-cancellation source (#3384): signalled when the gateway itself destroys
@@ -1269,7 +1309,8 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         IActivityTracker? activityTracker = null,
         ToolAuditWriteAhead? toolWriteAhead = null,
         int? contextWindowTokens = null,
-        ContextBudgetDiagnostics? contextBudget = null)
+        ContextBudgetDiagnostics? contextBudget = null,
+        IAgentRunEvidenceStore? agentRunEvidenceStore = null)
     {
         _agent = agent;
         AgentId = agentId;
@@ -1279,9 +1320,58 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         _contextBudget = contextBudget;
         _contextWindowTokens = contextBudget is null ? contextWindowTokens : contextBudget.EffectiveWorkingBudgetTokens;
         _toolWriteAhead = toolWriteAhead;
+        if (toolWriteAhead is not null || agentRunEvidenceStore is not null)
+        {
+            DateTimeOffset startedAt = default;
+            var completedResults = 0;
+            var incomplete = 0;
+            _disposableRunAudit = agent.Subscribe(async (evt, _) =>
+            {
+                if (evt is AgentStartEvent)
+                {
+                    startedAt = evt.Timestamp;
+                    Interlocked.Exchange(ref completedResults, 0);
+                    Interlocked.Exchange(ref incomplete, 0);
+                    toolWriteAhead?.BeginRun(ToDomainRunId(evt.AgentRunId));
+                }
+                else if (evt is ToolExecutionEndEvent toolEnd)
+                {
+                    if (toolEnd.Result.IsIncomplete) Interlocked.Exchange(ref incomplete, 1);
+                    else Interlocked.Increment(ref completedResults);
+                }
+                else if (evt is AgentEndEvent && toolWriteAhead is not null)
+                    await toolWriteAhead.RecordInterruptedAsync(CancellationToken.None).ConfigureAwait(false);
+
+                if (agentRunEvidenceStore is null || ToDomainRunId(evt.AgentRunId) is not { } runId)
+                    return;
+                AgentRunEvidence? evidence = evt switch
+                {
+                    AgentStartEvent => new(runId, startedAt, null, "Running", null, []),
+                    AgentEndEvent end => new(runId, startedAt, end.Timestamp,
+                        end.Completion?.Status.ToString() ?? "Unknown",
+                        Volatile.Read(ref incomplete) == 0 && (end.Completion?.Status is RunCompletionStatus.Completed or RunCompletionStatus.Parked)
+                            ? Volatile.Read(ref completedResults) : null,
+                        end.Completion is { } completion ? ProjectCompletion(completion).GuardObservations : []),
+                    _ => null
+                };
+                if (evidence is null) return;
+                try
+                {
+                    // The subscriber is awaited before tools and before prompt return. Terminal persistence
+                    // must not inherit the cancelled run token. Failed persistence leaves an unknown sample.
+                    await agentRunEvidenceStore.RecordAgentRunAsync(SessionId, evidence, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Agent-run evidence persistence failed for session {SessionId}, run {AgentRunId}", SessionId, runId);
+                    throw;
+                }
+            });
+        }
         _disposableResources = (tools ?? [])
             .Where(static tool => tool is IAsyncDisposable || tool is IDisposable)
             .Cast<object>()
+            .Concat(_disposableRunAudit is null ? [] : new object[] { _disposableRunAudit })
             .Concat((resourcesToDispose ?? [])
                 .Where(static resource => resource is IAsyncDisposable || resource is IDisposable))
             .Distinct(ReferenceEqualityComparer.Instance)
@@ -1340,12 +1430,20 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     {
         var state = _agent.State;
         var systemPromptChars = state.SystemPrompt?.Length ?? 0;
-        var toolDefinitions = state.Tools
-            .Select(static t => new ToolDiagInfo(
-                t.Name,
-                t.Definition.Description,
-                t.Definition.Parameters.GetRawText().Length))
-            .ToList();
+        var toolDefinitions = new List<ToolDiagInfo>(state.Tools.Count);
+        var toolDefinitionChars = 0;
+        var toolDefinitionUnits = 0L;
+        foreach (var tool in state.Tools)
+        {
+            var definition = tool.Definition;
+            var schema = definition.Parameters.GetRawText();
+            toolDefinitions.Add(new ToolDiagInfo(tool.Name, definition.Description, schema.Length));
+            toolDefinitionChars += tool.Name.Length + (definition.Description?.Length ?? 0) + schema.Length;
+            // JSON syntax is ASCII, but schema descriptions and property names need not be.
+            toolDefinitionUnits += TokenEstimator.WeightedCharUnits(tool.Name)
+                + TokenEstimator.WeightedCharUnits(definition.Description)
+                + TokenEstimator.WeightedCharUnits(schema);
+        }
         var historyEntries = state.Messages.Count;
 
         var userAssistantChars = state.Messages.Sum(static message => message switch
@@ -1382,12 +1480,12 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         });
 
         var systemPromptUnits = TokenEstimator.WeightedCharUnits(state.SystemPrompt);
-        var toolDefinitionChars = toolDefinitions.Sum(static t => t.SchemaChars);
         var historyChars = userAssistantChars + toolResultChars;
         var historyUnits = userAssistantUnits + toolResultUnits;
-        var totalUnits = systemPromptUnits
-            + ((long)toolDefinitions.Sum(static t => t.SchemaChars + t.Name.Length + (t.Description?.Length ?? 0)))
-            + historyUnits;
+        // Embedded skills stay in their enclosing prompt/history category: no separate attribution
+        // or second charge. Convert summed units once for each subtotal and once for the total;
+        // independent truncation means the displayed integer subtotals need not sum exactly.
+        var totalUnits = systemPromptUnits + toolDefinitionUnits + historyUnits;
         var estimatedTokens = TokenEstimator.TokensFromUnits(totalUnits);
 
         return new ContextDiagnostics
@@ -1396,9 +1494,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             SystemPromptTokens = TokenEstimator.TokensFromUnits(systemPromptUnits),
             ToolCount = state.Tools.Count,
             ToolDefinitionChars = toolDefinitionChars,
-            // Tool schemas are JSON emitted by the runtime: structurally ASCII, so the script-blind
-            // ratio is the right estimate and inspecting them would cost a scan for no accuracy.
-            ToolDefinitionTokens = TokenEstimator.EstimateTokensFromCharCount(toolDefinitionChars),
+            ToolDefinitionTokens = TokenEstimator.TokensFromUnits(toolDefinitionUnits),
             Tools = toolDefinitions,
             HistoryEntryCount = historyEntries,
             HistoryChars = historyChars,
@@ -1425,7 +1521,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         try
         {
             var messages = await _agent.PromptAsync(message, cancellationToken);
-            var response = BuildResponse(messages, _agent.State.LastCompletion);
+            var response = CompleteBlockingRun(messages);
 
             activity?.SetStatus(ActivityStatusCode.Ok);
             return response;
@@ -1433,19 +1529,14 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         catch (OperationCanceledException oce)
         {
             activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
-            // #2615 AC3/AC4: a cancellation or timeout after tool-start must not make the
-            // invocation vanish. Close out every still-unaccounted call with the shared explicit
-            // incomplete record before the cancellation propagates.
-            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
-            throw BuildInterruptedException(oce);
+            // Core returns admitted interruptions as run snapshots. A thrown cancellation is
+            // before admission: do not read history or close tools belonging to another active run.
+            throw new AgentPromptInterruptedException(BuildResponse([], null),
+                cancellationToken.IsCancellationRequested ? cancellationToken : oce.CancellationToken);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not AgentPromptInterruptedException)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            // A crash mid-run is the other half of AC3: the run unwinds through here, and an
-            // in-flight tool has to leave the same auditable incomplete record it would on a
-            // cancellation.
-            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
@@ -1460,20 +1551,19 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         try
         {
             var messages = await _agent.PromptWithoutToolsAsync(message, cancellationToken);
-            var response = BuildResponse(messages, _agent.State.LastCompletion);
+            var response = CompleteBlockingRun(messages);
             activity?.SetStatus(ActivityStatusCode.Ok);
             return response;
         }
         catch (OperationCanceledException oce)
         {
             activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
-            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
-            throw BuildInterruptedException(oce);
+            throw new AgentPromptInterruptedException(BuildResponse([], null),
+                cancellationToken.IsCancellationRequested ? cancellationToken : oce.CancellationToken);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not AgentPromptInterruptedException)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
@@ -1491,7 +1581,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         try
         {
             var messages = await _agent.PromptAsync(message.ToCore(), cancellationToken);
-            var response = BuildResponse(messages, _agent.State.LastCompletion);
+            var response = CompleteBlockingRun(messages);
 
             activity?.SetStatus(ActivityStatusCode.Ok);
             return response;
@@ -1499,13 +1589,12 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         catch (OperationCanceledException oce)
         {
             activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
-            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
-            throw BuildInterruptedException(oce);
+            throw new AgentPromptInterruptedException(BuildResponse([], null),
+                cancellationToken.IsCancellationRequested ? cancellationToken : oce.CancellationToken);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not AgentPromptInterruptedException)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
@@ -1527,32 +1616,26 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         {
             var messages = await _agent.PromptWhenAvailableAsync(
                 message.ToCore(), onStartedAsync, cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            var response = BuildResponse(messages, _agent.State.LastCompletion);
+            var response = CompleteBlockingRun(messages);
+            // Preserve producer-owned late cancellation without re-reading mutable agent state
+            // or closing a queued successor's audit. AgentEnd has already settled this run.
+            if (cancellationToken.IsCancellationRequested)
+                throw new AgentPromptInterruptedException(response, cancellationToken);
             activity?.SetStatus(ActivityStatusCode.Ok);
             return response;
         }
         catch (OperationCanceledException oce)
         {
             activity?.SetStatus(ActivityStatusCode.Error, oce.Message);
-            await RecordInterruptedToolsAsync(oce.CancellationToken).ConfigureAwait(false);
-            throw BuildInterruptedException(oce);
+            throw new AgentPromptInterruptedException(BuildResponse([], null),
+                cancellationToken.IsCancellationRequested ? cancellationToken : oce.CancellationToken);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not AgentPromptInterruptedException)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
-
-    /// <summary>
-    /// Writes the explicit incomplete record for every tool call that started and never reported a
-    /// result (#2615 AC3/AC4). Safe to call more than once and on a handle constructed without a
-    /// write-ahead; the write-ahead itself is idempotent and never throws.
-    /// </summary>
-    private Task RecordInterruptedToolsAsync(CancellationToken cancellationToken)
-        => _toolWriteAhead?.RecordInterruptedAsync(cancellationToken) ?? Task.CompletedTask;
 
     /// <summary>
     /// Projects the messages a completed blocking run produced into a gateway <see cref="AgentResponse"/>,
@@ -1560,18 +1643,39 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// such as the cron trigger can persist a tool timeline with parity to the interactive streaming path
     /// (issue #2118). Tool calls are surfaced in execution order.
     /// </summary>
-    private static AgentResponse BuildResponse(
+    internal AgentResponse CompleteBlockingRun(IReadOnlyList<AgentMessage> messages)
+    {
+        var run = messages as AgentRunMessages;
+        var response = BuildResponse(messages, run?.Completion);
+        if (run?.Completion?.Status == RunCompletionStatus.Cancelled)
+        {
+            // Awaited AgentEnd subscribers closed this run before core released its slot.
+            // A queued run may now own the mutable write-ahead; never close it here.
+            // Mutation seam: RemoveInterruptedPartialPropagation replaces the next throw with return response.
+            throw new AgentPromptInterruptedException(response, run.CancellationToken);
+        }
+        return response;
+    }
+
+    internal static AgentResponse BuildResponse(
         IReadOnlyList<AgentMessage> messages,
         RunCompletionResult? completion)
     {
+        var run = messages as AgentRunMessages;
+        var runId = ToDomainRunId(run?.AgentRunId);
+        messages = run?.EvidenceMessages ?? messages;
+        if (completion?.Status == RunCompletionStatus.Cancelled && run?.SyntheticTerminalMessage is { } synthetic)
+            messages = messages.Where(message => !ReferenceEquals(message, synthetic)).ToArray();
         var lastAssistant = messages.OfType<AssistantAgentMessage>().LastOrDefault();
+        var lastUsage = lastAssistant?.Usage;
         return new AgentResponse
         {
+            AgentRunId = runId,
             Content = lastAssistant?.Content ?? string.Empty,
-            Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite) : null,
+            Usage = lastUsage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite) : null,
             RunUsage = AggregateRunUsage(messages),
             TurnCount = messages.OfType<AssistantAgentMessage>().Count(),
-            ToolCalls = BuildToolCalls(messages, pendingToolCallIds: null),
+            ToolCalls = BuildToolCalls(messages, run?.PendingToolCalls).Select(call => call with { AgentRunId = runId }).ToArray(),
             // #3565: the blocking boundary now carries the terminal message's provider error, so a
             // sub-agent run that ended on a rejected turn is distinguishable from one that merely
             // said little. Gated strictly on StopReason.Error for the same reason MapTurnError is:
@@ -1591,7 +1695,15 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             completion.Evidence,
             completion.ContinuationOwner,
             completion.WakeCondition,
-            completion.ContinuationAttempts);
+            completion.ContinuationAttempts)
+        {
+            GuardObservations = GuardEvidenceSanitizer.Sanitize(completion.GuardObservations.Select(g => new BotNexus.Gateway.Abstractions.Models.GuardObservation(
+                g.GuardKind, g.ConsecutiveCount, g.TotalResults, g.WarningThreshold, g.StopThreshold,
+                g.AbsoluteLimitReached, g.Disposition, g.EvidenceReferences)).ToArray())
+        };
+
+    private static BotNexus.Domain.Primitives.AgentRunId? ToDomainRunId(BotNexus.Agent.Core.Types.AgentRunId? id)
+        => id is { } value ? BotNexus.Domain.Primitives.AgentRunId.From(value.Value) : null;
 
     /// <summary>
     /// Returns the provider error to report for a run's terminal assistant message, or
@@ -1658,40 +1770,11 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     }
 
     /// <summary>
-    /// Builds the interruption exception carried out of a cancelled/timed-out blocking run. Reads the
-    /// live agent timeline (<see cref="AgentState.Messages"/>) to capture every tool call that completed
-    /// before cancellation, plus any tool still in-flight (<see cref="AgentState.PendingToolCalls"/>),
-    /// which is marked <see cref="AgentToolCallInfo.IsIncomplete"/> so the transcript represents the
-    /// interrupted tool consistently (issue #2118).
-    /// </summary>
-    private AgentPromptInterruptedException BuildInterruptedException(OperationCanceledException oce)
-    {
-        var snapshot = _agent.State.Messages;
-        var lastAssistant = snapshot.OfType<AssistantAgentMessage>().LastOrDefault();
-        var partial = new AgentResponse
-        {
-            Content = lastAssistant?.Content ?? string.Empty,
-            Usage = lastAssistant?.Usage is { } u ? new AgentResponseUsage(u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite) : null,
-            // #2641 AC1: an interrupted run still cost what it cost. Carrying the aggregate out on
-            // the partial response is what lets the timeout/abort paths record a real figure
-            // instead of leaving the most expensive runs on the platform unmeasured.
-            RunUsage = AggregateRunUsage(snapshot),
-            TurnCount = snapshot.OfType<AssistantAgentMessage>().Count(),
-            ToolCalls = BuildToolCalls(snapshot, _agent.State.PendingToolCalls),
-            TerminalError = DescribeTerminalError(lastAssistant),
-            Completion = _agent.State.LastCompletion is { } completion
-                ? ProjectCompletion(completion)
-                : null
-        };
-        return new AgentPromptInterruptedException(partial, oce.CancellationToken);
-    }
-
-    /// <summary>
     /// Correlates the assistant tool-call requests (which carry arguments) with the tool-result messages
     /// (which carry result content and error state) in a run timeline, producing one
-    /// <see cref="AgentToolCallInfo"/> per requested call in execution order. A call whose id appears in
-    /// <paramref name="pendingToolCallIds"/> but has no matching result was interrupted mid-flight and is
-    /// flagged <see cref="AgentToolCallInfo.IsIncomplete"/>. Shared by the completed and interrupted paths
+    /// <see cref="AgentToolCallInfo"/> per requested call in execution order. A missing result is
+    /// incomplete: pending IDs prove a start, but absent IDs cannot distinguish an unstarted sibling
+    /// from unknown completion. Neither is evidence of success. Shared by the completed and interrupted paths
     /// so both persist the same tool-timeline shape (issue #2118).
     /// </summary>
     internal static IReadOnlyList<AgentToolCallInfo> BuildToolCalls(
@@ -1732,13 +1815,13 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                         result.IsError,
                         arguments,
                         AgentToolResultText.Extract(result.Result),
-                        IsIncomplete: false));
+                        IsIncomplete: result.Result.IsIncomplete));
                 }
                 else
                 {
                     // No result row: the call is either still in-flight at cancellation (pending) or
                     // otherwise never completed. Either way it is an incomplete/interrupted call.
-                    var incomplete = pendingToolCallIds?.Contains(call.Id) ?? true;
+                    const bool incomplete = true;
                     toolCalls.Add(new AgentToolCallInfo(
                         call.Id,
                         call.Name,
@@ -1762,7 +1845,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                     result.IsError,
                     Arguments: null,
                     AgentToolResultText.Extract(result.Result),
-                    IsIncomplete: false));
+                    IsIncomplete: result.Result.IsIncomplete));
             }
         }
 
@@ -1828,15 +1911,15 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                         rawArguments: arguments,
                         rawResultContent: AgentToolResultText.Extract(result.Result),
                         isError: result.IsError,
-                        isIncomplete: false,
+                        isIncomplete: result.Result.IsIncomplete,
                         startedAt: assistant.Timestamp,
-                        completedAt: result.Timestamp ?? assistant.Timestamp));
+                        completedAt: result.Result.IsIncomplete ? null : result.Timestamp ?? assistant.Timestamp));
                 }
                 else
                 {
                     // No result row: the call was either still in flight at cancellation or never
                     // completed. Either way it is an incomplete/interrupted call.
-                    var incomplete = pendingToolCallIds?.Contains(call.Id) ?? true;
+                    const bool incomplete = true;
                     records.Add(policy.Create(
                         orderIndex: records.Count,
                         toolCallId: call.Id,
@@ -1864,9 +1947,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                     rawArguments: null,
                     rawResultContent: AgentToolResultText.Extract(result.Result),
                     isError: result.IsError,
-                    isIncomplete: false,
+                    isIncomplete: result.Result.IsIncomplete,
                     startedAt: result.Timestamp,
-                    completedAt: result.Timestamp));
+                    completedAt: result.Result.IsIncomplete ? null : result.Timestamp));
             }
         }
 
@@ -1895,6 +1978,12 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// every emitted event.
     /// </remarks>
     internal static AgentStreamEvent? MapAgentEvent(AgentEvent agentEvent, string messageId)
+    {
+        var mapped = MapAgentEventUncorrelated(agentEvent, messageId);
+        return mapped is null ? null : mapped with { AgentRunId = ToDomainRunId(agentEvent.AgentRunId) };
+    }
+
+    private static AgentStreamEvent? MapAgentEventUncorrelated(AgentEvent agentEvent, string messageId)
         => agentEvent switch
         {
             // RunStarted/RunEnded bracket the ENTIRE loop (all turns, tool cycles, follow-up
@@ -1940,6 +2029,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 ToolName = toolEnd.ToolName,
                 ToolResult = AgentToolResultText.Extract(toolEnd.Result),
                 ToolIsError = toolEnd.IsError,
+                ToolIsIncomplete = toolEnd.Result.IsIncomplete,
                 MessageId = messageId
             },
             MessageEndEvent end when end.Message is AssistantAgentMessage assistant
@@ -2077,6 +2167,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         return new AgentStreamEvent
         {
             Type = AgentStreamEventType.Error,
+            AgentRunId = ToDomainRunId(agentEvent.AgentRunId),
             // A provider that errors without detail is rare but must still be distinguishable from
             // a turn that simply produced nothing, so the event is emitted either way.
             ErrorMessage = string.IsNullOrWhiteSpace(turnEnd.Message.ErrorMessage)
@@ -2100,6 +2191,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
         return new AgentStreamEvent
         {
             Type = AgentStreamEventType.Error,
+            AgentRunId = ToDomainRunId(agentEvent.AgentRunId),
             ErrorMessage = string.IsNullOrWhiteSpace(end.Completion.Detail)
                 ? "The agent run failed but supplied no detail."
                 : end.Completion.Detail,
@@ -2163,6 +2255,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 await writer.WriteAsync(new AgentStreamEvent
                 {
                     Type = AgentStreamEventType.Error,
+            AgentRunId = ToDomainRunId(agentEvent.AgentRunId),
                     ErrorMessage = $"Internal streaming error: {ex.Message}",
                     MessageId = messageId
                 }, cancellationToken);
@@ -2287,11 +2380,34 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
                 // Expected when caller cancels stream.
             }
 
-            // #2615 AC3/AC4: the streamed run may have been abandoned mid-tool (client disconnect,
-            // turn cancellation, provider death). Any call that started and never reported a result
-            // is closed out with the explicit incomplete record rather than left silently open.
-            await RecordInterruptedToolsAsync(cancellationToken).ConfigureAwait(false);
+            // Awaited AgentEnd subscribers closed this run before core released its slot.
+            // Do not touch write-ahead state that may already belong to a queued run.
         }
+    }
+
+    /// <inheritdoc />
+    public IDisposable? ObserveActivity(Action<AgentActivityObservation> onActivity)
+    {
+        ArgumentNullException.ThrowIfNull(onActivity);
+        return _agent.Subscribe((agentEvent, _) =>
+        {
+            var observation = agentEvent switch
+            {
+                ToolExecutionEndEvent completed => AgentActivityEvidence.Project(completed),
+                TurnEndEvent => new AgentActivityObservation(AgentActivityKind.TurnCompleted, 0, 0),
+                _ => null
+            };
+            if (observation is not null)
+            {
+                try { onActivity(observation); }
+                catch (Exception)
+                {
+                    // Do not leak tool payloads through observer exception messages.
+                    _logger.LogWarning("Agent activity observer threw.");
+                }
+            }
+            return Task.CompletedTask;
+        });
     }
 
     /// <inheritdoc />
@@ -2423,24 +2539,70 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     public Task<bool> TryFollowUpWhileRunningAsync(string message, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        return TryFollowUpCoreAsync(new AgentCoreUserMessage(message), cancellationToken);
+    }
 
-        if (!IsRunning)
-            return Task.FromResult(false);
+    /// <summary>
+    /// Shared enqueue-then-reverify body for both <c>TryFollowUpWhileRunningAsync</c> overloads.
+    /// </summary>
+    /// <remarks>
+    /// #4688 / #4731 review: an ABORTING run never drains its follow-up queue - it exits at the
+    /// deliberate pre-drain cancellation check (#2388) and goes Idle without touching the queue.
+    /// So a follow-up must never be reported as queued against an aborting run: we wait (honouring
+    /// <paramref name="cancellationToken"/>) for the abort to settle and hand the message back to
+    /// the caller (<c>false</c>) so it is dispatched as a fresh prompt on an idle agent. This also
+    /// covers an abort that lands between the busy check and the enqueue: the post-enqueue
+    /// re-check sees Aborting, waits for idle and reclaims the still-pending message.
+    /// </remarks>
+    private async Task<bool> TryFollowUpCoreAsync(AgentMessage queued, CancellationToken cancellationToken)
+    {
+        if (_agent.Status == AgentStatus.Aborting)
+        {
+            await _agent.WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
+            return false;
+        }
 
-        var queued = new AgentCoreUserMessage(message);
+        // #4688: gate on the agent's own busy predicate (Status != Idle), NOT IsRunning
+        // (Status == Running). Gating on IsRunning would send a caller down the direct-prompt
+        // path while RunAsync still throws "Agent is already running.".
+        if (!_agent.IsBusy)
+            return false;
 
         // Enqueue unconditionally; a PendingMessageQueueFullException from the bounded queue
         // propagates to the caller by design - overflow is a visible refusal, not a drop.
         _agent.FollowUp(queued);
+        AfterFollowUpEnqueuedForTest?.Invoke();
 
-        if (IsRunning)
-            return Task.FromResult(true);
+        // #4731 review P1: take ONE status snapshot. Reading Status and then IsBusy separately let
+        // an abort land between the reads and report a message queued on a run that never drains.
+        BeforeLifecycleSnapshotForTest?.Invoke();
+        var status = _agent.Status;
+        if (status == AgentStatus.Aborting)
+        {
+            // Abort raced the enqueue: the cancelled run will not drain, so wait for it to
+            // settle and take the message back. If the reclaim fails the run's drain already
+            // claimed it before the abort was observed, i.e. it is being delivered.
+            try
+            {
+                await _agent.WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // #4731 review P2: never leave the message ownerless when the caller gives up.
+                _agent.TryReclaimFollowUp(queued);
+                throw;
+            }
+
+            return !_agent.TryReclaimFollowUp(queued);
+        }
+
+        if (status != AgentStatus.Idle)
+            return true;
 
         // The run settled between the first check and the enqueue. Either the loop's final drain
         // already claimed our message (reclaim fails -> it IS being delivered) or it did not
         // (reclaim succeeds -> we own it again and the caller must send it normally).
-        var reclaimed = _agent.TryReclaimFollowUp(queued);
-        return Task.FromResult(!reclaimed);
+        return !_agent.TryReclaimFollowUp(queued);
     }
 
     /// <inheritdoc />
@@ -2453,20 +2615,16 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        if (!IsRunning)
-            return Task.FromResult(false);
-
-        // Map ONCE: the reclaim below is identity-sensitive, so the instance enqueued and the
+        // Map ONCE: the reclaim is identity-sensitive, so the instance enqueued and the
         // instance reclaimed must be the same object (#2438 ordering preserved under #3040).
-        var core = message.ToCore();
-        _agent.FollowUp(core);
-
-        if (IsRunning)
-            return Task.FromResult(true);
-
-        var reclaimedTyped = _agent.TryReclaimFollowUp(core);
-        return Task.FromResult(!reclaimedTyped);
+        return TryFollowUpCoreAsync(message.ToCore(), cancellationToken);
     }
+
+    /// <summary>Test seam invoked immediately after the follow-up is enqueued.</summary>
+    internal Action? AfterFollowUpEnqueuedForTest { get; set; }
+
+    /// <summary>Test seam at the point the pre-#4731 code sat between its Status and IsBusy reads.</summary>
+    internal Action? BeforeLifecycleSnapshotForTest { get; set; }
 
     /// <inheritdoc />
     public Task<bool> PingAsync(CancellationToken cancellationToken = default)

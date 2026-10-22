@@ -240,6 +240,7 @@ builder.Services.Configure<CronOptions>(options =>
     if (cron is null)
         return;
 
+    options.DefaultModel = cron.DefaultModel;
     options.Enabled = cron.Enabled;
     options.TickIntervalSeconds = cron.TickIntervalSeconds;
     // #3779: the operator-configured webhook blocked-host list must reach BOTH the API create/update
@@ -658,8 +659,7 @@ app.MapGet("/api/version", () =>
 {
     var assembly = typeof(Program).Assembly;
     var buildTime = File.GetLastWriteTimeUtc(assembly.Location).ToString("yyyyMMddHHmmss");
-    var gitHash = GetGitCommitHash();
-    return Results.Ok(new { version = buildTime, commit = gitHash });
+    return Results.Ok(new { version = buildTime, commit = GatewayBuildInfo.CommitSha });
 });
 var gatewayStartedAtUtc = DateTimeOffset.UtcNow;
 app.MapGet("/api/uptime", () => Results.Ok(new { startedAt = gatewayStartedAtUtc }));
@@ -844,24 +844,6 @@ static void LogGatewayStartup(
         worldDescriptor.Locations.Count,
         worldDescriptor.AvailableStrategies.Count,
         worldDescriptor.CrossWorldPermissions.Count);
-}
-
-static string? GetGitCommitHash()
-{
-    try
-    {
-        var psi = new System.Diagnostics.ProcessStartInfo("git", "rev-parse --short HEAD")
-        {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        using var proc = System.Diagnostics.Process.Start(psi);
-        var hash = proc?.StandardOutput.ReadToEnd().Trim();
-        proc?.WaitForExit(3000);
-        return string.IsNullOrEmpty(hash) ? null : hash;
-    }
-    catch { return null; }
 }
 
 // Returns true when the file exists and contains syntactically valid JSON.

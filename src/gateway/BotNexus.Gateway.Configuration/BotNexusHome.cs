@@ -159,6 +159,11 @@ public sealed class BotNexusHome : IVerifiedHome
         "MEMORY.md"
     ];
 
+    // Fixed stripes avoid retaining one lock forever for every home path. All instances in this
+    // process coordinate first creation and refresh; sibling publication also protects readers
+    // and other processes that do not participate in this coordination.
+    private static readonly object[] TrailguideWorkspaceLocks = Enumerable.Range(0, 64).Select(_ => new object()).ToArray();
+
     private readonly IFileSystem _fileSystem;
     private readonly string? _worldId;
     private readonly ILogger _logger;
@@ -339,33 +344,55 @@ public sealed class BotNexusHome : IVerifiedHome
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
 
+        var normalizedName = agentName.Trim();
+        var agentDirectory = Path.Combine(AgentsPath, normalizedName);
+        if (string.Equals(normalizedName, "nexus-trailguide", StringComparison.OrdinalIgnoreCase))
+        {
+            var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+            var stripe = (uint)comparer.GetHashCode(_fileSystem.Path.GetFullPath(agentDirectory)) % (uint)TrailguideWorkspaceLocks.Length;
+            var coordination = TrailguideWorkspaceLocks[stripe];
+            // Bound the entire queue wait, not one timeout per caller ahead of us.
+            // Publication has its own bounded sharing/lock retries once admitted.
+            if (!Monitor.TryEnter(coordination, millisecondsTimeout: 1000))
+                throw TrailguideRefreshException.CoordinationTimeout(agentDirectory);
+
+            try
+            {
+                Initialize();
+                _fileSystem.Directory.CreateDirectory(agentDirectory);
+                MigrateLegacyWorkspace(agentDirectory, scaffoldWhenEmpty: false);
+                _fileSystem.Directory.CreateDirectory(Path.Combine(agentDirectory, "workspace"));
+                _fileSystem.Directory.CreateDirectory(Path.Combine(agentDirectory, "data", "sessions"));
+                RefreshTrailguideWorkspace(agentDirectory);
+            }
+            finally
+            {
+                Monitor.Exit(coordination);
+            }
+            return agentDirectory;
+        }
+
         Initialize();
-        var agentDirectory = Path.Combine(AgentsPath, agentName.Trim());
         var isFirstCreation = !_fileSystem.Directory.Exists(agentDirectory);
         _fileSystem.Directory.CreateDirectory(agentDirectory);
 
         if (isFirstCreation)
-            ScaffoldAgentWorkspace(agentDirectory, agentName.Trim());
+            ScaffoldAgentWorkspace(agentDirectory);
         else
             MigrateLegacyWorkspace(agentDirectory);
-
-        if (string.Equals(agentName.Trim(), "nexus-trailguide", StringComparison.OrdinalIgnoreCase))
-            RefreshTrailguideWorkspace(agentDirectory);
 
         return agentDirectory;
     }
 
-    private void ScaffoldAgentWorkspace(string agentDirectory, string? agentName = null)
+    private void ScaffoldAgentWorkspace(string agentDirectory)
     {
         var workspacePath = Path.Combine(agentDirectory, "workspace");
         _fileSystem.Directory.CreateDirectory(workspacePath);
         _fileSystem.Directory.CreateDirectory(Path.Combine(agentDirectory, "data", "sessions"));
 
-        var isTrailguide = string.Equals(agentName, "nexus-trailguide", StringComparison.OrdinalIgnoreCase);
-        var scaffoldFiles = isTrailguide ? TrailguideWorkspaceScaffoldFiles : WorkspaceScaffoldFiles;
-        var resourceFolder = isTrailguide ? "Templates.Trailguide" : "Templates";
+        const string resourceFolder = "Templates";
         var assembly = typeof(BotNexusHome).Assembly;
-        foreach (var file in scaffoldFiles)
+        foreach (var file in WorkspaceScaffoldFiles)
         {
             var path = Path.Combine(workspacePath, file);
             if (_fileSystem.File.Exists(path))
@@ -415,7 +442,8 @@ public sealed class BotNexusHome : IVerifiedHome
             _documentationRootOverride,
             Environment.CurrentDirectory,
             Path.Combine(ResolveUserProfile(), "botnexus"));
-        _fileSystem.File.WriteAllText(
+        TrailguideFilePublisher.Publish(
+            _fileSystem,
             Path.Combine(workspacePath, "DOCUMENTATION_ROOT.md"),
             $"# BotNexus documentation root{Environment.NewLine}{Environment.NewLine}" +
             $"Strategy: {resolution.Strategy}{Environment.NewLine}" +
@@ -435,7 +463,7 @@ public sealed class BotNexusHome : IVerifiedHome
             return;
 
         using var reader = new StreamReader(stream);
-        _fileSystem.File.WriteAllText(destination, reader.ReadToEnd());
+        TrailguideFilePublisher.Publish(_fileSystem, destination, reader.ReadToEnd());
     }
 
     private static string ResolveUserProfile()
@@ -443,7 +471,7 @@ public sealed class BotNexusHome : IVerifiedHome
             ? home
             : Environment.GetEnvironmentVariable("HOME") ?? AppContext.BaseDirectory;
 
-    private void MigrateLegacyWorkspace(string agentDirectory)
+    private void MigrateLegacyWorkspace(string agentDirectory, bool scaffoldWhenEmpty = true)
     {
         var workspacePath = Path.Combine(agentDirectory, "workspace");
         if (_fileSystem.Directory.Exists(workspacePath))
@@ -453,7 +481,8 @@ public sealed class BotNexusHome : IVerifiedHome
             .Any(f => _fileSystem.File.Exists(Path.Combine(agentDirectory, f)));
         if (!hasLegacyFiles)
         {
-            ScaffoldAgentWorkspace(agentDirectory);
+            if (scaffoldWhenEmpty)
+                ScaffoldAgentWorkspace(agentDirectory);
             return;
         }
 

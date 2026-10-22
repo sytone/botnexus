@@ -8,17 +8,15 @@ namespace BotNexus.Conversation.Tests;
 /// Functional REST API tests for the Conversation endpoints.
 /// Each test creates isolated data using unique agentIds to prevent state bleed.
 /// </summary>
-[Collection("LiveGateway")]
-public class ConversationRestApiTests(LiveGatewayFixture fixture, ITestOutputHelper output)
+[Collection("CandidateGateway")]
+public class ConversationRestApiTests(CandidateGatewayFixture fixture, ITestOutputHelper output)
 {
     // ── GET /api/conversations ────────────────────────────────────────────────
 
-    [SkippableFact]
+    [Fact]
     public async Task GetConversations_WithUnusedAgentId_ReturnsEmptyArray()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
-        var uniqueAgentId = $"test-agent-{Guid.NewGuid():N}";
+        var uniqueAgentId = fixture.NewAgent();
         var response = await fixture.Conversations.GetConversationsAsync(uniqueAgentId);
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
 
@@ -30,12 +28,10 @@ public class ConversationRestApiTests(LiveGatewayFixture fixture, ITestOutputHel
 
     // ── POST /api/conversations ───────────────────────────────────────────────
 
-    [SkippableFact]
+    [Fact]
     public async Task CreateConversation_Returns201WithCorrectData()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
-        var agentId = $"test-agent-{Guid.NewGuid():N}";
+        var agentId = fixture.NewAgent();
         var response = await fixture.Conversations.CreateConversationAsync(agentId, "Test Project Alpha");
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
 
@@ -44,7 +40,8 @@ public class ConversationRestApiTests(LiveGatewayFixture fixture, ITestOutputHel
         var doc = JsonDocument.Parse(json).RootElement;
 
         doc.TryGetProperty("conversationId", out var convId).ShouldBeTrue();
-        convId.GetString()![..2].ShouldBe("c_");
+        convId.GetString().ShouldNotBeNullOrEmpty();
+        convId.GetString().ShouldStartWith("c_");
 
         doc.GetProperty("agentId").GetString().ShouldBe(agentId);
         doc.GetProperty("title").GetString().ShouldBe("Test Project Alpha");
@@ -56,23 +53,19 @@ public class ConversationRestApiTests(LiveGatewayFixture fixture, ITestOutputHel
         bindings.GetArrayLength().ShouldBe(0);
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task CreateConversation_MissingAgentId_Returns400()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
         var response = await fixture.Conversations.CreateConversationRawAsync(new { title = "No Agent" });
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
 
     // ── GET /api/conversations — created conversation appears in list ──────────
 
-    [SkippableFact]
+    [Fact]
     public async Task GetConversations_CreatedConversationAppearsInList()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
-        var agentId = $"test-agent-{Guid.NewGuid():N}";
+        var agentId = fixture.NewAgent();
         var createResponse = await fixture.Conversations.CreateConversationAsync(agentId, "Listed Conversation");
         createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
         var createdId = JsonDocument.Parse(await createResponse.Content.ReadAsStringAsync())
@@ -102,12 +95,10 @@ public class ConversationRestApiTests(LiveGatewayFixture fixture, ITestOutputHel
 
     // ── GET /api/conversations/{id} ───────────────────────────────────────────
 
-    [SkippableFact]
+    [Fact]
     public async Task GetConversation_ReturnsFullConversation()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
-        var agentId = $"test-agent-{Guid.NewGuid():N}";
+        var agentId = fixture.NewAgent();
         var createResponse = await fixture.Conversations.CreateConversationAsync(agentId, "Fetch By Id Test");
         createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
         var createdId = JsonDocument.Parse(await createResponse.Content.ReadAsStringAsync())
@@ -123,23 +114,19 @@ public class ConversationRestApiTests(LiveGatewayFixture fixture, ITestOutputHel
         bindings.ValueKind.ShouldBe(JsonValueKind.Array);
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task GetConversation_UnknownId_Returns404()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
         var response = await fixture.Conversations.GetConversationAsync("c_doesnotexist");
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }
 
     // ── PATCH /api/conversations/{id} ─────────────────────────────────────────
 
-    [SkippableFact]
+    [Fact]
     public async Task PatchConversation_TitleUpdatePersists()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
-        var agentId = $"test-agent-{Guid.NewGuid():N}";
+        var agentId = fixture.NewAgent();
         var createResponse = await fixture.Conversations.CreateConversationAsync(agentId, "Original");
         createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
         var createdId = JsonDocument.Parse(await createResponse.Content.ReadAsStringAsync())
@@ -159,12 +146,10 @@ public class ConversationRestApiTests(LiveGatewayFixture fixture, ITestOutputHel
 
     // ── GET /api/conversations/{id}/history ───────────────────────────────────
 
-    [SkippableFact]
+    [Fact]
     public async Task GetConversationHistory_EmptyOnNewConversation()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
-        var agentId = $"test-agent-{Guid.NewGuid():N}";
+        var agentId = fixture.NewAgent();
         var createResponse = await fixture.Conversations.CreateConversationAsync(agentId, "History Test");
         createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
         var createdId = JsonDocument.Parse(await createResponse.Content.ReadAsStringAsync())
@@ -181,22 +166,18 @@ public class ConversationRestApiTests(LiveGatewayFixture fixture, ITestOutputHel
         doc.GetProperty("offset").GetInt32().ShouldBe(0);
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task GetConversationHistory_UnknownId_Returns404()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
         var response = await fixture.Conversations.GetConversationHistoryAsync("c_doesnotexist");
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }
 
     // ── GET /api/conversations?agentId=nonexistent ────────────────────────────
 
-    [SkippableFact]
+    [Fact]
     public async Task GetConversations_NonexistentAgentId_ReturnsEmptyArrayNot404()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
         var response = await fixture.Conversations.GetConversationsAsync("agent-that-definitely-does-not-exist-xyz");
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
 

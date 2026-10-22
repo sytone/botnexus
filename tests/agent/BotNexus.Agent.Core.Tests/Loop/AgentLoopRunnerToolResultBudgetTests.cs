@@ -31,6 +31,129 @@ public sealed class AgentLoopRunnerToolResultBudgetTests
     }
 
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ConfiguredBudget_FinalizerPreservesGuardEvidenceAndRunIdentity(bool suppliedIdentity, bool cancelAtBoundary)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var api = $"budget-run-evidence-{suppliedIdentity}-{cancelAtBoundary}";
+        var tool = new ReceiptTool();
+        var requests = 0;
+        using var registration = TestHelpers.RegisterProvider(new TestApiProvider(api, simpleStreamFactory: (_, _, _) =>
+            Interlocked.Increment(ref requests) == 1
+                ? TestStreamFactory.CreateToolCallResponse(("call-0", tool.Name, new Dictionary<string, object?>()), ("call-1", tool.Name, new Dictionary<string, object?>()), ("call-2", tool.Name, new Dictionary<string, object?>()))
+                : TestStreamFactory.CreateTextResponse("summary")));
+        var expectedIdentity = suppliedIdentity ? AgentRunId.From("configured-budget-run") : (AgentRunId?)null;
+        var snapshots = new List<IReadOnlyList<GuardObservation>>();
+        var events = new List<AgentEvent>();
+        await AgentLoopRunner.RunAsync([new UserMessage("work")], new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with
+            {
+                MaxToolResults = 2,
+                AgentRunId = expectedIdentity,
+                GuardEvidenceObserver = guards => snapshots.Add(guards)
+            }, evt =>
+            {
+                events.Add(evt);
+                if (cancelAtBoundary && evt is TurnEndEvent { ToolResults.Count: > 0 }) cancellation.Cancel();
+                return Task.CompletedTask;
+            }, cancellation.Token);
+        requests.ShouldBe(cancelAtBoundary ? 1 : 2);
+        tool.Calls.ShouldBe(3);
+        var runIdentity = events.OfType<AgentStartEvent>().ShouldHaveSingleItem().AgentRunId.ShouldNotBeNull();
+        if (expectedIdentity is { } supplied) runIdentity.ShouldBe(supplied);
+        events.ShouldAllBe(evt => evt.AgentRunId == runIdentity);
+        var end = events.OfType<AgentEndEvent>().ShouldHaveSingleItem();
+        end.Completion.Status.ShouldBe(RunCompletionStatus.Parked);
+        end.Completion.StopReason.ShouldBe(RunStopReason.ToolResultBudget);
+        end.Completion.ToolResultBudget.ShouldBe(new ToolResultBudgetEvidence(2, 3, 1));
+        var guard = end.Completion.GuardObservations.ShouldHaveSingleItem();
+        guard.GuardKind.ShouldBe("absolute-tool-result-limit");
+        guard.TotalResults.ShouldBe(3L);
+        guard.StopThreshold.ShouldBe(2);
+        guard.AbsoluteLimitReached.ShouldBeTrue();
+        guard.Disposition.ShouldBe("terminal");
+        Guid.TryParseExact(guard.EvidenceReferences.ShouldHaveSingleItem(), "N", out _).ShouldBeTrue();
+        snapshots.ShouldNotBeEmpty();
+        snapshots.Last().ShouldHaveSingleItem().ShouldBe(guard);
+        end.Messages.OfType<ToolResultAgentMessage>().Count().ShouldBe(3);
+        end.Messages.OfType<ToolResultAgentMessage>().Single(m => m.ToolCallId == "call-0").IsError.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("done")]
+    [InlineData("error")]
+    [InlineData("interrupted")]
+    [InlineData("result-only")]
+    public async Task BudgetSummary_UnsolicitedCallsNeverEscapeAsDispatchEvidence(string outcome)
+    {
+        var api = "budget-unsolicited-" + outcome;
+        var tool = new ReceiptTool();
+        var requests = 0;
+        using var registration = TestHelpers.RegisterProvider(new TestApiProvider(api, simpleStreamFactory: (_, _, _) =>
+        {
+            if (++requests == 1)
+                return TestStreamFactory.CreateToolCallResponse(("call-0", tool.Name, new Dictionary<string, object?>()));
+            var call = new ToolCallContent("forbidden", tool.Name, new Dictionary<string, object?>());
+            var message = new AssistantMessage([new TextContent("retained summary"), call], api, "test-provider", "test-model",
+                new Usage { Input = 17, Output = 9, TotalTokens = 26 }, StopReason.ToolUse, null, null,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            var stream = new LlmStream();
+            if (outcome != "result-only")
+            {
+                stream.Push(new StartEvent(message));
+                stream.Push(new TextDeltaEvent(0, "retained summary", message));
+                stream.Push(new ToolCallStartEvent(1, message));
+                stream.Push(new ToolCallDeltaEvent(1, "{}", message));
+                stream.Push(new ToolCallEndEvent(1, call, message));
+                if (outcome == "done") stream.Push(new DoneEvent(StopReason.ToolUse, message));
+                if (outcome == "error") stream.Push(new ErrorEvent(StopReason.Error, message));
+            }
+            if (outcome == "interrupted") stream.EndFaulted(new InvalidOperationException("summary interrupted"));
+            else stream.End(message);
+            return stream;
+        }));
+        var events = new List<AgentEvent>();
+        await AgentLoopRunner.RunAsync([new UserMessage("work")], new AgentContext(null, [], [tool]),
+            TestHelpers.CreateTestConfig(model: TestHelpers.CreateTestModel(api)) with { MaxToolResults = 1 },
+            evt => { events.Add(evt); return Task.CompletedTask; }, CancellationToken.None);
+        requests.ShouldBe(2);
+        tool.Calls.ShouldBe(1);
+        events.OfType<ToolExecutionStartEvent>().ShouldHaveSingleItem().ToolCallId.ShouldBe("call-0");
+        events.OfType<ToolExecutionEndEvent>().ShouldHaveSingleItem().ToolCallId.ShouldBe("call-0");
+        var end = events.OfType<AgentEndEvent>().ShouldHaveSingleItem();
+        end.Completion.Status.ShouldBe(RunCompletionStatus.Parked);
+        end.Completion.StopReason.ShouldBe(RunStopReason.ToolResultBudget);
+        end.Completion.ToolResultBudget.ShouldBe(new ToolResultBudgetEvidence(1, 1, 0));
+        end.Messages.OfType<ToolResultAgentMessage>().ShouldHaveSingleItem().IsError.ShouldBeTrue();
+        var summary = end.Messages.OfType<AssistantAgentMessage>().Last();
+        summary.Content.ShouldBe("retained summary");
+        summary.Usage.ShouldNotBeNull().InputTokens.ShouldBe(17);
+        summary.Usage.ShouldNotBeNull().OutputTokens.ShouldBe(9);
+        end.Metrics.ShouldNotBeNull().InputTokens.ShouldBe(27);
+        end.Metrics.ShouldNotBeNull().OutputTokens.ShouldBe(14);
+        // Pin the entire public event surface, not just the fact that no tool was executed.
+        foreach (var snapshot in events.Select(evt => evt switch
+        {
+            MessageStartEvent { Message: AssistantAgentMessage message } => message,
+            MessageUpdateEvent update => update.Message,
+            MessageEndEvent { Message: AssistantAgentMessage message } => message,
+            TurnEndEvent turn => turn.Message,
+            _ => null
+        }).OfType<AssistantAgentMessage>().Append(summary))
+        {
+            (snapshot.ToolCalls ?? []).ShouldAllBe(call => call.Id == "call-0");
+            (snapshot.ContentBlocks ?? []).OfType<ToolCallContent>().ShouldAllBe(call => call.Id == "call-0");
+        }
+        events.OfType<MessageUpdateEvent>().ShouldAllBe(update => update.ToolCallId != "forbidden");
+        var lastEnd = events.OfType<MessageEndEvent>().Last(e => e.Message is AssistantAgentMessage);
+        lastEnd.Message.ShouldBe(summary);
+        events.OfType<TurnEndEvent>().Last().Message.ShouldBe(summary);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(-1)]
     [InlineData(1000001)]

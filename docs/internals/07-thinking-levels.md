@@ -30,7 +30,7 @@ Agent.State.StreamingMessage includes thinking
 
 ## ThinkingLevel enum
 
-Five levels control reasoning intensity:
+Six levels control reasoning intensity. This is the canonical value list, sourced from `src/agent/BotNexus.Agent.Providers.Core/Models/Enums.cs` at main revision `08ae4a8c353ce8a6ecfa6d866c53b70be86a8310` (not a claim about an installed release):
 
 ```csharp
 public enum ThinkingLevel
@@ -39,11 +39,12 @@ public enum ThinkingLevel
     [JsonStringEnumMemberName("low")] Low,              // ~2 KB thinking budget
     [JsonStringEnumMemberName("medium")] Medium,        // ~8 KB thinking budget
     [JsonStringEnumMemberName("high")] High,            // ~16 KB thinking budget
-    [JsonStringEnumMemberName("xhigh")] ExtraHigh       // ~16 KB thinking budget (capped)
+    [JsonStringEnumMemberName("xhigh")] ExtraHigh,      // 16384 thinking tokens
+    [JsonStringEnumMemberName("max")] Max             // 32768 thinking tokens
 }
 ```
 
-**JSON representation:** Levels serialize to lowercase strings (`"minimal"`, `"low"`, etc.) for API compatibility.
+**JSON representation:** The attributes above define the wire values. `off` is not an enum member. Available levels depend on the selected model; `ModelRegistry.GetSupportedThinkingLevels` returns none for non-reasoning models and includes the top two tiers only when the model advertises extra-high thinking support.
 
 ## Thinking budgets
 
@@ -57,7 +58,8 @@ private static readonly IReadOnlyDictionary<ThinkingLevel, int> DefaultThinkingB
         [ThinkingLevel.Low] = 2048,          // 2 KB
         [ThinkingLevel.Medium] = 8192,       // 8 KB
         [ThinkingLevel.High] = 16384,        // 16 KB
-        [ThinkingLevel.ExtraHigh] = 16384    // 16 KB (same as High)
+        [ThinkingLevel.ExtraHigh] = 16384,   // tokens (same as High)
+        [ThinkingLevel.Max] = 32768         // tokens
     };
 ```
 
@@ -75,6 +77,7 @@ public record ThinkingBudgets
     public int? Medium { get; init; }
     public int? High { get; init; }
     public int? ExtraHigh { get; init; }
+    public int? Max { get; init; }
 }
 ```
 
@@ -136,6 +139,7 @@ public static class SimpleOptionsHelper
             ThinkingLevel.Medium => customBudgets.Medium,
             ThinkingLevel.High => customBudgets.High,
             ThinkingLevel.ExtraHigh => customBudgets.ExtraHigh,
+            ThinkingLevel.Max => customBudgets.Max,
             _ => null
         };
     }
@@ -149,10 +153,10 @@ public static class SimpleOptionsHelper
         return DefaultThinkingBudgets[ThinkingLevel.Medium];  // Fallback
     }
 
-    // Clamp ExtraHigh to High for models that don't support it
+    // Clamp ExtraHigh and Max to High when the provider uses this helper
     public static ThinkingLevel? ClampReasoning(ThinkingLevel? level)
     {
-        if (level == ThinkingLevel.ExtraHigh)
+        if (level is ThinkingLevel.ExtraHigh or ThinkingLevel.Max)
             return ThinkingLevel.High;
         return level;
     }
@@ -227,7 +231,7 @@ if (options is SimpleStreamOptions simpleOptions && simpleOptions.Reasoning.HasV
 ```
 
 Each provider may have different constraints:
-- **Anthropic (Claude):** Uses `thinking` budget and supports all 5 levels (clamping ExtraHigh to High)
+- **Anthropic (Claude):** Uses provider-specific thinking configuration; the budget-based helper clamps ExtraHigh and Max to High. Adaptive-thinking requests follow a separate path in `AnthropicRequestBuilder`
 - **OpenAI (o1, o3):** Uses reasoning/thinking parameters with different naming
 - **Others:** May not support thinking at all, or require different parameter names
 
@@ -266,6 +270,10 @@ botnexus-coding-agent --thinking medium "Implement a binary search"
 11. **User sees** → Full response with visible thinking tags (e.g., `<think>...</think>`)
 
 ## CLI integration
+
+The installed `botnexus agent exec` command forwards `--thinking` to the gateway and supports the [canonical enum values](#thinkinglevel-enum), subject to the selected model. For example: `botnexus agent exec analyst "Review this algorithm" --thinking max`. Omitting the option inherits the effective default; it does not guarantee thinking is disabled.
+
+The separate example application under `examples/BotNexus.CodingAgent` has a narrower contract. Its `CommandParser` and `InteractiveLoop` reject `max`; both accept `off`, which maps to a nullable thinking value. The commands below belong to that example, not the installed gateway CLI.
 
 ### `--thinking` command-line argument
 

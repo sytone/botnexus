@@ -185,6 +185,12 @@ public record AgentLoopConfig(
             throw new ArgumentOutOfRangeException(nameof(MaxToolResults), value, "MaxToolResults must be between 1 and 1000000 executed results.");
     }
 
+    /// <summary>Admitted identity supplied by Agent; direct loop calls mint one when absent.</summary>
+    public AgentRunId? AgentRunId { get; init; }
+
+    // Run-owner snapshot for exceptional terminal paths; no control authority or payload.
+    internal Action<IReadOnlyList<GuardObservation>>? GuardEvidenceObserver { get; init; }
+
     /// <summary>
     /// Default cooperative cancellation budget for the tool-execution policy.
     /// </summary>

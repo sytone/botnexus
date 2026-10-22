@@ -147,6 +147,8 @@ public sealed class OpenAICompatProvider(HttpClient httpClient) : IApiProvider
                 requestBody = modifiedObject;
         }
 
+        requestBody.EnforceToolFree(options?.ToolChoiceMode, compat.SupportsTools != false);
+
         var requestJson = requestBody.ToJsonString();
         var url = $"{model.BaseUrl.TrimEnd('/')}/chat/completions";
 

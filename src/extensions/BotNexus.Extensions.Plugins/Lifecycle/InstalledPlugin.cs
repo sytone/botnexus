@@ -37,6 +37,10 @@ public sealed record InstalledPlugin
     [JsonPropertyName("manifestVersion")]
     public string? ManifestVersion { get; init; }
 
+    /// <summary>Manifest selected during import. Older records default to the native format.</summary>
+    [JsonPropertyName("manifestFormat")]
+    public PluginManifestFormat ManifestFormat { get; init; } = PluginManifestFormat.Native;
+
     /// <summary>
     /// Whether update may replace this plugin's content. Defaults to <c>true</c> - the settled
     /// decision in #2623 is that pinning is opt-in, so a plugin installed without an explicit

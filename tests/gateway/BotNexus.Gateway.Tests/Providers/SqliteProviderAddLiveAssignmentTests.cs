@@ -23,7 +23,8 @@ namespace BotNexus.Gateway.Tests.Providers;
 /// <summary>
 /// Source-backed proof of the running provider activation boundary. The gateway-side options,
 /// reconciler, health check and create-agent preflight share one live model registry; provider
-/// configuration is written through the canonical SQLite writer with no JSON configuration source.
+/// configuration is written through the canonical SQLite writer. Missing, conflicting and corrupt
+/// generated JSON projections must never become configuration sources.
 /// </summary>
 public sealed class SqliteProviderAddLiveAssignmentTests
 {
@@ -88,9 +89,37 @@ public sealed class SqliteProviderAddLiveAssignmentTests
         }
     }
 
-    [Fact]
-    public async Task CanonicalSqliteProviderAdd_ActivatesCredentialAndAllowsImmediateAgentAssignment()
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("conflicting")]
+    [InlineData("corrupt")]
+    public async Task CanonicalSqliteProviderAdd_ActivatesCredentialAndAllowsImmediateAgentAssignment(
+        string projectionState)
     {
+        // Deliberately stale generated output, not a legacy import or a second backend.
+        // The same provider/model has different credentials and routing from the canonical add.
+        var expectedProjection = projectionState switch
+        {
+            "missing" => null,
+            "conflicting" => """
+                {
+                  "authorityProbe": "generated-json",
+                  "providers": {
+                    "isolated-foundry": {
+                      "enabled": true,
+                      "apiKey": "projection-must-not-win",
+                      "baseUrl": "https://projection.example.invalid/v1",
+                      "chat": {
+                        "api": "anthropic-messages",
+                        "models": ["integration-model-4195", "projection-only-model"]
+                      }
+                    }
+                  }
+                }
+                """,
+            "corrupt" => "{ generated projection: not valid JSON",
+            _ => throw new ArgumentOutOfRangeException(nameof(projectionState))
+        };
         var homePath = Path.Combine(Path.GetTempPath(), $"botnexus-provider-add-{Guid.NewGuid():N}");
         Directory.CreateDirectory(homePath);
         var configPath = Path.Combine(homePath, "config.json");
@@ -101,7 +130,16 @@ public sealed class SqliteProviderAddLiveAssignmentTests
         {
             var readerStore = new SqliteConfigStore($"Data Source={storePath}");
             var writerStore = new SqliteConfigStore($"Data Source={storePath}");
-            await writerStore.WriteDocumentAsync(new JsonObject());
+            // A real store-only value makes authority observable before the provider exists and
+            // keeps the canonical writer on its populated-store path, not legacy JSON import.
+            await writerStore.WriteDocumentAsync(new JsonObject { ["authorityProbe"] = "sqlite" });
+
+            if (expectedProjection is not null)
+                await File.WriteAllTextAsync(configPath, expectedProjection);
+
+            // Assert the requested arrangement before constructing any consumer. Without this,
+            // every theory row could silently exercise the original missing-file fixture.
+            await AssertProjectionAsync(configPath, expectedProjection);
 
             var time = new TestTimeProvider();
             using var sqliteProvider = new SqliteConfigurationProvider(
@@ -110,6 +148,7 @@ public sealed class SqliteProviderAddLiveAssignmentTests
                 timeProvider: time);
             sqliteProvider.Load();
             using var configuration = new ConfigurationRoot([sqliteProvider]);
+            AssertSqliteSource(configuration, sqliteProvider);
 
             var services = new ServiceCollection();
             services.AddSingleton<IConfiguration>(configuration);
@@ -153,10 +192,14 @@ public sealed class SqliteProviderAddLiveAssignmentTests
             const string modelId = "integration-model-4195";
             const string agentId = "provider-added-agent";
 
+            options.CurrentValue.Providers?.ContainsKey(providerName).ShouldNotBe(true);
+            (await authManager.GetApiKeyAsync(providerName)).ShouldBeNullOrWhiteSpace();
+            modelRegistry.GetModel(providerName, "projection-only-model").ShouldBeNull();
             modelRegistry.GetModel(providerName, modelId).ShouldBeNull();
             var beforeAdd = await healthCheck.CheckAsync(providerName);
             beforeAdd.Status.ShouldBe(ProviderHealthStatus.Unhealthy);
             beforeAdd.ModelCount.ShouldBe(0);
+            beforeAdd.HasCredentials.ShouldBeFalse();
 
             var beforeAssignment = await CreateAgentAsync(createAgent, agentId, providerName, modelId);
             beforeAssignment.Content[0].Value.ShouldContain("Unknown API provider");
@@ -176,6 +219,9 @@ public sealed class SqliteProviderAddLiveAssignmentTests
                 backup: null,
                 writer: sqliteWriter,
                 pristineStore: writerStore);
+            var backend = supportedWriter.Backends.ShouldHaveSingleItem();
+            backend.Name.ShouldBe("sqlite");
+            backend.WinsOnRead.ShouldBeTrue();
             await supportedWriter.UpdateSectionEntryAsync(
                 "providers",
                 providerName,
@@ -195,7 +241,18 @@ public sealed class SqliteProviderAddLiveAssignmentTests
             var observedConfig = await changed.Task.WaitAsync(TimeSpan.FromSeconds(10));
             observedConfig.Providers.ShouldNotBeNull();
             observedConfig.Providers.ShouldContainKey(providerName);
-            File.Exists(configPath).ShouldBeFalse("SQLite is the only configuration backend in this fixture");
+            AssertSqliteSource(configuration, sqliteProvider);
+            await AssertProjectionAsync(configPath, expectedProjection);
+            configuration[$"providers:{providerName}:apiKey"].ShouldBe("integration-test-api-key");
+            configuration[$"providers:{providerName}:chat:models:0"].ShouldBe(modelId);
+            modelRegistry.GetModel(providerName, "projection-only-model").ShouldBeNull();
+
+            var persisted = ConfigDocumentRehydrator.Rehydrate(await readerStore.ReadEntriesAsync());
+            persisted["authorityProbe"]?.GetValue<string>().ShouldBe("sqlite");
+            persisted["providers"]?[providerName]?["apiKey"]?.GetValue<string>()
+                .ShouldBe("integration-test-api-key");
+            persisted["providers"]?[providerName]?["chat"]?["models"]?.AsArray()
+                .Select(node => node?.GetValue<string>()).ShouldBe(new[] { modelId });
 
             var activatedModel = modelRegistry.GetModel(providerName, modelId);
             activatedModel.ShouldNotBeNull();
@@ -226,6 +283,23 @@ public sealed class SqliteProviderAddLiveAssignmentTests
             if (Directory.Exists(homePath))
                 Directory.Delete(homePath, recursive: true);
         }
+    }
+
+    private static async Task AssertProjectionAsync(string configPath, string? expectedProjection)
+    {
+        File.Exists(configPath).ShouldBe(expectedProjection is not null,
+            "the requested generated projection state must exist, not just a theory label");
+        if (expectedProjection is not null)
+            (await File.ReadAllTextAsync(configPath)).ShouldBe(expectedProjection,
+                "the SQLite-only writer must leave the non-authoritative projection unchanged");
+    }
+
+    private static void AssertSqliteSource(
+        IConfigurationRoot configuration,
+        SqliteConfigurationProvider sqliteProvider)
+    {
+        configuration.Providers.ShouldHaveSingleItem().ShouldBeSameAs(sqliteProvider);
+        configuration["authorityProbe"].ShouldBe("sqlite");
     }
 
     private static Task<BotNexus.Agent.Core.Types.AgentToolResult> CreateAgentAsync(

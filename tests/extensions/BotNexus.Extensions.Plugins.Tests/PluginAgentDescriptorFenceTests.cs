@@ -181,6 +181,18 @@ public sealed class PluginAgentDescriptorFenceTests
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Apply_Rejects_ExplicitEnabledState_ButAcceptsOmission(bool enabled)
+    {
+        var result = PluginAgentDescriptorFence.Apply(Minimal() with { Enabled = enabled }, ceiling: null);
+        result.IsAccepted.ShouldBeFalse("activation is host-owned, not plugin-declarable");
+        result.Descriptor.ShouldBeNull();
+        result.Rejections.ShouldContain(r => r.Contains(nameof(AgentDescriptor.Enabled), StringComparison.Ordinal));
+        PluginAgentDescriptorFence.Apply(Minimal(), ceiling: null).IsAccepted.ShouldBeTrue();
+    }
+
     // ---- clause 3: fileAccess is NARROWED to the ceiling ------------------
 
     [Fact]
@@ -586,7 +598,9 @@ public sealed class PluginAgentDescriptorFenceTests
     private static IReadOnlyDictionary<string, Func<AgentDescriptor, AgentDescriptor>> MutationRecipes { get; } =
         new Dictionary<string, Func<AgentDescriptor, AgentDescriptor>>(StringComparer.Ordinal)
         {
+            [nameof(AgentDescriptor.Enabled)] = baseline => baseline with { Enabled = false },
             [nameof(AgentDescriptor.Kind)] = baseline => baseline with { Kind = AgentKind.SubAgent },
+            [nameof(AgentDescriptor.CompactionTokenCeiling)] = baseline => baseline with { CompactionTokenCeiling = 24_000 },
             [nameof(AgentDescriptor.IsolationStrategy)] = baseline => baseline with { IsolationStrategy = "container" },
             [nameof(AgentDescriptor.IsolationOptions)] = baseline => baseline with
             {

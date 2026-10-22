@@ -35,7 +35,16 @@ public static class AgentLoopRunner
     /// Emits AgentStartEvent, TurnStartEvent, then MessageStart/End for each prompt,
     /// then enters the main loop. Used by Agent.PromptAsync.
     /// </remarks>
-    public static async Task<IReadOnlyList<AgentMessage>> RunAsync(
+    public static Task<IReadOnlyList<AgentMessage>> RunAsync(
+        IReadOnlyList<AgentMessage> prompts,
+        AgentContext context,
+        AgentLoopConfig config,
+        Func<AgentEvent, Task> emit,
+        CancellationToken cancellationToken)
+        => ExecuteAdmittedAsync(config, emit, cancellationToken,
+            (admitted, sink) => RunAsyncCore(prompts, context, admitted, sink, cancellationToken));
+
+    private static async Task<IReadOnlyList<AgentMessage>> RunAsyncCore(
         IReadOnlyList<AgentMessage> prompts,
         AgentContext context,
         AgentLoopConfig config,
@@ -85,7 +94,16 @@ public static class AgentLoopRunner
     /// <param name="emit">The event sink for the one-turn lifecycle.</param>
     /// <param name="cancellationToken">The absolute caller deadline.</param>
     /// <returns>The prompt and the single assistant response.</returns>
-    public static async Task<IReadOnlyList<AgentMessage>> RunSingleProviderTurnAsync(
+    public static Task<IReadOnlyList<AgentMessage>> RunSingleProviderTurnAsync(
+        AgentMessage prompt,
+        AgentContext context,
+        AgentLoopConfig config,
+        Func<AgentEvent, Task> emit,
+        CancellationToken cancellationToken)
+        => ExecuteAdmittedAsync(config, emit, cancellationToken,
+            (admitted, sink) => RunSingleProviderTurnAsyncCore(prompt, context, admitted, sink, cancellationToken));
+
+    private static async Task<IReadOnlyList<AgentMessage>> RunSingleProviderTurnAsyncCore(
         AgentMessage prompt,
         AgentContext context,
         AgentLoopConfig config,
@@ -164,7 +182,15 @@ public static class AgentLoopRunner
     /// Throws InvalidOperationException if the last message is from the assistant.
     /// </para>
     /// </remarks>
-    public static async Task<IReadOnlyList<AgentMessage>> ContinueAsync(
+    public static Task<IReadOnlyList<AgentMessage>> ContinueAsync(
+        AgentContext context,
+        AgentLoopConfig config,
+        Func<AgentEvent, Task> emit,
+        CancellationToken cancellationToken)
+        => ExecuteAdmittedAsync(config, emit, cancellationToken,
+            (admitted, sink) => ContinueAsyncCore(context, admitted, sink, cancellationToken));
+
+    private static async Task<IReadOnlyList<AgentMessage>> ContinueAsyncCore(
         AgentContext context,
         AgentLoopConfig config,
         Func<AgentEvent, Task> emit,
@@ -194,6 +220,47 @@ public static class AgentLoopRunner
         return newMessages;
     }
 
+    private static async Task<IReadOnlyList<AgentMessage>> ExecuteAdmittedAsync(
+        AgentLoopConfig config, Func<AgentEvent, Task> emit, CancellationToken cancellationToken,
+        Func<AgentLoopConfig, Func<AgentEvent, Task>, Task<IReadOnlyList<AgentMessage>>> execute)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var id = config.AgentRunId ?? AgentRunId.Create();
+        var ended = false;
+        var started = false;
+        IReadOnlyList<GuardObservation> observedGuards = [];
+        var priorGuardObserver = config.GuardEvidenceObserver;
+        async Task Sink(AgentEvent evt)
+        {
+            if (evt is AgentStartEvent) started = true;
+            if (evt is AgentEndEvent) ended = true;
+            await emit(evt with { AgentRunId = id }).ConfigureAwait(false);
+        }
+        try
+        {
+            return await execute(config with
+            {
+                AgentRunId = id,
+                GuardEvidenceObserver = guards =>
+                {
+                    observedGuards = guards;
+                    priorGuardObserver?.Invoke(guards);
+                }
+            }, Sink).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (config.AgentRunId is null && started && !ended)
+        {
+            var cancelled = ex is OperationCanceledException && cancellationToken.IsCancellationRequested;
+            var failure = new AssistantAgentMessage(string.Empty,
+                FinishReason: cancelled ? StopReason.Aborted : StopReason.Error,
+                ErrorMessage: ex.Message, Timestamp: DateTimeOffset.UtcNow);
+            await Sink(new AgentEndEvent([failure], null, DateTimeOffset.UtcNow,
+                new RunCompletionResult(cancelled ? RunCompletionStatus.Cancelled : RunCompletionStatus.Failed,
+                    [], cancelled ? RunStopReason.Cancellation : null, ex.Message) { GuardObservations = observedGuards })).ConfigureAwait(false);
+            throw;
+        }
+    }
+
     private static async Task RunLoopAsync(
         AgentContext currentContext,
         List<AgentMessage> newMessages,
@@ -210,7 +277,8 @@ public static class AgentLoopRunner
         var completionContinuationAttempts = 0;
         RunCompletionDecision? lastCompletionDecision = null;
         var nonProgressGuard = new ToolNonProgressGuard(
-            config.ToolProgressPolicy ?? DefaultToolProgressPolicy.EvaluateAsync, config.MaxToolResults);
+            config.ToolProgressPolicy ?? DefaultToolProgressPolicy.EvaluateAsync, config.GuardEvidenceObserver,
+            config.MaxToolResults);
 
         // #2519: taint accumulation is scoped to the whole RUN, not to each provider turn. The
         // laundering path this closes is inherently multi-turn - the model fetches a page on one
@@ -330,8 +398,9 @@ public static class AgentLoopRunner
                 // assistant turn -- and, worse, risked having genuine prose containing well-formed
                 // invoke markup rewritten into an executed tool call -- to compensate for one
                 // transport's defect. Providers that declare RecoversLeakedToolCallMarkup keep the
-                // exact previous behaviour; everyone else gets their text left alone.
-                if (assistantMessage.FinishReason != StopReason.ToolUse
+                // recovery behaviour for successful Stop turns; everyone else gets their text
+                // left alone. Never promote an unsuccessful terminal into executable tool calls.
+                if (assistantMessage.FinishReason == StopReason.Stop
                     && assistantMessage.ToolCalls is not { Count: > 0 }
                     && config.LlmClient.GetCapabilities(config.Model).RecoversLeakedToolCallMarkup)
                 {
@@ -375,7 +444,7 @@ public static class AgentLoopRunner
                             status,
                             [],
                             stopReason,
-                            assistantMessage.ErrorMessage))).ConfigureAwait(false);
+                            assistantMessage.ErrorMessage) { GuardObservations = nonProgressGuard.Evidence })).ConfigureAwait(false);
                     return;
                 }
 
@@ -420,8 +489,9 @@ public static class AgentLoopRunner
                     // stall. ObserveAsync's hard-edge path invokes no progress-policy callback.
                     var budget = await nonProgressGuard.ObserveAsync(
                         assistantMessage.ToolCalls!, toolResults, cancellationToken).ConfigureAwait(false);
+                    nonProgressGuard.Record(budget, "terminal");
                     await FinalizeBudgetAsync(messages, newMessages, currentContext, config, emit,
-                        metrics, budget, lastCompletionDecision, completionContinuationAttempts,
+                        metrics, budget, nonProgressGuard.Evidence, lastCompletionDecision, completionContinuationAttempts,
                         assistantMessage, toolResults, turnToolNames, cancellationToken).ConfigureAwait(false);
                     return;
                 }
@@ -443,6 +513,7 @@ public static class AgentLoopRunner
                     : null;
                 if (nonProgress is { WarningReady: true })
                 {
+                    nonProgressGuard.Record(nonProgress, "warning");
                     var guidance = BuildNonProgressGuidance(nonProgress);
                     var feedback = new BotNexus.Agent.Core.Types.UserMessage(guidance);
                     await emit(new MessageStartEvent(feedback, DateTimeOffset.UtcNow)).ConfigureAwait(false);
@@ -464,6 +535,7 @@ public static class AgentLoopRunner
                 {
                     // Preserve the assistant call and all of its tool results in the transcript,
                     // then stop as incomplete instead of converting repeated no-progress into success.
+                    nonProgressGuard.Record(nonProgress, "terminal");
                     var detail = BuildNonProgressStopDetail(nonProgress);
                     try
                     {
@@ -486,7 +558,7 @@ public static class AgentLoopRunner
                             Detail: detail,
                             Evidence: $"Repeated {nonProgress.Kind} tool outcomes without observable progress.",
                             ContinuationOwner: "user",
-                            WakeCondition: "Provide new direction or resume after changing the underlying state.")))
+                            WakeCondition: "Provide new direction or resume after changing the underlying state.") { GuardObservations = nonProgressGuard.Evidence }))
                         .ConfigureAwait(false);
                     return;
                 }
@@ -545,7 +617,7 @@ public static class AgentLoopRunner
             break;
         }
 
-        var completion = BuildCompletionResult(lastCompletionDecision, completionContinuationAttempts);
+        var completion = BuildCompletionResult(lastCompletionDecision, completionContinuationAttempts) with { GuardObservations = nonProgressGuard.Evidence };
         var endTime2 = DateTimeOffset.UtcNow;
         await emit(new AgentEndEvent(
             messages.Skip(runStartIndex).ToList(),
@@ -557,7 +629,8 @@ public static class AgentLoopRunner
     private static async Task FinalizeBudgetAsync(
         List<AgentMessage> messages, List<AgentMessage> newMessages, AgentContext context,
         AgentLoopConfig config, Func<AgentEvent, Task> emit, RunMetricsAccumulator metrics,
-        ToolNonProgressObservation observation, RunCompletionDecision? priorDecision,
+        ToolNonProgressObservation observation, IReadOnlyList<GuardObservation> guardObservations,
+        RunCompletionDecision? priorDecision,
         int continuationAttempts, AssistantAgentMessage boundaryMessage,
         IReadOnlyList<ToolResultAgentMessage> boundaryResults, IReadOnlySet<string> boundaryToolNames,
         CancellationToken cancellationToken)
@@ -573,6 +646,7 @@ public static class AgentLoopRunner
         var summaryToken = summaryCancellation.Token;
         var summaryMessages = new List<AgentMessage>();
         AssistantAgentMessage? assistant = null;
+        AssistantAgentMessage? emittedSummary = null;
         var assistantEndEmitted = false;
 
         void ThrowIfSummaryCancelled()
@@ -584,12 +658,35 @@ public static class AgentLoopRunner
             summaryToken.ThrowIfCancellationRequested();
         }
 
+        // A provider may ignore ToolChoice.None. No summary call is executable, so neither
+        // streaming observers nor transcript consumers may see it as an attempted dispatch.
+        // Copy snapshots rather than mutating provider-owned partials; retain text and usage.
+        static AssistantAgentMessage SanitizeSummary(AssistantAgentMessage message) => message with
+        {
+            ToolCalls = null,
+            ContentBlocks = message.ContentBlocks?.Where(block => block is not ToolCallContent).ToList()
+        };
+
         async Task EmitSummaryAsync(AgentEvent evt)
         {
             ThrowIfSummaryCancelled();
+            evt = evt switch
+            {
+                MessageStartEvent { Message: AssistantAgentMessage message } start => start with { Message = SanitizeSummary(message) },
+                MessageUpdateEvent update => update with
+                {
+                    Message = SanitizeSummary(update.Message), ToolCallId = null, ToolName = null, ArgumentsDelta = null
+                },
+                MessageEndEvent { Message: AssistantAgentMessage message } end => end with { Message = SanitizeSummary(message) },
+                _ => evt
+            };
             // MessageEnd may have reached Agent.ProcessEvent before a listener fails or stalls.
             // Do not append that same assistant a second time during controlled terminalization.
-            if (evt is MessageEndEvent { Message: AssistantAgentMessage }) assistantEndEmitted = true;
+            if (evt is MessageEndEvent { Message: AssistantAgentMessage completed })
+            {
+                assistantEndEmitted = true;
+                emittedSummary = completed;
+            }
             await emit(evt).WaitAsync(summaryToken).ConfigureAwait(false);
         }
 
@@ -680,6 +777,9 @@ public static class AgentLoopRunner
         }
         if (assistant is not null)
         {
+            // Accumulator return/partial storage is independent of the sanitized event surface,
+            // including result-only and failed-listener paths. Keep terminal messages identical.
+            assistant = emittedSummary ?? SanitizeSummary(assistant);
             messages.Add(assistant);
             newMessages.Add(assistant);
             metrics.IncrementTurns();
@@ -693,7 +793,7 @@ public static class AgentLoopRunner
         await EmitTerminalAsync(new AgentEndEvent(newMessages.ToArray(), metrics.ToMetrics(end), end,
             new RunCompletionResult(RunCompletionStatus.Parked, open, RunStopReason.ToolResultBudget,
                 detail, detail, "user", "Review retained evidence and explicitly start a new run with new direction.",
-                continuationAttempts, evidence))).ConfigureAwait(false);
+                continuationAttempts, evidence) { GuardObservations = guardObservations })).ConfigureAwait(false);
     }
 
     private static string BuildNonProgressGuidance(ToolNonProgressObservation observation)

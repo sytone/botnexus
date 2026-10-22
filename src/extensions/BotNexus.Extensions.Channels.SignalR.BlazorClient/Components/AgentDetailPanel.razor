@@ -1124,7 +1124,9 @@
                 return;
             }
             _originalJson = JsonSerializer.Serialize(_model);
-            SetStatus(Mode == "edit" ? "Agent saved." : "Agent created.", "success");
+            SetStatus(_model.Enabled
+                ? "Configuration saved. Enabled for new work; provider authentication is checked when work starts."
+                : "Configuration saved. Disabled for new work; existing work is not cancelled.", "success");
             await OnSaved.InvokeAsync();
         }
         catch (Exception ex)

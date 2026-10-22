@@ -80,7 +80,8 @@ public sealed record PluginInstallRequest
     /// <summary>
     /// Expected plugin identifier, or <c>null</c> to accept whatever the fetched manifest declares.
     /// When supplied and the manifest disagrees, the install is rejected rather than silently
-    /// installing content under a name the caller did not ask for.
+    /// installing content under a name the caller did not ask for. Required for manifestless
+    /// conventional-skills imports; the source and directory names never supply identity.
     /// </summary>
     public string? Name { get; init; }
 

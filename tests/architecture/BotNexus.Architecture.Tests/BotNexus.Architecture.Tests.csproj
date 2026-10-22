@@ -33,6 +33,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../../tools/BotNexus.TestEventCollector/BotNexus.TestEventCollector.csproj" />
     <ProjectReference Include="..\..\..\src\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj" />
     <!-- #2616: controllers and triggers are execution call sites, so their assembly must be scanned. -->

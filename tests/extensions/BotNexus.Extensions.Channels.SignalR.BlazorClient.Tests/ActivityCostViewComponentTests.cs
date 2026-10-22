@@ -67,6 +67,23 @@ public sealed class ActivityCostViewComponentTests : IDisposable
             .Returns(Task.FromResult(costs));
     }
 
+    [Fact]
+    public void Long_conversation_title_uses_inner_wrapper_without_changing_six_column_cost_table()
+    {
+        const string title = "Investigate the complete conversation cost across sessions and messages without hiding identifying text " +
+            "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz";
+        Seed([Conv("long-title", title: title, source: "Webhook")], [new ConversationCostDto("long-title", 2, 42, 3)]);
+        var cut = _ctx.Render<ActivityCostView>(p => p.Add(c => c.Now, Now));
+        var cell = cut.Find("[data-testid='activity-cost-row'] td.activity-cell-title");
+        cell.Children.ShouldHaveSingleItem().ClassList.ShouldContain("activity-title-content");
+        cell.QuerySelector(".activity-title-content > [data-testid='activity-cost-title']")?.TextContent.ShouldBe(title);
+        cell.QuerySelector(".activity-title-content > [data-testid='activity-cost-origin-badge']").ShouldNotBeNull();
+        cut.FindAll("[data-testid='activity-cost-row'] td").Count.ShouldBe(6);
+        cut.Find("[data-testid='activity-cost']").ClassList.ShouldContain("activity-cost");
+        cut.Find("[data-testid='activity-cost-sessions']").TextContent.ShouldBe("2");
+        cut.Find("[data-testid='activity-cost-messages']").TextContent.ShouldBe("42");
+    }
+
     /// <summary>
     /// AC1 (routing half): the cost subsection is registered in the shell and
     /// <c>/activity/costs</c> renders it in place of the overview dashboard.
