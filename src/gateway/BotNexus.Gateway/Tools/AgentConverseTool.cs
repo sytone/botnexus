@@ -185,6 +185,17 @@ public sealed class AgentConverseTool(
                     ? BuildTimeoutReport(targetAgentId, timeoutSeconds, elapsed)
                     : BuildTargetUnavailableReport(targetAgentId, timeoutSeconds, elapsed);
 
+            // Only observed local progress is authoritative. No evidence is an honest unknown,
+            // not proof that dispatch never happened. Never encourage replay of possible mutations.
+            var evidence = (ex as AgentExchangeCancelledException)?.Evidence
+                ?? ex.Data[nameof(AgentExchangeCancellationEvidence)] as AgentExchangeCancellationEvidence;
+            report = report with
+            {
+                Evidence = evidence,
+                RetryAdvised = evidence?.Phase == "neverDispatched" && report.RetryAdvised,
+                Message = report.Message + " Before retrying, reconcile retained tool receipts and side effects " +
+                    "in the child session; missing results do not prove that a mutation did not happen."
+            };
             LogCancellation(toolCallId, targetAgentId, report);
             return new AgentToolResult(
                 [
@@ -195,8 +206,7 @@ public sealed class AgentConverseTool(
 
     /// <summary>
     /// Builds the #3577 AC3 report for the caller's own wall-clock budget being exhausted. This is
-    /// the one cancellation cause the caller can fix directly, so it is worded distinctly from every
-    /// other cause and always advises a retry with a larger budget.
+    /// a budget the caller can adjust, but possible side effects must be reconciled before replay.
     /// </summary>
     private static AgentConverseCancellationReport BuildTimeoutReport(
         string targetAgentId,
@@ -214,8 +224,8 @@ public sealed class AgentConverseTool(
             Message =
                 $"The exchange with agent '{targetAgentId}' timed out: the caller's {timeoutSeconds}s " +
                 $"timeoutSeconds budget was exhausted after {elapsed.TotalSeconds:0.###}s and this side " +
-                "cancelled the call. The target may still be working. Retry with a larger timeoutSeconds " +
-                "if the work genuinely needs longer."
+                "cancelled the call. The target's current state is unknown; increasing the budget alone " +
+                "does not establish that replaying the work is safe."
         };
 
     /// <summary>
@@ -269,10 +279,10 @@ public sealed class AgentConverseTool(
                 "will not succeed on retry"),
             "busy" => (true,
                 $"agent '{targetAgentId}' is currently busy; this catch-time observation does not " +
-                "establish whether it accepted the exchange; retrying once it is idle may succeed"),
+                "establish whether it accepted the exchange or already performed side effects"),
             "idle" => (true,
                 $"agent '{targetAgentId}' is registered and idle, so the exchange was cancelled by the " +
-                "target side or the runtime rather than by this call's budget; a retry may succeed"),
+                "target side or the runtime rather than by this call's budget; prior effects remain unknown"),
             _ => (true,
                 $"agent '{targetAgentId}' is unreachable and its state could not be established; the " +
                 "cancellation did not come from this call's timeoutSeconds budget")
@@ -545,6 +555,9 @@ public sealed record AgentConverseCancellationReport
 
     /// <summary>Whether a retry has any prospect of succeeding.</summary>
     public required bool RetryAdvised { get; init; }
+
+    /// <summary>Observed child progress and retained counts; null means unknown, not never dispatched.</summary>
+    public AgentExchangeCancellationEvidence? Evidence { get; init; }
 
     /// <summary>Human-readable explanation naming the cause, the side and the budget.</summary>
     public required string Message { get; init; }
