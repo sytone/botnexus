@@ -270,6 +270,85 @@ public sealed class AutoReplayInterruptedTurnsTests
             256, samePage.SessionId.Value, It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task StartedAsync_SaveFailsAfterScanCancellation_PropagatesAndStopsLaterCandidates(bool cancellationException)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var first = CreateSession("save-cancel-1", "agent-save", withSentinel: true);
+        var samePage = CreateSession("save-cancel-2", "agent-save", withSentinel: true);
+        var nextPage = CreateSession("save-cancel-3", "agent-save", withSentinel: true);
+        var store = CreatePagedStore(first, samePage, nextPage);
+        Exception failure = cancellationException
+            ? new OperationCanceledException(cancellation.Token)
+            : new IOException("save failed concurrently with scan cancellation");
+        store.Setup(s => s.SaveAsync(first, It.IsAny<SessionWriteFence>(), cancellation.Token))
+            .Callback(() => cancellation.Cancel()).ThrowsAsync(failure);
+        var broadcaster = new Mock<IActivityBroadcaster>();
+        var publisher = new Mock<IConversationEventPublisher>();
+        var service = CreateService(store.Object, CreateRegistry("agent-save"),
+            broadcaster: broadcaster.Object, eventPublisher: publisher.Object);
+
+        var caught = await Record.ExceptionAsync(() => service.StartedAsync(cancellation.Token));
+
+        caught.ShouldBeSameAs(failure);
+        store.Verify(s => s.SaveAsync(first, It.IsAny<SessionWriteFence>(), cancellation.Token), Times.Once);
+        store.Verify(s => s.GetAsync(samePage.SessionId, It.IsAny<CancellationToken>()), Times.Never);
+        store.Verify(s => s.GetAsync(nextPage.SessionId, It.IsAny<CancellationToken>()), Times.Never);
+        store.Verify(s => s.ListUnresolvedCrashSentinelsAsync(
+            256, samePage.SessionId.Value, It.IsAny<CancellationToken>()), Times.Never);
+        publisher.Verify(p => p.PublishAsync(It.IsAny<ConversationSessionItemPersistedEvent>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        broadcaster.Verify(b => b.PublishAsync(It.IsAny<GatewayActivity>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task StartedAsync_SaveFailsWithoutScanCancellation_ContainsFailureAndRecoversLaterRowsAndPages(bool cancellationException)
+    {
+        using var unrelatedCancellation = new CancellationTokenSource();
+        unrelatedCancellation.Cancel();
+        var first = CreateSession("save-fail-1", "agent-save", withSentinel: true);
+        var samePage = CreateSession("save-fail-2", "agent-save", withSentinel: true);
+        var nextPage = CreateSession("save-fail-3", "agent-save", withSentinel: true);
+        var store = CreatePagedStore(first, samePage, nextPage);
+        Exception failure = cancellationException
+            ? new OperationCanceledException(unrelatedCancellation.Token)
+            : new IOException("save failed without scan cancellation");
+        store.Setup(s => s.SaveAsync(first, It.IsAny<SessionWriteFence>(), CancellationToken.None))
+            .ThrowsAsync(failure);
+        var logger = new Mock<ILogger<InterruptedTurnNotificationService>>();
+        var broadcaster = new Mock<IActivityBroadcaster>();
+        var publisher = new Mock<IConversationEventPublisher>();
+        var service = CreateService(store.Object, CreateRegistry("agent-save"),
+            broadcaster: broadcaster.Object, eventPublisher: publisher.Object, logger: logger.Object);
+
+        await service.StartedAsync(CancellationToken.None);
+
+        foreach (var session in new[] { samePage, nextPage })
+        {
+            store.Verify(s => s.GetAsync(session.SessionId, CancellationToken.None), Times.Once);
+            store.Verify(s => s.SaveAsync(session, It.IsAny<SessionWriteFence>(), CancellationToken.None), Times.Once);
+            publisher.Verify(p => p.PublishAsync(It.Is<ConversationSessionItemPersistedEvent>(e =>
+                e.SessionId == session.SessionId), CancellationToken.None), Times.Once);
+            broadcaster.Verify(b => b.PublishAsync(It.Is<GatewayActivity>(a =>
+                a.SessionId == session.SessionId.Value), CancellationToken.None), Times.Once);
+        }
+        store.Verify(s => s.ListUnresolvedCrashSentinelsAsync(
+            256, samePage.SessionId.Value, CancellationToken.None), Times.Once);
+        publisher.Verify(p => p.PublishAsync(It.Is<ConversationSessionItemPersistedEvent>(e =>
+            e.SessionId == first.SessionId), It.IsAny<CancellationToken>()), Times.Never);
+        broadcaster.Verify(b => b.PublishAsync(It.Is<GatewayActivity>(a =>
+            a.SessionId == first.SessionId.Value), It.IsAny<CancellationToken>()), Times.Never);
+        var warning = logger.Invocations.Single(invocation => invocation.Method.Name == "Log"
+            && Equals(invocation.Arguments[0], LogLevel.Warning)
+            && ReferenceEquals(invocation.Arguments[3], failure));
+        (warning.Arguments[2].ToString() ?? string.Empty).ShouldContain(first.SessionId.Value);
+    }
+
     [Fact]
     public async Task StartedAsync_PageFetchFails_LogsAndStopsBoundedScan()
     {

@@ -292,7 +292,7 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
                 return false;
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
             _logger.LogWarning(ex, "Failed to save session {SessionId} after interrupted-turn recovery", session.SessionId.Value);
             return false;
