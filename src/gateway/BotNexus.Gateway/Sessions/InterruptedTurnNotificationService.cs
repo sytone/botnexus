@@ -150,6 +150,9 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         var notified = 0;
         var replayed = 0;
         var scanned = 0;
+        var terminalSkipped = 0;
+        var fenceRejected = 0;
+        var persistenceFailed = 0;
         string? cursor = null;
         var started = Stopwatch.StartNew();
         var allocatedBefore = GC.GetTotalAllocatedBytes();
@@ -172,15 +175,33 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
                         if (session is null || !session.History.Any(static entry => entry.IsCrashSentinel))
                             continue;
 
+                        // The session may have become terminal since the candidate page was read.
+                        // Do not resolve participants or mutate the hydrated transcript in that case.
+                        if (SessionMutationPolicy.IsTerminal(session.Status))
+                        {
+                            terminalSkipped++;
+                            continue;
+                        }
                         _logger.LogInformation(
                             "Session {SessionId} (agent {AgentId}) has unresolved crash sentinels - notifying user",
                             row.SessionId.Value, row.AgentId.Value);
                         var isAgentOnlyConversation = await IsAgentOnlyConversationAsync(session, cancellationToken)
                             .ConfigureAwait(false);
-                        var didReplay = await RecoverSessionAsync(
+                        var outcome = await RecoverSessionAsync(
                             session, row.AgentId, isAgentOnlyConversation, cancellationToken).ConfigureAwait(false);
-                        if (didReplay) replayed++;
-                        notified++;
+                        if (outcome.ReplayAccepted) replayed++;
+                        switch (outcome.Persistence)
+                        {
+                            case RecoveryPersistence.Persisted:
+                                notified++;
+                                break;
+                            case RecoveryPersistence.FenceRejected:
+                                fenceRejected++;
+                                break;
+                            case RecoveryPersistence.Failed:
+                                persistenceFailed++;
+                                break;
+                        }
                     }
                     catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
                     {
@@ -200,8 +221,10 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
 
         _logger.LogInformation(
             "Interrupted-turn scan complete: {ScannedRows} candidate row(s), {ElapsedMilliseconds} ms, {AllocatedBytes} allocated bytes; " +
-            "{NotifiedCount} session(s) notified ({ReplayedCount} auto-replayed)",
-            scanned, started.ElapsedMilliseconds, GC.GetTotalAllocatedBytes() - allocatedBefore, notified, replayed);
+            "{NotifiedCount} session(s) notified ({ReplayedCount} auto-replayed), {TerminalSkippedCount} terminal skipped, " +
+            "{FenceRejectedCount} fence rejected, {PersistenceFailedCount} persistence failed",
+            scanned, started.ElapsedMilliseconds, GC.GetTotalAllocatedBytes() - allocatedBefore,
+            notified, replayed, terminalSkipped, fenceRejected, persistenceFailed);
     }
 
     /// <inheritdoc />
@@ -252,7 +275,17 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
         }
     }
 
-    private async Task<bool> RecoverSessionAsync(
+    private enum RecoveryPersistence
+    {
+        Persisted,
+        FenceRejected,
+        Failed
+    }
+
+    // Posting precedes persistence: an accepted replay remains accepted even if the save fails.
+    private readonly record struct RecoveryOutcome(bool ReplayAccepted, RecoveryPersistence Persistence);
+
+    private async Task<RecoveryOutcome> RecoverSessionAsync(
         GatewaySession session,
         AgentId agentId,
         bool isAgentOnlyConversation,
@@ -289,28 +322,37 @@ public sealed class InterruptedTurnNotificationService : IHostedLifecycleService
                 _logger.LogInformation(
                     "Interrupted-turn recovery for session {SessionId} was skipped because the session was deleted, sealed, or rebound",
                     session.SessionId.Value);
-                return false;
+                return new RecoveryOutcome(didReplay, RecoveryPersistence.FenceRejected);
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
             _logger.LogWarning(ex, "Failed to save session {SessionId} after interrupted-turn recovery", session.SessionId.Value);
-            return false;
+            return new RecoveryOutcome(didReplay, RecoveryPersistence.Failed);
         }
 
+        // The committed transcript remains authoritative even if post-commit telemetry fails.
         await PublishPersistedNotificationAsync(session, agentId, notification, cancellationToken)
             .ConfigureAwait(false);
 
-        await _broadcaster.PublishAsync(new GatewayActivity
+        try
         {
-            Type = GatewayActivityType.System,
-            AgentId = agentId.Value,
-            SessionId = session.SessionId.Value,
-            ConversationId = session.ConversationId.IsInitialized() ? session.ConversationId.Value : null,
-            Message = didReplay ? $"{notificationContent} (auto-replaying)" : notificationContent
-        }, cancellationToken).ConfigureAwait(false);
-
-        return didReplay;
+            await _broadcaster.PublishAsync(new GatewayActivity
+            {
+                Type = GatewayActivityType.System,
+                AgentId = agentId.Value,
+                SessionId = session.SessionId.Value,
+                ConversationId = session.ConversationId.IsInitialized() ? session.ConversationId.Value : null,
+                Message = didReplay ? $"{notificationContent} (auto-replaying)" : notificationContent
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex,
+                "Failed to publish activity for persisted interrupted-turn notification in session {SessionId}",
+                session.SessionId.Value);
+        }
+        return new RecoveryOutcome(didReplay, RecoveryPersistence.Persisted);
     }
 
     private async Task PublishPersistedNotificationAsync(

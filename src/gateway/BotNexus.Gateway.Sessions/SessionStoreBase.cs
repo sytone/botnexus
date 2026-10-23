@@ -100,7 +100,8 @@ public abstract class SessionStoreBase : ISessionStore
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         var rows = (await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false))
-            .Where(session => session.History.Any(static entry => entry.IsCrashSentinel))
+            .Where(session => !SessionMutationPolicy.IsTerminal(session.Status)
+                && session.History.Any(static entry => entry.IsCrashSentinel))
             .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
             .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
             .Take(limit + 1)
