@@ -372,6 +372,56 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
+    public async Task GetSkillSecurityFindingsAsync_calls_admin_findings_endpoint()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/skills/security-findings", "{\"findings\":[],\"isTruncated\":false}");
+
+        var response = await client.GetSkillSecurityFindingsAsync();
+
+        handler.LastRequestMethod.ShouldBe("GET");
+        handler.LastRequestUrl.ShouldEndWith("/api/skills/security-findings");
+        response.ShouldNotBeNull();
+        response.Findings.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AcknowledgeSkillSecurityFindingAsync_posts_exact_evidence_and_surfaces_conflict()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/skills/security-acknowledgements", "{\"error\":\"stale evidence\"}", HttpStatusCode.Conflict);
+        var request = new SkillSecurityAcknowledgementDto(
+            "shelling-skill", "dangerous-exec", "scripts/run.mjs", "Critical",
+            new string('a', 64), new string('b', 64), true, "Reviewed in incident 42");
+
+        var result = await client.AcknowledgeSkillSecurityFindingAsync(request);
+
+        handler.LastRequestMethod.ShouldBe("POST");
+        handler.LastRequestUrl.ShouldEndWith("/api/skills/security-acknowledgements");
+        result.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        result.ErrorText.ShouldBe("stale evidence");
+        using var body = JsonDocument.Parse(handler.LastRequestBody);
+        body.RootElement.GetProperty("confirmed").GetBoolean().ShouldBeTrue();
+        body.RootElement.GetProperty("reason").GetString().ShouldBe("Reviewed in incident 42");
+        body.RootElement.GetProperty("findingId").GetString().ShouldBe(new string('a', 64));
+    }
+
+    [Fact]
+    public async Task AcknowledgeSkillSecurityFindingAsync_does_not_surface_uncontracted_error_body()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/skills/security-acknowledgements", "proxy diagnostic: internal-host", HttpStatusCode.BadGateway);
+        var request = new SkillSecurityAcknowledgementDto(
+            "shelling-skill", "dangerous-exec", "scripts/run.mjs", "Critical",
+            new string('a', 64), new string('b', 64), true, "Reviewed in incident 42");
+
+        var result = await client.AcknowledgeSkillSecurityFindingAsync(request);
+
+        result.StatusCode.ShouldBe(HttpStatusCode.BadGateway);
+        result.ErrorText.ShouldBeNull();
+    }
+
+    [Fact]
     public void Configure_not_called_throws_on_request()
     {
         var client = new GatewayRestClient(new HttpClient());
