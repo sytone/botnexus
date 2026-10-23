@@ -137,6 +137,56 @@ and prove both forbidden-request rejection and permitted-public requests in isol
 The current fail-closed tests instead prove transport denial through the production runner;
 public positive controls cover lexical admission and fake-driver content handling only.
 
+## CLI command contract (developer reference)
+
+The adapter targets the source contract of `agent-browser` **v0.33.2**. This is an
+implementation reference, not a procedure for enabling production execution. The #4030
+transport denial above remains in force.
+
+Every argument vector starts with `--session <id>`. The remaining arguments are:
+
+| Driver operation | CLI arguments after the session pair | Result used by BotNexus |
+| --- | --- | --- |
+| Navigate | `open <url>` | Successful process completion. `navigate` is also an upstream alias; the adapter uses canonical `open`. |
+| Read current URL | `--json get url` | String at `data.url`, with `success: true`; a blank URL is rejected. |
+| Read page text | `--json snapshot` | String at `data.snapshot`, with `success: true`; decoded whitespace and an empty snapshot are preserved. |
+| Click | `click <selector>` | Successful process completion. |
+| Type | `type <selector> <text>` | Successful process completion. |
+| Type and submit | `type <selector> <text>`, then `press Enter` | Both commands must succeed. There is no adapter `--submit` argument. |
+| Screenshot | `screenshot <path>`, optionally followed by `--full` | The supplied destination path. |
+| Close | `close` | Best-effort teardown; errors do not escape disposal. |
+
+The exact text values `--clear` and `--delay` are unsupported: the pinned CLI interprets them
+as type options rather than literal text. The adapter rejects either value with an
+`ArgumentException` before any process call, with or without submission. The error does not
+echo the supplied text. Other text, including values containing literal quote characters, is
+passed unchanged as one argument.
+
+URL and snapshot reads reject malformed JSON, unsuccessful responses, and missing or wrongly
+typed fields. Their parse errors do not include response content or upstream error payloads.
+Snapshot text still passes through the existing guards, sanitizer, untrusted-content envelope,
+and spill budget before it reaches a tool response.
+
+The per-session gate covers the complete type-and-submit operation, including both process
+calls. Failure or cancellation prevents the remaining submission step and releases the gate.
+Close also waits for that gate. Each invocation retains the configured timeout, session argument,
+and environment allow-list; the first successful navigation consumes the cold-start timeout floor.
+
+**Source-derived evidence:** the command shapes come from upstream
+[`commands.rs` (`parse_command` and `parse_get`)](https://github.com/vercel-labs/agent-browser/blob/v0.33.2/cli/src/commands.rs).
+The JSON envelope comes from
+[`connection.rs` (`Response`)](https://github.com/vercel-labs/agent-browser/blob/v0.33.2/cli/src/connection.rs)
+and [`output.rs` (`print_response_with_opts`)](https://github.com/vercel-labs/agent-browser/blob/v0.33.2/cli/src/output.rs).
+`AgentBrowserCliContractTests` uses a fake process runner to check argument vectors, parsing,
+timeouts, cancellation, and ordering against this source-derived contract. Contributor tests
+check tool formatting and guard behavior using the same fake response shape.
+
+**Not artifact validation:** these tests do not execute a downloaded release binary, start a
+browser, establish compatibility with a configured binary, or prove network isolation. Real-artifact
+compatibility and isolated browser validation remain separate work; fake-runner GREEN is not a
+readiness claim and does not relax #4030. Version resolution and provisioning are unchanged by
+this command-contract stage.
+
 ## Guards
 
 Every navigation and every snapshot passes through `GuardedBrowserSession`. The guards live in the
