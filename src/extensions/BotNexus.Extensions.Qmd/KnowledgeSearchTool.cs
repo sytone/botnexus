@@ -33,7 +33,7 @@ public sealed class KnowledgeSearchTool(IQmdBackend backend, QmdConfig config) :
                 },
                 "store": {
                   "type": "string",
-                  "description": "Target store name. Omit to search all stores."
+                  "description": "Target store name. Omit to search all allowed stores."
                 },
                 "mode": {
                   "type": "string",
@@ -91,7 +91,31 @@ public sealed class KnowledgeSearchTool(IQmdBackend backend, QmdConfig config) :
 
         try
         {
-            var results = await backend.SearchAsync(query, store, mode, limit, cancellationToken);
+            QmdSearchResult[] results;
+            if (config.AllowedStores is { Count: > 0 })
+            {
+                // Discover canonical, available names rather than passing configured names
+                // (which may be stale or differently cased) to the CLI.
+                var names = await backend.GetSearchStoreNamesAsync(cancellationToken);
+                var targets = names
+                    .Where(config.IsStoreAllowed)
+                    .Where(name => string.IsNullOrWhiteSpace(store) || name.Equals(store, StringComparison.OrdinalIgnoreCase))
+                    .Distinct(StringComparer.OrdinalIgnoreCase);
+                var matches = new List<QmdSearchResult>();
+                foreach (var target in targets)
+                {
+                    var scoped = await backend.SearchAsync(query, target, mode, limit, cancellationToken);
+                    matches.AddRange(scoped.Where(r => config.IsStoreAllowed(r.Store)));
+                }
+
+                // Scope before searching so denied hits cannot consume the result budget.
+                // Also enforce the allowlist on every returned row, even for explicit stores.
+                results = matches.OrderByDescending(r => r.Score).Take(limit).ToArray();
+            }
+            else
+            {
+                results = await backend.SearchAsync(query, store, mode, limit, cancellationToken);
+            }
             var json = JsonSerializer.Serialize(results, JsonOptions);
             return TextResult(json);
         }
