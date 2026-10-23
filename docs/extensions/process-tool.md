@@ -115,7 +115,9 @@ Captured output is bounded two ways:
 - `No tracked process` means that the PID is absent or not owned by the calling agent. It is not proof that the command never ran or that its operating-system process has died.
 - Process output is buffered in memory with the bounds described above.
 - Normal end-of-stream is reported as complete. An unexpected read failure is distinguished from a stream closed during cleanup; either condition marks output capture incomplete while preserving bytes already captured.
-- Capture failure still reaches a terminal lifecycle state, so completed-entry retention remains bounded. Running processes, pending drains, and unconfirmed kills remain protected from reaping.
+- Capture failure still reaches a terminal lifecycle state, so completed-entry retention remains bounded. Running roots and ordinary pending drains remain protected from reaping.
+- If an unconfirmed tree kill is followed by root exit, status, list, output, and repeated kill requests report **termination unresolved** and require operator intervention. Root exit does not prove descendants stopped. Cleanup releases the OS handle, stdin, and redirected streams, cancels held drains without waiting for descendants, and preserves captured output with an incomplete-capture diagnostic. This is not successful completion.
+- Exited unresolved diagnostics count towards the shared retention cap of 100 entries, oldest first. Eviction or explicit cleanup does not confirm termination. Only an unconfirmed kill whose root is still running remains pinned and retryable through its owned handle; an exited root is never reattached by PID.
 - The `kill` action requests termination of the entire process tree and reports whether termination was confirmed within the grace period.
 - Process state is owned by the agent within the running gateway and does not survive gateway restarts.
 
