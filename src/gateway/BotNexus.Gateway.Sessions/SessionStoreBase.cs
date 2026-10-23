@@ -74,10 +74,10 @@ public abstract class SessionStoreBase : ISessionStore
     /// Fenced post-run finalizer save (issue #1518). Default implementation re-reads the session
     /// via <see cref="GetAsync"/> and evaluates the fence through
     /// <see cref="SessionFenceEvaluator.Passes"/> before delegating to the unfenced
-    /// <see cref="SaveAsync(GatewaySession, CancellationToken)"/>. This closes the resurrect/clobber
-    /// window for File and InMemory stores. <see cref="SqliteSessionStore"/> overrides this to
-    /// perform the re-read and the write under a single per-session lock so the check-then-write
-    /// is atomic against a concurrent delete/reset.
+    /// <see cref="SaveAsync(GatewaySession, CancellationToken)"/>. This fallback is not atomic:
+    /// implementations that support concurrent lifecycle writes must override it to hold their
+    /// persistence lock across both the check and write. <see cref="FileSessionStore"/>,
+    /// <see cref="InMemorySessionStore"/> and <see cref="SqliteSessionStore"/> provide atomic overrides.
     /// </summary>
     public virtual async Task<SessionSaveOutcome> SaveAsync(
         GatewaySession session,
@@ -85,6 +85,10 @@ public abstract class SessionStoreBase : ISessionStore
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
+        // A check followed by an independent save cannot safely publish a detached replacement.
+        // Atomic store overrides opt in; unknown implementations must fail closed.
+        if (fence.ExpectedContentFingerprint is not null)
+            return SessionSaveOutcome.Conflict;
 
         var current = await GetAsync(fence.ExpectedSessionId, cancellationToken).ConfigureAwait(false);
         if (!SessionFenceEvaluator.Passes(fence, current))

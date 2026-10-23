@@ -12,6 +12,171 @@ namespace BotNexus.Gateway.Tests;
 
 public sealed class FileSessionStoreTests
 {
+    [Theory]
+    [InlineData(false, "append")]
+    [InlineData(true, "append")]
+    [InlineData(false, "replace")]
+    [InlineData(true, "replace")]
+    [InlineData(false, "metadata")]
+    [InlineData(true, "metadata")]
+    [InlineData(false, "unchanged")]
+    [InlineData(true, "unchanged")]
+    public async Task FencedSave_ContentSnapshot_ComparesAuthoritativeContentBeforePublishing(bool cold, string change)
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var original = await store.GetOrCreateAsync(SessionId.From("content-fenced"), AgentId.From("agent-a"));
+        original.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "original" });
+        await store.SaveAsync(original);
+        var candidate = original.CreateDetachedCopy();
+        var fence = SessionWriteFence.Capture(candidate) with
+        {
+            ExpectedContentFingerprint = SessionWriteFence.ContentFingerprint(candidate)
+        };
+        candidate.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }]);
+        var timestamp = original.UpdatedAt;
+        if (change == "append") original.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "append" });
+        if (change == "replace") original.ReplaceHistory([new SessionEntry { Role = MessageRole.User, Content = "replacement" }]);
+        if (change == "metadata") original.Metadata["concurrent"] = "patch";
+        // The guard must detect actual content, not just count or a timestamp heuristic.
+        original.UpdatedAt = timestamp;
+        await store.SaveAsync(original);
+        var expected = original.GetHistorySnapshot().Select(e => e with { PersistenceId = null, PersistenceKey = null }).ToArray();
+        var writer = cold ? fixture.CreateStore() : store;
+        (await writer.SaveAsync(candidate, fence)).ShouldBe(change == "unchanged"
+            ? SessionSaveOutcome.Persisted : SessionSaveOutcome.Conflict);
+        var saved = (await fixture.CreateStore().GetAsync(original.SessionId)).ShouldNotBeNull();
+        if (change == "unchanged") saved.GetHistorySnapshot().ShouldContain(e => e.IsCompactionSummary);
+        else
+        {
+            saved.GetHistorySnapshot().ShouldBe(expected);
+            saved.Metadata.Count.ShouldBe(original.Metadata.Count);
+            foreach (var pair in original.Metadata)
+                saved.Metadata[pair.Key]?.ToString().ShouldBe(pair.Value?.ToString());
+            saved.GetHistorySnapshot().ShouldNotContain(e => e.IsCompactionSummary);
+        }
+        original.GetHistorySnapshot().ShouldNotContain(e => e.IsCompactionSummary);
+    }
+
+    [Fact]
+    public async Task FencedSave_ColdReadRacingSealedSave_CheckAndWriteShareOneLock()
+    {
+        using var fixture = new StoreFixture();
+        var originalStore = fixture.CreateStore();
+        var original = await originalStore.GetOrCreateAsync(SessionId.From("fenced"), AgentId.From("agent-a"));
+        original.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "original" });
+        await originalStore.SaveAsync(original);
+        var expectedLiveHistory = original.GetHistorySnapshot().Select(entry => entry with { }).ToArray();
+        // File JSON deliberately omits storage identity, but must retain every semantic record field.
+        var expectedColdHistory = expectedLiveHistory
+            .Select(entry => entry with { PersistenceId = null, PersistenceKey = null }).ToArray();
+        var candidate = original.CreateDetachedCopy();
+        candidate.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }]);
+        var sealedCopy = original.CreateDetachedCopy();
+        sealedCopy.Status = SessionStatus.Sealed;
+        sealedCopy.ReplaceHistory(original.GetHistorySnapshot());
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var file = new Moq.Mock<System.IO.Abstractions.IFile>();
+        var fs = new Moq.Mock<System.IO.Abstractions.IFileSystem>();
+        fs.SetupGet(x => x.Directory).Returns(fixture.FileSystem.Directory);
+        fs.SetupGet(x => x.File).Returns(file.Object);
+        fs.SetupGet(x => x.FileStream).Returns(fixture.FileSystem.FileStream);
+        file.Setup(x => x.ReadAllLinesAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<CancellationToken>()))
+            .Returns((string path, CancellationToken token) => fixture.FileSystem.File.ReadAllLinesAsync(path, token));
+        file.Setup(x => x.Move(Moq.It.IsAny<string>(), Moq.It.IsAny<string>(), true))
+            .Callback((string source, string target, bool overwrite) => fixture.FileSystem.File.Move(source, target, overwrite));
+        file.Setup(x => x.Delete(Moq.It.IsAny<string>())).Callback((string path) => fixture.FileSystem.File.Delete(path));
+        file.Setup(x => x.Exists(Moq.It.IsAny<string>())).Returns((string path) => fixture.FileSystem.File.Exists(path));
+        var armed = false;
+        file.Setup(x => x.ReadAllTextAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<CancellationToken>()))
+            .Returns(async (string path, CancellationToken token) =>
+            {
+                var text = await fixture.FileSystem.File.ReadAllTextAsync(path, token);
+                if (armed && path.EndsWith(".meta.json", StringComparison.Ordinal))
+                {
+                    armed = false;
+                    entered.TrySetResult();
+                    await release.Task.WaitAsync(token);
+                }
+                return text;
+            });
+        // Other file operations use the real in-memory filesystem, not substitute defaults.
+        // A forwarding interface proxy is only needed for the single cold sidecar read.
+        file.Setup(x => x.WriteAllTextAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<string>(), Moq.It.IsAny<CancellationToken>()))
+            .Returns((string path, string text, CancellationToken token) => fixture.FileSystem.File.WriteAllTextAsync(path, text, token));
+        file.Setup(x => x.AppendAllTextAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<string>(), Moq.It.IsAny<CancellationToken>()))
+            .Returns((string path, string text, CancellationToken token) => fixture.FileSystem.File.AppendAllTextAsync(path, text, token));
+        var store = new FileSessionStore(fixture.StorePath, NullLogger<FileSessionStore>.Instance, fs.Object, fixture.Conversations);
+        await store.GetAsync(SessionId.From("missing")); // Finish migration before arming the cold fence read.
+        armed = true;
+        var pending = store.SaveAsync(candidate, SessionWriteFence.Capture(original));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var resetSave = store.SaveAsync(sealedCopy);
+            resetSave.IsCompleted.ShouldBeFalse(); // The cold fence read owns the same save lock.
+            release.TrySetResult();
+            (await pending).ShouldBe(SessionSaveOutcome.Persisted);
+            await resetSave;
+            var saved = (await fixture.CreateStore().GetAsync(original.SessionId)).ShouldNotBeNull();
+            saved.Status.ShouldBe(SessionStatus.Sealed);
+            saved.GetHistorySnapshot().ShouldBe(expectedColdHistory);
+            original.GetHistorySnapshot().ShouldBe(expectedLiveHistory);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Theory]
+    [InlineData(false, "sealed")]
+    [InlineData(true, "sealed")]
+    [InlineData(false, "expired")]
+    [InlineData(true, "expired")]
+    [InlineData(false, "rebound")]
+    [InlineData(true, "rebound")]
+    [InlineData(false, "deleted")]
+    [InlineData(true, "deleted")]
+    public async Task FencedSave_LifecycleChange_RejectsDetachedCandidateWithoutWriting(bool cold, string change)
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var original = await store.GetOrCreateAsync(SessionId.From("fenced"), AgentId.From("agent-a"));
+        original.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "original" });
+        await store.SaveAsync(original);
+        var expectedLiveHistory = original.GetHistorySnapshot().Select(entry => entry with { }).ToArray();
+        // The final reader is cold even when the fenced writer uses its live cache.
+        var expectedColdHistory = expectedLiveHistory
+            .Select(entry => entry with { PersistenceId = null, PersistenceKey = null }).ToArray();
+        var fence = SessionWriteFence.Capture(original);
+        var candidate = original.CreateDetachedCopy();
+        candidate.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "discarded summary", IsCompactionSummary = true }]);
+        if (change == "deleted") await store.DeleteAsync(original.SessionId);
+        else
+        {
+            if (change == "rebound")
+            {
+                var conversation = await fixture.Conversations.CreateAsync(new Conversation
+                {
+                    ConversationId = ConversationId.Create(), AgentId = original.AgentId
+                });
+                original.ConversationId = conversation.ConversationId;
+            }
+            else original.Status = change == "sealed" ? SessionStatus.Sealed : SessionStatus.Expired;
+            await store.SaveAsync(original);
+        }
+        var writer = cold ? fixture.CreateStore() : store;
+        (await writer.SaveAsync(candidate, fence)).ShouldBe(SessionSaveOutcome.Rebound);
+        var persisted = await fixture.CreateStore().GetAsync(original.SessionId);
+        if (change == "deleted") persisted.ShouldBeNull();
+        else
+        {
+            persisted.ShouldNotBeNull().Status.ShouldBe(original.Status);
+            persisted.ConversationId.ShouldBe(original.ConversationId);
+            persisted.GetHistorySnapshot().ShouldBe(expectedColdHistory);
+        }
+        original.GetHistorySnapshot().ShouldBe(expectedLiveHistory);
+    }
+
     [Fact]
     public async Task SaveSubAgentSessionAsync_ToolOrigin_ColdLookupRetainsRunningPartialEvidence()
     {

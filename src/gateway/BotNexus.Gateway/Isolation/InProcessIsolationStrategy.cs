@@ -1399,6 +1399,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     public bool IsRunning => _agent.Status == AgentStatus.Running;
 
     /// <inheritdoc />
+    public IDisposable? TryReserveMaintenance() => _agent.TryReserveMaintenance();
+
+    /// <inheritdoc />
     public IAgentHandle? GetHandle(AgentId agentId, SessionId sessionId)
         => string.Equals(AgentId.Value, agentId.Value, StringComparison.OrdinalIgnoreCase) &&
            string.Equals(SessionId.Value, sessionId.Value, StringComparison.OrdinalIgnoreCase)
@@ -2632,6 +2635,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
+        _agent.CloseAdmission();
         // #3384: signal BEFORE aborting. AbortAsync is what cancels the in-flight run, so any
         // cancellation it raises inside the streaming pipeline must already see the deliberate-stop
         // source set, or the guard races the teardown it is classifying.

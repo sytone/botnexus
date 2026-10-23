@@ -36,6 +36,13 @@ public interface IAgentHandle : IAsyncDisposable
     /// <summary>The session ID this handle is bound to.</summary>
     SessionId SessionId { get; }
 
+    /// <summary>
+    /// Reserves idle run admission for external transcript maintenance. Null means busy, stopped,
+    /// or unsupported. All prompt/continue/stream paths must honor the reservation until disposed.
+    /// Implementations without atomic lifecycle authority fail closed.
+    /// </summary>
+    IDisposable? TryReserveMaintenance() => null;
+
     /// <summary>Whether the agent is currently processing a request.</summary>
     bool IsRunning { get; }
 
