@@ -87,7 +87,7 @@ Configure in your agent's extension config block:
 | `defaultSearchMode` | string | `"hybrid"` | Default search mode: `keyword`, `semantic`, or `hybrid`. |
 | `maxResults` | integer | 10 | Default maximum number of search results. |
 | `stores` | array | `[]` | Knowledge stores to index and search. |
-| `allowedStores` | string[] | *(all)* | Store-name allowlist used by the tools, matched case-insensitively. Null or empty means unrestricted by this list. See the search limitation below. |
+| `allowedStores` | string[] | *(all)* | Store-name allowlist used by the tools, matched case-insensitively. Null or empty means unrestricted by this list. Applies to explicit and omitted-store searches. |
 | `includeMemoryStores` | boolean | false | Add readable shared memory stores alongside the CLI backend when a shared-memory registry is available. |
 
 ### Store Configuration
@@ -115,7 +115,7 @@ A shared store named `team-notes` appears as the virtual collection
 `memory:team-notes`. Search results use IDs such as
 `memory:team-notes/<entryId>` and paths such as `memory://team-notes/<entryId>`.
 Use the complete ID from a result with `knowledge_get`. If `allowedStores` is
-nonempty, include the prefixed collection name for explicit searches and reads.
+nonempty, include the prefixed collection name to allow searches and reads.
 
 The memory backend lists only stores the registry allows this agent to read.
 Explicit search targets and document reads also check the registry's read policy;
@@ -133,15 +133,22 @@ reaching the memory backend; this is not a memory-only fallback mode.
 The tools use `allowedStores` as follows:
 
 - `knowledge_search` checks an explicitly supplied `store` against the allowlist.
+  When `store` is omitted or blank, it discovers available allowed collections and
+  searches each one before ranking and applying the final result limit. Store names
+  are matched case-insensitively, using the backend's canonical collection name.
+  Returned results are also filtered by the allowlist, including explicit searches.
 - `knowledge_stores` filters the returned collection list.
 - `knowledge_get` checks the retrieved document's store before returning content.
 
-::: warning Unscoped searches are not filtered by allowedStores
-The current `knowledge_search` implementation does not apply the allowlist when
-`store` is omitted, and does not filter the returned results by store. Do not rely
-on `allowedStores` alone as a multi-tenant search boundary. The memory backend's
-separate registry read checks still apply.
-:::
+A nonempty `allowedStores` list restricts both explicit and omitted-store searches.
+Results from excluded collections do not consume the final result limit. Null or
+empty lists leave searches unrestricted by this setting. The memory backend's
+separate registry read checks still apply: listing a `memory:` collection in
+`allowedStores` does not grant registry read permission.
+
+The composite backend routes an explicit collection only to backends that advertise
+it. Virtual `memory:` collections are not sent to the file-store CLI. Discovery or
+search failures still return an error; they do not trigger an unrestricted retry.
 
 Sources: [QmdToolContributor](https://github.com/Sytone/botnexus/blob/main/src/extensions/BotNexus.Extensions.Qmd/QmdToolContributor.cs),
 [MemoryQmdBackend](https://github.com/Sytone/botnexus/blob/main/src/extensions/BotNexus.Extensions.Qmd/MemoryQmdBackend.cs),

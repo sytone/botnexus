@@ -92,6 +92,14 @@ public sealed class MemoryQmdBackend : IQmdBackend
     }
 
     /// <inheritdoc />
+    public Task<string[]> GetSearchStoreNamesAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(_registry.GetReadableStores(_agentId.Value)
+            .Select(name => $"{StorePrefix}{name}").ToArray());
+    }
+
+    /// <inheritdoc />
     public async Task<QmdStoreInfo[]> GetStoresAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
