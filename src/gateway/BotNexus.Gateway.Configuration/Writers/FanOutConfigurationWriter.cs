@@ -98,10 +98,28 @@ public sealed class FanOutConfigurationWriter : IConfigurationWriter
     /// <see cref="WriteAsync"/> - all backends are attempted, and a partial application throws naming
     /// the ones that succeeded.
     /// </remarks>
-    public async Task ApplyChangeSetAsync(
+    public Task ApplyChangeSetAsync(
         ConfigChangeSet changes,
         string reason,
         CancellationToken cancellationToken = default)
+        => ApplyChangeSetCoreAsync(changes, null, reason, cancellationToken);
+
+    /// <inheritdoc />
+    public Task ApplyChangeSetAsync(
+        ConfigChangeSet changes,
+        JsonObject pristineDocument,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(pristineDocument);
+        return ApplyChangeSetCoreAsync(changes, pristineDocument, reason, cancellationToken);
+    }
+
+    private async Task ApplyChangeSetCoreAsync(
+        ConfigChangeSet changes,
+        JsonObject? pristineDocument,
+        string reason,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(changes);
 
@@ -112,7 +130,10 @@ public sealed class FanOutConfigurationWriter : IConfigurationWriter
         {
             try
             {
-                await writer.ApplyChangeSetAsync(changes, reason, cancellationToken).ConfigureAwait(false);
+                if (pristineDocument is null)
+                    await writer.ApplyChangeSetAsync(changes, reason, cancellationToken).ConfigureAwait(false);
+                else
+                    await writer.ApplyChangeSetAsync(changes, pristineDocument, reason, cancellationToken).ConfigureAwait(false);
                 succeeded.Add(writer.Name);
             }
             catch (OperationCanceledException)

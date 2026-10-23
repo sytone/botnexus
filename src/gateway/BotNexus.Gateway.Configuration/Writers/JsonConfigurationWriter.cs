@@ -86,6 +86,38 @@ public sealed class JsonConfigurationWriter : IConfigurationWriter
         await WriteAsync(next, reason, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    public async Task ApplyChangeSetAsync(
+        ConfigChangeSet changes,
+        JsonObject pristineDocument,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(changes);
+        ArgumentNullException.ThrowIfNull(pristineDocument);
+
+        if (changes.IsEmpty)
+            return;
+
+        JsonObject? current;
+        try
+        {
+            current = await ReadDocumentAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (JsonException)
+        {
+            // Only malformed JSON needs reconstruction. The caller already read the authority
+            // successfully under its mutation lock; do not mask I/O or permission failures.
+            current = pristineDocument.DeepClone().AsObject();
+        }
+
+        // Valid and absent projections retain the established delta contract: unchanged keys
+        // stay as authored (or absent). The canonical store owns the complete sibling state.
+        var next = current ?? [];
+        next.Apply(changes);
+        await WriteAsync(next, reason, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Reads the configuration document currently on disk, or <see langword="null"/> when absent.
     /// </summary>
