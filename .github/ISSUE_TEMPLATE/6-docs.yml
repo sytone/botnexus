@@ -75,3 +75,12 @@ body:
       options: [area:platform, area:channels, area:portal, area:mobile, area:security, area:tooling, area:trailguide]
     validations:
       required: false
+  # <!-- BEGIN GENERATED CONTRIBUTOR USABILITY -->
+  - type: textarea
+    id: contributor_usability
+    attributes:
+      label: 'Contributor usability'
+      description: 'Consumers: Name the consumers and supported platforms (Windows and Linux, or an explicit Windows-only/Linux-only scope). Setup: Describe public setup/configuration and prerequisites; link the user documentation and any single-platform limitation. Validation: Record clean temporary-home or hermetic-fixture validation, exact commands in backticks, and numeric results for each supported platform. Private prerequisites: State ''none''. No author-private skills, personal paths, or preseeded databases may be required; path redaction alone is not reuse. Docs-only: give a concrete reason runtime provisioning does not apply. Only documentation-file diffs qualify, regardless of PR title; do not claim an unperformed clean-install check.'
+    validations:
+      required: false
+  # <!-- END GENERATED CONTRIBUTOR USABILITY -->
