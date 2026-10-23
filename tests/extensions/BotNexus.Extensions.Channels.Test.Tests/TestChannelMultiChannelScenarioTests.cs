@@ -46,6 +46,48 @@ public sealed class TestChannelMultiChannelScenarioTests
     }
 
     [Fact]
+    public async Task PublishCompactionAsync_FailingExtension_PreservesPersistedEventAndHealthyChannelProjections()
+    {
+        var failing = new ThrowingLifecycleSink();
+        await using var scenario = new TestChannelConversationScenario(
+            [failing],
+            TestChannelConversationScenario.Channel("telegram"),
+            TestChannelConversationScenario.Channel("signalr"));
+
+        scenario.Bind("telegram", "chat-failure");
+        scenario.Bind("signalr", "portal-failure");
+        scenario.Bind("telegram", "muted-failure", BindingMode.Muted);
+        scenario.Bind("signalr", "foreign-failure", conversationId: ConversationId.Create());
+
+        var persisted = await scenario.PublishCompactionAsync();
+
+        persisted.Role.ShouldBe(MessageRole.Notification);
+        persisted.Content.ShouldContain("Session context compacted");
+        failing.OfferedCount.ShouldBe(1);
+        foreach (var (channel, address) in new[] { ("telegram", "chat-failure"), ("signalr", "portal-failure") })
+        {
+            var delivered = scenario.LifecycleEvents(channel, address).ShouldHaveSingleItem();
+            var lifecycle = delivered.ConversationEvent.ShouldBeOfType<ConversationSessionItemPersistedEvent>();
+            lifecycle.ConversationId.ShouldBe(scenario.ConversationId);
+            lifecycle.Item.ShouldBe(persisted);
+        }
+        scenario.LifecycleEvents("telegram", "muted-failure").ShouldBeEmpty();
+        scenario.LifecycleEvents("signalr", "foreign-failure").ShouldBeEmpty();
+    }
+
+    private sealed class ThrowingLifecycleSink : IConversationEventSink
+    {
+        private int _offeredCount;
+        public int OfferedCount => Volatile.Read(ref _offeredCount);
+
+        public Task OnConversationEventAsync(ConversationEvent conversationEvent, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _offeredCount);
+            throw new InvalidOperationException("Simulated extension failure.");
+        }
+    }
+
+    [Fact]
     public async Task PublishCompactionAsync_TwoEligibleChannels_ProjectsPersistedLifecycleEventOncePerSurface()
     {
         await using var scenario = new TestChannelConversationScenario(
