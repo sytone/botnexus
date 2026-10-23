@@ -49,6 +49,9 @@ public sealed record CronJobCreateRequest
     /// <summary>Shell command executed by <c>command</c> jobs.</summary>
     public string? ShellCommand { get; init; }
 
+    /// <summary>Optional agent-prompt probe: exit 0 runs the prompt, exit 10 records no_work; all other exits fail closed.</summary>
+    public string? PreconditionCommand { get; init; }
+
     /// <summary>Whether the job is enabled. Defaults to <c>true</c>.</summary>
     public bool Enabled { get; init; } = true;
 
@@ -117,6 +120,7 @@ public sealed record CronJobCreateRequest
         Model = Model,
         WebhookUrl = WebhookUrl,
         ShellCommand = ShellCommand,
+        PreconditionCommand = string.IsNullOrWhiteSpace(PreconditionCommand) ? null : PreconditionCommand,
         Enabled = Enabled,
         System = System,
         DeleteAfterRun = DeleteAfterRun,

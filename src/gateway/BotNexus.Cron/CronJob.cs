@@ -30,6 +30,9 @@ public sealed record CronJob
         : !string.IsNullOrWhiteSpace(Model) ? "job-override" : !string.IsNullOrWhiteSpace(ConfiguredDefaultModel) ? "global-default" : "inherits-conversation-agent";
     public string? WebhookUrl { get; init; }
     public string? ShellCommand { get; init; }
+
+    /// <summary>Optional agent-prompt probe: exit 0 runs the prompt, exit 10 records no_work; other exits fail closed.</summary>
+    public string? PreconditionCommand { get; init; }
     public bool Enabled { get; init; } = true;
     /// <summary>Whether this is a system-provisioned job (e.g., heartbeat). Hidden from default listings.</summary>
     public bool System { get; init; }
