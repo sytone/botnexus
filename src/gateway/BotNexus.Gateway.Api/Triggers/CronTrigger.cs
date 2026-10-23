@@ -248,7 +248,9 @@ public sealed class CronTrigger(
     /// </summary>
     private static bool IsNoOpTurn(AgentResponse response)
     {
-        if (response.ToolCalls.Count > 0)
+        // An explicit non-completed disposition is evidence, not a disposable silent wake.
+        // Legacy strategies without completion metadata retain their existing no-op behavior.
+        if (response.Completion is { Status: not "Completed" } || response.ToolCalls.Count > 0)
             return false;
 
         var content = response.Content;
