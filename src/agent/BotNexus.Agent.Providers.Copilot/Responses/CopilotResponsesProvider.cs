@@ -107,6 +107,7 @@ public sealed class CopilotResponsesProvider : IApiProvider
         {
             ApiKey = apiKey,
             Temperature = options?.Temperature,
+            ToolChoiceMode = options?.ToolChoiceMode,
             MaxTokens = options?.MaxTokens,
             CancellationToken = options?.CancellationToken ?? CancellationToken.None,
             Transport = options?.Transport ?? Transport.Sse,
@@ -168,6 +169,7 @@ public sealed class CopilotResponsesProvider : IApiProvider
             {
                 capture.Observe(() => socket.ResponseHeaders);
             }
+            payload.EnforceToolFree(options?.ToolChoiceMode);
             await socket.SendAsync(payload.ToJsonString(), options?.CancellationToken ?? CancellationToken.None).ConfigureAwait(false);
 
             var normalized = new LlmStream();

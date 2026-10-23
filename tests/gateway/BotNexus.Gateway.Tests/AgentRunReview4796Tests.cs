@@ -12,23 +12,36 @@ public sealed class AgentRunReview4796Tests
     [Theory]
     [InlineData(1, 128)]
     [InlineData(3, 129)]
-    public async Task IncompleteResults_StillReachEveryPolicyDecisionAndAbsoluteFuse(int batch, int expected)
+    public async Task IncompleteResults_ClassifyEveryPreEdgeResultAndRetainWholeHardEdgeBatch(int batch, int expected)
     {
+        // Includes unsolicited calls on the final tool-free summary request.
         var provider = new ScriptedProvider((call, _) => call <= 130 ? Calls(call, batch) : TextResponse());
-        var decisions = 0;
+        var decisions = new List<string>();
         var tool = new IncompleteTool();
         var (_, handle) = Create(provider, [tool], progress: (context, _) =>
         {
             context.ToolResult.Result.IsIncomplete.ShouldBeTrue();
-            decisions++;
+            decisions.Add(context.ToolCall.Id);
             return Task.FromResult<ToolProgressDecision?>(ToolProgressDecision.Progress);
         });
         await using var owned = handle;
         var response = await handle.PromptAsync("incomplete");
-        response.Completion.ShouldNotBeNull().Status.ShouldBe("Parked");
-        decisions.ShouldBe(expected);
+        var completion = response.Completion.ShouldNotBeNull();
+        completion.Status.ShouldBe("Parked");
+        completion.StopReason.ShouldBe("ToolResultBudget");
+        // The absolute fuse secures the entire final batch before any stallable policy.
+        // Every earlier result, including incomplete ones, must still reach policy exactly once.
+        decisions.Count.ShouldBe(expected - batch);
+        decisions.ShouldBe(Enumerable.Range(1, expected / batch - 1)
+            .SelectMany(turn => Enumerable.Range(0, batch).Select(index => $"call-{turn}-{index}")));
         tool.Executions.ShouldBe(expected);
-        var guard = Guards(response.Completion)[0];
+        provider.Calls.ShouldBe(expected / batch + 1);
+        response.ToolCalls.Count.ShouldBe(expected);
+        response.ToolCalls.Select(call => call.ToolCallId).ShouldBe(Enumerable.Range(1, expected / batch)
+            .SelectMany(turn => Enumerable.Range(0, batch).Select(index => $"call-{turn}-{index}")));
+        response.ToolCalls.ShouldAllBe(call => call.IsIncomplete && call.ResultContent == "incomplete");
+        var guard = Guards(completion)[0];
+        guard.GetProperty("GuardKind").GetString().ShouldBe("absolute-tool-result-limit");
         guard.GetProperty("TotalResults").GetInt32().ShouldBe(expected);
         guard.GetProperty("AbsoluteLimitReached").GetBoolean().ShouldBeTrue();
     }

@@ -80,6 +80,12 @@ internal static class OpenAIResponsesRequestBuilder
             }
         }
 
+        if (options?.ToolChoiceMode == BotNexus.Agent.Providers.Core.ToolChoice.None)
+        {
+            payload.Remove("tools");
+            payload["tool_choice"] = "none";
+        }
+
         return payload;
     }
 

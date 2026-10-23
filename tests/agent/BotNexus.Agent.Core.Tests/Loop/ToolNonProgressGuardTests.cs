@@ -14,6 +14,19 @@ public sealed class ToolNonProgressGuardTests
     private static Task<ToolNonProgressObservation> Observe(ToolNonProgressGuard guard)
         => guard.ObserveAsync([Call], [Result], CancellationToken.None);
 
+    [Fact]
+    public void Record_ExecutedCountBeyondInt32_PreservesExactEvidence()
+    {
+        var guard = new ToolNonProgressGuard((_, _) => Task.FromResult<ToolProgressDecision?>(null), maxToolResults: 2);
+        var total = (long)int.MaxValue + 2;
+        guard.Record(new ToolNonProgressObservation(0, "absolute-tool-result-limit", null,
+            false, true, true, total), "terminal");
+        var evidence = guard.Evidence.ShouldHaveSingleItem();
+        evidence.TotalResults.ShouldBe(total);
+        evidence.StopThreshold.ShouldBe(2);
+        evidence.Disposition.ShouldBe("terminal");
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
