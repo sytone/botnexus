@@ -2,19 +2,13 @@
 
 ## Test Folder Structure
 
-Test projects mirror the `src/` folder structure. Project-specific tests live under matching buckets:
+Production projects under `src/` require an exact test mirror: `src/<category>/<Name>/<Name>.csproj` maps to `tests/<category>/<Name>.Tests/<Name>.Tests.csproj`, preserving any intermediate folders. `SrcTestsMirrorArchitectureTests` enforces this mapping, eight explicit justified source-project exemptions, and placement under a known category. Do not infer an exemption from a project's name or purpose.
 
-```
-tests/
-  agent/            ← mirrors src/agent/
-  domain/           ← mirrors src/domain/
-  extensions/       ← mirrors src/extensions/
-  gateway/          ← mirrors src/gateway/
-```
+No project may be added at the `tests/` root: the root-project exemption list is empty and closed. Known categories are `agent`, `domain`, `extensions`, `gateway`, `architecture`, `persistence`, `integration`, `e2e`, `scenarios`, `examples`, and `tools`. Cross-cutting tests belong in the appropriate category, not at the root. Provider conformance already lives under `agent`; `tools` covers non-`src` tooling.
 
-Each test project folder and `.csproj` name must end in **`.Tests`** (e.g., `BotNexus.Gateway.Tests`, `BotNexus.Domain.Tests`).
+The `.Tests` folder/project suffix is required for source mirrors, not a blanket description of every project under `tests/`: the existing `BotNexus.Integration.ProviderTests` name is legacy, and `BotNexus.Scenarios.Harness` is a reusable class library. These are not naming templates for new source mirrors.
 
-Cross-cutting test projects (E2E, integration, conformance, conversation) remain at the `tests/` root until they have a clear single-bucket home.
+Use [Test taxonomy](../docs/development/test-taxonomy.md) to choose between project-local unit tests, architecture rules, real integration seams, persistence seams, channel/browser E2E, and deterministic scenarios. This is contributor routing guidance, not new semantic enforcement.
 
 ## Assertion Library
 
@@ -135,21 +129,28 @@ All tests run with `BOTNEXUS_HOME` set to a temp directory via `test.runsettings
 
 ### Build Shortcuts
 
+Run from your task worktree. Local compilation is safe; local test execution is not permitted on a host with a live gateway.
+
 ```powershell
-# Skip test compilation for faster production builds
-dotnet build dirs.proj /p:SkipTests=true
+# Compile production projects without traversing tests
+dotnet build src/dirs.proj
 
-# Run only tests affected by your current changes (uses project dependency graph)
-scripts/repo/test-impacted.ps1
-
-# Preview which test projects would run without executing them
+# Preview impacted selection only; do not remove -DryRun on a live-gateway host
 scripts/repo/test-impacted.ps1 -DryRun
 
-# Run full test suite
-scripts/repo/test.ps1
+# Normal candidate gate (remote by default)
+scripts/repo/Validate-PreCommit.ps1
+
+# Explicit remote non-browser CORE execution for this worktree
+scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>
+
+# Documentation-only gate (npm ci first if dependencies are not installed)
+npm run docs:build
 ```
 
-This uses `Directory.Build.targets` to strip all test project inputs when `SkipTests=true`.
+Replace `<worktree>` with the task worktree path. `src/dirs.proj` and `tests/dirs.proj` discover `.csproj` files recursively, excluding `bin` and `obj`; root `dirs.proj` composes both plus tooling. Do not maintain a separate `.slnx` project list for this traversal.
+
+Normal code validation requires the remote non-browser core suite. Browser-emulated E2E remains quarantined under #3601; `-Mode full` and `-Mode playwright` are explicit diagnostics, not normal gates or proof that the quarantine is cleared. Documentation-only changes normally require the documentation build, not remote tests; an explicit task requirement to run remote CORE still applies. Never substitute local `dotnet test`, `test.ps1`, or executing `test-impacted.ps1` on a live-gateway host. Follow the root `AGENTS.md` for strict validation, receipts, and the explicit local fallback when remote infrastructure is genuinely unavailable.
 
 ## Test Conventions
 
