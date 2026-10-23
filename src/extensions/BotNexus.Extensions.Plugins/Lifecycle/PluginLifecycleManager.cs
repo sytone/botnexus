@@ -31,7 +31,10 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
     private readonly PluginImportAdapter _importer;
     private readonly TimeProvider _timeProvider;
     private readonly IPluginInstallObserver? _installObserver;
+    private readonly IPluginLifecycleParticipant? _participant;
     private readonly ILogger<PluginLifecycleManager> _logger;
+    // Internal isolation seam, not operator configuration or a security switch.
+    internal string StagingRoot { get; set; } = Path.Combine(Path.GetTempPath(), "botnexus-plugin-staging");
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
 
     /// <summary>Creates a manager over a plugin root.</summary>
@@ -45,19 +48,22 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
     /// no cron infrastructure at all - a consumer that only parses or removes plugins must not be
     /// forced to compose a scheduler.
     /// </param>
+    /// <param name="participant">Awaited runtime activation and teardown, composed outside core Plugins.</param>
     public PluginLifecycleManager(
         PluginStateStore store,
         IPluginSourceFetcher fetcher,
         PluginManifestParser? parser = null,
         TimeProvider? timeProvider = null,
         ILogger<PluginLifecycleManager>? logger = null,
-        IPluginInstallObserver? installObserver = null)
+        IPluginInstallObserver? installObserver = null,
+        IPluginLifecycleParticipant? participant = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _fetcher = fetcher ?? throw new ArgumentNullException(nameof(fetcher));
         _importer = new PluginImportAdapter(parser ?? new PluginManifestParser());
         _timeProvider = timeProvider ?? TimeProvider.System;
         _installObserver = installObserver;
+        _participant = participant;
         _logger = logger ?? NullLogger<PluginLifecycleManager>.Instance;
     }
 
@@ -144,6 +150,37 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 Files = files,
             };
             _store.Upsert(record);
+            if (_participant is not null)
+            {
+                var context = new PluginLifecycleContext(record, manifest, destination);
+                try
+                {
+                    await _participant.ActivateAsync(context, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception activationError)
+                {
+                    // Keep a recovery receipt if cleanup fails: a potentially live process must
+                    // never become an unowned orphan merely because install could not complete.
+                    using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    try
+                    {
+                        await _participant.DeactivateAsync(context, cleanup.Token).ConfigureAwait(false);
+                        DeleteRecordedFiles(record);
+                        _store.Delete(record.Name);
+                    }
+                    catch (Exception compensationError)
+                    {
+                        _logger.LogError(activationError, "Plugin {Plugin} activation failed.", record.Name);
+                        _logger.LogError(compensationError, "Plugin {Plugin} install compensation failed.", record.Name);
+                        return PluginOperationResult.Failure(record.Name, "lifecycle",
+                            "Activation failed. Install compensation failed; content and recovery receipt retained.");
+                    }
+
+                    _logger.LogWarning(activationError, "Plugin {Plugin} activation failed and was rolled back.", record.Name);
+                    if (activationError is OperationCanceledException) throw;
+                    return PluginOperationResult.Failure(record.Name, "lifecycle", "Activation failed and was rolled back.");
+                }
+            }
 
             _logger.LogInformation(
                 "Installed plugin {Plugin} at {Version} ({FileCount} files).",
@@ -161,7 +198,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
             {
                 try
                 {
-                    await _installObserver.OnPluginInstalledAsync(cancellationToken).ConfigureAwait(false);
+                    await _installObserver.OnPluginInstalledAsync(CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -247,24 +284,73 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 };
             }
 
-            // Retire the previous content by its recorded file set, not by wiping the directory,
-            // so anything the user placed alongside the plugin survives an update just as it
-            // survives a removal.
-            DeleteRecordedFiles(existing);
-
             var destination = GetPluginDirectory(name);
-            var files = Promote(staged.Directory!, destination);
-            files = WriteTrustCatalog(destination, name, files);
-
-            var record = existing with
+            if (HasCandidateCollision(existing, staged.Directory!, destination))
+                return PluginOperationResult.Failure(name, "directory", "Update conflicts with local content; installed content and runtime were not changed.")
+                    with { PreviousVersion = existing.ResolvedVersion };
+            var previousContext = ReadContext(existing);
+            // Snapshot only the recorded set. User-owned files are neither deleted nor restored.
+            var backup = Path.Combine(StagingRoot, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(backup);
+            InstalledPlugin? candidate = null;
+            var retired = false;
+            var written = new List<string>();
+            try
             {
-                ResolvedVersion = staged.ResolvedVersion!,
-                ManifestVersion = staged.Manifest!.Version,
-                ManifestFormat = staged.Format,
-                InstalledAtUtc = _timeProvider.GetUtcNow(),
-                Files = files,
-            };
-            _store.Upsert(record);
+                CopyRecordedFiles(existing, backup);
+                if (_participant is not null)
+                    await _participant.DeactivateAsync(previousContext, cancellationToken).ConfigureAwait(false);
+                retired = true;
+                DeleteRecordedFiles(existing);
+                var files = Promote(staged.Directory!, destination, written);
+                files = WriteTrustCatalog(destination, name, files);
+                candidate = existing with
+                {
+                    ResolvedVersion = staged.ResolvedVersion!,
+                    ManifestVersion = staged.Manifest!.Version,
+                    ManifestFormat = staged.Format,
+                    InstalledAtUtc = _timeProvider.GetUtcNow(),
+                    Files = files,
+                };
+                _store.Upsert(candidate);
+                if (_participant is not null)
+                    await _participant.ActivateAsync(new(candidate, staged.Manifest!, destination), cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception updateError)
+            {
+                if (retired)
+                {
+                    using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    try
+                    {
+                        if (_participant is not null && candidate is not null)
+                            await _participant.DeactivateAsync(new(candidate, staged.Manifest!, destination), cleanup.Token).ConfigureAwait(false);
+                        // Promotion may itself have failed before returning a candidate receipt.
+                        var candidateFiles = candidate?.Files ?? written;
+                        DeleteRecordedFiles(existing with { Files = candidateFiles });
+                        Promote(backup, destination);
+                        _store.Upsert(existing);
+                        if (_participant is not null)
+                            await _participant.ActivateAsync(previousContext, cleanup.Token).ConfigureAwait(false);
+                    }
+                    catch (Exception compensationError)
+                    {
+                        // Preserve the snapshot for recovery if even the filesystem restore failed.
+                        _logger.LogError(updateError, "Plugin {Plugin} update failed.", name);
+                        _logger.LogError(compensationError, "Plugin {Plugin} update compensation failed; recovery snapshot retained at {RecoverySnapshot}.", name, backup);
+                        return PluginOperationResult.Failure(name, "lifecycle",
+                            "Update failed. Update compensation failed; recovery snapshot retained. Consult local logs for recovery.")
+                            with { PreviousVersion = existing.ResolvedVersion };
+                    }
+                }
+                _logger.LogWarning(updateError, "Plugin {Plugin} update failed; content and receipt retained or restored.", name);
+                TryDeleteDirectory(backup);
+                if (updateError is OperationCanceledException) throw;
+                return PluginOperationResult.Failure(name, "lifecycle", "Update failed; installed content and receipt retained or restored.")
+                    with { PreviousVersion = existing.ResolvedVersion };
+            }
+            TryDeleteDirectory(backup);
+            var record = candidate ?? throw new InvalidOperationException("Update produced no installed receipt.");
 
             _logger.LogInformation(
                 "Updated plugin {Plugin} from {From} to {To}.",
@@ -294,10 +380,18 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
     public PluginOperationResult Remove(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        _mutationGate.Wait();
+        // Compatibility for existing synchronous callers: never fire-and-forget teardown.
+        return RemoveAsync(name).ConfigureAwait(false).GetAwaiter().GetResult();
+    }
+
+    /// <summary>Awaits runtime teardown before deleting recorded files or the installed receipt.</summary>
+    public async Task<PluginOperationResult> RemoveAsync(string name, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return RemoveCore(name);
+            return await RemoveCoreAsync(name, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -305,7 +399,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
         }
     }
 
-    private PluginOperationResult RemoveCore(string name)
+    private async Task<PluginOperationResult> RemoveCoreAsync(string name, CancellationToken cancellationToken)
     {
         var existing = _store.Find(name);
         if (existing is null)
@@ -313,6 +407,18 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
             return PluginOperationResult.Failure(name, "name", $"Plugin '{name}' is not installed.");
         }
 
+        if (_participant is not null)
+        {
+            try
+            {
+                await _participant.DeactivateAsync(ReadContext(existing), cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Plugin {Plugin} teardown failed; content and receipt retained.", name);
+                return PluginOperationResult.Failure(name, "lifecycle", "Teardown failed; content and receipt retained.");
+            }
+        }
         DeleteRecordedFiles(existing);
         _store.Delete(name);
 
@@ -365,6 +471,60 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
         };
     }
 
+    private PluginLifecycleContext ReadContext(InstalledPlugin plugin)
+    {
+        var directory = GetPluginDirectory(plugin.Name);
+        var parsed = _importer.ParseDirectory(directory, plugin.Name);
+        // Teardown must remain possible after content is missing or tampered. Identity and source
+        // come from the receipt; component discovery is only needed again on activation.
+        var manifest = parsed.IsValid && parsed.Value is not null
+            ? parsed.Value.Manifest : new PluginManifest { Name = plugin.Name };
+        return new(plugin, manifest, directory);
+    }
+
+    private static bool HasCandidateCollision(InstalledPlugin existing, string staging, string destination)
+    {
+        if (!Directory.Exists(destination)) return false;
+        var candidates = Directory.EnumerateFiles(staging, "*", SearchOption.AllDirectories)
+            .Select(p => Path.GetRelativePath(staging, p).Replace('\\', '/'))
+            .Where(p => !p.StartsWith(".git/", StringComparison.Ordinal))
+            .Append(ContentTrustCatalog.CatalogFileName).Distinct(StringComparer.Ordinal).ToArray();
+        var owned = existing.Files.ToHashSet(StringComparer.Ordinal);
+        foreach (var entry in Directory.EnumerateFileSystemEntries(destination, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(destination, entry).Replace('\\', '/');
+            var directory = Directory.Exists(entry);
+            foreach (var candidate in candidates)
+            {
+                if (candidate.Equals(relative, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (directory || !owned.Contains(relative) || candidate != relative) return true;
+                }
+                else if (candidate.StartsWith(relative + "/", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Shared directories are safe only with identical portable spelling.
+                    if (!directory || !candidate.StartsWith(relative + "/", StringComparison.Ordinal)) return true;
+                }
+                else if (relative.StartsWith(candidate + "/", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private void CopyRecordedFiles(InstalledPlugin plugin, string backup)
+    {
+        var directory = GetPluginDirectory(plugin.Name);
+        foreach (var relative in plugin.Files)
+        {
+            var source = Path.Combine(directory, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(source)) throw new IOException("Recorded plugin content is missing; a complete recovery snapshot cannot be created.");
+            var target = Path.Combine(backup, relative.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(source, target);
+        }
+    }
+
     private sealed record StagedPlugin(
         string? Directory,
         string? ResolvedVersion,
@@ -382,8 +542,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
         CancellationToken cancellationToken)
     {
         var staging = Path.Combine(
-            Path.GetTempPath(),
-            "botnexus-plugin-staging",
+            StagingRoot,
             Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
 
@@ -397,11 +556,10 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                _logger.LogWarning(ex, "Plugin source fetch failed.");
                 TryDeleteDirectory(staging);
                 return new StagedPlugin(null, null, null, PluginOperationResult.Failure(
-                    reportName,
-                    "source",
-                    $"Failed to fetch plugin source '{source}': {ex.Message}"));
+                    reportName, "source", "Failed to fetch plugin source."));
             }
 
             if (string.IsNullOrWhiteSpace(fetch.ResolvedVersion))
@@ -410,7 +568,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 return new StagedPlugin(null, null, null, PluginOperationResult.Failure(
                     reportName,
                     "resolvedVersion",
-                    $"Plugin source '{source}' did not report a resolved version."));
+                    "Plugin source did not report a resolved version."));
             }
 
             var parse = _importer.ParseDirectory(staging, expectedName);
@@ -428,7 +586,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 return new StagedPlugin(null, null, null, PluginOperationResult.Failure(
                     expectedName,
                     "name",
-                    $"Plugin source '{source}' declares name '{manifest.Name}', which does not match the requested '{expectedName}'."));
+                    $"Plugin declares name '{manifest.Name}', which does not match requested name '{expectedName}'."));
             }
 
             return new StagedPlugin(staging, fetch.ResolvedVersion, manifest, null, imported.Format);
@@ -443,10 +601,10 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
     // Copies validated staging content into the plugin directory and returns the relative path of
     // every file written - which becomes the removal manifest. Paths are normalised to forward
     // slashes so a record written on Windows still removes correctly on Linux.
-    private static List<string> Promote(string staging, string destination)
+    private static List<string> Promote(string staging, string destination, List<string>? written = null)
     {
         Directory.CreateDirectory(destination);
-        var written = new List<string>();
+        written ??= new List<string>();
 
         foreach (var sourceFile in Directory.EnumerateFiles(staging, "*", SearchOption.AllDirectories))
         {
@@ -466,8 +624,9 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 Directory.CreateDirectory(targetDir);
             }
 
-            File.Copy(sourceFile, targetPath, overwrite: true);
+            // Include even a partial copy that throws; the target was preflighted as owned/free.
             written.Add(relative);
+            File.Copy(sourceFile, targetPath, overwrite: true);
         }
 
         written.Sort(StringComparer.Ordinal);

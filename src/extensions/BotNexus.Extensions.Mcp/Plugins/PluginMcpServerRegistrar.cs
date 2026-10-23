@@ -127,37 +127,45 @@ public sealed class PluginMcpServerRegistrar
         var scopedNames = new List<string>();
         var tools = new List<IAgentTool>();
 
-        foreach (var (declaredName, serverConfig) in declaration.Servers)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var (declaredName, serverConfig) in declaration.Servers)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
-            var scoped = PluginScopedServerName.Scope(pluginName, declaredName);
-            scopedNames.Add(scoped);
+                var scoped = PluginScopedServerName.Scope(pluginName, declaredName);
+                scopedNames.Add(scoped);
+                // Record BEFORE awaiting: a failed start can already have created a connection.
+                lock (_gate)
+                {
+                    if (!_registered.TryGetValue(pluginName, out var owned))
+                        _registered[pluginName] = owned = [];
+                    if (!owned.Contains(scoped, StringComparer.Ordinal)) owned.Add(scoped);
+                }
 
-            var serverTools = await _manager
-                .StartServerAsync(scoped, serverConfig, useToolPrefix, cancellationToken)
-                .ConfigureAwait(false);
+                var serverTools = await _manager
+                    .StartServerAsync(scoped, serverConfig, useToolPrefix, cancellationToken)
+                    .ConfigureAwait(false);
 
-            tools.AddRange(serverTools);
+                tools.AddRange(serverTools);
+            }
+        }
+        catch (Exception startError)
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            try
+            {
+                await UnregisterAsync(pluginName, cleanup.Token).ConfigureAwait(false);
+            }
+            catch (Exception stopError)
+            {
+                throw new AggregateException("MCP startup and compensation failed; ownership retained for retry.", startError, stopError);
+            }
+            throw;
         }
 
         if (scopedNames.Count > 0)
         {
-            lock (_gate)
-            {
-                if (!_registered.TryGetValue(pluginName, out var existing))
-                {
-                    existing = [];
-                    _registered[pluginName] = existing;
-                }
-
-                foreach (var name in scopedNames)
-                {
-                    if (!existing.Contains(name, StringComparer.Ordinal))
-                        existing.Add(name);
-                }
-            }
-
             _logger.LogInformation(
                 "Registered {Count} MCP server(s) for plugin '{Plugin}'.",
                 scopedNames.Count,
@@ -187,12 +195,17 @@ public sealed class PluginMcpServerRegistrar
         lock (_gate)
         {
             owned = _registered.TryGetValue(pluginName, out var names) ? [.. names] : [];
-            _registered.Remove(pluginName);
         }
 
         await _manager
             .StopServersAsync(id => PluginScopedServerName.BelongsTo(id, pluginName), cancellationToken)
             .ConfigureAwait(false);
+
+        // Only release ownership after a successful stop; failure must remain retryable.
+        lock (_gate)
+        {
+            _registered.Remove(pluginName);
+        }
 
         if (owned.Count > 0)
         {

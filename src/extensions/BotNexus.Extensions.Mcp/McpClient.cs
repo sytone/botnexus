@@ -25,6 +25,9 @@ public sealed class McpClient : IAsyncDisposable
     private int _nextId;
     private McpServerCapabilities? _capabilities;
     private bool _initialized;
+    private bool _disposed;
+    private bool _disconnected;
+    private readonly SemaphoreSlim _disposalLock = new(1, 1);
 
     /// <summary>Creates a client bound to a transport.</summary>
     /// <param name="transport">Transport used to exchange JSON-RPC messages.</param>
@@ -257,9 +260,30 @@ public sealed class McpClient : IAsyncDisposable
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
-        await _transport.DisconnectAsync().ConfigureAwait(false);
-        await _transport.DisposeAsync().ConfigureAwait(false);
-        _protocolLock.Dispose();
+        await DisposeCoreAsync(strict: false, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    /// <summary>Confirms transport teardown before releasing client resources. Failures are retryable.</summary>
+    public Task StopAsync(CancellationToken ct = default) => DisposeCoreAsync(strict: true, ct);
+
+    private async Task DisposeCoreAsync(bool strict, CancellationToken ct)
+    {
+        await _disposalLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_disposed) return;
+            if (!_disconnected)
+            {
+                if (strict) await _transport.DisconnectStrictAsync(ct).ConfigureAwait(false);
+                else await _transport.DisconnectAsync(ct).ConfigureAwait(false);
+                _disconnected = true;
+            }
+            await _transport.DisposeAsync().ConfigureAwait(false);
+            _initialized = false;
+            _protocolLock.Dispose();
+            _disposed = true;
+        }
+        finally { _disposalLock.Release(); }
     }
 
     private void EnsureInitialized()

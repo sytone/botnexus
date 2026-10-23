@@ -28,7 +28,7 @@ public sealed class PluginLifecycleApiCompositionTests : IDisposable
     }
 
     [Fact]
-    public void Production_contributor_registers_one_shared_lifecycle_graph()
+    public async Task Production_contributor_registers_one_shared_lifecycle_graph()
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -37,7 +37,7 @@ public sealed class PluginLifecycleApiCompositionTests : IDisposable
 
         new PluginLifecycleServiceContributor().ConfigureServices(services);
 
-        using var provider = services.BuildServiceProvider();
+        await using var provider = services.BuildServiceProvider();
         var manager = provider.GetRequiredService<PluginLifecycleManager>();
 
         Assert.Same(manager, provider.GetRequiredService<PluginLifecycleManager>());
