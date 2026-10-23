@@ -8,10 +8,10 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Pages;
 /// Schema-driven mobile platform-settings page (config-parity PBI 6/6 of #1579, issue #1615 -- the
 /// payoff PBI). It consumes the SAME shared <c>SchemaForm</c> renderer the desktop Configuration page
 /// uses, fed by <c>GET /api/config/schema</c>: it fetches the UI schema and the effective config once,
-/// binds them into the form, and persists the sections the user actually edited. There is no
-/// mobile-specific field code, so a config field added to <c>PlatformConfig</c> with annotations
-/// surfaces here automatically. Save behaviour matches the desktop -- edits go through the same
-/// per-section <c>PUT /api/config/{section}</c> endpoints, so hot-reload-without-restart is unchanged.
+/// binds editable platform sections into the form, and persists only the paths the user edited.
+/// The same non-persisted roots as desktop are excluded from rendering, not from the loaded config.
+/// Save behaviour matches desktop: a revision-checked <c>PATCH /api/config</c> preserves unrelated
+/// configuration and reports concurrent changes instead of overwriting them.
 /// The logic mirrors the desktop <c>Configuration</c> code-behind so the two surfaces stay in lockstep.
 /// </summary>
 public partial class Settings : IDisposable
@@ -19,7 +19,7 @@ public partial class Settings : IDisposable
     private PlatformConfigFormModel? _form;
     private PlatformConfigFormModel Form => _form ??= new PlatformConfigFormModel(ConfigService);
     private JsonObject? _config => Form.Config;
-    private JsonObject? _schema => Form.Schema;
+    private JsonObject? _schema;
     private bool _loading => Form.IsLoading;
     private bool _saving => Form.IsSaving;
     private bool _dirty => Form.IsDirty;
@@ -37,6 +37,18 @@ public partial class Settings : IDisposable
         SetStatus("Loading...", "");
         StateHasChanged();
         await Form.LoadAsync();
+
+        // Mirror desktop's section boundary without pruning the effective config or changing the
+        // shared save workflow. Clone the envelope so the loaded schema remains intact as well.
+        _schema = Form.Schema?.DeepClone().AsObject();
+        if (_schema?["schema"]?["properties"] is JsonObject properties)
+        {
+            foreach (var key in properties.Select(entry => entry.Key).ToArray())
+            {
+                if (PlatformConfigFormModel.NonPersistedSections.Contains(key))
+                    properties.Remove(key);
+            }
+        }
 
         if (_config is null || _schema is null)
             SetStatus("Failed to load", "error");
