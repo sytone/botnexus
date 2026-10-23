@@ -21,6 +21,38 @@ namespace BotNexus.Gateway.Conversations;
 /// </summary>
 public sealed class SqliteConversationStore : IConversationStore
 {
+    /// <inheritdoc />
+    public async Task<ConversationOwnership?> GetOwnershipAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT agent_id FROM conversations WHERE id=$id";
+        command.Parameters.AddWithValue("$id", conversationId.Value);
+        var owner = await command.ExecuteScalarAsync(ct).ConfigureAwait(false) as string;
+        return owner is null ? null : new(conversationId, AgentId.From(owner));
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ConversationOwnership>> ListOwnershipAsync(AgentId? agentId = null, CancellationToken ct = default)
+    {
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id, agent_id FROM conversations" + (agentId is null ? "" : " WHERE agent_id=$agent");
+        if (agentId is { } owner) command.Parameters.AddWithValue("$agent", owner.Value);
+        var result = new List<ConversationOwnership>();
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            ct.ThrowIfCancellationRequested();
+            result.Add(new(ConversationId.From(reader.GetString(0)), AgentId.From(reader.GetString(1))));
+        }
+        return result;
+    }
+
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {

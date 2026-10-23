@@ -22,6 +22,12 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 /// </remarks>
 public interface ISessionStore
 {
+    /// <summary>Reads a bounded transcript prefix after checking canonical ownership. Unsupported
+    /// stores fail closed rather than falling back to full session hydration.</summary>
+    Task<SessionHistoryScanPage> ScanHistoryAsync(SessionId sessionId, SessionHistoryScan scan,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This store does not support bounded history reads.");
+
     /// <summary>
     /// Gets a session by ID, or <c>null</c> if it doesn't exist.
     /// </summary>
