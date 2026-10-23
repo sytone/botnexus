@@ -592,6 +592,10 @@ public interface ISessionStore
     Task<SubAgentRunDetail?> FindSubAgentSpawnAsync(SessionId parentSessionId, string toolCallId, CancellationToken cancellationToken = default)
         => Task.FromResult<SubAgentRunDetail?>(null);
 
+    /// <summary>Reads the full retained final summary, or null when legacy storage has no full copy. Does not consume delivery.</summary>
+    Task<string?> GetSubAgentResultSummaryAsync(string subAgentId, CancellationToken cancellationToken = default)
+        => Task.FromResult<string?>(null);
+
     /// <summary>Reads one retained run by its indexed identity without consuming it.</summary>
     Task<SubAgentRunDetail?> GetSubAgentSessionAsync(string subAgentId, CancellationToken cancellationToken = default)
         => Task.FromResult<SubAgentRunDetail?>(null);
