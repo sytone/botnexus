@@ -2,6 +2,210 @@
   "schemaVersion": "1.0.0",
   "releases": [
     {
+      "version": "0.51.0",
+      "tag": "v0.51.0",
+      "commit": "651f59f4f8b9630e8656a54e34adfc556fc6e466",
+      "releasedAt": "2026-10-24",
+      "releaseUrl": "https://github.com/sytone/botnexus/releases/tag/v0.51.0",
+      "documentationUrl": "https://sytone.github.io/botnexus/releases/v0.51.0/",
+      "categories": [
+        {
+          "name": "Features",
+          "changes": [
+            {
+              "summary": "**cron:** Add an opt-in global scheduled model default (#4943)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**plugins:** Import conventional claude skills safely (#4956)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**api:** Expose conversation-bound current context (#4993)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**plugins:** Import named manifestless claude skills (#4987)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Inventory legacy persistence without mutation (#4969)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**plugins:** Import legacy skills with additive metadata (#5018)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**workflows:** Embed governed workflow core foundation (#5054)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Bug Fixes",
+          "changes": [
+            {
+              "summary": "**mcp:** Retain redirect security fixture socket ownership (#4948)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tests:** Bound telegram polling fixtures and ensure cleanup (#4947)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**testing:** Execute conversation seams on the candidate host (#4967)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**audit:** Make queued deadline observation deterministic (#4973)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Reject non-durable world identity bootstrap (#4977)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Preserve explicit empty collection shapes (#4979)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**skills:** Reconcile discovery and linked-file boundaries (#4963)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Reject new runs during planned shutdown (#4953)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Reconcile current catalogue across startup and reload (#4981)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Reconcile live context diagnostic breakdown (#4983)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tests:** Capture legacy telegram dispatch timeout state (#4984)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Reconcile cancellation after normal action returns (#4992)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Bind agent default collections once (#4986)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cli:** Recover prior gateway after update build failure (#4994)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Preserve interrupted blocking run evidence (#4995)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Isolate interrupted recovery scan failures (#4988)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Stop duplicate tool payload writes and idle locks (#4978)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Persist enabled state and guard runtime admission (#4976)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**qmd:** Enforce allowed stores on unscoped searches (#5029)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Defer cleanup until application startup (#5019)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Documentation",
+          "changes": [
+            {
+              "summary": "**ci:** Define required-gate flake triage policy (#5020)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Refactor",
+          "changes": [
+            {
+              "summary": "**history:** Share stored-entry visibility policy (#4944)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Publish rest pin update facts (#4949)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Publish binding move lifecycle facts (#4959)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Publish automatic title lifecycle facts (#4989)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Testing",
+          "changes": [
+            {
+              "summary": "**providers:** Cover duplicate model id reload isolation (#4945)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Verify cleanup rollback and restart convergence (#4946)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**workspace:** Serialize refresh interactions on renderer (#4951)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Pin protected cleanup evidence dispositions (#4958)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Stabilize missed-run scan windows (#4991)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**providers:** Cover sqlite activation with stale projections (#4990)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**mcp:** Assert owned socket closure without rebinding (#5004)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Observe guide request cancellation at the held wait (#5033)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Build",
+          "changes": [
+            {
+              "summary": "**deps-dev:** Bump vite from 7.3.6 to 7.3.7 (#4997)",
+              "documentationUrls": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.50.1",
       "tag": "v0.50.1",
       "commit": "570a22c19402bf1073004f49813e1830c0f85db8",
