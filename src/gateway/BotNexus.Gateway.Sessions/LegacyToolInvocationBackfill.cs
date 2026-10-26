@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using BotNexus.Persistence.Sqlite;
 
@@ -7,6 +8,63 @@ namespace BotNexus.Gateway.Sessions;
 
 public static class LegacyToolInvocationBackfill
 {
+    internal static LegacyToolInvocationBackfillReport Resume(string connectionString, int batchSize)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+        using var connection = SqliteConnectionFactory.Create(connectionString);
+        try
+        {
+            connection.Open();
+            connection.DefaultTimeout = 1;
+            if (LegacyToolMigrationProgress.Read(connection) is { Phase: > 0 })
+                return new(0, 0, 0, false, true);
+
+            using var transaction = connection.BeginTransaction();
+            var progress = LegacyToolMigrationProgress.ReadOrCreate(connection, transaction);
+            if (progress.Phase > 0)
+                return new(0, 0, 0, false, true);
+            long end;
+            using (var window = connection.CreateCommand())
+            {
+                window.Transaction = transaction;
+                window.CommandText = $"""
+                    SELECT COALESCE(MAX(id),$after) FROM (
+                        SELECT id FROM session_history
+                        WHERE id>$after AND id<=$boundary AND tool_invocation_id IS NULL
+                          AND tool_call_id IS NOT NULL AND ({ToolRowPredicate})
+                        ORDER BY id LIMIT $limit)
+                    """;
+                window.Parameters.AddWithValue("$after", progress.HistoryCursor);
+                window.Parameters.AddWithValue("$boundary", progress.HistoryBoundary);
+                window.Parameters.AddWithValue("$limit", batchSize);
+                end = Convert.ToInt64(window.ExecuteScalar());
+            }
+            var rows = ReadBatch(connection, transaction, batchSize, progress.HistoryCursor, end);
+            foreach (var group in rows.GroupBy(row => (row.SessionId, row.ToolCallId)))
+            {
+                UpsertInvocation(connection, transaction, group);
+            }
+            LinkRows(connection, transaction, rows);
+            // An empty ID window is the only terminal probe; correlated protected rows
+            // advance the durable cursor even when no legacy row can be backfilled.
+            var more = end > progress.HistoryCursor && end < progress.HistoryBoundary;
+            if (!more)
+            {
+                using var boundary = connection.CreateCommand();
+                boundary.Transaction = transaction;
+                boundary.CommandText = "SELECT COALESCE(MAX(id),0) FROM tool_invocations";
+                progress = progress with { Phase = 1, InvocationBoundary = Convert.ToInt64(boundary.ExecuteScalar()) };
+            }
+            (progress with { HistoryCursor = end }).Save(connection, transaction);
+            transaction.Commit();
+            return new(rows.Count, rows.Count, rows.Select(row => (row.SessionId, row.ToolCallId)).Distinct().Count(), more, true);
+        }
+        catch (SqliteException ex) when (SqliteCapacityDiagnostics.ObserveFailure(connection, ex))
+        {
+            throw;
+        }
+    }
+
     public static LegacyToolInvocationBackfillReport Run(string databasePath, int batchSize, bool commit)
     {
         var mode = commit ? SqliteOpenMode.ReadWrite : SqliteOpenMode.ReadOnly;
@@ -54,8 +112,8 @@ public static class LegacyToolInvocationBackfill
             foreach (var group in rows.GroupBy(row => (row.SessionId, row.ToolCallId)))
             {
                 UpsertInvocation(writeConnection, transaction, group);
-                LinkRows(writeConnection, transaction, group);
             }
+            LinkRows(writeConnection, transaction, rows);
 
             transaction.Commit();
             return new LegacyToolInvocationBackfillReport(rows.Count, rows.Count, invocationCount, hasMore, true);
@@ -74,7 +132,8 @@ public static class LegacyToolInvocationBackfill
         return Convert.ToInt64(command.ExecuteScalar()) == 0 ? "1=1" : "agent_run_id IS NULL";
     }
 
-    private static List<LegacyRow> ReadBatch(SqliteConnection connection, SqliteTransaction? transaction, int batchSize)
+    private static List<LegacyRow> ReadBatch(SqliteConnection connection, SqliteTransaction? transaction, int batchSize,
+        long afterId = 0, long throughId = long.MaxValue)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -83,6 +142,7 @@ public static class LegacyToolInvocationBackfill
                    tool_is_error, message_kind, role
             FROM session_history
             WHERE tool_invocation_id IS NULL
+              AND id > $afterId AND id <= $throughId
               AND tool_call_id IS NOT NULL
               AND ({LegacyCorrelationPredicate(connection, transaction)})
               AND ({ToolRowPredicate})
@@ -90,6 +150,8 @@ public static class LegacyToolInvocationBackfill
             LIMIT $batchSize
             """;
         command.Parameters.AddWithValue("$batchSize", batchSize);
+        command.Parameters.AddWithValue("$afterId", afterId);
+        command.Parameters.AddWithValue("$throughId", throughId);
         using var reader = command.ExecuteReader();
         var rows = new List<LegacyRow>();
         while (reader.Read())
@@ -192,23 +254,20 @@ public static class LegacyToolInvocationBackfill
 
     private static void LinkRows(SqliteConnection connection, SqliteTransaction transaction, IEnumerable<LegacyRow> rows)
     {
-        foreach (var row in rows)
-        {
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = """
-                UPDATE session_history
-                SET tool_invocation_id = (
-                    SELECT id FROM tool_invocations
-                    WHERE session_id = $sessionId AND tool_call_id = $toolCallId)
-                WHERE id = $id AND tool_invocation_id IS NULL
-                """;
-            command.Parameters.AddWithValue("$sessionId", row.SessionId);
-            command.Parameters.AddWithValue("$toolCallId", row.ToolCallId);
-            command.Parameters.AddWithValue("$id", row.Id);
-            if (command.ExecuteNonQuery() != 1)
-                throw new InvalidOperationException($"Legacy session history row {row.Id} could not be linked.");
-        }
+        var ids = rows.Select(row => row.Id).ToArray();
+        if (ids.Length == 0) return;
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE session_history
+            SET tool_invocation_id = (
+                SELECT id FROM tool_invocations i
+                WHERE i.session_id=session_history.session_id AND i.tool_call_id=session_history.tool_call_id)
+            WHERE id IN (SELECT value FROM json_each($ids)) AND tool_invocation_id IS NULL
+            """;
+        command.Parameters.AddWithValue("$ids", JsonSerializer.Serialize(ids));
+        if (command.ExecuteNonQuery() != ids.Length)
+            throw new InvalidOperationException("Legacy session history batch could not be linked completely.");
     }
 
     private static bool IsStart(string? kind, string? role, bool argumentsAreNull) =>

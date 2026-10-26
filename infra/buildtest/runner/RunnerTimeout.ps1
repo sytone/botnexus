@@ -225,6 +225,7 @@ function Invoke-BoundedProcess {
     $stderr = "$LogPath.stderr"
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new($FilePath)
     $startInfo.UseShellExecute = $false
+    $startInfo.WorkingDirectory = (Get-Location).ProviderPath
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     foreach ($argument in $ArgumentList) { [void]$startInfo.ArgumentList.Add($argument) }
@@ -326,4 +327,3 @@ function New-RunnerTimeoutRecord {
         attribution = $attribution
     }
 }
-

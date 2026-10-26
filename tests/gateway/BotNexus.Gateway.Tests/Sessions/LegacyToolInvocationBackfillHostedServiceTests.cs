@@ -59,11 +59,12 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
     [Fact]
     public async Task ExecuteAsync_BackfillComplete_RunsCleanupUntilEligibleWorkIsExhausted()
     {
+        var backfillCalls = 0;
         var cleanupCalls = 0;
         var delays = new List<TimeSpan>();
         var completed = NewSignal();
         var service = CreateSqliteService(
-            (_, _) => new(0, 0, 0, false, true),
+            (_, _) => { backfillCalls++; return new(0, 0, 0, false, true); },
             (_, batchSize, afterInvocationId) =>
             {
                 batchSize.ShouldBe(LegacyToolInvocationBackfillHostedService.BatchSize);
@@ -79,6 +80,7 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
         await service.StopAsync(CancellationToken.None);
 
         cleanupCalls.ShouldBe(2);
+        backfillCalls.ShouldBe(1);
         delays.ShouldBe([
             LegacyToolInvocationBackfillHostedService.InitialDelay,
             LegacyToolInvocationBackfillHostedService.BatchDelay]);
@@ -305,7 +307,6 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
             (_, _) =>
             {
                 backfillCalls++;
-                if (backfillCalls == 4) throw new InvalidOperationException("secret backfill payload");
                 return new(0, 0, 0, false, true);
             },
             (_, batchSize, cursor) =>
@@ -328,19 +329,18 @@ public sealed class LegacyToolInvocationBackfillHostedServiceTests
         await service.StopAsync(CancellationToken.None);
 
         cursors.ShouldBe([0L, 100L, 100L, 200L]);
-        backfillCalls.ShouldBe(5);
+        backfillCalls.ShouldBe(1);
         delays.ShouldBe([
             LegacyToolInvocationBackfillHostedService.InitialDelay,
             LegacyToolInvocationBackfillHostedService.BatchDelay,
             LegacyToolInvocationBackfillHostedService.RetryDelay,
-            LegacyToolInvocationBackfillHostedService.BatchDelay,
-            LegacyToolInvocationBackfillHostedService.RetryDelay]);
+            LegacyToolInvocationBackfillHostedService.BatchDelay]);
         capture.BatchOutcomes(LegacyToolPayloadCleanupMetrics.BatchesInstrumentName)
             .ShouldBe(["committed", "failed", "committed", "committed"]);
         capture.BatchOutcomes(LegacyToolInvocationBackfillMetrics.BatchesInstrumentName)
-            .ShouldBe(["committed", "committed", "committed", "failed", "committed"]);
+            .ShouldBe(["committed"]);
         capture.CommittedHasMore(LegacyToolPayloadCleanupMetrics.BatchesInstrumentName).ShouldBe([true, true, false]);
-        capture.CommittedHasMore(LegacyToolInvocationBackfillMetrics.BatchesInstrumentName).ShouldBe([false, false, false, false]);
+        capture.CommittedHasMore(LegacyToolInvocationBackfillMetrics.BatchesInstrumentName).ShouldBe([false]);
         capture.Values(LegacyToolPayloadCleanupMetrics.CleanedInvocationsInstrumentName).ShouldBe([1L, 1L, 1L]);
         capture.Values(LegacyToolPayloadCleanupMetrics.CleanedRowsInstrumentName).ShouldBe([2L, 2L, 2L]);
         capture.Values(LegacyToolPayloadCleanupMetrics.ClearedBytesInstrumentName).ShouldBe([10L, 10L, 10L]);

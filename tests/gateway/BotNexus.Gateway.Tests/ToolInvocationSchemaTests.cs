@@ -19,6 +19,213 @@ public sealed class ToolInvocationSchemaTests : IDisposable
     public ToolInvocationSchemaTests() => Directory.CreateDirectory(_directoryPath);
 
     [Fact]
+    public async Task AutomaticBackfill_PersistsSplitPairAndExcludesRowsAfterInitialBoundary()
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("bounded-backfill"), AgentId.From("agent"));
+        await store.SaveAsync(session);
+        await using var connection = await OpenAsync();
+        await using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,tool_args,message_kind)
+                VALUES('bounded-backfill','tool','start','a','old','{}','tool-start'),
+                      ('bounded-backfill','tool','result','b','old',NULL,'tool-result')
+                """;
+            await seed.ExecuteNonQueryAsync();
+        }
+        store.ResumeLegacyToolBackfill(1).HasMore.ShouldBeTrue();
+        (await ReadInvocationAsync("bounded-backfill", "old")).Status.ShouldBe("incomplete");
+        await using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,message_kind)
+                VALUES('bounded-backfill','tool','late','c','late','tool-result')
+                """;
+            await seed.ExecuteNonQueryAsync();
+        }
+        var restarted = CreateStore();
+        restarted.ResumeLegacyToolBackfill(1).HasMore.ShouldBeFalse();
+        (await ReadInvocationAsync("bounded-backfill", "old")).Status.ShouldBe("success");
+        restarted.ResumeLegacyToolBackfill(1).LinkedRows.ShouldBe(0);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_call_id='late' AND tool_invocation_id IS NULL")).ShouldBe(1);
+        (await ScalarLongAsync(connection, "SELECT history_cursor FROM legacy_tool_migration WHERE id=1")).ShouldBe(2);
+        restarted.ResumeLegacyToolPayloadCleanup(1).CleanedInvocations.ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(4096)]
+    [InlineData(32768)]
+    public async Task AutomaticMigration_SparseWindowsBoundDiscoveryRatherThanSearchingForEligibleRows(int invocationCount)
+    {
+        var store = CreateStore();
+        _ = await store.GetAsync(SessionId.From("probe"));
+        await using var connection = await OpenAsync();
+        await using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                WITH RECURSIVE n(v) AS (SELECT 1 UNION ALL SELECT v+1 FROM n WHERE v<$count)
+                INSERT INTO tool_invocations(session_id,tool_call_id,status)
+                SELECT 'missing','call-'||v,'unknown' FROM n
+                """;
+            seed.Parameters.AddWithValue("$count", invocationCount);
+            await seed.ExecuteNonQueryAsync();
+        }
+        store.ResumeLegacyToolBackfill(17).HasMore.ShouldBeFalse();
+        var first = store.ResumeLegacyToolPayloadCleanup(17);
+        first.ScannedInvocations.ShouldBe(17);
+        first.LastScannedInvocationId.ShouldBe(17);
+        first.CleanedInvocations.ShouldBe(0);
+        first.HasMore.ShouldBeTrue();
+        var second = CreateStore().ResumeLegacyToolPayloadCleanup(17);
+        second.ScannedInvocations.ShouldBe(17);
+        second.LastScannedInvocationId.ShouldBe(34);
+        var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+        var windowReader = typeof(SqliteSessionStore).Assembly
+            .GetType("BotNexus.Gateway.Sessions.LegacyToolMigrationProgress")?.GetMethod("ReadInvocationWindow", flags);
+        windowReader.ShouldNotBeNull();
+        var candidateReader = typeof(LegacyToolPayloadCleanup).GetMethod("ReadCandidates", flags);
+        candidateReader.ShouldNotBeNull();
+        long steps = 0;
+        var handle = connection.Handle ?? throw new InvalidOperationException("SQLite connection must be open.");
+        using (var transaction = connection.BeginTransaction())
+        {
+            SQLitePCL.raw.sqlite3_progress_handler(handle, 1, _ => { steps++; return 0; }, null);
+            try
+            {
+                var window = windowReader.Invoke(null, [connection, transaction, 0L, (long)invocationCount, 17])
+                    .ShouldBeOfType<(long LastId, int Count)>();
+                window.ShouldBe((17L, 17));
+                var candidates = candidateReader.Invoke(null, [connection, transaction, 17, 0L, window.LastId])
+                    .ShouldBeAssignableTo<System.Collections.ICollection>();
+                candidates.ShouldNotBeNull();
+                candidates.Count.ShouldBe(0);
+            }
+            finally
+            {
+                SQLitePCL.raw.sqlite3_progress_handler(handle, 0, null, null);
+            }
+        }
+        steps.ShouldBeLessThanOrEqualTo(2700L,
+            $"actual production ID-window and sparse-candidate queries must have corpus-independent cost; corpus={invocationCount}, VM steps={steps}");
+        // Jump only the payload checkpoint to exercise the separate production orphan pass.
+        await using (var advance = connection.CreateCommand())
+        {
+            advance.CommandText = "UPDATE legacy_tool_migration SET phase=2";
+            await advance.ExecuteNonQueryAsync();
+        }
+        var orphan = CreateStore().ResumeLegacyToolPayloadCleanup(17);
+        orphan.OrphanedInvocationsDeleted.ShouldBe(17);
+        orphan.LastScannedOrphanId.ShouldBe(17);
+        var nextOrphan = CreateStore().ResumeLegacyToolPayloadCleanup(17);
+        nextOrphan.OrphanedInvocationsDeleted.ShouldBe(17);
+        nextOrphan.LastScannedOrphanId.ShouldBe(34);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM tool_invocations")).ShouldBe(invocationCount - 34);
+    }
+
+    [Fact]
+    public async Task AutomaticMigration_RestartsAfterProtectedWindowAndStopsAtBoundary()
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("checkpoint"), AgentId.From("agent"));
+        foreach (var call in new[] { "protected", "safe" })
+        {
+            session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "start", ToolCallId = call, ToolArgs = "{}", Kind = MessageKind.ToolStart });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "result", ToolCallId = call, Kind = MessageKind.ToolResult });
+        }
+        await store.SaveAsync(session);
+        await RestoreLegacyPayloadsAsync("checkpoint");
+        await using var connection = await OpenAsync();
+        await using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = "UPDATE tool_invocations SET result_sha256='mismatch' WHERE tool_call_id='protected'";
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        store.ResumeLegacyToolBackfill(1).HasMore.ShouldBeFalse();
+        var first = store.ResumeLegacyToolPayloadCleanup(1);
+        first.ScannedInvocations.ShouldBe(1);
+        first.CleanedInvocations.ShouldBe(0);
+        first.ProtectedInvocations.ShouldBe(1);
+        first.HasMore.ShouldBeTrue();
+
+        // New normalized writes must not extend this finite historical migration.
+        await store.AppendEntriesAsync(SessionId.From("checkpoint"), [
+            new SessionEntry { Role = MessageRole.Tool, Content = "late", ToolCallId = "late", ToolArgs = "{}", Kind = MessageKind.ToolStart }]);
+        var restarted = CreateStore();
+        restarted.ResumeLegacyToolBackfill(1).ScannedRows.ShouldBe(0);
+        var second = restarted.ResumeLegacyToolPayloadCleanup(1);
+        second.LastScannedInvocationId.ShouldBeGreaterThan(first.LastScannedInvocationId);
+        second.CleanedInvocations.ShouldBe(1);
+        second.HasMore.ShouldBeTrue(); // Separate bounded orphan pass follows.
+        for (var batch = 0; batch < 2; batch++)
+            restarted.ResumeLegacyToolPayloadCleanup(1).HasMore.ShouldBe(batch == 0);
+        CreateStore().ResumeLegacyToolPayloadCleanup(1).ScannedInvocations.ShouldBe(0);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM session_history WHERE tool_call_id='protected' AND tool_args IS NOT NULL")).ShouldBe(1);
+        (await ScalarLongAsync(connection, "SELECT phase FROM legacy_tool_migration WHERE id=1")).ShouldBe(3);
+        (await ScalarLongAsync(connection, "SELECT protected_invocations FROM legacy_tool_migration WHERE id=1")).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AutomaticMigration_FailedSetUpdateRollsBackPayloadAndCheckpoint()
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("atomic-checkpoint"), AgentId.From("agent"));
+        foreach (var call in new[] { "first", "second" })
+        {
+            session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "start", ToolCallId = call, ToolArgs = "{}", Kind = MessageKind.ToolStart });
+            session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "result", ToolCallId = call, Kind = MessageKind.ToolResult });
+        }
+        await store.SaveAsync(session);
+        await RestoreLegacyPayloadsAsync("atomic-checkpoint");
+        store.ResumeLegacyToolBackfill(2).HasMore.ShouldBeFalse();
+        await using var connection = await OpenAsync();
+        var before = await ReadTableBytesAsync(connection, "session_history");
+        await using (var guard = connection.CreateCommand())
+        {
+            guard.CommandText = """
+                CREATE TRIGGER fail_cleanup BEFORE UPDATE ON session_history
+                WHEN OLD.tool_call_id='second'
+                BEGIN SELECT RAISE(ABORT, 'injected cleanup failure'); END
+                """;
+            await guard.ExecuteNonQueryAsync();
+        }
+        Should.Throw<SqliteException>(() => store.ResumeLegacyToolPayloadCleanup(2));
+        (await ReadTableBytesAsync(connection, "session_history")).ShouldBe(before);
+        (await ScalarLongAsync(connection, "SELECT cleanup_cursor FROM legacy_tool_migration WHERE id=1")).ShouldBe(0);
+        await using (var guard = connection.CreateCommand())
+        {
+            guard.CommandText = "DROP TRIGGER fail_cleanup";
+            await guard.ExecuteNonQueryAsync();
+        }
+        CreateStore().ResumeLegacyToolPayloadCleanup(2).CleanedInvocations.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task AutomaticMigration_OrphanPassPreservesLinkedEvidenceAndResumesForward()
+    {
+        var store = CreateStore();
+        _ = await store.GetAsync(SessionId.From("probe"));
+        await using var connection = await OpenAsync();
+        await using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                INSERT INTO tool_invocations(session_id,tool_call_id,status)
+                VALUES('missing','linked','unknown'),('missing','unlinked','unknown');
+                INSERT INTO session_history(session_id,role,content,tool_invocation_id)
+                SELECT session_id,'tool','keep',id FROM tool_invocations WHERE tool_call_id='linked'
+                """;
+            await seed.ExecuteNonQueryAsync();
+        }
+        store.ResumeLegacyToolBackfill(1).HasMore.ShouldBeFalse();
+        for (var batch = 0; batch < 4; batch++)
+            CreateStore().ResumeLegacyToolPayloadCleanup(1).HasMore.ShouldBe(batch < 3);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM tool_invocations WHERE tool_call_id='linked'")).ShouldBe(1);
+        (await ScalarLongAsync(connection, "SELECT COUNT(*) FROM tool_invocations WHERE tool_call_id='unlinked'")).ShouldBe(0);
+        (await ScalarLongAsync(connection, "SELECT orphaned_invocations_deleted FROM legacy_tool_migration WHERE id=1")).ShouldBe(1);
+    }
+
+    [Fact]
     public async Task FreshStore_CreatesConstrainedNormalizedSchemaAndIndexes()
     {
         _ = await CreateStore().GetAsync(SessionId.From("probe"));

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using BotNexus.Persistence.Sqlite;
 using Microsoft.Data.Sqlite;
 
@@ -8,6 +9,77 @@ namespace BotNexus.Gateway.Sessions;
 /// <summary>Clears redundant legacy payload columns only after normalized evidence proves exact parity.</summary>
 public static class LegacyToolPayloadCleanup
 {
+    internal static LegacyToolPayloadCleanupReport Resume(string connectionString, int batchSize, Action<string>? invalidateSession)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+        using var connection = SqliteConnectionFactory.Create(connectionString);
+        try
+        {
+            connection.Open();
+            connection.DefaultTimeout = 1;
+            var progress = LegacyToolMigrationProgress.Read(connection)
+                ?? throw new InvalidOperationException("Run legacy tool backfill before payload cleanup.");
+            if (progress.Phase == 0)
+                throw new InvalidOperationException("Legacy tool backfill has not finished.");
+            if (progress.Phase == 3)
+                return new(0, 0, 0, 0, 0, false, progress.CleanupCursor, Phase: "complete", LastScannedOrphanId: progress.OrphanCursor);
+
+            using var transaction = connection.BeginTransaction();
+            progress = LegacyToolMigrationProgress.ReadOrCreate(connection, transaction);
+            if (progress.Phase == 3)
+                return new(0, 0, 0, 0, 0, false, progress.CleanupCursor, Phase: "complete", LastScannedOrphanId: progress.OrphanCursor);
+            var after = progress.Phase == 1 ? progress.CleanupCursor : progress.OrphanCursor;
+            var (end, scanned) = LegacyToolMigrationProgress.ReadInvocationWindow(
+                connection, transaction, after, progress.InvocationBoundary, batchSize);
+            // This terminal check is a primary-key seek, never a search for eligible
+            // payloads or missing sessions across the remaining corpus.
+            using var remaining = connection.CreateCommand();
+            remaining.Transaction = transaction;
+            remaining.CommandText = "SELECT EXISTS(SELECT 1 FROM tool_invocations WHERE id>$end AND id<=$boundary)";
+            remaining.Parameters.AddWithValue("$end", end);
+            remaining.Parameters.AddWithValue("$boundary", progress.InvocationBoundary);
+            var more = Convert.ToInt64(remaining.ExecuteScalar()) != 0;
+
+            if (progress.Phase == 2)
+            {
+                using var delete = connection.CreateCommand();
+                delete.Transaction = transaction;
+                delete.CommandText = """
+                    DELETE FROM tool_invocations
+                    WHERE id>$after AND id<=$end
+                      AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.id=tool_invocations.session_id)
+                      AND NOT EXISTS(SELECT 1 FROM session_history h WHERE h.tool_invocation_id=tool_invocations.id)
+                    """;
+                delete.Parameters.AddWithValue("$after", after);
+                delete.Parameters.AddWithValue("$end", end);
+                var deleted = delete.ExecuteNonQuery();
+                (progress with { OrphanCursor = end, Phase = more ? 2 : 3 })
+                    .Save(connection, transaction, orphansDeleted: deleted);
+                transaction.Commit();
+                return new(0, 0, 0, 0, more ? -1 : 0, more, progress.CleanupCursor,
+                    scanned, deleted, more ? "orphans" : "complete", end);
+            }
+
+            // Evidence and the set-based update share one bounded transaction. A
+            // concurrent writer cannot change verified payloads before they are cleared.
+            var candidates = ReadCandidates(connection, transaction, batchSize, after, end);
+            var eligible = candidates.Where(IsEligible).ToArray();
+            var rows = ClearPayloads(connection, transaction, eligible);
+            var bytes = eligible.Sum(candidate => candidate.LegacyBytes);
+            var protectedCount = candidates.Count - eligible.Length;
+            (progress with { CleanupCursor = end, Phase = more ? 1 : 2 })
+                .Save(connection, transaction, eligible.Length, protectedCount, bytes);
+            transaction.Commit();
+            foreach (var sessionId in eligible.Select(candidate => candidate.SessionId).Distinct(StringComparer.Ordinal))
+                invalidateSession?.Invoke(sessionId);
+            return new(eligible.Length, rows, bytes, protectedCount, -1, true, end, scanned, Phase: more ? "payloads" : "orphans");
+        }
+        catch (SqliteException ex) when (SqliteCapacityDiagnostics.ObserveFailure(connection, ex))
+        {
+            throw;
+        }
+    }
+
     internal static LegacyToolPayloadCleanupReport RunConnectionString(string connectionString, int batchSize, long afterInvocationId = 0, Action<string>? invalidateSession = null)
     {
         if (batchSize < 1)
@@ -32,16 +104,10 @@ public static class LegacyToolPayloadCleanup
             if (eligible.Length > 0)
             {
                 using var transaction = connection.BeginTransaction();
-                foreach (var candidate in eligible)
-                {
-                    using var update = connection.CreateCommand();
-                    update.Transaction = transaction;
-                    update.CommandText = "UPDATE session_history SET tool_args=NULL, content=CASE WHEN message_kind='tool-result' THEN NULL ELSE content END WHERE tool_invocation_id=$id AND message_kind IN ('tool-start','tool-result')";
-                    update.Parameters.AddWithValue("$id", candidate.Id);
-                    rows += update.ExecuteNonQuery();
-                    bytes += candidate.LegacyBytes;
-                }
-
+                eligible = ReadCandidates(connection, transaction, batchSize, afterInvocationId, candidates[^1].Id)
+                    .Where(IsEligible).ToArray();
+                rows = ClearPayloads(connection, transaction, eligible);
+                bytes = eligible.Sum(candidate => candidate.LegacyBytes);
                 transaction.Commit();
                 foreach (var sessionId in eligible.Select(candidate => candidate.SessionId).Distinct(StringComparer.Ordinal))
                     invalidateSession?.Invoke(sessionId);
@@ -60,6 +126,21 @@ public static class LegacyToolPayloadCleanup
         }
     }
 
+    private static int ClearPayloads(SqliteConnection connection, SqliteTransaction transaction, Candidate[] eligible)
+    {
+        if (eligible.Length == 0) return 0;
+        using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = """
+            UPDATE session_history
+            SET tool_args=NULL, content=CASE WHEN message_kind='tool-result' THEN NULL ELSE content END
+            WHERE tool_invocation_id IN (SELECT value FROM json_each($ids))
+              AND message_kind IN ('tool-start','tool-result')
+            """;
+        update.Parameters.AddWithValue("$ids", JsonSerializer.Serialize(eligible.Select(candidate => candidate.Id)));
+        return update.ExecuteNonQuery();
+    }
+
     private static int DeleteOrphanedInvocations(SqliteConnection connection, int limit)
     {
         // The absent-session scan may traverse the corpus. Never hold the writer slot
@@ -70,7 +151,9 @@ public static class LegacyToolPayloadCleanup
             select.CommandText = """
                 SELECT i.id FROM tool_invocations i
                 LEFT JOIN sessions s ON s.id=i.session_id
-                WHERE s.id IS NULL ORDER BY i.id LIMIT $limit
+                WHERE s.id IS NULL
+                  AND NOT EXISTS(SELECT 1 FROM session_history h WHERE h.tool_invocation_id=i.id)
+                ORDER BY i.id LIMIT $limit
                 """;
             select.Parameters.AddWithValue("$limit", limit);
             using var reader = select.ExecuteReader();
@@ -87,6 +170,7 @@ public static class LegacyToolPayloadCleanup
         command.CommandText = """
             DELETE FROM tool_invocations
             WHERE id=$id AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.id=tool_invocations.session_id)
+              AND NOT EXISTS(SELECT 1 FROM session_history h WHERE h.tool_invocation_id=tool_invocations.id)
             """;
         var idParameter = command.Parameters.AddWithValue("$id", 0L);
         var deleted = 0;
@@ -108,14 +192,20 @@ public static class LegacyToolPayloadCleanup
                 FROM tool_invocations i
                 LEFT JOIN sessions s ON s.id=i.session_id
                 WHERE s.id IS NULL
+                  AND NOT EXISTS(SELECT 1 FROM session_history h WHERE h.tool_invocation_id=i.id)
                 LIMIT 1)
             """;
         return Convert.ToInt32(command.ExecuteScalar()) != 0;
     }
 
-    private static List<Candidate> ReadCandidateWindow(SqliteConnection connection, int limit, long afterInvocationId)
+    private static List<Candidate> ReadCandidateWindow(SqliteConnection connection, int limit, long afterInvocationId) =>
+        ReadCandidates(connection, null, limit, afterInvocationId, long.MaxValue);
+
+    private static List<Candidate> ReadCandidates(SqliteConnection connection, SqliteTransaction? transaction,
+        int limit, long afterInvocationId, long throughInvocationId)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         // Materialize IDs only: LIMIT must run before payload-bearing joins/aggregation.
         // CROSS JOIN keeps the bounded window outermost even without planner statistics.
         command.CommandText = """
@@ -123,6 +213,7 @@ public static class LegacyToolPayloadCleanup
                 SELECT i.id
                 FROM tool_invocations i
                 WHERE i.id > $afterInvocationId
+                  AND i.id <= $throughInvocationId
                   AND i.status='success' AND i.is_error=0 AND i.retention_state='hot'
                   AND i.arguments_json IS NOT NULL AND i.result_content IS NOT NULL
                   AND EXISTS(
@@ -161,6 +252,7 @@ public static class LegacyToolPayloadCleanup
             ORDER BY i.id
             """;
         command.Parameters.AddWithValue("$afterInvocationId", afterInvocationId);
+        command.Parameters.AddWithValue("$throughInvocationId", throughInvocationId);
         command.Parameters.AddWithValue("$limit", limit);
 
         using var reader = command.ExecuteReader();
@@ -273,4 +365,6 @@ public sealed record LegacyToolPayloadCleanupReport(
     bool HasMore,
     long LastScannedInvocationId = 0,
     int ScannedInvocations = 0,
-    int OrphanedInvocationsDeleted = 0);
+    int OrphanedInvocationsDeleted = 0,
+    string Phase = "manual",
+    long LastScannedOrphanId = 0);
