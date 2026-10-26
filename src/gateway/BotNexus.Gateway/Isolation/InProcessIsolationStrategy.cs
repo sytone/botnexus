@@ -823,7 +823,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // retain actionable local login instructions.
             ToolResultTextTransformer: (_serviceProvider.GetService<ISecretRedactor>() ?? new SecretRedactor()).Redact,
             ToolAuditGate: beforeToolAudit,
-            ToolExecutionDecisionObserver: onToolCallDisposition);
+            ToolExecutionDecisionObserver: onToolCallDisposition,
+            MaxToolResults: platformConfig?.Value.Gateway?.MaxToolResults ?? 128);
 
         var agent = new BotNexus.Agent.Core.Agent(options);
 

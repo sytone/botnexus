@@ -129,6 +129,8 @@ public static class ResponsesStreamEngine
                 payload = obj;
         }
 
+        payload.EnforceToolFree(options?.ToolChoiceMode);
+
         var requestUri = profile.BuildRequestUri?.Invoke(model) ?? new Uri($"{model.BaseUrl.TrimEnd('/')}/responses");
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUri);
         request.Content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");

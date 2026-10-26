@@ -145,6 +145,8 @@ public static class CompletionsStreamEngine
                 payload = obj;
         }
 
+        payload.EnforceToolFree(options?.ToolChoiceMode, compat.SupportsTools != false);
+
         var url = $"{model.BaseUrl.TrimEnd('/')}/chat/completions";
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url);

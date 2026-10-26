@@ -12,4 +12,6 @@ public enum RunStopReason
     Cancellation,
     SafetyBoundary,
     DurableAsyncWait,
+    ToolResultBudget,
+    ToolNonProgress,
 }

@@ -124,6 +124,16 @@ internal static class CopilotCompletionsRequestBuilder
 
         MaybeAddOpenRouterAnthropicCacheControl(model, payload);
 
+        if (options?.ToolChoiceMode == BotNexus.Agent.Providers.Core.ToolChoice.None)
+        {
+            payload.Remove("tools");
+            payload.Remove("tool_stream");
+            if (compat.SupportsTools != false)
+                payload["tool_choice"] = "none";
+            else
+                payload.Remove("tool_choice");
+        }
+
         return payload;
     }
 

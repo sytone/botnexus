@@ -3,7 +3,7 @@ namespace BotNexus.Agent.Core.ExtensionPoints.RunCompletion;
 public sealed record GuardObservation(
     string GuardKind,
     int ConsecutiveCount,
-    int TotalResults,
+    long TotalResults,
     int WarningThreshold,
     int StopThreshold,
     bool AbsoluteLimitReached,

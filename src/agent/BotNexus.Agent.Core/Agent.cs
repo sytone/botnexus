@@ -61,6 +61,7 @@ public sealed class Agent
                 "MaxRetryDelayMs must be greater than zero when set.");
         }
 
+        AgentLoopConfig.ValidateToolResultBudget(options.MaxToolResults);
         _options = options;
         _providerMessageTransformer = options.ProviderMessageTransformer ?? DefaultProviderMessageTransformer.TransformAsync;
         _agentContextTransformer = options.AgentContextTransformer ?? IdentityAgentContextTransformer;
@@ -828,7 +829,8 @@ public sealed class Agent
             CredentialInvalidationService: _options.CredentialInvalidationService,
             RecoveryCoordinator: _options.RecoveryCoordinator,
             RecoveryAdmissionTimeout: _options.RecoveryAdmissionTimeout,
-            ToolProgressPolicy: _options.ToolProgressPolicy);
+            ToolProgressPolicy: _options.ToolProgressPolicy,
+            MaxToolResults: _options.MaxToolResults);
     }
 
     private Func<CancellationToken, Task<AgentContext?>>? BuildContextCompactionService()
