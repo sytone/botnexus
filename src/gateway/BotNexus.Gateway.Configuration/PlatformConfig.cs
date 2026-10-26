@@ -1924,6 +1924,11 @@ public sealed class CronJobConfig
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron-job", Order = 9)]
     public string? ShellCommand { get; set; }
 
+    /// <summary>Optional deterministic probe before an agent prompt. Uses command authorization and timeout machinery.</summary>
+    [Display(Name = "Precondition command", Description = "Agent-prompt probe: exit 0 runs the model, exit 10 records no_work with no model request; other exits fail closed. Runs with gateway privileges.", GroupName = "Cron job", Order = 21)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron-job", Order = 21)]
+    public string? PreconditionCommand { get; set; }
+
     /// <summary>Whether this job is enabled.</summary>
     [Display(
         Name = "Enabled",

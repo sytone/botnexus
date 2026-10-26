@@ -48,10 +48,16 @@ public sealed class CommandCronAction : ICronAction
 
     /// <inheritdoc/>
     public async Task ExecuteAsync(CronExecutionContext context, CancellationToken cancellationToken = default)
+        => _ = await ExecuteAuthorizedAsync(context, context.Job.ShellCommand, false, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Runs a deterministic probe through the same firing gate, timeout and subprocess cleanup as command jobs.</summary>
+    internal static async Task<bool> EvaluatePreconditionAsync(CronExecutionContext context, CancellationToken cancellationToken)
+        => await ExecuteAuthorizedAsync(context, context.Job.PreconditionCommand, true, cancellationToken).ConfigureAwait(false) == 0;
+
+    private static async Task<int> ExecuteAuthorizedAsync(CronExecutionContext context, string? command, bool precondition, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var command = context.Job.ShellCommand;
         if (string.IsNullOrWhiteSpace(command))
             throw new InvalidOperationException(
                 $"Cron job '{context.Job.Id}' has action type 'command' but ShellCommand is null or empty.");
@@ -96,7 +102,9 @@ public sealed class CommandCronAction : ICronAction
                 + TruncateForError(result.Output));
         }
 
-        if (result.ExitCode != 0)
+        // Exit 10 is a successful negative decision ONLY for a precondition. Ordinary commands
+        // retain their existing nonzero-exit failure contract; output is diagnostic, not a decision.
+        if (result.ExitCode != 0 && !(precondition && result.ExitCode == 10))
         {
             logger?.LogWarning(
                 "CommandCronAction: job '{JobId}' exited with code {ExitCode}. Output length: {OutputLength}.",
@@ -109,6 +117,7 @@ public sealed class CommandCronAction : ICronAction
         logger?.LogInformation(
             "CommandCronAction: job '{JobId}' completed successfully. Output length: {OutputLength}.",
             context.Job.Id, result.Output.Length);
+        return result.ExitCode;
     }
 
     /// <summary>

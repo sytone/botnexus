@@ -63,6 +63,9 @@ public sealed record CronJobUpdateRequest
     /// <summary>Shell command executed by <c>command</c> jobs.</summary>
     public CronPatch<string> ShellCommand { get; init; }
 
+    /// <summary>Agent-prompt probe. Omit to preserve, null/empty to clear; switching away clears it.</summary>
+    public CronPatch<string> PreconditionCommand { get; init; }
+
     /// <summary>Whether the job is enabled.</summary>
     public CronPatch<bool> Enabled { get; init; }
 
@@ -133,6 +136,7 @@ public sealed record CronJobUpdateRequest
             Model = CronPatch<string>.Set(job.Model),
             WebhookUrl = CronPatch<string>.Set(job.WebhookUrl),
             ShellCommand = CronPatch<string>.Set(job.ShellCommand),
+            PreconditionCommand = CronPatch<string>.Set(job.PreconditionCommand),
             Enabled = CronPatch<bool>.Set(job.Enabled),
             System = CronPatch<bool>.Set(job.System),
             TimeZone = CronPatch<string>.Set(job.TimeZone),
@@ -172,6 +176,7 @@ public sealed record CronJobUpdateRequest
             Model = Model.Or(existing.Model),
             WebhookUrl = WebhookUrl.Or(existing.WebhookUrl),
             ShellCommand = ShellCommand.Or(existing.ShellCommand),
+            PreconditionCommand = ResolvePrecondition(existing),
             Enabled = Enabled.IsSet ? Enabled.Value : existing.Enabled,
             System = System.IsSet ? System.Value : existing.System,
             TimeZone = TimeZone.Or(existing.TimeZone),
@@ -190,6 +195,16 @@ public sealed record CronJobUpdateRequest
             ExpiresAt = ExpiresAt.IsSet ? ExpiresAt.Value : existing.ExpiresAt,
             ExecutionClass = ExecutionClass.IsSet ? ExecutionClass.Value : existing.ExecutionClass
         };
+    }
+
+    private string? ResolvePrecondition(CronJob existing)
+    {
+        var action = ActionType.Or(existing.ActionType)?.Trim();
+        if (!string.Equals(action, "agent-prompt", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(action, "agent-chat", StringComparison.OrdinalIgnoreCase))
+            return null;
+        var command = PreconditionCommand.Or(existing.PreconditionCommand);
+        return string.IsNullOrWhiteSpace(command) ? null : command;
     }
 
     /// <summary>

@@ -2914,6 +2914,14 @@
           ],
           "description": "Command or script executed when the job fires. Runs with the gateway's privileges - treat as a dangerous operation."
         },
+        "preconditionCommand": {
+          "title": "Precondition command",
+          "type": [
+            "null",
+            "string"
+          ],
+          "description": "Agent-prompt probe: exit 0 runs the model, exit 10 records no_work with no model request; other exits fail closed. Runs with gateway privileges."
+        },
         "enabled": {
           "title": "Enabled",
           "type": "boolean",

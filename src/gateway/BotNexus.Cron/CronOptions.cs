@@ -96,6 +96,8 @@ public sealed record ConfiguredCronJob
     public string? Model { get; init; }
     public string? WebhookUrl { get; init; }
     public string? ShellCommand { get; init; }
+    /// <summary>Optional deterministic agent-prompt probe, subject to command firing authorization.</summary>
+    public string? PreconditionCommand { get; init; }
     public bool Enabled { get; init; } = true;
     public bool System { get; init; }
     public bool DeleteAfterRun { get; init; }
