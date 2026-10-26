@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
@@ -145,14 +146,19 @@ public sealed class InMemorySessionStore : SessionStoreBase
         }
     }
 
-    private readonly Dictionary<string, SubAgentRunDetail> _subAgents = [];
+    private readonly Dictionary<string, SubAgentRetainedRun> _subAgents = [];
     private readonly Dictionary<string, (string Call, AgentRunId? Run)> _consumedCalls = [];
 
     /// <inheritdoc />
     public override Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_sync) _subAgents.TryAdd(info.SubAgentId, SubAgentRunDetail.FromLive(info));
+        lock (_sync)
+        {
+            if (_subAgents.TryGetValue(info.SubAgentId, out var retained))
+                SubAgentAdmissionIdentity.EnsureUnchanged(retained, info);
+            else _subAgents.Add(info.SubAgentId, CreateRetainedRun(info));
+        }
         return Task.CompletedTask;
     }
 
@@ -160,7 +166,13 @@ public sealed class InMemorySessionStore : SessionStoreBase
     public override Task UpdateSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_sync) _subAgents[info.SubAgentId] = SubAgentRunDetail.FromLive(info);
+        lock (_sync)
+        {
+            if (!_subAgents.TryGetValue(info.SubAgentId, out var retained))
+                throw new InvalidOperationException("Sub-agent admission is missing.");
+            SubAgentAdmissionIdentity.EnsureUnchanged(retained, info);
+            _subAgents[info.SubAgentId] = CreateRetainedRun(info);
+        }
         return Task.CompletedTask;
     }
 
@@ -169,22 +181,29 @@ public sealed class InMemorySessionStore : SessionStoreBase
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (_sync) return Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(_subAgents.Values
-            .Where(d => d.ParentSessionId == sessionId.Value).OrderBy(d => d.StartedAt).ToArray());
+            .Where(d => d.ParentSessionId == sessionId.Value).OrderBy(d => d.StartedAt).Select(ToPublicDetail).ToArray());
     }
 
     /// <inheritdoc />
     public override Task<SubAgentRunDetail?> FindSubAgentSpawnAsync(SessionId parentSessionId, string toolCallId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_sync) return Task.FromResult(_subAgents.Values.FirstOrDefault(d =>
-            d.ParentSessionId == parentSessionId.Value && d.SpawningToolCallId == toolCallId));
+        lock (_sync) return Task.FromResult<SubAgentRunDetail?>(_subAgents.Values.FirstOrDefault(d =>
+            d.ParentSessionId == parentSessionId.Value && d.SpawningToolCallId == toolCallId) is { } found ? ToPublicDetail(found) : null);
+    }
+
+    /// <inheritdoc />
+    public override Task<string?> GetSubAgentResultSummaryAsync(string subAgentId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync) return Task.FromResult(_subAgents.GetValueOrDefault(subAgentId)?.FullResultSummary);
     }
 
     /// <inheritdoc />
     public override Task<SubAgentRunDetail?> GetSubAgentSessionAsync(string subAgentId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_sync) return Task.FromResult(_subAgents.GetValueOrDefault(subAgentId));
+        lock (_sync) return Task.FromResult<SubAgentRunDetail?>(_subAgents.GetValueOrDefault(subAgentId) is { } found ? ToPublicDetail(found) : null);
     }
 
     /// <inheritdoc />
@@ -224,8 +243,23 @@ public sealed class InMemorySessionStore : SessionStoreBase
             .Where(d => (string.IsNullOrWhiteSpace(status) || string.Equals(d.Status.ToString(), status, StringComparison.OrdinalIgnoreCase))
                 && (parentSessionId is null || d.ParentSessionId == parentSessionId)
                 && (childAgentId is null || d.ChildAgentId == childAgentId))
-            .OrderByDescending(d => d.StartedAt).Skip(offset).Take(limit).ToArray());
+            .OrderByDescending(d => d.StartedAt).Skip(offset).Take(limit).Select(ToPublicDetail).ToArray());
     }
+
+    private SubAgentRetainedRun CreateRetainedRun(SubAgentInfo info)
+    {
+        var retained = SubAgentRetainedRun.Create(info);
+        if (_redactor is null) return retained;
+        var json = _redactor.Redact(JsonSerializer.Serialize(retained));
+        return JsonSerializer.Deserialize<SubAgentRetainedRun>(json)
+            ?? throw new InvalidOperationException("Invalid redacted retained sub-agent detail.");
+    }
+
+    // A record 'with' clone preserves the runtime subtype. Deserialize the explicitly bounded
+    // base contract instead: object/array serializers must never see the persistence envelope.
+    private static SubAgentRunDetail ToPublicDetail(SubAgentRetainedRun retained) =>
+        JsonSerializer.Deserialize<SubAgentRunDetail>(JsonSerializer.Serialize<SubAgentRunDetail>(retained))
+            ?? throw new InvalidOperationException("Invalid retained sub-agent detail.");
 
     private static bool MatchesCleanupFence(GatewaySession session, SessionCleanupFence fence) =>
         ConversationIdsMatch(session.ConversationId, fence.ConversationId)

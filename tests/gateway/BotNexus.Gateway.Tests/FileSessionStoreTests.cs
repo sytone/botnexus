@@ -247,8 +247,9 @@ public sealed class FileSessionStoreTests
         if (scenario == "running") await store.UpdateSubAgentSessionAsync(RetainedRun(SubAgentStatus.Running));
         if (scenario == "owner")
         {
-            await store.UpdateSubAgentSessionAsync(RetainedRun() with { ParentAgentId = "other-agent" });
-            await Should.ThrowAsync<UnauthorizedAccessException>(() => store.ConsumeSubAgentResultAsync("file-run", parent.SessionId, originalConversation, ReceiptResult("call")));
+            await Should.ThrowAsync<UnauthorizedAccessException>(() =>
+                store.UpdateSubAgentSessionAsync(RetainedRun() with { ParentAgentId = "other-agent" }));
+            (await fixture.CreateStore().GetSubAgentSessionAsync("file-run")).ShouldNotBeNull().ParentAgentId.ShouldBe("agent-a");
         }
         else await Should.ThrowAsync<InvalidOperationException>(() => store.ConsumeSubAgentResultAsync("file-run", parent.SessionId, originalConversation, ReceiptResult("call")));
         if (fixture.FileSystem.File.Exists(fixture.HistoryPath("parent")))

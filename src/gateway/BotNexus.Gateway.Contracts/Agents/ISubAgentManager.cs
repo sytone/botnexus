@@ -51,6 +51,11 @@ public interface ISubAgentManager
     /// <returns>The sub-agent metadata when found; otherwise <see langword="null" />.</returns>
     Task<SubAgentInfo?> GetAsync(string subAgentId, CancellationToken ct = default);
 
+    /// <summary>Inspects only an exact original parent's durable child result or tool history. Never waits, consumes, dispatches, or restarts work.</summary>
+    Task<string> InspectAsync(string subAgentId, SessionId parentSessionId, string action, int offset = 0,
+        int limit = 20, CancellationToken ct = default)
+        => throw new NotSupportedException("This manager does not support retained inspection.");
+
     /// <summary>Joins a run's terminal boundary without consuming its result.</summary>
     Task<SubAgentInfo> WaitAsync(string subAgentId, SessionId parentSessionId, CancellationToken ct = default)
         => throw new NotSupportedException("This manager does not support joining sub-agent runs.");
