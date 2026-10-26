@@ -143,8 +143,20 @@ public static class ResponsesStreamParser
 
             if (string.Equals(evt.Event, "error", StringComparison.Ordinal))
             {
-                emitError(stream, model,
-                    ProviderHttpErrorHelper.RedactDiagnosticText(evt.Data, secretRedactor), null);
+                string detail;
+                try
+                {
+                    using var errorDocument = JsonDocument.Parse(evt.Data);
+                    detail = errorDocument.RootElement.GetErrorMessage();
+                }
+                catch (JsonException)
+                {
+                    // Some endpoints send plain-text error data. Preserve the existing redacted,
+                    // bounded diagnostic rather than discarding the only failure signal.
+                    detail = evt.Data;
+                }
+                detail = ProviderHttpErrorHelper.RedactDiagnosticText(detail, secretRedactor);
+                emitError(stream, model, detail.Length > 512 ? detail[..512] : detail, contentBlocks);
                 return;
             }
 
@@ -511,7 +523,7 @@ public static class ResponsesStreamParser
                 {
                     var message = ProviderHttpErrorHelper.RedactDiagnosticText(
                         root.GetErrorMessage(), secretRedactor);
-                    emitError(stream, model, message, contentBlocks);
+                    emitError(stream, model, message.Length > 512 ? message[..512] : message, contentBlocks);
                     return;
                 }
             }
@@ -582,6 +594,16 @@ public static class ResponsesStreamParser
     /// </summary>
     internal static string GetErrorMessage(this JsonElement root)
     {
+        if (TryGetObjectProperty(root, "error", out var directError) && directError.ValueKind == JsonValueKind.Object)
+        {
+            return $"{GetString(directError, "code") ?? "unknown"}: {GetString(directError, "message") ?? "no message"}";
+        }
+
+        if (TryGetObjectProperty(root, "code", out var directCode) && directCode.ValueKind == JsonValueKind.String)
+        {
+            return $"{directCode.GetString()}: {GetString(root, "message") ?? "no message"}";
+        }
+
         if (TryGetObjectProperty(root, "response", out var response) &&
             TryGetObjectProperty(response, "error", out var error) &&
             error.ValueKind == JsonValueKind.Object)
