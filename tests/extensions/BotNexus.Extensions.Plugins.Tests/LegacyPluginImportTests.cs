@@ -8,6 +8,7 @@ namespace BotNexus.Extensions.Plugins.Tests;
 /// <summary>Pins legacy root skills import, without opting into any versioned plugin dialect.</summary>
 public sealed class LegacyPluginImportTests : IDisposable
 {
+    private const string Source = "https://plugins.example.invalid/legacy.git";
     private readonly string _root = Path.Combine(Path.GetTempPath(), "legacy-import-tests", Guid.NewGuid().ToString("N"));
     private readonly FakePluginSourceFetcher _fetcher = new();
     private readonly PluginStateStore _store;
@@ -192,7 +193,7 @@ public sealed class LegacyPluginImportTests : IDisposable
                 if (File.Exists(link)) File.Delete(link);
                 File.CreateSymbolicLink(link, Path.Combine(staging, "absent"));
             }));
-            Rejected(await manager.InstallAsync(new PluginInstallRequest { Source = "fake" }), path);
+            Rejected(await manager.InstallAsync(new PluginInstallRequest { Source = Source }), path);
         }
         foreach (var path in new[] { "Plugin.json", "Mcp.json", "COM.GITHUB.COPILOT/config.json", ".botnexus-plugin/Plugin.json" })
         {
@@ -214,7 +215,7 @@ public sealed class LegacyPluginImportTests : IDisposable
         }
     }
 
-    private Task<PluginOperationResult> Install() => _manager.InstallAsync(new PluginInstallRequest { Source = "fake" });
+    private Task<PluginOperationResult> Install() => _manager.InstallAsync(new PluginInstallRequest { Source = Source });
     private void Rejected(PluginOperationResult result, params string[] fields)
     {
         result.Outcome.ShouldBe(PluginOperationOutcome.Failed);

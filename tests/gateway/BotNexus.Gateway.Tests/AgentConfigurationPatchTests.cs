@@ -140,7 +140,8 @@ public sealed class AgentConfigurationPatchTests
             var descriptor = Assert.Single(await source.LoadAsync());
             Assert.Equal(91, descriptor.Metadata["toolTimeoutSeconds"]);
             var sessions = new Moq.Mock<BotNexus.Gateway.Abstractions.Sessions.ISessionStore>();
-            sessions.Setup(m => m.ListAsync(Moq.It.IsAny<BotNexus.Domain.Primitives.AgentId>(), Moq.It.IsAny<CancellationToken>())).ReturnsAsync([]);
+            sessions.Setup(m => m.ListSummaryPageAsync(Moq.It.IsAny<BotNexus.Gateway.Abstractions.Sessions.SessionSummaryQuery>(), Moq.It.IsAny<CancellationToken>()))
+                .ReturnsAsync(BotNexus.Gateway.Abstractions.Sessions.SessionSummaryPage.Empty);
             var sessionTool = new BotNexus.Gateway.Tools.SessionTool(sessions.Object, descriptor.AgentId,
                 Enum.Parse<BotNexus.Gateway.Tools.SessionAccessLevel>(descriptor.SessionAccessLevel, true), descriptor.SessionAllowedAgents);
             await sessionTool.ExecuteAsync("allowed", new Dictionary<string, object?> { ["action"] = "list", ["agentId"] = "peer" });

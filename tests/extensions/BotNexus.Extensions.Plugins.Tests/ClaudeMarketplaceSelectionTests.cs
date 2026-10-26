@@ -11,6 +11,7 @@ namespace BotNexus.Extensions.Plugins.Tests;
 // Also compiled directly into the focused no-host console harness. No gateway or test host.
 public sealed class ClaudeMarketplaceSelectionTests
 {
+    private const string Source = "https://plugins.example.invalid/repository.git";
 #if !MARKETPLACE_NOHOST
     [Xunit.Fact]
 #endif
@@ -24,7 +25,7 @@ public sealed class ClaudeMarketplaceSelectionTests
             Check(installed.Outcome == PluginOperationOutcome.Installed, "relative install: " + Describe(installed));
             var record = new PluginStateStore(fixture.Root).Find("chosen") ?? throw new Exception("missing persisted receipt");
             Check(JsonSerializer.Serialize(record).Contains("\"marketplacePluginName\":\"chosen\""), "selector persisted");
-            Check(record.Source == "repository" && record.Reference == "branch" && record.ResolvedVersion == "revision-1", "source revision receipt");
+            Check(record.Source == Source && record.Reference == "branch" && record.ResolvedVersion == "revision-1", "source revision receipt");
             Check(record.Files.Contains("skills/greet/SKILL.md") && record.Files.Contains("trust.json"), "selected files recorded");
             if (relative != "./")
             {
@@ -71,7 +72,7 @@ public sealed class ClaudeMarketplaceSelectionTests
             Check(File.ReadAllText(Path.Combine(destination, "local.txt")) == "keep" && !File.Exists(Path.Combine(destination, "skills/new/SKILL.md")), "exact set removal");
             Discover(fixture);
             Check(fixture.Manager.List().Count == 0 && fixture.Fetcher.Staging.All(path => !Directory.Exists(path)), "state and staging cleanup");
-            Check(fixture.Fetcher.Calls.All(call => call == "repository:branch"), "update refetches repository reference");
+            Check(fixture.Fetcher.Calls.All(call => call == Source + ":branch"), "update refetches repository reference");
         }
     }
 
@@ -160,7 +161,7 @@ public sealed class ClaudeMarketplaceSelectionTests
     {
         using var fixture = new Fixture();
         fixture.Fetcher.Write = root => { Write(root, ".botnexus-plugin/plugin.json", "{\"name\":\"native\",\"hooks\":\"./hooks\"}"); Write(root, "hooks/a.json", "{}"); };
-        Check((await fixture.Manager.InstallAsync(new PluginInstallRequest { Source = "repository" })).Outcome == PluginOperationOutcome.Installed, "native unchanged");
+        Check((await fixture.Manager.InstallAsync(new PluginInstallRequest { Source = Source })).Outcome == PluginOperationOutcome.Installed, "native unchanged");
     }
 
 #if !MARKETPLACE_NOHOST
@@ -416,7 +417,7 @@ public sealed class ClaudeMarketplaceSelectionTests
     }
 
     private static PluginInstallRequest Request(string selector = "chosen", string? name = null) =>
-        JsonSerializer.Deserialize<PluginInstallRequest>(JsonSerializer.Serialize(new { Source = "repository", Reference = "branch", Name = name, MarketplacePluginName = selector })) ?? throw new Exception("request deserialize");
+        JsonSerializer.Deserialize<PluginInstallRequest>(JsonSerializer.Serialize(new { Source = Source, Reference = "branch", Name = name, MarketplacePluginName = selector })) ?? throw new Exception("request deserialize");
     private static string Populate(string root, string relative, bool manifest = true)
     {
         Write(root, ".claude-plugin/marketplace.json", JsonSerializer.Serialize(new { name = "market", owner = new { name = "owner" }, plugins = new[] { new { name = "chosen", source = relative }, new { name = "sibling", source = "./sibling" } } }));

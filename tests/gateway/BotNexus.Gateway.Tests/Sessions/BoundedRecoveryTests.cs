@@ -44,6 +44,9 @@ public sealed class BoundedRecoveryTests
             Pooling = false
         }.ToString();
         var conversations = new Mock<IConversationStore>();
+        // Every reopened store checks canonical ownership before quarantining dangling sessions.
+        conversations.Setup(s => s.GetOwnershipAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ConversationId id, CancellationToken _) => new ConversationOwnership(id, AgentId.From("agent")));
         conversations.Setup(s => s.GetAsync(It.IsAny<ConversationId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ConversationId id, CancellationToken _) => new Conversation
             {
