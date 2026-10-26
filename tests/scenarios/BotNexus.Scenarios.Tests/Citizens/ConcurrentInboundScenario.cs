@@ -40,46 +40,53 @@ public sealed class ConcurrentInboundScenario
         });
         _ = await world.GivenAgentAsync("contention-agent");
 
-        const int concurrency = 10;
-        var inbounds = Enumerable.Range(0, concurrency)
-            .Select(i => world.WhenSendsAsync(
-                fromUser: "carla",
-                toAgent: "contention-agent",
-                content: $"concurrent-{i}"))
-            .ToArray();
+        try
+        {
+            const int concurrency = 10;
+            var inbounds = Enumerable.Range(0, concurrency)
+                .Select(i => world.WhenSendsAsync(
+                    fromUser: "carla",
+                    toAgent: "contention-agent",
+                    content: $"concurrent-{i}"))
+                .ToArray();
 
-        // Act — fire all ten in parallel and wait for them all to enter the dispatcher.
-        await Task.WhenAll(inbounds);
+            // Act — fire all ten in parallel and wait for them all to enter the dispatcher.
+            await Task.WhenAll(inbounds);
 
-        // Wait until the provider has been invoked for every inbound — that is the strongest
-        // signal that the gateway has finished serializing each one through the per-conversation
-        // queue. If the gateway has a race that drops or duplicates, TurnCount will not match.
-        await TestAwait.EventuallyAsync(
-            () => world.Provider.TurnCount >= concurrency,
-            $"all {concurrency} concurrent inbounds to reach the provider");
+            // Wait until the provider has been invoked for every inbound — that is the strongest
+            // signal that the gateway has finished serializing each one through the per-conversation
+            // queue. If the gateway has a race that drops or duplicates, TurnCount will not match.
+            await TestAwait.EventuallyAsync(
+                () => world.Provider.TurnCount >= concurrency,
+                $"all {concurrency} concurrent inbounds to reach the provider");
 
-        // Assert — exactly ONE conversation exists for this agent. The routing rule
-        // (channelType, channelAddress) -> conversation is 1:1 by construction; if a race
-        // window opens during "first inbound for this address" handling, the
-        // conversation store will hold N rows instead of 1.
-        var conversations = await world.ListConversationsForAgentAsync("contention-agent");
-        conversations.Count.ShouldBe(
-            1,
-            $"expected exactly 1 conversation under concurrent inbound, observed {conversations.Count} " +
-            "— a race in DefaultConversationRouter's 'find or create' for new (channelType, channelAddress) tuples");
+            // Assert — exactly ONE conversation exists for this agent. The routing rule
+            // (channelType, channelAddress) -> conversation is 1:1 by construction; if a race
+            // window opens during "first inbound for this address" handling, the
+            // conversation store will hold N rows instead of 1.
+            var conversations = await world.ListConversationsForAgentAsync("contention-agent");
+            conversations.Count.ShouldBe(
+                1,
+                $"expected exactly 1 conversation under concurrent inbound, observed {conversations.Count} " +
+                "— a race in DefaultConversationRouter's 'find or create' for new (channelType, channelAddress) tuples");
 
-        var conversation = conversations[0];
-        conversation.ChannelBindings.Count.ShouldBe(
-            1,
-            $"expected exactly 1 binding on the shared conversation, observed {conversation.ChannelBindings.Count}");
-        conversation.ChannelBindings[0].ChannelAddress.ShouldBe("carla");
+            var conversation = conversations[0];
+            conversation.ChannelBindings.Count.ShouldBe(
+                1,
+                $"expected exactly 1 binding on the shared conversation, observed {conversation.ChannelBindings.Count}");
+            conversation.ChannelBindings[0].ChannelAddress.ShouldBe("carla");
 
-        // And the provider was invoked exactly N times — proves all inbounds were processed
-        // (none silently dropped) and none re-dispatched (no duplicate execution).
-        world.Provider.TurnCount.ShouldBe(
-            concurrency,
-            $"expected exactly {concurrency} provider invocations, observed {world.Provider.TurnCount} " +
-            "— some inbounds were dropped or duplicated by the dispatcher");
+            // And the provider was invoked exactly N times — proves all inbounds were processed
+            // (none silently dropped) and none re-dispatched (no duplicate execution).
+            world.Provider.TurnCount.ShouldBe(
+                concurrency,
+                $"expected exactly {concurrency} provider invocations, observed {world.Provider.TurnCount} " +
+                "— some inbounds were dropped or duplicated by the dispatcher");
+        }
+        catch (Exception error)
+        {
+            throw new InvalidOperationException(world.DescribeInboundProgress(), error);
+        }
     }
 
     [Fact]
@@ -95,41 +102,48 @@ public sealed class ConcurrentInboundScenario
         });
         _ = await world.GivenAgentAsync("multi-user-agent");
 
-        const int users = 8;
-        var inbounds = Enumerable.Range(0, users)
-            .Select(i => world.WhenSendsAsync(
-                fromUser: $"user-{i}",
-                toAgent: "multi-user-agent",
-                content: $"hello from user-{i}"))
-            .ToArray();
-
-        await Task.WhenAll(inbounds);
-
-        await TestAwait.EventuallyAsync(
-            () => world.Provider.TurnCount >= users,
-            $"all {users} distinct-address inbounds to reach the provider");
-
-        // Assert — exactly N conversations (one per channel address).
-        var conversations = await world.ListConversationsForAgentAsync("multi-user-agent");
-        conversations.Count.ShouldBe(
-            users,
-            $"expected exactly {users} conversations (one per channel address), observed {conversations.Count} " +
-            "— either router conflated addresses, or some inbound failed to create its conversation");
-
-        // And each conversation has its own distinct binding — no shared / cross-contaminated bindings.
-        var bindingAddresses = conversations
-            .SelectMany(c => c.ChannelBindings.Select(b => b.ChannelAddress))
-            .OrderBy(a => a)
-            .ToArray();
-        bindingAddresses.Distinct().Count().ShouldBe(
-            users,
-            "expected one distinct ChannelAddress per conversation; duplicate addresses indicate cross-contamination");
-
-        for (var i = 0; i < users; i++)
+        try
         {
-            bindingAddresses.ShouldContain(
-                $"user-{i}",
-                $"missing binding for user-{i} — that conversation never reached the store");
+            const int users = 8;
+            var inbounds = Enumerable.Range(0, users)
+                .Select(i => world.WhenSendsAsync(
+                    fromUser: $"user-{i}",
+                    toAgent: "multi-user-agent",
+                    content: $"hello from user-{i}"))
+                .ToArray();
+
+            await Task.WhenAll(inbounds);
+
+            await TestAwait.EventuallyAsync(
+                () => world.Provider.TurnCount >= users,
+                $"all {users} distinct-address inbounds to reach the provider");
+
+            // Assert — exactly N conversations (one per channel address).
+            var conversations = await world.ListConversationsForAgentAsync("multi-user-agent");
+            conversations.Count.ShouldBe(
+                users,
+                $"expected exactly {users} conversations (one per channel address), observed {conversations.Count} " +
+                "— either router conflated addresses, or some inbound failed to create its conversation");
+
+            // And each conversation has its own distinct binding — no shared / cross-contaminated bindings.
+            var bindingAddresses = conversations
+                .SelectMany(c => c.ChannelBindings.Select(b => b.ChannelAddress))
+                .OrderBy(a => a)
+                .ToArray();
+            bindingAddresses.Distinct().Count().ShouldBe(
+                users,
+                "expected one distinct ChannelAddress per conversation; duplicate addresses indicate cross-contamination");
+
+            for (var i = 0; i < users; i++)
+            {
+                bindingAddresses.ShouldContain(
+                    $"user-{i}",
+                    $"missing binding for user-{i} — that conversation never reached the store");
+            }
+        }
+        catch (Exception error)
+        {
+            throw new InvalidOperationException(world.DescribeInboundProgress(), error);
         }
     }
 }
