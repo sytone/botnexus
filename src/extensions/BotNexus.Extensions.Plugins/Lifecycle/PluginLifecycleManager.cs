@@ -381,6 +381,12 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
         string? expectedName,
         CancellationToken cancellationToken)
     {
+        if (!GitPluginSourcePolicy.IsSupported(source))
+        {
+            return new StagedPlugin(null, null, null, PluginOperationResult.Failure(
+                expectedName ?? string.Empty, "source", GitPluginSourcePolicy.RejectedSourceMessage));
+        }
+
         var staging = Path.Combine(
             Path.GetTempPath(),
             "botnexus-plugin-staging",
@@ -395,13 +401,17 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
             {
                 fetch = await _fetcher.FetchAsync(source, reference, staging, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+            catch (Exception)
             {
                 TryDeleteDirectory(staging);
                 return new StagedPlugin(null, null, null, PluginOperationResult.Failure(
                     reportName,
                     "source",
-                    $"Failed to fetch plugin source '{source}': {ex.Message}"));
+                    GitPluginSourcePolicy.FetchFailureMessage));
             }
 
             if (string.IsNullOrWhiteSpace(fetch.ResolvedVersion))
@@ -410,7 +420,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 return new StagedPlugin(null, null, null, PluginOperationResult.Failure(
                     reportName,
                     "resolvedVersion",
-                    $"Plugin source '{source}' did not report a resolved version."));
+                    "Plugin source did not report a resolved version."));
             }
 
             var parse = _importer.ParseDirectory(staging, expectedName);
@@ -428,7 +438,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 return new StagedPlugin(null, null, null, PluginOperationResult.Failure(
                     expectedName,
                     "name",
-                    $"Plugin source '{source}' declares name '{manifest.Name}', which does not match the requested '{expectedName}'."));
+                    $"Plugin manifest declares name '{manifest.Name}', which does not match the requested '{expectedName}'."));
             }
 
             return new StagedPlugin(staging, fetch.ResolvedVersion, manifest, null, imported.Format);

@@ -48,7 +48,7 @@ public sealed class ManifestlessClaudeImportTests : IDisposable
             var fetcher = new FakePluginSourceFetcher();
             fetcher.Enqueue("v1", Skills());
             var result = await new PluginLifecycleManager(_store, fetcher).InstallAsync(
-                new PluginInstallRequest { Source = "operator-name", Name = name });
+                new PluginInstallRequest { Source = "https://example.com/operator-name.git", Name = name });
             AssertRejected(result, "name");
             fetcher.StagingDirectories.ShouldAllBe(path => !Directory.Exists(path));
         }
@@ -75,7 +75,7 @@ public sealed class ManifestlessClaudeImportTests : IDisposable
         _fetcher.Enqueue("v1", new Dictionary<string, string>());
         var empty = new MutatingFetcher(_fetcher, staging => Directory.CreateDirectory(Path.Combine(staging, "skills")));
         AssertRejected(await new PluginLifecycleManager(_store, empty).InstallAsync(
-            new PluginInstallRequest { Source = "fake", Name = "operator-name" }), "skills");
+            new PluginInstallRequest { Source = "https://example.com/fake.git", Name = "operator-name" }), "skills");
     }
 
     [Fact]
@@ -120,7 +120,7 @@ public sealed class ManifestlessClaudeImportTests : IDisposable
             });
             // A source error (including unavailable link privileges) must not satisfy this assertion.
             AssertRejected(await new PluginLifecycleManager(_store, fetcher).InstallAsync(
-                new PluginInstallRequest { Source = "fake", Name = "operator-name" }), path);
+                new PluginInstallRequest { Source = "https://example.com/fake.git", Name = "operator-name" }), path);
         }
     }
 
@@ -166,7 +166,7 @@ public sealed class ManifestlessClaudeImportTests : IDisposable
         record.ResolvedVersion.ShouldBe("v3");
         record.ManifestFormat.ShouldBe(PluginManifestFormat.Claude);
         File.Exists(Path.Combine(_root, "operator-name", "skills", "greet", "SKILL.md")).ShouldBeFalse();
-        _fetcher.Calls.ShouldAllBe(call => call.Source == "fake-source-not-the-name");
+        _fetcher.Calls.ShouldAllBe(call => call.Source == "https://example.com/fake-source-not-the-name.git");
         _manager.Remove("operator-name").Outcome.ShouldBe(PluginOperationOutcome.Removed);
         Directory.Exists(Path.Combine(_root, "operator-name")).ShouldBeFalse();
         _fetcher.StagingDirectories.ShouldAllBe(path => !Directory.Exists(path));
@@ -188,7 +188,7 @@ public sealed class ManifestlessClaudeImportTests : IDisposable
             var fetcher = new MutatingFetcher(_fetcher, staging =>
                 Directory.CreateDirectory(Path.Combine(staging, path.Replace('/', Path.DirectorySeparatorChar))));
             AssertRejected(await new PluginLifecycleManager(_store, fetcher).InstallAsync(
-                new PluginInstallRequest { Source = "fake", Name = "operator-name" }));
+                new PluginInstallRequest { Source = "https://example.com/fake.git", Name = "operator-name" }));
         }
     }
 
@@ -303,7 +303,7 @@ public sealed class ManifestlessClaudeImportTests : IDisposable
             _manager.Remove("operator-name").Outcome.ShouldBe(PluginOperationOutcome.Removed);
             Directory.Exists(Path.Combine(_root, "operator-name")).ShouldBeFalse();
         }
-        _fetcher.Calls.ShouldAllBe(call => call.Source == "fake-source-not-the-name");
+        _fetcher.Calls.ShouldAllBe(call => call.Source == "https://example.com/fake-source-not-the-name.git");
         _fetcher.StagingDirectories.ShouldAllBe(path => !Directory.Exists(path));
     }
 
@@ -321,7 +321,7 @@ public sealed class ManifestlessClaudeImportTests : IDisposable
     }
 
     private Task<PluginOperationResult> Install(string? name) => _manager.InstallAsync(
-        new PluginInstallRequest { Source = "fake-source-not-the-name", Name = name });
+        new PluginInstallRequest { Source = "https://example.com/fake-source-not-the-name.git", Name = name });
 
     private void AssertRejected(PluginOperationResult result, params string[] fields)
     {
