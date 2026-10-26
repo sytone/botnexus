@@ -826,6 +826,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 FROM session_history h
                 INNER JOIN sessions s ON s.id = h.session_id
                 WHERE h.is_crash_sentinel = 1
+                  AND lower(trim(coalesce(s.status, 'active'))) NOT IN ('sealed', 'expired', 'closed', '2', '3')
                   AND ($cursor IS NULL OR h.session_id > $cursor)
                 ORDER BY h.session_id
                 LIMIT $limit

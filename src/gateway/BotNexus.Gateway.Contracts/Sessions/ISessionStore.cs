@@ -287,7 +287,7 @@ public interface ISessionStore
     }
 
     /// <summary>
-    /// Returns one globally-scoped, bounded, transcript-free page of sessions that still contain crash sentinels.
+    /// Returns one globally-scoped, bounded, transcript-free page of nonterminal sessions that still contain crash sentinels.
     /// Callers hydrate one selected session at a time through <see cref="GetAsync"/>.
     /// </summary>
     async Task<UnresolvedCrashSentinelPage> ListUnresolvedCrashSentinelsAsync(
@@ -298,7 +298,8 @@ public interface ISessionStore
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         var sessions = await ListAsync(null, cancellationToken).ConfigureAwait(false);
         var rows = sessions
-            .Where(session => session.History.Any(static entry => entry.IsCrashSentinel))
+            .Where(session => !SessionMutationPolicy.IsTerminal(session.Status)
+                && session.History.Any(static entry => entry.IsCrashSentinel))
             .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
             .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
             .Take(limit + 1)
