@@ -13,12 +13,13 @@ namespace BotNexus.Gateway.Sessions;
 /// In-memory session store for development and testing.
 /// Not durable — all sessions are lost on restart.
 /// </summary>
-public sealed class InMemorySessionStore : SessionStoreBase
+public sealed partial class InMemorySessionStore : SessionStoreBase
 {
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
     private readonly Dictionary<SessionId, GatewaySession> _sessions = [];
     private readonly Lock _sync = new();
     private readonly ISecretRedactor? _redactor;
+    private readonly IConversationStore? _conversationStore;
     private readonly LegacyConversationResolver? _legacyResolver;
     private readonly ILogger<InMemorySessionStore>? _logger;
 
@@ -46,6 +47,7 @@ public sealed class InMemorySessionStore : SessionStoreBase
         : base(conversationStore)
     {
         _redactor = redactor;
+        _conversationStore = conversationStore;
         _legacyResolver = conversationStore is not null
             ? new LegacyConversationResolver(conversationStore, logger: null)
             : null;

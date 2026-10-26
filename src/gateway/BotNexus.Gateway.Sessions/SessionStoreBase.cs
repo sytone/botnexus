@@ -332,16 +332,19 @@ public abstract class SessionStoreBase : ISessionStore
             offset);
     }
 
-    /// <summary>
-    /// Filter-then-window summary page for stores without a query engine (#2532). Filtering
-    /// happens before the slice so <c>Offset</c> addresses the filtered set - the invariant the
-    /// controller's old post-hoc LINQ broke.
-    /// </summary>
+    /// <summary>Fails closed unless the backend implements a bounded content read.</summary>
+    public virtual Task<SessionHistoryScanPage> ScanHistoryAsync(SessionId sessionId, SessionHistoryScan scan,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This store does not support bounded history reads.");
+
+    /// <summary>Filters summaries before applying a deterministic paging window.</summary>
     public virtual async Task<SessionSummaryPage> ListSummaryPageAsync(
         SessionSummaryQuery query,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
+        if (query.MetadataOnly)
+            throw new NotSupportedException("This store does not support metadata-only summary reads.");
         var sessions = await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false);
         return SessionSummaryWindow.ApplyQuery(sessions.Select(SessionSummary.FromSession), query);
     }

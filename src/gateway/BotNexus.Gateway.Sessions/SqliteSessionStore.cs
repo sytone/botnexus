@@ -1279,7 +1279,18 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             // the conversation store is a separate database and must not be queried while a reader
             // holds this one.
             List<string>? conversationIds = null;
-            if (query.AgentId is { Length: > 0 } agentFilter)
+            Dictionary<string, string>? canonicalOwners = null;
+            if (query.MetadataOnly)
+            {
+                var ownership = await _conversationStore.ListOwnershipAsync(
+                    query.AgentId is { Length: > 0 } ownerFilter ? AgentId.From(ownerFilter) : null,
+                    cancellationToken).ConfigureAwait(false);
+                canonicalOwners = ownership.ToDictionary(c => c.ConversationId.Value, c => c.AgentId.Value, StringComparer.Ordinal);
+                conversationIds = canonicalOwners.Keys.Where(id => query.ConversationIdFilter is null
+                    || string.Equals(id, query.ConversationIdFilter, StringComparison.Ordinal)).ToList();
+                if (conversationIds.Count == 0) return SessionSummaryPage.Empty;
+            }
+            else if (query.AgentId is { Length: > 0 } agentFilter)
             {
                 var owned = await _conversationStore
                     .ListAsync(AgentId.From(agentFilter), cancellationToken)
@@ -1383,7 +1394,9 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             var summaries = new List<SessionSummary>(rows.Count);
             foreach (var row in rows)
             {
-                var agentId = await ResolveAgentForConversationAsync(row.ConversationId, cancellationToken).ConfigureAwait(false);
+                var agentId = canonicalOwners is not null
+                    ? canonicalOwners.GetValueOrDefault(row.ConversationId ?? "")
+                    : await ResolveAgentForConversationAsync(row.ConversationId, cancellationToken).ConfigureAwait(false);
                 if (string.IsNullOrEmpty(agentId))
                     continue;
 
@@ -2089,7 +2102,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             if (!resolution.TryGetValue(convIdValue, out var exists))
             {
                 var conversation = await conversationStore
-                    .GetAsync(ConversationId.From(convIdValue), cancellationToken)
+                    .GetOwnershipAsync(ConversationId.From(convIdValue), cancellationToken)
                     .ConfigureAwait(false);
                 exists = conversation is not null;
                 resolution[convIdValue] = exists;
