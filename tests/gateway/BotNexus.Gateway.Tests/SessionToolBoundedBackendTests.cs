@@ -274,13 +274,25 @@ public sealed class SessionToolBoundedBackendTests
     [Fact]
     public async Task MemoryScan_LargeHistoryMaterializesOnlyBoundedPrefix()
     {
+        var entry = new SessionEntry { Role = MessageRole.User, Content = "needle" };
+        // Warm the scan path on a separate small store, not the measured history. The first
+        // scan of the large store stays measured so cold full-history materialization fails.
+        var warmupStore = new InMemorySessionStore();
+        var warmupSession = new GatewaySession { SessionId = SessionId.From("warmup"), AgentId = AgentId.From("owner") };
+        warmupSession.AddEntries(Enumerable.Repeat(entry, 11));
+        await warmupStore.SaveAsync(warmupSession);
+        var warmup = warmupStore.ScanHistoryAsync(warmupSession.SessionId, new(warmupSession.AgentId, 10, 1024));
+        warmup.IsCompletedSuccessfully.ShouldBeTrue("In-memory scans must complete on the measuring thread");
+        await warmup;
+
         var store = new InMemorySessionStore();
         var session = new GatewaySession { SessionId = SessionId.From("large"), AgentId = AgentId.From("owner") };
-        var entry = new SessionEntry { Role = MessageRole.User, Content = "needle" };
         session.AddEntries(Enumerable.Repeat(entry, 300_000));
         await store.SaveAsync(session);
         var before = GC.GetAllocatedBytesForCurrentThread();
-        var page = await store.ScanHistoryAsync(session.SessionId, new(session.AgentId, 10, 1024));
+        var pending = store.ScanHistoryAsync(session.SessionId, new(session.AgentId, 10, 1024));
+        pending.IsCompletedSuccessfully.ShouldBeTrue("In-memory scans must complete on the measuring thread");
+        var page = await pending;
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         page.Entries.Count.ShouldBe(10);
         page.Complete.ShouldBeFalse();
