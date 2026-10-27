@@ -542,7 +542,7 @@ public sealed class InProcessAgentHandleInterruptedRunEvidenceTests
         }
     }
 
-    private sealed class Fixture : IAsyncDisposable
+    internal sealed class Fixture : IAsyncDisposable
     {
         public ScriptedProvider Provider { get; } = new();
         public ReadTool Tool { get; }
@@ -609,11 +609,12 @@ public sealed class InProcessAgentHandleInterruptedRunEvidenceTests
     private static AgentToolResult Result()
         => new([new AgentToolContent(AgentToolContentType.Text, "harmless content")]);
 
-    private sealed class ScriptedProvider : IApiProvider
+    internal sealed class ScriptedProvider : IApiProvider
     {
         public string Api => "test-api";
         public int Calls { get; private set; }
         public bool TextOnly { get; set; }
+        public string Text { get; set; } = "finished";
         public bool AbortFirst { get; set; }
         public bool FailAfterTool { get; set; }
         public LlmStream Stream(LlmModel model, Context context, StreamOptions? options = null)
@@ -622,7 +623,7 @@ public sealed class InProcessAgentHandleInterruptedRunEvidenceTests
         {
             var index = Calls++;
             if (FailAfterTool && index > 0) throw new InvalidOperationException("provider failure 4101");
-            var content = TextOnly ? new ContentBlock[] { new TextContent("finished") } : index switch
+            var content = TextOnly ? new ContentBlock[] { new TextContent(Text) } : index switch
             {
                 0 => new ContentBlock[] { new TextContent("first check"), Call("completed-4101") },
                 1 => new ContentBlock[] { new TextContent("second check"), Call("interrupted-4101") },
@@ -645,7 +646,7 @@ public sealed class InProcessAgentHandleInterruptedRunEvidenceTests
         }
     }
 
-    private sealed class ReadTool(bool block) : IAgentTool
+    internal sealed class ReadTool(bool block) : IAgentTool
     {
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public string Name => "read";
