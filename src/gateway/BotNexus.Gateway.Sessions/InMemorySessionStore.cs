@@ -86,6 +86,74 @@ public sealed partial class InMemorySessionStore : SessionStoreBase
         activity?.SetTag("botnexus.session.id", session.SessionId);
         activity?.SetTag("botnexus.agent.id", session.AgentId);
 
+        await StampLegacyConversationAsync(session, cancellationToken).ConfigureAwait(false);
+        lock (_sync) _sessions[session.SessionId] = session;
+    }
+
+    /// <inheritdoc />
+    public override async Task<SessionSaveOutcome> SaveAsync(
+        GatewaySession session,
+        SessionWriteFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        // Resolve outside the synchronous lock, then check the authoritative row and replace it
+        // under the same lock used by save/delete/archive/cleanup. Completed-task reads alone
+        // cannot protect the fallback's check/write gap from another thread or legacy stamping.
+        await StampLegacyConversationAsync(session, cancellationToken).ConfigureAwait(false);
+        lock (_sync)
+        {
+            var current = _sessions.GetValueOrDefault(fence.ExpectedSessionId);
+            if (!SessionFenceEvaluator.Passes(fence, current))
+                return SessionSaveOutcome.Rebound;
+            if (fence.ExpectedContentFingerprint is { } expected &&
+                (current is null || SessionWriteFence.ContentFingerprint(current) != expected))
+                return SessionSaveOutcome.Conflict;
+            _sessions[session.SessionId] = session;
+            return SessionSaveOutcome.Persisted;
+        }
+    }
+
+    /// <inheritdoc />
+    public override Task<SessionAppendMutationResult> AppendEntriesAsync(SessionId sessionId,
+        IReadOnlyList<SessionEntry> entries, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            if (!_sessions.TryGetValue(sessionId, out var current))
+                return Task.FromResult(new SessionAppendMutationResult(SessionMutationOutcome.NotFound, 0));
+            if (SessionMutationPolicy.IsTerminal(current.Status))
+                return Task.FromResult(new SessionAppendMutationResult(SessionMutationOutcome.Conflict, 0));
+            if (entries.Count > 0)
+            {
+                current.AddEntries(entries);
+                current.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+            return Task.FromResult(new SessionAppendMutationResult(SessionMutationOutcome.Applied, entries.Count));
+        }
+    }
+
+    /// <inheritdoc />
+    public override Task<SessionMetadataMutationResult> PatchMetadataAsync(SessionId sessionId,
+        IReadOnlyDictionary<string, object?> patch, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            if (!_sessions.TryGetValue(sessionId, out var current))
+                return Task.FromResult(SessionMetadataMutationResult.NotFound);
+            SessionMutationPolicy.ApplyMetadataPatch(current.Metadata, patch);
+            current.UpdatedAt = DateTimeOffset.UtcNow;
+            return Task.FromResult(new SessionMetadataMutationResult(SessionMutationOutcome.Applied,
+                new Dictionary<string, object?>(current.Metadata)));
+        }
+    }
+
+    private async Task StampLegacyConversationAsync(GatewaySession session, CancellationToken cancellationToken)
+    {
         // Backfill outside the lock — the resolver may await a conversation store call.
         // _sync is non-async so we cannot hold it across the await anyway.
         if (!session.ConversationId.IsInitialized() && _legacyResolver is not null)
@@ -107,8 +175,6 @@ public sealed partial class InMemorySessionStore : SessionStoreBase
                 "Session {SessionId} for agent {AgentId} was saved with no ConversationId; stamped legacy conversation {LegacyConversationId}.",
                 session.SessionId, session.AgentId, legacy.ConversationId);
         }
-
-        lock (_sync) _sessions[session.SessionId] = session;
     }
 
     /// <inheritdoc />

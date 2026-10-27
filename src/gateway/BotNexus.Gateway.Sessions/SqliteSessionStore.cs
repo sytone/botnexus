@@ -393,7 +393,13 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 if (!SessionFenceEvaluator.Passes(fence, snapshot))
                 {
                     activity?.SetTag("botnexus.session.fence.rebound", true);
-                    return false;
+                    return SessionSaveOutcome.Rebound;
+                }
+                if (fence.ExpectedContentFingerprint is { } expected)
+                {
+                    var current = await LoadSessionAsync(connection, session.SessionId, cancellationToken, transaction).ConfigureAwait(false);
+                    if (current is null || SessionWriteFence.ContentFingerprint(current) != expected)
+                        return SessionSaveOutcome.Conflict;
                 }
 
                 var history = session.CaptureHistoryForPersistence();
@@ -411,10 +417,10 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 session.AcknowledgeHistoryPersistence(history, persistence.InsertedRowIds);
                 RecordHistoryMutation(activity, history, persistence);
-                return true;
+                return SessionSaveOutcome.Persisted;
             }, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            if (persisted)
+            if (persisted == SessionSaveOutcome.Persisted)
             {
                 // A successful fenced save can still originate from an aggregate retained across
                 // an independent narrow append. Evict after either outcome so the next read sees
@@ -424,6 +430,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             }
 
             _cache.Remove(session.SessionId);
+            if (persisted == SessionSaveOutcome.Conflict)
+                return SessionSaveOutcome.Conflict;
             _logger.LogInformation(
                 "Fenced session save for {SessionId} skipped as rebound: the on-disk row was deleted, sealed, " +
                 "or rebound to another conversation while the run was in flight (#1518).",
@@ -438,7 +446,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
     /// for issue #1518. Returns a synthetic <see cref="GatewaySession"/> carrying only those two
     /// values (never touches history or the conversation store) so
     /// <see cref="SessionFenceEvaluator.Passes"/> can evaluate it, or <c>null</c> when the row no
-    /// longer exists. Deliberately avoids <see cref="LoadSessionAsync(SqliteConnection, SessionId, CancellationToken)"/>,
+    /// longer exists. Deliberately avoids <see cref="LoadSessionAsync(SqliteConnection, SessionId, CancellationToken, SqliteTransaction?)"/>,
     /// which hydrates AgentId from the conversation store and would throw if a competing reset had
     /// already removed the conversation - the fence must observe "row gone" as a clean skip, not an
     /// exception.
@@ -763,7 +771,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
 
     /// <summary>
     /// Reads just the <c>status</c> column for a session, or <c>null</c> when the row does not exist.
-    /// The narrow mutations (#2132) use this instead of <see cref="LoadSessionAsync(SqliteConnection, SessionId, CancellationToken)"/>
+    /// The narrow mutations (#2132) use this instead of <see cref="LoadSessionAsync(SqliteConnection, SessionId, CancellationToken, SqliteTransaction?)"/>
     /// so a conflict probe never materialises the transcript or reaches into the conversation store.
     /// </summary>
     private static async Task<SessionStatus?> ReadStatusAsync(
@@ -2328,9 +2336,11 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         return await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<GatewaySession?> LoadSessionAsync(SqliteConnection connection, SessionId sessionId, CancellationToken cancellationToken)
+    private async Task<GatewaySession?> LoadSessionAsync(SqliteConnection connection, SessionId sessionId, CancellationToken cancellationToken,
+        SqliteTransaction? transaction = null)
     {
         await using var sessionCommand = connection.CreateCommand();
+        sessionCommand.Transaction = transaction;
         // P9-I (#674): agent_id column removed from SELECT — AgentId is hydrated via
         // HydrateAgentIdAsync below from Conversation.AgentId. The column itself is
         // dropped from the schema by DropLegacyAgentIdColumnAsync at startup.
@@ -2362,6 +2372,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         await reader.DisposeAsync().ConfigureAwait(false);
 
         await using var historyCommand = connection.CreateCommand();
+        historyCommand.Transaction = transaction;
         historyCommand.CommandText = """
             SELECT h.id, h.persistence_key, h.role,
                    COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END) AS content,

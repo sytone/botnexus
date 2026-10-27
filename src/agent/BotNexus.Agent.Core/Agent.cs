@@ -41,6 +41,45 @@ public sealed class Agent
     private TaskCompletionSource? _activeRun;
     private AgentStatus _status = AgentStatus.Idle;
     private bool _skipInitialSteeringPollForNextRun;
+    private TaskCompletionSource? _maintenance;
+    private bool _admissionClosed;
+
+    /// <summary>
+    /// Reserves an idle agent against all run admission until disposal. Returns null when busy
+    /// or permanently closed. Disposal is idempotent and wakes queued producers; no model is run.
+    /// </summary>
+    public IDisposable? TryReserveMaintenance()
+    {
+        lock (_lifecycleLock)
+        {
+            if (_admissionClosed || _status != AgentStatus.Idle || _maintenance is not null)
+                return null;
+            _maintenance = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            return new MaintenanceReservation(this, _maintenance);
+        }
+    }
+
+    /// <summary>
+    /// Permanently refuses new runs before host teardown begins. Existing runs must still be
+    /// aborted and awaited separately. A held maintenance reservation remains valid until released.
+    /// </summary>
+    public void CloseAdmission()
+    {
+        lock (_lifecycleLock) _admissionClosed = true;
+    }
+
+    private sealed class MaintenanceReservation(Agent owner, TaskCompletionSource completion) : IDisposable
+    {
+        public void Dispose()
+        {
+            lock (owner._lifecycleLock)
+            {
+                if (!ReferenceEquals(owner._maintenance, completion)) return;
+                owner._maintenance = null;
+                completion.TrySetResult();
+            }
+        }
+    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Agent"/> class.
@@ -148,7 +187,7 @@ public sealed class Agent
         {
             lock (_lifecycleLock)
             {
-                return _status != AgentStatus.Idle;
+                return _admissionClosed || _maintenance is not null || _status != AgentStatus.Idle;
             }
         }
     }
@@ -542,14 +581,18 @@ public sealed class Agent
     /// </remarks>
     public void Reset()
     {
-        ClearAllQueues();
-
-        lock (_stateLock)
+        lock (_lifecycleLock)
         {
-            _state.Messages = [];
-            _state.SetErrorMessage(null);
-            _state.SetStreamingMessage(null);
-            _state.SetPendingToolCalls([]);
+            if (_maintenance is not null)
+                throw new InvalidOperationException("Agent is reserved for maintenance.");
+            ClearAllQueues();
+            lock (_stateLock)
+            {
+                _state.Messages = [];
+                _state.SetErrorMessage(null);
+                _state.SetStreamingMessage(null);
+                _state.SetPendingToolCalls([]);
+            }
         }
     }
 
@@ -569,14 +612,15 @@ public sealed class Agent
             {
                 lock (_lifecycleLock)
                 {
-                    if (_status != AgentStatus.Idle)
+                    ObjectDisposedException.ThrowIf(_admissionClosed, this);
+                    if (_status != AgentStatus.Idle || _maintenance is not null)
                     {
                         if (!waitForAvailability)
                         {
                             throw new InvalidOperationException("Agent is already running.");
                         }
 
-                        priorRun = _activeRun?.Task;
+                        priorRun = _maintenance?.Task ?? _activeRun?.Task;
                     }
                     else
                     {

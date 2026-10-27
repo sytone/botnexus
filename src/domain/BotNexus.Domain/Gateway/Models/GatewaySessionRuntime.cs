@@ -169,6 +169,34 @@ public sealed class GatewaySessionRuntime
     }
 
     /// <summary>
+    /// Copies aggregate and persistence state under the history lock. The candidate owns its
+    /// history entries and cursor, so a speculative rewrite or persistence acknowledgement
+    /// cannot leak into a cached session retained by reset or transcript readers.
+    /// </summary>
+    internal GatewaySessionRuntime CreateDetachedCopy()
+    {
+        lock (_lock)
+        {
+            var copy = new GatewaySessionRuntime(Session with
+            {
+                History = Session.History.Select(static entry => entry with { }).ToList(),
+                Metadata = new Dictionary<string, object?>(Session.Metadata)
+            })
+            {
+                _additionVersion = _additionVersion,
+                _destructiveVersion = _destructiveVersion,
+                _persistedHistoryCount = _persistedHistoryCount,
+                _persistedDestructiveVersion = _persistedDestructiveVersion,
+                _nextTransientPersistenceId = _nextTransientPersistenceId
+            };
+            copy._observedPersistedHistoryIds.UnionWith(_observedPersistedHistoryIds);
+            copy._ownedPersistenceKeys.UnionWith(_ownedPersistenceKeys);
+            copy.StreamReplay.SetState(this.StreamReplay.NextSequenceId, this.StreamReplay.GetEventSnapshot());
+            return copy;
+        }
+    }
+
+    /// <summary>
     /// Atomically captures (a) an immutable snapshot of the current history,
     /// (b) the destructive-mutation version observed at snapshot time, and
     /// (c) the snapshot length. Compactors operate on the returned snapshot —
