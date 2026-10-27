@@ -93,7 +93,21 @@ public sealed class MemoryTrigger(
             if (request?.SessionCreatedAsync is not null)
                 await request.SessionCreatedAsync(sessionId, ct).ConfigureAwait(false);
             var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
-            var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+            AgentResponse response;
+            try
+            {
+                response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+            }
+            catch (AgentPromptInterruptedException interrupted)
+            {
+                session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt, Trigger = TriggerType.Memory });
+                foreach (var entry in TriggerToolAuditProjector.ProjectToolEntries(interrupted.PartialResponse))
+                    session.AddEntry(entry);
+                ProviderTokenUsageRecorder.Record(session, interrupted.PartialResponse.Usage);
+                await sessions.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+                throw new OperationCanceledException("Trigger run was interrupted.", interrupted,
+                    ct.IsCancellationRequested ? ct : interrupted.CancellationToken);
+            }
 
             ProviderTokenUsageRecorder.Record(session, response.Usage);
 

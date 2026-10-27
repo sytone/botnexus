@@ -2,6 +2,7 @@ using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace BotNexus.Gateway.Tests.Providers;
@@ -267,6 +268,99 @@ public sealed class ConfigDefinedModelRegistryReconcilerTests
         registry.GetModel("dynamic", "model-b").ShouldBeNull();
         reconciler.GetActivationFailure("dynamic").ShouldBe(
             "Provider 'dynamic' uses unregistered chat API 'unregistered-chat-api'.");
+    }
+
+    [Fact]
+    public async Task Start_ChangeAtSubscriptionBoundary_ProjectsLatestSnapshot()
+    {
+        var monitor = new BoundaryOptionsMonitor(StartupConfig("old-model"));
+        monitor.BeforeSubscribe = () => monitor.Publish(StartupConfig("new-model"));
+        var registry = new ModelRegistry();
+        using var reconciler = new ConfigDefinedModelRegistryReconciler(
+            monitor, registry, NullLogger<ConfigDefinedModelRegistryReconciler>.Instance);
+
+        await reconciler.StartAsync(CancellationToken.None);
+
+        registry.GetModels("dynamic").Select(model => model.Id).ShouldBe(["new-model"]);
+    }
+
+    [Fact]
+    public async Task Start_ChangeWhileReadingStartupSnapshot_DoesNotOverwriteNewerNotification()
+    {
+        var monitor = new BoundaryOptionsMonitor(StartupConfig("old-model"));
+        // Capture the startup value, then deliver a newer change before returning that old value.
+        // This also guards against fixing the gap by only moving OnChange before CurrentValue.
+        monitor.AfterSnapshotRead = () => monitor.Publish(StartupConfig("new-model"));
+        var registry = new ModelRegistry();
+        using var reconciler = new ConfigDefinedModelRegistryReconciler(
+            monitor, registry, NullLogger<ConfigDefinedModelRegistryReconciler>.Instance);
+
+        await reconciler.StartAsync(CancellationToken.None);
+
+        registry.GetModels("dynamic").Select(model => model.Id).ShouldBe(["new-model"]);
+    }
+
+    [Fact]
+    public async Task Reload_DelayedOlderNotification_ProjectsCurrentSnapshot()
+    {
+        var oldConfig = StartupConfig("old-model");
+        var monitor = new BoundaryOptionsMonitor(oldConfig);
+        var registry = new ModelRegistry();
+        using var reconciler = new ConfigDefinedModelRegistryReconciler(
+            monitor, registry, NullLogger<ConfigDefinedModelRegistryReconciler>.Instance);
+        await reconciler.StartAsync(CancellationToken.None);
+
+        monitor.Publish(StartupConfig("new-model"));
+        monitor.Notify(oldConfig);
+
+        registry.GetModels("dynamic").Select(model => model.Id).ShouldBe(["new-model"]);
+    }
+
+    private static PlatformConfig StartupConfig(string model) => ConfigWithProvider(
+        "dynamic", enabled: true, baseUrl: "https://example.invalid/v1",
+        api: "openai-responses", models: [model]);
+
+    private sealed class BoundaryOptionsMonitor(PlatformConfig initial) : IOptionsMonitor<PlatformConfig>
+    {
+        private PlatformConfig _current = initial;
+        private Action<PlatformConfig, string?>? _listener;
+
+        public Action? BeforeSubscribe { get; set; }
+        public Action? AfterSnapshotRead { get; set; }
+
+        public PlatformConfig CurrentValue
+        {
+            get
+            {
+                var snapshot = _current;
+                var boundary = AfterSnapshotRead;
+                AfterSnapshotRead = null;
+                boundary?.Invoke();
+                return snapshot;
+            }
+        }
+
+        public PlatformConfig Get(string? name) => CurrentValue;
+
+        public IDisposable OnChange(Action<PlatformConfig, string?> listener)
+        {
+            BeforeSubscribe?.Invoke();
+            _listener = listener;
+            return new Subscription(() => _listener = null);
+        }
+
+        public void Publish(PlatformConfig updated)
+        {
+            _current = updated;
+            Notify(updated);
+        }
+
+        public void Notify(PlatformConfig updated) => _listener?.Invoke(updated, null);
+
+        private sealed class Subscription(Action unsubscribe) : IDisposable
+        {
+            public void Dispose() => unsubscribe();
+        }
     }
 
     private static ApiProviderRegistry ApiProviders(params string[] apiNames)

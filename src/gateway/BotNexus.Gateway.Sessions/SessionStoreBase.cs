@@ -100,7 +100,8 @@ public abstract class SessionStoreBase : ISessionStore
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         var rows = (await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false))
-            .Where(session => session.History.Any(static entry => entry.IsCrashSentinel))
+            .Where(session => !SessionMutationPolicy.IsTerminal(session.Status)
+                && session.History.Any(static entry => entry.IsCrashSentinel))
             .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
             .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
             .Take(limit + 1)
@@ -332,16 +333,19 @@ public abstract class SessionStoreBase : ISessionStore
             offset);
     }
 
-    /// <summary>
-    /// Filter-then-window summary page for stores without a query engine (#2532). Filtering
-    /// happens before the slice so <c>Offset</c> addresses the filtered set - the invariant the
-    /// controller's old post-hoc LINQ broke.
-    /// </summary>
+    /// <summary>Fails closed unless the backend implements a bounded content read.</summary>
+    public virtual Task<SessionHistoryScanPage> ScanHistoryAsync(SessionId sessionId, SessionHistoryScan scan,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This store does not support bounded history reads.");
+
+    /// <summary>Filters summaries before applying a deterministic paging window.</summary>
     public virtual async Task<SessionSummaryPage> ListSummaryPageAsync(
         SessionSummaryQuery query,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
+        if (query.MetadataOnly)
+            throw new NotSupportedException("This store does not support metadata-only summary reads.");
         var sessions = await EnumerateSessionsAsync(cancellationToken).ConfigureAwait(false);
         return SessionSummaryWindow.ApplyQuery(sessions.Select(SessionSummary.FromSession), query);
     }
@@ -502,6 +506,10 @@ public abstract class SessionStoreBase : ISessionStore
     /// <inheritdoc />
     public virtual Task<SubAgentRunDetail?> FindSubAgentSpawnAsync(SessionId parentSessionId, string toolCallId, CancellationToken cancellationToken = default)
         => Task.FromResult<SubAgentRunDetail?>(null);
+
+    /// <inheritdoc />
+    public virtual Task<string?> GetSubAgentResultSummaryAsync(string subAgentId, CancellationToken cancellationToken = default)
+        => Task.FromResult<string?>(null);
 
     /// <inheritdoc />
     public virtual Task<SubAgentRunDetail?> GetSubAgentSessionAsync(string subAgentId, CancellationToken cancellationToken = default)

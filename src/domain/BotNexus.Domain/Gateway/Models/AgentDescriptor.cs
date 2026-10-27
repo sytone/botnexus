@@ -13,6 +13,13 @@ public sealed record AgentDescriptor : ICitizen
     /// <summary>Unique agent identifier (e.g., "coding-agent", "chat-assistant").</summary>
     public required AgentId AgentId { get; init; }
 
+    /// <summary>
+    /// Whether new runtime work may be admitted. Null on a submitted update preserves the
+    /// current state; new registrations default to enabled. Disabled agents remain administrable
+    /// and already-admitted work is not cancelled.
+    /// </summary>
+    public bool? Enabled { get; init; }
+
     /// <summary>Human-readable display name.</summary>
     public required string DisplayName { get; init; }
 

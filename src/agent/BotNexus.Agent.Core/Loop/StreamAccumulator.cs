@@ -1,6 +1,7 @@
 using BotNexus.Agent.Core.Types;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Streaming;
+using BotNexus.Agent.Providers.Core.Utilities;
 
 namespace BotNexus.Agent.Core.Loop;
 
@@ -21,6 +22,9 @@ internal static class StreamAccumulator
     /// <param name="stream">The provider event stream.</param>
     /// <param name="emit">The event emission callback.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="contextMessages">Optional live context updated with partial evidence.</param>
+    /// <param name="attemptFailure">When supplied by the retry owner, normalizes eligible in-band
+    /// failures before terminal emission and retains classification for unsafe-to-replay partials.</param>
     /// <returns>The final accumulated assistant message.</returns>
     /// <remarks>
     /// Emits MessageStartEvent → MessageUpdateEvent (0+) → MessageEndEvent.
@@ -30,17 +34,26 @@ internal static class StreamAccumulator
         LlmStream stream,
         Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken,
-        IList<AgentMessage>? contextMessages = null)
+        IList<AgentMessage>? contextMessages = null,
+        ProviderAttemptFailure? attemptFailure = null)
     {
         var _startEmitted = false;
         var partialAddedToContext = false;
         AssistantAgentMessage? current = null;
         AssistantAgentMessage? final = null;
         var toolCallState = new Dictionary<int, (string? Id, string? Name)>();
+        var exposedSemanticOutput = false;
 
         await foreach (var evt in stream.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            // Starts for text/thinking alone carry no semantic output; tool identity already does.
+            exposedSemanticOutput |= evt is TextDeltaEvent { Delta.Length: > 0 }
+                or ThinkingDeltaEvent { Delta.Length: > 0 }
+                or TextEndEvent { Content.Length: > 0 }
+                or ThinkingEndEvent { Content.Length: > 0 }
+                or ToolCallStartEvent or ToolCallDeltaEvent or ToolCallEndEvent;
 
             switch (evt)
             {
@@ -238,6 +251,28 @@ internal static class StreamAccumulator
 
                 case ErrorEvent error:
                     final = MessageConverter.ToAgentMessage(error.Error) with { FinishReason = error.Reason };
+                    if (attemptFailure is not null && error.Reason == StopReason.Error)
+                    {
+                        var failureClass = TransientErrorClassifier.Classify(final.ErrorMessage);
+                        attemptFailure.Classification = failureClass;
+                        attemptFailure.DiagnosticDetail = final.ErrorMessage is { Length: > 512 } detail
+                            ? detail[..512] : final.ErrorMessage;
+                        // Overflow remains on its independent one-compaction budget in the loop.
+                        if (!exposedSemanticOutput && !ContextOverflowDetector.IsContextOverflow(final.ErrorMessage)
+                            && failureClass is ProviderFailureClass.Transient or ProviderFailureClass.Exhausted)
+                        {
+                            throw new ProviderInBandFailureException(error.Error.Provider, failureClass, final.ErrorMessage);
+                        }
+
+                        if (exposedSemanticOutput
+                            && failureClass is ProviderFailureClass.Transient or ProviderFailureClass.Exhausted)
+                        {
+                            final = final with
+                            {
+                                ErrorMessage = $"Provider '{error.Error.Provider}' failed ({failureClass}) after partial output; automatic replay stopped. Resume only after you verify partial text and tool effects."
+                            };
+                        }
+                    }
                     ReplacePartialWithFinal(contextMessages, final, partialAddedToContext);
                     if (!_startEmitted)
                     {

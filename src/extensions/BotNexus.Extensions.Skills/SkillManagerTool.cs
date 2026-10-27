@@ -369,13 +369,17 @@ public sealed class SkillManagerTool(
         if (!string.IsNullOrEmpty(targetDir))
             _fs.Directory.CreateDirectory(targetDir);
 
+        var backup = _fs.File.Exists(targetPath) ? _fs.File.ReadAllText(targetPath) : null;
         _fs.File.WriteAllText(targetPath, content);
 
         // Security scan
         var scan = SkillSecurityScanner.ScanDirectory(skillDir, fileSystem: _fs);
         if (scan.Critical > 0)
         {
-            _fs.File.Delete(targetPath);
+            if (backup is null)
+                _fs.File.Delete(targetPath);
+            else
+                _fs.File.WriteAllText(targetPath, backup);
             return Error($"File write blocked: security scan found {scan.Critical} critical finding(s). Rolled back.\n{FormatFindings(scan)}");
         }
 

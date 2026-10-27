@@ -134,6 +134,18 @@ public class CompatResolverTests
         compat.ThinkingFormat.ShouldBe("qwen-chat-template");
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(null, true)]
+    public void Resolve_ModelSupportsToolsOverride_PreservesExplicitValueOrDetectedDefault(bool? configured, bool expected)
+    {
+        var compat = CompatResolver.Resolve(Model("openai", "https://api.openai.com",
+            compat: new OpenAICompletionsCompat { SupportsTools = configured }));
+
+        compat.SupportsTools.ShouldBe(expected);
+    }
+
     [Fact]
     public void Resolve_ModelCompatOverride_TakesPrecedenceOverDetected()
     {

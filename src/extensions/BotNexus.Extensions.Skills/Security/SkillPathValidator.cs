@@ -45,7 +45,17 @@ public static class SkillPathValidator
         var normalizedRoot = NormalizePath(rootValue, fileSystem);
 
         // Resolve symlinks by walking each path component
-        var resolved = ResolvePath(targetPath, fileSystem);
+        string resolved;
+        try
+        {
+            var remainingLinkResolutions = 256;
+            resolved = ResolvePath(targetPath, fileSystem, ref remainingLinkResolutions);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            error = "Path could not be resolved safely within the skill directory boundary.";
+            return false;
+        }
         var normalizedResolved = NormalizePath(resolved, fileSystem);
 
         // Check containment: resolved path must be under (or equal to) the allowed root
@@ -67,8 +77,10 @@ public static class SkillPathValidator
     /// from root to leaf. If any component is a symlink, resolves it and continues
     /// from the resolved location.
     /// </summary>
-    private static string ResolvePath(string fullPath, IFileSystem fileSystem)
+    private static string ResolvePath(string fullPath, IFileSystem fileSystem, ref int remainingLinkResolutions, int linkDepth = 0)
     {
+        if (linkDepth > 40)
+            throw new InvalidDataException("Skill path contains a link cycle or exceeds the link resolution limit.");
         var normalized = fileSystem.Path.GetFullPath(fullPath);
         var root = fileSystem.Path.GetPathRoot(normalized);
         if (string.IsNullOrWhiteSpace(root))
@@ -90,23 +102,18 @@ public static class SkillPathValidator
         {
             current = fileSystem.Path.Combine(current, segment);
 
-            if (fileSystem.Directory.Exists(current))
+            // Inspect link metadata even for dangling/cyclic links (Exists may be false).
+            var linkTarget = fileSystem.DirectoryInfo.New(current).LinkTarget
+                ?? fileSystem.FileInfo.New(current).LinkTarget;
+            if (linkTarget is not null)
             {
-                var dirInfo = fileSystem.DirectoryInfo.New(current);
-                if (dirInfo.LinkTarget is not null)
-                {
-                    var target = ResolveLink(current, dirInfo.LinkTarget, fileSystem);
-                    current = target;
-                }
-            }
-            else if (fileSystem.File.Exists(current))
-            {
-                var fileInfo = fileSystem.FileInfo.New(current);
-                if (fileInfo.LinkTarget is not null)
-                {
-                    var target = ResolveLink(current, fileInfo.LinkTarget, fileSystem);
-                    current = target;
-                }
+                // Share one work budget across sibling branches as well as nested chains.
+                if (--remainingLinkResolutions < 0)
+                    throw new InvalidDataException("Skill path exceeds the total link resolution limit.");
+                var target = ResolveLink(current, linkTarget, fileSystem);
+                // Resolve the target's components too: a contained first hop is not proof
+                // that a chain's final target is contained.
+                current = ResolvePath(target, fileSystem, ref remainingLinkResolutions, linkDepth + 1);
             }
             // If path component doesn't exist yet (write to new file), stop resolution
             // and just use the normalized form from here forward

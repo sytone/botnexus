@@ -41,6 +41,7 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 /// </param>
 /// <param name="Offset">Rows to skip <b>within the filtered set</b>. Negative values are treated as zero.</param>
 /// <param name="ConversationIds">Eligible conversation IDs, intersected with all other predicates before counting or paging. Null adds no filter; empty matches no rows.</param>
+/// <param name="MetadataOnly">Fail closed on unsupported stores rather than hydrating transcripts. File reads exclude legacy orphan sidecars without canonical ownership.</param>
 public sealed record SessionSummaryQuery(
     DateTimeOffset UpdatedAfter,
     string? AgentId = null,
@@ -48,7 +49,8 @@ public sealed record SessionSummaryQuery(
     bool IncludeInactive = false,
     int? Limit = null,
     int Offset = 0,
-    IReadOnlySet<ConversationId>? ConversationIds = null)
+    IReadOnlySet<ConversationId>? ConversationIds = null,
+    bool MetadataOnly = false)
 {
     /// <summary>
     /// Returns <c>true</c> when <paramref name="summary"/> satisfies every filter clause. The

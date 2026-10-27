@@ -26,6 +26,18 @@ public sealed record InstalledPlugin
     [JsonPropertyName("reference")]
     public string? Reference { get; init; }
 
+    /// <summary>Explicit Claude or Copilot marketplace identity, replayed on update; null for ordinary installs.</summary>
+    [JsonPropertyName("marketplacePluginName")]
+    public string? MarketplacePluginName { get; init; }
+
+    /// <summary>Canonical repository-relative catalog path selected during the last import.</summary>
+    [JsonPropertyName("marketplaceCatalogPath")]
+    public string? MarketplaceCatalogPath { get; init; }
+
+    /// <summary>Validated repository-relative source advertised by the selected entry.</summary>
+    [JsonPropertyName("marketplaceSourcePath")]
+    public string? MarketplaceSourcePath { get; init; }
+
     /// <summary>
     /// Exact revision currently materialised on disk - a commit SHA for a git source. Recorded
     /// so an update can report whether the source actually moved.
@@ -36,6 +48,10 @@ public sealed record InstalledPlugin
     /// <summary>Version string the plugin's own manifest advertised, or <c>null</c> if unversioned.</summary>
     [JsonPropertyName("manifestVersion")]
     public string? ManifestVersion { get; init; }
+
+    /// <summary>Manifest selected during import. Older records default to the native format.</summary>
+    [JsonPropertyName("manifestFormat")]
+    public PluginManifestFormat ManifestFormat { get; init; } = PluginManifestFormat.Native;
 
     /// <summary>
     /// Whether update may replace this plugin's content. Defaults to <c>true</c> - the settled

@@ -33,6 +33,12 @@ public record SubAgentRunDetail
     public double? RemainingTimeSeconds { get; init; }
     public int? TurnsUsed { get; init; }
     public string? ResultSummary { get; init; }
+    /// <summary>Whether the summary projection omits retained characters.</summary>
+    public bool SummaryTruncated { get; init; }
+    /// <summary>Original summary length before projection; null for legacy records.</summary>
+    public int? OriginalLength { get; init; }
+    /// <summary>Run identifier for manage_subagent result paging, not a filesystem path.</summary>
+    public string? ResultReference { get; init; }
     public SubAgentRunResult? Result { get; init; }
     [JsonConverter(typeof(JsonStringEnumConverter<SubAgentCompletionDelivery>))]
     public SubAgentCompletionDelivery? CompletionDelivery { get; init; }
@@ -63,6 +69,9 @@ public record SubAgentRunDetail
             EffectiveMaxTurns = info.EffectiveMaxTurns, EffectiveTimeoutSeconds = info.EffectiveTimeoutSeconds,
             RemainingTurns = remainingTurns, RemainingTimeSeconds = remainingTime, TurnsUsed = info.TurnsUsed,
             ResultSummary = Bound(info.ResultSummary, MaxLongTextLength), Result = SubAgentRunResult.From(info.PartialResult),
+            SummaryTruncated = info.RetainedResultSummaryTruncated || (info.ResultSummary?.Length ?? 0) > MaxLongTextLength,
+            OriginalLength = info.RetainedResultFullCopyUnavailable ? info.RetainedResultOriginalLength
+                : info.RetainedResultOriginalLength ?? info.ResultSummary?.Length ?? 0, ResultReference = info.SubAgentId,
             CompletionDelivery = info.CompletionDelivery, CompletionDeliveryError = Bound(info.CompletionDeliveryError, MaxLongTextLength),
             DeliveryWarning = info.CompletionDelivery == SubAgentCompletionDelivery.Failed
                 ? "This sub-agent finished but its completion announcement never reached this session. Treat this record as the retained result; no wake-up is coming."

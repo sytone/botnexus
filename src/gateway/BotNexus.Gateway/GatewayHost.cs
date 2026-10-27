@@ -181,7 +181,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                 llmClient,
                 _logger,
                 conversationChangeNotifier,
-                _authManager);
+                _authManager,
+                conversationEventPublisher);
         }
         // The coordinator is the single source of truth for compaction (PR #602
         // followup). Tests that construct GatewayHost directly may not provide
@@ -821,6 +822,15 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         // otherwise a non-streamed turn leaves the compactor with no provider
                         // measurement and the unit normalisation degrades to a no-op.
                         ProviderTokenUsageRecorder.Record(session, response.Usage);
+                    }
+                    catch (AgentPromptInterruptedException interrupted)
+                    {
+                        foreach (var entry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(interrupted.PartialResponse)))
+                            session.AddEntry(entry);
+                        ProviderTokenUsageRecorder.Record(session, interrupted.PartialResponse.Usage);
+                        await _sessions.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+                        throw new OperationCanceledException("Blocking agent turn was interrupted.", interrupted,
+                            cancellationToken.IsCancellationRequested ? cancellationToken : interrupted.CancellationToken);
                     }
                     finally
                     {

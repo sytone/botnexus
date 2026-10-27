@@ -170,7 +170,7 @@ public static class ExportMarkdownRenderer
                 break;
 
             case "tool":
-                if (!string.IsNullOrEmpty(entry.ToolName) && !string.IsNullOrEmpty(entry.ToolArgs))
+                if (entry.MessageKind != "tool-result" && !string.IsNullOrEmpty(entry.ToolName) && !string.IsNullOrEmpty(entry.ToolArgs))
                 {
                     sb.AppendLine($"### 🔧 Tool Call: `{entry.ToolName}` [{timestamp}]");
                     sb.AppendLine();

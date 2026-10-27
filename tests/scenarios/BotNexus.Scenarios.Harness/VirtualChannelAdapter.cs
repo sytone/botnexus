@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
+using BotNexus.Gateway.Dispatching;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -56,6 +57,37 @@ public sealed class VirtualChannelAdapter : ChannelAdapterBase, IChannelAdapter,
     private readonly ConcurrentQueue<ChannelStreamTarget> _streamTargets = new();
     private readonly VirtualChannelAdapterOptions _options;
     private int _dispatchCount;
+    private readonly ConcurrentQueue<ScenarioInboundOutcome> _inboundOutcomes = new();
+    private readonly ConcurrentQueue<ScenarioInboundAcceptance> _inboundAcceptances = new();
+
+    /// <summary>Completed adapter calls, including policy drops and exceptions; not proof of provider entry.</summary>
+    public IReadOnlyList<ScenarioInboundOutcome> InboundOutcomes => [.. _inboundOutcomes];
+
+    /// <summary>Typed results before the legacy dispatcher discards them. Stalled is not a rejection.</summary>
+    public IReadOnlyList<ScenarioInboundAcceptance> InboundAcceptances => [.. _inboundAcceptances];
+
+    // Keep the base adapter's lifecycle and allow-list path. GatewayHost's legacy DispatchAsync
+    // forwards directly to this same AcceptAsync; observe the result before it becomes an untyped Task.
+    Task IChannelAdapter.StartAsync(IChannelDispatcher dispatcher, CancellationToken cancellationToken)
+        => base.StartAsync(new ObservingDispatcher(dispatcher, _inboundAcceptances), cancellationToken);
+
+    private sealed class ObservingDispatcher(
+        IChannelDispatcher dispatcher,
+        ConcurrentQueue<ScenarioInboundAcceptance> observations) : IChannelDispatcher
+    {
+        public async Task DispatchAsync(InboundMessage message, CancellationToken cancellationToken = default)
+        {
+            if (dispatcher is BotNexus.Gateway.GatewayHost host)
+            {
+                var result = await host.Orchestrator.AcceptAsync(message, cancellationToken);
+                observations.Enqueue(new ScenarioInboundAcceptance(message, result));
+            }
+            else
+            {
+                await dispatcher.DispatchAsync(message, cancellationToken);
+            }
+        }
+    }
 
     /// <summary>
     /// Creates a virtual channel adapter with default capabilities (streaming, steering,
@@ -143,7 +175,16 @@ public sealed class VirtualChannelAdapter : ChannelAdapterBase, IChannelAdapter,
 
         _inbound.Enqueue(message);
         Interlocked.Increment(ref _dispatchCount);
-        await DispatchInboundAsync(message, cancellationToken);
+        try
+        {
+            var outcome = await DispatchInboundAsync(message, cancellationToken);
+            _inboundOutcomes.Enqueue(new ScenarioInboundOutcome(message, outcome, null));
+        }
+        catch (Exception error)
+        {
+            _inboundOutcomes.Enqueue(new ScenarioInboundOutcome(message, null, error));
+            throw;
+        }
     }
 
     /// <summary>
@@ -175,6 +216,8 @@ public sealed class VirtualChannelAdapter : ChannelAdapterBase, IChannelAdapter,
     {
         _outbound.Clear();
         _inbound.Clear();
+        _inboundOutcomes.Clear();
+        _inboundAcceptances.Clear();
         _streamDeltas.Clear();
         _streamEvents.Clear();
         _streamTargets.Clear();

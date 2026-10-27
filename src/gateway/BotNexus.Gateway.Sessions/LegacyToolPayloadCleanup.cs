@@ -8,7 +8,7 @@ namespace BotNexus.Gateway.Sessions;
 /// <summary>Clears redundant legacy payload columns only after normalized evidence proves exact parity.</summary>
 public static class LegacyToolPayloadCleanup
 {
-    internal static LegacyToolPayloadCleanupReport RunConnectionString(string connectionString, int batchSize, long afterInvocationId = 0)
+    internal static LegacyToolPayloadCleanupReport RunConnectionString(string connectionString, int batchSize, long afterInvocationId = 0, Action<string>? invalidateSession = null)
     {
         if (batchSize < 1)
             throw new ArgumentOutOfRangeException(nameof(batchSize), "Batch size must be positive.");
@@ -43,6 +43,8 @@ public static class LegacyToolPayloadCleanup
                 }
 
                 transaction.Commit();
+                foreach (var sessionId in eligible.Select(candidate => candidate.SessionId).Distinct(StringComparer.Ordinal))
+                    invalidateSession?.Invoke(sessionId);
             }
 
             // Progress is a bounded existence probe, not an exact whole-corpus count. Protected and
@@ -60,21 +62,39 @@ public static class LegacyToolPayloadCleanup
 
     private static int DeleteOrphanedInvocations(SqliteConnection connection, int limit)
     {
+        // The absent-session scan may traverse the corpus. Never hold the writer slot
+        // during discovery, and never acquire it for an empty maintenance batch.
+        var ids = new List<long>();
+        using (var select = connection.CreateCommand())
+        {
+            select.CommandText = """
+                SELECT i.id FROM tool_invocations i
+                LEFT JOIN sessions s ON s.id=i.session_id
+                WHERE s.id IS NULL ORDER BY i.id LIMIT $limit
+                """;
+            select.Parameters.AddWithValue("$limit", limit);
+            using var reader = select.ExecuteReader();
+            while (reader.Read()) ids.Add(reader.GetInt64(0));
+        }
+        if (ids.Count == 0)
+            return 0;
+
         using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        // Revalidate each selected identity: a session may have appeared since discovery.
+        // One id per statement also avoids SQLite's parameter-count limit for large batches.
         command.CommandText = """
             DELETE FROM tool_invocations
-            WHERE id IN (
-                SELECT i.id
-                FROM tool_invocations i
-                LEFT JOIN sessions s ON s.id=i.session_id
-                WHERE s.id IS NULL
-                ORDER BY i.id
-                LIMIT $limit)
+            WHERE id=$id AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.id=tool_invocations.session_id)
             """;
-        command.Parameters.AddWithValue("$limit", limit);
-        var deleted = command.ExecuteNonQuery();
+        var idParameter = command.Parameters.AddWithValue("$id", 0L);
+        var deleted = 0;
+        foreach (var id in ids)
+        {
+            idParameter.Value = id;
+            deleted += command.ExecuteNonQuery();
+        }
         transaction.Commit();
         return deleted;
     }

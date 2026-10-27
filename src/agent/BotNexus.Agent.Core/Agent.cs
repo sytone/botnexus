@@ -61,6 +61,7 @@ public sealed class Agent
                 "MaxRetryDelayMs must be greater than zero when set.");
         }
 
+        AgentLoopConfig.ValidateToolResultBudget(options.MaxToolResults);
         _options = options;
         _providerMessageTransformer = options.ProviderMessageTransformer ?? DefaultProviderMessageTransformer.TransformAsync;
         _agentContextTransformer = options.AgentContextTransformer ?? IdentityAgentContextTransformer;
@@ -270,14 +271,7 @@ public sealed class Agent
                 cancellationToken)
             .ConfigureAwait(false);
 
-        if (result.OfType<AssistantAgentMessage>().Any())
-            return result;
-
-        lock (_stateLock)
-        {
-            var assistant = _state.Messages.OfType<AssistantAgentMessage>().LastOrDefault();
-            return assistant is null ? result : [assistant];
-        }
+        return result;
     }
 
     /// <summary>
@@ -323,6 +317,11 @@ public sealed class Agent
     /// <para>
     /// Throws InvalidOperationException if the agent is already running.
     /// Drains queued steering messages before starting the loop.
+    /// </para>
+    /// <para>
+    /// Admitted runs return <see cref="AgentRunMessages"/>, including cancellation evidence captured
+    /// before the run slot is released. Cancellation before admission throws without run evidence.
+    /// Synthetic runtime terminal messages are not provider turns; their usage remains unknown.
     /// </para>
     /// <para>
     /// All lifecycle events (agent_start, turn_start, message_start/update/end, tool_execution_start/end,
@@ -604,6 +603,47 @@ public sealed class Agent
 
         var agentRunId = AgentRunId.Create();
         IReadOnlyList<GuardObservation> observedGuards = [];
+        var evidenceLock = new object();
+        var runMessages = new List<AgentMessage>();
+        var pendingToolCalls = new HashSet<string>(StringComparer.Ordinal);
+        RunCompletionResult? completion = null;
+        async Task EmitRunEventAsync(AgentEvent evt, CancellationToken token)
+        {
+            lock (evidenceLock)
+            {
+                switch (evt)
+                {
+                    case MessageEndEvent end:
+                        if (end.Message is not UserMessage)
+                            runMessages.Add(end.Message);
+                        break;
+                    case ToolExecutionStartEvent start:
+                        pendingToolCalls.Add(start.ToolCallId);
+                        break;
+                    case ToolExecutionEndEvent end:
+                        pendingToolCalls.Remove(end.ToolCallId);
+                        break;
+                    case AgentEndEvent end:
+                        completion = end.Completion;
+                        break;
+                }
+            }
+            await HandleEventAsync(evt with { AgentRunId = agentRunId }, token).ConfigureAwait(false);
+        }
+
+        AgentRunMessages Snapshot(IReadOnlyList<AgentMessage> messages, AssistantAgentMessage? synthetic = null,
+            IReadOnlyList<AgentMessage>? evidenceMessages = null)
+        {
+            var token = completion?.Status == RunCompletionStatus.Cancelled
+                ? cancellationToken.IsCancellationRequested ? cancellationToken
+                    : linkedCts.IsCancellationRequested ? linkedCts.Token : new CancellationToken(true)
+                : CancellationToken.None;
+            lock (evidenceLock)
+            {
+                return new AgentRunMessages(messages, agentRunId, completion, pendingToolCalls, token, synthetic, evidenceMessages);
+            }
+        }
+
         lock (_stateLock)
         {
             _state.AgentRunId = agentRunId;
@@ -619,12 +659,13 @@ public sealed class Agent
                 await onStartedAsync().ConfigureAwait(false);
             }
 
-            return await runner(
+            var messages = await runner(
                     BuildContextSnapshot(),
                     BuildLoopConfig() with { AgentRunId = agentRunId, GuardEvidenceObserver = guards => observedGuards = guards },
-                    @event => HandleEventAsync(@event with { AgentRunId = agentRunId }, linkedCts.Token),
+                    @event => EmitRunEventAsync(@event, linkedCts.Token),
                     linkedCts.Token)
                 .ConfigureAwait(false);
+            return Snapshot(messages);
         }
         catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
         {
@@ -644,7 +685,7 @@ public sealed class Agent
 
             try
             {
-                await HandleEventAsync(
+                await EmitRunEventAsync(
                         new AgentEndEvent(
                             [abortedMessage],
                             null,
@@ -663,7 +704,8 @@ public sealed class Agent
                     DiagnosticNotification.Report(observer, $"Listener error during agent_end: {listenerEx.Message}");
             }
 
-            return [abortedMessage];
+            runMessages.Add(abortedMessage);
+            return Snapshot(runMessages, abortedMessage);
         }
         catch (Exception ex)
         {
@@ -683,7 +725,7 @@ public sealed class Agent
 
             try
             {
-                await HandleEventAsync(
+                await EmitRunEventAsync(
                         new AgentEndEvent(
                             [failureMessage],
                             null,
@@ -701,7 +743,10 @@ public sealed class Agent
                     DiagnosticNotification.Report(observer, $"Listener error during agent_end: {listenerEx.Message}");
             }
 
-            return [failureMessage];
+            runMessages.Add(failureMessage);
+            // Preserve the core failure return contract; the gateway can separately project the
+            // captured timeline without changing collection membership for existing core callers.
+            return Snapshot([failureMessage], failureMessage, runMessages);
         }
         finally
         {
@@ -784,7 +829,8 @@ public sealed class Agent
             CredentialInvalidationService: _options.CredentialInvalidationService,
             RecoveryCoordinator: _options.RecoveryCoordinator,
             RecoveryAdmissionTimeout: _options.RecoveryAdmissionTimeout,
-            ToolProgressPolicy: _options.ToolProgressPolicy);
+            ToolProgressPolicy: _options.ToolProgressPolicy,
+            MaxToolResults: _options.MaxToolResults);
     }
 
     private Func<CancellationToken, Task<AgentContext?>>? BuildContextCompactionService()

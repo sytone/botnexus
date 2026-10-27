@@ -22,6 +22,12 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 /// </remarks>
 public interface ISessionStore
 {
+    /// <summary>Reads a bounded transcript prefix after checking canonical ownership. Unsupported
+    /// stores fail closed rather than falling back to full session hydration.</summary>
+    Task<SessionHistoryScanPage> ScanHistoryAsync(SessionId sessionId, SessionHistoryScan scan,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This store does not support bounded history reads.");
+
     /// <summary>
     /// Gets a session by ID, or <c>null</c> if it doesn't exist.
     /// </summary>
@@ -281,7 +287,7 @@ public interface ISessionStore
     }
 
     /// <summary>
-    /// Returns one globally-scoped, bounded, transcript-free page of sessions that still contain crash sentinels.
+    /// Returns one globally-scoped, bounded, transcript-free page of nonterminal sessions that still contain crash sentinels.
     /// Callers hydrate one selected session at a time through <see cref="GetAsync"/>.
     /// </summary>
     async Task<UnresolvedCrashSentinelPage> ListUnresolvedCrashSentinelsAsync(
@@ -292,7 +298,8 @@ public interface ISessionStore
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         var sessions = await ListAsync(null, cancellationToken).ConfigureAwait(false);
         var rows = sessions
-            .Where(session => session.History.Any(static entry => entry.IsCrashSentinel))
+            .Where(session => !SessionMutationPolicy.IsTerminal(session.Status)
+                && session.History.Any(static entry => entry.IsCrashSentinel))
             .OrderBy(session => session.SessionId.Value, StringComparer.Ordinal)
             .Where(session => cursor is null || string.CompareOrdinal(session.SessionId.Value, cursor) > 0)
             .Take(limit + 1)
@@ -591,6 +598,10 @@ public interface ISessionStore
     /// <summary>Finds the retained admission for an original parent spawn tool call without consuming it.</summary>
     Task<SubAgentRunDetail?> FindSubAgentSpawnAsync(SessionId parentSessionId, string toolCallId, CancellationToken cancellationToken = default)
         => Task.FromResult<SubAgentRunDetail?>(null);
+
+    /// <summary>Reads the full retained final summary, or null when legacy storage has no full copy. Does not consume delivery.</summary>
+    Task<string?> GetSubAgentResultSummaryAsync(string subAgentId, CancellationToken cancellationToken = default)
+        => Task.FromResult<string?>(null);
 
     /// <summary>Reads one retained run by its indexed identity without consuming it.</summary>
     Task<SubAgentRunDetail?> GetSubAgentSessionAsync(string subAgentId, CancellationToken cancellationToken = default)

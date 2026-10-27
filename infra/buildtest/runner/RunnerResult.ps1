@@ -12,7 +12,6 @@ Set-StrictMode -Version Latest
 # suite as it actually behaves. Adding a new deliberate skip now requires adding it here, which
 # is the point: a skip nobody declared is a skip nobody vouched for.
 $script:DeliberateSkipPatterns = @(
-    'Dev gateway not running at'
     'GITHUB_TOKEN environment variable not set'
     # LocalCliCopilotSetupTests drives the real GitHub device-code endpoint. A runner with no
     # egress to github.com skips it deliberately, but the reason was never allow-listed, so an

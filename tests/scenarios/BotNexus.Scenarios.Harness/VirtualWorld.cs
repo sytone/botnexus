@@ -94,6 +94,29 @@ public sealed class VirtualWorld : IAsyncDisposable
     /// <summary>The fake provider — exposes turn count and the canned response factory.</summary>
     public ScenarioFakeApiProvider Provider => _provider;
 
+    /// <summary>Live failure diagnostics; attempted/completed dispatch is deliberately distinct from provider entry.</summary>
+    public string DescribeInboundProgress()
+    {
+        var attempts = _adapter.InboundDispatched;
+        var outcomes = _adapter.InboundOutcomes;
+        var acceptances = _adapter.InboundAcceptances;
+        var entries = _provider.Invocations;
+        return $"Inbound attempts={attempts.Count}, completed={outcomes.Count}, provider count={_provider.TurnCount}; " +
+            string.Join("; ", attempts.Select(message =>
+            {
+                var outcome = outcomes.LastOrDefault(item => ReferenceEquals(item.Message, message));
+                var acceptance = acceptances.LastOrDefault(item => ReferenceEquals(item.Message, message));
+                return $"sender={message.SenderId}, address={message.ChannelAddress}, content={message.Content}, " +
+                    $"adapter={outcome?.Outcome?.ToString() ?? "pending-or-faulted"}, " +
+                    $"acceptance={acceptance?.Result.Status.ToString() ?? "unobserved"}, " +
+                    $"targets=[{string.Join(",", acceptance?.Result.Dispatches.Select(d => $"{d.Resolution.ConversationId}/{d.Resolution.SessionId}") ?? [])}], " +
+                    $"error={outcome?.Error}";
+            })) + "; provider entries=[" +
+            string.Join("; ", entries.Select(entry => $"turn={entry.TurnIndex}, latest-user={entry.UserText}")) +
+            "]; outbound=[" + string.Join("; ", _adapter.Outbound.Select(message =>
+                $"address={message.ChannelAddress}, content={message.Content}")) + "]";
+    }
+
     /// <summary>
     /// Bootstraps a fully wired in-process gateway, registers the virtual channel + fake
     /// provider, waits for the channel adapter to start, and returns a ready-to-use world.

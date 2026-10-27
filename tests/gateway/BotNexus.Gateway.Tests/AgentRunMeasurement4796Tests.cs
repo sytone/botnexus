@@ -101,7 +101,9 @@ public sealed class AgentRunMeasurement4796Tests : IDisposable
         await cancelling.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Rows(await Query(Store(), Session)).Length.ShouldBe(3);
         cancellation.Cancel();
-        var cancelled = await cancelledTask.WaitAsync(TimeSpan.FromSeconds(10));
+        var interrupted = await Should.ThrowAsync<AgentPromptInterruptedException>(() => cancelledTask.WaitAsync(TimeSpan.FromSeconds(10)));
+        interrupted.CancellationToken.ShouldBe(cancellation.Token);
+        var cancelled = interrupted.PartialResponse;
         Id(cancelled).ShouldNotBe(Id(first));
         Id(cancelled).ShouldNotBe(Id(second));
         var final = await Query(Store(), Session);

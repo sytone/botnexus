@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
+    <InternalsVisibleTo Include="BotNexus.Gateway.Sessions.Tests" />
   </ItemGroup>
 
 </Project>

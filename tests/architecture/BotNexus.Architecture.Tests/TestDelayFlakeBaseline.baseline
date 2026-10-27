@@ -89,8 +89,6 @@ tests/gateway/BotNexus.Memory.Tests/MarkdownAgentMemoryBudgetTests.cs|1
 tests/gateway/BotNexus.Memory.Tests/MarkdownNoteIndexingTests.cs|1
 tests/gateway/BotNexus.Memory.Tests/MemoryIsolationTests.cs|1
 tests/gateway/BotNexus.Memory.Tests/MemoryProvenanceTests.cs|1
-tests/integration/BotNexus.Conversation.Tests/ConversationSignalRTests.cs|2
-tests/integration/BotNexus.Conversation.Tests/TestSignalRClient.cs|2
 tests/integration/BotNexus.Integration.ConfigDiskE2E.Tests/ConfigMutationMatrixDiskTests.cs|1
 tests/integration/BotNexus.Integration.ConfigDiskE2E.Tests/ConfigWriterOpenReaderDiskTests.cs|1
 tests/integration/BotNexus.Integration.E2E.Tests/Helpers/TcpReadinessProbe.cs|1

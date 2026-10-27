@@ -56,7 +56,9 @@ These are deeper explanations, also grouped under **Architecture → Runtime and
 
 - **[code-standards.md](code-standards.md)** - XML comment standard, naming, dependency boundaries, and testing conventions
 - **[pr-and-commit-conventions.md](pr-and-commit-conventions.md)** — Required PR body and squash-commit format, and the reviewer inspection order for agent-authored changes
+- **[test-taxonomy.md](test-taxonomy.md)** — Choose a test category, preserve source mirrors, and distinguish real seam coverage from virtual scenarios and E2E stubs
 - **[running-tests.md](running-tests.md)** — Impacted-test selection and Windows testhost firewall pre-authorization
+- **[required-gate-flakes.md](required-gate-flakes.md)** — Evidence threshold, P0 triage, recurrence attribution, and closure requirements for flaky required-gate tests
 - **[persistence-seam-testing.md](persistence-seam-testing.md)** — Write classification and deterministic lost-update seam tests for aggregate stores
 - **[azure-build-test-runner.md](azure-build-test-runner.md)** — Selectable strict validation and optional Azure Container Apps execution
 - **[stale-base-merges.md](stale-base-merges.md)** — #3173 base-freshness gate: why a green PR on a stale base can still redden `main`, and how inherited red is told apart from introduced red
