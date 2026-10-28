@@ -6,6 +6,7 @@ using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
+using Xunit.Abstractions;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -16,7 +17,13 @@ public sealed class ToolInvocationSchemaTests : IDisposable
     private string DatabasePath => Path.Combine(_directoryPath, "sessions.db");
     private string ConnectionString => $"Data Source={DatabasePath};Pooling=False";
 
-    public ToolInvocationSchemaTests() => Directory.CreateDirectory(_directoryPath);
+    private readonly ITestOutputHelper _output;
+
+    public ToolInvocationSchemaTests(ITestOutputHelper output)
+    {
+        _output = output;
+        Directory.CreateDirectory(_directoryPath);
+    }
 
     [Fact]
     public async Task FreshStore_CreatesConstrainedNormalizedSchemaAndIndexes()
@@ -680,6 +687,132 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         firstWindowSteps.ShouldBeLessThanOrEqualTo(batchSize * 2000L,
             "candidate discovery must bound payload-bearing work before aggregation; " + diagnostic);
         vmSteps.ShouldBeLessThanOrEqualTo(2000L, "the cursor must seek with bounded VM work; " + diagnostic);
+    }
+
+    [Theory]
+    [InlineData(512)]
+    [InlineData(2048)]
+    public async Task CleanupLegacyToolPayloads_CandidateReaderBoundsTemporaryWriteBytes(int invocationCount)
+    {
+        const int batchSize = 17;
+        const int payloadBytes = 16384;
+        const int cacheKibibytes = 64;
+        // Allow multiple payload copies and record overhead per candidate, but never a
+        // corpus-sized allowance. The largest seed has only 64 MiB of stored payloads.
+        const long writeBudget = batchSize * (4L * payloadBytes + 4096);
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("scratch-cost"), AgentId.From("agent"));
+        await store.SaveAsync(session);
+        await using var connection = await OpenAsync();
+        var handle = connection.Handle ?? throw new InvalidOperationException("SQLite connection must be open.");
+        var sqliteVersion = SQLitePCL.raw.sqlite3_libversion_number();
+        _output.WriteLine($"sqlite_version={sqliteVersion}, corpus={invocationCount}, window={batchSize}, payload_bytes={payloadBytes}, write_budget={writeBudget}");
+        sqliteVersion.ShouldBe(3053003, "exercise the pinned SQLite 3.53.3 native library");
+
+        // Probe support before allocating the corpus; unsupported native verbs fail, not skip.
+        _ = ReadTemporaryWriteBytes(handle, reset: true);
+        ReadTemporaryWriteBytes(handle).ShouldBe(0);
+        await using (var configure = connection.CreateCommand())
+        {
+            // These settings belong only to this unpooled connection. main.cache_size
+            // controls the external sorter's PMA threshold (subject to SQLite's minimum).
+            // Do not use a nonexistent sorter pragma or process-global temp directory.
+            configure.CommandText = $"PRAGMA temp_store=FILE; PRAGMA main.cache_size=-{cacheKibibytes}; PRAGMA threads=0;";
+            await configure.ExecuteNonQueryAsync();
+        }
+        (await ScalarLongAsync(connection, "PRAGMA temp_store")).ShouldBe(1);
+        (await ScalarLongAsync(connection, "PRAGMA main.cache_size")).ShouldBe(-cacheKibibytes);
+        (await ScalarLongAsync(connection, "PRAGMA threads")).ShouldBe(0);
+        _output.WriteLine($"temp_store=1, main_cache_kibibytes={cacheKibibytes}, sorter_threads=0");
+
+        await using (var seed = connection.CreateCommand())
+        {
+            seed.CommandText = """
+                WITH RECURSIVE sequence(value) AS (
+                    SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < $count)
+                INSERT INTO tool_invocations(session_id,tool_call_id,arguments_json,status,is_error,result_content,retention_state)
+                SELECT 'scratch-cost','call-' || value,'{}','success',0,$payload,'hot' FROM sequence;
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,tool_args,message_kind,tool_invocation_id)
+                SELECT session_id,'tool','start','a',tool_call_id,'{}','tool-start',id
+                FROM tool_invocations ORDER BY id DESC;
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,message_kind,tool_invocation_id)
+                SELECT session_id,'tool',$payload,'b',tool_call_id,'tool-result',id
+                FROM tool_invocations ORDER BY id DESC;
+                """;
+            seed.Parameters.AddWithValue("$count", invocationCount);
+            seed.Parameters.AddWithValue("$payload", new string('x', payloadBytes));
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        // Positive control: a computed order key prevents index-order streaming, and
+        // returning content carries the payload into the whole-corpus sorter. Drain it
+        // without retaining payloads in managed memory; a row count alone proves no spill.
+        _ = ReadTemporaryWriteBytes(handle, reset: true);
+        ReadTemporaryWriteBytes(handle).ShouldBe(0);
+        var controlRows = 0;
+        await using (var control = connection.CreateCommand())
+        {
+            control.CommandText = """
+                SELECT content FROM session_history
+                WHERE message_kind='tool-result'
+                ORDER BY -tool_invocation_id
+                """;
+            await using var reader = await control.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) controlRows++;
+        }
+        var controlWriteBytes = ReadTemporaryWriteBytes(handle);
+        var controlDiagnostic = $"sqlite_version={sqliteVersion}, corpus={invocationCount}, control_rows={controlRows}, control_write_bytes={controlWriteBytes}, write_budget={writeBudget}";
+        _output.WriteLine(controlDiagnostic);
+        controlRows.ShouldBe(invocationCount, controlDiagnostic);
+        controlWriteBytes.ShouldBeGreaterThan(writeBudget,
+            "the payload sorter must actually spill, proving the temporary-write observer is live; " + controlDiagnostic);
+
+        // sqlite3_db_status returns the pre-reset value. Verify both that value and a
+        // fresh zero before measuring only the exact production ReadCandidateWindow.
+        ReadTemporaryWriteBytes(handle, reset: true).ShouldBe(controlWriteBytes, controlDiagnostic);
+        ReadTemporaryWriteBytes(handle).ShouldBe(0, controlDiagnostic);
+        var readWindow = typeof(LegacyToolPayloadCleanup).GetMethod("ReadCandidateWindow",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        readWindow.ShouldNotBeNull();
+        var window = readWindow.Invoke(null, [connection, batchSize, 0L]);
+        var firstWindowWriteBytes = ReadTemporaryWriteBytes(handle);
+        var candidates = window as System.Collections.ICollection
+            ?? throw new InvalidOperationException("Candidate reader must return a collection.");
+        var diagnostic = $"sqlite_version={sqliteVersion}, corpus={invocationCount}, window={batchSize}, control_write_bytes={controlWriteBytes}, first_window_write_bytes={firstWindowWriteBytes}, write_budget={writeBudget}";
+        _output.WriteLine(diagnostic);
+        candidates.Count.ShouldBe(batchSize, diagnostic);
+        firstWindowWriteBytes.ShouldBeLessThanOrEqualTo(writeBudget,
+            "candidate discovery must bound temporary-file write bytes independently of corpus size; " + diagnostic);
+
+        _ = ReadTemporaryWriteBytes(handle, reset: true);
+        ReadTemporaryWriteBytes(handle).ShouldBe(0, diagnostic);
+        window = readWindow.Invoke(null, [connection, batchSize, (long)invocationCount - 1]);
+        var cursorWriteBytes = ReadTemporaryWriteBytes(handle);
+        var finalCandidates = window as System.Collections.ICollection
+            ?? throw new InvalidOperationException("Candidate reader must return a collection.");
+        var cursorDiagnostic = $"corpus={invocationCount}, cursor={invocationCount - 1}, cursor_write_bytes={cursorWriteBytes}, write_budget={4L * payloadBytes + 4096}";
+        _output.WriteLine(cursorDiagnostic);
+        finalCandidates.Count.ShouldBe(1, cursorDiagnostic);
+        cursorWriteBytes.ShouldBeLessThanOrEqualTo(4L * payloadBytes + 4096,
+            "the cursor must not spill payloads from earlier candidates; " + cursorDiagnostic);
+    }
+
+    private long ReadTemporaryWriteBytes(SQLitePCL.sqlite3 handle, bool reset = false)
+    {
+        // SQLITE_DBSTATUS_TEMPBUF_SPILL=13 reports cumulative temporary-file WRITE
+        // BYTES, not peak allocation or page counts; its high-water value is always 0.
+        // https://www.sqlite.org/c3ref/c_dbstatus%20options.html
+        // The managed raw binding uses 32-bit outputs (SQLite masks to 31 bits).
+        // Keep this fixture's cumulative writes far below 2 GiB to avoid truncation.
+        const int temporaryBufferSpill = 13;
+        var rc = SQLitePCL.raw.sqlite3_db_status(handle, temporaryBufferSpill,
+            out var current, out var highwater, reset ? 1 : 0);
+        var diagnostic = $"dbstatus_verb={temporaryBufferSpill}, rc={rc}, current_write_bytes={current}, highwater={highwater}, reset={(reset ? 1 : 0)}";
+        _output.WriteLine(diagnostic);
+        rc.ShouldBe(SQLitePCL.raw.SQLITE_OK, "the pinned native library must support the temporary-write counter; " + diagnostic);
+        highwater.ShouldBe(0, diagnostic);
+        current.ShouldBeGreaterThanOrEqualTo(0, diagnostic);
+        return current;
     }
 
     [Fact]

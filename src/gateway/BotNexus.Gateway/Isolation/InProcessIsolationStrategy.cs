@@ -823,7 +823,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             // retain actionable local login instructions.
             ToolResultTextTransformer: (_serviceProvider.GetService<ISecretRedactor>() ?? new SecretRedactor()).Redact,
             ToolAuditGate: beforeToolAudit,
-            ToolExecutionDecisionObserver: onToolCallDisposition);
+            ToolExecutionDecisionObserver: onToolCallDisposition,
+            MaxToolResults: platformConfig?.Value.Gateway?.MaxToolResults ?? 128);
 
         var agent = new BotNexus.Agent.Core.Agent(options);
 
@@ -1397,6 +1398,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
 
     /// <inheritdoc />
     public bool IsRunning => _agent.Status == AgentStatus.Running;
+
+    /// <inheritdoc />
+    public IDisposable? TryReserveMaintenance() => _agent.TryReserveMaintenance();
 
     /// <inheritdoc />
     public IAgentHandle? GetHandle(AgentId agentId, SessionId sessionId)
@@ -2632,6 +2636,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
+        _agent.CloseAdmission();
         // #3384: signal BEFORE aborting. AbortAsync is what cancels the in-flight run, so any
         // cancellation it raises inside the streaming pipeline must already see the deliberate-stop
         // source set, or the guard races the teardown it is classifying.

@@ -51,6 +51,7 @@ public static class AgentLoopRunner
         Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken)
     {
+        AgentLoopConfig.ValidateToolResultBudget(config.MaxToolResults);
         cancellationToken.ThrowIfCancellationRequested();
 
         var runStartIndex = context.Messages.Count;
@@ -109,6 +110,7 @@ public static class AgentLoopRunner
         Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken)
     {
+        AgentLoopConfig.ValidateToolResultBudget(config.MaxToolResults);
         cancellationToken.ThrowIfCancellationRequested();
 
         var startedAt = DateTimeOffset.UtcNow;
@@ -130,7 +132,7 @@ public static class AgentLoopRunner
             .ConfigureAwait(false);
         var executionOptions = await config.ProviderExecutionOptionsProvider(config.Model.Provider, cancellationToken)
             .ConfigureAwait(false);
-        var generationOptions = config.GenerationSettings with { CancellationToken = cancellationToken };
+        var generationOptions = config.GenerationSettings with { CancellationToken = cancellationToken, ToolChoiceMode = ToolChoice.None };
         var stream = config.LlmClient.StreamSimple(config.Model, providerContext, generationOptions, executionOptions);
         var messageCountBeforeAssistant = messages.Count;
         var assistant = await StreamAccumulator
@@ -194,6 +196,7 @@ public static class AgentLoopRunner
         Func<AgentEvent, Task> emit,
         CancellationToken cancellationToken)
     {
+        AgentLoopConfig.ValidateToolResultBudget(config.MaxToolResults);
         cancellationToken.ThrowIfCancellationRequested();
         if (context.Messages.Count == 0)
         {
@@ -274,7 +277,8 @@ public static class AgentLoopRunner
         var completionContinuationAttempts = 0;
         RunCompletionDecision? lastCompletionDecision = null;
         var nonProgressGuard = new ToolNonProgressGuard(
-            config.ToolProgressPolicy ?? DefaultToolProgressPolicy.EvaluateAsync, config.GuardEvidenceObserver);
+            config.ToolProgressPolicy ?? DefaultToolProgressPolicy.EvaluateAsync, config.GuardEvidenceObserver,
+            config.MaxToolResults);
 
         // #2519: taint accumulation is scoped to the whole RUN, not to each provider turn. The
         // laundering path this closes is inherently multi-turn - the model fetches a page on one
@@ -479,6 +483,19 @@ public static class AgentLoopRunner
                 metrics.AddTokens(assistantMessage.Usage?.InputTokens, assistantMessage.Usage?.OutputTokens);
                 metrics.AddToolCalls(toolResults.Count);
 
+                if (hasMoreToolCalls && nonProgressGuard.WouldReachAbsoluteLimit(toolResults.Count))
+                {
+                    // Count the whole retained batch before boundary callbacks can cancel or
+                    // stall. ObserveAsync's hard-edge path invokes no progress-policy callback.
+                    var budget = await nonProgressGuard.ObserveAsync(
+                        assistantMessage.ToolCalls!, toolResults, cancellationToken).ConfigureAwait(false);
+                    nonProgressGuard.Record(budget, "terminal");
+                    await FinalizeBudgetAsync(messages, newMessages, currentContext, config, emit,
+                        metrics, budget, nonProgressGuard.Evidence, lastCompletionDecision, completionContinuationAttempts,
+                        assistantMessage, toolResults, turnToolNames, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
                 await emit(new TurnEndEvent(assistantMessage, toolResults, DateTimeOffset.UtcNow))
                     .ConfigureAwait(false);
 
@@ -537,7 +554,7 @@ public static class AgentLoopRunner
                         new RunCompletionResult(
                             RunCompletionStatus.Parked,
                             ["tool-non-progress"],
-                            RunStopReason.UserInput,
+                            RunStopReason.ToolNonProgress,
                             Detail: detail,
                             Evidence: $"Repeated {nonProgress.Kind} tool outcomes without observable progress.",
                             ContinuationOwner: "user",
@@ -607,6 +624,176 @@ public static class AgentLoopRunner
             metrics.ToMetrics(endTime2),
             endTime2,
             completion)).ConfigureAwait(false);
+    }
+
+    private static async Task FinalizeBudgetAsync(
+        List<AgentMessage> messages, List<AgentMessage> newMessages, AgentContext context,
+        AgentLoopConfig config, Func<AgentEvent, Task> emit, RunMetricsAccumulator metrics,
+        ToolNonProgressObservation observation, IReadOnlyList<GuardObservation> guardObservations,
+        RunCompletionDecision? priorDecision,
+        int continuationAttempts, AssistantAgentMessage boundaryMessage,
+        IReadOnlyList<ToolResultAgentMessage> boundaryResults, IReadOnlySet<string> boundaryToolNames,
+        CancellationToken cancellationToken)
+    {
+        var evidence = new ToolResultBudgetEvidence(config.MaxToolResults, observation.TotalResults,
+            observation.TotalResults - config.MaxToolResults);
+        var detail = $"Tool result budget exhausted (absolute-tool-result-limit): {evidence.ExecutedResults} executed results, limit {evidence.Limit}, overshoot {evidence.Overshoot}. " +
+            "The entire batch is retained. Work remains incomplete; no side effects will be retried automatically.";
+        // One absolute deadline also bounds lifecycle listeners. Caller cancellation ends generation,
+        // but cannot prevent the controlled message/end notifications from persisting the decision.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var summaryCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        var summaryToken = summaryCancellation.Token;
+        var summaryMessages = new List<AgentMessage>();
+        AssistantAgentMessage? assistant = null;
+        AssistantAgentMessage? emittedSummary = null;
+        var assistantEndEmitted = false;
+
+        void ThrowIfSummaryCancelled()
+        {
+            // The deadline's WaitAsync callback can resume this lane before cancellation
+            // propagates to the linked token. Consult the source tokens before any work.
+            deadline.Token.ThrowIfCancellationRequested();
+            cancellationToken.ThrowIfCancellationRequested();
+            summaryToken.ThrowIfCancellationRequested();
+        }
+
+        // A provider may ignore ToolChoice.None. No summary call is executable, so neither
+        // streaming observers nor transcript consumers may see it as an attempted dispatch.
+        // Copy snapshots rather than mutating provider-owned partials; retain text and usage.
+        static AssistantAgentMessage SanitizeSummary(AssistantAgentMessage message) => message with
+        {
+            ToolCalls = null,
+            ContentBlocks = message.ContentBlocks?.Where(block => block is not ToolCallContent).ToList()
+        };
+
+        async Task EmitSummaryAsync(AgentEvent evt)
+        {
+            ThrowIfSummaryCancelled();
+            evt = evt switch
+            {
+                MessageStartEvent { Message: AssistantAgentMessage message } start => start with { Message = SanitizeSummary(message) },
+                MessageUpdateEvent update => update with
+                {
+                    Message = SanitizeSummary(update.Message), ToolCallId = null, ToolName = null, ArgumentsDelta = null
+                },
+                MessageEndEvent { Message: AssistantAgentMessage message } end => end with { Message = SanitizeSummary(message) },
+                _ => evt
+            };
+            // MessageEnd may have reached Agent.ProcessEvent before a listener fails or stalls.
+            // Do not append that same assistant a second time during controlled terminalization.
+            if (evt is MessageEndEvent { Message: AssistantAgentMessage completed })
+            {
+                assistantEndEmitted = true;
+                emittedSummary = completed;
+            }
+            await emit(evt).WaitAsync(summaryToken).ConfigureAwait(false);
+        }
+
+        async Task EmitTerminalAsync(AgentEvent evt)
+        {
+            try
+            {
+                // Invoke even after the deadline: the synchronous state transition precedes
+                // listener waits. Never allow callback cancellation to escape this terminal lane.
+                await emit(evt).WaitAsync(deadline.Token).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Only this already-decided budget finalizer isolates authoritative callbacks.
+            }
+        }
+
+        // Preserve completed-turn ordering and emit once, inside the already-decided lane.
+        // A failed/stalled boundary listener cannot replace Parked with cancellation or failure.
+        await EmitTerminalAsync(new TurnEndEvent(boundaryMessage, boundaryResults, DateTimeOffset.UtcNow))
+            .ConfigureAwait(false);
+        await AuditClaimsAsync(config, boundaryMessage, boundaryToolNames, EmitTerminalAsync).ConfigureAwait(false);
+
+        try
+        {
+            ThrowIfSummaryCancelled();
+            var steering = await GetMessagesAsync(config.SteeringMessageProvider, summaryToken)
+                .WaitAsync(summaryToken).ConfigureAwait(false);
+            foreach (var message in steering)
+            {
+                await EmitSummaryAsync(new MessageStartEvent(message, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+                messages.Add(message);
+                newMessages.Add(message);
+                await EmitSummaryAsync(new MessageEndEvent(message, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+            }
+            var prompt = new BotNexus.Agent.Core.Types.UserMessage(
+                "[Tool result budget] " + detail +
+                " Summarize existing evidence, prior failures and unresolved work only. Do not claim completion or request tools.");
+            await EmitSummaryAsync(new TurnStartEvent(DateTimeOffset.UtcNow)).ConfigureAwait(false);
+            await EmitSummaryAsync(new MessageStartEvent(prompt, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+            messages.Add(prompt);
+            newMessages.Add(prompt);
+            await EmitSummaryAsync(new MessageEndEvent(prompt, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+            // Abandoned transformers and producers must never hold either live run list.
+            var isolatedContext = messages.ToList();
+            var transformed = config.AgentContextTransformer is null ? isolatedContext
+                : (await config.AgentContextTransformer(isolatedContext, summaryToken).WaitAsync(summaryToken).ConfigureAwait(false)).ToList();
+            var providerContext = await ContextConverter.ToProviderContext(
+                new AgentContext(context.SystemPrompt, transformed, []), config.ProviderMessageTransformer, summaryToken)
+                .WaitAsync(summaryToken).ConfigureAwait(false);
+            var execution = await config.ProviderExecutionOptionsProvider(config.Model.Provider, summaryToken)
+                .WaitAsync(summaryToken).ConfigureAwait(false);
+            var generation = config.GenerationSettings with
+            {
+                CancellationToken = summaryToken,
+                MaxTokens = Math.Clamp(config.GenerationSettings.MaxTokens ?? 1024, 1, 1024),
+                ToolChoiceMode = ToolChoice.None,
+                Reasoning = null,
+                ThinkingBudgets = null
+            };
+            // The deadline bounds asynchronous work, not synchronous user code invoked to
+            // obtain a stream. Providers/callbacks must return promptly; do not spawn orphan
+            // invocations to pretend that synchronous code can be forcibly interrupted.
+            ThrowIfSummaryCancelled();
+            var stream = config.LlmClient.StreamSimple(config.Model, providerContext, generation, execution);
+            // Do not race the accumulator itself against WaitAsync: its emitter and channel reads
+            // observe cancellation, so it fully unwinds before its isolated partial is inspected.
+            assistant = await StreamAccumulator.AccumulateAsync(stream, EmitSummaryAsync, summaryToken, summaryMessages)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            detail += ex is OperationCanceledException ? " Summary cancelled or timed out." : " Summary generation failed.";
+            if (!assistantEndEmitted && summaryMessages.LastOrDefault() is AssistantAgentMessage partial)
+            {
+                assistant = partial with
+                {
+                    FinishReason = ex is OperationCanceledException ? StopReason.Aborted : StopReason.Error,
+                    ErrorMessage = "Budget summary interrupted.",
+                    ToolCalls = null,
+                    ContentBlocks = partial.ContentBlocks?.Where(block => block is not ToolCallContent).ToList()
+                };
+            }
+            else
+            {
+                assistant = summaryMessages.LastOrDefault() as AssistantAgentMessage;
+            }
+        }
+        if (assistant is not null)
+        {
+            // Accumulator return/partial storage is independent of the sanitized event surface,
+            // including result-only and failed-listener paths. Keep terminal messages identical.
+            assistant = emittedSummary ?? SanitizeSummary(assistant);
+            messages.Add(assistant);
+            newMessages.Add(assistant);
+            metrics.IncrementTurns();
+            metrics.AddTokens(assistant.Usage?.InputTokens, assistant.Usage?.OutputTokens);
+            if (!assistantEndEmitted)
+                await EmitTerminalAsync(new MessageEndEvent(assistant, DateTimeOffset.UtcNow)).ConfigureAwait(false);
+            await EmitTerminalAsync(new TurnEndEvent(assistant, [], DateTimeOffset.UtcNow)).ConfigureAwait(false);
+        }
+        var open = (priorDecision?.OpenItemIds ?? []).Append("tool-result-budget").Distinct().ToArray();
+        var end = DateTimeOffset.UtcNow;
+        await EmitTerminalAsync(new AgentEndEvent(newMessages.ToArray(), metrics.ToMetrics(end), end,
+            new RunCompletionResult(RunCompletionStatus.Parked, open, RunStopReason.ToolResultBudget,
+                detail, detail, "user", "Review retained evidence and explicitly start a new run with new direction.",
+                continuationAttempts, evidence) { GuardObservations = guardObservations })).ConfigureAwait(false);
     }
 
     private static string BuildNonProgressGuidance(ToolNonProgressObservation observation)
@@ -943,8 +1130,9 @@ public static class AgentLoopRunner
                 }
 
                 var stream = config.LlmClient.StreamSimple(config.Model, providerContext, generationOptions, executionOptions);
+                var attemptFailure = new ProviderAttemptFailure();
                 var assistantMessage = await StreamAccumulator
-                    .AccumulateAsync(stream, emit, cancellationToken, messages)
+                    .AccumulateAsync(stream, emit, cancellationToken, messages, attemptFailure)
                     .ConfigureAwait(false);
                 if (assistantMessage.FinishReason == StopReason.Error
                     && ContextOverflowDetector.IsContextOverflow(assistantMessage.ErrorMessage)
@@ -961,8 +1149,29 @@ public static class AgentLoopRunner
                     continue;
                 }
 
-                recoveryLease?.ReportSuccess();
-                if (attempt > 0)
+                var providerFailed = assistantMessage.FinishReason is StopReason.Error or StopReason.Aborted;
+                if (providerFailed)
+                {
+                    if (attemptFailure.DiagnosticDetail is { } detail)
+                        DiagnosticNotification.Report(config.DiagnosticObserver, detail);
+                    if (attemptFailure.Classification == ProviderFailureClass.Transient)
+                        recoveryLease?.ReportTransientFailure(null);
+                    else
+                        recoveryLease?.ReportNonTransientFailure();
+                    // Unsafe-to-replay partials still carry authoritative exhaustion evidence.
+                    // Keep their transcript while protecting subsequent turns on this profile.
+                    if (attemptFailure.Classification == ProviderFailureClass.Exhausted)
+                        config.SuspensionRegistry?.Suspend(
+                            config.Model.Provider,
+                            config.AuthProfile ?? string.Empty,
+                            ProviderSuspensionRegistry.DefaultDuration,
+                            assistantMessage.ErrorMessage ?? "Provider exhausted after partial output.");
+                }
+                else
+                {
+                    recoveryLease?.ReportSuccess();
+                }
+                if (attempt > 0 && !providerFailed)
                 {
                     await EmitRecoveryAsync(AttemptObservation(ProviderRecoveryStage.Recovered, attempt + 1))
                         .ConfigureAwait(false);
@@ -993,6 +1202,7 @@ public static class AgentLoopRunner
             catch (ProviderAuthenticationException) when
                 (!authenticationRecovered && config.CredentialInvalidationService is not null)
             {
+                recoveryLease?.ReportNonTransientFailure();
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
                 authenticationRecovered = true;
                 await config.CredentialInvalidationService(config.Model.Provider, cancellationToken)
@@ -1003,6 +1213,8 @@ public static class AgentLoopRunner
             }
             catch (Exception ex) when (ClassifyFailure(ex) == ProviderFailureClass.Exhausted)
             {
+                if (ex is ProviderInBandFailureException inBand)
+                    DiagnosticNotification.Report(config.DiagnosticObserver, inBand.DiagnosticDetail);
                 recoveryLease?.ReportNonTransientFailure();
                 // #3015 -- the non-transient exhaustion lane. Quota exhausted / billing disabled /
                 // credential rejected will not clear by waiting, so spending the remaining three
@@ -1027,6 +1239,8 @@ public static class AgentLoopRunner
             catch (Exception ex) when (ClassifyFailure(ex) == ProviderFailureClass.Transient && attempt < maxAttempts - 1)
             {
                 RestoreMessagesAfterFailedStream(messages, messageCountBeforeStream);
+                if (ex is ProviderInBandFailureException inBand)
+                    DiagnosticNotification.Report(config.DiagnosticObserver, inBand.DiagnosticDetail);
                 var retryAfterDelay = (ex as ProviderRateLimitException)?.RetryAfter;
                 recoveryLease?.ReportTransientFailure(retryAfterDelay);
                 var delayMs = ComputeRetryDelayMs(backoffMs, retryAfterDelay, config);
@@ -1042,6 +1256,8 @@ public static class AgentLoopRunner
             }
             catch (Exception ex)
             {
+                if (ex is ProviderInBandFailureException inBand)
+                    DiagnosticNotification.Report(config.DiagnosticObserver, inBand.DiagnosticDetail);
                 if (ClassifyFailure(ex) == ProviderFailureClass.Transient)
                 {
                     recoveryLease?.ReportTransientFailure((ex as ProviderRateLimitException)?.RetryAfter);
@@ -1114,5 +1330,7 @@ public static class AgentLoopRunner
     /// second, divergent copy of the classification rules.
     /// </summary>
     private static ProviderFailureClass ClassifyFailure(Exception exception)
-        => TransientErrorClassifier.Classify(exception);
+        => exception is ProviderInBandFailureException inBand
+            ? inBand.FailureClass
+            : TransientErrorClassifier.Classify(exception);
 }

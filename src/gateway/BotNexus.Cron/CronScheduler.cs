@@ -1350,6 +1350,38 @@ public sealed class CronScheduler(
 
             var scope = _scopeFactory.CreateScope();
             executionScope = scope;
+            if (jobForRun.PreconditionCommand is not null)
+            {
+                if (!NormalizeActionType(jobForRun.ActionType).Equals("agent-prompt", StringComparison.OrdinalIgnoreCase)
+                    || string.IsNullOrWhiteSpace(jobForRun.PreconditionCommand))
+                    throw new InvalidOperationException("preconditionCommand requires an agent-prompt job and a nonempty command.");
+                var probeContext = new CronExecutionContext
+                {
+                    Job = jobForRun, RunId = run.Id, TriggeredAt = triggeredAt,
+                    TriggerType = triggerType, Services = scope.ServiceProvider
+                };
+                // A failed probe throws into the existing error/alert path. No model fallback.
+                bool hasWork;
+                try
+                {
+                    hasWork = await Actions.CommandCronAction.EvaluatePreconditionAsync(probeContext, runCt).ConfigureAwait(false);
+                    runCt.ThrowIfCancellationRequested();
+                    if (!hasWork)
+                    {
+                        await _cronStore.RecordRunCompleteAsync(run.Id, CronRunStatus.NoWork, null, ct: ct).ConfigureAwait(false);
+                        await FinalizeRunAsync(job.Id, jobForRun, triggeredAt, CronRunStatus.NoWork, null, ct: ct).ConfigureAwait(false);
+                        return run with { Status = CronRunStatus.NoWork, CompletedAt = _timeProvider.GetUtcNow() };
+                    }
+                }
+                catch (OperationCanceledException) when (runCt.IsCancellationRequested)
+                {
+                    var status = activeRun.OperatorCancelled ? CronRunStatus.Aborted : CronRunStatus.Error;
+                    var reason = activeRun.OperatorCancelled ? OperatorAbortReason : ResolveHostAbortReason();
+                    await RecordAbortedRunAsync(run.Id, jobForRun, triggeredAt, status, reason).ConfigureAwait(false);
+                    if (!activeRun.OperatorCancelled) throw;
+                    return run with { Status = status, CompletedAt = _timeProvider.GetUtcNow(), Error = reason };
+                }
+            }
             CronModelSelection? modelSelection = null;
             if (CronModelRouting.UsesModel(jobForRun.ActionType))
             {
@@ -3241,6 +3273,7 @@ public sealed class CronScheduler(
                     Model = configuredJob.Model,
                     WebhookUrl = normalizedWebhookUrl,
                     ShellCommand = configuredJob.ShellCommand,
+                    PreconditionCommand = configuredJob.PreconditionCommand,
                     Enabled = configuredJob.Enabled,
                     System = configuredJob.System,
                     DeleteAfterRun = configuredJob.DeleteAfterRun,
@@ -3272,6 +3305,7 @@ public sealed class CronScheduler(
                 Model = configuredJob.Model,
                 WebhookUrl = normalizedWebhookUrl,
                 ShellCommand = configuredJob.ShellCommand,
+                PreconditionCommand = configuredJob.PreconditionCommand,
                 Enabled = configuredJob.Enabled,
                 System = configuredJob.System,
                 DeleteAfterRun = configuredJob.DeleteAfterRun,

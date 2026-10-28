@@ -1303,11 +1303,31 @@ Two conditions must both hold, and each guards a distinct way of getting this wr
 1. **The job is marked `executionClass`.** An unmarked job is untouched (a reporting job may
    legitimately make no tool call).
 2. **The action actually reported a tool count.** `command` and `webhook` actions have no tool
-   concept and report nothing; an interrupted turn already carries its own terminal outcome. That
-   silence means *not applicable*, and is never read as "zero tools" -- otherwise every shell job on
-   the platform would be classified as a do-nothing run.
+   concept and report nothing. That silence means *not applicable*, and is never read as "zero
+   tools" -- otherwise every shell job on the platform would be classified as a do-nothing run.
+   Interrupted agent turns can report partial counts, but retain their interruption outcome rather
+   than being classified by the zero-tool rule.
 
-A run that invokes one or more tools continues to record `ok` exactly as before.
+A genuinely completed run that invokes one or more tools can record `ok`; a tool invocation
+alone does not prove that the run completed successfully.
+
+### Interrupted runs and partial evidence
+
+Cancellation is not a completed zero-tool run. Operator cancellation records `aborted`; host
+cancellation records `error` and still propagates cancellation to the caller. A timeout records
+`timed_out`. If a returned agent response explicitly reports cancellation, failure, incomplete work,
+or a parked run, that disposition takes precedence over the zero-tool rule.
+
+Cron and soul-triggered runs retain the current run's partial tool timeline and measured usage.
+An unfinished tool is marked incomplete, not successful. Missing token measurements remain unknown
+(`null`), not zero; a missing final answer does not mean that no tools ran or that the run was free.
+Cancellation does **not** roll back tool side effects. Inspect the retained transcript and the target
+system before retrying work that could have changed external state.
+
+Disposable no-op cleanup applies only to an empty or `NO_REPLY` response with no tool calls and no
+explicit non-completed disposition. Interrupted cron sessions are retained rather than deleted as
+silent wakes. A genuinely completed silent no-tool run can still be cleaned up. This is separate
+from an explicitly configured `deleteAfterRun` retention policy.
 
 ## 11c. Delivery failure (`delivery_failed`)
 

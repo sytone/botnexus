@@ -119,6 +119,7 @@ public sealed partial class AnthropicProvider(HttpClient httpClient, ISecretReda
         var anthropicOpts = new AnthropicOptions
         {
             Temperature = baseOptions.Temperature,
+            ToolChoiceMode = baseOptions.ToolChoiceMode,
             MaxTokens = baseOptions.MaxTokens,
             CancellationToken = baseOptions.CancellationToken,
             ApiKey = baseOptions.ApiKey,
@@ -212,6 +213,8 @@ public sealed partial class AnthropicProvider(HttpClient httpClient, ISecretReda
             if (modified is JsonObject modifiedObject)
                 requestBody = modifiedObject;
         }
+
+        requestBody.EnforceToolFree(options?.ToolChoiceMode, messagesChoice: true);
 
         var json = requestBody.ToJsonString();
 

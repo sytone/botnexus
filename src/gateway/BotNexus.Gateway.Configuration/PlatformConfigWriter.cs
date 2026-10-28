@@ -984,7 +984,10 @@ public sealed class PlatformConfigWriter
             return Task.CompletedTask;
         }
 
-        return _writer.ApplyChangeSetAsync(changes, reason, ct);
+        // Carry the complete before-image as an optional fallback for malformed JSON projections.
+        // Valid or absent projections and row backends keep applying only the diff. The canonical
+        // read already succeeded; this is not a whole-store replacement or source-read fallback.
+        return _writer.ApplyChangeSetAsync(changes, pristine, reason, ct);
     }
 
     // #2357: Windows fails File.Move(..., overwrite: true) with UnauthorizedAccessException when

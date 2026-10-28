@@ -117,6 +117,7 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
         var copilotOpts = new CopilotMessagesOptions
         {
             Temperature = baseOptions.Temperature,
+            ToolChoiceMode = baseOptions.ToolChoiceMode,
             MaxTokens = baseOptions.MaxTokens,
             CancellationToken = baseOptions.CancellationToken,
             ApiKey = baseOptions.ApiKey,
@@ -206,6 +207,8 @@ public sealed partial class CopilotMessagesProvider(HttpClient httpClient, ISecr
             if (modified is JsonObject modifiedObject)
                 requestBody = modifiedObject;
         }
+
+        requestBody.EnforceToolFree(options?.ToolChoiceMode, messagesChoice: true);
 
         var requestedEffort = requestBody["output_config"]?["effort"]?.GetValue<string>();
         if (requestedEffort is not null)

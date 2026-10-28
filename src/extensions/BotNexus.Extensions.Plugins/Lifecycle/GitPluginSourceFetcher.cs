@@ -28,7 +28,11 @@ public sealed class GitPluginSourceFetcher : IPluginSourceFetcher
         string stagingDirectory,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        if (!GitPluginSourcePolicy.IsSupported(source))
+        {
+            throw new InvalidOperationException(GitPluginSourcePolicy.RejectedSourceMessage);
+        }
+
         ArgumentException.ThrowIfNullOrWhiteSpace(stagingDirectory);
 
         // "--" terminates option parsing so a source beginning with a dash can never be
@@ -44,23 +48,33 @@ public sealed class GitPluginSourceFetcher : IPluginSourceFetcher
         cloneArgs.Add(source);
         cloneArgs.Add(".");
 
-        var clone = await _git.RunAsync(stagingDirectory, cloneArgs, cancellationToken).ConfigureAwait(false);
-        if (clone.ExitCode != 0)
+        try
         {
-            throw new InvalidOperationException(
-                $"git clone of '{source}' failed with exit code {clone.ExitCode}: {Describe(clone)}");
-        }
+            var clone = await _git.RunAsync(stagingDirectory, cloneArgs, cancellationToken).ConfigureAwait(false);
+            if (clone.ExitCode != 0)
+            {
+                throw new InvalidOperationException(GitPluginSourcePolicy.FetchFailureMessage);
+            }
 
-        var rev = await _git.RunAsync(stagingDirectory, ["rev-parse", "HEAD"], cancellationToken).ConfigureAwait(false);
-        if (rev.ExitCode != 0 || string.IsNullOrWhiteSpace(rev.StandardOutput))
+            var rev = await _git.RunAsync(stagingDirectory, ["rev-parse", "HEAD"], cancellationToken).ConfigureAwait(false);
+            var objectId = rev.StandardOutput.Trim();
+            if (rev.ExitCode != 0 || objectId.Length is not (40 or 64)
+                || !objectId.All(char.IsAsciiHexDigit))
+            {
+                throw new InvalidOperationException(GitPluginSourcePolicy.FetchFailureMessage);
+            }
+
+            return new PluginFetchResult(objectId);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            throw new InvalidOperationException(
-                $"Could not resolve the revision cloned from '{source}': {Describe(rev)}");
+            // Even cancellation exceptions can contain runner-supplied secrets or inner chains.
+            throw new OperationCanceledException(cancellationToken);
         }
-
-        return new PluginFetchResult(rev.StandardOutput.Trim());
+        catch (Exception)
+        {
+            // Do not attach the original exception: ToString/loggers traverse inner exceptions.
+            throw new InvalidOperationException(GitPluginSourcePolicy.FetchFailureMessage);
+        }
     }
-
-    private static string Describe(GitCommandResult result) =>
-        string.IsNullOrWhiteSpace(result.StandardError) ? result.StandardOutput : result.StandardError;
 }

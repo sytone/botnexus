@@ -230,7 +230,43 @@ var recentMemories = previousSoulSessions
 
 ### agent_converse Tool
 
-Enables peer agent conversations via the `agent_converse` tool.
+Runs a bounded, blocking peer exchange via the `agent_converse` tool. It does not invite
+agents into the human's current conversation or create a continuing shared group thread.
+
+### Collaboration boundaries
+
+For developers integrating peer communication, distinguish the following capabilities.
+This inventory is source-verified on `main` at `8b59da266`; it is not evidence from an
+end-to-end collaborative conversation run.
+
+| Capability | Delivered behavior | What it does not establish |
+| --- | --- | --- |
+| Bilateral exchange | `AgentExchangeService` authorizes the peer, registers two participants in a new normal Conversation and awaits the target handle. `AgentExchangeTurnEngine` constructs objective-based follow-up prompts. | The initiating model does not author each intervening reply. This is not an asynchronous, alternating dialogue. |
+| Asynchronous posting | `ConversationTool.SendMessageAsync` posts through the conversation router and inbound orchestrator with the calling agent's citizen identity, then returns conversation/session IDs on admission. | Admission is not execution completion or correlated reply delivery to the originating conversation. The addressed agent is the conversation owner, not every participant. |
+| Participant metadata | Conversation summary DTOs expose participants; history entries expose an agent ID. | A participant list does not dispatch messages. `ConversationHistoryProjection` uses the owning session's agent ID, not a separate producing speaker on every entry. |
+| Progress visibility | `AgentExchangeProgressEvent` reports handoff milestones to the initiating conversation. | Progress deliberately excludes child output; it is not a reply mailbox or model-wake guarantee. |
+| Shared human/agent thread | The original group-thread scenario remains unverified and incomplete. | Invitation, subsequent-message fan-out, addressed agent selection, per-entry speaker attribution and a participant-roster UI are not delivered together by these primitives. |
+
+The inbound orchestrator already provides bounded per-conversation FIFO admission and
+explicit steering. `DefaultInboundDeliveryResolver` resolves `Auto` to queue; steering
+against an idle or unaddressed handle falls back to queue. These are reusable delivery
+seams, not a durable peer-dialogue protocol or restart-safe reply ledger.
+
+Historical issue closure is not capability evidence. [Issue #414](https://github.com/sytone/botnexus/issues/414#issuecomment-4521872648)
+was superseded by the owner's normal-Conversation design, and [PR #474](https://github.com/sytone/botnexus/pull/474)
+was closed unmerged. [PR #1137](https://github.com/sytone/botnexus/pull/1137)
+delivered API/data-model metadata and explicitly deferred portal rendering despite closing
+#415. The broader completion claim on [#378](https://github.com/sytone/botnexus/issues/378#issuecomment-6354739862)
+has been corrected. No new `SessionType.MultiAgent` is required by that owner decision.
+
+[Issue #5044](https://github.com/sytone/botnexus/issues/5044) owns the source-backed
+interactive-dialogue proposal, separate bilateral and group scopes, security boundaries
+and future end-to-end acceptance scenarios. That proposal is **planned**, not an
+implemented API, approved architecture, or a usable invitation procedure. Peer message
+content must remain distinct from human authority; participant membership and message
+role alone do not grant approval or additional access.
+
+### Exchange tool parameters
 
 **Tool Definition:**
 

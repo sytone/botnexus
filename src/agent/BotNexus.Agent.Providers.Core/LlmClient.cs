@@ -140,6 +140,7 @@ public sealed class LlmClient
         ArgumentNullException.ThrowIfNull(generation);
         return new SimpleStreamOptions
         {
+            ToolChoiceMode = generation.ToolChoiceMode,
             Temperature = generation.Temperature,
             MaxTokens = generation.MaxTokens,
             ContextWindow = generation.ContextWindow,

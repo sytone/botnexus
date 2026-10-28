@@ -107,7 +107,8 @@ manifest. Original plugin files remain part of the installed file receipt.
 | Missing or invalid manifestless identity | Rejected. No identity is inferred from the source, checkout directory, or skill name. |
 | Present malformed or linked metadata | Rejected, never reinterpreted as manifestless content. Native manifest validation remains authoritative when present. |
 | Claude and manifestless path safety | Staging preflight rejects symbolic links and reparse points (including dangling links), nonportable names, case-insensitive destination collisions, and noncanonical conventional root names. Manifestless skill entry files must be spelled `SKILL.md`. |
-| Marketplace, consent, UI or extra component execution | No expansion in this stage; unsupported content fails rather than producing partial success. |
+| Claude/Copilot marketplace relative selection | Explicit `PluginInstallRequest.MarketplacePluginName` selects one entry from the fetched repository's `.claude-plugin/marketplace.json` or `.github/plugin/marketplace.json`; see the limited matrix below. No automatic reinterpretation of ordinary requests. |
+| Consent, UI or extra component execution | No expansion in this stage; unsupported content fails rather than producing partial success. |
 
 The installed receipt stores `manifestFormat` as `"Native"` or `"Claude"` for the selected
 manifest, including `"Claude"` for accepted manifestless imports. Manifestless receipts keep the
@@ -137,6 +138,45 @@ and `plugins[]`; each entry requires a `name` and a `source`.
   ]
 }
 ```
+
+### Experimental explicit Claude and Copilot marketplace selection
+
+This is one bounded slice of #4640, not full Claude marketplace compatibility. The separate
+`ClaudeMarketplaceSelection` staging helper does not change the native catalog parser or schema.
+It follows [Claude's repository-root relative source rule](https://code.claude.com/docs/en/plugins/marketplace-reference).
+The existing endpoint binds `PluginInstallRequest` directly, so its optional
+`MarketplacePluginName` property is available to API callers as `marketplacePluginName`.
+The CLI forwards the same selection without rewriting the repository URL:
+
+```shell
+botnexus plugin install https://example.test/catalog.git --marketplace-plugin chosen --reference main
+```
+
+The selector probes canonical `.claude-plugin/marketplace.json` and
+`.github/plugin/marketplace.json` paths after tree preflight. Exactly one must be present;
+both present, malformed catalogs and case aliases fail closed, without dialect fallback.
+The latter path supports the inspected Copilot relative-source catalog shape, including
+entry-level descriptive `version`. Generated native catalog requests leave the selector null.
+Marketplace registration persistence, catalog browsing and init/UI selection remain a later stage.
+
+| Capability | Limited support |
+| --- | --- |
+| Fetch and revision | Fetch the whole source once using the existing transport and requested reference. Record its resolved revision, source, reference, `marketplacePluginName`, `marketplaceCatalogPath` and `marketplaceSourcePath`; update replays repository/reference/identity and revalidates the current catalog, refreshing path evidence only on successful replacement. No additional entry source is fetched. |
+| Selected source | String `"./"` or `"./contained/subdir"`, resolved from the fetched root, not `.claude-plugin/`. Nested selection detaches only that subtree before import. Root selection owns the whole root, including its catalog, so all root content must pass the skills-only checks. |
+| Identity | Explicit selector, selected entry name and any plugin manifests must agree exactly and pass native identity rules. Optional request `Name` must agree too. A manifestless selected directory uses the selector as explicit identity and still requires canonical skill files. Catalog-only root metadata is permitted for this case only when `.claude-plugin` contains exactly the canonical `marketplace.json` file. Empty metadata directories and nested catalog-only metadata are rejected. |
+| Catalog shape | JSON object with nonempty `name`, required `owner` object with nonempty string `name`, and `plugins` array. Optional owner `email` and `url` must be strings. Optional descriptive `metadata` (`description`, `version`) and string `$schema` are not executed or fetched. Other catalog metadata fields, including path overrides, fail. Each entry needs a valid name and source. |
+| Selected entry fields | `name`, `source`, and descriptive `description`, `author`, `homepage`, `repository`, `license`, `keywords`. Metadata uses native type validation. Copilot catalogs additionally accept descriptive `version`, validated but never merged into the package manifest. Claude entry version overrides still fail. Component fields, `strict` and unknown selected-entry fields fail, even if null or empty. No inheritance or partial component import. |
+| Unsupported selected sources | Typed objects (including GitHub, git, URL, package and other remote forms), absolute paths, URIs, traversal, backslashes, percent encoding, empty/dot segments, trailing slash except `./`, and nonportable segments fail. |
+| Safety and bounds | Catalog reads stop at 1 MiB plus one byte and reject over-limit UTF-8 bytes. Duplicate fields anywhere and duplicate plugin names fail. The entire fetched source must pass link/reparse-point, portable-name and collision preflight before metadata is opened; this intentionally rejects unsafe unselected siblings too. |
+| Unselected entries | Never fetched, promoted or activated. Their names/source presence and global duplicate fields are checked; unsupported source types or component declarations in unselected entries do not activate anything. |
+| Imported components | Existing conventional-skills importer, catalog generation, trust checks and exact-file receipts remain in use. Selected native-only manifests also cannot enable hooks, commands, agents, MCP or custom skill paths. Native whole-manifest authority is preserved, not merged with catalog metadata. Selected root `plugin.json` packages use the existing bounded legacy importer and its additive enhancement rules. |
+| Update/removal | A rejected staged candidate preserves the previous receipt and content. A successful update refreshes revision, files and trust catalog; removal deletes only recorded files. Existing pinning and same-revision behavior are unchanged. |
+
+The link-free preflight is deliberately stricter than checking only the selected subtree.
+This stage does not provide arbitrary HTTP catalog loading, full upstream schema validation,
+plugin dependency resolution, marketplace version constraints, component overrides, consent or
+foreign hook execution. A root-source plugin that declares hooks (including Ponytail-shaped
+inputs) remains unsupported rather than being installed with hooks silently dropped.
 
 ## Schema is the single source of truth
 
@@ -191,6 +231,35 @@ The fetcher reports the **resolved revision** (the commit SHA), never the reques
 Recording `main` would make the question "has the source moved since install?" unanswerable,
 and that is precisely the question update exists to answer. The installed record therefore
 carries both: `reference` is what update re-resolves, `resolvedVersion` is what is on disk.
+
+### Git source admission, authentication and diagnostics
+
+The Git fetch boundary admits a conservative source grammar before invoking Git. Supported
+forms are `https://host[:port]/path`, `ssh://[user@]host[:port]/path`, and
+`user@host:path` (including an absolute remote path). Hosts use ASCII letters, digits, dots
+and hyphens; SSH usernames use letters, digits, underscores, dots and hyphens. Repository
+paths use letters, digits, underscores, dots, hyphens, slashes and tildes, with a nonempty
+first segment. IPv6 literals and percent-encoded sources are not supported by this grammar.
+
+HTTPS user information, SSH passwords, query parameters, fragments, whitespace, control
+characters and backslashes are rejected, not stripped or normalized. Other transports,
+Git remote-helper syntax (such as `ext::`), file URLs and local paths are rejected too.
+An SSH username such as `git@` is supported; it is not an inline password. **Local
+user-checkout handoff is not supported.** A checkout accessible to a user's shell is not
+an alternative installation source.
+
+Git owns authentication in the **actual gateway or container environment**. This path does
+not use HTTP marketplace credential providers, browser sessions or cookies. Access from a
+user's shell does not establish access for the gateway. After a fetch failure, check Git
+availability, connectivity and repository access in that actual environment, then retry.
+A Git failure alone does not establish a permission or credential problem.
+
+Source rejections and fetch failures use fixed diagnostics. Fetch exceptions and the lifecycle
+fetch boundary do not expose the raw source, Git stdout/stderr, runner exception messages or
+inner exception chains. Caller-requested cancellation remains cancellation, without runner
+details. This is a bounded fetch-boundary contract (Refs #4151), not a claim that marketplace
+metadata or all plugin state and response projections are private. Admission does not grant
+trust: manifest validation and content trust checks still apply.
 
 ### Install is all-or-nothing
 

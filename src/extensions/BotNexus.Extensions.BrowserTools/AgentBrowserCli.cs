@@ -120,26 +120,29 @@ public sealed class AgentBrowserCli : IBrowserDriver, IBrowserInteractionDriver,
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(url);
 
-        // The floor is read BEFORE the flag flips, so the first navigate of a session gets it and
-        // the second does not, exactly as AC5 words it.
-        var timeout = NextTimeoutFor("navigate");
-        await RunAsync(["navigate", url], timeout, cancellationToken).ConfigureAwait(false);
-        _hasNavigated = true;
+        await WithSessionGateAsync(async () =>
+        {
+            // Select and consume the cold-start budget under the same gate as the command.
+            await RunCoreAsync(["open", url], NextTimeoutFor("navigate"), cancellationToken)
+                .ConfigureAwait(false);
+            _hasNavigated = true;
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<string> GetCurrentUrlAsync(CancellationToken cancellationToken = default)
     {
-        var result = await RunAsync(["url"], _commandTimeout, cancellationToken).ConfigureAwait(false);
-        return result.StandardOutput.Trim();
+        var result = await RunAsync(["--json", "get", "url"], _commandTimeout, cancellationToken)
+            .ConfigureAwait(false);
+        return ReadDataString(result.StandardOutput, "url", allowEmpty: false);
     }
 
     /// <inheritdoc />
     public async Task<string> GetPageTextAsync(CancellationToken cancellationToken = default)
     {
-        var result = await RunAsync(["snapshot"], _commandTimeout, cancellationToken)
+        var result = await RunAsync(["--json", "snapshot"], _commandTimeout, cancellationToken)
             .ConfigureAwait(false);
-        return result.StandardOutput;
+        return ReadDataString(result.StandardOutput, "snapshot", allowEmpty: true);
     }
 
     /// <inheritdoc />
@@ -159,15 +162,29 @@ public sealed class AgentBrowserCli : IBrowserDriver, IBrowserInteractionDriver,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(selector);
-
-        var args = new List<string> { "type", selector, text ?? string.Empty };
-        if (submit)
+        // The pinned CLI interprets these exact text arguments as type options, not literals.
+        if (text is "--clear" or "--delay")
         {
-            args.Add("--submit");
+            throw new ArgumentException("The supplied text is not supported by the pinned browser CLI.", nameof(text));
         }
 
-        var result = await RunAsync(args, _commandTimeout, cancellationToken).ConfigureAwait(false);
-        return result.StandardOutput.Trim();
+        var output = string.Empty;
+        await WithSessionGateAsync(async () =>
+        {
+            var result = await RunCoreAsync(["type", selector, text ?? string.Empty],
+                _commandTimeout, cancellationToken).ConfigureAwait(false);
+            if (submit)
+            {
+                // Submission is a separate CLI command, but one indivisible session operation.
+                // Check cancellation even when a runner completes without observing its token.
+                cancellationToken.ThrowIfCancellationRequested();
+                result = await RunCoreAsync(["press", "Enter"], _commandTimeout, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            output = result.StandardOutput.Trim();
+        }, cancellationToken).ConfigureAwait(false);
+        return output;
     }
 
     /// <inheritdoc />
@@ -178,10 +195,10 @@ public sealed class AgentBrowserCli : IBrowserDriver, IBrowserInteractionDriver,
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
 
-        var args = new List<string> { "screenshot", "--output", destinationPath };
+        var args = new List<string> { "screenshot", destinationPath };
         if (fullPage)
         {
-            args.Add("--full-page");
+            args.Add("--full");
         }
 
         await RunAsync(args, _commandTimeout, cancellationToken).ConfigureAwait(false);
@@ -206,6 +223,8 @@ public sealed class AgentBrowserCli : IBrowserDriver, IBrowserInteractionDriver,
 
         _disposed = true;
 
+        // Close is a session command too: it must not interrupt an in-flight type + press.
+        await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
             if (_resolution.IsResolved)
@@ -225,7 +244,9 @@ public sealed class AgentBrowserCli : IBrowserDriver, IBrowserInteractionDriver,
         }
         finally
         {
-            _gate.Dispose();
+            // Queued calls still need to acquire, reject the disposed driver, and release.
+            // Do not dispose this managed semaphore while those waiters can still resume.
+            _gate.Release();
         }
     }
 
@@ -242,8 +263,37 @@ public sealed class AgentBrowserCli : IBrowserDriver, IBrowserInteractionDriver,
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        AgentBrowserProcessResult? result = null;
+        await WithSessionGateAsync(async () =>
+        {
+            result = await RunCoreAsync(command, timeout, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
+        return result ?? throw new InvalidOperationException("The browser command produced no result.");
+    }
 
+    private async Task WithSessionGateAsync(Func<Task> operation, CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            cancellationToken.ThrowIfCancellationRequested();
+            await operation().ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    // The caller owns the gate for the entire logical operation (including type + press).
+    private async Task<AgentBrowserProcessResult> RunCoreAsync(
+        IReadOnlyList<string> command,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!_resolution.IsResolved)
         {
             // AC6's first half: an unresolvable binary is reported the moment a call is made,
@@ -252,48 +302,68 @@ public sealed class AgentBrowserCli : IBrowserDriver, IBrowserInteractionDriver,
                 _resolution.Message ?? AgentBrowserBinaryResolver.InstallGuidance);
         }
 
-        // Serialised per session: agent-browser drives one browser per session id, and two
-        // concurrent commands against the same profile race on the same page.
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var result = await _runner.RunAsync(
+            _resolution.BinaryPath!,
+            BuildArguments(command),
+            _environment,
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+
+        if (result.TimedOut)
+        {
+            throw new AgentBrowserUnavailableException(
+                $"The agent-browser command '{command[0]}' exceeded its "
+                + $"{timeout.TotalSeconds:0}s budget and was terminated. The browser tools "
+                + "fail fast rather than hang so the agent loop is never wedged by one page.");
+        }
+
+        if (!result.IsSuccess)
+        {
+            var combined = result.StandardError + "\n" + result.StandardOutput;
+
+            if (LooksLikeMissingChrome(combined))
+            {
+                // AC6's second half. Recognised explicitly so the agent is told to install
+                // Chrome rather than handed a raw launcher stack trace it cannot act on.
+                throw new AgentBrowserUnavailableException(ChromeInstallGuidance);
+            }
+
+            throw new AgentBrowserUnavailableException(
+                $"The agent-browser command '{command[0]}' failed with exit code "
+                + $"{result.ExitCode}: {Summarise(result.StandardError)}");
+        }
+
+        return result;
+    }
+
+    private static string ReadDataString(string output, string field, bool allowEmpty)
+    {
+        // Never include JSON, page text, URL, or upstream error diagnostics in parse failures.
+        var message = $"The agent-browser {field} response was unsuccessful or invalid.";
         try
         {
-            var result = await _runner.RunAsync(
-                _resolution.BinaryPath!,
-                BuildArguments(command),
-                _environment,
-                timeout,
-                cancellationToken).ConfigureAwait(false);
-
-            if (result.TimedOut)
+            using var document = JsonDocument.Parse(output);
+            var root = document.RootElement;
+            if (root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("success", out var success)
+                && success.ValueKind == JsonValueKind.True
+                && root.TryGetProperty("data", out var data)
+                && data.ValueKind == JsonValueKind.Object
+                && data.TryGetProperty(field, out var value)
+                && value.ValueKind == JsonValueKind.String
+                && value.GetString() is { } text
+                && (allowEmpty || !string.IsNullOrWhiteSpace(text)))
             {
-                throw new AgentBrowserUnavailableException(
-                    $"The agent-browser command '{command[0]}' exceeded its "
-                    + $"{timeout.TotalSeconds:0}s budget and was terminated. The browser tools "
-                    + "fail fast rather than hang so the agent loop is never wedged by one page.");
+                // Snapshot whitespace belongs to the page, not the JSON presentation layer.
+                return text;
             }
-
-            if (!result.IsSuccess)
-            {
-                var combined = result.StandardError + "\n" + result.StandardOutput;
-
-                if (LooksLikeMissingChrome(combined))
-                {
-                    // AC6's second half. Recognised explicitly so the agent is told to install
-                    // Chrome rather than handed a raw launcher stack trace it cannot act on.
-                    throw new AgentBrowserUnavailableException(ChromeInstallGuidance);
-                }
-
-                throw new AgentBrowserUnavailableException(
-                    $"The agent-browser command '{command[0]}' failed with exit code "
-                    + $"{result.ExitCode}: {Summarise(result.StandardError)}");
-            }
-
-            return result;
         }
-        finally
+        catch (JsonException)
         {
-            _gate.Release();
+            // Do not attach the parser exception: it can contain untrusted response fragments.
         }
+
+        throw new AgentBrowserUnavailableException(message);
     }
 
     /// <summary>

@@ -31,12 +31,12 @@ public sealed class GitPluginSourceFetcherTests
     {
         var runner = new RecordingGitRunner();
         runner.Enqueue(new GitCommandResult(0, string.Empty, string.Empty));
-        runner.Enqueue(new GitCommandResult(0, "0d0ebca8f00d\n", string.Empty));
+        runner.Enqueue(new GitCommandResult(0, "0123456789012345678901234567890123456789\n", string.Empty));
 
         var result = await new GitPluginSourceFetcher(runner)
             .FetchAsync("https://example.com/hello.git", reference: null, stagingDirectory: Path.GetTempPath());
 
-        Assert.Equal("0d0ebca8f00d", result.ResolvedVersion);
+        Assert.Equal("0123456789012345678901234567890123456789", result.ResolvedVersion);
         Assert.Equal(["clone", "--quiet", "--", "https://example.com/hello.git", "."], runner.Invocations[0]);
         Assert.Equal(["rev-parse", "HEAD"], runner.Invocations[1]);
     }
@@ -48,7 +48,7 @@ public sealed class GitPluginSourceFetcherTests
     {
         var runner = new RecordingGitRunner();
         runner.Enqueue(new GitCommandResult(0, string.Empty, string.Empty));
-        runner.Enqueue(new GitCommandResult(0, "abc123", string.Empty));
+        runner.Enqueue(new GitCommandResult(0, "0123456789012345678901234567890123456789", string.Empty));
 
         await new GitPluginSourceFetcher(runner)
             .FetchAsync("https://example.com/hello.git", "v1.2.0", Path.GetTempPath());
@@ -60,7 +60,7 @@ public sealed class GitPluginSourceFetcherTests
     }
 
     [Fact]
-    public async Task FetchThrowsWithGitsDiagnosticWhenTheCloneFails()
+    public async Task FetchThrowsWithSafeGuidanceWhenTheCloneFails()
     {
         var runner = new RecordingGitRunner();
         runner.Enqueue(new GitCommandResult(128, string.Empty, "fatal: repository not found"));
@@ -68,7 +68,11 @@ public sealed class GitPluginSourceFetcherTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             new GitPluginSourceFetcher(runner).FetchAsync("https://example.com/nope.git", null, Path.GetTempPath()));
 
-        Assert.Contains("repository not found", ex.Message, StringComparison.Ordinal);
+        ex.Message.ShouldBe("Plugin source fetch failed. Check Git availability, connectivity, and repository access in the actual gateway or container environment, then retry. Git diagnostics are withheld because they may contain credentials.");
+        ex.ToString().ShouldNotContain("repository not found");
+        ex.ToString().ShouldNotContain("https://example.com/nope.git");
+        ex.InnerException.ShouldBeNull();
+        runner.Invocations.Count.ShouldBe(1);
     }
 
     // A clone that succeeds but whose revision cannot be resolved must fail, not install content

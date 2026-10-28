@@ -24,6 +24,7 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
     // A cron pin changes isolation precedence even when the descriptor model is identical.
     private readonly Dictionary<AgentSessionKey, string?> _cronModelPins = [];
     private readonly Lock _sync = new();
+    private readonly HashSet<AgentSessionKey> _maintenance = [];
     private readonly ILogger<DefaultAgentSupervisor> _logger;
 
     public DefaultAgentSupervisor(
@@ -58,6 +59,8 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
 
         lock (_sync)
         {
+            if (_maintenance.Contains(key))
+                throw new InvalidOperationException("Session is reserved for maintenance.");
             if (_instances.TryGetValue(key, out var existing) && existing.Instance.Status is AgentInstanceStatus.Idle or AgentInstanceStatus.Running)
             {
                 // Invalidate if the agent descriptor changed (e.g., provider, model, tools)
@@ -146,6 +149,58 @@ public sealed class DefaultAgentSupervisor : IAgentSupervisor, IAgentHandleInspe
         entry.Instance.Status = AgentInstanceStatus.Stopped;
 
         _logger.LogInformation("Stopped agent instance '{AgentId}' for session '{SessionId}'", agentId, sessionId);
+    }
+
+    /// <inheritdoc />
+    public IDisposable? TryReserveMaintenance(IAgentHandle expectedHandle)
+    {
+        var key = AgentSessionKey.From(expectedHandle.AgentId, expectedHandle.SessionId);
+        lock (_sync)
+        {
+            if (_maintenance.Contains(key) || _pendingCreates.ContainsKey(key) ||
+                !_instances.TryGetValue(key, out var entry) || !ReferenceEquals(entry.Handle, expectedHandle))
+                return null;
+            var admission = expectedHandle.TryReserveMaintenance();
+            if (admission is null) return null;
+            _maintenance.Add(key);
+            return new MaintenanceReservation(this, key, admission);
+        }
+    }
+
+    private sealed class MaintenanceReservation(DefaultAgentSupervisor owner, AgentSessionKey key,
+        IDisposable admission) : IDisposable
+    {
+        private bool _disposed;
+        public void Dispose()
+        {
+            lock (owner._sync)
+            {
+                if (_disposed) return;
+                _disposed = true;
+                admission.Dispose();
+                owner._maintenance.Remove(key);
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> StopIfCurrentAsync(IAgentHandle expectedHandle,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var key = AgentSessionKey.From(expectedHandle.AgentId, expectedHandle.SessionId);
+        (AgentInstance Instance, IAgentHandle Handle, AgentDescriptor Descriptor) entry;
+        lock (_sync)
+        {
+            if (!_instances.TryGetValue(key, out entry) || !ReferenceEquals(entry.Handle, expectedHandle))
+                return false;
+            _instances.Remove(key);
+            _cronModelPins.Remove(key);
+        }
+        entry.Instance.Status = AgentInstanceStatus.Stopping;
+        await entry.Handle.DisposeAsync().ConfigureAwait(false);
+        entry.Instance.Status = AgentInstanceStatus.Stopped;
+        return true;
     }
 
     /// <inheritdoc />

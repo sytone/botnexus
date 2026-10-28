@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <Using Include="Xunit" />
+    <Compile Include="../../BotNexus.Testing/SqlitePoolCleanup.cs" Link="Shared/SqlitePoolCleanup.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/gateway/BotNexus.Gateway.Abstractions/BotNexus.Gateway.Abstractions.csproj" />
+    <ProjectReference Include="../../../src/gateway/BotNexus.Gateway.Workflows/BotNexus.Gateway.Workflows.csproj" />
+  </ItemGroup>
+</Project>

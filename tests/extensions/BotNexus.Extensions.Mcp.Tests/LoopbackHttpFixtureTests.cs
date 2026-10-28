@@ -9,7 +9,14 @@ public sealed class LoopbackHttpFixtureTests
     [Fact]
     public async Task Start_RetainsExclusiveOwnership_UntilDisposed()
     {
-        var fixture = new LoopbackHttpFixture();
+        Socket? owned = null;
+        var fixture = new LoopbackHttpFixture(start: listener =>
+        {
+            owned = listener.Server;
+            listener.Start();
+            owned.IsBound.ShouldBeTrue();
+            owned.SafeHandle.IsClosed.ShouldBeFalse();
+        });
         var endpoint = fixture.Endpoint;
         try
         {
@@ -23,7 +30,9 @@ public sealed class LoopbackHttpFixtureTests
         }
 
         await fixture.DisposeAsync(); // Repeated disposal must not touch an already released listener.
-        AssertReleased(endpoint);
+        // Port reuse is unrelated to release: inspect the original owned socket.
+        owned.ShouldNotBeNull();
+        owned.SafeHandle.IsClosed.ShouldBeTrue();
         fixture.IsBound.ShouldBeFalse();
         fixture.Completion.IsCompleted.ShouldBeTrue();
         fixture.Completion.IsFaulted.ShouldBeFalse();
@@ -33,20 +42,24 @@ public sealed class LoopbackHttpFixtureTests
     public void Start_WhenSetupFailsAfterBind_ReleasesOwnedSocketAndPreservesFailure()
     {
         TcpListener? acquired = null;
-        IPEndPoint? endpoint = null;
+        Socket? owned = null;
         var failure = new InvalidOperationException("injected setup failure");
         try
         {
             var thrown = Should.Throw<InvalidOperationException>(() => new LoopbackHttpFixture(start: listener =>
             {
                 acquired = listener;
+                owned = listener.Server;
                 listener.Start();
-                endpoint = (IPEndPoint)listener.LocalEndpoint;
+                owned.IsBound.ShouldBeTrue();
+                owned.SafeHandle.IsClosed.ShouldBeFalse();
                 throw failure;
             }));
             thrown.ShouldBeSameAs(failure);
-            endpoint.ShouldNotBeNull();
-            AssertReleased(endpoint);
+            owned.ShouldNotBeNull();
+            owned.SafeHandle.IsClosed.ShouldBeTrue();
+            acquired.ShouldNotBeNull();
+            acquired.Server.IsBound.ShouldBeFalse();
         }
         finally
         {
@@ -113,12 +126,5 @@ public sealed class LoopbackHttpFixtureTests
         target.Authorization.ShouldBe("Bearer positive-control");
         target.Completion.IsCompletedSuccessfully.ShouldBeTrue();
         target.IsBound.ShouldBeFalse();
-    }
-
-    private static void AssertReleased(IPEndPoint endpoint)
-    {
-        using var replacement = new TcpListener(endpoint);
-        replacement.ExclusiveAddressUse = true;
-        replacement.Start();
     }
 }

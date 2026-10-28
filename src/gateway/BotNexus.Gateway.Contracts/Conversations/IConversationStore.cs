@@ -19,6 +19,16 @@ namespace BotNexus.Gateway.Abstractions.Conversations;
 /// </remarks>
 public interface IConversationStore
 {
+    /// <summary>Reads current canonical ownership without hydrating aggregate state or using a cache.
+    /// Missing conversations return null. Unsupported implementations fail closed.</summary>
+    Task<ConversationOwnership?> GetOwnershipAsync(ConversationId conversationId, CancellationToken ct = default)
+        => throw new NotSupportedException("This store does not support ownership-only reads.");
+
+    /// <summary>Projects only canonical IDs and owners, optionally filtered by owner, in any status.
+    /// This enumeration is not a bounded page; it must never hydrate conversation aggregates.</summary>
+    Task<IReadOnlyList<ConversationOwnership>> ListOwnershipAsync(AgentId? agentId = null, CancellationToken ct = default)
+        => throw new NotSupportedException("This store does not support ownership-only reads.");
+
     /// <summary>
     /// Gets a specific conversation by ID. Returns <c>null</c> if not found.
     /// </summary>

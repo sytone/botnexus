@@ -3,7 +3,7 @@ namespace BotNexus.Gateway.Abstractions.Models;
 public sealed record GuardObservation(
     string GuardKind,
     int ConsecutiveCount,
-    int TotalResults,
+    long TotalResults,
     int WarningThreshold,
     int StopThreshold,
     bool AbsoluteLimitReached,

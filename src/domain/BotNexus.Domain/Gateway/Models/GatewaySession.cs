@@ -222,6 +222,24 @@ public sealed class GatewaySession
     /// </summary>
     public void RemoveCrashSentinels() => Runtime.RemoveCrashSentinels();
 
+    /// <summary>
+    /// Creates an isolated candidate for a fenced aggregate write. History entries, metadata
+    /// dictionary, replay state and persistence bookkeeping are copied without changing the live session.
+    /// Publish the candidate through the store only after the write fence accepts it.
+    /// </summary>
+    public GatewaySession CreateDetachedCopy()
+    {
+        var runtime = Runtime.CreateDetachedCopy();
+        return new GatewaySession(runtime.Session, _redactor)
+        {
+            AgentId = AgentId,
+            CallerId = CallerId,
+            LastRenderedSystemPrompt = LastRenderedSystemPrompt,
+            LastRenderedSystemPromptAt = LastRenderedSystemPromptAt,
+            _runtime = runtime
+        };
+    }
+
     /// <summary>Thread-safe append to conversation history. Content is redacted before storage when a redactor is configured.</summary>
     public void AddEntry(SessionEntry entry) => Runtime.AddEntry(Redact(entry));
 
