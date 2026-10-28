@@ -6,19 +6,21 @@ body:
     attributes:
       value: |
         **Feature** — A new capability that does not exist today.
-        Fields marked required are enforced. Agents: use `New-BotNexusIssue.ps1 -Action template -Type type:feature` instead of this form.
+        Use a title such as [Portal] describe the problem or outcome. Required fields are enforced by this form; API clients must validate them too.
+        Search existing issues before filing. Never include secrets or private infrastructure details. Report exploitable vulnerabilities through the private security link instead.
+        Agents with the issue-creation skill: use `New-BotNexusIssue.ps1 -Action template -Type type:feature` instead of this form.
   - type: textarea
     id: summary
     attributes:
       label: 'Summary'
-      description: 'Two or three sentences: what is wrong or missing, and the outcome you want. Not a title restatement.'
+      description: 'Explain the problem and wanted outcome in two or three short sentences. Use plain language; define technical terms. Do not repeat the title.'
     validations:
       required: true
   - type: textarea
     id: problem
     attributes:
       label: 'Problem'
-      description: 'The user-facing need. Describe the pain, not the solution you already picked.'
+      description: 'Describe who needs this and why the current product cannot meet the need. Explain impact before implementation details. Search for existing capabilities and overlapping work; distinguish new capability from improvement.'
     validations:
       required: true
   - type: textarea
@@ -36,34 +38,48 @@ body:
     validations:
       required: true
   - type: textarea
+    id: example
+    attributes:
+      label: 'Example'
+      description: 'Optional short user scenario: what someone tries, what happens now, and the wanted outcome. Use fictional names and synthetic data, not private systems or identifiers.'
+    validations:
+      required: false
+  - type: textarea
     id: acceptance_criteria
     attributes:
       label: 'Acceptance criteria'
-      description: 'Numbered, independently checkable clauses. Each one must be provable by a test, a command, or a file that exists. This is the close gate: the issue closes only when every clause is met.'
+      description: 'Numbered, independently checkable outcomes. Say what evidence proves each one: a named test, command result, reviewed document, or recorded decision. Separate required outcomes from suggestions. Close only when all required outcomes are verified.'
       placeholder: |
         1. First independently checkable clause
         2. Second clause
     validations:
       required: true
   - type: textarea
+    id: validation
+    attributes:
+      label: 'Validation plan'
+      description: 'Name tests, commands, or review evidence that will prove the acceptance criteria. Include failure and boundary cases where relevant. Distinguish planned checks from results already observed; do not claim a test ran when it did not.'
+    validations:
+      required: false
+  - type: textarea
     id: files
     attributes:
       label: 'Files'
-      description: 'Known-relevant paths, one per line. Saves an agent a discovery pass.'
+      description: 'Known public repository paths and symbols, one per line. State what you checked against current source and what remains unverified. Do not include private machine paths.'
     validations:
       required: false
   - type: textarea
     id: related
     attributes:
       label: 'Related'
-      description: 'Issue/PR numbers and links. Parent epic goes here.'
+      description: 'Link related issues and PRs. Identify parent, children, duplicates, blocked-by issues, and required decisions or external prerequisites explicitly. A related link alone does not mean blocked.'
     validations:
       required: false
   - type: dropdown
     id: priority
     attributes:
       label: Priority
-      description: 'Leave blank if unsure - triage will set it.'
+      description: 'Optional. Leave blank if unsure. Explain high or critical priority using the impact evidence; do not infer urgency from the issue type.'
       options: [priority:critical, priority:high, priority:medium, priority:low]
     validations:
       required: false
@@ -72,6 +88,6 @@ body:
     attributes:
       label: Area
       multiple: true
-      options: [area:platform, area:channels, area:portal, area:mobile, area:security, area:tooling, area:trailguide]
+      options: [area:platform, area:channels, area:portal, area:mobile, area:security, area:tooling, area:testing, area:trailguide]
     validations:
       required: false
