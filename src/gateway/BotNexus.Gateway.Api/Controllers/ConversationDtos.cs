@@ -126,6 +126,9 @@ public sealed record ConversationHistoryResponse(
 /// <summary>A single history entry — either a message or a session boundary marker.</summary>
 public sealed class ConversationHistoryEntry
 {
+    /// <summary>Authoritative run identity, including host terminal notices.</summary>
+    public string? AgentRunId { get; init; }
+
     /// <summary>Entry kind: "message" or "boundary".</summary>
     public required string Kind { get; init; }
 

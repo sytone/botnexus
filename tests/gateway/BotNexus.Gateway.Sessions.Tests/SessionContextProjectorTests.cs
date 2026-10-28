@@ -175,6 +175,29 @@ public sealed class SessionContextProjectorTests
     }
 
     [Fact]
+    public void IsVisibleInLiveContext_ExcludesHostToolResultBudgetNotice()
+    {
+        var notice = RawSystem("Host budget notice") with { Kind = ToolResultBudgetNotice.Kind };
+
+        SessionContextProjector.IsVisibleInLiveContext(notice).ShouldBeFalse();
+        SessionContextProjector.IsVisibleOnResume(notice).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ProjectForLiveContext_ExcludesBudgetNotice_PreservingNormalSystemAndToolEntries()
+    {
+        var system = RawSystem("System instructions");
+        var tool = Tool("Tool result");
+        var notice = RawSystem("Host budget notice") with { Kind = ToolResultBudgetNotice.Kind };
+        var history = new[] { User(), system, Assistant(), tool, notice, Summary(), ReplayBanner() };
+
+        var projected = SessionContextProjector.ProjectForLiveContext(history);
+
+        projected.ShouldBe(new[] { history[0], system, history[2], tool, history[5], history[6] });
+        history.ShouldContain(notice);
+    }
+
+    [Fact]
     public void IsVisibleInLiveContext_IncludesCompactionSummary()
     {
         SessionContextProjector.IsVisibleInLiveContext(Summary()).ShouldBeTrue();

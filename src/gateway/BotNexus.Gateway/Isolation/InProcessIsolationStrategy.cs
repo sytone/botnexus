@@ -1700,6 +1700,9 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             completion.WakeCondition,
             completion.ContinuationAttempts)
         {
+            ToolResultBudget = completion.ToolResultBudget is { } budget
+                ? new ToolResultBudgetSignal(budget.Limit, budget.ExecutedResults, budget.Overshoot)
+                : null,
             GuardObservations = GuardEvidenceSanitizer.Sanitize(completion.GuardObservations.Select(g => new BotNexus.Gateway.Abstractions.Models.GuardObservation(
                 g.GuardKind, g.ConsecutiveCount, g.TotalResults, g.WarningThreshold, g.StopThreshold,
                 g.AbsoluteLimitReached, g.Disposition, g.EvidenceReferences)).ToArray())

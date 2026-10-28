@@ -105,6 +105,10 @@ public sealed record ConversationHistoryResponseDto(
 
 public sealed class ConversationHistoryEntryDto
 {
+    /// <summary>Run identity retained for terminal-notice reconciliation.</summary>
+    [JsonPropertyName("agentRunId")]
+    public string? AgentRunId { get; init; }
+
     [JsonPropertyName("kind")]
     public required string Kind { get; init; }
 
@@ -179,6 +183,14 @@ public sealed record SessionHistoryResponseDto(
 
 public sealed class SessionHistoryEntryDto
 {
+    /// <summary>Raw session entries serialize their presentation kind as kind, not messageKind.</summary>
+    [JsonPropertyName("kind")]
+    public string? Kind { get; init; }
+
+    /// <summary>Run identity retained for terminal-notice reconciliation.</summary>
+    [JsonPropertyName("agentRunId")]
+    public string? AgentRunId { get; init; }
+
     [JsonPropertyName("role")]
     public string? Role { get; init; }
 

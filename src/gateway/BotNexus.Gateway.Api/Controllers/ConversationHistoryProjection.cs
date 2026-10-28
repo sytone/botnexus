@@ -104,6 +104,7 @@ public static class ConversationHistoryProjection
                     EntryId = NextEntryId(session.SessionId),
                     SessionId = session.SessionId.Value,
                     AgentId = session.AgentId.Value,
+                    AgentRunId = entry.AgentRunId?.Value,
                     Role = entry.Role.ToString().ToLowerInvariant(),
                     Content = entry.Content,
                     Attachments = ProjectAttachments(entry.OriginalContentParts),

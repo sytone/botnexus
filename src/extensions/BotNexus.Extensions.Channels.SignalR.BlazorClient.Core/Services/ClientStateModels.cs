@@ -122,6 +122,9 @@ public sealed record ChatAttachment
 /// </summary>
 public sealed record ChatMessage(string Role, string Content, DateTimeOffset Timestamp)
 {
+    /// <summary>Run identity for terminal-notice deduplication across live events and history.</summary>
+    public string? AgentRunId { get; init; }
+
     /// <summary>Stable identity for markdown caching and tool-call linking.</summary>
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
 
