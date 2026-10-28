@@ -278,6 +278,7 @@ public sealed class DomainArchitectureTests
     /// </remarks>
     [Theory]
     [InlineData(typeof(ToolName))]
+    [InlineData(typeof(MarketplaceId))]
     [InlineData(typeof(WorkingDir))]
     [InlineData(typeof(ConversationTitle))]
     public void Phase3ValueObject_IsVogenAndHasNoImplicitStringConversion(Type type)

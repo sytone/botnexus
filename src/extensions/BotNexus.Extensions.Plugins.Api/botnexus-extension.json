@@ -6,5 +6,6 @@
   "entryAssembly": "BotNexus.Extensions.Plugins.Api.dll",
   "extensionTypes": ["endpoint-contributor"],
   "enabled": true,
+  "configurationScopes": ["world"],
   "configSchema": []
 }

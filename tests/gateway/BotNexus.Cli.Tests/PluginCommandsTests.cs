@@ -92,6 +92,65 @@ public sealed class PluginCommandsTests
         Assert.DoesNotContain("BotNexus.Extensions.Plugins", project, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("list", "GET", "api/plugins/marketplaces")]
+    [InlineData("get", "GET", "api/plugins/marketplaces/community")]
+    [InlineData("remove", "DELETE", "api/plugins/marketplaces/community")]
+    [InlineData("enable", "POST", "api/plugins/marketplaces/community/enable")]
+    [InlineData("disable", "POST", "api/plugins/marketplaces/community/disable")]
+    public async Task Marketplace_commands_forward_to_registry_routes(string operation, string method, string path)
+    {
+        var handler = new CapturingHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        var root = BuildRoot(new PluginCommands(http));
+        var arguments = operation == "list" ? new[] { "plugin", "marketplace", operation } : ["plugin", "marketplace", operation, "community"];
+        (await root.InvokeAsync(arguments)).ShouldBe(0);
+        var request = handler.Requests.ShouldHaveSingleItem();
+        request.Method.Method.ShouldBe(method);
+        request.RequestUri.ShouldNotBeNull().GetComponents(UriComponents.Path, UriFormat.UriEscaped).ShouldBe(path);
+        request.Body.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("add", "POST")]
+    [InlineData("update", "PUT")]
+    public async Task Marketplace_writes_forward_typed_source_and_optional_ref(string operation, string method)
+    {
+        var handler = new CapturingHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        var root = BuildRoot(new PluginCommands(http));
+        (await root.InvokeAsync(["plugin", "marketplace", operation, "community", "https://example.test/catalog.git", "--reference", "release/1"])).ShouldBe(0);
+        var request = handler.Requests.ShouldHaveSingleItem();
+        request.Method.Method.ShouldBe(method);
+        request.RequestUri.ShouldNotBeNull().GetComponents(UriComponents.Path, UriFormat.UriEscaped)
+            .ShouldBe(operation == "add" ? "api/plugins/marketplaces" : "api/plugins/marketplaces/community");
+        using var body = System.Text.Json.JsonDocument.Parse(request.Body.ShouldNotBeNull());
+        body.RootElement.GetProperty("source").GetString().ShouldBe("https://example.test/catalog.git");
+        body.RootElement.GetProperty("reference").GetString().ShouldBe("release/1");
+        if (operation == "add") body.RootElement.GetProperty("id").GetString().ShouldBe("community");
+    }
+
+    [Theory]
+    [InlineData("UPPER")]
+    [InlineData("../escape")]
+    [InlineData("two.words")]
+    public async Task Marketplace_invalid_identity_is_rejected_before_transport(string id)
+    {
+        var handler = new CapturingHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        (await BuildRoot(new PluginCommands(http)).InvokeAsync(["plugin", "marketplace", "get", id])).ShouldNotBe(0);
+        handler.Requests.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Marketplace_gateway_rejection_returns_nonzero()
+    {
+        var handler = new CapturingHandler { StatusCode = HttpStatusCode.BadRequest };
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5000/") };
+        (await BuildRoot(new PluginCommands(http)).InvokeAsync(["plugin", "marketplace", "add", "community", "https://user:password@example.test/catalog.git"])).ShouldBe(1);
+        handler.Requests.ShouldHaveSingleItem();
+    }
+
     private static RootCommand BuildRoot(PluginCommands commands)
     {
         var verbose = new Option<bool>("--verbose");
@@ -106,6 +165,7 @@ public sealed class PluginCommandsTests
     private sealed class CapturingHandler : HttpMessageHandler
     {
         public List<CapturedRequest> Requests { get; } = [];
+        public HttpStatusCode StatusCode { get; init; } = HttpStatusCode.OK;
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -115,7 +175,7 @@ public sealed class PluginCommandsTests
                 ? null
                 : await request.Content.ReadAsStringAsync(cancellationToken);
             Requests.Add(new CapturedRequest(request.Method, request.RequestUri, body));
-            return new HttpResponseMessage(HttpStatusCode.OK)
+            return new HttpResponseMessage(StatusCode)
             {
                 Content = new StringContent(
                     "{\"outcome\":\"installed\",\"name\":\"alpha\",\"isSuccess\":true,\"errors\":[]}",
