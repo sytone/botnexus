@@ -17,6 +17,9 @@ public sealed record CronExecutionContext
     public required CronTriggerType TriggerType { get; init; }
     public required IServiceProvider Services { get; init; }
 
+    /// <summary>Selection resolved once by the scheduler, absent for deterministic actions.</summary>
+    public CronModelSelection? EffectiveModel { get; init; }
+
     /// <summary>
     /// Optional persistence callback supplied by the scheduler so an action can publish its
     /// owning session before the action completes (#4283).

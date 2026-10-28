@@ -7,8 +7,14 @@ page assembled client-side. Browser Tools drives a headless Chrome through the s
 safety layer in front of every call.
 
 ::: warning Delivery status
-The guard layer, binary resolution and the five tools below are **implemented and tested**
-(`src/extensions/BotNexus.Extensions.BrowserTools/`).
+**Production browser execution is disabled (#4030).** All commands fail closed before starting
+or attaching to `agent-browser`, including navigation to public URLs. The external transport has
+no connection-bound destination enforcement. Installing Chrome, selecting another binary, or
+changing proxy settings does not enable it.
+
+The lexical guards, binary resolution and tool formatting are implemented and tested
+(`src/extensions/BotNexus.Extensions.BrowserTools/`). Fake-runner tests do not prove browser
+network isolation. The following setup reference does not override this execution boundary.
 
 One operator-facing gap remains: the pinned release catalogue **ships empty**, so
 `browser.autoProvision` cannot yet download a binary and fails closed with an actionable message.
@@ -110,6 +116,76 @@ disk where a later run could resolve it through channel 2 and execute it.
 The guard layer additionally accepts `additionalBlockedHosts`: extra hostnames blocked on top of
 the shared SSRF policy, matched exactly and case-insensitively. It is passed straight through to
 the shared validator; the browser extension defines no address rules of its own.
+
+## External browser transport boundary
+
+For developers and operators: URL admission is not a network isolation mechanism. A hostname
+that looks public can resolve to a forbidden address. Even an initially public connection can
+lead to private destinations through redirects, subresources, page scripts or form submission.
+Checking the current URL after load is too late to prevent those requests.
+
+`AgentBrowserProcessRunner` therefore refuses every command before process start. This also
+prevents read, click, type and screenshot commands from attaching to an existing daemon. There
+is no configuration bypass or operator assertion that enables this runner. BotNexus does not
+terminate browser processes started outside this runner.
+
+The child environment allow-list excludes proxy and `NO_PROXY` variables. That limits environment
+inheritance; it does not constrain the browser's actual connections or exclude alternate routes.
+A future enabled transport must enforce the shared `SsrfValidator` address policy on actual
+connections, including changed or mixed DNS answers, redirects, subresources and proxy bypass,
+and prove both forbidden-request rejection and permitted-public requests in isolated tests.
+The current fail-closed tests instead prove transport denial through the production runner;
+public positive controls cover lexical admission and fake-driver content handling only.
+
+## CLI command contract (developer reference)
+
+The adapter targets the source contract of `agent-browser` **v0.33.2**. This is an
+implementation reference, not a procedure for enabling production execution. The #4030
+transport denial above remains in force.
+
+Every argument vector starts with `--session <id>`. The remaining arguments are:
+
+| Driver operation | CLI arguments after the session pair | Result used by BotNexus |
+| --- | --- | --- |
+| Navigate | `open <url>` | Successful process completion. `navigate` is also an upstream alias; the adapter uses canonical `open`. |
+| Read current URL | `--json get url` | String at `data.url`, with `success: true`; a blank URL is rejected. |
+| Read page text | `--json snapshot` | String at `data.snapshot`, with `success: true`; decoded whitespace and an empty snapshot are preserved. |
+| Click | `click <selector>` | Successful process completion. |
+| Type | `type <selector> <text>` | Successful process completion. |
+| Type and submit | `type <selector> <text>`, then `press Enter` | Both commands must succeed. There is no adapter `--submit` argument. |
+| Screenshot | `screenshot <path>`, optionally followed by `--full` | The supplied destination path. |
+| Close | `close` | Best-effort teardown; errors do not escape disposal. |
+
+The exact text values `--clear` and `--delay` are unsupported: the pinned CLI interprets them
+as type options rather than literal text. The adapter rejects either value with an
+`ArgumentException` before any process call, with or without submission. The error does not
+echo the supplied text. Other text, including values containing literal quote characters, is
+passed unchanged as one argument.
+
+URL and snapshot reads reject malformed JSON, unsuccessful responses, and missing or wrongly
+typed fields. Their parse errors do not include response content or upstream error payloads.
+Snapshot text still passes through the existing guards, sanitizer, untrusted-content envelope,
+and spill budget before it reaches a tool response.
+
+The per-session gate covers the complete type-and-submit operation, including both process
+calls. Failure or cancellation prevents the remaining submission step and releases the gate.
+Close also waits for that gate. Each invocation retains the configured timeout, session argument,
+and environment allow-list; the first successful navigation consumes the cold-start timeout floor.
+
+**Source-derived evidence:** the command shapes come from upstream
+[`commands.rs` (`parse_command` and `parse_get`)](https://github.com/vercel-labs/agent-browser/blob/v0.33.2/cli/src/commands.rs).
+The JSON envelope comes from
+[`connection.rs` (`Response`)](https://github.com/vercel-labs/agent-browser/blob/v0.33.2/cli/src/connection.rs)
+and [`output.rs` (`print_response_with_opts`)](https://github.com/vercel-labs/agent-browser/blob/v0.33.2/cli/src/output.rs).
+`AgentBrowserCliContractTests` uses a fake process runner to check argument vectors, parsing,
+timeouts, cancellation, and ordering against this source-derived contract. Contributor tests
+check tool formatting and guard behavior using the same fake response shape.
+
+**Not artifact validation:** these tests do not execute a downloaded release binary, start a
+browser, establish compatibility with a configured binary, or prove network isolation. Real-artifact
+compatibility and isolated browser validation remain separate work; fake-runner GREEN is not a
+readiness claim and does not relax #4030. Version resolution and provisioning are unchanged by
+this command-contract stage.
 
 ## Guards
 

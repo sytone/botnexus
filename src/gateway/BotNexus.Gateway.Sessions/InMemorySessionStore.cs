@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
@@ -12,12 +13,13 @@ namespace BotNexus.Gateway.Sessions;
 /// In-memory session store for development and testing.
 /// Not durable — all sessions are lost on restart.
 /// </summary>
-public sealed class InMemorySessionStore : SessionStoreBase
+public sealed partial class InMemorySessionStore : SessionStoreBase
 {
     private static readonly ActivitySource ActivitySource = new("BotNexus.Gateway");
     private readonly Dictionary<SessionId, GatewaySession> _sessions = [];
     private readonly Lock _sync = new();
     private readonly ISecretRedactor? _redactor;
+    private readonly IConversationStore? _conversationStore;
     private readonly LegacyConversationResolver? _legacyResolver;
     private readonly ILogger<InMemorySessionStore>? _logger;
 
@@ -45,6 +47,7 @@ public sealed class InMemorySessionStore : SessionStoreBase
         : base(conversationStore)
     {
         _redactor = redactor;
+        _conversationStore = conversationStore;
         _legacyResolver = conversationStore is not null
             ? new LegacyConversationResolver(conversationStore, logger: null)
             : null;
@@ -83,6 +86,74 @@ public sealed class InMemorySessionStore : SessionStoreBase
         activity?.SetTag("botnexus.session.id", session.SessionId);
         activity?.SetTag("botnexus.agent.id", session.AgentId);
 
+        await StampLegacyConversationAsync(session, cancellationToken).ConfigureAwait(false);
+        lock (_sync) _sessions[session.SessionId] = session;
+    }
+
+    /// <inheritdoc />
+    public override async Task<SessionSaveOutcome> SaveAsync(
+        GatewaySession session,
+        SessionWriteFence fence,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        // Resolve outside the synchronous lock, then check the authoritative row and replace it
+        // under the same lock used by save/delete/archive/cleanup. Completed-task reads alone
+        // cannot protect the fallback's check/write gap from another thread or legacy stamping.
+        await StampLegacyConversationAsync(session, cancellationToken).ConfigureAwait(false);
+        lock (_sync)
+        {
+            var current = _sessions.GetValueOrDefault(fence.ExpectedSessionId);
+            if (!SessionFenceEvaluator.Passes(fence, current))
+                return SessionSaveOutcome.Rebound;
+            if (fence.ExpectedContentFingerprint is { } expected &&
+                (current is null || SessionWriteFence.ContentFingerprint(current) != expected))
+                return SessionSaveOutcome.Conflict;
+            _sessions[session.SessionId] = session;
+            return SessionSaveOutcome.Persisted;
+        }
+    }
+
+    /// <inheritdoc />
+    public override Task<SessionAppendMutationResult> AppendEntriesAsync(SessionId sessionId,
+        IReadOnlyList<SessionEntry> entries, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            if (!_sessions.TryGetValue(sessionId, out var current))
+                return Task.FromResult(new SessionAppendMutationResult(SessionMutationOutcome.NotFound, 0));
+            if (SessionMutationPolicy.IsTerminal(current.Status))
+                return Task.FromResult(new SessionAppendMutationResult(SessionMutationOutcome.Conflict, 0));
+            if (entries.Count > 0)
+            {
+                current.AddEntries(entries);
+                current.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+            return Task.FromResult(new SessionAppendMutationResult(SessionMutationOutcome.Applied, entries.Count));
+        }
+    }
+
+    /// <inheritdoc />
+    public override Task<SessionMetadataMutationResult> PatchMetadataAsync(SessionId sessionId,
+        IReadOnlyDictionary<string, object?> patch, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(patch);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync)
+        {
+            if (!_sessions.TryGetValue(sessionId, out var current))
+                return Task.FromResult(SessionMetadataMutationResult.NotFound);
+            SessionMutationPolicy.ApplyMetadataPatch(current.Metadata, patch);
+            current.UpdatedAt = DateTimeOffset.UtcNow;
+            return Task.FromResult(new SessionMetadataMutationResult(SessionMutationOutcome.Applied,
+                new Dictionary<string, object?>(current.Metadata)));
+        }
+    }
+
+    private async Task StampLegacyConversationAsync(GatewaySession session, CancellationToken cancellationToken)
+    {
         // Backfill outside the lock — the resolver may await a conversation store call.
         // _sync is non-async so we cannot hold it across the await anyway.
         if (!session.ConversationId.IsInitialized() && _legacyResolver is not null)
@@ -104,8 +175,6 @@ public sealed class InMemorySessionStore : SessionStoreBase
                 "Session {SessionId} for agent {AgentId} was saved with no ConversationId; stamped legacy conversation {LegacyConversationId}.",
                 session.SessionId, session.AgentId, legacy.ConversationId);
         }
-
-        lock (_sync) _sessions[session.SessionId] = session;
     }
 
     /// <inheritdoc />
@@ -145,14 +214,19 @@ public sealed class InMemorySessionStore : SessionStoreBase
         }
     }
 
-    private readonly Dictionary<string, SubAgentRunDetail> _subAgents = [];
-    private readonly Dictionary<string, string> _consumedCalls = [];
+    private readonly Dictionary<string, SubAgentRetainedRun> _subAgents = [];
+    private readonly Dictionary<string, (string Call, AgentRunId? Run)> _consumedCalls = [];
 
     /// <inheritdoc />
     public override Task SaveSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_sync) _subAgents.TryAdd(info.SubAgentId, SubAgentRunDetail.FromLive(info));
+        lock (_sync)
+        {
+            if (_subAgents.TryGetValue(info.SubAgentId, out var retained))
+                SubAgentAdmissionIdentity.EnsureUnchanged(retained, info);
+            else _subAgents.Add(info.SubAgentId, CreateRetainedRun(info));
+        }
         return Task.CompletedTask;
     }
 
@@ -160,7 +234,13 @@ public sealed class InMemorySessionStore : SessionStoreBase
     public override Task UpdateSubAgentSessionAsync(SubAgentInfo info, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_sync) _subAgents[info.SubAgentId] = SubAgentRunDetail.FromLive(info);
+        lock (_sync)
+        {
+            if (!_subAgents.TryGetValue(info.SubAgentId, out var retained))
+                throw new InvalidOperationException("Sub-agent admission is missing.");
+            SubAgentAdmissionIdentity.EnsureUnchanged(retained, info);
+            _subAgents[info.SubAgentId] = CreateRetainedRun(info);
+        }
         return Task.CompletedTask;
     }
 
@@ -169,22 +249,29 @@ public sealed class InMemorySessionStore : SessionStoreBase
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (_sync) return Task.FromResult<IReadOnlyList<SubAgentRunDetail>>(_subAgents.Values
-            .Where(d => d.ParentSessionId == sessionId.Value).OrderBy(d => d.StartedAt).ToArray());
+            .Where(d => d.ParentSessionId == sessionId.Value).OrderBy(d => d.StartedAt).Select(ToPublicDetail).ToArray());
     }
 
     /// <inheritdoc />
     public override Task<SubAgentRunDetail?> FindSubAgentSpawnAsync(SessionId parentSessionId, string toolCallId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_sync) return Task.FromResult(_subAgents.Values.FirstOrDefault(d =>
-            d.ParentSessionId == parentSessionId.Value && d.SpawningToolCallId == toolCallId));
+        lock (_sync) return Task.FromResult<SubAgentRunDetail?>(_subAgents.Values.FirstOrDefault(d =>
+            d.ParentSessionId == parentSessionId.Value && d.SpawningToolCallId == toolCallId) is { } found ? ToPublicDetail(found) : null);
+    }
+
+    /// <inheritdoc />
+    public override Task<string?> GetSubAgentResultSummaryAsync(string subAgentId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_sync) return Task.FromResult(_subAgents.GetValueOrDefault(subAgentId)?.FullResultSummary);
     }
 
     /// <inheritdoc />
     public override Task<SubAgentRunDetail?> GetSubAgentSessionAsync(string subAgentId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_sync) return Task.FromResult(_subAgents.GetValueOrDefault(subAgentId));
+        lock (_sync) return Task.FromResult<SubAgentRunDetail?>(_subAgents.GetValueOrDefault(subAgentId) is { } found ? ToPublicDetail(found) : null);
     }
 
     /// <inheritdoc />
@@ -203,14 +290,14 @@ public sealed class InMemorySessionStore : SessionStoreBase
             if (!_subAgents.TryGetValue(subAgentId, out var run) || run.ParentSessionId != parentSessionId.Value)
                 throw new UnauthorizedAccessException("Sub-agent does not belong to this parent.");
             if (_consumedCalls.TryGetValue(subAgentId, out var consumed))
-                return Task.FromResult(consumed == result.ToolCallId
-                    ? parent.GetHistorySnapshot().Single(e => e.ToolCallId == consumed && e.Kind == MessageKind.ToolResult).Content : null);
+                return Task.FromResult(consumed == (result.ToolCallId, result.AgentRunId)
+                    ? parent.GetHistorySnapshot().Single(e => e.ToolCallId == consumed.Call && e.AgentRunId == consumed.Run && e.Kind == MessageKind.ToolResult).Content : null);
             var call = result.ToolCallId ?? throw new ArgumentException("Missing tool call id.");
-            if (parent.GetHistorySnapshot().Any(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == call))
+            if (parent.GetHistorySnapshot().Any(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == call && e.AgentRunId == result.AgentRunId))
                 throw new InvalidOperationException("An original tool result already exists without a receipt; consumption was refused.");
             parent.AddEntry(result);
-            _consumedCalls.Add(subAgentId, call);
-            return Task.FromResult<string?>(parent.GetHistorySnapshot().Last(e => e.ToolCallId == call && e.Kind == MessageKind.ToolResult).Content);
+            _consumedCalls.Add(subAgentId, (call, result.AgentRunId));
+            return Task.FromResult<string?>(parent.GetHistorySnapshot().Last(e => e.ToolCallId == call && e.AgentRunId == result.AgentRunId && e.Kind == MessageKind.ToolResult).Content);
         }
     }
 
@@ -224,8 +311,23 @@ public sealed class InMemorySessionStore : SessionStoreBase
             .Where(d => (string.IsNullOrWhiteSpace(status) || string.Equals(d.Status.ToString(), status, StringComparison.OrdinalIgnoreCase))
                 && (parentSessionId is null || d.ParentSessionId == parentSessionId)
                 && (childAgentId is null || d.ChildAgentId == childAgentId))
-            .OrderByDescending(d => d.StartedAt).Skip(offset).Take(limit).ToArray());
+            .OrderByDescending(d => d.StartedAt).Skip(offset).Take(limit).Select(ToPublicDetail).ToArray());
     }
+
+    private SubAgentRetainedRun CreateRetainedRun(SubAgentInfo info)
+    {
+        var retained = SubAgentRetainedRun.Create(info);
+        if (_redactor is null) return retained;
+        var json = _redactor.Redact(JsonSerializer.Serialize(retained));
+        return JsonSerializer.Deserialize<SubAgentRetainedRun>(json)
+            ?? throw new InvalidOperationException("Invalid redacted retained sub-agent detail.");
+    }
+
+    // A record 'with' clone preserves the runtime subtype. Deserialize the explicitly bounded
+    // base contract instead: object/array serializers must never see the persistence envelope.
+    private static SubAgentRunDetail ToPublicDetail(SubAgentRetainedRun retained) =>
+        JsonSerializer.Deserialize<SubAgentRunDetail>(JsonSerializer.Serialize<SubAgentRunDetail>(retained))
+            ?? throw new InvalidOperationException("Invalid retained sub-agent detail.");
 
     private static bool MatchesCleanupFence(GatewaySession session, SessionCleanupFence fence) =>
         ConversationIdsMatch(session.ConversationId, fence.ConversationId)

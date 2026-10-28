@@ -263,10 +263,21 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
         lock (_sync)
         {
             var state = GetOrCreate(scope);
-            PruneFailures(state, _clock());
-            var immediate = TryAdmit(scope, state, incidentId, _clock(), observe);
+            var now = _clock();
+            PruneFailures(state, now);
+            // A due cooldown wake may not have dispatched yet. Reserve available admission
+            // for existing callers before considering a newcomer or the queue capacity bound.
+            DrainWaiters(scope, state, now);
+            var immediate = state.Waiters.Count == 0
+                ? TryAdmit(scope, state, incidentId, now, observe)
+                : null;
             if (immediate is not null)
             {
+                if (immediate.IsProbe)
+                {
+                    Notify(scope, state, ProviderRecoveryStage.ProbeAdmitted, observe);
+                }
+
                 return ValueTask.FromResult(immediate);
             }
 
@@ -276,12 +287,12 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
                     new ProviderRecoveryQueueFullException(scope.Provider));
             }
 
-            waiter = new Waiter(scope, incidentId, _clock(), observe);
+            waiter = new Waiter(scope, incidentId, now, now + maxWait, cancellationToken, observe);
             state.Waiters.Enqueue(waiter);
             Notify(scope, state, ProviderRecoveryStage.AdmissionQueued, observe);
         }
 
-        _ = CompleteWaitAsync(waiter, maxWait, cancellationToken);
+        _ = CompleteWaitAsync(waiter, cancellationToken);
         return new ValueTask<ProviderRecoveryLease>(waiter.Completion.Task);
     }
 
@@ -311,7 +322,6 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
         ProviderRecoveryLease.LeaseOutcome outcome,
         TimeSpan? retryAfter)
     {
-        List<(Waiter Waiter, ProviderRecoveryLease Lease)> releases;
         lock (_sync)
         {
             var state = GetOrCreate(lease.Scope);
@@ -350,15 +360,13 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
                 Notify(lease.Scope, state, ProviderRecoveryStage.Recovered, lease.Observe);
             }
 
-            releases = DrainWaiters(lease.Scope, state, now);
+            DrainWaiters(lease.Scope, state, now);
         }
-
-        CompleteReleases(releases);
     }
 
-    private async Task CompleteWaitAsync(Waiter waiter, TimeSpan maxWait, CancellationToken cancellationToken)
+    private async Task CompleteWaitAsync(Waiter waiter, CancellationToken cancellationToken)
     {
-        var deadlineAt = _clock() + maxWait;
+        var deadlineAt = waiter.DeadlineAt;
         while (!waiter.IsCompleted)
         {
             var now = _clock();
@@ -403,14 +411,11 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
                     return;
                 }
 
-                List<(Waiter Waiter, ProviderRecoveryLease Lease)> releases;
                 lock (_sync)
                 {
                     var state = GetOrCreate(waiter.Scope);
-                    releases = DrainWaiters(waiter.Scope, state, _clock());
+                    DrainWaiters(waiter.Scope, state, _clock());
                 }
-
-                CompleteReleases(releases);
             }
             catch (OperationCanceledException) when (waiter.IsCompleted)
             {
@@ -447,7 +452,6 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
             // fence: after this admission the circuit is HalfOpen, so no second probe can enter.
             state.State = ProviderRecoveryState.HalfOpen;
             state.InFlight++;
-            Notify(scope, state, ProviderRecoveryStage.ProbeAdmitted, observe);
             return new ProviderRecoveryLease(this, scope, incidentId, state.Generation, isProbe: true, observe);
         }
 
@@ -460,18 +464,33 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
         return null;
     }
 
-    private List<(Waiter Waiter, ProviderRecoveryLease Lease)> DrainWaiters(
+    private void DrainWaiters(
         ProviderRecoveryScope scope,
         ScopeState state,
         DateTimeOffset now)
     {
-        var releases = new List<(Waiter, ProviderRecoveryLease)>();
         while (state.Waiters.Count > 0)
         {
             var waiter = state.Waiters.Peek();
             if (waiter.IsCompleted)
             {
                 state.Waiters.Dequeue();
+                continue;
+            }
+
+            // Caller authority does not depend on its delay continuation winning a race
+            // with an arrival, report, or another waiter's cooldown wake.
+            if (waiter.CancellationToken.IsCancellationRequested)
+            {
+                state.Waiters.Dequeue();
+                waiter.TrySetException(new ProviderRecoveryCancelledException(scope.Provider, waiter.CancellationToken));
+                continue;
+            }
+
+            if (now >= waiter.DeadlineAt)
+            {
+                state.Waiters.Dequeue();
+                waiter.TrySetException(new ProviderRecoveryDeadlineExceededException(scope.Provider));
                 continue;
             }
 
@@ -482,21 +501,14 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
             }
 
             state.Waiters.Dequeue();
-            releases.Add((waiter, lease));
+            // Commit before observers can synchronously reenter admission or cancel the head.
+            // Task continuations run asynchronously; diagnostics see the committed reservation.
+            waiter.TrySetResult(lease);
             if (lease.IsProbe)
             {
+                Notify(scope, state, ProviderRecoveryStage.ProbeAdmitted, waiter.Observe);
                 break;
             }
-        }
-
-        return releases;
-    }
-
-    private static void CompleteReleases(List<(Waiter Waiter, ProviderRecoveryLease Lease)> releases)
-    {
-        foreach (var (waiter, lease) in releases)
-        {
-            waiter.TrySetResult(lease);
         }
     }
 
@@ -578,17 +590,23 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
             ProviderRecoveryScope scope,
             Guid incidentId,
             DateTimeOffset enqueuedAt,
+            DateTimeOffset deadlineAt,
+            CancellationToken cancellationToken,
             Action<ProviderRecoveryObservation>? observe)
         {
             Scope = scope;
             IncidentId = incidentId;
             EnqueuedAt = enqueuedAt;
+            DeadlineAt = deadlineAt;
+            CancellationToken = cancellationToken;
             Observe = observe;
         }
 
         public ProviderRecoveryScope Scope { get; }
         public Guid IncidentId { get; }
         public DateTimeOffset EnqueuedAt { get; }
+        public DateTimeOffset DeadlineAt { get; }
+        public CancellationToken CancellationToken { get; }
         public Action<ProviderRecoveryObservation>? Observe { get; }
         public TaskCompletionSource<ProviderRecoveryLease> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);

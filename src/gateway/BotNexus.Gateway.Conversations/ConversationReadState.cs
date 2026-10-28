@@ -14,6 +14,12 @@ public sealed record ConversationReadState(
     long Version);
 
 /// <summary>
+/// The atomic snapshot returned by one cursor acknowledgement. Changed is true only for the call
+/// that durably created this version; later concurrent writes cannot replace its returned state.
+/// </summary>
+public sealed record ConversationReadStateAdvanceResult(ConversationReadState State, bool Changed);
+
+/// <summary>
 /// Persists independently scoped conversation read cursors. Implementations must atomically retain
 /// the greatest submitted position and must not increment the version for equal or lower retries.
 /// </summary>
@@ -31,6 +37,14 @@ public interface IConversationReadStateStore
     /// stored position, returning the winning state after the operation.
     /// </summary>
     Task<ConversationReadState> AdvanceAsync(
+        string worldId,
+        ConversationReaderId readerId,
+        ConversationId conversationId,
+        ConversationReadPosition position,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Atomically advances a cursor and reports whether this call changed its version.</summary>
+    Task<ConversationReadStateAdvanceResult> AdvanceWithResultAsync(
         string worldId,
         ConversationReaderId readerId,
         ConversationId conversationId,

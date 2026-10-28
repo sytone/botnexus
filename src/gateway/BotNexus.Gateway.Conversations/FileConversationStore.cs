@@ -65,6 +65,56 @@ public sealed class FileConversationStore : IConversationStore
         _fileSystem.Directory.CreateDirectory(rootPath);
     }
 
+    private static readonly HashSet<string> OwnershipFields = new(StringComparer.Ordinal) { "conversationId", "agentId" };
+
+    /// <inheritdoc />
+    public async Task<ConversationOwnership?> GetOwnershipAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            foreach (var dir in _fileSystem.Directory.EnumerateDirectories(_rootPath))
+            {
+                ct.ThrowIfCancellationRequested();
+                var path = Path.Combine(dir, $"{conversationId.Value}.json");
+                if (!_fileSystem.File.Exists(path)) continue;
+                var ownership = await ReadOwnershipAsync(path, ct).ConfigureAwait(false);
+                if (ownership?.ConversationId == conversationId) return ownership;
+            }
+            return null;
+        }
+        finally { _lock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ConversationOwnership>> ListOwnershipAsync(AgentId? agentId = null, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var result = new List<ConversationOwnership>();
+            foreach (var dir in _fileSystem.Directory.EnumerateDirectories(_rootPath))
+            foreach (var path in _fileSystem.Directory.EnumerateFiles(dir, "*.json"))
+            {
+                ct.ThrowIfCancellationRequested();
+                var ownership = await ReadOwnershipAsync(path, ct).ConfigureAwait(false);
+                if (ownership is not null && (agentId is null || ownership.AgentId == agentId.Value)) result.Add(ownership);
+            }
+            return result;
+        }
+        finally { _lock.Release(); }
+    }
+
+    private async Task<ConversationOwnership?> ReadOwnershipAsync(string path, CancellationToken ct)
+    {
+        try
+        {
+            await using var stream = _fileSystem.FileStream.New(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return await BoundedJsonProjection.ReadAsync<ConversationOwnership>(stream, JsonOptions, OwnershipFields, ct).ConfigureAwait(false);
+        }
+        catch (FileNotFoundException) { return null; }
+    }
+
     /// <inheritdoc />
     public async Task<Conversation?> GetAsync(ConversationId conversationId, CancellationToken ct = default)
     {
@@ -107,6 +157,8 @@ public sealed class FileConversationStore : IConversationStore
 
     public async Task<Conversation> CreateAsync(Conversation conversation, CancellationToken ct = default)
     {
+        if (conversation.CompactionTokenCeiling is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(conversation), "CompactionTokenCeiling must be positive or null.");
         StampWorldId(conversation);
 
         await _lock.WaitAsync(ct).ConfigureAwait(false);
@@ -124,6 +176,8 @@ public sealed class FileConversationStore : IConversationStore
     /// <inheritdoc />
     public async Task SaveAsync(Conversation conversation, CancellationToken ct = default)
     {
+        if (conversation.CompactionTokenCeiling is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(conversation), "CompactionTokenCeiling must be positive or null.");
         if (conversation.Status == ConversationStatus.Archived && conversation.ActiveSessionId is not null)
             throw new InvalidOperationException($"Conversation '{conversation.ConversationId}' cannot be archived while an active session is assigned.");
         StampWorldId(conversation);
@@ -343,6 +397,8 @@ public sealed class FileConversationStore : IConversationStore
     public async Task<Conversation?> PatchOverrideAsync(ConversationId conversationId, ConversationOverridePatch patch, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(patch);
+        if (patch.CompactionTokenCeiling.IsSet && patch.CompactionTokenCeiling.Value is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(patch), "CompactionTokenCeiling must be positive or null.");
         await _lock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -355,6 +411,8 @@ public sealed class FileConversationStore : IConversationStore
                 conversation.ThinkingOverride = patch.Thinking.Value;
             if (patch.ContextWindow.IsSet)
                 conversation.ContextWindowOverride = patch.ContextWindow.Value;
+            if (patch.CompactionTokenCeiling.IsSet)
+                conversation.CompactionTokenCeiling = patch.CompactionTokenCeiling.Value;
             if (patch.ToolOverrideJson.IsSet)
                 conversation.ToolOverrideJson = patch.ToolOverrideJson.Value;
             conversation.UpdatedAt = DateTimeOffset.UtcNow;

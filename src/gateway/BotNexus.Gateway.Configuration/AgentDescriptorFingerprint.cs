@@ -73,6 +73,7 @@ internal static class AgentDescriptorFingerprint
     private static void AppendDescriptor(StringBuilder builder, AgentDescriptor d)
     {
         builder.Append(d.AgentId.Value).Append('\u001f');
+        builder.Append(d.Enabled ?? true).Append('\u001f');
         builder.Append(d.DisplayName).Append('\u001f');
         builder.Append(d.Kind).Append('\u001f');
         builder.Append(d.Emoji).Append('\u001f');
@@ -89,6 +90,7 @@ internal static class AgentDescriptorFingerprint
         builder.Append(d.CacheRetentionMode).Append('\u001f');
         builder.Append(d.Thinking).Append('\u001f');
         builder.Append(d.ContextWindow).Append('\u001f');
+        builder.Append(d.CompactionTokenCeiling).Append('\u001f');
         builder.Append(d.MaxConcurrentSessions).Append('\u001f');
         builder.Append(d.SessionAccessLevel).Append('\u001f');
         builder.Append(d.ConversationAccessLevel).Append('\u001f');

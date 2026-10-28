@@ -61,7 +61,8 @@ public sealed class SqliteDataReaderExtensionsTests
                 '{"q":1}' AS pending_ask_user_json,
                 'gpt-4.1' AS model_override,
                 'high' AS thinking_override,
-                200000 AS context_window_override
+                200000 AS context_window_override,
+                24000 AS compaction_token_ceiling
             """);
 
         var conversation = reader.MapConversation();
@@ -87,6 +88,7 @@ public sealed class SqliteDataReaderExtensionsTests
         conversation.ModelOverride.ShouldBe("gpt-4.1");
         conversation.ThinkingOverride.ShouldBe("high");
         conversation.ContextWindowOverride.ShouldBe(200000);
+        conversation.CompactionTokenCeiling.ShouldBe(24000);
     }
 
     [Fact]
@@ -116,7 +118,8 @@ public sealed class SqliteDataReaderExtensionsTests
                 NULL AS pending_ask_user_json,
                 NULL AS model_override,
                 NULL AS thinking_override,
-                NULL AS context_window_override
+                NULL AS context_window_override,
+                NULL AS compaction_token_ceiling
             """);
 
         var conversation = reader.MapConversation();
@@ -136,6 +139,7 @@ public sealed class SqliteDataReaderExtensionsTests
         conversation.ModelOverride.ShouldBeNull();
         conversation.ThinkingOverride.ShouldBeNull();
         conversation.ContextWindowOverride.ShouldBeNull();
+        conversation.CompactionTokenCeiling.ShouldBeNull();
     }
 
     [Fact]

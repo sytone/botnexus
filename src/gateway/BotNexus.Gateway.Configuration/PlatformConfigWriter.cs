@@ -136,6 +136,33 @@ public sealed class PlatformConfigWriter
         _writer = writer ?? new Writers.JsonConfigurationWriter(configPath, fileSystem, backup);
     }
 
+    // Identity bootstrap must detect an unwritable mount before the timed writer lock. File
+    // attributes cannot detect a Linux read-only bind mount. Probe only a unique sibling, never
+    // the existing configuration; the real write still goes through the canonical pipeline.
+    internal void EnsurePersistenceWritable(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var directory = _fileSystem.Path.GetDirectoryName(_configPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            _fileSystem.Directory.CreateDirectory(directory);
+
+        var probePath = _configPath + "." + Guid.NewGuid().ToString("N") + ".write-probe";
+        var created = false;
+        try
+        {
+            using var probe = _fileSystem.FileStream.New(
+                probePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            created = true;
+        }
+        finally
+        {
+            // Do not delete a pre-existing file if CreateNew failed (including a name collision).
+            if (created)
+                _fileSystem.File.Delete(probePath);
+        }
+        ct.ThrowIfCancellationRequested();
+    }
+
     /// <summary>
     /// Reads the config as a canonical-path <see cref="ConfigDocument"/> - the surface consumers
     /// outside this project use (#2887). Note this read is outside the writer lock and is therefore
@@ -798,6 +825,12 @@ public sealed class PlatformConfigWriter
                     return additionalErrors;
             }
 
+            // Ceiling constraints apply even to legacy raw mutation paths. Validate only this
+            // new policy here; unrelated legacy configuration remains load-tolerated.
+            var ceilingErrors = ValidateCompactionCeilings(root);
+            if (ceilingErrors.Count > 0)
+                return ceilingErrors;
+
             if (validateCandidate)
             {
                 // Validate the complete candidate document, not just the mutated fragment: a
@@ -815,6 +848,47 @@ public sealed class PlatformConfigWriter
         finally
         {
             WriteLock.Release();
+        }
+    }
+
+    private static IReadOnlyList<string> ValidateCompactionCeilings(JsonObject root)
+    {
+        List<string> errors = [];
+        var worlds = Matches(root, "world");
+        var agentSections = Matches(root, "agents");
+        // Reject scope ambiguity only when this policy is present (including explicit null).
+        // Unrelated legacy duplicate casing remains load-tolerated on raw mutation paths.
+        if (worlds.Length > 1 && worlds.Any(entry => HasCeiling(entry.Value)))
+            errors.Add("world has ambiguous case-insensitive duplicate keys for compactionTokenCeiling policy.");
+        if (agentSections.Length > 1 && agentSections.Any(entry =>
+                entry.Value is JsonObject agents && agents.Any(agent => HasCeiling(agent.Value))))
+            errors.Add("agents has ambiguous case-insensitive duplicate keys for compactionTokenCeiling policy.");
+        foreach (var entry in worlds)
+            if (entry.Value is JsonObject world)
+                Check(world, entry.Key);
+        foreach (var section in agentSections)
+            if (section.Value is JsonObject agents)
+                foreach (var entry in agents)
+                    if (entry.Value is JsonObject agent)
+                        Check(agent, section.Key + "." + entry.Key);
+        return errors;
+
+        static KeyValuePair<string, JsonNode?>[] Matches(JsonObject scope, string name)
+            => scope.Where(entry => string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+        static bool HasCeiling(JsonNode? node)
+            => node is JsonObject scope && Matches(scope, "compactionTokenCeiling").Length > 0;
+
+        void Check(JsonObject scope, string path)
+        {
+            var ceilings = Matches(scope, "compactionTokenCeiling");
+            if (ceilings.Length > 1)
+                errors.Add(path + ".compactionTokenCeiling has ambiguous case-insensitive duplicate keys.");
+            // Validate all occurrences: null or a valid first key must not hide an invalid alias.
+            foreach (var entry in ceilings)
+                if (entry.Value is { } value
+                    && (value is not JsonValue scalar || !scalar.TryGetValue<int>(out var tokens) || tokens <= 0))
+                    errors.Add(path + "." + entry.Key + " must be a positive 32-bit integer or null.");
         }
     }
 
@@ -910,7 +984,10 @@ public sealed class PlatformConfigWriter
             return Task.CompletedTask;
         }
 
-        return _writer.ApplyChangeSetAsync(changes, reason, ct);
+        // Carry the complete before-image as an optional fallback for malformed JSON projections.
+        // Valid or absent projections and row backends keep applying only the diff. The canonical
+        // read already succeeded; this is not a whole-store replacement or source-read fallback.
+        return _writer.ApplyChangeSetAsync(changes, pristine, reason, ct);
     }
 
     // #2357: Windows fails File.Move(..., overwrite: true) with UnauthorizedAccessException when

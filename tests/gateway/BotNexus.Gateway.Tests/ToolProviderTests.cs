@@ -163,6 +163,21 @@ public class ToolProviderTests
     }
 
     [Fact]
+    public async Task SubAgentToolProvider_InspectionHonorsManageToolRestriction()
+    {
+        var provider = new SubAgentToolProvider(new Mock<BotNexus.Gateway.Abstractions.Agents.ISubAgentManager>().Object,
+            Options.Create(new GatewayOptions { SubAgents = new SubAgentOptions { MaxDepth = 1 } }), null, null);
+        (await provider.CreateToolsAsync(Context(toolIds: ["read"]))).ShouldBeEmpty();
+        var allowed = await provider.CreateToolsAsync(Context(toolIds: ["manage_subagent"]));
+        allowed.ShouldHaveSingleItem().Name.ShouldBe("manage_subagent");
+        var actions = allowed[0].Definition.Parameters.GetProperty("properties").GetProperty("action").GetProperty("enum");
+        actions.EnumerateArray().Select(a => a.GetString()).ShouldContain("result");
+        actions.EnumerateArray().Select(a => a.GetString()).ShouldContain("history");
+        actions.EnumerateArray().Select(a => a.GetString()).ShouldNotContain("message");
+        provider.ShouldInclude(Context(isSubAgentSession: true)).ShouldBeFalse();
+    }
+
+    [Fact]
     public void SubAgentToolProvider_ExcludedWhenManagerMissing()
     {
         new SubAgentToolProvider(null, Options.Create(new GatewayOptions

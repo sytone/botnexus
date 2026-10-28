@@ -168,18 +168,28 @@ public sealed class ConversationBindingManagementTests
     // ── Detach ────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task RemoveBinding_NotifiesAndAudits()
+    public async Task RemoveBinding_PublishesTypedEventAndAudits()
     {
-        var controller = CreateController();
+        var sink = new BindingRemovalEventSink();
+        await using var publisher = new ConversationEventPublisher([sink]);
+        var controller = new ConversationsController(
+            _store, new InMemorySessionStore(), [_notifier],
+            NullLogger<ConversationsController>.Instance, auditLog: _audit,
+            conversationEventPublisher: publisher);
         var id = await NewConversationAsync("detach target");
         var bindingId = await AttachAsync(controller, id, "1234567890");
-        _notifier.Events.Clear();
+        await publisher.WaitForDrainAsync();
 
         var result = await controller.RemoveBinding(id.Value, bindingId, CancellationToken.None);
+        await publisher.WaitForDrainAsync();
 
         result.ShouldBeOfType<NoContentResult>();
         (await _store.GetAsync(id))!.ChannelBindings.ShouldBeEmpty();
-        _notifier.Events.ShouldContain(e => e.ChangeType == "updated" && e.ConversationId == id.Value);
+        var detached = sink.Events.ShouldHaveSingleItem();
+        detached.ConversationId.ShouldBe(id);
+        detached.Binding.BindingId.Value.ShouldBe(bindingId);
+        detached.Bindings.ShouldBeEmpty();
+        _notifier.Events.ShouldBeEmpty();
 
         var entry = _audit.Entries.SingleOrDefault(e => e.Action == "binding_removed");
         entry.ShouldNotBeNull();
@@ -382,6 +392,18 @@ public sealed class ConversationBindingManagementTests
         {
             if (conversationEvent is ConversationBindingAddedEvent added)
                 Events.Add(added);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class BindingRemovalEventSink : IConversationEventSink
+    {
+        public List<ConversationBindingRemovedEvent> Events { get; } = [];
+
+        public Task OnConversationEventAsync(ConversationEvent conversationEvent, CancellationToken cancellationToken = default)
+        {
+            if (conversationEvent is ConversationBindingRemovedEvent removed)
+                Events.Add(removed);
             return Task.CompletedTask;
         }
     }

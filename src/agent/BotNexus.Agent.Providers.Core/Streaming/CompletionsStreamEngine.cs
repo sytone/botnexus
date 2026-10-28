@@ -55,11 +55,23 @@ public static class CompletionsStreamEngine
         LlmModel model,
         Context context,
         StreamOptions? options)
+        => StreamAsync(profile, httpClient, logger, model, context, options,
+            static (producer, cancellationToken) => Task.Run(producer, cancellationToken));
+
+    // Per-call dispatch seam lets tests hold work before scheduling without changing global state.
+    internal static LlmStream StreamAsync(
+        CompletionsTransportProfile profile,
+        HttpClient httpClient,
+        ILogger logger,
+        LlmModel model,
+        Context context,
+        StreamOptions? options,
+        Func<Func<Task>, CancellationToken, Task> dispatch)
     {
         var stream = new LlmStream();
         var ct = options?.CancellationToken ?? CancellationToken.None;
 
-        _ = Task.Run(async () =>
+        _ = dispatch(async () =>
         {
             using var activity = ProviderDiagnostics.Source.StartActivity(profile.ActivityName, ActivityKind.Client);
             activity?.SetTag("botnexus.provider.name", model.Provider);
@@ -68,6 +80,7 @@ public static class CompletionsStreamEngine
 
             try
             {
+                ct.ThrowIfCancellationRequested();
                 await StreamCoreAsync(profile, httpClient, logger, stream, model, context, options, ct);
                 activity?.SetStatus(ActivityStatusCode.Ok);
             }
@@ -96,7 +109,8 @@ public static class CompletionsStreamEngine
                 EmitError(stream, profile.Api, model, ex.Message);
                 activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             }
-        }, ct);
+        // Cancellation belongs to work/I/O, never dispatch: this producer owns terminalization.
+        }, CancellationToken.None);
 
         return stream;
     }
@@ -130,6 +144,8 @@ public static class CompletionsStreamEngine
             if (modified is JsonObject obj)
                 payload = obj;
         }
+
+        payload.EnforceToolFree(options?.ToolChoiceMode, compat.SupportsTools != false);
 
         var url = $"{model.BaseUrl.TrimEnd('/')}/chat/completions";
 
@@ -195,7 +211,7 @@ public static class CompletionsStreamEngine
             reader,
             model,
             profile.Api,
-            ParseUsage,
+            (usageElement, usage, usageModel) => usageElement.ParseUsage(usage, usageModel),
             MapStopReason,
             ExtractProviderErrorMessage,
             (s, m, msg, partial) => EmitError(s, profile.Api, m, msg, partial),
@@ -245,7 +261,7 @@ public static class CompletionsStreamEngine
     /// <see cref="Usage.Reasoning"/> for attribution (#3297). The separate field stays <c>null</c>
     /// when the provider reported no breakdown — absent is never coerced to a measured zero.
     /// </remarks>
-    public static Usage ParseUsage(JsonElement usageElement, Usage usage, LlmModel model)
+    public static Usage ParseUsage(this JsonElement usageElement, Usage usage, LlmModel model)
     {
         var promptTokens = usage.Input + usage.CacheRead + usage.CacheWrite;
         var completionTokens = usage.Output;

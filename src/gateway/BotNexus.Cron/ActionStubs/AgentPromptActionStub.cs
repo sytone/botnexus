@@ -41,7 +41,8 @@ public sealed class AgentPromptAction : ICronAction
 
         // #2373: classify an unresolvable model override before dispatch so the run records the
         // real reason instead of an opaque provider error raised deep inside the agent turn.
-        CronModelPreflight.EnsureResolvable(
+        if (context.EffectiveModel is null)
+            CronModelPreflight.EnsureResolvable(
             context.Services.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
             context.Job.Model);
 
@@ -65,6 +66,8 @@ public sealed class AgentPromptAction : ICronAction
             CronJobId = context.Job.Id,
             JobName = ExternalText.Sanitize(context.Job.Name, ExternalText.DefaultDisplayLength),
             ModelOverride = context.Job.Model,
+            CronRequestedModel = context.EffectiveModel?.RequestedModel,
+            CronModelSource = context.EffectiveModel?.Source,
             ConversationId = context.Job.ConversationId,
             CreatedBy = context.Job.CreatedBy,
             SessionCreatedAsync = context.PersistSessionIdAsync
@@ -105,8 +108,6 @@ public sealed class AgentPromptAction : ICronAction
         // produced an unbroken streak of green runs indefinitely.
         if (triggerRequest.DeliveryError is { } deliveryError)
             context.RecordDeliveryFailure(deliveryError);
-        if (triggerRequest.Completion is { } completion)
-            context.RecordRunCompletion(completion);
     }
 
     /// <summary>
@@ -114,11 +115,15 @@ public sealed class AgentPromptAction : ICronAction
     /// execution context. Extracted so the success and failure paths cannot drift: both run it,
     /// exactly once, from the same finally.
     /// </summary>
-    private static void RecordCost(CronExecutionContext context, InternalTriggerRequest triggerRequest)
+    internal static void RecordCost(CronExecutionContext context, InternalTriggerRequest triggerRequest)
     {
+        // Both cron and soul-routed heartbeat runs must forward evidence even while unwinding.
+        if (triggerRequest.Completion is { } completion)
+            context.RecordRunCompletion(completion);
+
         // #2985: forward the turn's tool-invocation count to the execution context so the
         // scheduler can apply the execution-class zero-tool rule at the existing run-outcome
-        // seam. Only agent-prompt reports a count; command/webhook actions leave it null, which
+        // seam. Agent-backed triggers report a count; command/webhook actions leave it null, which
         // the scheduler reads as "not applicable" rather than as zero.
         if (triggerRequest.ToolInvocationCount is { } toolInvocationCount)
             context.RecordToolInvocationCount(toolInvocationCount);

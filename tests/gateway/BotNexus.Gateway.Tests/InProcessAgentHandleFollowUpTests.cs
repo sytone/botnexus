@@ -104,6 +104,178 @@ public sealed class InProcessAgentHandleFollowUpTests
     }
 
     [Fact]
+    public async Task TryFollowUpWhileRunningAsync_WhileAborting_DoesNotQueueAndHandsBackAfterIdle()
+    {
+        // #4688 / #4731 review: an aborting run exits before its follow-up drain (#2388) and goes
+        // Idle without touching the queue, so a follow-up accepted during Aborting is stranded
+        // while the caller believes it was delivered. It must instead be handed back (false) once
+        // the agent is idle, so the caller can send it as a fresh prompt.
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (agent, handle) = CreateHandle(release, entered);
+
+        var run = agent.PromptAsync("start");
+        await entered.Task;
+
+        var abort = agent.AbortAsync();
+        agent.Status.ShouldBe(AgentStatus.Aborting);
+
+        var followUp = handle.TryFollowUpWhileRunningAsync("after abort");
+
+        release.TrySetResult();
+        await abort;
+        try { await run; } catch (OperationCanceledException) { }
+
+        var queued = await followUp;
+
+        queued.ShouldBeFalse();
+        agent.Status.ShouldBe(AgentStatus.Idle);
+        agent.HasQueuedMessages.ShouldBeFalse();
+
+        // The caller's fresh dispatch now succeeds - no "Agent is already running.".
+        var produced = await agent.PromptAsync("after abort");
+        produced.OfType<AgentCoreUserMessage>().Select(m => m.Content).ShouldContain("after abort");
+    }
+
+    [Fact]
+    public async Task TryFollowUpWhileRunningAsync_AbortBetweenPostEnqueueReads_IsReclaimedNotReportedQueued()
+    {
+        // #4731 review P1: the post-enqueue code read Status and then, separately, IsBusy. An abort
+        // landing between the two reads made IsBusy answer true for a run that exits before its
+        // drain, so the message was reported queued and never delivered. The seam injects the
+        // abort exactly inside that window.
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (agent, handle) = CreateHandle(release, entered);
+
+        var run = agent.PromptAsync("start");
+        await entered.Task;
+
+        Task? abort = null;
+        handle.AfterFollowUpEnqueuedForTest = () =>
+        {
+            abort = agent.AbortAsync();
+            agent.Status.ShouldBe(AgentStatus.Aborting);
+            // Let the cancelled run settle; the follow-up path must wait for it, not race it.
+            release.TrySetResult();
+        };
+
+        var queued = await handle.TryFollowUpWhileRunningAsync("raced");
+        await abort.ShouldNotBeNull();
+        try { await run; } catch (OperationCanceledException) { }
+
+        queued.ShouldBeFalse("observing Aborting must never report queued-success");
+        agent.HasQueuedMessages.ShouldBeFalse("the message must be reclaimed, not stranded in the aborted run's queue");
+        agent.Status.ShouldBe(AgentStatus.Idle);
+    }
+
+    [Fact]
+    public async Task TryFollowUpWhileRunningAsync_AbortExactlyBetweenStatusAndBusyReads_IsNotReportedQueued()
+    {
+        // #4731 review P1 (exact interleaving): the old code read Status (Running), then IsBusy.
+        // An abort landing between those reads made IsBusy true -> "queued" against a run that
+        // exits before its drain. The seam fires precisely in that window.
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (agent, handle) = CreateHandle(release, entered);
+
+        var run = agent.PromptAsync("start");
+        await entered.Task;
+
+        Task? abort = null;
+        handle.BeforeLifecycleSnapshotForTest = () =>
+        {
+            abort = agent.AbortAsync();
+            release.TrySetResult();
+        };
+
+        var queued = await handle.TryFollowUpWhileRunningAsync("between reads");
+        await abort.ShouldNotBeNull();
+        try { await run; } catch (OperationCanceledException) { }
+
+        queued.ShouldBeFalse("an abort observed by the lifecycle decision must not yield queued-success");
+        agent.HasQueuedMessages.ShouldBeFalse("the message must be reclaimed, not stranded");
+    }
+
+    [Fact]
+    public async Task TryFollowUpWhileRunningAsync_CallerCancelsWhileWaitingForAbort_ReclaimsTheMessage()
+    {
+        // #4731 review P2 / #4971: cancelling the stream reader can unwind the run even while
+        // the provider is blocked. Hold the awaited agent_end listener instead: RunAsync cannot
+        // complete its active-run task (the real WaitForIdleAsync boundary) until it returns.
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseEnd = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var providerSettled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (agent, handle) = CreateHandle(release, entered, providerSettled);
+        using var subscription = agent.Subscribe(async (@event, _) =>
+        {
+            if (@event is AgentEndEvent)
+            {
+                ending.TrySetResult();
+                await releaseEnd.Task.ConfigureAwait(false);
+            }
+        });
+
+        using var cts = new CancellationTokenSource();
+        Task? abort = null;
+        Task<bool>? followUp = null;
+        var run = agent.PromptAsync("start");
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            handle.AfterFollowUpEnqueuedForTest = () => abort = agent.AbortAsync();
+
+            followUp = handle.TryFollowUpWhileRunningAsync("orphan?", cts.Token);
+            await ending.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            abort.ShouldNotBeNull().IsCompleted.ShouldBeFalse("the listener must hold abort settlement");
+            run.IsCompleted.ShouldBeFalse("the active run must remain unsettled");
+            agent.Status.ShouldBe(AgentStatus.Aborting);
+            followUp.IsCompleted.ShouldBeFalse("the follow-up must be waiting for the abort to settle");
+            agent.HasQueuedMessages.ShouldBeTrue("the caller's message must be pending before cancellation");
+
+            // Equal content, different identity: cancellation must reclaim only this caller's
+            // instance, not clear the queue or remove another producer's message.
+            var otherMessage = new AgentCoreUserMessage("orphan?");
+            agent.FollowUp(otherMessage);
+
+            await cts.CancelAsync();
+            await Should.ThrowAsync<OperationCanceledException>(
+                () => followUp.WaitAsync(TimeSpan.FromSeconds(5)));
+
+            agent.TryReclaimFollowUp(otherMessage).ShouldBeTrue("another producer's exact message must remain queued");
+            agent.HasQueuedMessages.ShouldBeFalse("a cancelled wait must reclaim the message rather than leave it ownerless");
+            abort.ShouldNotBeNull().IsCompleted.ShouldBeFalse("caller cancellation must not release the abort gate");
+            run.IsCompleted.ShouldBeFalse("reclamation must finish before the aborted run settles");
+        }
+        finally
+        {
+            // Release both independent gates even if readiness or an assertion fails. Cancel
+            // and observe the follow-up too, then join BOTH lifecycle tasks unconditionally.
+            release.TrySetResult();
+            releaseEnd.TrySetResult();
+            try
+            {
+                await cts.CancelAsync();
+                if (followUp is not null)
+                {
+                    try { await followUp.WaitAsync(TimeSpan.FromSeconds(5)); }
+                    catch (OperationCanceledException) { }
+                }
+            }
+            finally
+            {
+                try
+                {
+                    await Task.WhenAll(abort ?? agent.AbortAsync(), run, providerSettled.Task).WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                catch (OperationCanceledException) { }
+            }
+        }
+    }
+
+    [Fact]
     public async Task TryFollowUpWhileRunningAsync_NullOrWhitespace_Throws()
     {
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -115,7 +287,8 @@ public sealed class InProcessAgentHandleFollowUpTests
 
     private static (BotNexus.Agent.Core.Agent Agent, InProcessAgentHandle Handle) CreateHandle(
         TaskCompletionSource release,
-        TaskCompletionSource? entered = null)
+        TaskCompletionSource? entered = null,
+        TaskCompletionSource? providerSettled = null)
     {
         var modelRegistry = new ModelRegistry();
         modelRegistry.Register("test-provider", new LlmModel(
@@ -131,7 +304,7 @@ public sealed class InProcessAgentHandleFollowUpTests
             MaxTokens: 1024));
 
         var providers = new ApiProviderRegistry();
-        providers.Register(new BlockingTestProvider(release, entered));
+        providers.Register(new BlockingTestProvider(release, entered, providerSettled));
         var llmClient = new LlmClient(providers, modelRegistry);
         var model = modelRegistry.GetModel("test-provider", "test-model")!;
 
@@ -166,7 +339,10 @@ public sealed class InProcessAgentHandleFollowUpTests
     /// test releases it, giving a deterministic in-flight window. Subsequent turns (the
     /// follow-up continuation) complete immediately.
     /// </summary>
-    private sealed class BlockingTestProvider(TaskCompletionSource release, TaskCompletionSource? entered) : IApiProvider
+    private sealed class BlockingTestProvider(
+        TaskCompletionSource release,
+        TaskCompletionSource? entered,
+        TaskCompletionSource? providerSettled) : IApiProvider
     {
         private int _calls;
 
@@ -193,15 +369,27 @@ public sealed class InProcessAgentHandleFollowUpTests
 
             _ = Task.Run(async () =>
             {
-                if (isFirst)
+                try
                 {
-                    entered?.TrySetResult();
-                    await release.Task.ConfigureAwait(false);
-                }
+                    if (isFirst)
+                    {
+                        entered?.TrySetResult();
+                        await release.Task.ConfigureAwait(false);
+                    }
 
-                stream.Push(new StartEvent(partial));
-                stream.Push(new TextDeltaEvent(0, "hello", withText));
-                stream.Push(new DoneEvent(StopReason.Stop, withText));
+                    stream.Push(new StartEvent(partial));
+                    stream.Push(new TextDeltaEvent(0, "hello", withText));
+                    stream.Push(new DoneEvent(StopReason.Stop, withText));
+                    if (isFirst)
+                        providerSettled?.TrySetResult();
+                }
+                catch (Exception error)
+                {
+                    if (isFirst && providerSettled is not null)
+                        providerSettled.TrySetException(error);
+                    else
+                        throw;
+                }
             });
 
             return stream;

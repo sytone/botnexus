@@ -39,14 +39,23 @@ public interface IAgentRegistry
         => throw new NotSupportedException("This registry does not support descriptor updates.");
 
     /// <summary>
-    /// Gets an agent descriptor by ID, or <c>null</c> if not registered.
+    /// Gets a runtime-enabled agent descriptor by ID, or null if absent or disabled.
     /// </summary>
     AgentDescriptor? Get(AgentId agentId);
 
     /// <summary>
-    /// Gets all registered agent descriptors.
+    /// Gets all runtime-enabled agent descriptors.
     /// </summary>
     IReadOnlyList<AgentDescriptor> GetAll();
+
+    /// <summary>
+    /// Gets a descriptor for administration when includeDisabled is true, including agents
+    /// that cannot admit runtime work. Existing registry implementations may delegate to Get.
+    /// </summary>
+    AgentDescriptor? Get(AgentId agentId, bool includeDisabled) => Get(agentId);
+
+    /// <summary>Lists descriptors, optionally retaining disabled registrations for administration.</summary>
+    IReadOnlyList<AgentDescriptor> GetAll(bool includeDisabled) => GetAll();
 
     /// <summary>
     /// Checks whether an agent with the given ID is registered.

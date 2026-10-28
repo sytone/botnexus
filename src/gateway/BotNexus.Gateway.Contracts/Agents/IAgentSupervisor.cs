@@ -38,6 +38,20 @@ public interface IAgentSupervisor
     Task StopAsync(AgentId agentId, SessionId sessionId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Atomically reserves the exact resident handle's idle run admission and prevents replacement
+    /// creation until disposal. Null means stale, busy, or unsupported. Never creates an agent.
+    /// </summary>
+    IDisposable? TryReserveMaintenance(IAgentHandle expectedHandle) => null;
+
+    /// <summary>
+    /// Removes and disposes only the exact captured resident handle. False means no matching
+    /// resident exists; a replacement must never be stopped. Unsupported implementations fail closed.
+    /// Once removal commits, cleanup is not cancelled by the request token.
+    /// </summary>
+    Task<bool> StopIfCurrentAsync(IAgentHandle expectedHandle, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Conditional handle eviction is unsupported.");
+
+    /// <summary>
     /// Gets the current instance metadata, or <c>null</c> if no instance exists.
     /// </summary>
     AgentInstance? GetInstance(AgentId agentId, SessionId sessionId);

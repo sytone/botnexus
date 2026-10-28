@@ -81,6 +81,7 @@ public sealed class MemoryTrigger(
             session.Metadata.Remove("modelOverride");
         else
             session.Metadata["modelOverride"] = request!.ModelOverride;
+        request?.ApplyCronModelMetadata(session);
 
         // Write-ahead save so the agent handle binds to the right conversation and model before the
         // turn runs. The user entry is added AFTER PromptAsync so the handle does not load the flush
@@ -89,8 +90,24 @@ public sealed class MemoryTrigger(
 
         try
         {
+            if (request?.SessionCreatedAsync is not null)
+                await request.SessionCreatedAsync(sessionId, ct).ConfigureAwait(false);
             var handle = await supervisor.GetOrCreateAsync(agentId, sessionId, ct).ConfigureAwait(false);
-            var response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+            AgentResponse response;
+            try
+            {
+                response = await handle.PromptAsync(prompt, ct).ConfigureAwait(false);
+            }
+            catch (AgentPromptInterruptedException interrupted)
+            {
+                session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = prompt, Trigger = TriggerType.Memory });
+                foreach (var entry in TriggerToolAuditProjector.ProjectToolEntries(interrupted.PartialResponse))
+                    session.AddEntry(entry);
+                ProviderTokenUsageRecorder.Record(session, interrupted.PartialResponse.Usage);
+                await sessions.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+                throw new OperationCanceledException("Trigger run was interrupted.", interrupted,
+                    ct.IsCancellationRequested ? ct : interrupted.CancellationToken);
+            }
 
             ProviderTokenUsageRecorder.Record(session, response.Usage);
 
@@ -107,7 +124,7 @@ public sealed class MemoryTrigger(
             foreach (var toolEntry in TriggerToolAuditProjector.ProjectToolEntries(response))
                 session.AddEntry(toolEntry);
 
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            session.AddEntry(new SessionEntry { AgentRunId = response.AgentRunId, Role = MessageRole.Assistant, Content = response.Content });
         }
         finally
         {

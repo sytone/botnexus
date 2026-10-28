@@ -58,10 +58,14 @@ public enum GatewayStopOutcome
 /// <param name="Message">Diagnostic message describing the result.</param>
 /// <param name="Outcome">What was actually observed. Defaults to <see cref="GatewayStopOutcome.Stopped"/>
 /// only so existing two-argument construction keeps compiling; every production call site states it.</param>
+/// <param name="VerifiedGatewayBinaryPath">Live launch image observed before stopping, not the requested
+/// deployment or PID-file metadata. Null means the deployment identity could not be established;
+/// callers must not use this stop to authorize binary recovery.</param>
 public record GatewayStopResult(
     bool Success,
     string? Message,
-    GatewayStopOutcome Outcome = GatewayStopOutcome.Stopped
+    GatewayStopOutcome Outcome = GatewayStopOutcome.Stopped,
+    string? VerifiedGatewayBinaryPath = null
 );
 
 /// <summary>

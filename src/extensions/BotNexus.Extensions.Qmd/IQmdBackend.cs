@@ -30,6 +30,16 @@ public interface IQmdBackend : IAsyncDisposable
     Task<QmdStoreInfo[]> GetStoresAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// Discover canonical store names for search routing without requiring store statistics.
+    /// Backends may override the metadata-based default with lightweight discovery.
+    /// </summary>
+    async Task<string[]> GetSearchStoreNamesAsync(CancellationToken ct = default)
+    {
+        var stores = await GetStoresAsync(ct).ConfigureAwait(false);
+        return stores.Select(s => s.Name).ToArray();
+    }
+
+    /// <summary>
     /// Trigger a re-index of the specified store (or all stores if null).
     /// </summary>
     /// <param name="store">Store name, or null for all stores.</param>

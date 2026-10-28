@@ -63,6 +63,7 @@ public sealed class CopilotCompletionsProvider(
         {
             ApiKey = apiKey,
             Temperature = options?.Temperature,
+            ToolChoiceMode = options?.ToolChoiceMode,
             MaxTokens = options?.MaxTokens,
             CancellationToken = options?.CancellationToken ?? CancellationToken.None,
             Transport = options?.Transport ?? Transport.Sse,

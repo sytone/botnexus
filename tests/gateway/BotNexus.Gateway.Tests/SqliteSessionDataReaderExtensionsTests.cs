@@ -135,7 +135,7 @@ public sealed class SqliteSessionDataReaderExtensionsTests
                 'thinking...' AS thinking_content,
                 'subagent-response' AS message_kind,
                 'api:cron:pr-doctor' AS sender_id,
-                1 AS is_replay_banner
+                1 AS is_replay_banner, 'run-42' AS agent_run_id, 1 AS tool_is_incomplete
             """);
 
         var entry = reader.MapHistoryEntry();
@@ -161,6 +161,8 @@ public sealed class SqliteSessionDataReaderExtensionsTests
         entry.SenderId.ShouldBe("api:cron:pr-doctor");
         // #3046: the restart-replay banner marker maps from the is_replay_banner column.
         entry.IsReplayBanner.ShouldBeTrue();
+        entry.AgentRunId?.Value.ShouldBe("run-42");
+        entry.ToolIsIncomplete.ShouldBeTrue();
     }
 
     [Fact]
@@ -175,7 +177,7 @@ public sealed class SqliteSessionDataReaderExtensionsTests
                 NULL AS tool_call_id, 0 AS is_compaction_summary, NULL AS tool_args,
                 0 AS tool_is_error, 0 AS is_crash_sentinel, 0 AS is_history,
                 NULL AS trigger_type, NULL AS thinking_content, NULL AS message_kind,
-                NULL AS sender_id, 0 AS is_replay_banner
+                NULL AS sender_id, 0 AS is_replay_banner, NULL AS agent_run_id, 0 AS tool_is_incomplete
             """);
 
         var entry = reader.MapHistoryEntry();
@@ -200,6 +202,8 @@ public sealed class SqliteSessionDataReaderExtensionsTests
         entry.SenderId.ShouldBeNull();
         // #3046: an unset is_replay_banner maps to false - every ordinary row and every pre-#3046 row.
         entry.IsReplayBanner.ShouldBeFalse();
+        entry.AgentRunId.ShouldBeNull();
+        entry.ToolIsIncomplete.ShouldBeFalse();
     }
 
     [Fact]

@@ -50,6 +50,31 @@ public readonly record struct SessionWriteFence(
     ConversationId ExpectedConversationId)
 {
     /// <summary>
+    /// Optional immutable content fingerprint for detached aggregate replacement. Stores must
+    /// compare it with authoritative content under their write lock, or fail closed as Conflict.
+    /// Ordinary live/run finalizers leave this null and retain lifecycle-only semantics.
+    /// </summary>
+    public string? ExpectedContentFingerprint { get; init; }
+
+    /// <summary>Captures history and metadata independently of the candidate's mutation counters.</summary>
+    public static string ContentFingerprint(GatewaySession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        var content = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            History = session.GetHistorySnapshot().Select(e => e with { PersistenceId = null, PersistenceKey = null }),
+            Metadata = session.Metadata.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .ToDictionary(pair => pair.Key, pair => pair.Value),
+            session.UpdatedAt,
+            session.Status,
+            session.ExpiresAt,
+            session.ChannelType,
+            session.SessionType
+        });
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content));
+    }
+
+    /// <summary>
     /// Captures the fence identity from a live session at run start.
     /// </summary>
     /// <param name="session">The session whose identity to capture.</param>
@@ -75,5 +100,8 @@ public enum SessionSaveOutcome
     /// the run was in flight). No row was created or modified - the finalizer must treat this
     /// as a "session-rebound" short-circuit and suppress all downstream persistence.
     /// </summary>
-    Rebound = 1
+    Rebound = 1,
+
+    /// <summary>The detached replacement lost to a concurrent content write; nothing was published.</summary>
+    Conflict = 2
 }

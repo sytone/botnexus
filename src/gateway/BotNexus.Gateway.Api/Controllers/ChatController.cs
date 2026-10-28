@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -23,6 +24,7 @@ namespace BotNexus.Gateway.Api.Controllers;
 [Route("api/[controller]")]
 public sealed class ChatController : ControllerBase
 {
+    private readonly IConversationStore? _conversations;
     private readonly IAgentSupervisor _supervisor;
     private readonly ISessionStore _sessions;
     private readonly IToolAuditSink _toolAudit;
@@ -40,12 +42,15 @@ public sealed class ChatController : ControllerBase
     /// this controller happened to be resolved from DI.
     /// </param>
     /// <param name="orchestrator">The unified inbound message entry point used by steer requests.</param>
+    /// <param name="conversations">Stored parent visibility authority; linked sessions fail closed when absent.</param>
     public ChatController(
         IAgentSupervisor supervisor,
         ISessionStore sessions,
         IToolAuditSink? toolAudit = null,
-        IInboundMessageOrchestrator? orchestrator = null)
+        IInboundMessageOrchestrator? orchestrator = null,
+        IConversationStore? conversations = null)
     {
+        _conversations = conversations;
         _supervisor = supervisor;
         _sessions = sessions;
         _toolAudit = toolAudit ?? DefaultToolAuditSink.Instance;
@@ -79,6 +84,11 @@ public sealed class ChatController : ControllerBase
 
             var typedAgentId = AgentId.From(request.AgentId);
             var typedSessionId = SessionId.From(sessionId);
+
+            var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+                await _sessions.GetAsync(typedSessionId, cancellationToken), typedAgentId, cancellationToken);
+            if (clientWriteFailure is not null)
+                return clientWriteFailure;
 
             // #2396: per-run model / thinking selection for a headless one-shot run. Stamped as
             // session metadata - the SAME seam the cron, soul and heartbeat triggers already use -
@@ -116,6 +126,16 @@ public sealed class ChatController : ControllerBase
             {
                 response = await handle.PromptAsync(request.Message, CancellationToken.None);
             }
+            catch (AgentPromptInterruptedException interrupted)
+            {
+                var partialSession = await _sessions.GetOrCreateAsync(typedSessionId, typedAgentId, CancellationToken.None);
+                partialSession.SessionType = SessionType.UserAgent;
+                partialSession.AddEntry(new SessionEntry { Role = MessageRole.User, Content = request.Message });
+                foreach (var entry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(interrupted.PartialResponse)))
+                    partialSession.AddEntry(entry);
+                await _sessions.SaveAsync(partialSession, CancellationToken.None);
+                throw new OperationCanceledException("Chat turn was interrupted.", interrupted, interrupted.CancellationToken);
+            }
             catch (InvalidOperationException ex) when (ex.Message.Contains("already running", StringComparison.OrdinalIgnoreCase))
             {
                 await handle.FollowUpAsync(request.Message, CancellationToken.None);
@@ -132,7 +152,7 @@ public sealed class ChatController : ControllerBase
             // Ordered before the assistant row, matching every other blocking call site.
             foreach (var toolEntry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(response)))
                 session.AddEntry(toolEntry);
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            session.AddEntry(new SessionEntry { AgentRunId = response.AgentRunId, Role = MessageRole.Assistant, Content = response.Content });
             await _sessions.SaveAsync(session, CancellationToken.None);
 
             return Ok(new ChatResponse(
@@ -190,6 +210,11 @@ public sealed class ChatController : ControllerBase
     [HttpPost("steer")]
     public async Task<IActionResult> Steer([FromBody] AgentControlRequest request, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(request.SessionId), cancellationToken), AgentId.From(request.AgentId), cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var agentId = AgentId.From(request.AgentId);
         var sessionId = SessionId.From(request.SessionId);
         var instance = _supervisor.GetInstance(agentId, sessionId);
@@ -239,6 +264,11 @@ public sealed class ChatController : ControllerBase
     [HttpPost("follow-up")]
     public async Task<IActionResult> FollowUp([FromBody] AgentControlRequest request, CancellationToken cancellationToken)
     {
+        var clientWriteFailure = await ClientConversationWriteGuard.CheckSessionAsync(this, _conversations,
+            await _sessions.GetAsync(SessionId.From(request.SessionId), cancellationToken), AgentId.From(request.AgentId), cancellationToken);
+        if (clientWriteFailure is not null)
+            return clientWriteFailure;
+
         var instance = _supervisor.GetInstance(AgentId.From(request.AgentId), SessionId.From(request.SessionId));
         if (instance is null)
             return NotFound(new { message = "Agent session not found." });

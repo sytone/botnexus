@@ -15,7 +15,6 @@ tests/extensions/BotNexus.Extensions.Channels.Matrix.Tests/MatrixConfigurationTe
 tests/extensions/BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests/GatewayEventHandlerTests.cs|1
 tests/extensions/BotNexus.Extensions.ExecTool.Tests/ExecToolCancellationTests.cs|1
 tests/extensions/BotNexus.Extensions.ExecTool.Tests/ExecToolTests.cs|1
-tests/extensions/BotNexus.Extensions.Mcp.Tests/McpUrlSchemeValidationTests.cs|1
 tests/extensions/BotNexus.Extensions.Mcp.Tests/Transport/HttpSseReconnectCeilingTests.cs|1
 tests/extensions/BotNexus.Extensions.Mcp.Tests/Transport/HttpSseSessionExpiryTests.cs|1
 tests/extensions/BotNexus.Extensions.Mcp.Tests/Transport/HttpSseTransportRobustnessTests.cs|1
@@ -90,8 +89,6 @@ tests/gateway/BotNexus.Memory.Tests/MarkdownAgentMemoryBudgetTests.cs|1
 tests/gateway/BotNexus.Memory.Tests/MarkdownNoteIndexingTests.cs|1
 tests/gateway/BotNexus.Memory.Tests/MemoryIsolationTests.cs|1
 tests/gateway/BotNexus.Memory.Tests/MemoryProvenanceTests.cs|1
-tests/integration/BotNexus.Conversation.Tests/ConversationSignalRTests.cs|2
-tests/integration/BotNexus.Conversation.Tests/TestSignalRClient.cs|2
 tests/integration/BotNexus.Integration.ConfigDiskE2E.Tests/ConfigMutationMatrixDiskTests.cs|1
 tests/integration/BotNexus.Integration.ConfigDiskE2E.Tests/ConfigWriterOpenReaderDiskTests.cs|1
 tests/integration/BotNexus.Integration.E2E.Tests/Helpers/TcpReadinessProbe.cs|1

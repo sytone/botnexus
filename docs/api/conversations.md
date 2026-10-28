@@ -16,6 +16,23 @@ canvas concern was extracted into its own controller (#1688) but deliberately ke
 
 ---
 
+## Client write visibility
+
+Conversation visibility is stamped by the server when the conversation is created.
+API credentials and agent scope do not override it.
+
+- `UserFacing` conversations retain normal client interactions.
+- `InspectableReadOnly` conversations remain readable, but client mutations return
+  `403 Forbidden`.
+- `InternalHidden` conversations are not disclosed through client mutation endpoints;
+  these requests return `404 Not Found`.
+
+Client message, metadata, binding, lifecycle, override, pin, and canvas writes check
+stored visibility before dispatch or persistence. Session-addressed operations check
+the session's stored parent conversation, not a caller-supplied conversation hint.
+Trusted runtime persistence and lifecycle operations remain separate from client
+write permission. Per-reader read-state is observer state and remains available.
+
 ## Endpoints
 
 | Verb | Route | Purpose |
@@ -215,14 +232,43 @@ configured), or `404 Not Found`.
 ### `PUT /api/conversations/{conversationId}/override`
 
 Sets per-conversation model / thinking / context overrides. Body fields: `model`,
-`thinking` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`), `contextWindow`
-(positive token count). Each null field clears that override. Overrides are
+`thinking` (see the canonical [ThinkingLevel values](../internals/07-thinking-levels.md#thinkinglevel-enum)), `contextWindow`
+(positive token count). Each omitted or null field clears that override. Overrides are
 validated against the resolved model's capabilities; an unsupported value returns
 `400 Bad Request`. Returns `200 OK` with the updated conversation, or `404 Not Found`.
 
+The optional `compactionTokenCeiling` is a positive 32-bit integer or null. It is written
+only when `applyCompactionTokenCeiling` is `true`; false or omission leaves the stored
+ceiling unchanged. Applying null resets the conversation ceiling to agent/world inheritance.
+Zero and negative values return `400`; fractions, overflow, and quoted numbers are rejected
+by request binding. Responses include `compactionTokenCeiling` (the stored override, not
+the effective inherited threshold).
+
+**This PUT is not a field-only patch.** When changing only the ceiling, resend the current
+`model`, `thinking`, and `contextWindow` values to preserve them. A body containing only
+`compactionTokenCeiling` and its apply flag clears those three overrides. The tool overlay
+is unchanged unless `applyToolOverride` is also true. For example, after reading the
+conversation, a caller preserving its existing overrides might send:
+
+```json
+{
+  "model": "existing-model-id",
+  "thinking": "high",
+  "contextWindow": 8192,
+  "compactionTokenCeiling": 4000,
+  "applyCompactionTokenCeiling": true
+}
+```
+
+Use the actual stored values rather than copying these example values. To reset only the
+ceiling, resend those same three fields with `compactionTokenCeiling: null` and
+`applyCompactionTokenCeiling: true`. See [scoped ceiling behavior](../configuration.md#scoped-compaction-token-ceilings)
+for precedence and runtime limitations.
+
 ### `DELETE /api/conversations/{conversationId}/override`
 
-Clears all three overrides back to the agent default. Returns `200 OK`, or
+Clears model, thinking, context-window, tool-overlay, and compaction-ceiling overrides
+back to inheritance. Returns `200 OK`, or
 `404 Not Found`.
 
 ### `POST` / `DELETE /api/conversations/{conversationId}/pin`

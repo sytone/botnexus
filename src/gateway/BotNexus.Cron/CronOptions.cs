@@ -6,6 +6,9 @@ public sealed class CronOptions
 {
     public const string SectionName = "cron";
 
+    /// <summary>Opt-in model for model-running cron jobs without an explicit job model. Null preserves inheritance.</summary>
+    public string? DefaultModel { get; set; }
+
     public bool Enabled { get; set; } = true;
     public int TickIntervalSeconds { get; set; } = 60;
     public int DefaultJobTimeoutSeconds { get; set; } = 3600;
@@ -93,6 +96,8 @@ public sealed record ConfiguredCronJob
     public string? Model { get; init; }
     public string? WebhookUrl { get; init; }
     public string? ShellCommand { get; init; }
+    /// <summary>Optional deterministic agent-prompt probe, subject to command firing authorization.</summary>
+    public string? PreconditionCommand { get; init; }
     public bool Enabled { get; init; } = true;
     public bool System { get; init; }
     public bool DeleteAfterRun { get; init; }

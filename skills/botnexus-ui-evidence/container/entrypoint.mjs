@@ -70,7 +70,8 @@ try {
   gateway = spawn('dotnet', ['/app/publish/BotNexus.Gateway.Api.dll'], { env, stdio: ['ignore', fs.openSync('/evidence/gateway.stdout.log', 'a'), fs.openSync('/evidence/gateway.stderr.log', 'a')] });
   await waitForGateway();
   process.env.BOTNEXUS_EVIDENCE_STARTED_UTC = startedUtc;
-  await import('./capture.mjs');
+  const scenario = JSON.parse(process.env.BOTNEXUS_EVIDENCE_SCENARIO || '{}');
+  await import(scenario.name === 'conversation-menu' ? './capture-menu.mjs' : './capture.mjs');
   const gatewayStopped = await stopGateway();
   remove(home); remove(data); remove(catalog);
   const manifestPath = `${output}/evidence.json`;

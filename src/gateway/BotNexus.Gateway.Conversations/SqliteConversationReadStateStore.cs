@@ -44,6 +44,16 @@ public sealed class SqliteConversationReadStateStore : IConversationReadStateSto
         ConversationId conversationId,
         ConversationReadPosition position,
         CancellationToken cancellationToken = default)
+        => (await AdvanceWithResultAsync(worldId, readerId, conversationId, position, cancellationToken)
+            .ConfigureAwait(false)).State;
+
+    /// <inheritdoc />
+    public async Task<ConversationReadStateAdvanceResult> AdvanceWithResultAsync(
+        string worldId,
+        ConversationReaderId readerId,
+        ConversationId conversationId,
+        ConversationReadPosition position,
+        CancellationToken cancellationToken = default)
     {
         ConversationReadStateKey.Validate(readerId, conversationId);
         var normalizedWorldId = ConversationReadStateKey.NormalizeWorldId(worldId);
@@ -51,7 +61,11 @@ public sealed class SqliteConversationReadStateStore : IConversationReadStateSto
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
+        // Keep the winning version and its snapshot in one write transaction, so another
+        // connection cannot replace the state between the upsert and the response read.
+        using var transaction = connection.BeginTransaction();
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO conversation_read_state
                 (world_id, reader_id, conversation_id, position, version)
@@ -63,11 +77,13 @@ public sealed class SqliteConversationReadStateStore : IConversationReadStateSto
             """;
         BindKey(command, normalizedWorldId, readerId, conversationId);
         command.Parameters.AddWithValue("$position", position.Value);
-        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        var changed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) > 0;
 
-        return await ReadAsync(
-            connection, normalizedWorldId, readerId, conversationId, cancellationToken).ConfigureAwait(false)
+        var state = await ReadAsync(
+            connection, normalizedWorldId, readerId, conversationId, cancellationToken, transaction).ConfigureAwait(false)
             ?? throw new InvalidOperationException("The read-state upsert completed without a stored row.");
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return new ConversationReadStateAdvanceResult(state, changed);
     }
 
     private async Task EnsureCreatedAsync(CancellationToken cancellationToken)
@@ -111,9 +127,11 @@ public sealed class SqliteConversationReadStateStore : IConversationReadStateSto
         string worldId,
         ConversationReaderId readerId,
         ConversationId conversationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SqliteTransaction? transaction = null)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT position, version
             FROM conversation_read_state

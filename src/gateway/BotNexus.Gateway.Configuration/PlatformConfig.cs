@@ -676,6 +676,14 @@ public sealed class ProviderEmbeddingsConfig
 /// <summary>Configuration owned by the singular BotNexus world.</summary>
 public sealed class WorldSettingsConfig
 {
+    /// <summary>Optional positive compaction trigger ceiling in tokens; null inherits the enclosing scope. Not model capacity.</summary>
+    [Range(1, int.MaxValue)]
+    [Display(Name = "Compaction token ceiling", Description = "Optional positive compaction trigger ceiling, not model capacity. Null inherits.")]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 0)]
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
+    public int? CompactionTokenCeiling { get; set; }
+
+
     /// <summary>World-scoped extension-owned runtime configuration, keyed by extension ID.</summary>
     [Display(
         Name = "World extensions",
@@ -792,6 +800,11 @@ public sealed class GatewaySettingsConfig
         Description = "Limits on how much output a single tool result may contribute before it is truncated.")]
     [ConfigField(Group = "tool-output-budget", Order = 0)]
     public ToolOutputBudgetConfig? ToolOutputBudget { get; set; }
+    /// <summary>Maximum completed tool results per run, checked after entire batches. Zero is invalid.</summary>
+    [Range(1, 1_000_000)]
+    [Display(Name = "Tool result budget", Description = "Executed results per run, not provider turns. Default 128.")]
+    [ConfigField(Group = "tool-result-budget", Order = 0)]
+    public int MaxToolResults { get; set; } = 128;
     /// <summary>Size guardrails for the <c>read</c> tool (#2689).</summary>
     [Display(
         Name = "Read tool",
@@ -1766,6 +1779,11 @@ public sealed class SecretRedactionConfig
 /// <summary>Cron scheduler configuration.</summary>
 public sealed class CronConfig
 {
+    /// <summary>Opt-in global model for model-running cron jobs; explicit job models take precedence.</summary>
+    [Display(Name = "Default cron model", Description = "Optional provider/model or registered model ID. Explicit job model overrides this; unset inherits conversation then agent. Restart the gateway after changing configuration.", GroupName = "Cron", Order = 4)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron", Order = 4)]
+    public string? DefaultModel { get; set; }
+
     /// <summary>Whether the cron scheduler is enabled.</summary>
     [Display(
         Name = "Enable cron",
@@ -1911,6 +1929,11 @@ public sealed class CronJobConfig
     [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron-job", Order = 9)]
     public string? ShellCommand { get; set; }
 
+    /// <summary>Optional deterministic probe before an agent prompt. Uses command authorization and timeout machinery.</summary>
+    [Display(Name = "Precondition command", Description = "Agent-prompt probe: exit 0 runs the model, exit 10 records no_work with no model request; other exits fail closed. Runs with gateway privileges.", GroupName = "Cron job", Order = 21)]
+    [ConfigField(Widget = ConfigFieldWidget.Text, Group = "cron-job", Order = 21)]
+    public string? PreconditionCommand { get; set; }
+
     /// <summary>Whether this job is enabled.</summary>
     [Display(
         Name = "Enabled",
@@ -2041,6 +2064,14 @@ public sealed class ExtensionLoaderConfig
 /// <summary>Agent definition in platform config.</summary>
 public sealed class AgentDefinitionConfig
 {
+    /// <summary>Optional positive compaction trigger ceiling in tokens; null inherits the enclosing scope. Not model capacity.</summary>
+    [Range(1, int.MaxValue)]
+    [Display(Name = "Compaction token ceiling", Description = "Optional positive compaction trigger ceiling, not model capacity. Null inherits.")]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 0)]
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
+    public int? CompactionTokenCeiling { get; set; }
+
+
     /// <summary>Provider name (e.g. 'copilot').</summary>
     [Display(
         Name = "Provider",

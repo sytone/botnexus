@@ -12,6 +12,9 @@ public sealed record CronRun
     public string? Error { get; init; }
     public SessionId? SessionId { get; init; }
 
+    /// <summary>Actual dispatch selection, null for historical or deterministic runs.</summary>
+    public CronModelSelection? EffectiveModel { get; init; }
+
     /// <summary>Age of a running row at projection time; null for terminal rows.</summary>
     public TimeSpan? RunningAge { get; init; }
 

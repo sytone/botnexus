@@ -84,3 +84,161 @@ invariant exists to prevent.
 - **Portal-side fallbacks.** The `?? agent.ActiveConversationId` fallbacks in the portal's
   `GatewayEventHandler` are now provably unreachable for conversation-scoped events, but their
   removal belongs to the portal route-ownership arc, not here.
+
+## REST binding-removal facts and reconciliation
+
+For developers integrating conversation lifecycle consumers, REST binding removal is a bounded
+part of [issue #2088](https://github.com/Sytone/botnexus/issues/2088), not completion of the whole
+lifecycle migration. `ConversationsController.RemoveBinding` preserves the client write guard and
+uses the store's transactional single-binding delete. A rejected or failed store mutation emits
+no success fact. A successful removal keeps the existing `binding_removed` audit entry and emits
+`ConversationBindingRemovedEvent` instead of calling the legacy change notifier.
+
+The fact carries the agent and conversation identifiers, an immutable value snapshot of the
+removed binding, and an immutable snapshot of the remaining bindings reloaded after commit.
+The latter is an observation of durable state after deletion, not an atomic deletion result;
+concurrent mutations may already be reflected in it. If the removed binding was absent from the
+pre-delete read, or the conversation no longer exists after deletion, the controller cannot
+publish a complete removal fact and does not invent one.
+
+Event delivery is best effort, not a durable outbox. Publisher rejection or an exception does
+not undo the committed delete or change the successful response; the controller logs a warning.
+Consumers must refresh conversation state from the store or conversation API after a missed
+notification or reconnect. Do not restore a removed binding from an old client snapshot, and do
+not retry a successful delete solely because its notification was missed. The durable store is
+the authority; an event is a post-commit notification, not proof of exactly-once delivery.
+
+`ConversationsControllerRemoveBindingEventTests` exercises real in-memory and SQLite stores,
+checks durable deletion through a fresh SQLite store, and pins snapshot detachment, post-commit
+consumption, publisher failure isolation, and absence of legacy notifications.
+
+
+## REST override-update facts
+
+For developers integrating lifecycle consumers, `ConversationsController.SetOverride` and
+`ClearOverride` are another bounded part of [issue #2088](https://github.com/Sytone/botnexus/issues/2088).
+They retain the existing client write guard, validation, narrow transactional override patch,
+audit entries, and HTTP response. After the store returns the committed aggregate, they use
+`PublishConversationUpdatedBestEffortAsync` instead of the legacy change notifier. A null store
+result or store exception emits no success event.
+
+`ConversationUpdatedEvent` carries the committed agent and conversation identifiers, `UpdatedAt`
+as `OccurredAt`, and detached immutable binding snapshots. `ChangedFields` follows metadata PATCH:
+compare the pre-read values with the store-returned values, within the patch's write set, in the
+order `ModelOverride`, `ThinkingOverride`, `ContextWindowOverride`, `ToolOverrideJson`,
+`CompactionTokenCeiling`. Setting always patches the first three fields, including nulls;
+tools are patched only when `ApplyToolOverride` is true, and the compaction ceiling is patched
+only when `ApplyCompactionTokenCeiling` is true (a null ceiling resets it). Clearing patches all
+five to null. Ceiling-only changes use the same event and field-selection contract as the other
+overrides; opting out preserves the ceiling and does not report it. Unchanged values are omitted;
+when no values differ, no event is published. The pre-read is not an atomic before-image, so
+these field names are a reconciliation hint, not a complete concurrent-change history.
+
+Delivery uses the existing best-effort seam, not an outbox. Publisher rejection or an exception
+does not roll back the overrides or change the successful response. Consumers must refresh from
+durable conversation state after a missed notification or reconnect.
+`ConversationsControllerOverrideEventTests` covers real in-memory and SQLite stores, fresh-store
+SQLite reads, post-commit consumption, snapshot detachment, deterministic field selection,
+audit preservation, and store/publisher failure boundaries. This override slice does not migrate
+pin, move, or auto-title producers, and does not change compaction-ceiling behavior.
+
+## REST pin/unpin producer facts
+
+For developers integrating lifecycle consumers, `ConversationsController.Pin` and `Unpin` are a
+producer-only part of [issue #2088](https://github.com/Sytone/botnexus/issues/2088). They retain the
+client write guards, narrow `PinAsync` write, and successful HTTP 204 response. Because `PinAsync`
+returns no aggregate, each action captures the pre-write `IsPinned` value and reloads the
+conversation after the write. A missing post-write conversation returns HTTP 404; a failed write
+or read emits no success fact.
+
+When the observed boolean differs from the reloaded value, the action uses
+`PublishConversationUpdatedBestEffortAsync` alongside the legacy change notifier as a transitional
+compatibility measure. The `ConversationUpdatedEvent` carries the reloaded agent and conversation identifiers, `UpdatedAt`
+as `OccurredAt`, detached immutable binding snapshots, and exactly `IsPinned` in `ChangedFields`.
+An unchanged boolean emits no event, even if the store refreshes pin timestamps. The pre-read and
+reload are observations, not an atomic before/after result; concurrent changes can affect them.
+The field name is a reconciliation hint, not an exactly-once change history.
+
+Publisher rejection or an exception does not undo the committed pin state or change the successful
+response. Delivery is best effort, not a durable outbox. Consumers must reload durable conversation
+state after a missed notification or reconnect. `ConversationsControllerPinEventTests` covers both
+actions with real in-memory and SQLite stores and the real publisher, fresh SQLite reads during
+consumption and afterward, detached snapshots, timestamps, narrow-field preservation, no-op and
+guard behavior, and store/publisher failures. Every successful HTTP 204 operation also calls the
+legacy change notifier once with `updated` and the owning agent and conversation identifiers,
+after the typed-event publication or no-op branch. This includes unchanged pin state and typed
+publisher rejection or exceptions. Rejected guards, store failures, and missing post-write state
+call neither notification path.
+
+This does not establish end-to-end Portal delivery: `SignalRChannelAdapter.OnConversationEventAsync`
+currently ignores facts that are not `ConversationAgentEvent`, including `ConversationUpdatedEvent`.
+The consumer remains unchanged, so the legacy notification is retained to preserve existing live
+invalidation until consumers migrate to typed update facts. Move, auto-title, other lifecycle
+producers, and the wider #2088 migration are outside this slice.
+
+
+## REST binding-move producer facts
+
+For developers integrating lifecycle consumers, `ConversationsController.MoveBinding` adds a
+producer-only pair of existing binding facts for issue #2088. After the transactional
+`MoveBindingAsync` succeeds and the existing `binding_moved` audit call completes, the controller
+reloads each conversation separately. It publishes `ConversationBindingRemovedEvent` for the
+source if the binding is absent, then `ConversationBindingAddedEvent` for the target if the
+binding is present. A failed store write or rejected request emits neither success fact.
+
+The removed binding snapshot comes from the pre-move source read. The added binding snapshot
+comes from the reloaded target. Both carry the existing event contract's binding identity,
+channel type, adapter ID, address, binding mode, and threading mode. Display prefix and bound-at timestamp remain part of
+the unchanged store/HTTP binding behavior, not this event payload. Each fact carries its owning agent and conversation identifiers,
+that conversation's reloaded `UpdatedAt` as `OccurredAt`, and a detached immutable snapshot of
+its complete reloaded binding set. The source set excludes the moved binding; the target set
+includes it.
+
+These reloads are post-commit observations, not an atomic before/after pair. A concurrent move,
+removal, or attachment can already be visible. A missing conversation or a binding presence
+inconsistent with the expected side suppresses that side's fact rather than inventing state.
+Publication is attempted source-first, but the real publisher orders only within one conversation;
+consumers must not assume delivery order across the two conversations.
+
+Reload exceptions, publisher exceptions, and publisher rejection are isolated per side. They do
+not undo the committed move, change the HTTP 200 response, suppress the other side's attempt, or
+suppress the two existing legacy `updated` notifications (source, then target). Delivery is best
+effort, not a durable outbox or an exactly-once move history. After reconnect or a missed fact,
+consumers must reload authoritative conversation state rather than replay an old binding set or
+retry an already successful move.
+
+This slice changes no consumer and makes no end-to-end Portal delivery claim. Both legacy
+notifications remain unchanged for compatibility. `ConversationsControllerMoveBindingEventTests`
+uses real in-memory and SQLite stores and the real publisher, fresh SQLite-store reads inside
+the sink, and tests detached snapshots, both sides, guards, write failures, and per-side
+publication/reload failure isolation.
+
+## Auto-title producer facts
+
+For developers integrating lifecycle consumers, both provisional and final/refinement saves in
+`ConversationAutoTitleService` add the existing `ConversationUpdatedEvent` after `SaveAsync`
+completes. `GatewayHost` passes its existing publisher; the service's final constructor parameter
+is optional for legacy callers. The guards, model/auth calls, save behavior, and legacy `updated`
+notification remain unchanged. This is a producer-only #2088 slice, not a consumer migration or
+an end-to-end Portal delivery claim.
+
+`ChangedFields` contains `Title` when the ordinal title value changes, followed by `Metadata`
+when the provisional metadata entry changes. Removing an existing false/null entry also counts;
+replacing a string flag with a boolean counts, while an existing JSON boolean true does not.
+An unchanged title and flag emits no typed fact, but still performs the original save and legacy
+notification. Other metadata is not part of this write set.
+
+Because `SaveAsync` returns no aggregate and stores update timestamps on copies, the service
+reloads after saving. The fact uses the reloaded owning identifiers, `UpdatedAt` as `OccurredAt`,
+and detached `ConversationBindingSnapshot.FromMany` bindings, with the default system origin
+`ConversationEventOrigin.None`. The pre-save comparison and reload are not an atomic before/after
+pair: concurrent writes may already be visible. Fields are reconciliation hints, not a complete
+change history. Missing post-save state suppresses the fact rather than inventing a snapshot.
+
+Reload failure, publisher rejection, or publisher exceptions do not undo a successful save or
+suppress the legacy notification. Guards, missing pre-save state, model failures, empty model
+output, and failed saves emit no success fact. Delivery remains best effort, not a durable outbox;
+consumers must reload authoritative conversation state after reconnect or a missed notification.
+`ConversationAutoTitleEventTests` covers both paths with real memory/SQLite stores and the real
+publisher, fresh SQLite reads inside the sink, detached snapshots, deterministic field selection,
+no-op writes, and failure isolation.

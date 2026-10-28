@@ -273,6 +273,79 @@ public sealed class ConversationManagementTests
     }
 
     [SkippableTheory]
+    [InlineData(240, "ordinary")]
+    [InlineData(180, "minimum")]
+    [Trait("Category", "Playwright")]
+    public async Task ConversationActionMenu_CrossesSidebarBoundaryInTopLayer(int sidebarWidth, string label)
+    {
+        Skip.IfNot(_fx.Succeeded, $"Fixture failed: {_fx.Error}");
+
+        using var playwright = await Playwright.CreateAsync();
+        var (browser, skipReason) = await PortalTestHelpers.TryLaunchBrowserAsync(playwright);
+        Skip.If(browser is null, skipReason);
+
+        await using var _ = browser!;
+        var (page, portal, chat) = await PortalTestHelpers.NewChatPageAsync(
+            browser, _fx.GatewayBaseUrl, _fx.AgentIds[1]);
+        await page.SetViewportSizeAsync(1280, 800);
+
+        await portal.ConversationNewBtn.ClickAsync();
+        await chat.ChatInput.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = 10_000,
+        });
+
+        var sidebar = page.Locator(".main-sidebar");
+        await sidebar.EvaluateAsync(
+            "(element, width) => { element.style.flex = `0 0 ${width}px`; element.style.width = `${width}px`; }",
+            sidebarWidth);
+        var row = page.Locator(".conversation-list-item:has(.conversation-list-item-btn.active)").First;
+        await row.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+
+        var sidebarBox = await sidebar.BoundingBoxAsync()
+            ?? throw new InvalidOperationException("Sidebar bounding box is missing.");
+        var rowBox = await row.BoundingBoxAsync()
+            ?? throw new InvalidOperationException("Conversation row bounding box is missing.");
+        await page.Mouse.ClickAsync(
+            sidebarBox.X + sidebarBox.Width - 4,
+            rowBox.Y + rowBox.Height / 2,
+            new MouseClickOptions { Button = MouseButton.Right });
+
+        var overlay = page.Locator("[data-testid='conversation-action-overlay']");
+        var menu = page.Locator("[data-testid='conversation-action-menu']");
+        await menu.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 5_000 });
+        await page.WaitForFunctionAsync(
+            "element => element.matches(':popover-open')",
+            await overlay.ElementHandleAsync());
+
+        var menuBox = await menu.BoundingBoxAsync()
+            ?? throw new InvalidOperationException("Conversation menu bounding box is missing.");
+        Assert.True(menuBox.X < sidebarBox.X + sidebarBox.Width,
+            $"{label}: menu did not start inside the sidebar boundary.");
+        Assert.True(menuBox.X + menuBox.Width > sidebarBox.X + sidebarBox.Width,
+            $"{label}: menu did not cross the sidebar boundary.");
+        Assert.InRange(menuBox.X, 8, 1280 - menuBox.Width - 8);
+        Assert.InRange(menuBox.Y, 8, 800 - menuBox.Height - 8);
+
+        var hitX = Math.Min(menuBox.X + menuBox.Width - 2, sidebarBox.X + sidebarBox.Width + 20);
+        var hitY = menuBox.Y + menuBox.Height / 2;
+        Assert.True(await page.EvaluateAsync<bool>(
+            "point => { const menu = document.querySelector('[data-testid=conversation-action-menu]'); const hit = document.elementFromPoint(point.x, point.y); return menu !== null && hit !== null && hit.closest('[data-testid=conversation-action-menu]') === menu; }",
+            new { x = hitX, y = hitY }), $"{label}: menu was not the topmost hit target beyond the sidebar.");
+
+        var runId = Environment.GetEnvironmentVariable("RUN_ID");
+        var screenshotDirectory = string.IsNullOrWhiteSpace(runId)
+            ? Path.Combine(RepoLocator.FindRepoRoot(), "tmp", "screenshots-4462")
+            : Path.Combine(Path.DirectorySeparatorChar.ToString(), "work", runId, "artifacts", "screenshots-4462");
+        Directory.CreateDirectory(screenshotDirectory);
+        await page.ScreenshotAsync(new PageScreenshotOptions
+        {
+            Path = Path.Combine(screenshotDirectory, $"conversation-action-menu-{label}.png"),
+        });
+    }
+
+    [SkippableTheory]
     [InlineData(240, "wide")]
     [InlineData(180, "minimum")]
     [Trait("Category", "Playwright")]

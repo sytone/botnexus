@@ -6,6 +6,7 @@ using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Mobile.Pages;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Components;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 
@@ -13,10 +14,9 @@ namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Tests;
 /// Mobile config-parity tests for the schema-driven mobile <see cref="Settings"/> page
 /// (config-parity PBI 6/6 of #1579, issue #1615 -- the payoff PBI). The mobile Settings page
 /// consumes the SAME shared <see cref="SchemaForm"/> renderer the desktop Configuration page uses,
-/// fed by <c>GET /api/config/schema</c>, so there is no mobile-specific field code. These assert the
-/// page renders entirely from <see cref="SchemaForm"/>, surfaces config sections from the schema, and
-/// round-trips saves through the existing <c>PUT /api/config/{section}</c> endpoint (the same hot-reload
-/// path the desktop uses). Mirrors <c>ConfigurationPageSchemaFormTests</c> for parity.
+/// fed by <c>GET /api/config/schema</c>. These assert that only editable platform sections render,
+/// agent management is routed to desktop, and saves use revision-checked <c>PATCH /api/config</c>
+/// without changing unrelated configuration.
 /// </summary>
 public sealed class MobileSettingsPageTests : IDisposable
 {
@@ -36,7 +36,13 @@ public sealed class MobileSettingsPageTests : IDisposable
             ["type"] = "object",
             ["properties"] = new JsonObject
             {
+                ["$schema"] = Scalar("string", "text", "Schema URI"),
                 ["version"] = Scalar("integer", "number", "Config schema version"),
+                ["agents"] = Dict("Agents", new JsonObject
+                {
+                    ["model"] = Scalar("string", "text", "Model"),
+                }),
+                ["extensionRepositories"] = Scalar("string", "text", "Extension repositories"),
                 ["apiKey"] = Secret("Global API Key"),
                 ["gateway"] = Obj("Gateway", new JsonObject
                 {
@@ -69,7 +75,14 @@ public sealed class MobileSettingsPageTests : IDisposable
 
     private static JsonObject SampleConfig() => new()
     {
+        ["$schema"] = "https://example.test/config.schema.json",
         ["version"] = 1,
+        ["agents"] = new JsonObject
+        {
+            ["defaults"] = new JsonObject { ["model"] = "default-model" },
+            ["assistant"] = new JsonObject { ["model"] = "agent-model" },
+        },
+        ["extensionRepositories"] = "managed-separately",
         ["apiKey"] = "***",
         ["gateway"] = new JsonObject
         {
@@ -112,8 +125,7 @@ public sealed class MobileSettingsPageTests : IDisposable
 
         cut.WaitForAssertion(() =>
         {
-            // Top-level scalar (version) and the secret global apiKey.
-            cut.Find("[data-testid='field-version'] input");
+            // The editable top-level secret remains available; metadata does not.
             cut.Find("[data-testid='field-apiKey'] input");
             // Gateway nested scalars.
             cut.Find("[data-testid='field-gateway.listenUrl'] input");
@@ -124,6 +136,56 @@ public sealed class MobileSettingsPageTests : IDisposable
             // Cron global settings.
             cut.Find("[data-testid='field-cron.tickIntervalSeconds'] input");
         });
+    }
+
+    [Fact]
+    public void Page_excludes_non_persisted_roots_without_mutating_schema_or_config()
+    {
+        ConfigureServices(new FakeConfigApiHandler(BuildSchema(), SampleConfig()));
+        var cut = _ctx.Render<Settings>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
+
+        var renderer = cut.FindComponent<SchemaForm>().Instance;
+        var propertiesNode = renderer.Schema["schema"]?["properties"];
+        var properties = propertiesNode.ShouldBeOfType<JsonObject>();
+        // Keep these expected roots independent of the production exclusion set.
+        foreach (var root in new[] { "$schema", "version", "agents", "extensionRepositories" })
+        {
+            properties.ContainsKey(root).ShouldBeFalse();
+            cut.FindAll($"[data-testid='field-{root}']").ShouldBeEmpty();
+        }
+        cut.FindAll("[data-testid='field-agents.defaults.model']").ShouldBeEmpty();
+        cut.FindAll("[data-testid='field-agents.assistant.model']").ShouldBeEmpty();
+        renderer.Value.ToJsonString().ShouldBe(SampleConfig().ToJsonString());
+        cut.Find("[data-testid='settings-save-btn']").HasAttribute("disabled").ShouldBeTrue();
+
+        cut.Find("[data-testid='settings-reload-btn']").Click();
+        cut.WaitForAssertion(() =>
+        {
+            var reloaded = cut.FindComponent<SchemaForm>().Instance;
+            reloaded.Schema.ToJsonString().ShouldBe(renderer.Schema.ToJsonString());
+            reloaded.Value.ToJsonString().ShouldBe(SampleConfig().ToJsonString());
+            cut.Find("[data-testid='settings-save-btn']").HasAttribute("disabled").ShouldBeTrue();
+        });
+    }
+
+    [Fact]
+    public void Agent_notice_links_out_of_mobile_to_desktop_without_claiming_defaults_are_editable()
+    {
+        ConfigureServices(new FakeConfigApiHandler(BuildSchema(), SampleConfig()));
+        var nav = new MobileNavigationManager();
+        _ctx.Services.AddSingleton<NavigationManager>(nav);
+
+        var cut = _ctx.Render<Settings>();
+        cut.WaitForAssertion(() => cut.Find("[data-testid='schema-form']"));
+        var notice = cut.Find("[data-testid='settings-agent-notice']");
+        notice.TextContent.ShouldContain("Agent settings and defaults are not edited here");
+        var link = notice.QuerySelector("a").ShouldNotBeNull();
+        link.TextContent.ShouldContain("desktop");
+        var href = link.GetAttribute("href").ShouldNotBeNull();
+        new Uri(new Uri(nav.BaseUri), href).AbsoluteUri.ShouldBe("http://gateway.test/agents");
+        link.HasAttribute("data-enhance-nav").ShouldBeTrue();
+        link.GetAttribute("data-enhance-nav").ShouldBe("false");
     }
 
     [Fact]
@@ -169,6 +231,10 @@ public sealed class MobileSettingsPageTests : IDisposable
         var patch = handler.Patches[0];
         var paths = patch["operations"]!.AsArray().Select(o => o!["path"]!.GetValue<string>()).ToList();
         paths.ShouldBe(["gateway.listenUrl"]);
+        patch["expectedRevision"]?.GetValue<string>().ShouldBe(FakeConfigApiHandler.Revision);
+        var renderer = cut.FindComponent<SchemaForm>().Instance;
+        renderer.Value["agents"]?.ToJsonString().ShouldBe(SampleConfig()["agents"]?.ToJsonString());
+        renderer.Value["providers"]?.ToJsonString().ShouldBe(SampleConfig()["providers"]?.ToJsonString());
 
         // No section-wide PUT may accompany the patch: a whole-section write is the defect.
         handler.SavedSections.ShouldBeEmpty();
@@ -206,6 +272,14 @@ public sealed class MobileSettingsPageTests : IDisposable
         // #1893: the shared SchemaForm injects IModelOptionsProvider; register an empty stub.
         _ctx.Services.AddSingleton<IModelOptionsProvider>(new EmptyModelOptionsProvider());
         _ctx.JSInterop.SetupVoid("", _ => true);
+    }
+
+    private sealed class MobileNavigationManager : NavigationManager
+    {
+        public MobileNavigationManager() => Initialize("http://gateway.test/mobile/", "http://gateway.test/mobile/settings");
+
+        protected override void NavigateToCore(string uri, bool forceLoad) =>
+            throw new InvalidOperationException("This test checks a native desktop link, not mobile routing.");
     }
 
     private sealed class EmptyModelOptionsProvider : IModelOptionsProvider

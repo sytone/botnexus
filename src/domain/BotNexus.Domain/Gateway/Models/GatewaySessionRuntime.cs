@@ -84,7 +84,8 @@ public sealed class GatewaySessionRuntime
     private bool IsRetainedToolResultDuplicate(SessionEntry entry)
         => entry.Kind == MessageKind.ToolResult && entry.PersistenceKey is { } key
             && key.StartsWith("tool-result:", StringComparison.Ordinal)
-            && Session.History.Any(existing => existing.PersistenceKey == key);
+            && Session.History.Any(existing => existing.PersistenceKey == key
+                && existing.AgentRunId == entry.AgentRunId);
 
     /// <summary>
     /// Executes replace history.
@@ -164,6 +165,34 @@ public sealed class GatewaySessionRuntime
             return new SessionAppendResult(
                 new HistorySnapshot(snapshot, _destructiveVersion, snapshot.Length),
                 priorUpdatedAt);
+        }
+    }
+
+    /// <summary>
+    /// Copies aggregate and persistence state under the history lock. The candidate owns its
+    /// history entries and cursor, so a speculative rewrite or persistence acknowledgement
+    /// cannot leak into a cached session retained by reset or transcript readers.
+    /// </summary>
+    internal GatewaySessionRuntime CreateDetachedCopy()
+    {
+        lock (_lock)
+        {
+            var copy = new GatewaySessionRuntime(Session with
+            {
+                History = Session.History.Select(static entry => entry with { }).ToList(),
+                Metadata = new Dictionary<string, object?>(Session.Metadata)
+            })
+            {
+                _additionVersion = _additionVersion,
+                _destructiveVersion = _destructiveVersion,
+                _persistedHistoryCount = _persistedHistoryCount,
+                _persistedDestructiveVersion = _persistedDestructiveVersion,
+                _nextTransientPersistenceId = _nextTransientPersistenceId
+            };
+            copy._observedPersistedHistoryIds.UnionWith(_observedPersistedHistoryIds);
+            copy._ownedPersistenceKeys.UnionWith(_ownedPersistenceKeys);
+            copy.StreamReplay.SetState(this.StreamReplay.NextSequenceId, this.StreamReplay.GetEventSnapshot());
+            return copy;
         }
     }
 

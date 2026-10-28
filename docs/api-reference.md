@@ -414,6 +414,46 @@ Content-Type: application/json
 
 ---
 
+### Edit authored agent configuration
+
+**Endpoints:** `GET /api/agents/{agentId}/configuration` and
+`PATCH /api/agents/{agentId}/configuration`
+
+Use this operator-edit contract instead of round-tripping the runtime descriptor.
+GET reads the canonical configuration writer and returns only supported editor
+fields. It excludes opaque metadata, extension settings, and unknown nested keys;
+those values remain stored and are not replaced by an edit. `enabled` accepts an
+explicit boolean: false blocks new work without cancelling existing work; true
+restores admission, with provider authentication checked when work starts. Omission
+preserves the authored state; removing `enabled` restores the enabled code default.
+Explicit null is invalid for this non-nullable state.
+
+PATCH accepts a typed batch of changed fields. For example:
+
+```json
+{
+  "toolTimeoutSeconds": 120,
+  "sessionAccess": { "level": "allowlist", "allowedAgents": ["peer"] },
+  "conversationAccess": { "level": "own" },
+  "toolPolicy": { "alwaysApprove": ["read"], "neverApprove": [], "denied": ["shell"] }
+}
+```
+
+| Input | Stored result |
+| --- | --- |
+| Omitted field | Existing value and presence are unchanged. |
+| Empty list | Explicit empty list; clears that list only. |
+| Explicit `null` | Retains an explicit-null key. Effective behavior uses the current runtime fallback. |
+| `{"inherit":["toolPolicy.denied"]}` | Removes the named supported key. This does not enable merging `agents.defaults`; that runtime merge remains retired. |
+
+Access levels are `own`, `allowlist`, and `all`. Timeout must be positive or null.
+Nested edits preserve unedited sibling keys. A path cannot be both edited and
+removed in one batch. Unknown request fields, invalid values, and invalid candidate
+model capabilities return HTTP 400 without persisting the batch. Missing agents
+and the reserved `defaults` entry return HTTP 404. Successful persistence returns
+`{"saved":true}`; this is not a provider-authentication or in-flight-work receipt.
+The full editor submits one changed-field batch and leaves failed edits dirty.
+
 ### Delete Agent
 
 **Endpoint:** `DELETE /api/agents/{agentId}`
@@ -3361,6 +3401,77 @@ different parameters is one row, not 400. `hours` is clamped to `1-168`, `pageSi
 
 ---
 
+### Diagnostics: Structured Events (read-only)
+
+**Experimental developer API; partial [#4010](https://github.com/sytone/botnexus/issues/4010).**
+Use this separate safe-preview surface to integrate structured diagnostic review. It does not
+change the existing `log-patterns` response. Source: `StructuredDiagnosticsController`,
+`StructuredDiagnosticPreview`, and `LogDiagnosticsRingBuffer` in the gateway projects.
+
+```http
+GET /api/diagnostics/events?hours=24&page=0&pageSize=50&severity=Warning&category=Gateway.Skills&agentId=agent-a
+GET /api/diagnostics/events/0123456789ABCDEF?hours=24
+```
+
+The usual gateway authentication applies. Both reads additionally require a resolved
+administrator identity and return `403` without it, including when identity is missing.
+Administrators can review all agents; these are not per-agent authorization endpoints.
+
+| Query parameter | Default | Contract |
+| --- | --- | --- |
+| `hours` | `24` | Clamped to `1–168`; applies to both routes. |
+| `page` | `0` | Zero-based, clamped to zero or greater; overflow-safe offset. List only. |
+| `pageSize` | `50` | Clamped to `1–200`. List only. |
+| `severity` | omitted | Exact named level, case-insensitive: `Warning`, `Error`, or `Critical`. Numeric/unknown values return `400`. List only. |
+| `category` | omitted | Exact case-sensitive validated logger category. List only. |
+| `agentId` | omitted | Exact case-sensitive validated identity from retained occurrence evidence. List only. |
+
+Malformed category/agent filters return `400` and are not echoed. Identifiers are 1–128 ASCII
+letters, digits, underscores, dots, colons, or hyphens, start with a letter/digit, and exclude
+`..`. A detail fingerprint must be exactly 16 hexadecimal characters (case-insensitive lookup);
+malformed fingerprints return `400`. Missing, evicted, expired, or outside-window records return
+`404`. A disabled buffer also returns `404`.
+
+The list returns `events`, `total`, `hours`, `page`, and `pageSize`. Each summary has
+`fingerprint`, `severity`, nullable `category`, `count`, `firstSeen`, and `lastSeen`. Ordering is
+newest aggregate first, with fingerprint as a stable tie-breaker. `total` counts matching aggregates
+before pagination. Filters must match the same retained occurrence; they never infer an old agent
+from historical cardinalities. `count` and timestamps describe the aggregate since creation or
+retention reset, not the selected window or agent's occurrence count.
+
+Detail returns the summary fields plus `recentOccurrences`, newest first, capped at **20** even
+if a custom ring retains more. Each occurrence has `timestamp`, nullable `category`, `eventId`,
+nullable `eventName`, and a fixed-schema `properties` object. The schema includes origin identifiers
+(`AgentId`, `ConversationId`, `SessionId`, `RunId`, `ToolCallId`, parent and instance identifiers),
+finding identifiers, `SkillName`, `SkillScope`, `RuleId`, `FindingSeverity`, `RelativePath`,
+`FindingLine`, `ScannerVersion`, `ScannerFindingId`, `FileSha256`, `EvidenceStatus`, `MissingReason`,
+`Channel`, `TraceId`, `SpanId`, `CorrelationId`, `DiagnosticSource`, `DiagnosticCategory`,
+`DiagnosticOriginKind`, and `DiagnosticTrigger`. Property keys retain these declared names.
+Missing or invalid values are null; identifiers are never filled through correlation or inference.
+
+No template, rendered/sample message, raw source/prompt, arbitrary property, or arbitrary reason
+text is exported. Relative paths use forward slashes and conservative ASCII segments; absolute,
+encoded, backslash, empty, dot, and traversal paths are rejected. SHA-256 values require 64 hex
+characters; trace/span values require 32/16 nonzero hex characters. Lines must be positive integers.
+Scanner versions are numeric three-part versions (optional prerelease) or `skill-security-scanner/1`.
+Fixed vocabularies are: scope `Global`/`Agent`/`Workspace`/`Plugin`; finding severity
+`Info`/`Warn`/`Critical`; origin kind `DescriptorOnly`/`Execution`; trigger
+`PromptConstruction`/`ToolInvocation`/`prompt-discovery`. `EvidenceStatus` preserves
+`complete` or `incomplete`; incomplete evidence has a fixed `MissingReason` of
+`invalid-relative-path`, `file-hash-unavailable`, `invalid-line`, or `unknown`. The producer's
+`EvidenceReason` field itself is never exported. These previews are diagnostic evidence, not an
+approval or execution identity.
+
+The in-memory ring retains at most 1000 aggregates and 20 occurrences each by default. Capacity
+eviction can happen sooner than seven days. Capture and reads physically prune evidence older
+than seven days, including stale samples and origin cardinalities of active patterns; after such
+an active-pattern reset, the count describes its remaining bounded evidence. No background expiry
+timer or persistence is added, so an idle buffer is pruned on its next capture/read and restart
+loses its contents. There are **no notice, dismissal, acknowledgement, or approval endpoints**
+in this slice; those identity and mutation decisions remain unresolved in #4010.
+
+---
+
 ### Diagnostics: Memory Pressure
 
 ```http
@@ -3378,6 +3489,7 @@ The response also includes these diagnostic fields:
 | `gcHeapSizeBytes` | Managed heap size reported by the last garbage collection (GC), including fragmentation. |
 | `gcFragmentedBytes` | Fragmentation reported by that GC. This is not a current live-object census. |
 | `gcCollectionIndex` | Index of the GC supplying these values. Zero means no GC information is available yet. |
+| `lastGcCollection` | Immutable characteristics of that GC: `generation` (Int32), `compacted` and `concurrent` (booleans), `pinnedObjectsCount` and `finalizationPendingCount` (Int64 object counts). `null` when the collection index is zero or a stored snapshot has no observation. |
 | `gcGenerations` | Array of up to five ordinal runtime slots from the same last GC as `gcCollectionIndex`. Empty (`[]`) when the index is zero. Each entry has `slot` (zero-based integer), `sizeBeforeBytes`, `fragmentationBeforeBytes`, `sizeAfterBytes`, and `fragmentationAfterBytes` (Int64 byte counts). |
 | `sqliteConnections` | Immutable observations of logical connections explicitly created by `SqliteConnectionFactory` or attached through its policy: `currentObservedOpenConnections`, `peakObservedOpenConnections`, `openTransitions`, `closeTransitions`, `poolingEnabledObservedOpenConnections`, and `poolingDisabledObservedOpenConnections` (Int64 counts). `null` only for a stored snapshot without this observation. |
 | `sqliteAllocatorAvailable` | Whether the SQLite raw provider was available at capture. If false, both allocator byte counters are `null`, not zero. |
@@ -3393,6 +3505,16 @@ atomic with current process-private memory. Both endpoints return this additive 
 preserves the immutable stored readings without resampling GC. No additional sampling timer or
 collection is introduced. See the [.NET 10 GC memory information source](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/GCMemoryInfo.cs)
 for the five-slot and before/after field contract.
+
+`lastGcCollection` comes from the same `GCMemoryInfo` sample as `gcCollectionIndex` and
+`gcGenerations`. `generation` identifies the collected generation, including younger generations;
+`concurrent` identifies a background GC. The pinned-object and ready-for-finalization counts are
+what that collection observed, not a current pinned-object population, live-object census, or
+finalization queue size. An available zero count is distinct from a missing (`null`) observation.
+`compacted` identifies a compacting GC but does not prove that process-private memory was reclaimed
+or returned to the operating system. Both endpoints preserve the immutable observation; history
+mapping does not resample GC. These fields help interpret collection and fragmentation readings,
+not identify the cause of retained memory. See the [.NET GC collection characteristics](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/GCMemoryInfo.cs).
 
 Capture does not force a collection. The pressure percentage and level
 continue to use GC commitment; the extra fields do not change alert thresholds or establish a

@@ -21,12 +21,23 @@ public sealed class CompositeQmdBackend : IQmdBackend
     public async Task<QmdSearchResult[]> SearchAsync(string query, string? store, QmdSearchMode mode, int limit, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(store)) store = null;
 
         var allResults = new List<QmdSearchResult>();
 
         foreach (var backend in _backends)
         {
-            var results = await backend.SearchAsync(query, store, mode, limit, ct).ConfigureAwait(false);
+            var target = store;
+            if (store is not null)
+            {
+                // A store belongs only to backends that advertise it. In particular,
+                // never send virtual memory collection names to the file-store CLI.
+                var names = await backend.GetSearchStoreNamesAsync(ct).ConfigureAwait(false);
+                target = names.FirstOrDefault(name => name.Equals(store, StringComparison.OrdinalIgnoreCase));
+                if (target is null) continue;
+            }
+
+            var results = await backend.SearchAsync(query, target, mode, limit, ct).ConfigureAwait(false);
             allResults.AddRange(results);
         }
 
@@ -49,6 +60,20 @@ public sealed class CompositeQmdBackend : IQmdBackend
         }
 
         return null;
+    }
+
+    /// <inheritdoc />
+    public async Task<string[]> GetSearchStoreNamesAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var allNames = new List<string>();
+        foreach (var backend in _backends)
+        {
+            var names = await backend.GetSearchStoreNamesAsync(ct).ConfigureAwait(false);
+            allNames.AddRange(names);
+        }
+
+        return allNames.ToArray();
     }
 
     /// <inheritdoc />

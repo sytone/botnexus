@@ -34,15 +34,17 @@ public sealed class ProcessManager
     public BackgroundProcess? Get(int pid) => _registry.Get(_owner, pid);
     /// <summary>Lists this owner's retained processes after bounded completed-entry cleanup.</summary>
     public IReadOnlyList<ManagedProcessInfo> List() => _registry.List(_owner)
-        .Select(p => new ManagedProcessInfo(p.Pid, p.Command, p.IsRunning, p.StartedAt, p.ExitCode, p.OutputCaptureIncomplete)).ToArray();
-    /// <summary>Requests termination without discarding an unconfirmed registration.</summary>
+        .Select(p => new ManagedProcessInfo(p.Pid, p.Command, p.IsRunning, p.StartedAt, p.ExitCode,
+            p.OutputCaptureIncomplete, p.KillUnconfirmed, p.Status)).ToArray();
+    /// <summary>Returns true only for confirmed termination; false includes unknown PIDs and unresolved outcomes.</summary>
     public bool Kill(int pid)
     {
         var process = Get(pid);
         if (process is null) return false;
-        if (!process.Kill())
-            _logger?.LogWarning("Tree kill of process {Pid} ({ProcessName}) was not confirmed; keeping registration.", process.Pid, process.ProcessName);
-        return true;
+        var confirmed = process.Kill();
+        if (!confirmed)
+            _logger?.LogWarning("Tree kill of process {Pid} ({ProcessName}) was not confirmed; status: {Status}.", process.Pid, process.ProcessName, process.Status);
+        return confirmed;
     }
     internal void Reap() => _registry.Reap();
     internal void Clear() => _registry.Clear(_owner);
@@ -56,4 +58,6 @@ public sealed record ManagedProcessInfo(
     bool IsRunning,
     DateTimeOffset StartedAt,
     int? ExitCode,
-    bool OutputCaptureIncomplete = false);
+    bool OutputCaptureIncomplete = false,
+    bool KillUnconfirmed = false,
+    string Status = "");

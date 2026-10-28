@@ -15,8 +15,10 @@ namespace BotNexus.Cron.Actions;
 /// Dedicated cron action for system heartbeat jobs (actionType = "heartbeat").
 /// Handles quiet-hours gating, HEARTBEAT.md emptiness pre-check, and heartbeat-specific trigger routing.
 /// </summary>
-public sealed class HeartbeatAction : ICronAction
+public sealed class HeartbeatAction(TimeProvider? timeProvider = null) : ICronAction
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
     /// <inheritdoc/>
     public string ActionType => "heartbeat";
 
@@ -76,26 +78,36 @@ public sealed class HeartbeatAction : ICronAction
 
         // #2373: classify an unresolvable model override before dispatch so the run records the
         // real reason instead of an opaque provider error raised deep inside the agent turn.
-        CronModelPreflight.EnsureResolvable(
+        if (context.EffectiveModel is null)
+            CronModelPreflight.EnsureResolvable(
             context.Services.GetService<BotNexus.Agent.Providers.Core.Registry.ModelRegistry>(),
             context.Job.Model);
 
         var trigger = ResolveHeartbeatTrigger(context.Services, descriptor);
 
-        var sessionId = await trigger
-            .CreateSessionAsync(
-                agentId,
-                prompt,
-                cancellationToken,
-                new InternalTriggerRequest
-                {
-                    CronJobId = context.Job.Id,
-                    JobName = ExternalText.Sanitize(context.Job.Name, ExternalText.DefaultDisplayLength),
-                    ModelOverride = context.Job.Model,
-                    ConversationId = context.Job.ConversationId,
-                    CreatedBy = context.Job.CreatedBy
-                })
-            .ConfigureAwait(false);
+        var request = new InternalTriggerRequest
+        {
+            CronJobId = context.Job.Id,
+            JobName = ExternalText.Sanitize(context.Job.Name, ExternalText.DefaultDisplayLength),
+            ModelOverride = context.Job.Model,
+            CronRequestedModel = context.EffectiveModel?.RequestedModel,
+            CronModelSource = context.EffectiveModel?.Source,
+            ConversationId = context.Job.ConversationId,
+            CreatedBy = context.Job.CreatedBy,
+            SessionCreatedAsync = context.PersistSessionIdAsync
+        };
+        SessionId sessionId;
+        try
+        {
+            sessionId = await trigger.CreateSessionAsync(agentId, prompt, cancellationToken, request)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            // SoulTrigger records partial activity before rethrowing interruption. Do not lose
+            // that evidence here, including measured usage and explicit completion disposition.
+            AgentPromptAction.RecordCost(context, request);
+        }
 
         context.RecordSessionId(sessionId);
     }
@@ -210,10 +222,10 @@ public sealed class HeartbeatAction : ICronAction
                 "No suitable internal trigger found for heartbeat action (heartbeat, soul, or cron).");
     }
 
-    private static bool IsInQuietHours(QuietHoursConfig config, string timezoneId)
+    private bool IsInQuietHours(QuietHoursConfig config, string timezoneId)
     {
         var tz = CronTimeZoneResolver.Resolve(timezoneId);
-        var localNow = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, tz);
+        var localNow = TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), tz);
         var currentTime = localNow.TimeOfDay;
 
         if (!TimeSpan.TryParse(config.Start, out var start) ||

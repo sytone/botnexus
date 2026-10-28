@@ -193,7 +193,8 @@ public sealed class SqliteCronStore(
         "tool_call_count INTEGER NULL",
         "duration_ms INTEGER NULL",
         "prompt_tokens INTEGER NULL",
-        "completion_tokens INTEGER NULL"
+        "completion_tokens INTEGER NULL",
+        "effective_model_json TEXT NULL"
     ];
 
     /// <summary>
@@ -202,7 +203,7 @@ public sealed class SqliteCronStore(
     /// </summary>
     private const string RunColumns =
         "id, job_id, started_at, completed_at, status, error, session_id, " +
-        "turn_count, tool_call_count, duration_ms, prompt_tokens, completion_tokens";
+        "turn_count, tool_call_count, duration_ms, prompt_tokens, completion_tokens, effective_model_json";
 
     public async Task InitializeAsync(CancellationToken ct = default)
     {
@@ -315,6 +316,11 @@ public sealed class SqliteCronStore(
                 ALTER TABLE cron_jobs ADD COLUMN system INTEGER NOT NULL DEFAULT 0;
                 """;
             await SqliteAdditiveMigration.ExecuteAsync(migrateSystem, ct).ConfigureAwait(false);
+
+            // An absent probe preserves existing jobs exactly: never backfill executable text.
+            await using var migratePrecondition = connection.CreateCommand();
+            migratePrecondition.CommandText = "ALTER TABLE cron_jobs ADD COLUMN precondition_command TEXT NULL;";
+            await SqliteAdditiveMigration.ExecuteAsync(migratePrecondition, ct).ConfigureAwait(false);
 
             // Migrate existing databases: add model column if missing.
             await using var migrateModel = connection.CreateCommand();
@@ -484,12 +490,12 @@ public sealed class SqliteCronStore(
                 INSERT INTO cron_jobs (
                     id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                     enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                    failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class, backoff_until
+                    failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class, backoff_until, precondition_command
                 )
                 VALUES (
                     $id, $name, $schedule, $actionType, $agentId, $message, @templateName, @templateParametersJson, $model, $webhookUrl, $shellCommand,
                     $enabled, $system, $timeZone, $createdBy, $createdAt, $lastRunAt, $nextRunAt, $lastRunStatus, $lastRunError, $metadataJson, $conversationId, $deleteAfterRun, $scheduleActivatedAt,
-                    $failureAlertsEnabled, $failureAlertConversationId, $deleteJobAfterRun, $expiresAt, $executionClass, $backoffUntil
+                    $failureAlertsEnabled, $failureAlertConversationId, $deleteJobAfterRun, $expiresAt, $executionClass, $backoffUntil, $preconditionCommand
                 )
                 """;
             BindJob(command, created);
@@ -518,7 +524,7 @@ public sealed class SqliteCronStore(
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class, backoff_until
+                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class, backoff_until, precondition_command
             FROM cron_jobs
             WHERE id = $id
             """;
@@ -540,7 +546,7 @@ public sealed class SqliteCronStore(
         command.CommandText = """
             SELECT id, name, schedule, action_type, agent_id, message, template_name, template_parameters_json, model, webhook_url, shell_command,
                    enabled, system, time_zone, created_by, created_at, last_run_at, next_run_at, last_run_status, last_run_error, metadata_json, conversation_id, delete_after_run, schedule_activated_at,
-                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class, backoff_until
+                   failure_alerts_enabled, failure_alert_conversation_id, delete_job_after_run, expires_at, execution_class, backoff_until, precondition_command
             FROM cron_jobs
             WHERE $agentId IS NULL OR agent_id = $agentId
             ORDER BY created_at DESC
@@ -603,6 +609,7 @@ public sealed class SqliteCronStore(
                     model = $model,
                     webhook_url = $webhookUrl,
                     shell_command = $shellCommand,
+                    precondition_command = $preconditionCommand,
                     enabled = $enabled,
                     system = $system,
                     time_zone = $timeZone,
@@ -967,6 +974,24 @@ public sealed class SqliteCronStore(
         }
     }
 
+    /// <inheritdoc />
+    public async Task RecordRunModelAsync(RunId runId, CronModelSelection selection, CancellationToken ct = default)
+    {
+        await InitializeAsync(ct).ConfigureAwait(false);
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE cron_runs SET effective_model_json = COALESCE(effective_model_json, $model) WHERE id = $id";
+            command.Parameters.AddWithValue("$model", JsonSerializer.Serialize(selection, JsonOptions));
+            command.Parameters.AddWithValue("$id", runId.Value);
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally { _writeLock.Release(); }
+    }
+
     public async Task RecordRunSessionAsync(
         RunId runId,
         SessionId sessionId,
@@ -1272,6 +1297,7 @@ public sealed class SqliteCronStore(
         command.Parameters.AddWithValue("$model", (object?)job.Model ?? DBNull.Value);
         command.Parameters.AddWithValue("$webhookUrl", (object?)job.WebhookUrl ?? DBNull.Value);
         command.Parameters.AddWithValue("$shellCommand", (object?)job.ShellCommand ?? DBNull.Value);
+        command.Parameters.AddWithValue("$preconditionCommand", (object?)job.PreconditionCommand ?? DBNull.Value);
         command.Parameters.AddWithValue("$enabled", job.Enabled ? 1 : 0);
         command.Parameters.AddWithValue("$system", job.System ? 1 : 0);
         command.Parameters.AddWithValue("$timeZone", (object?)job.TimeZone ?? DBNull.Value);
@@ -1300,6 +1326,7 @@ public sealed class SqliteCronStore(
         command.Parameters.AddWithValue("$model", (object?)job.Model ?? DBNull.Value);
         command.Parameters.AddWithValue("$webhookUrl", (object?)job.WebhookUrl ?? DBNull.Value);
         command.Parameters.AddWithValue("$shellCommand", (object?)job.ShellCommand ?? DBNull.Value);
+        command.Parameters.AddWithValue("$preconditionCommand", (object?)job.PreconditionCommand ?? DBNull.Value);
         command.Parameters.AddWithValue("$enabled", job.Enabled ? 1 : 0);
         command.Parameters.AddWithValue("$system", job.System ? 1 : 0);
         command.Parameters.AddWithValue("$timeZone", (object?)job.TimeZone ?? DBNull.Value);
@@ -1380,7 +1407,8 @@ public sealed class SqliteCronStore(
             // #3350: NULL means "not paced" - no job-authored floor, so the job wakes purely on its
             // expression cache, exactly as it did before the column existed. Coercing this to a
             // concrete instant would invent a deferral no job ever requested.
-            BackoffUntil = reader.IsDBNull(29) ? null : ParseDate(reader.GetString(29))
+            BackoffUntil = reader.IsDBNull(29) ? null : ParseDate(reader.GetString(29)),
+            PreconditionCommand = reader.IsDBNull(30) ? null : reader.GetString(30)
         };
     }
 
@@ -1395,6 +1423,7 @@ public sealed class SqliteCronStore(
             Status = reader.GetString(4),
             Error = reader.IsDBNull(5) ? null : reader.GetString(5),
             SessionId = reader.IsDBNull(6) ? null : SessionId.From(reader.GetString(6)),
+            EffectiveModel = reader.IsDBNull(12) ? null : JsonSerializer.Deserialize<CronModelSelection>(reader.GetString(12), JsonOptions),
 
             // #2641: every cost column reads NULL as "not measured". No `?? 0` anywhere on this
             // path - a coerced zero here would be indistinguishable from a genuinely free run and
@@ -1509,10 +1538,11 @@ public sealed class SqliteCronStore(
             DELETE FROM cron_runs
             WHERE completed_at IS NOT NULL
               AND completed_at < $cutoff
-              AND status IN ($statusOk, $statusError, $statusTimedOut, $statusNoToolCalls, $statusIncomplete, $statusParked, $statusDeliveryFailed, $statusAborted)
+              AND status IN ($statusOk, $statusNoWork, $statusError, $statusTimedOut, $statusNoToolCalls, $statusIncomplete, $statusParked, $statusDeliveryFailed, $statusAborted)
             """;
         command.Parameters.AddWithValue("$cutoff", cutoff.ToString("O"));
         command.Parameters.AddWithValue("$statusOk", CronRunStatus.Ok);
+        command.Parameters.AddWithValue("$statusNoWork", CronRunStatus.NoWork);
         command.Parameters.AddWithValue("$statusError", CronRunStatus.Error);
         command.Parameters.AddWithValue("$statusTimedOut", CronRunStatus.TimedOut);
         // #2985: no_tool_calls is a TERMINAL status. Omitting it here would make those rows

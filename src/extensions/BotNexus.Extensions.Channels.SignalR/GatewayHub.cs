@@ -1,3 +1,4 @@
+using BotNexus.Gateway.Abstractions.Security;
 using BotNexus.Gateway.Abstractions.Text;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -348,6 +349,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         if (conversation is null)
             throw new HubException($"Conversation '{normalizedConversationId.Value}' not found.");
 
+        EnsureConversationWritable(conversation);
+
         // Join before resolving either a live waiter or durable continuation. The durable path can
         // synchronously start an internal-origin run and publish RunStarted; without this membership
         // edge, the browser that submitted the answer can miss the continuation it just initiated.
@@ -630,10 +633,13 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     {
         EnsureControlScope(nameof(Steer));
         var ctx = ResolveCallContext(agentId, sessionId);
+        await EnsureSessionWritableAsync(ctx.AgentId, ctx.SessionId);
         var parts = (contentParts ?? []).Select(ConvertToDomainContentPart).ToList();
         if (string.IsNullOrWhiteSpace(content) && parts.Count == 0)
             throw new ArgumentException("A steer must contain text or at least one attachment.", nameof(content));
 
+        if (!string.IsNullOrWhiteSpace(conversationId))
+            await EnsureConversationWritableAsync(ConversationId.From(conversationId), ctx.AgentId);
         await SubscribeInternalAsync(ctx.SessionId);
         var addressedConversationId = await ResolveConversationHintAsync(ctx.SessionId, conversationId);
         var admission = await _app.PostAsync(
@@ -681,6 +687,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     {
         EnsureControlScope(nameof(InterruptAndSteer));
         var ctx = ResolveCallContext(agentId, sessionId);
+        await EnsureSessionWritableAsync(ctx.AgentId, ctx.SessionId);
         var parts = (contentParts ?? []).Select(ConvertToDomainContentPart).ToList();
         if (string.IsNullOrWhiteSpace(message) && parts.Count == 0)
             throw new ArgumentException("A redirect must contain text or at least one attachment.", nameof(message));
@@ -747,7 +754,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     /// <param name="content">The follow-up text.</param>
     /// <param name="contentParts">Draft attachments to deliver with the follow-up.</param>
     /// <returns>A task that completes once the follow-up has been accepted.</returns>
-    public Task FollowUpWithMedia(
+    public async Task FollowUpWithMedia(
         AgentId agentId,
         SessionId sessionId,
         string content,
@@ -755,6 +762,11 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     {
         EnsureControlScope(nameof(FollowUp));
         var ctx = ResolveCallContext(agentId, sessionId);
+        // Pin the stored parent that passed the fence. RequestedSessionId alone does not
+        // select a conversation in the ordinary inbound dispatcher.
+        var conversationId = await EnsureSessionWritableAsync(ctx.AgentId, ctx.SessionId);
+        if (conversationId is null)
+            conversationId = await ResolveImplicitWritableConversationAsync(ctx.AgentId);
         var connectionId = Context.ConnectionId;
         var parts = (contentParts ?? []).Select(ConvertToDomainContentPart).ToList();
         if (string.IsNullOrWhiteSpace(content) && parts.Count == 0)
@@ -795,13 +807,12 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                         new InboundMessageRoutingHints(
                             RequestedAgentId: ctx.AgentId,
                             RequestedSessionId: ctx.SessionId,
-                            RequestedConversationId: null),
+                            RequestedConversationId: conversationId),
                         parts.Count == 0 ? null : parts),
                     CancellationToken.None);
             },
             ctx.AgentId,
             ctx.SessionId);
-        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -822,6 +833,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     {
         EnsureControlScope(nameof(Abort));
         var ctx = ResolveCallContext(agentId, sessionId);
+        await EnsureSessionWritableAsync(ctx.AgentId, ctx.SessionId);
         var instance = _supervisor.GetInstance(ctx.AgentId, ctx.SessionId);
         if (instance is null)
             return;
@@ -853,6 +865,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     {
         EnsureControlScope(nameof(ResetSession));
         var ctx = ResolveCallContext(agentId, sessionId);
+        await EnsureSessionWritableAsync(ctx.AgentId, ctx.SessionId);
 
         var gatewaySession = await _sessions.GetAsync(ctx.SessionId, CancellationToken.None);
 
@@ -907,6 +920,7 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
     {
         EnsureControlScope(nameof(CompactSession));
         var ctx = ResolveCallContext(agentId, sessionId);
+        await EnsureSessionWritableAsync(ctx.AgentId, ctx.SessionId);
         var session = await _sessions.GetAsync(ctx.SessionId, CancellationToken.None);
         if (session is null)
             throw new HubException($"Session '{ctx.SessionId.Value}' not found.");
@@ -1335,11 +1349,67 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         }
     }
 
-    /// <summary>
-    /// Adds the connection to the conversation group for the given session, looking up the
-    /// session's conversation id if needed. Conversation-keyed groups survive session
-    /// compaction; the previous session-keyed equivalent did not (#682).
-    /// </summary>
+    /// <summary>Enforces stored client-write visibility without restricting runtime producers.</summary>
+    private void EnsureConversationWritable(Conversation? conversation, AgentId? expectedAgent = null)
+    {
+        var status = ConversationClientWritePolicy.Evaluate(conversation, expectedAgent);
+        if (conversation is not null && !IsClientAgentAllowed(conversation.AgentId))
+            status = 404;
+        if (status != 0)
+            throw new HubException(status == 403 ? "Conversation is read-only (403)." : "Conversation not found (404).");
+    }
+
+    private async Task EnsureConversationWritableAsync(ConversationId conversationId, AgentId expectedAgent)
+    {
+        var conversation = _conversationStore is null ? null :
+            await _conversationStore.GetAsync(conversationId, Context.ConnectionAborted);
+        EnsureConversationWritable(conversation, expectedAgent);
+    }
+
+    private async Task<ConversationId?> EnsureSessionWritableAsync(AgentId agentId, SessionId sessionId)
+    {
+        var session = await _sessions.GetAsync(sessionId, Context.ConnectionAborted);
+        var status = await ConversationClientWritePolicy.EvaluateSessionAsync(_conversationStore, session, agentId, Context.ConnectionAborted);
+        if (!IsClientAgentAllowed(agentId))
+            status = 404;
+        if (status != 0)
+            throw new HubException(status == 403 ? "Conversation is read-only (403)." : "Conversation not found (404).");
+        return session is not null && session.ConversationId.IsInitialized() ? session.ConversationId : null;
+    }
+
+    // Mirrors the router's active-then-newest-archived binding selection without reopening,
+    // creating a session, or changing a binding merely to discover the write destination.
+    private async Task<ConversationId?> ResolveImplicitWritableConversationAsync(AgentId agentId)
+    {
+        if (_conversationStore is null)
+            throw new HubException("Conversation not found (404).");
+
+        var channelAddress = ChannelAddress.From(agentId.Value);
+        var candidate = await _conversationStore.ResolveByBindingAsync(agentId, SignalRChannel, channelAddress, Context.ConnectionAborted);
+        if (candidate is null)
+        {
+            var conversations = await _conversationStore.ListAsync(agentId, Context.ConnectionAborted);
+            candidate = conversations.Where(c => c.Status == ConversationStatus.Archived)
+                .Where(c => c.ChannelBindings.Any(b => b.ChannelType == SignalRChannel && b.ChannelAddress == channelAddress))
+                .OrderByDescending(c => c.UpdatedAt).FirstOrDefault();
+        }
+        if (candidate is not null)
+            EnsureConversationWritable(candidate, agentId);
+        // No stored binding means the ordinary router will mint a new user-facing conversation.
+        return candidate?.ConversationId;
+    }
+
+    private bool IsClientAgentAllowed(AgentId agentId)
+    {
+        var httpContext = Context.GetHttpContext();
+        if (httpContext?.Items.TryGetValue(GatewayAuthHttpContext.CallerIdentityItemKey, out var value) != true ||
+            value is not GatewayCallerIdentity identity)
+            return true;
+        return identity.IsAdmin || identity.AllowedAgents.Count == 0 ||
+            identity.AllowedAgents.Any(allowed => string.Equals(allowed, agentId.Value, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Joins the stored parent conversation group; membership survives compaction.</summary>
     private async Task SubscribeInternalAsync(SessionId sessionId)
     {
         var session = await _sessions.GetAsync(sessionId, Context.ConnectionAborted);
@@ -1418,6 +1488,8 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
         // identity -- doing so mints e.g. a 'telegram' or 'servicebus' binding addressed by the
         // agent id, which fan-out then sends a real, undeliverable envelope to. This hub IS the
         // SignalR transport, so the binding identity is always signalr.
+        if (!IsClientAgentAllowed(agentId))
+            throw new HubException("Conversation not found (404).");
         var bindingChannelType = SignalRChannel;
         var channelAddress = ChannelAddress.From(agentId.Value);
         var typedConversationId = string.IsNullOrWhiteSpace(conversationId)
@@ -1441,6 +1513,28 @@ public sealed class GatewayHub : Hub<IGatewayHubClient>
                 Context.ConnectionId),
             RequestedConversationId: typedConversationId,
             RequestedAgentId: agentId);
+
+        // Check the stored target BEFORE the dispatcher can reactivate, bind, or materialize a session.
+        if (typedConversationId.HasValue)
+        {
+            await EnsureConversationWritableAsync(typedConversationId.Value, agentId);
+        }
+        else
+        {
+            if (_conversationStore is null)
+                throw new HubException("Conversation not found (404).");
+
+            var candidate = await _conversationStore.ResolveByBindingAsync(agentId, bindingChannelType, channelAddress, Context.ConnectionAborted);
+            if (candidate is null)
+            {
+                var conversations = await _conversationStore.ListAsync(agentId, Context.ConnectionAborted);
+                candidate = conversations.Where(c => c.Status == ConversationStatus.Archived)
+                    .Where(c => c.ChannelBindings.Any(b => b.ChannelType == bindingChannelType && b.ChannelAddress == channelAddress))
+                    .OrderByDescending(c => c.UpdatedAt).FirstOrDefault();
+            }
+            if (candidate is not null)
+                EnsureConversationWritable(candidate, agentId);
+        }
 
         var dispatchResult = await _app.ResolveSessionAsync(context, Context.ConnectionAborted);
         return new HubInboundResolution(

@@ -1,6 +1,7 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Services;
+using Microsoft.Extensions.Time.Testing;
 
 namespace BotNexus.Gateway.Tests.Services;
 
@@ -64,12 +65,115 @@ public sealed class AskUserResponseRegistryTests
     [Fact]
     public async Task Register_WithTimeout_CompletesWithTimeoutPayload()
     {
-        using var registry = new AskUserResponseRegistry();
-        var pending = registry.Register(ConversationId.From("conversation-7"), TimeSpan.FromMilliseconds(50));
+        var timeProvider = new FakeTimeProvider();
+        using var registry = new AskUserResponseRegistry(timeProvider);
+        var conversationId = ConversationId.From("conversation-7");
+        var pending = registry.Register(conversationId, TimeSpan.FromMilliseconds(50));
 
-        var result = await pending.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        pending.Task.IsCompleted.ShouldBeFalse();
+        timeProvider.Advance(TimeSpan.FromMilliseconds(49));
+        pending.Task.IsCompleted.ShouldBeFalse();
+        registry.TryGetPendingRequestId(conversationId, out var requestId).ShouldBeTrue();
+        requestId.ShouldBe(pending.RequestId);
+
+        // Advance runs due timer callbacks; assert completion before awaiting so a broken
+        // clock seam fails immediately instead of hanging or racing a wall-clock deadline.
+        timeProvider.Advance(TimeSpan.FromMilliseconds(1));
+        pending.Task.IsCompletedSuccessfully.ShouldBeTrue();
+        var result = await pending.Task;
         result.RequestId.ShouldBe(pending.RequestId);
         result.WasTimeout.ShouldBeTrue();
+        result.WasCancelled.ShouldBeFalse();
+        result.FreeFormText.ShouldBeNull();
+        result.SelectedValues.ShouldBeNull();
+        registry.TryGetPendingRequestId(conversationId, out _).ShouldBeFalse();
+        registry.TryComplete(conversationId, pending.RequestId, CreateResponse(pending.RequestId)).ShouldBeFalse();
+
+        var replacement = registry.Register(conversationId, timeout: null);
+        replacement.RequestId.ShouldNotBe(pending.RequestId);
+        registry.TryGetPendingRequestId(conversationId, out var replacementId).ShouldBeTrue();
+        replacementId.ShouldBe(replacement.RequestId);
+        replacement.Task.IsCompleted.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task TryComplete_BeforeTimeout_PreservesResponseAndReplacement()
+    {
+        var timeProvider = new FakeTimeProvider();
+        using var registry = new AskUserResponseRegistry(timeProvider);
+        var conversationId = ConversationId.From("conversation-response-before-timeout");
+        var pending = registry.Register(conversationId, TimeSpan.FromMilliseconds(50));
+        timeProvider.Advance(TimeSpan.FromMilliseconds(49));
+        pending.Task.IsCompleted.ShouldBeFalse();
+        var response = CreateResponse(pending.RequestId, freeFormText: "approved", selectedValues: ["yes"]);
+
+        registry.TryComplete(conversationId, pending.RequestId, response).ShouldBeTrue();
+        pending.Task.IsCompletedSuccessfully.ShouldBeTrue();
+        registry.TryGetPendingRequestId(conversationId, out _).ShouldBeFalse();
+        var replacement = registry.Register(conversationId, timeout: null);
+
+        timeProvider.Advance(TimeSpan.FromMilliseconds(1));
+        var result = await pending.Task;
+        result.ShouldBeSameAs(response);
+        result.WasTimeout.ShouldBeFalse();
+        result.WasCancelled.ShouldBeFalse();
+        replacement.Task.IsCompleted.ShouldBeFalse();
+        registry.TryGetPendingRequestId(conversationId, out var replacementId).ShouldBeTrue();
+        replacementId.ShouldBe(replacement.RequestId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Cancel_BeforeTimeout_PreservesCancellationAndReplacement(bool cancelAll)
+    {
+        var timeProvider = new FakeTimeProvider();
+        using var registry = new AskUserResponseRegistry(timeProvider);
+        var conversationId = ConversationId.From("conversation-cancel-before-timeout");
+        var pending = registry.Register(conversationId, TimeSpan.FromMilliseconds(50));
+        timeProvider.Advance(TimeSpan.FromMilliseconds(49));
+        pending.Task.IsCompleted.ShouldBeFalse();
+
+        if (cancelAll)
+            registry.CancelAllForConversation(conversationId);
+        else
+            registry.Cancel(pending.RequestId);
+
+        pending.Task.IsCanceled.ShouldBeTrue();
+        registry.TryGetPendingRequestId(conversationId, out _).ShouldBeFalse();
+        var replacement = registry.Register(conversationId, timeout: null);
+        timeProvider.Advance(TimeSpan.FromMilliseconds(1));
+
+        await Should.ThrowAsync<TaskCanceledException>(async () => await pending.Task);
+        registry.TryComplete(conversationId, pending.RequestId, CreateResponse(pending.RequestId)).ShouldBeFalse();
+        replacement.Task.IsCompleted.ShouldBeFalse();
+        registry.TryGetPendingRequestId(conversationId, out var replacementId).ShouldBeTrue();
+        replacementId.ShouldBe(replacement.RequestId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task Register_WithoutPositiveTimeout_RemainsPendingUntilResponse(int? timeoutMilliseconds)
+    {
+        var timeProvider = new FakeTimeProvider();
+        using var registry = new AskUserResponseRegistry(timeProvider);
+        var conversationId = ConversationId.From("conversation-without-timeout");
+        TimeSpan? timeout = timeoutMilliseconds is { } milliseconds
+            ? TimeSpan.FromMilliseconds(milliseconds)
+            : null;
+        var pending = registry.Register(conversationId, timeout);
+
+        timeProvider.Advance(TimeSpan.FromDays(1));
+
+        pending.Task.IsCompleted.ShouldBeFalse();
+        registry.TryGetPendingRequestId(conversationId, out var requestId).ShouldBeTrue();
+        requestId.ShouldBe(pending.RequestId);
+        var response = CreateResponse(pending.RequestId);
+        registry.TryComplete(conversationId, pending.RequestId, response).ShouldBeTrue();
+        (await pending.Task).ShouldBeSameAs(response);
+        registry.TryGetPendingRequestId(conversationId, out _).ShouldBeFalse();
     }
 
     [Fact]

@@ -37,17 +37,20 @@ public sealed class AgentExchangeTurnEngine
     private readonly IConversationStore _conversationStore;
     private readonly ILogger _logger;
     private readonly AgentExchangeBudgetTracker? _budgetTracker;
+    private readonly TimeProvider _timeProvider;
 
     public AgentExchangeTurnEngine(
         ISessionStore sessionStore,
         IConversationStore conversationStore,
         ILogger logger,
-        AgentExchangeBudgetTracker? budgetTracker)
+        AgentExchangeBudgetTracker? budgetTracker,
+        TimeProvider? timeProvider = null)
     {
         _sessionStore = sessionStore;
         _conversationStore = conversationStore;
         _logger = logger;
         _budgetTracker = budgetTracker;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -259,15 +262,13 @@ public sealed class AgentExchangeTurnEngine
     /// as "no deadline": a caller that hands over a past instant has already spent its budget, and
     /// silently granting it a fresh unbounded one would be the opposite of what it asked for.
     /// </remarks>
-    private static CancellationTokenSource? CreateDeadlineSource(DateTimeOffset? deadline)
+    private CancellationTokenSource? CreateDeadlineSource(DateTimeOffset? deadline)
     {
         if (deadline is not { } instant)
             return null;
 
-        var remaining = instant - DateTimeOffset.UtcNow;
-        var cts = new CancellationTokenSource();
-        cts.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
-        return cts;
+        var remaining = instant - _timeProvider.GetUtcNow();
+        return new CancellationTokenSource(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, _timeProvider);
     }
 
     /// <summary>

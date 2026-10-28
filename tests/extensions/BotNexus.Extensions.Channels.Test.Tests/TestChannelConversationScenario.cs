@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.IO.Abstractions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
@@ -32,7 +33,15 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
     private readonly SessionId _sessionId = SessionId.Create();
 
     public TestChannelConversationScenario(params ChannelDefinition[] channels)
+        : this([], channels)
     {
+    }
+
+    public TestChannelConversationScenario(
+        IEnumerable<IConversationEventSink> additionalSinks,
+        params ChannelDefinition[] channels)
+    {
+        ArgumentNullException.ThrowIfNull(additionalSinks);
         ArgumentNullException.ThrowIfNull(channels);
 
         _adapters = channels.ToDictionary(
@@ -42,7 +51,7 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
                 Options.Create(new TestChannelOptions { ChannelId = channel.ChannelId })),
             StringComparer.Ordinal);
 
-        _publisher = new ConversationEventPublisher(_adapters.Values);
+        _publisher = new ConversationEventPublisher(additionalSinks.Concat<IConversationEventSink>(_adapters.Values));
         ConversationId = ConversationId.Create();
     }
 
@@ -74,27 +83,45 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
 
     public async Task<SessionEntry> PublishCompactionAsync()
     {
-        var (conversations, sessions, session) = await CreatePersistedConversationAsync();
+        var sessionDirectory = Directory.CreateTempSubdirectory("botnexus-channel-compaction-");
+        try
+        {
+            var (conversations, sessions, session) = await CreatePersistedConversationAsync(sessionDirectory.FullName);
 
-        var coordinator = new SessionCompactionCoordinator(
-            Substitute.For<ISessionCompactor>(),
-            sessions,
-            Substitute.For<IAgentSupervisor>(),
-            _publisher,
-            conversations,
-            new OptionsMonitor<CompactionOptions>(new CompactionOptions()),
-            NullLogger<SessionCompactionCoordinator>.Instance);
+            var coordinator = new SessionCompactionCoordinator(
+                Substitute.For<ISessionCompactor>(),
+                sessions,
+                Substitute.For<IAgentSupervisor>(),
+                _publisher,
+                conversations,
+                new OptionsMonitor<CompactionOptions>(new CompactionOptions()),
+                NullLogger<SessionCompactionCoordinator>.Instance);
 
-        var accepted = await coordinator.TryPublishNotificationAsync(
-            new SessionCompactionOutcome(true, true, HistoryReplaceOutcome.Applied, 4, 2, 600, 200, null),
-            _agentId,
-            session,
-            CancellationToken.None);
-        if (!accepted)
-            throw new InvalidOperationException("The production conversation-event publisher refused the compaction event.");
+            var accepted = await coordinator.TryPublishNotificationAsync(
+                new SessionCompactionOutcome(true, true, HistoryReplaceOutcome.Applied, 4, 2, 600, 200, null),
+                _agentId,
+                session,
+                CancellationToken.None);
+            if (!accepted)
+                throw new InvalidOperationException("The production conversation-event publisher refused the compaction event.");
 
-        await _publisher.WaitForDrainAsync(CancellationToken.None);
-        return session.History.ShouldHaveSingleItem();
+            await _publisher.WaitForDrainAsync(CancellationToken.None);
+            // A new store bypasses the writer's mutable cache: only a saved notification can be reloaded.
+            var reader = new FileSessionStore(sessionDirectory.FullName,
+                NullLogger<FileSessionStore>.Instance, new FileSystem(), conversations);
+            var persistedSession = (await reader.GetAsync(_sessionId)).ShouldNotBeNull();
+            var persisted = persistedSession.History.ShouldHaveSingleItem();
+            var published = session.History.ShouldHaveSingleItem();
+            // Persistence identities are store-local metadata and are not serialized into history.
+            persisted.Role.ShouldBe(published.Role);
+            persisted.Content.ShouldBe(published.Content);
+            persisted.Timestamp.ShouldBe(published.Timestamp);
+            return published;
+        }
+        finally
+        {
+            sessionDirectory.Delete(recursive: true);
+        }
     }
 
     public async Task<ResetScenarioResult> ResetActiveSessionAsync()
@@ -178,8 +205,8 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
 
     public ValueTask DisposeAsync() => _publisher.DisposeAsync();
 
-    private async Task<(InMemoryConversationStore Conversations, InMemorySessionStore Sessions, GatewaySession Session)>
-        CreatePersistedConversationAsync()
+    private async Task<(InMemoryConversationStore Conversations, ISessionStore Sessions, GatewaySession Session)>
+        CreatePersistedConversationAsync(string? sessionStorePath = null)
     {
         var conversations = new InMemoryConversationStore();
         await conversations.CreateAsync(new Conversation
@@ -187,7 +214,9 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
             ConversationId = ConversationId,
             AgentId = _agentId,
             ActiveSessionId = _sessionId,
-            ChannelBindings = [.. _bindings.Select(binding => new ChannelBinding
+            ChannelBindings = [.. _bindings
+                .Where(binding => binding.ConversationId == ConversationId)
+                .Select(binding => new ChannelBinding
             {
                 BindingId = binding.Snapshot.BindingId,
                 ChannelType = binding.Snapshot.ChannelType,
@@ -198,7 +227,10 @@ internal sealed class TestChannelConversationScenario : IAsyncDisposable
             })],
         });
 
-        var sessions = new InMemorySessionStore(redactor: null, conversations);
+        ISessionStore sessions = sessionStorePath is null
+            ? new InMemorySessionStore(redactor: null, conversations)
+            : new FileSessionStore(sessionStorePath,
+                NullLogger<FileSessionStore>.Instance, new FileSystem(), conversations);
         var session = new GatewaySession
         {
             SessionId = _sessionId,

@@ -135,15 +135,20 @@ does not evade it.
 | `ExtensionBootFixture` | `Integration.ExtensionBoot.Tests` | Was skip-gated via `ShouldSkip()` indirection with **no** health test — fixed here |
 | `CliInstallFixture` | `Integration.Cli.Tests` | Not skip-gated; asserts `InstallSucceeded` directly. Compliant. |
 | `LocalCliInstallFixture` | `Integration.Cli.Tests` | Not skip-gated; asserts `Succeeded` via `AssertFixture()`. Compliant. |
-| `LiveGatewayFixture` | `Conversation.Tests` | **Permanently dark in CI** — registered exemption, see below |
+| `CandidateGatewayFixture` | `Conversation.Tests` | Candidate in-process HTTP/SignalR seam; startup failures fail the collection, with no availability skips |
 
-`LiveGatewayFixture` probes a *developer-run* gateway at `localhost:5006` that no
-CI or container gate ever starts, so `IsAvailable` is always `false` unattended
-and asserting it would fail every run. It is registered in the fence's
-`EnvironmentGatedFixtures` allowlist with that reason. The finding stands on its
-own merits: **that suite has never contributed gate signal** and should either be
-re-hosted on a self-provisioned fixture (as `NewUserExperienceFixture` does) or
-dropped from the gate scope. Tracked separately rather than fixed here.
+Issue #4624 replaces the former developer-gateway probe with
+`WebApplicationFactory<Program>` and `TestServer`. The conversation project runs
+in ordinary CORE, using a disposable home, production in-memory stores and real
+HTTP/hub routing. Only out-of-scope agent execution is deterministic. It does not
+provide SQLite restart or socket-transport evidence. No connection is made to a
+running developer gateway, and no architecture exemption remains.
+
+Inspect the project's TRX: its tests must execute and pass with zero skips. The
+runner rejects the former `Dev gateway not running at` reason rather than
+certifying dormant conversation coverage. Aggregate CORE counts still distinguish
+executed tests from intentional credential/platform skips in other projects.
+Browser-emulated E2E quarantine (#3601) is independent of this in-process seam.
 
 ## Followup work (issue #598)
 

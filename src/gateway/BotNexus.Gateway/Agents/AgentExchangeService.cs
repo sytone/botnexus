@@ -156,6 +156,10 @@ public sealed class AgentExchangeService : IAgentExchangeService
         // the policy (and the call chain, budget, conversation and supervisor handle) all evaluate
         // against the RESOLVED agent. Display-name addressing therefore cannot bypass a whitelist.
         var isLocalTarget = _registry.Contains(request.TargetId);
+        // Exact registration wins even when disabled: do not fall through to a display-name
+        // match or reinterpret a local id as federation, and reject before any state is minted.
+        if (isLocalTarget && _registry.Get(request.TargetId, includeDisabled: true)?.Enabled == false)
+            throw new KeyNotFoundException($"Target agent '{request.TargetId}' is disabled.");
         var hasCrossWorldTarget = CrossWorldAgentReference.TryParse(request.TargetId, out var parsedCrossWorldTarget);
         if (!isLocalTarget && !hasCrossWorldTarget)
         {
@@ -264,6 +268,19 @@ public sealed class AgentExchangeService : IAgentExchangeService
         session.Metadata["objective"] = request.Objective;
         session.Metadata["maxTurns"] = request.MaxTurns;
         session.Metadata["conversationId"] = conversation.ConversationId.Value;
+        if (!string.IsNullOrWhiteSpace(request.ModelOverride))
+        {
+            session.Metadata["modelOverride"] = request.ModelOverride;
+            if (request.CronModelSource is not null)
+            {
+                session.Metadata["cronModelOverride"] = request.ModelOverride;
+                session.Metadata["cronRequestedModel"] = request.CronRequestedModel;
+                session.Metadata["cronModelSource"] = request.CronModelSource;
+                var separator = request.ModelOverride.LastIndexOf('/');
+                session.Metadata["cronEffectiveProvider"] = separator > 0 ? request.ModelOverride[..separator] : null;
+                session.Metadata["cronEffectiveModel"] = separator > 0 ? request.ModelOverride[(separator + 1)..] : request.ModelOverride;
+            }
+        }
 
         await _sessionStore.SaveAsync(session, cancellationToken).ConfigureAwait(false);
 
@@ -305,7 +322,21 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 AgentExchangeCompletionGate.PrepareTurn(session.Metadata, exchangeId);
                 await _sessionStore.SaveAsync(session, ct).ConfigureAwait(false);
 
-                var response = await targetHandle.PromptAsync(message, ct).ConfigureAwait(false);
+                AgentResponse response;
+                try
+                {
+                    response = await targetHandle.PromptAsync(message, ct).ConfigureAwait(false);
+                }
+                catch (AgentPromptInterruptedException interrupted)
+                {
+                    // The engine has already added the user row. Keep partial tool evidence, not
+                    // unfinished assistant prose, and persist with a token independent of the run.
+                    foreach (var entry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(interrupted.PartialResponse)))
+                        session.AddEntry(entry);
+                    await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+                    throw new OperationCanceledException("Agent exchange turn was interrupted.", interrupted,
+                        ct.IsCancellationRequested ? ct : interrupted.CancellationToken);
+                }
                 var responseText = response.Content ?? string.Empty;
                 // #2614 AC4: capture the tool timeline this turn executed and hand it to the shared
                 // loop, which persists it between the user and assistant rows.

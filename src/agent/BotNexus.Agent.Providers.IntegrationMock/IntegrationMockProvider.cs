@@ -52,6 +52,12 @@ public sealed class IntegrationMockProvider : IApiProvider
                 await StreamCoreAsync(model, context, options, stream);
                 activity?.SetStatus(ActivityStatusCode.Ok);
             }
+            catch (OperationCanceledException ex) when (options?.CancellationToken.IsCancellationRequested == true)
+            {
+                var abortedMessage = CreateErrorMessage(model, ex.Message, StopReason.Aborted);
+                stream.Push(new ErrorEvent(StopReason.Aborted, abortedMessage));
+                stream.End(abortedMessage);
+            }
             catch (Exception ex)
             {
                 var errorMessage = CreateErrorMessage(model, ex.Message);
@@ -71,6 +77,7 @@ public sealed class IntegrationMockProvider : IApiProvider
     private async Task StreamCoreAsync(LlmModel model, Context context, StreamOptions? options, LlmStream stream)
     {
         var ct = options?.CancellationToken ?? CancellationToken.None;
+        ct.ThrowIfCancellationRequested();
         var catalog = _loader.Resolve(string.IsNullOrWhiteSpace(model.BaseUrl) ? null : model.BaseUrl);
         var key = ExtractKey(context);
 
@@ -293,14 +300,14 @@ public sealed class IntegrationMockProvider : IApiProvider
         return string.Empty;
     }
 
-    private AssistantMessage CreateErrorMessage(LlmModel model, string error)
+    private AssistantMessage CreateErrorMessage(LlmModel model, string error, StopReason stopReason = StopReason.Error)
         => new(
             Content: [new TextContent(error)],
             Api: Api,
             Provider: model.Provider,
             ModelId: model.Id,
             Usage: Usage.Empty(),
-            StopReason: StopReason.Error,
+            StopReason: stopReason,
             ErrorMessage: error,
             ResponseId: null,
             Timestamp: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());

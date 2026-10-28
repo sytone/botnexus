@@ -723,6 +723,11 @@ public sealed class CronSchedulerTests
         var task = method!.Invoke(scheduler, [CancellationToken.None]) as Task;
         Assert.NotNull(task);
         await task!;
+
+        // #4688: the tick now dispatches and returns, so completion must be awaited explicitly.
+        // These suites assert on executed runs and their persisted bookkeeping, not on dispatch
+        // latency, so draining here preserves their original intent.
+        await scheduler.WaitForInFlightAsync();
     }
 
     private static async Task InvokeSyncConfiguredJobsAsync(CronScheduler scheduler, CronOptions options)
@@ -826,10 +831,10 @@ public sealed class CronSchedulerTests
         }
     }
 
-    private sealed record PlannedShutdownState(bool Current, bool Previous) : IPlannedShutdownState
+    private sealed class PlannedShutdownState : IPlannedShutdownState
     {
-        public bool CurrentShutdownIsPlanned => Current;
-        public bool PreviousShutdownWasPlanned => Previous;
+        public bool CurrentShutdownIsPlanned { get; set; }
+        public bool PreviousShutdownWasPlanned => false;
     }
 
     private sealed class StaticOptionsMonitor<T>(T currentValue) : IOptionsMonitor<T>
@@ -971,15 +976,17 @@ public sealed class CronSchedulerTests
         var action = new AbortableAction("test-action");
         await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1", actionType: "test-action"));
         var options = new CronOptions { Enabled = true, TickIntervalSeconds = 1, DefaultJobTimeoutSeconds = 600 };
+        var shutdownState = new PlannedShutdownState();
         var scheduler = CreateScheduler(
             context.Store,
             [action],
             options,
-            shutdownState: new PlannedShutdownState(Current: true, Previous: false));
+            shutdownState: shutdownState);
 
         using var cts = new CancellationTokenSource();
         var runTask = scheduler.RunNowAsync(JobId.From("job-1"), cts.Token);
         await action.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        shutdownState.CurrentShutdownIsPlanned = true;
         await cts.CancelAsync();
         await Should.ThrowAsync<OperationCanceledException>(async () => await runTask);
 

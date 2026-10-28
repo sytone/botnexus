@@ -148,6 +148,12 @@ internal static class AnthropicRequestBuilder
             maxBreakpoints: Math.Min(3, MaxCacheBreakpoints - systemBreakpoints));
         body["messages"] = ToNode(messages);
 
+        if (options?.ToolChoiceMode == BotNexus.Agent.Providers.Core.ToolChoice.None)
+        {
+            body.Remove("tools");
+            body["tool_choice"] = new JsonObject { ["type"] = "none" };
+        }
+
         return body;
     }
 

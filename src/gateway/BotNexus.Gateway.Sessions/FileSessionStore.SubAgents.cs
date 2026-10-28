@@ -29,8 +29,7 @@ public sealed partial class FileSessionStore
             var existing = await ReadRunAsync(info.SubAgentId, cancellationToken).ConfigureAwait(false);
             if (existing is not null)
             {
-                if (existing.ParentSessionId != info.ParentSessionId.Value || existing.SpawningToolCallId != info.SpawningToolCallId)
-                    throw new UnauthorizedAccessException("Sub-agent admission identity cannot be rebound.");
+                SubAgentAdmissionIdentity.EnsureUnchanged(existing, info);
                 return;
             }
             if (info.SpawningToolCallId is { } call)
@@ -43,7 +42,7 @@ public sealed partial class FileSessionStore
             // no retained run is published until the final atomic admission replacement.
             if (info.SpawningToolCallId is { } spawn)
                 await AtomicJsonAsync(SpawnPath(info.ParentSessionId, spawn), info.SubAgentId, cancellationToken).ConfigureAwait(false);
-            await WriteRunAsync(SubAgentRunDetail.FromLive(info), cancellationToken).ConfigureAwait(false);
+            await WriteRunAsync(SubAgentRetainedRun.Create(info), cancellationToken).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -56,18 +55,17 @@ public sealed partial class FileSessionStore
         {
             var retained = await ReadRunAsync(info.SubAgentId, cancellationToken).ConfigureAwait(false);
             if (retained is null) throw new InvalidOperationException("Sub-agent admission is missing.");
-            if (retained.ParentSessionId != info.ParentSessionId.Value || retained.SpawningToolCallId != info.SpawningToolCallId)
-                throw new UnauthorizedAccessException("Sub-agent admission identity cannot be rebound.");
-            await WriteRunAsync(SubAgentRunDetail.FromLive(info), cancellationToken).ConfigureAwait(false);
+            SubAgentAdmissionIdentity.EnsureUnchanged(retained, info);
+            await WriteRunAsync(SubAgentRetainedRun.Create(info), cancellationToken).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
 
-    private Task WriteRunAsync(SubAgentRunDetail detail, CancellationToken ct)
+    private Task WriteRunAsync(SubAgentRetainedRun detail, CancellationToken ct)
     {
         // Redact the whole bounded projection as well as the consuming result.
         var json = JsonSerializer.Serialize(detail, JsonOptions);
-        var safe = JsonSerializer.Deserialize<SubAgentRunDetail>(_redactor?.Redact(json) ?? json, JsonOptions)
+        var safe = JsonSerializer.Deserialize<SubAgentRetainedRun>(_redactor?.Redact(json) ?? json, JsonOptions)
             ?? throw new InvalidOperationException("Invalid retained sub-agent detail.");
         return AtomicJsonAsync(RunPath(detail.SubAgentId), safe, ct);
     }
@@ -88,6 +86,18 @@ public sealed partial class FileSessionStore
 
     private Task<SubAgentRunDetail?> ReadRunAsync(string id, CancellationToken ct) =>
         SessionMetadataSidecar.ReadAsync<SubAgentRunDetail>(_fileSystem, RunPath(id), JsonOptions, ct);
+
+    /// <inheritdoc />
+    public override async Task<string?> GetSubAgentResultSummaryAsync(string subAgentId, CancellationToken cancellationToken = default)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return (await SessionMetadataSidecar.ReadAsync<SubAgentRetainedRun>(_fileSystem,
+                RunPath(subAgentId), JsonOptions, cancellationToken).ConfigureAwait(false))?.FullResultSummary;
+        }
+        finally { _lock.Release(); }
+    }
 
     private async Task<IReadOnlyList<SubAgentRunDetail>> ReadRunsAsync(CancellationToken ct)
     {
@@ -182,7 +192,7 @@ public sealed partial class FileSessionStore
                 ?? throw new InvalidOperationException("Consumption receipt has no original result.");
             if (entry.Kind != MessageKind.ToolResult || string.IsNullOrWhiteSpace(entry.ToolCallId))
                 throw new InvalidOperationException("Invalid original consumption result.");
-            entry.PersistenceKey = "tool-result:" + entry.ToolCallId;
+            entry.PersistenceKey ??= "tool-result:" + entry.ToolCallId;
             receipts.Add(new(id, entry));
         }
         return receipts;
@@ -195,7 +205,7 @@ public sealed partial class FileSessionStore
         {
             var node = JsonSerializer.SerializeToNode(entry, JsonOptions) as JsonObject
                 ?? throw new InvalidOperationException("Invalid session entry.");
-            var receipt = receipts.SingleOrDefault(r => r.Entry.ToolCallId == entry.ToolCallId && entry.Kind == MessageKind.ToolResult);
+            var receipt = receipts.SingleOrDefault(r => r.Entry.ToolCallId == entry.ToolCallId && r.Entry.AgentRunId == entry.AgentRunId && entry.Kind == MessageKind.ToolResult);
             if (receipt is not null) node[ReceiptProperty] = receipt.SubAgentId;
             return node;
         });
@@ -232,15 +242,15 @@ public sealed partial class FileSessionStore
             var accepted = receipts.SingleOrDefault(r => r.SubAgentId == subAgentId);
             if (accepted is not null)
             {
-                if (accepted.Entry.ToolName != result.ToolName && accepted.Entry.ToolCallId == result.ToolCallId)
+                if (accepted.Entry.ToolName != result.ToolName && accepted.Entry.ToolCallId == result.ToolCallId && accepted.Entry.AgentRunId == result.AgentRunId)
                     throw new InvalidOperationException("Original receipt tool name differs.");
-                return accepted.Entry.ToolCallId == result.ToolCallId ? accepted.Entry.Content : null;
+                return accepted.Entry.ToolCallId == result.ToolCallId && accepted.Entry.AgentRunId == result.AgentRunId ? accepted.Entry.Content : null;
             }
-            if (parent.GetHistorySnapshot().Any(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == result.ToolCallId))
+            if (parent.GetHistorySnapshot().Any(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == result.ToolCallId && e.AgentRunId == result.AgentRunId))
                 throw new InvalidOperationException("An original tool result already exists without this receipt.");
             var safe = result with { Content = _redactor?.Redact(result.Content) ?? result.Content,
                 ToolArgs = result.ToolArgs is null ? null : _redactor?.Redact(result.ToolArgs) ?? result.ToolArgs };
-            safe.PersistenceKey = "tool-result:" + safe.ToolCallId;
+            safe.PersistenceKey ??= "tool-result:" + safe.ToolCallId;
             if (BeforeSubAgentReceiptCommitAsync is { } before) await before(cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             await WriteReceiptHistoryAsync(parentSessionId, parent.GetHistorySnapshot().Append(safe),
@@ -259,7 +269,7 @@ public sealed partial class FileSessionStore
         if (receipts.Count == 0) return false;
         var snapshot = session.SnapshotHistoryForCompaction();
         var entries = snapshot.Entries.Where(e => !receipts.Any(r =>
-            e.Kind == MessageKind.ToolResult && e.ToolCallId == r.Entry.ToolCallId)).ToList();
+            e.Kind == MessageKind.ToolResult && e.ToolCallId == r.Entry.ToolCallId && e.AgentRunId == r.Entry.AgentRunId)).ToList();
         entries.AddRange(receipts.Select(r => r.Entry));
         entries = entries.OrderBy(e => e.Timestamp).ToList();
         if (BeforeReceiptHistorySaveAsync is { } before) await before(ct).ConfigureAwait(false);

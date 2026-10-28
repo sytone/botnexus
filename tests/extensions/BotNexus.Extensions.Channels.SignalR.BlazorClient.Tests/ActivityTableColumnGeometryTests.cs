@@ -238,12 +238,11 @@ public sealed class ActivityTableColumnGeometryTests
     }
 
     /// <summary>
-    /// Clause 2 and clause 3 of #2788: the #2528 one-line ellipsis guarantee and the #2496
-    /// origin badge must both survive the fix. The title remains the only shrinkable part
-    /// of the flex line, and it shrinks via <c>min-width: 0</c> on the child.
+    /// #4882 supersedes the one-line ellipsis contract: the full identifying title wraps
+    /// on its own row, leaving badges below it. Shrink constraints remain on the child.
     /// </summary>
     [Fact]
-    public void TitleShrinksViaChildMinWidth_AndStillEllipsisesOnOneLine()
+    public void TitleShrinksViaChildMinWidth_AndWrapsFullTextOnItsOwnRow()
     {
         var css = ReadCssWithoutComments();
 
@@ -255,8 +254,10 @@ public sealed class ActivityTableColumnGeometryTests
 
         var block = rule.Groups[1].Value;
         Assert.Matches(@"min-width:\s*0", block);
-        Assert.Matches(@"overflow:\s*hidden", block);
-        Assert.Matches(@"text-overflow:\s*ellipsis", block);
-        Assert.Matches(@"white-space:\s*nowrap", block);
+        block.ShouldMatch(@"flex:\s*1\s+1\s+100%");
+        block.ShouldMatch(@"white-space:\s*normal");
+        block.ShouldMatch(@"overflow-wrap:\s*anywhere");
+        block.ShouldMatch(@"overflow:\s*visible");
+        block.ShouldNotMatch(@"text-overflow:\s*ellipsis");
     }
 }

@@ -14,8 +14,7 @@ public sealed class SessionToolTests
     public async Task List_OwnAccess_ReturnsOnlyOwnSessions()
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([CreateSession("s1", "agent-a"), CreateSession("s2", "agent-a")]);
+        SetupBoundedStore(store, "agent-a", [CreateSession("s1", "agent-a"), CreateSession("s2", "agent-a")]);
         var tool = new SessionTool(store.Object, AgentId.From("agent-a"));
 
         var result = await tool.ExecuteAsync("call-1", Args("list"));
@@ -23,7 +22,7 @@ public sealed class SessionToolTests
 
         text.ShouldContain("s1");
         text.ShouldContain("s2");
-        store.Verify(s => s.ListAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()), Times.Once);
+        store.Verify(s => s.ListSummaryPageAsync(It.Is<SessionSummaryQuery>(q => q.AgentId == "agent-a"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -41,8 +40,7 @@ public sealed class SessionToolTests
     public async Task List_AllowlistAccess_AllowsConfiguredAgent()
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListAsync(AgentId.From("agent-b"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([CreateSession("s1", "agent-b")]);
+        SetupBoundedStore(store, "agent-b", [CreateSession("s1", "agent-b")]);
         var tool = new SessionTool(store.Object, AgentId.From("agent-a"), SessionAccessLevel.Allowlist, ["agent-b"]);
 
         var result = await tool.ExecuteAsync("call-1", Args("list", agentId: "agent-b"));
@@ -66,8 +64,7 @@ public sealed class SessionToolTests
     public async Task List_AllAccess_AllowsAnyAgent()
     {
         var store = new Mock<ISessionStore>();
-        store.Setup(s => s.ListAsync(AgentId.From("agent-x"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([CreateSession("s1", "agent-x")]);
+        SetupBoundedStore(store, "agent-x", [CreateSession("s1", "agent-x")]);
         var tool = new SessionTool(store.Object, AgentId.From("agent-a"), SessionAccessLevel.All);
 
         var result = await tool.ExecuteAsync("call-1", Args("list", agentId: "agent-x"));
@@ -141,8 +138,7 @@ public sealed class SessionToolTests
         var session = CreateSession("s1", "agent-a");
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Tell me about weather in Seattle" });
         session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = "Seattle has mild winters." });
-        store.Setup(s => s.ListAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([session]);
+        SetupBoundedStore(store, "agent-a", [session]);
         var tool = new SessionTool(store.Object, AgentId.From("agent-a"));
 
         var result = await tool.ExecuteAsync("call-1", Args("search", query: "Seattle"));
@@ -158,14 +154,24 @@ public sealed class SessionToolTests
         var store = new Mock<ISessionStore>();
         var session = CreateSession("s1", "agent-a");
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Hello world" });
-        store.Setup(s => s.ListAsync(AgentId.From("agent-a"), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([session]);
+        SetupBoundedStore(store, "agent-a", [session]);
         var tool = new SessionTool(store.Object, AgentId.From("agent-a"));
 
         var result = await tool.ExecuteAsync("call-1", Args("search", query: "nonexistent"));
         var text = ReadText(result);
 
-        text.ShouldBe("[]");
+        using var json = JsonDocument.Parse(text);
+        json.RootElement.GetProperty("items").GetRawText().ShouldBe("[]");
+        json.RootElement.GetProperty("complete").GetBoolean().ShouldBeTrue();
+    }
+
+    private static void SetupBoundedStore(Mock<ISessionStore> store, string owner, GatewaySession[] sessions)
+    {
+        store.Setup(s => s.ListSummaryPageAsync(It.Is<SessionSummaryQuery>(q => q.AgentId == owner), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionSummaryPage(sessions.Select(SessionSummary.FromSession).ToList(), sessions.Length, false));
+        foreach (var session in sessions)
+            store.Setup(s => s.ScanHistoryAsync(session.SessionId, It.IsAny<SessionHistoryScan>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new SessionHistoryScanPage(session.GetHistorySnapshot(), true, session.GetHistorySnapshot().Sum(e => e.Content.Length)));
     }
 
     private static GatewaySession CreateSession(string sessionId, string agentId)

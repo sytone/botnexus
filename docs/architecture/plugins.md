@@ -14,7 +14,7 @@ privilege fence.
 ```
 my-plugin/
   .botnexus-plugin/
-    plugin.json        # the manifest - the only required file
+    plugin.json        # the native manifest - its only required file
   skills/              # discovered by convention
   agents/
   commands/
@@ -22,13 +22,16 @@ my-plugin/
   .mcp.json
 ```
 
-The manifest lives at `.botnexus-plugin/plugin.json`. A directory without that file is not a
-plugin and is rejected rather than treated as an empty one.
+The native manifest lives at `.botnexus-plugin/plugin.json`. The lifecycle also accepts a
+bounded, experimental Claude import from `.claude-plugin/plugin.json`, as described below.
+A root legacy `plugin.json` also supports the bounded skills-only import described below.
+Without any supported manifest, only conventional skills content with an explicit operator-supplied
+`PluginInstallRequest.Name` is accepted. The source URL and directory name never supply identity.
 
 ## The manifest
 
-The manifest adopts the Claude Code field set so plugins authored for that ecosystem port with
-no translation layer. Only `name` is required:
+The native manifest uses a strict subset of Claude-style metadata and component fields. This
+is not full Claude Code compatibility. Only `name` is required:
 
 ```json
 { "name": "hello-world" }
@@ -36,12 +39,90 @@ no translation layer. Only `name` is required:
 
 That single-field manifest is valid and complete. Components are **discovered by convention**
 at the plugin root, so a well-laid-out plugin never needs to enumerate its own paths. The
-explicit path fields (`skills`, `agents`, `commands`, `hooks`, `mcpServers`) exist only as an
-override for plugins with a non-conventional layout.
+native schema accepts explicit path fields (`skills`, `agents`, `commands`, `hooks`,
+`mcpServers`), but schema acceptance does not mean every runtime consumer implements an
+override. `PluginSkillRootResolver` uses only `skills/`; `PluginAgentConfigurationSource`
+independently loads conventional `agents/*.json`. The MCP reader supports its explicit path
+and otherwise probes `.botnexus-plugin/mcp.json`, then `.mcp.json`.
 
 This distinction is load-bearing in the parsed model: an omitted component field deserialises
 to `null`, meaning *discover by convention*. It is never normalised to an empty collection,
 which would instead mean *this plugin deliberately has none*.
+
+## Legacy root import: conventional skills and additive metadata
+
+For maintainers importing a legacy portable skills package, the lifecycle accepts root
+`plugin.json` without requiring BotNexus metadata. This is a bounded subset, not full Agent
+Plugins 1.0 support. A `$schema` or `schemaVersion` declaration is rejected rather than
+silently interpreted as legacy. The native parser remains strict and native-only.
+
+The baseline requires a native-compatible `name` and accepts native metadata fields plus a
+string `displayName` (retained in the original file, not projected into native metadata).
+`skills` may be omitted, or name only `skills`, `./skills`, `skills/`, or `./skills/`, as a
+string or single-element array. Skills continue through `PluginSkillRootResolver` and the
+existing discovery and trust policies; this adds no second skill loader.
+
+Optional enhancement metadata is selected in this order:
+
+1. `.botnexus-plugin/plugin.json`
+2. `botnexus-plugin.json`
+
+The enhancement may omit identity and other baseline metadata. Missing fields inherit from
+the baseline; non-conflicting object fields merge recursively. Contradictory duplicate values
+fail with a diagnostic naming both files. The selected nested enhancement takes precedence
+over the root form; a malformed selected enhancement never falls back. Both source files stay
+in the exact-file ownership and trust catalog. Removing enhancement metadata on a subsequent
+update leaves the basic legacy package valid.
+
+This slice adds metadata only, not new executable capabilities. Explicit hooks, commands,
+agents, MCP and LSP declarations or discovered behavior paths are rejected before promotion,
+including `mcp.json`, `com.github.copilot`, and `.claude-plugin`. Native enhancements cannot
+add these behaviors or redirect/narrow the portable skills directory. Unknown fields, duplicate
+JSON fields, links, path aliases and case-insensitive collisions fail closed. Native-only and
+Claude-only inputs retain their existing behavior.
+
+Receipts record `manifestFormat: "Legacy"`; updates revalidate the source and removal uses the
+existing exact-file receipt, preserving unowned files. Versioned Agent Plugins manifests,
+portable MCP/agent projection, monorepo subpath selection, richer provenance receipts and
+private-source authentication acceptance remain outside this slice of #4726.
+
+## Experimental Claude import: conventional skills only
+
+This bounded implementation is for plugin authors and maintainers who need conventional
+skills to enter the existing install, update, trust-catalog and exact-file removal lifecycle.
+`PluginImportAdapter` validates fetched content in staging, before any file is promoted. It
+does not execute plugin scripts, rewrite source manifests, or create a synthetic native
+manifest. Original plugin files remain part of the installed file receipt.
+
+| Input or capability | Bounded support |
+| --- | --- |
+| Native `.botnexus-plugin/plugin.json` only | Existing strict schema and ordinary lifecycle behavior remain supported. Linked metadata files or directories, including dangling links, are now rejected by staging preflight. |
+| Claude `.claude-plugin/plugin.json` only | Required native-compatible `name`; optional `description`, `version`, `author`, `homepage`, `repository`, `license`, `keywords`, validated against native metadata rules. Unknown fields and duplicate fields, including nested duplicates, fail. |
+| Conventional `skills/` | Supported through the existing skill-root resolver and skill discovery. |
+| Claude `skills` declaration | Omitted, `"./skills"`, `"skills"`, or a one-element array containing either path. Empty, custom, additional or escaping paths fail rather than being ignored. |
+| Claude hooks, commands, agents, MCP or LSP declarations | Rejected, even when the declared value is empty. All offending fields are reported. |
+| Discovered behavior in a Claude or manifestless import | `hooks`, `commands`, `agents`, `lsp`, `.mcp.json`, `.lsp.json` and `.botnexus-plugin/mcp.json` paths are rejected, whether files or directories. Omitting declarations cannot bypass the check. |
+| Both manifests | Native whole-manifest authority, with no metadata inheritance. Both manifests must stay within conventional skills; native unsupported component declarations or custom skill paths fail too. Claude content must pass the bounded checks and declare the same identity. A malformed present native manifest fails; there is no Claude fallback. |
+| Missing both manifests | Requires an explicit `PluginInstallRequest.Name` validated by the native identity schema and at least one regular `skills/<skill>/SKILL.md` file with canonical spelling. Missing or empty skills, a loose root `SKILL.md`, and nested-only skill files do not qualify. No manifest is written to disk. |
+| Missing or invalid manifestless identity | Rejected. No identity is inferred from the source, checkout directory, or skill name. |
+| Present malformed or linked metadata | Rejected, never reinterpreted as manifestless content. Native manifest validation remains authoritative when present. |
+| Claude and manifestless path safety | Staging preflight rejects symbolic links and reparse points (including dangling links), nonportable names, case-insensitive destination collisions, and noncanonical conventional root names. Manifestless skill entry files must be spelled `SKILL.md`. |
+| Claude/Copilot marketplace relative selection | Explicit `PluginInstallRequest.MarketplacePluginName` selects one entry from the fetched repository's `.claude-plugin/marketplace.json` or `.github/plugin/marketplace.json`; see the limited matrix below. No automatic reinterpretation of ordinary requests. |
+| Consent, UI or extra component execution | No expansion in this stage; unsupported content fails rather than producing partial success. |
+
+The installed receipt stores `manifestFormat` as `"Native"` or `"Claude"` for the selected
+manifest, including `"Claude"` for accepted manifestless imports. Manifestless receipts keep the
+operator-supplied name and have no manifest version. Updates pass the recorded name back to
+staging validation; a later manifest cannot silently rename the installed plugin. Removal uses
+the existing exact-file receipt and preserves unowned files. Older receipts without the format
+field default to `Native`. Successful updates refresh
+the format along with the manifest version and file set. A rejected candidate revision leaves
+the installed content and receipt untouched. Format selection does not grant trust: the
+existing skill validation and content-trust policies still apply.
+
+The strict native schema and `PluginManifestParser.ParsePluginDirectory` remain native-only.
+The separate adapter is a lifecycle import boundary, not a general Claude manifest parser or
+a promise that arbitrary Claude plugins work in BotNexus.
 
 ## Marketplaces
 
@@ -58,9 +139,48 @@ and `plugins[]`; each entry requires a `name` and a `source`.
 }
 ```
 
+### Experimental explicit Claude and Copilot marketplace selection
+
+This is one bounded slice of #4640, not full Claude marketplace compatibility. The separate
+`ClaudeMarketplaceSelection` staging helper does not change the native catalog parser or schema.
+It follows [Claude's repository-root relative source rule](https://code.claude.com/docs/en/plugins/marketplace-reference).
+The existing endpoint binds `PluginInstallRequest` directly, so its optional
+`MarketplacePluginName` property is available to API callers as `marketplacePluginName`.
+The CLI forwards the same selection without rewriting the repository URL:
+
+```shell
+botnexus plugin install https://example.test/catalog.git --marketplace-plugin chosen --reference main
+```
+
+The selector probes canonical `.claude-plugin/marketplace.json` and
+`.github/plugin/marketplace.json` paths after tree preflight. Exactly one must be present;
+both present, malformed catalogs and case aliases fail closed, without dialect fallback.
+The latter path supports the inspected Copilot relative-source catalog shape, including
+entry-level descriptive `version`. Generated native catalog requests leave the selector null.
+Marketplace registration persistence, catalog browsing and init/UI selection remain a later stage.
+
+| Capability | Limited support |
+| --- | --- |
+| Fetch and revision | Fetch the whole source once using the existing transport and requested reference. Record its resolved revision, source, reference, `marketplacePluginName`, `marketplaceCatalogPath` and `marketplaceSourcePath`; update replays repository/reference/identity and revalidates the current catalog, refreshing path evidence only on successful replacement. No additional entry source is fetched. |
+| Selected source | String `"./"` or `"./contained/subdir"`, resolved from the fetched root, not `.claude-plugin/`. Nested selection detaches only that subtree before import. Root selection owns the whole root, including its catalog, so all root content must pass the skills-only checks. |
+| Identity | Explicit selector, selected entry name and any plugin manifests must agree exactly and pass native identity rules. Optional request `Name` must agree too. A manifestless selected directory uses the selector as explicit identity and still requires canonical skill files. Catalog-only root metadata is permitted for this case only when `.claude-plugin` contains exactly the canonical `marketplace.json` file. Empty metadata directories and nested catalog-only metadata are rejected. |
+| Catalog shape | JSON object with nonempty `name`, required `owner` object with nonempty string `name`, and `plugins` array. Optional owner `email` and `url` must be strings. Optional descriptive `metadata` (`description`, `version`) and string `$schema` are not executed or fetched. Other catalog metadata fields, including path overrides, fail. Each entry needs a valid name and source. |
+| Selected entry fields | `name`, `source`, and descriptive `description`, `author`, `homepage`, `repository`, `license`, `keywords`. Metadata uses native type validation. Copilot catalogs additionally accept descriptive `version`, validated but never merged into the package manifest. Claude entry version overrides still fail. Component fields, `strict` and unknown selected-entry fields fail, even if null or empty. No inheritance or partial component import. |
+| Unsupported selected sources | Typed objects (including GitHub, git, URL, package and other remote forms), absolute paths, URIs, traversal, backslashes, percent encoding, empty/dot segments, trailing slash except `./`, and nonportable segments fail. |
+| Safety and bounds | Catalog reads stop at 1 MiB plus one byte and reject over-limit UTF-8 bytes. Duplicate fields anywhere and duplicate plugin names fail. The entire fetched source must pass link/reparse-point, portable-name and collision preflight before metadata is opened; this intentionally rejects unsafe unselected siblings too. |
+| Unselected entries | Never fetched, promoted or activated. Their names/source presence and global duplicate fields are checked; unsupported source types or component declarations in unselected entries do not activate anything. |
+| Imported components | Existing conventional-skills importer, catalog generation, trust checks and exact-file receipts remain in use. Selected native-only manifests also cannot enable hooks, commands, agents, MCP or custom skill paths. Native whole-manifest authority is preserved, not merged with catalog metadata. Selected root `plugin.json` packages use the existing bounded legacy importer and its additive enhancement rules. |
+| Update/removal | A rejected staged candidate preserves the previous receipt and content. A successful update refreshes revision, files and trust catalog; removal deletes only recorded files. Existing pinning and same-revision behavior are unchanged. |
+
+The link-free preflight is deliberately stricter than checking only the selected subtree.
+This stage does not provide arbitrary HTTP catalog loading, full upstream schema validation,
+plugin dependency resolution, marketplace version constraints, component overrides, consent or
+foreign hook execution. A root-source plugin that declares hooks (including Ponytail-shaped
+inputs) remains unsupported rather than being installed with hooks silently dropped.
+
 ## Schema is the single source of truth
 
-Two JSON Schema files define the contract:
+Two JSON Schema files define the native manifest and marketplace contracts:
 
 - `src/extensions/BotNexus.Extensions.Plugins/Schemas/plugin-manifest.schema.json`
 - `src/extensions/BotNexus.Extensions.Plugins/Schemas/marketplace.schema.json`
@@ -111,6 +231,35 @@ The fetcher reports the **resolved revision** (the commit SHA), never the reques
 Recording `main` would make the question "has the source moved since install?" unanswerable,
 and that is precisely the question update exists to answer. The installed record therefore
 carries both: `reference` is what update re-resolves, `resolvedVersion` is what is on disk.
+
+### Git source admission, authentication and diagnostics
+
+The Git fetch boundary admits a conservative source grammar before invoking Git. Supported
+forms are `https://host[:port]/path`, `ssh://[user@]host[:port]/path`, and
+`user@host:path` (including an absolute remote path). Hosts use ASCII letters, digits, dots
+and hyphens; SSH usernames use letters, digits, underscores, dots and hyphens. Repository
+paths use letters, digits, underscores, dots, hyphens, slashes and tildes, with a nonempty
+first segment. IPv6 literals and percent-encoded sources are not supported by this grammar.
+
+HTTPS user information, SSH passwords, query parameters, fragments, whitespace, control
+characters and backslashes are rejected, not stripped or normalized. Other transports,
+Git remote-helper syntax (such as `ext::`), file URLs and local paths are rejected too.
+An SSH username such as `git@` is supported; it is not an inline password. **Local
+user-checkout handoff is not supported.** A checkout accessible to a user's shell is not
+an alternative installation source.
+
+Git owns authentication in the **actual gateway or container environment**. This path does
+not use HTTP marketplace credential providers, browser sessions or cookies. Access from a
+user's shell does not establish access for the gateway. After a fetch failure, check Git
+availability, connectivity and repository access in that actual environment, then retry.
+A Git failure alone does not establish a permission or credential problem.
+
+Source rejections and fetch failures use fixed diagnostics. Fetch exceptions and the lifecycle
+fetch boundary do not expose the raw source, Git stdout/stderr, runner exception messages or
+inner exception chains. Caller-requested cancellation remains cancellation, without runner
+details. This is a bounded fetch-boundary contract (Refs #4151), not a claim that marketplace
+metadata or all plugin state and response projections are private. Admission does not grant
+trust: manifest validation and content trust checks still apply.
 
 ### Install is all-or-nothing
 

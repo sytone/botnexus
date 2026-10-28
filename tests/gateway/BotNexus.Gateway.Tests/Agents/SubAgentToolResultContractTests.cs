@@ -204,6 +204,27 @@ public sealed class SubAgentToolResultContractTests
     }
 
     [Fact]
+    public async Task ManageTool_RuntimeContext_RetainsAuthoritativeParentRunOnReceipt()
+    {
+        await using var harness = new Harness();
+        var info = await harness.SpawnBackgroundAsync();
+        harness.CompleteChild();
+        await harness.Manager.WaitForRunCompletionForTestAsync(info.SubAgentId).WaitAsync(Deadline);
+        var args = ManageArgs(info, "wait");
+        var run = BotNexus.Agent.Core.Types.AgentRunId.From("parent-consumer-run");
+        var call = new BotNexus.Agent.Providers.Core.Models.ToolCallContent("context-call", "manage_subagent", args);
+        var context = new BotNexus.Agent.Core.ExtensionPoints.ToolExecution.ToolExecutionContext(
+            new AssistantAgentMessage(string.Empty), call, args, new AgentContext(null, [], [harness.ManageTool]))
+            { AgentRunId = run };
+        ReadText(await harness.ManageTool.ExecuteAsync(context)).ShouldContain(Summary);
+        var parent = (await harness.Store.GetAsync(ParentSession)).ShouldNotBeNull();
+        parent.GetHistorySnapshot().Single(e => e.Kind == MessageKind.ToolResult && e.ToolCallId == "context-call")
+            .AgentRunId.ShouldBe(BotNexus.Domain.Primitives.AgentRunId.From(run.Value));
+        ReadText(await harness.ManageTool.ExecuteAsync(context with { AgentRunId = BotNexus.Agent.Core.Types.AgentRunId.From("different-run") }))
+            .ShouldNotContain(Summary);
+    }
+
+    [Fact]
     public async Task SpawnTool_AwaitedResult_IsNotRedeliveredByStatus()
     {
         await using var harness = new Harness();
@@ -586,6 +607,86 @@ public sealed class SubAgentToolResultContractTests
         (await harness.Manager.ListAsync(ParentSession)).ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task RetainedInspection_ComposedSpawnAuditWaitAndColdFileReads_PreserveReceiptAndParentBoundary()
+    {
+        var fs = new System.IO.Abstractions.TestingHelpers.MockFileSystem();
+        var conversations = new InMemoryConversationStore();
+        var root = Path.Combine(Path.GetTempPath(), "composed-inspection");
+        FileSessionStore Store() => new(root, NullLogger<FileSessionStore>.Instance, fs, conversations);
+        await conversations.CreateAsync(new Conversation { ConversationId = ConversationId.From("parent-conversation"),
+            AgentId = AgentId.From("parent-agent") });
+        await using var harness = new Harness(store: Store(), conversations: conversations);
+        var info = await harness.SpawnBackgroundAsync();
+        var retained = (await Store().GetSubAgentSessionAsync(info.SubAgentId)).ShouldNotBeNull();
+        retained.ParentSessionId.ShouldBe(ParentSession.Value);
+        retained.ChildSessionId.ShouldBe(info.ChildSessionId.Value);
+        var waiting = harness.ManageTool.ExecuteAsync("composed-wait", ManageArgs(info, "wait"));
+        waiting.IsCompleted.ShouldBeFalse();
+        var summary = "composed-result-" + new string('z', 7000) + "-FINAL-TAIL";
+        harness.ChildResponse.TrySetResult(new AgentResponse { Content = summary, ToolCalls =
+            [new AgentToolCallInfo("audit-call", "read", IsError: false, Arguments: "{\"path\":\"evidence.txt\"}", ResultContent: "real-audit-evidence")] });
+        var consumed = await waiting.WaitAsync(Deadline);
+        await harness.Manager.WaitForRunCompletionForTestAsync(info.SubAgentId).WaitAsync(Deadline);
+        ReadText(consumed).ShouldContain("composed-result-");
+        var parentBefore = (await Store().GetAsync(ParentSession)).ShouldNotBeNull().GetHistorySnapshot().ToArray();
+        parentBefore.Count(e => e.ToolCallId == "composed-wait" && e.Kind == MessageKind.ToolResult).ShouldBe(1);
+        var childRows = (await Store().GetAsync(info.ChildSessionId)).ShouldNotBeNull().GetHistorySnapshot().ToArray();
+        childRows.Where(e => e.Role == MessageRole.Tool).ShouldHaveSingleItem().Kind.ShouldBe(MessageKind.ToolResult);
+        childRows.Last().Kind.ShouldBe(MessageKind.SubAgentResponse);
+        childRows.Last().Content.ShouldBe(summary);
+
+        // Both manager AND file store are cold. Neither admission nor tool history is seeded by the test.
+        var cold = harness.CreateManager(Store());
+        var tool = new SubAgentManageTool(cold, ParentSession);
+        var recovered = "";
+        var offset = 0;
+        do
+        {
+            var args = ManageArgs(info, "result"); args["offset"] = offset;
+            var page = await tool.ExecuteAsync("page", args);
+            var repeat = await tool.ExecuteAsync("repeat-page", args);
+            ReadText(repeat).ShouldBe(ReadText(page));
+            using var json = JsonDocument.Parse(ReadText(page));
+            var value = json.RootElement;
+            value.GetProperty("originalLength").GetInt32().ShouldBe(summary.Length);
+            value.GetProperty("fullResultAvailable").GetBoolean().ShouldBeTrue();
+            var content = value.GetProperty("content").GetString().ShouldNotBeNull();
+            content.Length.ShouldBeLessThanOrEqualTo(2048);
+            recovered += content;
+            var next = value.GetProperty("nextOffset");
+            offset = next.ValueKind == JsonValueKind.Null ? -1 : next.GetInt32();
+        } while (offset >= 0);
+        recovered.ShouldBe(summary);
+        var history = await tool.ExecuteAsync("history", ManageArgs(info, "history"));
+        ReadText(await tool.ExecuteAsync("history-again", ManageArgs(info, "history"))).ShouldBe(ReadText(history));
+        using (var json = JsonDocument.Parse(ReadText(history)))
+        {
+            var entries = json.RootElement.GetProperty("entries");
+            entries.GetArrayLength().ShouldBe(1);
+            entries[0].GetProperty("kind").GetString().ShouldBe(MessageKind.ToolResult.Value);
+            entries[0].GetProperty("arguments").GetString().ShouldBe("{\"path\":\"evidence.txt\"}");
+            entries[0].GetProperty("content").GetString().ShouldBe("real-audit-evidence");
+            foreach (var entry in entries.EnumerateArray())
+            {
+                entry.GetProperty("toolName").GetString().ShouldBe("read");
+                entry.GetProperty("toolCallId").GetString().ShouldBe("audit-call");
+            }
+        }
+        ReadText(await tool.ExecuteAsync("composed-wait", ManageArgs(info, "wait"))).ShouldBe(ReadText(consumed));
+        ReadText(await tool.ExecuteAsync("second-wait", ManageArgs(info, "wait"))).ShouldNotContain("composed-result-");
+        var parentAfter = (await Store().GetAsync(ParentSession)).ShouldNotBeNull().GetHistorySnapshot().ToArray();
+        parentAfter.Length.ShouldBe(parentBefore.Length);
+        parentAfter.Count(e => e.ToolCallId == "composed-wait" && e.Kind == MessageKind.ToolResult).ShouldBe(1);
+        foreach (var requester in new[] { "sibling-session", "parent-session-rollover" })
+        {
+            var denied = new SubAgentManageTool(cold, SessionId.From(requester));
+            foreach (var action in new[] { "result", "history" })
+                await Should.ThrowAsync<UnauthorizedAccessException>(() => denied.ExecuteAsync("denied", ManageArgs(info, action)));
+        }
+        harness.Dispatcher.Verify(d => d.DispatchAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private static Dictionary<string, object?> ManageArgs(SubAgentInfo info, string action)
         => new() { ["subAgentId"] = info.SubAgentId, ["action"] = action };
 
@@ -608,8 +709,8 @@ public sealed class SubAgentToolResultContractTests
         public TaskCompletionSource<bool> SpawnPublished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<AgentResponse> ChildResponse { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<GatewayActivity> TerminalPublished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public InMemorySessionStore Store { get; } = new();
-        public InMemoryConversationStore Conversations { get; } = new();
+        public BotNexus.Gateway.Abstractions.Sessions.ISessionStore Store { get; }
+        public InMemoryConversationStore Conversations { get; }
         public Mock<IChannelDispatcher> Dispatcher { get; } = new();
         public Mock<IAgentSupervisor> Supervisor { get; } = new();
         private readonly Mock<IAgentRegistry> _registry = new();
@@ -620,12 +721,17 @@ public sealed class SubAgentToolResultContractTests
 
         private readonly SubAgentOptions _options;
 
-        public Harness(int timeoutSeconds = 600, SubAgentOptions? options = null)
+        public Harness(int timeoutSeconds = 600, SubAgentOptions? options = null,
+            BotNexus.Gateway.Abstractions.Sessions.ISessionStore? store = null,
+            InMemoryConversationStore? conversations = null)
         {
+            Conversations = conversations ?? new InMemoryConversationStore();
+            Store = store ?? new InMemorySessionStore();
             _options = options ?? new SubAgentOptions { MaxTimeoutSeconds = timeoutSeconds, DefaultTimeoutSeconds = timeoutSeconds };
             // A receipt must attach to an existing, owned parent session.
             var parent = Store.GetOrCreateAsync(ParentSession, AgentId.From("parent-agent")).GetAwaiter().GetResult();
             parent.ConversationId = ConversationId.From("parent-conversation");
+            Store.SaveAsync(parent).GetAwaiter().GetResult();
             var handle = new Mock<IAgentHandle>();
             handle.SetupGet(h => h.AgentId).Returns(AgentId.From("child-agent"));
             handle.SetupGet(h => h.SessionId).Returns(SessionId.From("child-session"));
@@ -658,10 +764,10 @@ public sealed class SubAgentToolResultContractTests
             ManageTool = new SubAgentManageTool(Manager, ParentSession);
         }
 
-        public DefaultSubAgentManager CreateManager() => new(
+        public DefaultSubAgentManager CreateManager(BotNexus.Gateway.Abstractions.Sessions.ISessionStore? store = null) => new(
             Supervisor.Object, _registry.Object, _activity.Object, Dispatcher.Object,
             new TestOptionsMonitor<GatewayOptions>(new GatewayOptions { SubAgents = _options }), NullLogger<DefaultSubAgentManager>.Instance,
-            sessionStore: Store, conversationStore: Conversations);
+            sessionStore: store ?? Store, conversationStore: Conversations);
 
         public async Task<SubAgentInfo> SpawnBackgroundAsync()
         {

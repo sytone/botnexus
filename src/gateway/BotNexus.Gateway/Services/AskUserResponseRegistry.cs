@@ -20,6 +20,19 @@ public sealed class AskUserResponseRegistry : IAskUserResponseRegistry, IDisposa
 {
     private readonly ConcurrentDictionary<string, PendingAskUserResponse> _pendingByRequestId = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _requestIdByConversation = new(StringComparer.Ordinal);
+    private readonly TimeProvider _timeProvider;
+
+    /// <summary>Uses system time for ordinary construction and dependency injection.</summary>
+    public AskUserResponseRegistry() : this(TimeProvider.System)
+    {
+    }
+
+    /// <summary>Allows timeout tests to control the timer scheduler without wall-clock waits.</summary>
+    public AskUserResponseRegistry(TimeProvider timeProvider)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        _timeProvider = timeProvider;
+    }
 
     /// <inheritdoc />
     public (string RequestId, Task<AskUserResponse> Task) Register(ConversationId conversationId, TimeSpan? timeout)
@@ -51,7 +64,7 @@ public sealed class AskUserResponseRegistry : IAskUserResponseRegistry, IDisposa
 
             if (timeout is { } timeoutValue && timeoutValue > TimeSpan.Zero)
             {
-                pending.TimeoutCts = new CancellationTokenSource(timeoutValue);
+                pending.TimeoutCts = new CancellationTokenSource(timeoutValue, _timeProvider);
                 pending.TimeoutRegistration = pending.TimeoutCts.Token.Register(() => HandleTimeout(pending));
             }
 

@@ -39,6 +39,7 @@ COPY --from=build /app/source-tree /app/source-tree
 COPY --from=build /app/playwright/node /usr/local/bin/node
 COPY skills/botnexus-ui-evidence/container/entrypoint.mjs /app/entrypoint.mjs
 COPY skills/botnexus-ui-evidence/container/capture.mjs /app/capture.mjs
+COPY skills/botnexus-ui-evidence/container/capture-menu.mjs /app/capture-menu.mjs
 RUN chmod 0755 /usr/local/bin/node
 ENV NODE_PATH=/app/playwright/node_modules
 ENTRYPOINT ["node","/app/entrypoint.mjs"]

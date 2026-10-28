@@ -81,6 +81,7 @@ public sealed class CronTrigger(
             session.Metadata.Remove("modelOverride");
         else
             session.Metadata["modelOverride"] = request!.ModelOverride;
+        request?.ApplyCronModelMetadata(session);
 
         if (request?.CronJobId is null)
             session.Metadata.Remove("cronJobId");
@@ -214,7 +215,7 @@ public sealed class CronTrigger(
             foreach (var toolEntry in ProjectToolEntries(response))
                 session.AddEntry(toolEntry);
 
-            session.AddEntry(new SessionEntry { Role = MessageRole.Assistant, Content = response.Content });
+            session.AddEntry(new SessionEntry { AgentRunId = response.AgentRunId, Role = MessageRole.Assistant, Content = response.Content });
         }
         finally
         {
@@ -247,7 +248,9 @@ public sealed class CronTrigger(
     /// </summary>
     private static bool IsNoOpTurn(AgentResponse response)
     {
-        if (response.ToolCalls.Count > 0)
+        // An explicit non-completed disposition is evidence, not a disposable silent wake.
+        // Legacy strategies without completion metadata retain their existing no-op behavior.
+        if (response.Completion is { Status: not "Completed" } || response.ToolCalls.Count > 0)
             return false;
 
         var content = response.Content;
