@@ -125,11 +125,16 @@ public sealed class ConversationsControllerContextTests
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task GetContext_ResetOrReplacementDuringPolicyRead_DiscardsOldSnapshot(bool reset)
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task GetContext_ResetOrReplacementDuringPolicyRead_DiscardsOldSnapshot(bool reset, bool idContainsTokenCount)
     {
-        var conversation = await CreateAsync();
+        // Token-count digits are valid identity data, not evidence of a leaked context snapshot.
+        var conversation = await CreateAsync(conversationId: idContainsTokenCount
+            ? ConversationId.From("c_31400000000000000000000000000000")
+            : null);
         Resident(conversation, 314);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<CompactionPolicyDiagnostics?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -142,10 +147,12 @@ public sealed class ConversationsControllerContextTests
 
         var json = Json(await pending);
 
+        json.GetProperty("conversationId").GetString().ShouldBe(conversation.ConversationId.Value);
         json.GetProperty("status").GetString().ShouldBe("binding-changed");
+        json.GetProperty("agentId").ValueKind.ShouldBe(JsonValueKind.Null);
         json.GetProperty("sessionId").ValueKind.ShouldBe(JsonValueKind.Null);
+        json.GetProperty("source").ValueKind.ShouldBe(JsonValueKind.Null);
         json.GetProperty("context").ValueKind.ShouldBe(JsonValueKind.Null);
-        json.GetRawText().ShouldNotContain("314");
     }
 
     [Fact]
@@ -222,11 +229,12 @@ public sealed class ConversationsControllerContextTests
         JsonSerializer.SerializeToElement(result.ShouldBeOfType<OkObjectResult>().Value,
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
-    private async Task<Conversation> CreateAsync(ConversationVisibility visibility = ConversationVisibility.UserFacing)
+    private async Task<Conversation> CreateAsync(
+        ConversationVisibility visibility = ConversationVisibility.UserFacing, ConversationId? conversationId = null)
     {
         var conversation = await _conversations.CreateAsync(new Conversation
         {
-            ConversationId = ConversationId.Create(), AgentId = Owner, Visibility = visibility,
+            ConversationId = conversationId ?? ConversationId.Create(), AgentId = Owner, Visibility = visibility,
             Title = "context", CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         });
         var session = await _sessions.GetOrCreateAsync(SessionId.Create(), Owner);
