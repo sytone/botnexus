@@ -19,8 +19,19 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
         "hooks", "commands", "agents", "mcpServers", "lspServers",
     };
 
-    public PluginParseResult<ImportedPlugin> ParseDirectory(string directory, string? expectedName = null)
+    public PluginParseResult<ImportedPlugin> ParseDirectory(string directory, string? expectedName = null, bool marketplaceSelected = false)
     {
+        // Root legacy inputs are a separate dialect, including when native enhancement is present.
+        // Detect entries rather than File.Exists so dangling links and aliases cannot bypass preflight.
+        if (Directory.EnumerateFileSystemEntries(directory).Any(path =>
+            Path.GetFileName(path).Equals("plugin.json", StringComparison.OrdinalIgnoreCase)))
+        {
+            var legacySafetyErrors = ValidateImportTree(directory);
+            if (legacySafetyErrors.Count > 0)
+                return PluginParseResult<ImportedPlugin>.Failure(legacySafetyErrors);
+            return new LegacyPluginImportAdapter(parser).ParseDirectory(directory);
+        }
+
         // Inspect entry names, not File.Exists: a dangling metadata link still marks a
         // Claude input. Do not parse either manifest until the entire tree passes preflight.
         var hasClaudeInput = Directory.EnumerateFileSystemEntries(directory).Any(path =>
@@ -37,7 +48,7 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
         var linkedNativeMetadata = (Directory.Exists(nativeMetadata)
                 && (File.GetAttributes(nativeMetadata) & FileAttributes.ReparsePoint) != 0)
             || (File.Exists(nativePath) && (File.GetAttributes(nativePath) & FileAttributes.ReparsePoint) != 0);
-        if (hasClaudeInput || !File.Exists(nativePath) || linkedNativeMetadata)
+        if (marketplaceSelected || hasClaudeInput || !File.Exists(nativePath) || linkedNativeMetadata)
         {
             var safetyErrors = ValidateImportTree(directory);
             if (safetyErrors.Count > 0)
@@ -56,7 +67,11 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
                 return PluginParseResult<ImportedPlugin>.Success(new(nativeOnly, PluginManifestFormat.Native));
             // A metadata entry that is present but cannot be read is not permission to
             // reinterpret the input as manifestless (including directory/file aliases).
-            if (hasClaudeInput || File.Exists(nativeMetadata) || Directory.Exists(nativePath)
+            var metadataEntries = Directory.Exists(Path.Combine(directory, ".claude-plugin"))
+                ? Directory.GetFileSystemEntries(Path.Combine(directory, ".claude-plugin")) : [];
+            var catalogOnlyMetadata = marketplaceSelected && metadataEntries.Length == 1
+                && Path.GetFileName(metadataEntries[0]) == "marketplace.json" && File.Exists(metadataEntries[0]);
+            if ((hasClaudeInput && !catalogOnlyMetadata) || File.Exists(nativeMetadata) || Directory.Exists(nativePath)
                 || HasManifestEntry(directory, PluginManifestParser.PluginMetadataDirectoryName))
                 return PluginParseResult<ImportedPlugin>.Failure(ClaudeManifestPath,
                     "Present plugin metadata does not contain a readable canonical manifest.");
@@ -182,7 +197,7 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
             .Any(entry => Path.GetFileName(entry).Equals(PluginManifestParser.ManifestFileName, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static List<PluginValidationError> ValidateDiscoveredComponents(string directory)
+    internal static List<PluginValidationError> ValidateDiscoveredComponents(string directory)
     {
         var errors = new List<PluginValidationError>();
         foreach (var relative in new[] { "hooks", "commands", "agents", "lsp", ".mcp.json", ".lsp.json", ".botnexus-plugin/mcp.json" })
@@ -194,7 +209,7 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
         return errors;
     }
 
-    private static List<PluginValidationError> ValidateImportTree(string directory)
+    internal static List<PluginValidationError> ValidateImportTree(string directory)
     {
         var errors = new List<PluginValidationError>();
         var root = Path.GetFullPath(directory);
@@ -238,7 +253,8 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
                         foreach (var conventional in new[]
                         {
                             "skills", "hooks", "commands", "agents", "lsp", ".mcp.json", ".lsp.json",
-                            ".claude-plugin", ".botnexus-plugin",
+                            ".claude-plugin", ".botnexus-plugin", "plugin.json", "botnexus-plugin.json",
+                            "mcp.json", "com.github.copilot",
                         })
                         {
                             if (name.Equals(conventional, StringComparison.OrdinalIgnoreCase)
@@ -246,7 +262,14 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
                                 errors.Add(new(field, $"Claude import requires canonical spelling '{conventional}'."));
                         }
                     }
-                    if ((attributes & FileAttributes.Directory) != 0)
+                    if (Path.GetRelativePath(root, current) == PluginManifestParser.PluginMetadataDirectoryName
+                        && name.Equals(PluginManifestParser.ManifestFileName, StringComparison.OrdinalIgnoreCase)
+                        && !name.Equals(PluginManifestParser.ManifestFileName, StringComparison.Ordinal))
+                        errors.Add(new(field, "Import requires canonical spelling '.botnexus-plugin/plugin.json'."));
+                    // The root .git directory is fetch transport state, not plugin content.
+                    // Its entry has already passed link/reparse and destination checks above;
+                    // nested .git directories remain ordinary working-tree content to inspect.
+                    if ((attributes & FileAttributes.Directory) != 0 && !(current == root && name == ".git"))
                         pending.Push(entry);
                 }
             }
@@ -258,7 +281,7 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
         return errors;
     }
 
-    private static bool IsPortableName(string name)
+    internal static bool IsPortableName(string name)
     {
         if (name.Length == 0 || name.EndsWith('.') || name.EndsWith(' ')
             || name.Any(c => c < 32 || "<>:\"/\\|?*".Contains(c)))
@@ -279,7 +302,7 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
     private static bool IsConventionalSkillsPath(JsonElement value) =>
         value.ValueKind == JsonValueKind.String && value.GetString() is "./skills" or "skills";
 
-    private static void CheckDuplicates(JsonElement value, string path, List<PluginValidationError> errors)
+    internal static void CheckDuplicates(JsonElement value, string path, List<PluginValidationError> errors)
     {
         if (value.ValueKind == JsonValueKind.Object)
         {

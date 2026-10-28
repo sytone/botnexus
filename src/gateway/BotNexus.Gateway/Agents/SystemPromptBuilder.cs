@@ -417,7 +417,7 @@ public static class SystemPromptBuilder
         {
             "- Reply in current session → automatically routes to the source channel (Signal, Telegram, etc.)",
             "- Cross-session messaging → use sessions_send(sessionKey, message)",
-            "- Sub-agent orchestration → use subagents(action=list|steer|kill)",
+            "- Sub-agent orchestration: use spawn_subagent, list_subagents, and manage_subagent (status/wait/kill/result/history); live steering is unsupported",
             $"- Runtime-generated completion events may ask for a user update. Rewrite those in your normal assistant voice and send the update (do not forward raw internal metadata or default to {SilentReplyToken}).",
             "- Never use exec/curl for provider messaging; BotNexus handles all routing internally."
         };
@@ -656,8 +656,8 @@ public static class SystemPromptBuilder
             ]);
         }
 
-        lines.Add("If a task is more complex or takes longer, spawn a sub-agent. Completion is push-based: it will auto-announce when done.");
-        lines.Add("Do not poll `subagents list` / `sessions_list` in a loop; only check status on-demand (for intervention, debugging, or when explicitly asked).");
+        lines.Add("If a task is more complex or takes longer, use spawn_subagent. By default spawn awaits completion; background=true returns early. Use manage_subagent action=wait to join background work. Completion does not push an automatic inbound turn. Use action=result/history for repeatable read-only retained child results/tool evidence from the original parent session; live messaging and steering are unsupported.");
+        lines.Add("Do not poll list_subagents or sessions in a loop; use manage_subagent wait to join, and inspect status/result/history on demand.");
         lines.Add(string.Empty);
         lines.Add(BuildExecApprovalPromptGuidance(data.RuntimeChannel, data.InlineButtonsEnabled));
         lines.Add("Never execute /approve through exec or any other shell/tool path; /approve is a user-facing approval command, not a shell command.");

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
@@ -37,6 +38,10 @@ public sealed class ScenarioFakeApiProvider : IApiProvider
 
     private readonly Func<int, Context, string> _responseFactory;
     private int _turnIndex;
+    private readonly ConcurrentQueue<ScenarioProviderInvocation> _invocations = new();
+
+    /// <summary>Entry snapshots captured before the response factory, including entries whose factory throws.</summary>
+    public IReadOnlyList<ScenarioProviderInvocation> Invocations => [.. _invocations];
 
     /// <summary>
     /// Creates a fake provider that emits <paramref name="response"/> for every turn.
@@ -101,6 +106,11 @@ public sealed class ScenarioFakeApiProvider : IApiProvider
 
     private LlmStream BuildStream(int turn, Context context, LlmModel model)
     {
+        var user = context.Messages.OfType<UserMessage>().LastOrDefault();
+        var userText = user?.Content.Text ?? (user?.Content.Blocks is { } blocks
+            ? string.Concat(blocks.OfType<TextContent>().Select(block => block.Text))
+            : null);
+        _invocations.Enqueue(new ScenarioProviderInvocation(turn, userText));
         var text = _responseFactory(turn, context) ?? string.Empty;
         var stream = new LlmStream();
         var message = new AssistantMessage(

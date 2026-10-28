@@ -85,23 +85,29 @@ public sealed class HeartbeatAction(TimeProvider? timeProvider = null) : ICronAc
 
         var trigger = ResolveHeartbeatTrigger(context.Services, descriptor);
 
-        var sessionId = await trigger
-            .CreateSessionAsync(
-                agentId,
-                prompt,
-                cancellationToken,
-                new InternalTriggerRequest
-                {
-                    CronJobId = context.Job.Id,
-                    JobName = ExternalText.Sanitize(context.Job.Name, ExternalText.DefaultDisplayLength),
-                    ModelOverride = context.Job.Model,
+        var request = new InternalTriggerRequest
+        {
+            CronJobId = context.Job.Id,
+            JobName = ExternalText.Sanitize(context.Job.Name, ExternalText.DefaultDisplayLength),
+            ModelOverride = context.Job.Model,
             CronRequestedModel = context.EffectiveModel?.RequestedModel,
             CronModelSource = context.EffectiveModel?.Source,
-                    ConversationId = context.Job.ConversationId,
-                    CreatedBy = context.Job.CreatedBy,
-                    SessionCreatedAsync = context.PersistSessionIdAsync
-                })
-            .ConfigureAwait(false);
+            ConversationId = context.Job.ConversationId,
+            CreatedBy = context.Job.CreatedBy,
+            SessionCreatedAsync = context.PersistSessionIdAsync
+        };
+        SessionId sessionId;
+        try
+        {
+            sessionId = await trigger.CreateSessionAsync(agentId, prompt, cancellationToken, request)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            // SoulTrigger records partial activity before rethrowing interruption. Do not lose
+            // that evidence here, including measured usage and explicit completion disposition.
+            AgentPromptAction.RecordCost(context, request);
+        }
 
         context.RecordSessionId(sessionId);
     }

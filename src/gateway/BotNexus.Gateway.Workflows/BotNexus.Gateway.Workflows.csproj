@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../BotNexus.Gateway.Abstractions/BotNexus.Gateway.Abstractions.csproj" />
+    <PackageReference Include="WorkflowCore" />
+    <PackageReference Include="WorkflowCore.Persistence.Sqlite" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="TestableIO.System.IO.Abstractions.Wrappers" />
+  </ItemGroup>
+</Project>

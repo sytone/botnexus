@@ -393,7 +393,13 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 if (!SessionFenceEvaluator.Passes(fence, snapshot))
                 {
                     activity?.SetTag("botnexus.session.fence.rebound", true);
-                    return false;
+                    return SessionSaveOutcome.Rebound;
+                }
+                if (fence.ExpectedContentFingerprint is { } expected)
+                {
+                    var current = await LoadSessionAsync(connection, session.SessionId, cancellationToken, transaction).ConfigureAwait(false);
+                    if (current is null || SessionWriteFence.ContentFingerprint(current) != expected)
+                        return SessionSaveOutcome.Conflict;
                 }
 
                 var history = session.CaptureHistoryForPersistence();
@@ -411,10 +417,10 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 session.AcknowledgeHistoryPersistence(history, persistence.InsertedRowIds);
                 RecordHistoryMutation(activity, history, persistence);
-                return true;
+                return SessionSaveOutcome.Persisted;
             }, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            if (persisted)
+            if (persisted == SessionSaveOutcome.Persisted)
             {
                 // A successful fenced save can still originate from an aggregate retained across
                 // an independent narrow append. Evict after either outcome so the next read sees
@@ -424,6 +430,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             }
 
             _cache.Remove(session.SessionId);
+            if (persisted == SessionSaveOutcome.Conflict)
+                return SessionSaveOutcome.Conflict;
             _logger.LogInformation(
                 "Fenced session save for {SessionId} skipped as rebound: the on-disk row was deleted, sealed, " +
                 "or rebound to another conversation while the run was in flight (#1518).",
@@ -438,7 +446,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
     /// for issue #1518. Returns a synthetic <see cref="GatewaySession"/> carrying only those two
     /// values (never touches history or the conversation store) so
     /// <see cref="SessionFenceEvaluator.Passes"/> can evaluate it, or <c>null</c> when the row no
-    /// longer exists. Deliberately avoids <see cref="LoadSessionAsync(SqliteConnection, SessionId, CancellationToken)"/>,
+    /// longer exists. Deliberately avoids <see cref="LoadSessionAsync(SqliteConnection, SessionId, CancellationToken, SqliteTransaction?)"/>,
     /// which hydrates AgentId from the conversation store and would throw if a competing reset had
     /// already removed the conversation - the fence must observe "row gone" as a clean skip, not an
     /// exception.
@@ -763,7 +771,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
 
     /// <summary>
     /// Reads just the <c>status</c> column for a session, or <c>null</c> when the row does not exist.
-    /// The narrow mutations (#2132) use this instead of <see cref="LoadSessionAsync(SqliteConnection, SessionId, CancellationToken)"/>
+    /// The narrow mutations (#2132) use this instead of <see cref="LoadSessionAsync(SqliteConnection, SessionId, CancellationToken, SqliteTransaction?)"/>
     /// so a conflict probe never materialises the transcript or reaches into the conversation store.
     /// </summary>
     private static async Task<SessionStatus?> ReadStatusAsync(
@@ -826,6 +834,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 FROM session_history h
                 INNER JOIN sessions s ON s.id = h.session_id
                 WHERE h.is_crash_sentinel = 1
+                  AND lower(trim(coalesce(s.status, 'active'))) NOT IN ('sealed', 'expired', 'closed', '2', '3')
                   AND ($cursor IS NULL OR h.session_id > $cursor)
                 ORDER BY h.session_id
                 LIMIT $limit
@@ -1279,7 +1288,18 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             // the conversation store is a separate database and must not be queried while a reader
             // holds this one.
             List<string>? conversationIds = null;
-            if (query.AgentId is { Length: > 0 } agentFilter)
+            Dictionary<string, string>? canonicalOwners = null;
+            if (query.MetadataOnly)
+            {
+                var ownership = await _conversationStore.ListOwnershipAsync(
+                    query.AgentId is { Length: > 0 } ownerFilter ? AgentId.From(ownerFilter) : null,
+                    cancellationToken).ConfigureAwait(false);
+                canonicalOwners = ownership.ToDictionary(c => c.ConversationId.Value, c => c.AgentId.Value, StringComparer.Ordinal);
+                conversationIds = canonicalOwners.Keys.Where(id => query.ConversationIdFilter is null
+                    || string.Equals(id, query.ConversationIdFilter, StringComparison.Ordinal)).ToList();
+                if (conversationIds.Count == 0) return SessionSummaryPage.Empty;
+            }
+            else if (query.AgentId is { Length: > 0 } agentFilter)
             {
                 var owned = await _conversationStore
                     .ListAsync(AgentId.From(agentFilter), cancellationToken)
@@ -1383,7 +1403,9 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             var summaries = new List<SessionSummary>(rows.Count);
             foreach (var row in rows)
             {
-                var agentId = await ResolveAgentForConversationAsync(row.ConversationId, cancellationToken).ConfigureAwait(false);
+                var agentId = canonicalOwners is not null
+                    ? canonicalOwners.GetValueOrDefault(row.ConversationId ?? "")
+                    : await ResolveAgentForConversationAsync(row.ConversationId, cancellationToken).ConfigureAwait(false);
                 if (string.IsNullOrEmpty(agentId))
                     continue;
 
@@ -2089,7 +2111,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             if (!resolution.TryGetValue(convIdValue, out var exists))
             {
                 var conversation = await conversationStore
-                    .GetAsync(ConversationId.From(convIdValue), cancellationToken)
+                    .GetOwnershipAsync(ConversationId.From(convIdValue), cancellationToken)
                     .ConfigureAwait(false);
                 exists = conversation is not null;
                 resolution[convIdValue] = exists;
@@ -2314,9 +2336,11 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         return await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<GatewaySession?> LoadSessionAsync(SqliteConnection connection, SessionId sessionId, CancellationToken cancellationToken)
+    private async Task<GatewaySession?> LoadSessionAsync(SqliteConnection connection, SessionId sessionId, CancellationToken cancellationToken,
+        SqliteTransaction? transaction = null)
     {
         await using var sessionCommand = connection.CreateCommand();
+        sessionCommand.Transaction = transaction;
         // P9-I (#674): agent_id column removed from SELECT — AgentId is hydrated via
         // HydrateAgentIdAsync below from Conversation.AgentId. The column itself is
         // dropped from the schema by DropLegacyAgentIdColumnAsync at startup.
@@ -2348,6 +2372,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         await reader.DisposeAsync().ConfigureAwait(false);
 
         await using var historyCommand = connection.CreateCommand();
+        historyCommand.Transaction = transaction;
         historyCommand.CommandText = """
             SELECT h.id, h.persistence_key, h.role,
                    COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END) AS content,
@@ -3263,12 +3288,24 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         await using var conn = CreateConnection();
         await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using var cmd = conn.CreateCommand();
+        // An immediate transaction makes identity validation and the replacement one boundary.
+        await using var transaction = conn.BeginTransaction(deferred: false);
+        cmd.Transaction = transaction;
+        cmd.CommandText = "SELECT id,parent_session_id,parent_agent_id,child_agent_id,archetype,started_at,ended_at,status,detail_json FROM sub_agent_sessions WHERE id=@id";
+        cmd.Parameters.AddWithValue("@id", info.SubAgentId);
+        await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) return;
+            SubAgentAdmissionIdentity.EnsureUnchanged(reader.MapSubAgentSession(), info);
+        }
+        cmd.Parameters.Clear();
         cmd.CommandText = "UPDATE sub_agent_sessions SET ended_at=@endedAt, status=@status, detail_json=@detail WHERE id=@id";
         cmd.Parameters.AddWithValue("@id", info.SubAgentId);
         cmd.Parameters.AddWithValue("@endedAt", info.CompletedAt.HasValue ? info.CompletedAt.Value.ToString("O") : DBNull.Value);
         cmd.Parameters.AddWithValue("@status", info.Status.ToString());
-        cmd.Parameters.AddWithValue("@detail", JsonSerializer.Serialize(SubAgentRunDetail.FromLive(info), JsonOptions));
+        cmd.Parameters.AddWithValue("@detail", (_redactor?.Redact(JsonSerializer.Serialize(SubAgentRetainedRun.Create(info), JsonOptions)) ?? JsonSerializer.Serialize(SubAgentRetainedRun.Create(info), JsonOptions)));
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -3283,6 +3320,19 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         command.Parameters.AddWithValue("$call", toolCallId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         return await reader.ReadAsync(cancellationToken).ConfigureAwait(false) ? reader.MapSubAgentSession() : null;
+    }
+
+    /// <inheritdoc />
+    public override async Task<string?> GetSubAgentResultSummaryAsync(string subAgentId, CancellationToken cancellationToken = default)
+    {
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT detail_json FROM sub_agent_sessions WHERE id=$id";
+        command.Parameters.AddWithValue("$id", subAgentId);
+        var json = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
+        return json is null ? null : JsonSerializer.Deserialize<SubAgentRetainedRun>(json, JsonOptions)?.FullResultSummary;
     }
 
     /// <inheritdoc />
@@ -3396,7 +3446,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private static void BindSubAgent(SqliteCommand cmd, SubAgentInfo info)
+    private void BindSubAgent(SqliteCommand cmd, SubAgentInfo info)
     {
         cmd.Parameters.AddWithValue("@id", info.SubAgentId);
         cmd.Parameters.AddWithValue("@parentSessionId", info.ParentSessionId.Value);
@@ -3406,7 +3456,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         cmd.Parameters.AddWithValue("@spawnCall", (object?)info.SpawningToolCallId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@startedAt", info.StartedAt.ToString("O"));
         cmd.Parameters.AddWithValue("@status", info.Status.ToString());
-        cmd.Parameters.AddWithValue("@detail", JsonSerializer.Serialize(SubAgentRunDetail.FromLive(info), JsonOptions));
+        cmd.Parameters.AddWithValue("@detail", (_redactor?.Redact(JsonSerializer.Serialize(SubAgentRetainedRun.Create(info), JsonOptions)) ?? JsonSerializer.Serialize(SubAgentRetainedRun.Create(info), JsonOptions)));
     }
 
     /// <inheritdoc />

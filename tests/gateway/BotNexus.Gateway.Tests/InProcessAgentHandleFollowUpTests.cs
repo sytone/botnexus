@@ -200,37 +200,79 @@ public sealed class InProcessAgentHandleFollowUpTests
     [Fact]
     public async Task TryFollowUpWhileRunningAsync_CallerCancelsWhileWaitingForAbort_ReclaimsTheMessage()
     {
-        // #4731 review P2: if the caller token cancels during WaitForIdleAsync the enqueued message
-        // used to stay in the queue with no owner. The abort's settlement is held behind a gate so
-        // the wait is genuinely pending when the token is cancelled.
+        // #4731 review P2 / #4971: cancelling the stream reader can unwind the run even while
+        // the provider is blocked. Hold the awaited agent_end listener instead: RunAsync cannot
+        // complete its active-run task (the real WaitForIdleAsync boundary) until it returns.
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var (agent, handle) = CreateHandle(release, entered);
-
-        var run = agent.PromptAsync("start");
-        await entered.Task;
+        var ending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseEnd = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var providerSettled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (agent, handle) = CreateHandle(release, entered, providerSettled);
+        using var subscription = agent.Subscribe(async (@event, _) =>
+        {
+            if (@event is AgentEndEvent)
+            {
+                ending.TrySetResult();
+                await releaseEnd.Task.ConfigureAwait(false);
+            }
+        });
 
         using var cts = new CancellationTokenSource();
         Task? abort = null;
-        handle.AfterFollowUpEnqueuedForTest = () =>
+        Task<bool>? followUp = null;
+        var run = agent.PromptAsync("start");
+        try
         {
-            // Abort after the enqueue but do NOT release the provider: the run cannot settle.
-            abort = agent.AbortAsync();
-        };
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            handle.AfterFollowUpEnqueuedForTest = () => abort = agent.AbortAsync();
 
-        var followUp = handle.TryFollowUpWhileRunningAsync("orphan?", cts.Token);
-        var pendingAbort = abort.ShouldNotBeNull();
-        agent.Status.ShouldBe(AgentStatus.Aborting);
-        followUp.IsCompleted.ShouldBeFalse("the follow-up must be waiting for the abort to settle");
+            followUp = handle.TryFollowUpWhileRunningAsync("orphan?", cts.Token);
+            await ending.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            abort.ShouldNotBeNull().IsCompleted.ShouldBeFalse("the listener must hold abort settlement");
+            run.IsCompleted.ShouldBeFalse("the active run must remain unsettled");
+            agent.Status.ShouldBe(AgentStatus.Aborting);
+            followUp.IsCompleted.ShouldBeFalse("the follow-up must be waiting for the abort to settle");
+            agent.HasQueuedMessages.ShouldBeTrue("the caller's message must be pending before cancellation");
 
-        await cts.CancelAsync();
-        await Should.ThrowAsync<OperationCanceledException>(() => followUp);
+            // Equal content, different identity: cancellation must reclaim only this caller's
+            // instance, not clear the queue or remove another producer's message.
+            var otherMessage = new AgentCoreUserMessage("orphan?");
+            agent.FollowUp(otherMessage);
 
-        agent.HasQueuedMessages.ShouldBeFalse("a cancelled wait must reclaim the message rather than leave it ownerless");
+            await cts.CancelAsync();
+            await Should.ThrowAsync<OperationCanceledException>(
+                () => followUp.WaitAsync(TimeSpan.FromSeconds(5)));
 
-        release.TrySetResult();
-        await pendingAbort;
-        try { await run; } catch (OperationCanceledException) { }
+            agent.TryReclaimFollowUp(otherMessage).ShouldBeTrue("another producer's exact message must remain queued");
+            agent.HasQueuedMessages.ShouldBeFalse("a cancelled wait must reclaim the message rather than leave it ownerless");
+            abort.ShouldNotBeNull().IsCompleted.ShouldBeFalse("caller cancellation must not release the abort gate");
+            run.IsCompleted.ShouldBeFalse("reclamation must finish before the aborted run settles");
+        }
+        finally
+        {
+            // Release both independent gates even if readiness or an assertion fails. Cancel
+            // and observe the follow-up too, then join BOTH lifecycle tasks unconditionally.
+            release.TrySetResult();
+            releaseEnd.TrySetResult();
+            try
+            {
+                await cts.CancelAsync();
+                if (followUp is not null)
+                {
+                    try { await followUp.WaitAsync(TimeSpan.FromSeconds(5)); }
+                    catch (OperationCanceledException) { }
+                }
+            }
+            finally
+            {
+                try
+                {
+                    await Task.WhenAll(abort ?? agent.AbortAsync(), run, providerSettled.Task).WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                catch (OperationCanceledException) { }
+            }
+        }
     }
 
     [Fact]
@@ -245,7 +287,8 @@ public sealed class InProcessAgentHandleFollowUpTests
 
     private static (BotNexus.Agent.Core.Agent Agent, InProcessAgentHandle Handle) CreateHandle(
         TaskCompletionSource release,
-        TaskCompletionSource? entered = null)
+        TaskCompletionSource? entered = null,
+        TaskCompletionSource? providerSettled = null)
     {
         var modelRegistry = new ModelRegistry();
         modelRegistry.Register("test-provider", new LlmModel(
@@ -261,7 +304,7 @@ public sealed class InProcessAgentHandleFollowUpTests
             MaxTokens: 1024));
 
         var providers = new ApiProviderRegistry();
-        providers.Register(new BlockingTestProvider(release, entered));
+        providers.Register(new BlockingTestProvider(release, entered, providerSettled));
         var llmClient = new LlmClient(providers, modelRegistry);
         var model = modelRegistry.GetModel("test-provider", "test-model")!;
 
@@ -296,7 +339,10 @@ public sealed class InProcessAgentHandleFollowUpTests
     /// test releases it, giving a deterministic in-flight window. Subsequent turns (the
     /// follow-up continuation) complete immediately.
     /// </summary>
-    private sealed class BlockingTestProvider(TaskCompletionSource release, TaskCompletionSource? entered) : IApiProvider
+    private sealed class BlockingTestProvider(
+        TaskCompletionSource release,
+        TaskCompletionSource? entered,
+        TaskCompletionSource? providerSettled) : IApiProvider
     {
         private int _calls;
 
@@ -323,15 +369,27 @@ public sealed class InProcessAgentHandleFollowUpTests
 
             _ = Task.Run(async () =>
             {
-                if (isFirst)
+                try
                 {
-                    entered?.TrySetResult();
-                    await release.Task.ConfigureAwait(false);
-                }
+                    if (isFirst)
+                    {
+                        entered?.TrySetResult();
+                        await release.Task.ConfigureAwait(false);
+                    }
 
-                stream.Push(new StartEvent(partial));
-                stream.Push(new TextDeltaEvent(0, "hello", withText));
-                stream.Push(new DoneEvent(StopReason.Stop, withText));
+                    stream.Push(new StartEvent(partial));
+                    stream.Push(new TextDeltaEvent(0, "hello", withText));
+                    stream.Push(new DoneEvent(StopReason.Stop, withText));
+                    if (isFirst)
+                        providerSettled?.TrySetResult();
+                }
+                catch (Exception error)
+                {
+                    if (isFirst && providerSettled is not null)
+                        providerSettled.TrySetException(error);
+                    else
+                        throw;
+                }
             });
 
             return stream;

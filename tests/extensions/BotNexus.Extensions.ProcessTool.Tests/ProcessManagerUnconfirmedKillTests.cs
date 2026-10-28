@@ -4,9 +4,8 @@ using Microsoft.Extensions.Logging;
 namespace BotNexus.Extensions.ProcessTool.Tests;
 
 /// <summary>
-/// Tests for issue #2521: a tree kill whose exit was never confirmed must NOT release the
-/// registration slot. The observable contract is that the entry stays visible in the registry,
-/// survives reaping, remains re-killable, and produces a Warning naming the PID and process name.
+/// Unconfirmed tree kills pin running roots, but exited roots become bounded unresolved diagnostics.
+/// No cleanup or retry may turn uncertainty into a successful termination.
 /// </summary>
 public sealed class ProcessManagerUnconfirmedKillTests : IDisposable
 {
@@ -96,29 +95,100 @@ public sealed class ProcessManagerUnconfirmedKillTests : IDisposable
     }
 
     [Fact]
-    public void UnconfirmedKill_KeepsRegistrationVisibleAndReKillable()
+    public async Task ExitedUnconfirmedKill_IsBoundedAndCannotBeReKilled()
     {
-        // Cap of zero: anything eligible for eviction is dropped on the next reap.
-        var manager = NewManager(maxExitedRetained: 0);
+        var manager = NewManager(maxExitedRetained: 1);
         var managed = Spawn(p => new UnconfirmedKillProcess(p, "unconfirmed", DateTimeOffset.UtcNow));
         manager.Register(managed.Pid, managed);
 
-        manager.Kill(managed.Pid).ShouldBeTrue("the PID was registered, so the kill request is accepted");
-
+        manager.Kill(managed.Pid).ShouldBeFalse("accepting a request is not confirmed termination");
+        await managed.WaitForCompletionAsync().WaitAsync(TimeSpan.FromSeconds(10));
         manager.Reap();
-
-        // Observable 1: the registration is still present after a reap that would otherwise evict it.
-        manager.Get(managed.Pid).ShouldNotBeNull("an unconfirmed kill must not release the registration slot");
-
-        // Observable 2: it is still visible to `process list`.
-        manager.List().Select(p => p.Pid).ShouldContain(managed.Pid);
-
-        // Observable 3: it is still re-killable - a second kill reaches the process again.
-        manager.Kill(managed.Pid).ShouldBeTrue();
-        managed.KillAttempts.ShouldBe(2, "the retained entry must remain re-killable");
-
-        // Observable 4: it was not disposed out from under us.
         manager.Get(managed.Pid).ShouldBeSameAs(managed);
+        var info = manager.List().ShouldHaveSingleItem();
+        info.Pid.ShouldBe(managed.Pid);
+        info.IsRunning.ShouldBeFalse();
+        info.KillUnconfirmed.ShouldBeTrue();
+        info.Status.ShouldContain("unresolved");
+        info.Status.ShouldContain("operator intervention");
+        manager.Kill(managed.Pid).ShouldBeFalse();
+        managed.KillAttempts.ShouldBe(1, "an exited root cannot safely be used to find descendants again");
+        managed.IsComplete.ShouldBeFalse();
+        manager.Clear();
+        manager.Get(managed.Pid).ShouldBeNull("bounded diagnostics can be explicitly released");
+        managed.KillState.ShouldBe(ProcessKillState.Unconfirmed);
+    }
+
+    private sealed class RunningUnconfirmedKillProcess : ManagedProcess
+    {
+        private readonly Process _root;
+        public RunningUnconfirmedKillProcess(Process process)
+            : base(process, "running-unconfirmed", DateTimeOffset.UtcNow) => _root = process;
+        public int Attempts { get; private set; }
+        protected override bool KillCore() { Attempts++; return false; }
+        public void ExitRoot()
+        {
+            // The managed exit callback owns disposal; do not wait on its raw Process afterward.
+            _root.Kill(entireProcessTree: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunningUnconfirmedKill_StaysVisibleAndReKillableUntilExit()
+    {
+        var manager = NewManager(maxExitedRetained: 0);
+        var managed = Spawn(p => new RunningUnconfirmedKillProcess(p));
+        manager.Register(managed.Pid, managed);
+        try
+        {
+            manager.Kill(managed.Pid).ShouldBeFalse();
+            manager.Reap();
+            manager.Clear();
+            manager.Get(managed.Pid).ShouldBeSameAs(managed);
+            manager.List().ShouldHaveSingleItem().IsRunning.ShouldBeTrue();
+            manager.Kill(managed.Pid).ShouldBeFalse();
+            managed.Attempts.ShouldBeGreaterThanOrEqualTo(2);
+        }
+        finally { managed.ExitRoot(); }
+        await managed.WaitForCompletionAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        managed.IsRunning.ShouldBeFalse("managed completion must observe root exit before reaping");
+        manager.Reap();
+        manager.Get(managed.Pid).ShouldBeNull();
+        managed.KillState.ShouldBe(ProcessKillState.Unconfirmed);
+    }
+
+    [Fact]
+    public async Task ProcessTool_ExitedUnconfirmedKill_ReportsUnresolvedAcrossAllActions()
+    {
+        var manager = NewManager(maxExitedRetained: 1);
+        var managed = Spawn(p => new UnconfirmedKillProcess(p, "unconfirmed", DateTimeOffset.UtcNow));
+        manager.Register(managed.Pid, managed);
+        var tool = new ProcessTool(manager);
+        async Task<string> Call(string action)
+        {
+            var result = await tool.ExecuteAsync("call", new Dictionary<string, object?>
+            {
+                ["action"] = action, ["pid"] = managed.Pid,
+            });
+            return string.Join("", result.Content.Select(c => c.Value));
+        }
+        var firstKill = await Call("kill");
+        firstKill.ShouldContain("did NOT confirm termination");
+        firstKill.ShouldContain("Operator intervention");
+        firstKill.ShouldNotContain("can be killed again");
+        await managed.WaitForCompletionAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        foreach (var action in new[] { "status", "list", "output" })
+        {
+            var text = await Call(action);
+            text.ShouldContain("unresolved");
+            text.ShouldContain("operator intervention");
+        }
+        var retry = await Call("kill");
+        retry.ShouldContain("unresolved");
+        retry.ShouldNotContain("already exited");
+        retry.ShouldNotContain("terminated (exit code");
+        retry.ShouldNotContain("can be killed again");
+        managed.KillAttempts.ShouldBe(1);
     }
 
     [Fact]

@@ -36,6 +36,28 @@ public sealed class InMemoryConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public Task<ConversationOwnership?> GetOwnershipAsync(ConversationId conversationId, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(_conversations.TryGetValue(conversationId.Value, out var conversation)
+            ? new ConversationOwnership(conversation.ConversationId, conversation.AgentId) : null);
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<ConversationOwnership>> ListOwnershipAsync(AgentId? agentId = null, CancellationToken ct = default)
+    {
+        var result = new List<ConversationOwnership>();
+        foreach (var conversation in _conversations.Values)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (agentId is null || conversation.AgentId == agentId.Value)
+                result.Add(new(conversation.ConversationId, conversation.AgentId));
+        }
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult<IReadOnlyList<ConversationOwnership>>(result);
+    }
+
+    /// <inheritdoc />
     public Task<Conversation?> GetAsync(ConversationId conversationId, CancellationToken ct = default)
     {
         var conversation = _conversations.GetValueOrDefault(conversationId.Value);

@@ -29,8 +29,7 @@ public sealed partial class FileSessionStore
             var existing = await ReadRunAsync(info.SubAgentId, cancellationToken).ConfigureAwait(false);
             if (existing is not null)
             {
-                if (existing.ParentSessionId != info.ParentSessionId.Value || existing.SpawningToolCallId != info.SpawningToolCallId)
-                    throw new UnauthorizedAccessException("Sub-agent admission identity cannot be rebound.");
+                SubAgentAdmissionIdentity.EnsureUnchanged(existing, info);
                 return;
             }
             if (info.SpawningToolCallId is { } call)
@@ -43,7 +42,7 @@ public sealed partial class FileSessionStore
             // no retained run is published until the final atomic admission replacement.
             if (info.SpawningToolCallId is { } spawn)
                 await AtomicJsonAsync(SpawnPath(info.ParentSessionId, spawn), info.SubAgentId, cancellationToken).ConfigureAwait(false);
-            await WriteRunAsync(SubAgentRunDetail.FromLive(info), cancellationToken).ConfigureAwait(false);
+            await WriteRunAsync(SubAgentRetainedRun.Create(info), cancellationToken).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
@@ -56,18 +55,17 @@ public sealed partial class FileSessionStore
         {
             var retained = await ReadRunAsync(info.SubAgentId, cancellationToken).ConfigureAwait(false);
             if (retained is null) throw new InvalidOperationException("Sub-agent admission is missing.");
-            if (retained.ParentSessionId != info.ParentSessionId.Value || retained.SpawningToolCallId != info.SpawningToolCallId)
-                throw new UnauthorizedAccessException("Sub-agent admission identity cannot be rebound.");
-            await WriteRunAsync(SubAgentRunDetail.FromLive(info), cancellationToken).ConfigureAwait(false);
+            SubAgentAdmissionIdentity.EnsureUnchanged(retained, info);
+            await WriteRunAsync(SubAgentRetainedRun.Create(info), cancellationToken).ConfigureAwait(false);
         }
         finally { _lock.Release(); }
     }
 
-    private Task WriteRunAsync(SubAgentRunDetail detail, CancellationToken ct)
+    private Task WriteRunAsync(SubAgentRetainedRun detail, CancellationToken ct)
     {
         // Redact the whole bounded projection as well as the consuming result.
         var json = JsonSerializer.Serialize(detail, JsonOptions);
-        var safe = JsonSerializer.Deserialize<SubAgentRunDetail>(_redactor?.Redact(json) ?? json, JsonOptions)
+        var safe = JsonSerializer.Deserialize<SubAgentRetainedRun>(_redactor?.Redact(json) ?? json, JsonOptions)
             ?? throw new InvalidOperationException("Invalid retained sub-agent detail.");
         return AtomicJsonAsync(RunPath(detail.SubAgentId), safe, ct);
     }
@@ -88,6 +86,18 @@ public sealed partial class FileSessionStore
 
     private Task<SubAgentRunDetail?> ReadRunAsync(string id, CancellationToken ct) =>
         SessionMetadataSidecar.ReadAsync<SubAgentRunDetail>(_fileSystem, RunPath(id), JsonOptions, ct);
+
+    /// <inheritdoc />
+    public override async Task<string?> GetSubAgentResultSummaryAsync(string subAgentId, CancellationToken cancellationToken = default)
+    {
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return (await SessionMetadataSidecar.ReadAsync<SubAgentRetainedRun>(_fileSystem,
+                RunPath(subAgentId), JsonOptions, cancellationToken).ConfigureAwait(false))?.FullResultSummary;
+        }
+        finally { _lock.Release(); }
+    }
 
     private async Task<IReadOnlyList<SubAgentRunDetail>> ReadRunsAsync(CancellationToken ct)
     {

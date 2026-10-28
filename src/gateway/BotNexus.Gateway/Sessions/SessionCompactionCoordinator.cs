@@ -50,6 +50,14 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         CompactionOptions? resolvedOptions = null)
     {
         ArgumentNullException.ThrowIfNull(session);
+        // Manual current-handle compaction owns admission, but reset can still retain the
+        // cached aggregate while stopping that handle. Never mutate that shared object before
+        // the authoritative fenced save commits. Stores publish/evict the detached candidate;
+        // the endpoint then invalidates only the captured handle, without copying history back.
+        var detached = force && handlePolicy == CompactionHandlePolicy.KeepCurrent;
+        if (detached)
+            session = session.CreateDetachedCopy();
+
         var options = resolvedOptions ?? _options.CurrentValue;
 
         // When the user explicitly requests compaction, override PreservedTurns
@@ -69,6 +77,8 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         // against it so a delete/reset that lands while we are summarising cannot be undone by
         // the compaction record write resurrecting or un-sealing the row.
         var fence = SessionWriteFence.Capture(session);
+        if (detached)
+            fence = fence with { ExpectedContentFingerprint = SessionWriteFence.ContentFingerprint(session) };
 
         // 1. Optional pre-compaction memory flush. Best-effort: failures are logged
         //    and swallowed so compaction always proceeds (mirrors auto-compact path).
@@ -118,6 +128,26 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
                 FailureExceptionType: ex.GetType().Name);
         }
 
+        // Avoid changing shared in-memory history when reset/seal/rebinding already won during
+        // summarization. The fenced save remains the authoritative final persistence boundary.
+        if (force && handlePolicy == CompactionHandlePolicy.KeepCurrent)
+        {
+            var currentSession = await _sessions.GetAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            var bindingMatches = currentSession is not null && currentSession.Status == SessionStatus.Active &&
+                currentSession.AgentId == agentId && currentSession.ConversationId == fence.ExpectedConversationId;
+            if (_conversations is not null)
+            {
+                var conversation = await _conversations.GetAsync(fence.ExpectedConversationId, cancellationToken).ConfigureAwait(false);
+                bindingMatches = bindingMatches && conversation is not null &&
+                    conversation.AgentId == agentId && conversation.ActiveSessionId == sessionId &&
+                    conversation.Status == ConversationStatus.Active;
+            }
+            if (!bindingMatches)
+                return new SessionCompactionOutcome(result.Succeeded, false, HistoryReplaceOutcome.Aborted,
+                    result.EntriesSummarized, result.EntriesPreserved, result.TokensBefore, result.TokensAfter,
+                    "Session binding changed.", CompactionSkipReason.SessionRebound);
+        }
+
         // 3. Apply + persist. Track outcome for the caller.
         var historyOutcome = HistoryReplaceOutcome.Aborted;
         var applied = false;
@@ -145,7 +175,15 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
             }
         }
 
-        var saveOutcome = await _sessions.SaveAsync(session, fence, cancellationToken).ConfigureAwait(false);
+        // A skipped/aborted manual attempt has no changes to commit. In particular, never
+        // publish its pre-summary detached snapshot over independently appended messages.
+        var saveOutcome = detached && !applied ? SessionSaveOutcome.Persisted
+            : await _sessions.SaveAsync(session, fence, cancellationToken).ConfigureAwait(false);
+        if (saveOutcome == SessionSaveOutcome.Conflict)
+            return new SessionCompactionOutcome(result.Succeeded, false, HistoryReplaceOutcome.Aborted,
+                result.EntriesSummarized, result.EntriesPreserved, result.TokensBefore, result.TokensAfter,
+                DescribeFailure(CompactionSkipReason.ConcurrentHistoryChange, null),
+                CompactionSkipReason.ConcurrentHistoryChange);
         if (saveOutcome == SessionSaveOutcome.Rebound)
         {
             // #1518: the session was deleted, sealed, or rebound while we summarised. Do NOT

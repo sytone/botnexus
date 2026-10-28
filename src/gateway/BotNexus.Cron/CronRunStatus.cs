@@ -22,6 +22,9 @@ public static class CronRunStatus
     /// <summary>The run completed successfully.</summary>
     public const string Ok = "ok";
 
+    /// <summary>A successful negative precondition: durable, non-failure history without an agent turn.</summary>
+    public const string NoWork = "no_work";
+
     /// <summary>The run failed with an exception (or was aborted before completion).</summary>
     public const string Error = "error";
 

@@ -11,4 +11,7 @@ public enum PluginManifestFormat
 
     /// <summary>A Claude manifest accepted by the bounded conventional-skills adapter.</summary>
     Claude,
+
+    /// <summary>A legacy root plugin.json imported only as conventional skills, with optional native metadata.</summary>
+    Legacy,
 }

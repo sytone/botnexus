@@ -88,4 +88,25 @@ public interface IConfigurationWriter
         ConfigChangeSet changes,
         string reason,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Applies an edit derived from a complete authoritative before-document captured by the caller.
+    /// </summary>
+    /// <remarks>
+    /// Backends still apply only the named keys. A JSON projection may clone the pristine document
+    /// as a fallback only when its existing JSON is malformed; valid or absent projections retain
+    /// delta-patch behavior. The canonical store owns complete sibling state. Implementations must
+    /// not mutate the supplied snapshot. This is not a fallback for corrupt source configuration:
+    /// the caller must first read the authoritative document successfully, under its mutation lock.
+    /// </remarks>
+    /// <param name="changes">The keys to upsert and remove.</param>
+    /// <param name="pristineDocument">The complete authoritative document before the mutation.</param>
+    /// <param name="reason">Why the write is happening, for backup labelling and diagnostics.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task ApplyChangeSetAsync(
+        ConfigChangeSet changes,
+        JsonObject pristineDocument,
+        string reason,
+        CancellationToken cancellationToken = default)
+        => ApplyChangeSetAsync(changes, reason, cancellationToken);
 }

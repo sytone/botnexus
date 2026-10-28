@@ -42,7 +42,7 @@ public static class ExportContentFilter
             Entries = entries,
             Sessions = sessions,
             MessageCount = entries.Count(entry => entry.Kind == "message"),
-            ToolCallCount = entries.Count(entry => entry.Kind == "message" && !string.IsNullOrEmpty(entry.ToolName) && !string.IsNullOrEmpty(entry.ToolArgs))
+            ToolCallCount = entries.Count(entry => entry.Kind == "message" && entry.MessageKind != "tool-result" && !string.IsNullOrEmpty(entry.ToolName) && !string.IsNullOrEmpty(entry.ToolArgs))
         };
     }
 

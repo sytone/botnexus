@@ -67,6 +67,7 @@ public static class CronExternalDeliveryRedactor
         {
             Message = job.Message is null ? null : redactor.RedactForExternalDelivery(job.Message),
             ShellCommand = job.ShellCommand is null ? null : redactor.RedactForExternalDelivery(job.ShellCommand),
+            PreconditionCommand = job.PreconditionCommand is null ? null : redactor.RedactForExternalDelivery(job.PreconditionCommand),
             LastRunError = null, // never externalise raw run errors
             Metadata = StripDiagnostics(job.Metadata),
         };

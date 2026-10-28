@@ -12,6 +12,54 @@ per-job rollup ordered by total spend, and the rollup already reports its own wi
 this subsection, **no client consumed any of it** — the platform knew what every scheduled job cost
 and no user could see it.
 
+## Avoid model turns when nothing changed
+
+For job authors, an `agent-prompt` job can carry an optional `preconditionCommand`. Each firing
+runs this deterministic shell probe **before** model routing or prompt dispatch. A negative probe
+makes zero model/provider requests; it does not spend a model turn asking whether work is needed.
+The shell process and any services your script calls still have their own runtime and costs.
+Jobs without this field keep their existing behavior.
+
+There is no CLI create/update command for cron jobs. Use the agent-facing `cron` tool to author
+the field, or the configured-job surface. The ordinary cron page does not add a dedicated probe
+editor. For example, with PowerShell (`pwsh`) installed and an approved, existing probe script,
+ask the agent to create an `agent-prompt` job with `preconditionCommand` set to
+`& './scripts/check-for-work.ps1'; exit $LASTEXITCODE`, alongside its normal `message` or
+`templateName`. Use a stable script path accessible to the gateway identity. This is an example,
+not an installed script. The script must implement the following exit-code contract explicitly:
+
+| Probe result | Effect |
+| --- | --- |
+| Exit `0` | Run the ordinary agent prompt. |
+| Exit `10` | Record `no_work`, with no agent turn or failure alert. |
+| Any other exit | Record `error`, make no model request, and use configured failure alerts. |
+| Cannot execute, times out, or has an invalid definition | Fail closed: record `error`, make no model request, and use configured failure alerts. |
+
+Output is diagnostic only, not a decision payload. Exit `10` is reserved for a successfully
+evaluated negative probe; do not map operational errors to it. Ordinary `command` jobs still
+fail on **every** nonzero exit, including `10`.
+
+A `no_work` result has durable run history and updates `lastRunStatus`. It is distinct from `ok`
+(work ran), `error` (failure), and expiry-suppressed `skipped` (no history row). It is not an
+execution-class `no_tool_calls` failure. Existing nullable cost measurements are not changed into
+invented token counts for a turn that never ran.
+
+The probe uses the existing command authorizer on **every firing**, before starting a process,
+and the tool uses the same authorizer before persisting a probe. It runs as the gateway identity:
+this is arbitrary command execution, not a security sandbox or a second permission model.
+Authorization denial starts no process and records a failure. Process timeout uses the existing
+command timeout: `metadata.timeoutSeconds`, default 120 seconds, with explicit `0` meaning
+unlimited. After a positive probe, the ordinary prompt keeps its own existing run timeout.
+Failure alerts remain opt-in through `failureAlertsEnabled` and `failureAlertConversationId`;
+a broken probe never invokes a model as an automatic fallback.
+
+On tool updates, omit `preconditionCommand` to preserve it, or set it to `null` or an empty string
+to clear it. Switching away from `agent-prompt` clears the probe. Configured definitions carry
+`preconditionCommand` too; removing it removes the probe on configuration reconciliation.
+After setup, check run history for `no_work` on a known negative result, then test a known positive
+result before relying on the schedule. Disable the job to stop firings, or clear the field to
+return to an ordinary model turn on every firing.
+
 ## Tool calls per turn is the actionable column
 
 Total tokens tells you what a job costs. `toolCalls / turns` tells you *why*.

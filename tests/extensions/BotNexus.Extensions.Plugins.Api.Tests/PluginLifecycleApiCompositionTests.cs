@@ -108,6 +108,40 @@ public sealed class PluginLifecycleApiCompositionTests : IDisposable
     }
 
     [Fact]
+    public async Task Install_accepts_marketplace_selection_from_the_existing_json_request()
+    {
+        var fetcher = new ScriptedFetcher();
+        fetcher.Enqueue("v1", new Dictionary<string, string>
+        {
+            [".github/plugin/marketplace.json"] = """
+                {"name":"sample","owner":{"name":"Sample"},"plugins":[
+                  {"name":"chosen","source":"./packages/chosen","version":"1.0.0"}]}
+                """,
+            ["packages/chosen/plugin.json"] = "{\"name\":\"chosen\",\"skills\":\"./skills\"}",
+            ["packages/chosen/skills/sample/SKILL.md"] = "---\nname: sample\ndescription: Sample skill.\n---\n# Sample",
+        });
+        var store = new PluginStateStore(_root);
+        var manager = new PluginLifecycleManager(store, fetcher);
+        var request = JsonSerializer.Deserialize<PluginInstallRequest>("""
+            {"source":"https://example.test/catalog.git","reference":"release","marketplacePluginName":"chosen","updatesEnabled":false}
+            """, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException("missing request");
+
+        var result = await PluginsEndpointContributor.Install(request, manager, CancellationToken.None);
+
+        var response = result.ShouldBeOfType<Ok<PluginOperationReceipt>>();
+        var receipt = response.Value ?? throw new InvalidOperationException("missing receipt");
+        receipt.Outcome.ShouldBe(PluginOperationOutcome.Installed);
+        receipt.Name.ShouldBe("chosen");
+        receipt.RequestedReference.ShouldBe("release");
+        receipt.UpdatesEnabled.ShouldBe(false);
+        var installed = store.Find("chosen") ?? throw new InvalidOperationException("missing installed record");
+        installed.MarketplacePluginName.ShouldBe("chosen");
+        installed.ManifestFormat.ShouldBe(PluginManifestFormat.Legacy);
+        installed.Files.ShouldNotContain(path => path.Contains("marketplace.json"));
+    }
+
+    [Fact]
     public async Task CredentialBearingFetchFailureReturnsOnlyASanitizedBoundedReceipt()
     {
         const string source = "https://alice:secret@example.test/private.git?token=query-secret";

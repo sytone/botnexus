@@ -82,7 +82,7 @@ public sealed class CronTool(
 
     public Tool Definition => new(
         Name,
-        "Manage scheduled cron jobs. Create, list, update, delete, and run cron jobs. The 'run' action accepts execution asynchronously and returns a runId immediately; use 'history' to poll for completion. A job is either an 'agent-prompt' job (the default - costs a model turn on every fire, requires 'message' or 'templateName') or a 'command' job (runs 'shellCommand' directly and costs no tokens, requires 'shellCommand').",
+        "Manage scheduled cron jobs. Create, list, update, delete, and run cron jobs. The 'run' action accepts execution asynchronously and returns a runId immediately; use 'history' to poll for completion. A job is either an 'agent-prompt' job (the default - costs a model turn unless preconditionCommand returns exit 10, requires 'message' or 'templateName') or a 'command' job (runs 'shellCommand' directly and costs no tokens, requires 'shellCommand').",
         JsonDocument.Parse("""
             {
               "type": "object",
@@ -102,6 +102,7 @@ public sealed class CronTool(
                   "enum": ["agent-prompt", "command"],
                   "description": "What the job does when it fires. 'agent-prompt' (default) sends a prompt to the agent and requires 'message' or 'templateName'. 'command' runs 'shellCommand' as a script and requires 'shellCommand'. On update, omitting it keeps the current action type; supplying a different one switches the job and clears the fields belonging to the other action type."
                 },
+                "preconditionCommand": { "type": ["string", "null"], "description": "Optional agent-prompt shell probe, authorized like shellCommand. Exit 0 runs the prompt; exit 10 records non-failure no_work with ZERO model requests. Any other exit, execution failure or timeout fails closed and uses configured failure alerts. Omit on update to preserve; null/empty clears; switching away from agent-prompt clears it. Arbitrary-execution surface." },
                 "shellCommand": { "type": "string", "description": "Shell command or script to run (required for create/update of actionType 'command'). This is an arbitrary-execution surface - treat creating or editing a command job as a dangerous operation." },
                 "message": { "type": "string", "description": "Prompt message (for create/update). Optional when templateName is provided." },
                 "templateName": { "type": "string", "description": "Named prompt template reference (for create/update)." },
@@ -150,6 +151,8 @@ public sealed class CronTool(
         CopyString(arguments, prepared, "templateName");
         CopyString(arguments, prepared, "actionType");
         CopyString(arguments, prepared, "shellCommand");
+        if (arguments.ContainsKey("preconditionCommand"))
+            prepared["preconditionCommand"] = ReadString(arguments, "preconditionCommand");
         if (TryReadStringMap(arguments, "templateParameters", out var templateParameters))
             prepared["templateParameters"] = templateParameters;
         // Omitted preserves the pin; explicit null/empty clears it. CopyString drops blanks.
@@ -296,6 +299,7 @@ public sealed class CronTool(
             TemplateName = templateName,
             TemplateParameters = isCommand ? null : ReadStringMap(arguments, "templateParameters"),
             ShellCommand = shellCommand,
+            PreconditionCommand = isCommand ? null : ReadPrecondition(arguments),
             Model = model,
             Enabled = arguments.TryGetValue("enabled", out var enabled) && enabled is bool boolEnabled ? boolEnabled : true,
             // #2634: both default to the inert state, so a create that omits them is byte-identical
@@ -333,6 +337,9 @@ public sealed class CronTool(
         // AUTHORING gate (#2462) - before any store write, so a denied command leaves no row behind.
         if (isCommand)
             EnsureCommandAuthorized(job, shellCommand!);
+
+        if (!string.IsNullOrWhiteSpace(job.PreconditionCommand))
+            EnsureCommandAuthorized(job, job.PreconditionCommand);
 
         var created = await cronStore.CreateAsync(job, cancellationToken).ConfigureAwait(false);
         return TextResult(JsonSerializer.Serialize(created, JsonOptions));
@@ -412,6 +419,9 @@ public sealed class CronTool(
             TimeZone = newTimeZone,
             ActionType = newActionType,
             ShellCommand = newShellCommand,
+            PreconditionCommand = newActionType == "agent-prompt"
+                ? arguments.ContainsKey("preconditionCommand") ? ReadPrecondition(arguments) : switchingActionType ? null : existing.PreconditionCommand
+                : null,
             Message = newMessage,
             TemplateName = newTemplateName,
             TemplateParameters = newTemplateParameters,
@@ -447,6 +457,9 @@ public sealed class CronTool(
         // creation takes effect on the next edit instead of being grandfathered in.
         if (string.Equals(updated.ActionType, "command", StringComparison.Ordinal))
             EnsureCommandAuthorized(updated, newShellCommand!);
+
+        if (!string.IsNullOrWhiteSpace(updated.PreconditionCommand))
+            EnsureCommandAuthorized(updated, updated.PreconditionCommand);
 
         // #3573: the authorization decision above was made against `existing`, and ~100 lines of
         // argument parsing, model preflight and an AWAITED alert-target validation have run since.
@@ -798,6 +811,12 @@ public sealed class CronTool(
             throw new ArgumentException($"Argument '{key}' cannot be empty.");
 
         return result;
+    }
+
+    private static string? ReadPrecondition(IReadOnlyDictionary<string, object?> arguments)
+    {
+        var command = ReadString(arguments, "preconditionCommand");
+        return string.IsNullOrWhiteSpace(command) ? null : command;
     }
 
     private static IReadOnlyDictionary<string, string?>? ReadStringMap(IReadOnlyDictionary<string, object?> arguments, string key)

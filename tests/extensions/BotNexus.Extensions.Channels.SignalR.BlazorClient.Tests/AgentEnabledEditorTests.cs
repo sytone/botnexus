@@ -24,9 +24,12 @@ public sealed class AgentEnabledEditorTests
         checkbox.HasAttribute("checked").ShouldBe(initial);
         checkbox.Change(desired);
         await cut.FindAll("button").First(b => b.TextContent.Contains("Save Changes")).ClickAsync(new());
-        var body = handler.Submitted ?? throw new InvalidOperationException("Expected PUT.");
+        var body = handler.Submitted ?? throw new InvalidOperationException("Expected PATCH.");
+        handler.Method.ShouldBe(HttpMethod.Patch);
+        handler.Path.ShouldBe("/api/agents/assistant/configuration");
         using var json = JsonDocument.Parse(body);
         json.RootElement.GetProperty("enabled").GetBoolean().ShouldBe(desired);
+        json.RootElement.EnumerateObject().Count().ShouldBe(1);
         cut.Markup.ShouldNotContain("Save failed");
         cut.Find("[role=status]").TextContent.ShouldBe(desired
             ? "Configuration saved. Enabled for new work; provider authentication is checked when work starts."
@@ -36,15 +39,19 @@ public sealed class AgentEnabledEditorTests
     private sealed class EditorHandler(bool enabled) : HttpMessageHandler
     {
         public string? Submitted { get; private set; }
+        public HttpMethod? Method { get; private set; }
+        public string? Path { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath;
-            if (request.Method == HttpMethod.Put)
+            if (request.Method == HttpMethod.Patch)
             {
+                Method = request.Method;
+                Path = path;
                 Submitted = await (request.Content ?? throw new InvalidOperationException("Expected content.")).ReadAsStringAsync(cancellationToken);
                 return Json(Submitted);
             }
-            return Json(path == "/api/agents/assistant"
+            return Json(path is "/api/agents/assistant" or "/api/agents/assistant/configuration"
                 ? JsonSerializer.Serialize(new { agentId = "assistant", displayName = "Assistant", apiProvider = "copilot", modelId = "gpt-4.1", enabled })
                 : "[]");
         }

@@ -50,6 +50,7 @@ public sealed class ConversationsController : ControllerBase
     private readonly IReadOnlyList<IConversationReadStateChangeNotifier> _readStateChangeNotifiers;
     private readonly IAgentSupervisor? _supervisor;
     private readonly ISessionCompactionDiagnostics? _compactionDiagnostics;
+    private readonly ISessionCompactionCoordinator? _compactionCoordinator;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConversationsController"/> class.
@@ -74,6 +75,7 @@ public sealed class ConversationsController : ControllerBase
     /// <param name="readStateChangeNotifiers">Publishes best-effort, reader-scoped invalidations after a durable cursor version advances.</param>
     /// <param name="supervisor">Existing resident-handle authority; diagnostic reads never activate agents.</param>
     /// <param name="compactionDiagnostics">Fresh read-only compaction policy and provider measurement diagnostics.</param>
+    /// <param name="compactionCoordinator">Canonical pipeline; absent dependencies fail closed.</param>
     public ConversationsController(
         IConversationStore conversations,
         ISessionStore sessions,
@@ -90,7 +92,8 @@ public sealed class ConversationsController : ControllerBase
         IConversationEventPublisher? conversationEventPublisher = null,
         IEnumerable<IConversationReadStateChangeNotifier>? readStateChangeNotifiers = null,
         IAgentSupervisor? supervisor = null,
-        ISessionCompactionDiagnostics? compactionDiagnostics = null)
+        ISessionCompactionDiagnostics? compactionDiagnostics = null,
+        ISessionCompactionCoordinator? compactionCoordinator = null)
     {
         _conversations = conversations;
         _sessions = sessions;
@@ -111,6 +114,7 @@ public sealed class ConversationsController : ControllerBase
         _readStateChangeNotifiers = readStateChangeNotifiers?.ToArray() ?? [];
         _supervisor = supervisor;
         _compactionDiagnostics = compactionDiagnostics;
+        _compactionCoordinator = compactionCoordinator;
     }
 
     /// <summary>
@@ -203,6 +207,96 @@ public sealed class ConversationsController : ControllerBase
         return Ok(new { conversationId = typedConversationId.Value, agentId = agentId.Value,
             sessionId = sessionId?.Value, status, observedAtUtc,
             source = context is null ? null : "resident-handle-local-estimate", context });
+    }
+
+    /// <summary>
+    /// Compacts only the caller's explicitly expected, writable current resident session. Reserves
+    /// actual run admission without activation and removes only the captured handle after applying.
+    /// Responses contain fixed outcome codes, never transcript, summary, or provider failure text.
+    /// </summary>
+    [HttpPost("{conversationId}/compact")]
+    public async Task<ActionResult> CompactAsync(string conversationId,
+        [FromBody] CompactConversationRequest request, CancellationToken cancellationToken = default)
+    {
+        if (!ConversationId.TryFrom(conversationId, out var id) ||
+            !SessionId.TryFrom(request.ExpectedSessionId, out var expected))
+            return BadRequest();
+        var conversation = await _conversations.GetAsync(id, cancellationToken).ConfigureAwait(false);
+        if (!CanInspectContext(conversation)) return NotFound();
+        if (conversation.Visibility != ConversationVisibility.UserFacing ||
+            conversation.Status != ConversationStatus.Active || conversation.ActiveSessionId != expected)
+            return Conflict(new { status = "not-current-writable-session" });
+        var agentId = conversation.AgentId;
+        var session = await _sessions.GetAsync(expected, cancellationToken).ConfigureAwait(false);
+        if (session is null || !OwnsActiveSession(session, id, agentId, expected))
+            return Conflict(new { status = "session-unavailable" });
+        var handle = _supervisor?.GetHandle(agentId, expected);
+        if (_supervisor is null || handle is null || handle.AgentId != agentId || handle.SessionId != expected || _compactionCoordinator is null)
+            return Conflict(new { status = "unloaded-or-unsupported" });
+        using var reservation = _supervisor.TryReserveMaintenance(handle);
+        if (reservation is null) return Conflict(new { status = "busy-or-unavailable" });
+
+        async Task<bool> StillCurrentAsync(CancellationToken token)
+        {
+            var currentSession = await _sessions.GetAsync(expected, token).ConfigureAwait(false);
+            var current = await _conversations.GetAsync(id, token).ConfigureAwait(false);
+            return CanInspectContext(current) && current.Visibility == ConversationVisibility.UserFacing &&
+                current.Status == ConversationStatus.Active && current.AgentId == agentId &&
+                current.ActiveSessionId == expected && OwnsActiveSession(currentSession, id, agentId, expected) &&
+                ReferenceEquals(handle, _supervisor.GetHandle(agentId, expected));
+        }
+        if (!await StillCurrentAsync(cancellationToken).ConfigureAwait(false))
+            return Conflict(new { status = "binding-changed" });
+        try
+        {
+            var outcome = await _compactionCoordinator.CompactAsync(agentId, session, cancellationToken,
+                force: true, handlePolicy: CompactionHandlePolicy.KeepCurrent).ConfigureAwait(false);
+            // An applied rewrite invalidates the captured live context even if reset or cancellation
+            // won immediately after persistence. Never release it back to queued producers stale.
+            var stillCurrent = await StillCurrentAsync(CancellationToken.None).ConfigureAwait(false);
+            if (outcome.Applied)
+                await _supervisor.StopIfCurrentAsync(handle, CancellationToken.None).ConfigureAwait(false);
+            if (!stillCurrent)
+                return Conflict(new { status = "binding-changed" });
+            if (outcome.Applied)
+                return Ok(new { status = "compacted", applied = true });
+            if (outcome.SkipReason == CompactionSkipReason.EmptyHistory ||
+                outcome.SkipReason == CompactionSkipReason.NoSummarizableTurns)
+                return Ok(new { status = "no-op", applied = false });
+            if (outcome.SkipReason == CompactionSkipReason.ConcurrentHistoryChange)
+                return Conflict(new { status = "concurrent-session-change" });
+            if (outcome.SkipReason == CompactionSkipReason.SessionRebound)
+                return Conflict(new { status = "binding-changed" });
+            return StatusCode(StatusCodes.Status502BadGateway, new { status = "compaction-failed" });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Persistence may have committed before cancellation surfaced; invalidate only this
+            // captured context before letting any queued producer proceed.
+            await TryStopCapturedCompactionHandleAsync(handle).ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Current-session compaction failed for {ConversationId}", id);
+            await TryStopCapturedCompactionHandleAsync(handle).ConfigureAwait(false);
+            return StatusCode(StatusCodes.Status502BadGateway, new { status = "compaction-failed" });
+        }
+    }
+
+    private async Task TryStopCapturedCompactionHandleAsync(IAgentHandle handle)
+    {
+        try
+        {
+            if (_supervisor is not null)
+                await _supervisor.StopIfCurrentAsync(handle, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Teardown is best effort: never replace the original cancellation or expose disposal
+            // details through an unhandled 500. Exact-instance removal still protects replacements.
+            _logger.LogWarning(ex, "Failed to stop captured compaction handle for {SessionId}", handle.SessionId);
+        }
     }
 
     private bool CanInspectContext([NotNullWhen(true)] Conversation? conversation) =>

@@ -3,6 +3,8 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Configuration;
 using BotNexus.Gateway.Sessions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -152,6 +154,157 @@ public class SessionCleanupServiceTests
             SessionCleanupFence.Capture(row), It.IsAny<CancellationToken>()), Times.Once);
         store.Verify(sessionStore => sessionStore.DeleteAsync(
             It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WaitsForApplicationStartedBeforeScanningSessions()
+    {
+        using var applicationStarted = new CancellationTokenSource();
+        using var stopping = new CancellationTokenSource();
+        var projectionRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = CreateSignallingStore(projectionRequested);
+        using var service = CreateServiceWithLifetime(store.Object, applicationStarted.Token);
+
+        // Invoke the loop directly: it runs synchronously to its first incomplete await,
+        // unlike BackgroundService.StartAsync, which schedules ExecuteAsync on .NET 10.
+        var execution = ExecuteCleanupLoop(service, stopping.Token);
+        try
+        {
+            store.VerifyNoOtherCalls();
+            execution.IsCompleted.ShouldBeFalse();
+            applicationStarted.Cancel();
+            await projectionRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            store.Verify(candidate => candidate.ListCleanupPlanAsync(
+                512, false, null, It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            await CancelAndDrainAsync(stopping, execution);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CancelledWhileWaiting_CompletesCleanlyWithoutStoreWork()
+    {
+        using var applicationStarted = new CancellationTokenSource();
+        using var stopping = new CancellationTokenSource();
+        var store = new Mock<ISessionStore>(MockBehavior.Strict);
+        using var service = CreateServiceWithLifetime(store.Object, applicationStarted.Token);
+        var execution = ExecuteCleanupLoop(service, stopping.Token);
+
+        stopping.Cancel();
+        try
+        {
+            await execution.WaitAsync(TimeSpan.FromSeconds(5));
+            execution.IsCompletedSuccessfully.ShouldBeTrue();
+        }
+        finally
+        {
+            // A later startup notification must not resurrect a cancelled cleanup loop.
+            applicationStarted.Cancel();
+            store.VerifyNoOtherCalls();
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AlreadyStarted_ScansWithoutAnotherNotification()
+    {
+        using var applicationStarted = new CancellationTokenSource();
+        applicationStarted.Cancel();
+        using var stopping = new CancellationTokenSource();
+        var projectionRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = CreateSignallingStore(projectionRequested);
+        using var service = CreateServiceWithLifetime(store.Object, applicationStarted.Token);
+        var execution = ExecuteCleanupLoop(service, stopping.Token);
+        try
+        {
+            await projectionRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            store.Verify(candidate => candidate.ListCleanupPlanAsync(
+                512, false, null, It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            await CancelAndDrainAsync(stopping, execution);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithoutLifetime_PreservesImmediateCleanup()
+    {
+        using var stopping = new CancellationTokenSource();
+        var projectionRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = CreateSignallingStore(projectionRequested);
+        using var service = CreateService(store.Object, new SessionCleanupOptions());
+        var execution = ExecuteCleanupLoop(service, stopping.Token);
+        try
+        {
+            await projectionRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            store.Verify(candidate => candidate.ListCleanupPlanAsync(
+                512, false, null, It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            await CancelAndDrainAsync(stopping, execution);
+        }
+    }
+
+    [Fact]
+    public async Task RunCleanupOnce_BeforeApplicationStarted_RemainsUsable()
+    {
+        using var applicationStarted = new CancellationTokenSource();
+        var projectionRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = CreateSignallingStore(projectionRequested);
+        using var service = CreateServiceWithLifetime(store.Object, applicationStarted.Token);
+
+        await service.RunCleanupOnceAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        applicationStarted.IsCancellationRequested.ShouldBeFalse();
+        store.Verify(candidate => candidate.ListCleanupPlanAsync(
+            512, false, null, It.IsAny<CancellationToken>()), Times.Once);
+        store.VerifyNoOtherCalls();
+    }
+
+    private static Mock<ISessionStore> CreateSignallingStore(TaskCompletionSource projectionRequested)
+    {
+        var store = new Mock<ISessionStore>(MockBehavior.Strict);
+        store.Setup(candidate => candidate.ListCleanupPlanAsync(
+                512, false, null, It.IsAny<CancellationToken>()))
+            .Callback(() => projectionRequested.TrySetResult())
+            .ReturnsAsync(new SessionCleanupPlanPage([], null));
+        return store;
+    }
+
+    private static SessionCleanupService CreateServiceWithLifetime(ISessionStore store, CancellationToken started)
+    {
+        var lifetime = new Mock<IHostApplicationLifetime>();
+        lifetime.SetupGet(candidate => candidate.ApplicationStarted).Returns(started);
+        var services = new ServiceCollection();
+        services.AddSingleton(lifetime.Object);
+        using var provider = services.BuildServiceProvider();
+        return ActivatorUtilities.CreateInstance<SessionCleanupService>(provider,
+            store, Options.Create(new SessionCleanupOptions { CheckInterval = TimeSpan.FromHours(1) }),
+            NullLogger<SessionCleanupService>.Instance);
+    }
+
+    private static Task ExecuteCleanupLoop(SessionCleanupService service, CancellationToken stoppingToken)
+    {
+        var method = typeof(SessionCleanupService).GetMethod("ExecuteAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Session cleanup execution loop was not found.");
+        return method.CreateDelegate<Func<CancellationToken, Task>>(service)(stoppingToken);
+    }
+
+    private static async Task CancelAndDrainAsync(CancellationTokenSource stopping, Task execution)
+    {
+        stopping.Cancel();
+        try
+        {
+            await execution.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+        {
+            // Existing periodic-delay cancellation is outside the startup-wait contract.
+        }
     }
 
     [Fact]

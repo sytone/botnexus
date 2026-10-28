@@ -156,7 +156,7 @@ public sealed class ClaudePluginImportTests : IDisposable
         _fetcher.Enqueue("v1", new Dictionary<string, string> { ["skills/greet/SKILL.md"] = "# greet" });
         AssertRejected(await Install());
         _fetcher.Enqueue("v1", Content());
-        AssertRejected(await _manager.InstallAsync(new PluginInstallRequest { Source = "fake", Name = "other" }));
+        AssertRejected(await _manager.InstallAsync(new PluginInstallRequest { Source = "https://example.com/fake.git", Name = "other" }));
     }
 
     [Fact]
@@ -286,7 +286,7 @@ public sealed class ClaudePluginImportTests : IDisposable
             });
             var manager = new PluginLifecycleManager(_store, fetcher);
             // Link creation failures propagate from the fetcher as source failures, and must NOT pass this assertion.
-            AssertRejected(await manager.InstallAsync(new PluginInstallRequest { Source = "fake" }), linkPath);
+            AssertRejected(await manager.InstallAsync(new PluginInstallRequest { Source = "https://example.com/fake.git" }), linkPath);
             File.ReadAllText(hostFile).ShouldBe("host-secret");
         }
     }
@@ -305,7 +305,7 @@ public sealed class ClaudePluginImportTests : IDisposable
             File.CreateSymbolicLink(Path.Combine(metadata, "plugin.json"), Path.Combine(staging, "absent"));
         });
         AssertRejected(await new PluginLifecycleManager(_store, fetcher)
-            .InstallAsync(new PluginInstallRequest { Source = "fake" }), ".claude-plugin/plugin.json");
+            .InstallAsync(new PluginInstallRequest { Source = "https://example.com/fake.git" }), ".claude-plugin/plugin.json");
     }
 
     [Fact]
@@ -337,7 +337,7 @@ public sealed class ClaudePluginImportTests : IDisposable
         }
     }
 
-    private Task<PluginOperationResult> Install() => _manager.InstallAsync(new PluginInstallRequest { Source = "fake" });
+    private Task<PluginOperationResult> Install() => _manager.InstallAsync(new PluginInstallRequest { Source = "https://example.com/fake.git" });
 
     private void AssertRejected(PluginOperationResult result, params string[] fields)
     {
