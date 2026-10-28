@@ -90,6 +90,7 @@
                 aria-label="Filter by recency"
                 value="@_filter.Recency"
                 @onchange="OnRecencyFilterChanged">
+            <option value="@ActivityRecencyWindow.Last24Hours">Last 24 hours</option>
             <option value="@ActivityRecencyWindow.Any">Any time</option>
             <option value="@ActivityRecencyWindow.Today">Today</option>
             <option value="@ActivityRecencyWindow.Week">Last 7 days</option>
@@ -271,7 +272,8 @@
     // later evolution (see #1888). Kept as a field so a future enhancement can make it configurable.
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
 
-    private ActivityDashboardFilter _filter = new();
+    private static ActivityDashboardFilter DefaultFilter => new(Recency: ActivityRecencyWindow.Last24Hours);
+    private ActivityDashboardFilter _filter = DefaultFilter;
 
     // #3421: resolved optionally rather than @inject'ed so a host that has not registered the cron
     // client (and every existing bUnit fixture) renders the dashboard exactly as before instead of
@@ -283,6 +285,7 @@
     private DateTimeOffset _projectionNow;
     private bool _isLoading;
     private bool _loadError;
+    private long _loadGeneration;
     private CancellationTokenSource? _pollCts;
 
     protected override async Task OnInitializedAsync()
@@ -296,10 +299,21 @@
 
     private async Task LoadAsync()
     {
+        var generation = ++_loadGeneration;
+        var filter = _filter;
         _isLoading = true;
         try
         {
-            var conversations = await Rest.GetAllConversationsAsync();
+            var now = DateTimeOffset.UtcNow;
+            DateTimeOffset? cutoff = filter.Recency switch
+            {
+                ActivityRecencyWindow.Last24Hours => now.AddHours(-24),
+                ActivityRecencyWindow.Today => new DateTimeOffset(now.ToLocalTime().Date),
+                ActivityRecencyWindow.Week => now.AddDays(-7),
+                ActivityRecencyWindow.Month => now.AddDays(-30),
+                _ => null
+            };
+            var conversations = await Rest.GetAllConversationsAsync(cutoff);
 
             // #3421: cron health is a SEPARATE, non-fatal fetch. CronApiClient.ListAsync already
             // swallows its own transport errors into an (empty, error) result, so a dead cron API
@@ -332,10 +346,14 @@
                 // Conversation data is the page contract; unavailable corroboration must not hide it.
             }
 
-            _projectionNow = DateTimeOffset.UtcNow;
+            // A newer filter load or poll owns all visible state, even if this request finishes last.
+            if (generation != _loadGeneration)
+                return;
+
+            _projectionNow = now;
             _rows = ActivityDashboardProjection.Project(
                 conversations,
-                _filter,
+                filter,
                 _projectionNow,
                 cronHealth,
                 sessionStatus);
@@ -344,11 +362,13 @@
         }
         catch
         {
-            _loadError = true;
+            if (generation == _loadGeneration)
+                _loadError = true;
         }
         finally
         {
-            _isLoading = false;
+            if (generation == _loadGeneration)
+                _isLoading = false;
         }
     }
 
@@ -388,9 +408,9 @@
         StateHasChanged();
     }
 
-    private bool HasActiveFilters => _filter != new ActivityDashboardFilter();
+    private bool HasActiveFilters => _filter != DefaultFilter;
 
-    private Task ResetFilters() => ApplyFilterAsync(new ActivityDashboardFilter());
+    private Task ResetFilters() => ApplyFilterAsync(DefaultFilter);
 
     private Task ToggleCron() => ApplyFilterAsync(_filter with { IncludeCron = !_filter.IncludeCron });
 
@@ -620,6 +640,7 @@
 
     public void Dispose()
     {
+        ++_loadGeneration;
         Store.OnChanged -= HandleStateChanged;
         _pollCts?.Cancel();
         _pollCts?.Dispose();

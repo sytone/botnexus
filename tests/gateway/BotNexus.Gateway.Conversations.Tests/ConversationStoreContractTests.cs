@@ -42,6 +42,63 @@ public abstract class ConversationStoreContractTests
             Title = title ?? "Test conversation"
         };
 
+    [Fact]
+    public async Task Activity_cutoff_is_inclusive_and_preserves_visibility_and_unbounded_callers()
+    {
+        var store = CreateStore();
+        var cutoff = new DateTimeOffset(2026, 10, 27, 12, 0, 0, TimeSpan.Zero);
+        foreach (var (id, updated, parent, status, visibility) in new[]
+        {
+            ("old", cutoff.AddTicks(-1), false, ConversationStatus.Active, ConversationVisibility.UserFacing),
+            ("boundary", cutoff, false, ConversationStatus.Active, ConversationVisibility.UserFacing),
+            ("offset", cutoff.ToOffset(TimeSpan.FromHours(-7)), false, ConversationStatus.Active, ConversationVisibility.UserFacing),
+            ("readonly", cutoff, false, ConversationStatus.Active, ConversationVisibility.InspectableReadOnly),
+            ("nested", cutoff, true, ConversationStatus.Active, ConversationVisibility.UserFacing),
+            ("archived", cutoff, false, ConversationStatus.Archived, ConversationVisibility.UserFacing)
+        })
+            await store.CreateAsync(new Conversation
+            {
+                ConversationId = ConversationId.From(id), AgentId = Agent(), Title = id,
+                CreatedAt = cutoff.AddDays(-2), UpdatedAt = updated, Status = status, Visibility = visibility,
+                ParentConversationId = parent ? ConversationId.From("parent") : null
+            });
+        var summaries = await store.GetSummariesAsync(cutoff);
+        summaries.Select(s => s.ConversationId).Order().ShouldBe(new[] { "boundary", "offset", "readonly" });
+        summaries.Single(s => s.ConversationId == "readonly").Visibility.ShouldBe("InspectableReadOnly");
+        (await store.GetSummariesAsync()).ShouldContain(s => s.ConversationId == "old");
+    }
+    [Theory]
+    [InlineData("created")]
+    [InlineData("updated")]
+    [InlineData("inbound")]
+    [InlineData("outbound")]
+    public async Task Activity_cutoff_uses_latest_creation_update_or_binding_activity(string signal)
+    {
+        var store = CreateStore();
+        var cutoff = DateTimeOffset.UtcNow.AddDays(1);
+        var latest = cutoff.AddMinutes(2);
+        var conversation = MakeConversation() with
+        {
+            CreatedAt = signal == "created" ? latest : cutoff.AddDays(-2),
+            UpdatedAt = signal == "updated" ? latest : cutoff.AddDays(-2)
+        };
+        conversation.ChannelBindings.Add(new ChannelBinding
+        {
+            BindingId = BindingId.Create(), ChannelType = ChannelKey.From("signalr"),
+            ChannelAddress = ChannelAddress.From("test"),
+            LastInboundAt = signal == "inbound" ? latest : null,
+            LastOutboundAt = signal == "outbound" ? latest : null
+        });
+        await store.CreateAsync(conversation);
+        var summary = (await store.GetSummariesAsync(cutoff)).ShouldHaveSingleItem();
+        summary.UpdatedAt.ShouldBe(cutoff.AddMinutes(2));
+        (await store.GetSummariesAsync((DateTimeOffset?)null)).ShouldHaveSingleItem()
+            .UpdatedAt.ShouldBe(latest);
+        (await store.GetSummariesAsync(cutoff)).ShouldHaveSingleItem()
+            .UpdatedAt.ShouldBe(latest);
+        (await store.GetSummariesAsync()).ShouldHaveSingleItem()
+            .UpdatedAt.ShouldBe(conversation.UpdatedAt);
+    }
     // ── GetAsync ───────────────────────────────────────────────────────────
 
     /// <summary>

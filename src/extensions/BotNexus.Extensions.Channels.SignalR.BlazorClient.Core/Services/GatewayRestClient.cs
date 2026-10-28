@@ -112,7 +112,21 @@ public sealed class GatewayRestClient : IGatewayRestClient, IChannelErrorReporte
     {
         EnsureConfigured();
         var result = await _http.GetFromJsonAsync<List<ConversationSummaryDto>>(
-            $"{_apiBaseUrl}conversations",
+            $"{_apiBaseUrl}conversations", cancellationToken);
+        return result as IReadOnlyList<ConversationSummaryDto> ?? [];
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ConversationSummaryDto>> GetAllConversationsAsync(
+        DateTimeOffset? activitySince,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        var query = activitySince is { } cutoff
+            ? $"?activitySince={Uri.EscapeDataString(cutoff.ToString("O", System.Globalization.CultureInfo.InvariantCulture))}"
+            : "?effectiveActivity=true";
+        var result = await _http.GetFromJsonAsync<List<ConversationSummaryDto>>(
+            $"{_apiBaseUrl}conversations{query}",
             cancellationToken);
         return result as IReadOnlyList<ConversationSummaryDto> ?? [];
     }
