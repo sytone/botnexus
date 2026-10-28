@@ -9,11 +9,11 @@
     <!-- Temporary residual dependency for #3040 AC6, not an implementation-facing exemption.
          IAgentTool still appears in IAgentHandleInspector.ResolveTool, IAgentToolFactory.CreateTools,
          and CommandExecutionContext.ResolveSessionTool; migration owner: #3446.
-         Provider-model types LlmModel (ContextWindowResolver.Resolve) and ThinkingLevel
-         (EffectiveExecutionSettings.Thinking) are reached transitively through Agent.Core;
-         migration owner: #3445. Both clusters remain under #3251 after the message seam was removed.
-         Remove this reference when those migrations leave it unused; do not widen the existing
-         ten-member equality IL fence in GatewayAbstractionCoreLeakFenceArchitectureTests.
+         Provider-model contracts are gateway-owned projections as of #3445, with conversion
+         confined to Gateway/Isolation. The provider registry remains the sole catalogue owner.
+         This is the remaining #3251 tool cluster. Remove this reference when #3446 leaves it unused;
+         do not widen the existing
+         six-member equality IL fence in GatewayAbstractionCoreLeakFenceArchitectureTests.
          Tracking: https://github.com/sytone/botnexus/issues/3040
                    https://github.com/sytone/botnexus/issues/3251
                    https://github.com/sytone/botnexus/issues/3445

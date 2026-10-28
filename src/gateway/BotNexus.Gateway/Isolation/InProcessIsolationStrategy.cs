@@ -193,13 +193,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             effectiveModel.ContextWindow,
             conversationOverrideLayer.ContextWindow.HasValue ? "conversation"
                 : descriptor.ContextWindow.HasValue ? "agent" : null,
-            new ContextBudgetDiagnostics
-            {
-                ModelContextWindowTokens = model.ContextWindow,
-                ModelContextWindowSource = model.ContextWindowSource,
-                ModelMaxOutputTokens = model.MaxTokens,
-                ModelMaxOutputSource = model.MaxTokensSource
-            });
+            model.ToContextDeclarations());
 
         // #2796: hand the prompt builder the SAME resolved settings that configure the model and
         // AgentOptions below. This is the single value; the context builder must never re-resolve
@@ -209,7 +203,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             Provider: descriptor.ApiProvider,
             Model: resolvedModelId,
             DescriptorDefaultModel: descriptor.ModelId,
-            Thinking: effectiveModel.Thinking,
+            Thinking: effectiveModel.Thinking.ToGatewayThinking(),
             ContextWindow: effectiveModel.ContextWindow);
 
         var enrichedSystemPrompt = await _contextBuilder.BuildSystemPromptAsync(descriptor, context, effectiveSettings, cancellationToken);
@@ -749,7 +743,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             InitialState: new AgentInitialState(
                 SystemPrompt: resumeSystemPrompt,
                 Model: model,
-                ThinkingLevel: effectiveModel.Thinking,
+                ThinkingLevel: effectiveSettings.Thinking.ToProviderThinking(),
                 Tools: tools,
                 Messages: initialMessages),
             Model: model,
