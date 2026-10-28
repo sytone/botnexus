@@ -80,9 +80,16 @@ public sealed record PluginInstallRequest
     /// <summary>
     /// Expected plugin identifier, or <c>null</c> to accept whatever the fetched manifest declares.
     /// When supplied and the manifest disagrees, the install is rejected rather than silently
-    /// installing content under a name the caller did not ask for.
+    /// installing content under a name the caller did not ask for. Required for manifestless
+    /// conventional-skills imports; the source and directory names never supply identity.
     /// </summary>
     public string? Name { get; init; }
+
+    /// <summary>
+    /// Explicit Claude or Copilot marketplace entry identity. When set, Source is the whole repository;
+    /// only this entry's safe relative source is imported. Null retains ordinary native behavior.
+    /// </summary>
+    public string? MarketplacePluginName { get; init; }
 
     /// <summary>Branch, tag or commit to check out, or <c>null</c> for the default branch.</summary>
     public string? Reference { get; init; }

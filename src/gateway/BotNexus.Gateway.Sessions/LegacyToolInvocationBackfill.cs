@@ -43,8 +43,8 @@ public static class LegacyToolInvocationBackfill
         }
 
         var invocationCount = rows.Select(row => (row.SessionId, row.ToolCallId)).Distinct().Count();
-        if (!commit)
-            return new LegacyToolInvocationBackfillReport(rows.Count, 0, invocationCount, hasMore, false);
+        if (!commit || rows.Count == 0)
+            return new LegacyToolInvocationBackfillReport(rows.Count, 0, invocationCount, hasMore, commit);
 
         using var writeConnection = SqliteConnectionFactory.Create(connectionString);
         try

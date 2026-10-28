@@ -6,7 +6,8 @@ namespace BotNexus.Agent.Core.Tools;
 /// <summary>
 /// Owns launched children in the host-shared assembly so separately loaded extensions see the same
 /// handles. Owner keys are supplied by trusted tool contributors, never by tool-call arguments.
-/// No operation attaches to an arbitrary OS PID. Running and unconfirmed-kill entries are never reaped.
+/// No operation attaches to an arbitrary OS PID. Running roots are never reaped; exited unresolved
+/// diagnostics count towards the same bounded retention cap as completed entries.
 /// </summary>
 public sealed class BackgroundProcessRegistry
 {
@@ -58,7 +59,7 @@ public sealed class BackgroundProcessRegistry
         }
     }
 
-    /// <summary>Bounds completed registrations without evicting running or uncertain children.</summary>
+    /// <summary>Bounds terminal diagnostics, including unresolved termination, without evicting running roots.</summary>
     public void Reap()
     {
         lock (_gate) ReapCore();
@@ -66,7 +67,7 @@ public sealed class BackgroundProcessRegistry
 
     private void ReapCore()
     {
-        var exited = _processes.Values.Where(p => p.Process.IsTerminal && !p.Process.KillUnconfirmed)
+        var exited = _processes.Values.Where(p => p.Process.IsTerminal)
             .OrderBy(p => p.Process.StartedAt).ToArray();
         foreach (var entry in exited.Take(Math.Max(0, exited.Length - _maxExitedRetained)))
         {
@@ -81,7 +82,7 @@ public sealed class BackgroundProcessRegistry
         lock (_gate)
         {
             if (!_processes.TryGetValue(pid, out var entry) || entry.Owner != owner) return false;
-            if (entry.Process.IsRunning || entry.Process.KillUnconfirmed) return false;
+            if (!entry.Process.TryReleaseCompleted()) return false;
             return _processes.Remove(pid);
         }
     }
@@ -94,7 +95,7 @@ public sealed class BackgroundProcessRegistry
             foreach (var entry in _processes.Values.Where(p => p.Owner == owner).ToArray())
             {
                 entry.Process.Dispose();
-                if (!entry.Process.IsRunning && !entry.Process.KillUnconfirmed)
+                if (entry.Process.TryReleaseCompleted())
                     _processes.Remove(entry.Process.Pid);
             }
         }
@@ -102,8 +103,9 @@ public sealed class BackgroundProcessRegistry
 }
 
 /// <summary>
-/// Owns a started process, bounded stream drains, and stdin until confirmed completion. Completion
-/// includes both stream drains; seeing OS exit alone must not truncate the child's final output.
+/// Owns a started process, bounded stream drains, and stdin. Ordinary completion includes both
+/// stream drains. An exited root after an unconfirmed kill instead releases resources and retains
+/// unresolved diagnostics; cleanup is not evidence that descendants terminated.
 /// Background lifetimes are independent of the launching call after ownership transfer.
 /// </summary>
 public class BackgroundProcess : IDisposable
@@ -114,6 +116,11 @@ public class BackgroundProcess : IDisposable
     private readonly Task _completion;
     private readonly object _lifecycle = new();
     private readonly SemaphoreSlim _inputGate = new(1, 1);
+    private readonly CancellationTokenSource _drainCancellation = new();
+    private readonly StreamReader _standardOutput;
+    private readonly StreamReader _standardError;
+    private readonly StreamWriter? _standardInput;
+    private StreamWriter StandardInput => _standardInput ?? _process.StandardInput;
     private volatile bool _disposed;
     private int _captureFailures;
     private int _captureInterruptions;
@@ -131,10 +138,11 @@ public class BackgroundProcess : IDisposable
         string command,
         DateTimeOffset startedAt,
         StreamReader? standardOutput,
-        StreamReader? standardError)
+        StreamReader? standardError,
+        StreamWriter? standardInput = null)
         : this(process, command, startedAt, GetProcess(process).Id,
             standardOutput ?? throw new ArgumentNullException(nameof(standardOutput)),
-            standardError ?? throw new ArgumentNullException(nameof(standardError)))
+            standardError ?? throw new ArgumentNullException(nameof(standardError)), standardInput)
     {
     }
 
@@ -144,7 +152,8 @@ public class BackgroundProcess : IDisposable
         DateTimeOffset startedAt,
         int pid,
         StreamReader standardOutput,
-        StreamReader standardError)
+        StreamReader standardError,
+        StreamWriter? standardInput = null)
     {
         _process = GetProcess(process);
         Pid = pid;
@@ -152,6 +161,9 @@ public class BackgroundProcess : IDisposable
         StartedAt = startedAt;
         try { ProcessName = process.ProcessName; }
         catch (InvalidOperationException) { ProcessName = "exited"; }
+        _standardOutput = standardOutput;
+        _standardError = standardError;
+        _standardInput = standardInput;
         _completion = CompleteAsync(DrainAsync(standardOutput), DrainAsync(standardError));
     }
 
@@ -167,7 +179,7 @@ public class BackgroundProcess : IDisposable
     /// <summary>Captured OS name for diagnostics after termination.</summary>
     public string ProcessName { get; }
     /// <summary>True only when process exit and both redirected output drains completed successfully.</summary>
-    public bool IsComplete => IsTerminal && !OutputCaptureIncomplete;
+    public bool IsComplete => IsTerminal && !KillUnconfirmed && !OutputCaptureIncomplete;
     /// <summary>True when process exit and both drain attempts reached a terminal outcome.</summary>
     public bool IsTerminal => _completion.IsCompletedSuccessfully;
     /// <summary>True when final output may be partial because a redirected stream could not be drained.</summary>
@@ -177,8 +189,14 @@ public class BackgroundProcess : IDisposable
         : Volatile.Read(ref _captureFailures) != 0 ? "incomplete (read failure)"
         : Volatile.Read(ref _captureInterruptions) != 0 ? "incomplete (stream closed during cleanup)"
         : "complete";
-    /// <summary>An unconfirmed kill pins the registration even if the root has exited.</summary>
+    /// <summary>Termination of the tree was not confirmed; root exit alone never clears this uncertainty.</summary>
     public bool KillUnconfirmed { get; private set; }
+    /// <summary>An exited root with uncertain descendants; resources are released, not reattached by PID.</summary>
+    public bool IsUnresolved => KillUnconfirmed && !IsRunning;
+    /// <summary>Separates OS root liveness from the outcome of a requested tree termination.</summary>
+    public string Status => IsRunning
+        ? KillUnconfirmed ? "running (termination unconfirmed)" : "running"
+        : IsUnresolved ? "exited (termination unresolved; operator intervention required)" : "exited";
     /// <summary>Distinguishes normal completion from a requested termination.</summary>
     public bool KillRequested { get; private set; }
     /// <summary>OS liveness, independent of pending final output.</summary>
@@ -201,11 +219,17 @@ public class BackgroundProcess : IDisposable
         {
             while (true)
             {
-                var count = await reader.ReadAsync(buffer).ConfigureAwait(false);
+                // WaitAsync also bounds cleanup if an underlying stream ignores cancellation.
+                var count = await reader.ReadAsync(buffer.AsMemory(), _drainCancellation.Token)
+                    .AsTask().WaitAsync(_drainCancellation.Token).ConfigureAwait(false);
                 var clean = decoder.Append(buffer.AsSpan(0, count), final: count == 0);
                 lock (_gate) _output.AppendChunk(clean);
                 if (count == 0) return;
             }
+        }
+        catch (OperationCanceledException) when (_drainCancellation.IsCancellationRequested)
+        {
+            Interlocked.Increment(ref _captureInterruptions);
         }
         catch (ObjectDisposedException)
         {
@@ -222,7 +246,11 @@ public class BackgroundProcess : IDisposable
         try
         {
             await _process.WaitForExitAsync().ConfigureAwait(false);
-            _exitCode = _process.ExitCode;
+            lock (_lifecycle)
+            {
+                if (!_disposed) _exitCode = _process.ExitCode;
+                if (KillUnconfirmed) ReleaseExitedUnresolved();
+            }
         }
         catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
         {
@@ -260,7 +288,10 @@ public class BackgroundProcess : IDisposable
             }
             var retentionBanner = _output.FormatBanner();
             var captureBanner = OutputCaptureIncomplete ? $"[output capture {OutputCaptureStatus}]" : string.Empty;
-            var banner = string.Join('\n', new[] { captureBanner, retentionBanner }.Where(value => value.Length != 0));
+            var terminationBanner = IsUnresolved
+                ? "[termination unresolved: root exited; descendants may still be running; operator intervention required]"
+                : KillUnconfirmed ? "[termination unconfirmed: root remains tracked for retry]" : string.Empty;
+            var banner = string.Join('\n', new[] { terminationBanner, captureBanner, retentionBanner }.Where(value => value.Length != 0));
             return banner.Length == 0 ? text : text.Length == 0 ? banner : $"{banner}\n{text}";
         }
     }
@@ -276,8 +307,8 @@ public class BackgroundProcess : IDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (!IsRunning) throw new InvalidOperationException($"Process {Pid} has already exited.");
-            await _process.StandardInput.WriteAsync(content.AsMemory(), cancellationToken).ConfigureAwait(false);
-            await _process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await StandardInput.WriteAsync(content.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -288,24 +319,30 @@ public class BackgroundProcess : IDisposable
     /// <summary>Supplied launch input is finite: write it while output drains, then signal EOF.</summary>
     public async Task WriteInitialInputAsync(string input, CancellationToken cancellationToken)
     {
-        await _process.StandardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false);
-        _process.StandardInput.Close();
+        await StandardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false);
+        StandardInput.Close();
     }
 
-    /// <summary>Requests a tree kill and preserves uncertain registrations for a later retry.</summary>
+    /// <summary>Retries a tree kill only while the owned root is live; exited uncertainty requires operator intervention.</summary>
     public bool Kill()
     {
+        bool confirmed;
         lock (_lifecycle)
         {
             if (_disposed) return false;
+            if (IsUnresolved)
+            {
+                ReleaseExitedUnresolved();
+                return false;
+            }
             KillRequested = true;
-            var confirmed = KillCore();
+            confirmed = KillCore();
             KillUnconfirmed = !confirmed;
-            // Preserve the synchronous kill/reap contract: a confirmed root exit must also give
-            // the bounded drains an opportunity to publish their final output before reaping.
-            if (confirmed) _completion.Wait(2_000);
-            return confirmed;
+            if (!confirmed) ReleaseExitedUnresolved();
         }
+        // Never hold the lifecycle lock while waiting: exit observation uses it to cache status.
+        if (confirmed) _completion.Wait(2_000);
+        return confirmed;
     }
 
     /// <summary>Kill the tree BEFORE its root disappears; a failed observation must remain explicit.</summary>
@@ -321,16 +358,56 @@ public class BackgroundProcess : IDisposable
         catch (System.ComponentModel.Win32Exception) { return false; }
     }
 
-    /// <summary>Releases stream and OS resources only when the owner explicitly ends this lifetime.</summary>
+    private void ReleaseExitedUnresolved()
+    {
+        // Called with _lifecycle held, after kill publication or natural exit observation.
+        if (_disposed || IsRunning) return;
+        _exitCode = _process.ExitCode;
+        Interlocked.Increment(ref _captureInterruptions);
+        _drainCancellation.Cancel();
+        ReleaseResources();
+    }
+
+    private static void CloseReader(StreamReader reader)
+    {
+        // StreamReader.Dispose may reject an active read. Close its underlying pipe regardless.
+        reader.BaseStream.Dispose();
+        try { reader.Dispose(); }
+        catch (InvalidOperationException) { }
+    }
+
+    private void ReleaseResources()
+    {
+        _disposed = true;
+        CloseReader(_standardOutput);
+        CloseReader(_standardError);
+        // Test/adaptor readers may differ from the process's own redirected readers.
+        if (_process.StartInfo.RedirectStandardOutput) CloseReader(_process.StandardOutput);
+        if (_process.StartInfo.RedirectStandardError) CloseReader(_process.StandardError);
+        if (_process.StartInfo.RedirectStandardInput)
+        {
+            // Close the pipe first; disposing a writer must not block flushing to a surviving descendant.
+            StandardInput.BaseStream.Dispose();
+            try { StandardInput.Dispose(); }
+            catch (IOException) { }
+            catch (ObjectDisposedException) { }
+            // Closing the pipe does not synchronously finish a pending async writer operation.
+            // Its disposal must not prevent the owned process handle from being released.
+            catch (InvalidOperationException) { }
+        }
+        _process.Dispose();
+    }
+
+    /// <summary>Releases owned resources after root exit; an unconfirmed kill of a live root stays pinned.</summary>
     public virtual void Dispose()
     {
+        // Kill may wait for completion, whose exit observer also needs _lifecycle.
+        if (IsRunning && !Kill()) return;
         lock (_lifecycle)
         {
-            if (_disposed) return;
-            if (IsRunning && !Kill()) return;
-            if (KillUnconfirmed) return;
-            _disposed = true;
-            _process.Dispose();
+            if (_disposed || IsRunning) return;
+            if (KillUnconfirmed) ReleaseExitedUnresolved();
+            else ReleaseResources();
         }
     }
 
@@ -340,7 +417,7 @@ public class BackgroundProcess : IDisposable
     {
         lock (_lifecycle)
         {
-            if (!IsTerminal || KillUnconfirmed) return false;
+            if (!IsTerminal || IsRunning) return false;
             Dispose();
             return _disposed;
         }

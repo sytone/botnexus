@@ -613,13 +613,15 @@ public sealed class BrowserToolsContributorTests
         // Non-vacuity for every AC8 case above: a tool that refused everything would pass them
         // all and be useless.
         var runner = new FakeAgentBrowserProcessRunner();
-        runner.ForCommand("url", new AgentBrowserProcessResult(0, "https://example.com/", ""));
-        runner.ForCommand("snapshot", new AgentBrowserProcessResult(0, "Hello page", ""));
+        runner.ForCommand("get", new AgentBrowserProcessResult(0,
+            AgentBrowserCli.Json(new { success = true, data = new { url = "https://example.com/" } }), ""));
+        runner.ForCommand("snapshot", new AgentBrowserProcessResult(0,
+            AgentBrowserCli.Json(new { success = true, data = new { snapshot = "Hello page" } }), ""));
 
         var tools = await ToolsFor(Contributor(runner), Context());
         var output = await InvokeAsync(Tool(tools, "browser_navigate"), ("url", "https://example.com/"));
 
-        runner.Commands.ShouldContain("navigate");
+        runner.Commands.ShouldContain("open");
         output.ShouldContain("Hello page");
     }
 
@@ -627,8 +629,10 @@ public sealed class BrowserToolsContributorTests
     public async Task Ac8_SnapshotContent_IsReturnedInTheUntrustedContentEnvelope()
     {
         var runner = new FakeAgentBrowserProcessRunner();
-        runner.ForCommand("url", new AgentBrowserProcessResult(0, "https://example.com/", ""));
-        runner.ForCommand("snapshot", new AgentBrowserProcessResult(0, "page body", ""));
+        runner.ForCommand("get", new AgentBrowserProcessResult(0,
+            AgentBrowserCli.Json(new { success = true, data = new { url = "https://example.com/" } }), ""));
+        runner.ForCommand("snapshot", new AgentBrowserProcessResult(0,
+            AgentBrowserCli.Json(new { success = true, data = new { snapshot = "page body" } }), ""));
 
         var tools = await ToolsFor(Contributor(runner), Context());
         var output = await InvokeAsync(Tool(tools, "browser_snapshot"));
@@ -644,9 +648,10 @@ public sealed class BrowserToolsContributorTests
         // The post-navigation re-check from #3030, asserted through the TOOL surface: without it
         // a page could pass the guard at navigate time and serve metadata content at snapshot time.
         var runner = new FakeAgentBrowserProcessRunner();
-        runner.ForCommand("url", new AgentBrowserProcessResult(
-            0, "http://169.254.169.254/latest/meta-data/", ""));
-        runner.ForCommand("snapshot", new AgentBrowserProcessResult(0, "SECRET-IAM-CREDENTIALS", ""));
+        runner.ForCommand("get", new AgentBrowserProcessResult(0,
+            AgentBrowserCli.Json(new { success = true, data = new { url = "http://169.254.169.254/latest/meta-data/" } }), ""));
+        runner.ForCommand("snapshot", new AgentBrowserProcessResult(0,
+            AgentBrowserCli.Json(new { success = true, data = new { snapshot = "SECRET-IAM-CREDENTIALS" } }), ""));
 
         var tools = await ToolsFor(Contributor(runner), Context());
         var output = await InvokeAsync(Tool(tools, "browser_snapshot"));
@@ -686,7 +691,7 @@ public sealed class BrowserToolsContributorTests
     }
 
     [Fact]
-    public async Task Type_ForwardsTheSubmitFlagOnlyWhenAsked()
+    public async Task Type_PressesEnterOnlyWhenSubmitIsAsked()
     {
         var runner = new FakeAgentBrowserProcessRunner();
         var tools = await ToolsFor(Contributor(runner), Context());
@@ -696,8 +701,9 @@ public sealed class BrowserToolsContributorTests
         await InvokeAsync(Tool(tools, "browser_type"),
             ("selector", "input"), ("text", "a"));
 
-        runner.Invocations[0].Arguments.ShouldContain("--submit");
-        runner.Invocations[1].Arguments.ShouldNotContain("--submit");
+        runner.Commands.ShouldBe(new[] { "type", "press", "type" });
+        runner.Invocations[1].Arguments.ShouldBe(new[] { "--session", runner.SessionArguments[1], "press", "Enter" });
+        runner.Invocations.ShouldAllBe(i => !i.Arguments.Contains("--submit"));
     }
 
     [Fact]
@@ -733,8 +739,10 @@ public sealed class BrowserToolsContributorTests
     public async Task Ac9_ExercisingEveryTool_LaunchesNoRealProcess()
     {
         var runner = new FakeAgentBrowserProcessRunner();
-        runner.ForCommand("url", new AgentBrowserProcessResult(0, "https://example.com/", ""));
-        runner.ForCommand("snapshot", new AgentBrowserProcessResult(0, "body", ""));
+        runner.ForCommand("get", new AgentBrowserProcessResult(0,
+            AgentBrowserCli.Json(new { success = true, data = new { url = "https://example.com/" } }), ""));
+        runner.ForCommand("snapshot", new AgentBrowserProcessResult(0,
+            AgentBrowserCli.Json(new { success = true, data = new { snapshot = "body" } }), ""));
 
         var tools = await ToolsFor(Contributor(runner), Context());
 
@@ -746,7 +754,8 @@ public sealed class BrowserToolsContributorTests
 
         // Every command was observed by the FAKE. If any had escaped to the real runner it would
         // not appear here, and the count would be short.
-        runner.Commands.ShouldContain("navigate");
+        runner.Commands.ShouldContain("open");
+        runner.Commands.ShouldContain("get");
         runner.Commands.ShouldContain("snapshot");
         runner.Commands.ShouldContain("click");
         runner.Commands.ShouldContain("type");

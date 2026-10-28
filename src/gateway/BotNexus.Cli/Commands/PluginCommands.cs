@@ -42,7 +42,8 @@ internal sealed class PluginCommands
         var source = new Argument<string>("source", "Git source URL.");
         var reference = new Option<string?>("--reference", "Branch, tag, or commit to install.");
         var pin = new Option<bool>("--pin", "Disable updates after installation.");
-        var install = new Command("install", "Install a plugin from a git source.") { source, reference, pin };
+        var marketplacePlugin = new Option<string?>("--marketplace-plugin", "Select a plugin identity from a relative-source Claude or Copilot repository catalog.");
+        var install = new Command("install", "Install a plugin from a git source.") { source, reference, pin, marketplacePlugin };
         install.SetHandler(context => ExecuteAsync(
             context,
             urlOption,
@@ -53,7 +54,8 @@ internal sealed class PluginCommands
             new PluginInstallWireRequest(
                 context.ParseResult.GetValueForArgument(source),
                 context.ParseResult.GetValueForOption(reference),
-                !context.ParseResult.GetValueForOption(pin))));
+                !context.ParseResult.GetValueForOption(pin),
+                context.ParseResult.GetValueForOption(marketplacePlugin))));
 
         command.AddCommand(list);
         command.AddCommand(get);
@@ -177,5 +179,5 @@ internal sealed class PluginCommands
 
     private static string Escape(string value) => Uri.EscapeDataString(value);
 
-    private sealed record PluginInstallWireRequest(string Source, string? Reference, bool UpdatesEnabled);
+    private sealed record PluginInstallWireRequest(string Source, string? Reference, bool UpdatesEnabled, string? MarketplacePluginName);
 }

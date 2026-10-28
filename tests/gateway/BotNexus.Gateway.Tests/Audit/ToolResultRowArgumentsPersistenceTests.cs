@@ -12,22 +12,22 @@ namespace BotNexus.Gateway.Tests.Audit;
 
 /// <summary>
 /// Issue #2906 AC4: records a session containing a <c>shell</c> call, an <c>edit</c> call and a
-/// no-argument call, then asserts every persisted <c>role='tool'</c> RESULT row round-trips the
-/// arguments that produced it.
+/// no-argument call, then asserts every durable <c>role='tool'</c> result projection round-trips
+/// the arguments that produced it through its normalized evidence link.
 /// </summary>
 /// <remarks>
 /// <para>
 /// These tests deliberately drive the REAL streaming write path into the REAL
-/// <see cref="SqliteSessionStore"/> and then read the raw <c>session_history</c> rows back with
-/// SQL - the exact query the forensics scanner runs. Asserting on the in-memory
-/// <c>SessionEntry</c> alone would not have caught the defect, because the loss #2906 reports is
-/// only visible once the rows are on disk and read back without a self-join on
-/// <c>tool_call_id</c>.
+/// <see cref="SqliteSessionStore"/> and then reconstruct <c>session_history</c> projections with
+/// a SQL join to <c>tool_invocations</c> on the persisted invocation link and session identity.
+/// Asserting on the in-memory <c>SessionEntry</c> alone would not catch lost durable evidence.
+/// The join restores start arguments and result text only; result arguments remain per-row
+/// evidence and must not be invented from the normalized invocation when absent.
 /// </para>
 /// <para>
-/// The measured production shape (2026-08 <c>sessions.db</c>) is a two-row pair per call: a start
-/// row with args and a result row without. The pairing survives; what changes is that the result
-/// row is now self-describing.
+/// The start/result pair survives the normalized write cutover. Raw start arguments and raw
+/// result content are intentionally NULL; their payloads live in the linked invocation. Separate
+/// raw-storage assertions verify both the narrow markers and the intact normalized evidence.
 /// </para>
 /// </remarks>
 public sealed class ToolResultRowArgumentsPersistenceTests
@@ -49,7 +49,7 @@ public sealed class ToolResultRowArgumentsPersistenceTests
         var results = rows.Where(r => r.Kind == "tool-result").ToList();
         results.Count.ShouldBe(3);
 
-        // AC1: no result row for a tool invoked with arguments persists NULL.
+        // AC1: no durable result projection for a tool invoked with arguments has NULL args.
         results.Single(r => r.ToolName == "shell").ToolArgs.ShouldBe(ShellArgs);
         results.Single(r => r.ToolName == "edit").ToolArgs.ShouldBe(EditArgs);
 
@@ -62,16 +62,17 @@ public sealed class ToolResultRowArgumentsPersistenceTests
     [Fact]
     public async Task RecordedSession_HasNoToolRowWithNullArguments()
     {
-        // The issue's headline query, run verbatim against a freshly recorded session:
-        //   select count(*) from session_history where role='tool' and tool_args is null
+        // The issue's no-lost-arguments invariant applies to the durable reconstructed
+        // projection, not the intentionally narrow raw start markers.
         using var fixture = new StoreFixture();
         var session = await RecordSessionAsync(fixture);
 
         using var connection = new SqliteConnection(fixture.ConnectionString);
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT COUNT(*) FROM session_history WHERE session_id = $id AND role = 'tool' AND tool_args IS NULL";
+        command.CommandText = $"""
+            SELECT COUNT(*) FROM ({ToolRowProjectionSql}) WHERE tool_args IS NULL
+            """;
         command.Parameters.AddWithValue("$id", session.Value);
 
         Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture).ShouldBe(0);
@@ -80,7 +81,7 @@ public sealed class ToolResultRowArgumentsPersistenceTests
     [Fact]
     public async Task RecordedSession_ResultRowContent_IsExtractedTextNotAToolContentToString()
     {
-        // AC3: the result row must hold the tool's text, never the compiler-generated
+        // AC3: the durable result projection must hold the tool's text, never the compiler-generated
         // "AgentToolContent { Type = Text, Value = ... }" record ToString that #2906 observed in
         // 13k production rows.
         using var fixture = new StoreFixture();
@@ -95,9 +96,9 @@ public sealed class ToolResultRowArgumentsPersistenceTests
     [Fact]
     public async Task RecordedSession_StartAndResultRows_ShareCallIdAndAgreeOnArguments()
     {
-        // The pairing invariant the forensics tooling relies on: a consumer reading ONLY the
-        // result rows sees the same arguments a consumer reading the start rows sees, so the
-        // self-join #2906 complains about becomes unnecessary rather than merely optional.
+        // The pairing invariant the forensics tooling relies on: reconstructed result rows
+        // expose the same arguments as reconstructed start rows, without a history self-join
+        // on tool_call_id. Each marker instead links to its normalized durable evidence.
         using var fixture = new StoreFixture();
         var session = await RecordSessionAsync(fixture);
 
@@ -144,6 +145,78 @@ public sealed class ToolResultRowArgumentsPersistenceTests
         synthesized.ToolArgs.ShouldNotBeNull();
         synthesized.ToolArgs.ShouldContain("git status --short");
         synthesized.ToolIsError.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task RecordedSession_RawMarkersAreNarrowAndLinkedNormalizedPayloadsAreIntact()
+    {
+        using var fixture = new StoreFixture();
+        var session = await RecordSessionAsync(fixture);
+        var expected = new Dictionary<string, (string Name, string Args, string Content)>
+        {
+            ["call-shell"] = ("shell", ShellArgs, " M src/a.cs"),
+            ["call-edit"] = ("edit", EditArgs, "Replaced 1 occurrence."),
+            ["call-noargs"] = ("datetime_helper", "{}", "2026-08-11T01:00:00Z")
+        };
+
+        using var connection = new SqliteConnection(fixture.ConnectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT h.message_kind, h.tool_args, h.content, h.tool_invocation_id,
+                   i.id, i.arguments_json, i.result_content, i.tool_call_id, h.tool_call_id,
+                   i.tool_name, h.tool_name
+            FROM session_history h
+            LEFT JOIN tool_invocations i ON i.id = h.tool_invocation_id AND i.session_id = h.session_id
+            WHERE h.session_id = $id AND h.role = 'tool'
+            ORDER BY h.id
+            """;
+        command.Parameters.AddWithValue("$id", session.Value);
+
+        var starts = new List<string>();
+        var results = new List<string>();
+        var invocationIds = new HashSet<long>();
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                reader.IsDBNull(3).ShouldBeFalse();
+                reader.IsDBNull(4).ShouldBeFalse();
+                reader.GetInt64(3).ShouldBe(reader.GetInt64(4));
+                invocationIds.Add(reader.GetInt64(4));
+                var callId = reader.GetString(8);
+                reader.GetString(7).ShouldBe(callId);
+                var payload = expected[callId];
+                reader.GetString(9).ShouldBe(payload.Name);
+                reader.GetString(10).ShouldBe(payload.Name);
+                reader.GetString(5).ShouldBe(payload.Args);
+                reader.GetString(6).ShouldBe(payload.Content);
+
+                var kind = reader.GetString(0);
+                if (kind == "tool-start")
+                {
+                    reader.IsDBNull(1).ShouldBeTrue();
+                    starts.Add(callId);
+                }
+                else
+                {
+                    kind.ShouldBe("tool-result");
+                    reader.IsDBNull(2).ShouldBeTrue();
+                    // Result arguments remain per-row evidence, not a normalized fallback.
+                    reader.GetString(1).ShouldBe(payload.Args);
+                    results.Add(callId);
+                }
+            }
+        }
+
+        // Exactly three narrow starts and three narrow results, with one linked pair per call.
+        starts.Order().ShouldBe(expected.Keys.Order());
+        results.Order().ShouldBe(expected.Keys.Order());
+        starts.Count.ShouldBe(3);
+        results.Count.ShouldBe(3);
+        invocationIds.Count.ShouldBe(3);
+        command.CommandText = "SELECT COUNT(*) FROM tool_invocations WHERE session_id = $id";
+        Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture).ShouldBe(3);
     }
 
     /// <summary>
@@ -217,20 +290,15 @@ public sealed class ToolResultRowArgumentsPersistenceTests
     }
 
     /// <summary>
-    /// Reads the persisted tool rows straight out of <c>session_history</c> with SQL, the way the
-    /// forensics scanner does - not through the store's own mapper.
+    /// Reconstructs persisted tool rows with a session-scoped normalized evidence join, using
+    /// the production projection contract but independent SQL rather than the store's mapper.
     /// </summary>
     private static List<ToolRow> ReadToolRows(StoreFixture fixture, SessionId sessionId)
     {
         using var connection = new SqliteConnection(fixture.ConnectionString);
         connection.Open();
         using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT tool_name, tool_call_id, tool_args, tool_is_error, content, message_kind
-            FROM session_history
-            WHERE session_id = $id AND role = 'tool'
-            ORDER BY id
-            """;
+        command.CommandText = ToolRowProjectionSql;
         command.Parameters.AddWithValue("$id", sessionId.Value);
 
         var rows = new List<ToolRow>();
@@ -248,6 +316,20 @@ public sealed class ToolResultRowArgumentsPersistenceTests
 
         return rows;
     }
+
+    // Match the durable projection: only start args and result text have normalized fallbacks.
+    private const string ToolRowProjectionSql = """
+        SELECT h.tool_name, h.tool_call_id,
+               CASE WHEN h.tool_args IS NOT NULL THEN h.tool_args
+                    WHEN h.message_kind = 'tool-start' THEN i.arguments_json END AS tool_args,
+               h.tool_is_error,
+               COALESCE(h.content, CASE WHEN h.message_kind = 'tool-result' THEN i.result_content END) AS content,
+               h.message_kind
+        FROM session_history h
+        LEFT JOIN tool_invocations i ON i.id = h.tool_invocation_id AND i.session_id = h.session_id
+        WHERE h.session_id = $id AND h.role = 'tool'
+        ORDER BY h.id
+        """;
 
     private sealed record ToolRow(
         string? ToolName,

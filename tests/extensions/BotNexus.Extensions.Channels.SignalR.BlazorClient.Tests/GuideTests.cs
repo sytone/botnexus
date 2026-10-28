@@ -125,6 +125,52 @@ public sealed class GuideTests : IDisposable
         await search;
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Held_request_reports_cancellation_when_its_continuation_runs_inline(bool cancelBeforeSend)
+    {
+        const string path = "/guide/beta.md";
+        var held = _http.HoldNext(path);
+        using var cancellation = new CancellationTokenSource();
+        using var invoker = new HttpMessageInvoker(_http, disposeHandler: false);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"http://localhost{path}");
+        Task<HttpResponseMessage> send;
+
+        // Force the handler's await to resume inside Cancel, before any earlier cancellation
+        // observer can run. Restore the test runner's context before awaiting assertions.
+        var previousContext = SynchronizationContext.Current;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(new InlineSynchronizationContext());
+            if (cancelBeforeSend)
+                cancellation.Cancel();
+            send = invoker.SendAsync(request, cancellation.Token);
+            _http.RequestCount(path).ShouldBe(1);
+            if (!cancelBeforeSend)
+            {
+                send.IsCompleted.ShouldBeFalse();
+                cancellation.Cancel();
+            }
+            send.IsCanceled.ShouldBeTrue();
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
+
+        var exception = await Should.ThrowAsync<OperationCanceledException>(
+            async () => await send.WaitAsync(TimeSpan.FromSeconds(30)));
+        exception.CancellationToken.ShouldBe(cancellation.Token);
+        held.Task.IsCompleted.ShouldBeFalse();
+        await _http.WaitForCancellationAsync(path);
+    }
+
+    private sealed class InlineSynchronizationContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback callback, object? state) => callback(state);
+    }
+
     [Fact]
     public async Task Older_uncached_request_cannot_replace_newer_cached_selection()
     {
@@ -313,9 +359,17 @@ public sealed class GuideTests : IDisposable
 
             if (_held.TryRemove(path, out var held))
             {
-                using var registration = cancellationToken.Register(() =>
-                    _cancelled.GetOrAdd(path, _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult());
-                return await held.Task.WaitAsync(cancellationToken);
+                try
+                {
+                    return await held.Task.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // Observe cancellation where the held wait consumes it. A separate callback
+                    // can be unregistered by an inline continuation before that callback runs.
+                    _cancelled.GetOrAdd(path, _ => new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
+                    throw;
+                }
             }
 
             return _responses.TryGetValue(path, out var response)

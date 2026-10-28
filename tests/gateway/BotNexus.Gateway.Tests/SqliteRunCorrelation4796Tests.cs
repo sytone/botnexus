@@ -38,6 +38,7 @@ public sealed class SqliteRunCorrelation4796Tests : IDisposable
         var reloaded = (await Store().GetAsync(session.SessionId)).ShouldNotBeNull();
         reloaded.GetHistorySnapshot().Count.ShouldBe(2);
         reloaded.GetHistorySnapshot().ShouldAllBe(row => Id(row) == "agent-run-a");
+        await RestoreLegacyPayloadsAsync(session.SessionId);
         store.CleanupLegacyToolPayloads(10).CleanedInvocations.ShouldBe(1);
         reloaded = (await Store().GetAsync(session.SessionId)).ShouldNotBeNull();
         reloaded.GetHistorySnapshot().ShouldAllBe(row => Id(row) == "agent-run-a");
@@ -157,6 +158,7 @@ public sealed class SqliteRunCorrelation4796Tests : IDisposable
         reopened.GetHistorySnapshot().ShouldAllBe(row => row.ToolCallId == "same-provider-id");
         reopened.ReplaceHistory(reopened.GetHistorySnapshot());
         await Store().SaveAsync(reopened);
+        await RestoreLegacyPayloadsAsync(session.SessionId);
         store.CleanupLegacyToolPayloads(10).CleanedInvocations.ShouldBe(2);
         var rows = (await Store().GetAsync(session.SessionId)).ShouldNotBeNull().GetHistorySnapshot();
         rows.Where(row => row.Kind == MessageKind.ToolResult).Select(row => row.Content).ShouldBe(["result-0", "result-1"]);
@@ -166,6 +168,21 @@ public sealed class SqliteRunCorrelation4796Tests : IDisposable
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(DISTINCT tool_call_id) FROM tool_invocations WHERE session_id='reused' AND provider_tool_call_id='same-provider-id'";
         Convert.ToInt64(await command.ExecuteScalarAsync()).ShouldBe(2);
+    }
+
+    private async Task RestoreLegacyPayloadsAsync(SessionId sessionId)
+    {
+        await using var connection = new SqliteConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE session_history AS h SET
+                tool_args=CASE WHEN h.message_kind='tool-start' THEN i.arguments_json ELSE h.tool_args END,
+                content=CASE WHEN h.message_kind='tool-result' THEN i.result_content ELSE h.content END
+            FROM tool_invocations i WHERE h.tool_invocation_id=i.id AND h.session_id=$session
+            """;
+        command.Parameters.AddWithValue("$session", sessionId.Value);
+        await command.ExecuteNonQueryAsync();
     }
 
     [Fact]

@@ -17,6 +17,16 @@ namespace BotNexus.Gateway.Abstractions.Agents;
 /// For in-process isolation, this wraps a <c>BotNexus.Agent.Core.Agent</c> directly.
 /// For container or remote isolation, this would be a gRPC/HTTP proxy.
 /// </para>
+/// <para>
+/// Blocking prompt methods report cancellation or timeout through
+/// <see cref="AgentPromptInterruptedException"/>. Its partial response contains only the interrupted
+/// run's tool timeline and provider measurements; unmeasured usage remains null, and runtime-generated
+/// abort markers do not count as model turns. Calls cancelled before admission contain no run evidence.
+/// The exception carries the caller token when cancelled, otherwise the signalled run token. Internal
+/// abort does not cancel the caller's source. In-flight audited tools are closed as incomplete before
+/// interruption propagates. Streaming retains event-based completion and ordinary enumeration
+/// cancellation; it does not throw the blocking partial-response exception.
+/// </para>
 /// </remarks>
 public interface IAgentHandle : IAsyncDisposable
 {
@@ -25,6 +35,13 @@ public interface IAgentHandle : IAsyncDisposable
 
     /// <summary>The session ID this handle is bound to.</summary>
     SessionId SessionId { get; }
+
+    /// <summary>
+    /// Reserves idle run admission for external transcript maintenance. Null means busy, stopped,
+    /// or unsupported. All prompt/continue/stream paths must honor the reservation until disposed.
+    /// Implementations without atomic lifecycle authority fail closed.
+    /// </summary>
+    IDisposable? TryReserveMaintenance() => null;
 
     /// <summary>Whether the agent is currently processing a request.</summary>
     bool IsRunning { get; }

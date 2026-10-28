@@ -15,7 +15,8 @@ public sealed class SessionCleanupService(
     IOptions<SessionCleanupOptions> optionsAccessor,
     ILogger<SessionCleanupService> logger,
     SessionLifecycleEvents? lifecycleEvents = null,
-    ISessionTurnTracker? turnTracker = null) : BackgroundService
+    ISessionTurnTracker? turnTracker = null,
+    IHostApplicationLifetime? appLifetime = null) : BackgroundService
 {
     private readonly ISessionTurnTracker? _turnTracker = turnTracker;
 
@@ -26,6 +27,23 @@ public sealed class SessionCleanupService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Automatic scans must not contend with HTTP startup. Explicit one-shot cleanup
+        // remains available before readiness, and callers without a host retain the old behavior.
+        if (appLifetime is not null && !appLifetime.ApplicationStarted.IsCancellationRequested)
+        {
+            var applicationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var startedRegistration = appLifetime.ApplicationStarted.Register(
+                () => applicationStarted.TrySetResult());
+            try
+            {
+                await applicationStarted.Task.WaitAsync(stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try

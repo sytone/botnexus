@@ -25,7 +25,7 @@ namespace BotNexus.Gateway.Agents;
 /// <summary>
 /// Default in-memory orchestrator for background sub-agent sessions.
 /// </summary>
-public sealed class DefaultSubAgentManager : ISubAgentManager
+public sealed partial class DefaultSubAgentManager : ISubAgentManager
 {
     private static readonly StripedAsyncLock SpawnAdmissionLocks = new();
     private readonly IAgentSupervisor _supervisor;
@@ -38,6 +38,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
     private readonly DefaultToolPolicyProvider? _policyProvider;
     private readonly TimeProvider _timeProvider;
     private readonly ISessionStore? _sessionStore;
+    private readonly ISecretRedactor _secretRedactor;
     private readonly ISubAgentWorktreeSnapshotService? _worktreeSnapshotService;
 
     /// <summary>
@@ -92,7 +93,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         ModelRegistry? modelRegistry = null,
         IToolAuditSink? toolAudit = null,
         ISubAgentWorktreeSnapshotService? worktreeSnapshotService = null,
-        IOptions<AgentExchangeOptions>? exchangeOptions = null)
+        IOptions<AgentExchangeOptions>? exchangeOptions = null,
+        ISecretRedactor? secretRedactor = null)
     {
         _supervisor = supervisor;
         _registry = registry;
@@ -104,6 +106,7 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         _logger = logger;
         _policyProvider = policyProvider;
         _sessionStore = sessionStore;
+        _secretRedactor = secretRedactor ?? new SecretRedactor();
         _timeProvider = timeProvider ?? TimeProvider.System;
         _securityEvents = securityEvents;
         _conversationStore = conversationStore;
@@ -1148,7 +1151,10 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
         ReapCompletedRecords();
         if (_records.TryGetValue(subAgentId, out var record)) return record.Info;
         var detail = _sessionStore is null ? null : await _sessionStore.GetSubAgentSessionAsync(subAgentId, ct).ConfigureAwait(false);
-        return detail is null ? null : FromRetained(detail);
+        if (detail is null || _sessionStore is null) return null;
+        var fullSummary = await _sessionStore.GetSubAgentResultSummaryAsync(subAgentId, ct).ConfigureAwait(false);
+        return FromRetained(fullSummary is null ? detail : detail with { ResultSummary = fullSummary })
+            with { RetainedResultFullCopyUnavailable = fullSummary is null };
     }
 
     private static SubAgentInfo FromRetained(SubAgentRunDetail detail)
@@ -1171,6 +1177,8 @@ public sealed class DefaultSubAgentManager : ISubAgentManager
             StartedAt = detail.StartedAt ?? default, CompletedAt = interrupted ? DateTimeOffset.UtcNow : detail.CompletedAt,
             Status = interrupted ? SubAgentStatus.Failed : detail.Status,
             ResultSummary = interrupted ? "Sub-agent interrupted by host restart; no live run can be joined. " + detail.ResultSummary : detail.ResultSummary,
+            RetainedResultFullCopyUnavailable = true,
+            RetainedResultOriginalLength = detail.OriginalLength, RetainedResultSummaryTruncated = detail.SummaryTruncated,
             TurnsUsed = detail.TurnsUsed ?? 0, EffectiveMaxTurns = detail.EffectiveMaxTurns, EffectiveTimeoutSeconds = detail.EffectiveTimeoutSeconds,
             PartialResult = detail.Result is { } result ? new SubAgentPartialResult
             {

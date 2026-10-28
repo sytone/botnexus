@@ -1,3 +1,4 @@
+using System.IO.Abstractions;
 using BotNexus.Cli.Commands;
 using BotNexus.Cli.Services;
 using BotNexus.Gateway.Contracts.Updates;
@@ -7,7 +8,11 @@ namespace BotNexus.Cli.Tests.Commands;
 // Explicit immutable release/metadata fixture for tests of the later lifecycle stages.
 internal abstract class CompatibleUpdateFixture : UpdateCommand
 {
-    protected CompatibleUpdateFixture(IGatewayProcessManager manager, bool noOp = false) : base(manager)
+    protected CompatibleUpdateFixture(IGatewayProcessManager manager, bool noOp = false) : this(manager, null, noOp)
+    {
+    }
+
+    protected CompatibleUpdateFixture(IGatewayProcessManager manager, IFileSystem? fileSystem, bool noOp = false) : base(manager, fileSystem)
     {
         ReleaseRequest = ReleaseTargetRequest.Latest;
         TargetWasNoOp = noOp;

@@ -293,6 +293,16 @@ The web Configuration page derives its section and subsection navigation from th
 
 Changing sections or subsections keeps the same in-progress edit buffer and does not itself mark configuration as changed. **Save Changes**, **Validate**, and **Reload** continue to apply to the whole configuration page, not only the visible subsection.
 
+### Gateway: tool result budget
+
+`gateway.maxToolResults` limits executed tool results in one agent run. The default is **128**; the supported range is **1–1,000,000**. Zero, negative values, non-integers and values outside that range are rejected, not treated as unlimited. This is separate from `gateway.toolOutputBudget`, which limits bytes in each result.
+
+The runtime checks the budget after the whole tool batch finishes. If a parallel batch crosses the limit, all sibling results and prior errors remain in the transcript. Terminal evidence reports the configured limit, actual executed count and overshoot. Steering, progress resets, context compaction, follow-ups and completion-policy continuations cannot replenish the budget within the same run.
+
+At the limit, the runtime attempts at most one summary with tools absent and tool choice disabled. The budget finalizer shares a 30-second deadline across asynchronous completed-turn notifications and summary work, with at most 1,024 output tokens. Provider invocation and callbacks must return promptly: this deadline cannot interrupt synchronous code before it returns a stream or task. Tool calls returned as structured calls or leaked text never execute. A failed, cancelled, timed-out, filtered or completion-claiming summary still ends **Parked**, with typed `ToolResultBudget` evidence and unresolved work retained. Semantic non-progress remains a separate stop and keeps its six-result threshold.
+
+Review the retained results before explicitly starting a new run with new direction. A new run receives a fresh budget; it does not automatically retry or replay earlier side effects. In embedded integrations, set `AgentOptions.MaxToolResults` or `AgentLoopConfig.MaxToolResults`. The production host uses its existing platform configuration/settings pipeline.
+
 ### Root: PlatformConfig
 
 | JSON property | Bound type | Default | Description |

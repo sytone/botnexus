@@ -12,8 +12,8 @@ For non-trivial multi-step work, keep a short plan updated with `update_plan`.
 Skip `update_plan` for simple tasks, obvious one-step fixes, or work you can finish in a few direct actions.
 When you use `update_plan`, keep exactly one step `in_progress` until the work is done.
 After calling `update_plan`, continue the work and do not repeat the full plan unless the user asks.
-If a task is more complex or takes longer, spawn a sub-agent. Completion is push-based: it will auto-announce when done.
-Do not poll `subagents list` / `sessions_list` in a loop; only check status on-demand (for intervention, debugging, or when explicitly asked).
+If a task is more complex or takes longer, use spawn_subagent. By default spawn awaits completion; background=true returns early. Use manage_subagent action=wait to join background work. Completion does not push an automatic inbound turn. Use action=result/history for repeatable read-only retained child results/tool evidence from the original parent session; live messaging and steering are unsupported.
+Do not poll list_subagents or sessions in a loop; use manage_subagent wait to join, and inspect status/result/history on demand.
 When exec returns approval-pending on this channel, rely on native approval card/buttons when they appear and do not also send plain chat /approve instructions. Only include the concrete /approve command if the tool result says chat approvals are unavailable or only manual approval is possible.
 Never execute /approve through exec or any other shell/tool path; /approve is a user-facing approval command, not a shell command.
 Treat allow-once as single-command only: if another elevated command needs approval, request a fresh /approve and do not claim prior approval covered it.
@@ -127,7 +127,7 @@ A model-specific instruction file is named `<stem>.<suffix>.<ext>`, e.g. `AGENTS
 - Reply in current session → automatically routes to the source channel (Signal, Telegram, etc.)
 - Cross-session messaging → use sessions_send(sessionKey, message)
 - Another of your own conversations → use the `conversation` tool (`new` to start one, `message` to speak into it, `list` to see them); see <conversations>.
-- Sub-agent orchestration → use subagents(action=list|steer|kill)
+- Sub-agent orchestration: use spawn_subagent, list_subagents, and manage_subagent (status/wait/kill/result/history); live steering is unsupported
 - Runtime-generated completion events may ask for a user update. Rewrite those in your normal assistant voice and send the update (do not forward raw internal metadata or default to NO_REPLY).
 - Never use exec/curl for provider messaging; BotNexus handles all routing internally.
 ### message tool

@@ -23,7 +23,7 @@ public sealed class SubAgentManageTool(
 
     public Tool Definition => new(
         Name,
-        "Get status, wait for a terminal result, or kill a sub-agent for this session. Terminal results are returned once across tool calls; completion never creates an inbound turn.",
+        "Get status, wait for a terminal result, or kill a sub-agent for this session. Status/wait deliver terminal results once. Result/history are repeatable read-only retained inspection for the original parent session only (not after session rollover); completion never creates an inbound turn.",
         JsonDocument.Parse("""
             {
               "type": "object",
@@ -32,10 +32,12 @@ public sealed class SubAgentManageTool(
                   "type": "string",
                   "description": "Sub-agent identifier."
                 },
+                "offset": { "type": "integer", "minimum": 0, "description": "Character offset for result; tool-entry offset for history. Default 0." },
+                "limit": { "type": "integer", "minimum": 1, "description": "history entries (maximum 20, default 20). Result pages are fixed at 2048 characters." },
                 "action": {
                   "type": "string",
-                  "enum": ["status", "wait", "kill"],
-                  "description": "Management action."
+                  "enum": ["status", "wait", "kill", "result", "history"],
+                  "description": "result pages the full retained final summary; history pages redacted tool evidence only. Neither consumes delivery or starts work."
                 }
               },
               "required": ["subAgentId", "action"]
@@ -54,8 +56,12 @@ public sealed class SubAgentManageTool(
         var action = ReadString(arguments, "action");
         if (!string.Equals(action, "status", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(action, "kill", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(action, "wait", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Argument 'action' must be 'status', 'wait' or 'kill'.");
+            !string.Equals(action, "wait", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(action, "result", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(action, "history", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Unsupported action. Use status, wait, kill, result or history. Live messaging/steering is unsupported; use result/history to inspect or spawn_subagent for a new bounded task.");
+        _ = ReadPageInt(arguments, "offset", 0, 0);
+        _ = ReadPageInt(arguments, "limit", 20, 1);
 
         var prepared = new Dictionary<string, object?>(arguments);
         prepared.Remove("subAgentWaitTimeoutSeconds");
@@ -95,6 +101,17 @@ public sealed class SubAgentManageTool(
         var action = ReadString(arguments, "action")
             ?? throw new ArgumentException("Missing required argument: action.");
 
+        if (string.Equals(action, "result", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(action, "history", StringComparison.OrdinalIgnoreCase))
+        {
+            var payload = await subAgentManager.InspectAsync(subAgentId, sessionId, action.ToLowerInvariant(),
+                ReadPageInt(arguments, "offset", 0, 0), ReadPageInt(arguments, "limit", 20, 1), cancellationToken).ConfigureAwait(false);
+            return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, payload)]);
+        }
+        if (action is not ("status" or "wait" or "kill") &&
+            !new[] { "status", "wait", "kill" }.Contains(action, StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException("Live messaging/steering is unsupported; use result/history or spawn_subagent for a new bounded task.");
+
         if (string.Equals(action, "kill", StringComparison.OrdinalIgnoreCase))
         {
             var killed = await subAgentManager.KillAsync(subAgentId, sessionId, cancellationToken).ConfigureAwait(false);
@@ -118,6 +135,15 @@ public sealed class SubAgentManageTool(
                 JsonSerializer.Serialize(arguments), result, cancellationToken, agentRunId).ConfigureAwait(false);
 
         return new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, result)]);
+    }
+
+    private static int ReadPageInt(IReadOnlyDictionary<string, object?> args, string key, int fallback, int minimum)
+    {
+        var text = ReadString(args, key);
+        if (text is null) return fallback;
+        if (!int.TryParse(text, out var value) || value < minimum)
+            throw new ArgumentException($"{key} must be an integer >= {minimum}.");
+        return value;
     }
 
     private static string? ReadString(IReadOnlyDictionary<string, object?> args, string key)

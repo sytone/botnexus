@@ -632,6 +632,20 @@ internal static class ToolExecutor
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             Interlocked.Exchange(ref terminalState, 1);
+            // The outer wait can finish before ambient cancellation reaches the linked source.
+            // Forward cancellation before disposal unregisters that link and abandons the tool.
+            try
+            {
+                timeoutCts?.Cancel();
+            }
+            catch (AggregateException)
+            {
+                // Cancellation callbacks must not replace the original ambient cancellation.
+            }
+            finally
+            {
+                ObserveAbandonedToolExecution(executionTask);
+            }
             throw;
         }
         catch (SatelliteToolExecutionException ex)

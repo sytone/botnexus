@@ -8,16 +8,14 @@ namespace BotNexus.Conversation.Tests;
 /// Functional tests for conversation channel binding endpoints.
 /// Each test uses unique agentIds to prevent state bleed.
 /// </summary>
-[Collection("LiveGateway")]
-public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHelper output)
+[Collection("CandidateGateway")]
+public class ConversationBindingTests(CandidateGatewayFixture fixture, ITestOutputHelper output)
 {
     // ── POST /api/conversations/{id}/bindings ─────────────────────────────────
 
-    [SkippableFact]
+    [Fact]
     public async Task AddBinding_Returns201WithCorrectData()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
         var convId = await CreateConversationAsync();
         var response = await fixture.Conversations.AddBindingAsync(
             convId, "telegram", "1234567890", "Single");
@@ -40,21 +38,17 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
         doc.GetProperty("threadingMode").GetString().ShouldBe("Single");
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task AddBinding_UnknownConversationId_Returns404()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
         var response = await fixture.Conversations.AddBindingAsync(
             "c_doesnotexist", "telegram", "1234567890", "Single");
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task AddBinding_CompositeAddressWithTopicSuffix_RoundTripsViaRest()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
         var convId = await CreateConversationAsync();
         // Composite address — the channel adapter is responsible for encoding native
         // thread/topic identifiers into the ChannelAddress before submission. The REST
@@ -81,11 +75,9 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
 
     // ── GET conversation after add ────────────────────────────────────────────
 
-    [SkippableFact]
+    [Fact]
     public async Task GetConversation_AfterAddBinding_BindingAppearsInArray()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
         var convId = await CreateConversationAsync();
         var addResponse = await fixture.Conversations.AddBindingAsync(
             convId, "telegram", "1234567890", "Single");
@@ -107,12 +99,10 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
         binding.GetProperty("channelAddress").GetString().ShouldBe("1234567890");
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task GetConversationsList_AfterAddBinding_BindingCountIsOne()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
-        var agentId = $"test-agent-{Guid.NewGuid():N}";
+        var agentId = fixture.NewAgent();
         var createResponse = await fixture.Conversations.CreateConversationAsync(agentId, "BindingCount Test");
         createResponse.StatusCode.ShouldBe(HttpStatusCode.Created);
         var convId = JsonDocument.Parse(await createResponse.Content.ReadAsStringAsync())
@@ -133,11 +123,9 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
 
     // ── DELETE /api/conversations/{id}/bindings/{bindingId} ───────────────────
 
-    [SkippableFact]
+    [Fact]
     public async Task DeleteBinding_Returns204AndBindingIsGone()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
         var convId = await CreateConversationAsync();
         var addResponse = await fixture.Conversations.AddBindingAsync(
             convId, "telegram", "1234567890", "Single");
@@ -155,11 +143,9 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
         doc.GetProperty("bindings").GetArrayLength().ShouldBe(0);
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task DeleteBinding_UnknownBindingId_Returns404()
     {
-        Skip.If(!fixture.IsAvailable, "Dev gateway not running at localhost:5006");
-
         var convId = await CreateConversationAsync();
         var response = await fixture.Conversations.DeleteBindingAsync(convId, "doesnotexist");
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
@@ -169,7 +155,7 @@ public class ConversationBindingTests(LiveGatewayFixture fixture, ITestOutputHel
 
     private async Task<string> CreateConversationAsync()
     {
-        var agentId = $"test-agent-{Guid.NewGuid():N}";
+        var agentId = fixture.NewAgent();
         var response = await fixture.Conversations.CreateConversationAsync(agentId, "Binding Test");
         response.StatusCode.ShouldBe(HttpStatusCode.Created);
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync())

@@ -152,7 +152,8 @@ public sealed class SessionWriteInventoryTests
     }
 
     private static bool IsReadOnlyEntryPoint(string name, string[] prefixes)
-        => name == nameof(ISessionStore.FindSubAgentSpawnAsync)
+        => name == nameof(ISessionStore.ScanHistoryAsync)
+            || name == nameof(ISessionStore.FindSubAgentSpawnAsync)
             || prefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal));
 
     [Fact]
@@ -163,6 +164,13 @@ public sealed class SessionWriteInventoryTests
         IsReadOnlyEntryPoint("FindFutureMutationAsync", []).ShouldBeFalse();
         Inventory.Single(e => e.EntryPoint == nameof(ISessionStore.ConsumeSubAgentResultAsync))
             .Classification.ShouldBe(WriteClassification.NarrowPatch);
+    }
+
+    [Fact]
+    public void ScanHistory_IsExplicitlyReadOnlyWithoutClassifyingFutureScanMutations()
+    {
+        IsReadOnlyEntryPoint(nameof(ISessionStore.ScanHistoryAsync), []).ShouldBeTrue();
+        IsReadOnlyEntryPoint("ScanFutureMutationAsync", []).ShouldBeFalse();
     }
 
     [Fact]

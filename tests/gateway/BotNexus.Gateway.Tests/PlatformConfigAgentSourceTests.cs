@@ -91,7 +91,16 @@ public sealed class PlatformConfigAgentSourceTests : IDisposable
             _configDirectory,
             new ListLogger<PlatformConfigAgentSource>());
 
-        var descriptor = (await source.LoadAsync()).ShouldHaveSingleItem();
+        var descriptors = await source.LoadAsync();
+        descriptors.Count.ShouldBe(2);
+        var disabled = descriptors.Single(d => d.AgentId.Value == "disabled-agent");
+        disabled.Enabled.ShouldBe(false);
+        var registry = new DefaultAgentRegistry(NullLogger<DefaultAgentRegistry>.Instance);
+        foreach (var loaded in descriptors)
+            registry.Register(loaded);
+        registry.Get(disabled.AgentId).ShouldBeNull();
+        registry.GetAll().ShouldHaveSingleItem().AgentId.Value.ShouldBe("assistant");
+        var descriptor = descriptors.Single(d => d.AgentId.Value == "assistant");
 
         descriptor.AgentId.Value.ShouldBe("assistant");
         descriptor.DisplayName.ShouldBe("Assistant");

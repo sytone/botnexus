@@ -9,6 +9,7 @@ public record class GenerationOptions
 
     protected GenerationOptions(GenerationOptions original)
     {
+        ToolChoiceMode = original.ToolChoiceMode;
         Temperature = original.Temperature;
         MaxTokens = original.MaxTokens;
         ContextWindow = original.ContextWindow;
@@ -18,6 +19,8 @@ public record class GenerationOptions
         Reasoning = original.Reasoning;
         ThinkingBudgets = original.ThinkingBudgets;
     }
+    /// <summary>Null preserves provider defaults; None suppresses tools and tool selection.</summary>
+    public ToolChoice? ToolChoiceMode { get; init; }
     /// <summary>Sampling temperature requested for the generation.</summary>
     public float? Temperature { get; init; }
     /// <summary>Maximum output-token count requested for the generation.</summary>

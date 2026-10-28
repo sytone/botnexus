@@ -9,6 +9,7 @@ using BotNexus.Gateway.Security;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 
 namespace BotNexus.Gateway.Tests.Audit;
@@ -77,19 +78,30 @@ public sealed class ToolAuditDeadlineTests
                 entered.TrySetResult(true);
                 return completion.Task;
             });
+        var clock = new AuditDeadlineClock();
         var audit = Create(store.Object, append =>
         {
             dispatchCount++;
             queuedAppend = append;
             return dispatched.Task;
-        });
+        }, clock);
         var stopwatch = Stopwatch.StartNew();
         Task<SessionAppendMutationResult>? appendTask = null;
 
         try
         {
-            await audit.PersistStartAsync("call-queued", "read", Args("path", "file.txt"), CancellationToken.None)
-                .WaitAsync(TimeSpan.FromSeconds(2));
+            var persistence = audit.PersistStartAsync(
+                "call-queued", "read", Args("path", "file.txt"), CancellationToken.None);
+            persistence.IsCompleted.ShouldBeFalse();
+            clock.Advance(Deadline - TimeSpan.FromMilliseconds(1));
+            clock.FiredTimers.ShouldBe(0);
+            persistence.IsCompleted.ShouldBeFalse("neither store entry nor the deadline has been reached");
+
+            // Advance synchronously fires both deadline callbacks without waiting for an ambient
+            // timer. The real-time guard below bounds continuation/observation, not virtual time.
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+            clock.FiredTimers.ShouldBe(2, "both append-token cancellation and the independent wait must use the injected scheduler");
+            await persistence.WaitAsync(TimeSpan.FromSeconds(2));
 
             stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
             dispatchCount.ShouldBe(1);
@@ -356,7 +368,8 @@ public sealed class ToolAuditDeadlineTests
 
     private static ToolAuditWriteAhead Create(
         ISessionStore store,
-        Func<Func<Task<SessionAppendMutationResult>>, Task<SessionAppendMutationResult>>? dispatchReadAppend = null) => new(
+        Func<Func<Task<SessionAppendMutationResult>>, Task<SessionAppendMutationResult>>? dispatchReadAppend = null,
+        TimeProvider? timeProvider = null) => new(
         store,
         DefaultToolAuditSink.Instance,
         new SecretRedactor(),
@@ -364,7 +377,28 @@ public sealed class ToolAuditDeadlineTests
         SessionId.From("session-a"),
         NullLogger.Instance,
         Deadline,
-        dispatchReadAppend);
+        dispatchReadAppend,
+        timeProvider);
+
+    // ManualTimeProvider controls reads only. Delegate to the existing scheduler-aware fake,
+    // counting callback delivery separately from the async continuation observed by the test.
+    private sealed class AuditDeadlineClock : TimeProvider
+    {
+        private readonly FakeTimeProvider _clock = new();
+        private int _firedTimers;
+
+        public int FiredTimers => Volatile.Read(ref _firedTimers);
+        public void Advance(TimeSpan duration) => _clock.Advance(duration);
+        public override DateTimeOffset GetUtcNow() => _clock.GetUtcNow();
+        public override long GetTimestamp() => _clock.GetTimestamp();
+        public override long TimestampFrequency => _clock.TimestampFrequency;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+            => _clock.CreateTimer(value =>
+            {
+                Interlocked.Increment(ref _firedTimers);
+                callback(value);
+            }, state, dueTime, period);
+    }
 
     private static IReadOnlyDictionary<string, object?> Args(string name, string value) =>
         new Dictionary<string, object?> { [name] = value };

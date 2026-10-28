@@ -141,14 +141,18 @@ public sealed class ConversationTool(
         if (string.IsNullOrWhiteSpace(message))
             throw new ArgumentException("message must not be empty.");
 
+        var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
+        // This is denial guidance, not an access grant: never route, reactivate or dispatch a
+        // child conversation, even for an Own-scoped parent that cannot otherwise read it.
+        if (conversation.Kind == ConversationKind.AgentSubAgent)
+            throw new NotSupportedException("Child conversations do not support live messaging or steering. From the original parent session use manage_subagent action=status/wait/result/history; use spawn_subagent for a new bounded task. Session rollover does not grant retained inspection access.");
+        EnsureCanAccess(conversation.AgentId);
+
         if (messageOrchestrator is null)
             throw new InvalidOperationException("Message orchestrator is required to send a message to a conversation.");
 
         if (sessionStore is null)
             throw new InvalidOperationException("Session store is required to send a message to a conversation.");
-
-        var conversation = await ResolveConversationAsync(arguments, ct).ConfigureAwait(false);
-        EnsureCanAccess(conversation.AgentId);
 
         var router = conversationRouter ?? new DefaultConversationRouter(
             conversationStore,

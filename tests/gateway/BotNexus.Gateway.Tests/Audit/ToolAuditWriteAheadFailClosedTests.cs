@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using BotNexus.Agent.Core.Configuration;
 using BotNexus.Agent.Core.ExtensionPoints.ToolExecution;
 using BotNexus.Agent.Core.Tools;
@@ -109,19 +108,15 @@ public sealed class ToolAuditWriteAheadFailClosedTests
     }
 
     /// <summary>
-    /// AC3 companion fence: the interrupted-invocation recorder must be reachable from the run's
-    /// unwind paths. If no call site remains, a cancelled run silently loses its in-flight tool.
+    /// AC3/AC4: real core runs and the real handle's awaited terminal subscriber must close
+    /// outstanding write-ahead calls across blocking cancellation, crash, and streaming unwind.
     /// </summary>
-    [Fact]
-    public void InterruptedInvocations_AreRecordedOnTheRunUnwindPaths()
-    {
-        var source = File.ReadAllText(Path.Combine(SourceRoot(), "gateway", "BotNexus.Gateway", "Isolation", "InProcessIsolationStrategy.cs"));
-        var callSites = Regex.Matches(source, @"RecordInterruptedToolsAsync\(").Count;
-
-        // One definition plus at least the blocking-cancel, blocking-crash and streaming unwind sites.
-        callSites.ShouldBeGreaterThanOrEqualTo(4,
-            "A cancelled, crashed or timed-out run must still leave the explicit incomplete record (#2615 AC3/AC4).");
-    }
+    [Theory]
+    [InlineData("blocking")]
+    [InlineData("crash")]
+    [InlineData("stream")]
+    public Task InterruptedInvocations_AreRecordedOnTheRunUnwindPaths(string path)
+        => Isolation.InProcessAgentHandleInterruptedRunEvidenceTests.AssertUnwindAuditAsync(path);
 
     private static ToolExecutionPolicy BuildHook(ToolAuditWriteAhead writeAhead)
         => async (ctx, ct) =>

@@ -3,11 +3,116 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Sessions;
+using BotNexus.Gateway.Abstractions.Conversations;
+using NSubstitute;
 
 namespace BotNexus.Gateway.Tests;
 
 public sealed class InMemorySessionStoreTests
 {
+    [Theory]
+    [InlineData("append")]
+    [InlineData("replace")]
+    [InlineData("metadata")]
+    [InlineData("unchanged")]
+    public async Task FencedSave_ContentSnapshot_ComparesLiveContentBeforePublishing(string change)
+    {
+        var store = new InMemorySessionStore();
+        var original = await store.GetOrCreateAsync(SessionId.Create(), AgentId.From("agent-a"));
+        original.ConversationId = ConversationId.Create();
+        original.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "original" });
+        var candidate = original.CreateDetachedCopy();
+        var fence = SessionWriteFence.Capture(candidate) with
+        {
+            ExpectedContentFingerprint = SessionWriteFence.ContentFingerprint(candidate)
+        };
+        candidate.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }]);
+        var timestamp = original.UpdatedAt;
+        if (change == "append") original.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "append" });
+        if (change == "replace") original.ReplaceHistory([new SessionEntry { Role = MessageRole.User, Content = "replacement" }]);
+        if (change == "metadata") original.Metadata["concurrent"] = "patch";
+        original.UpdatedAt = timestamp;
+        var expected = original.GetHistorySnapshot().ToArray();
+        (await store.SaveAsync(candidate, fence)).ShouldBe(change == "unchanged"
+            ? SessionSaveOutcome.Persisted : SessionSaveOutcome.Conflict);
+        var saved = (await store.GetAsync(original.SessionId)).ShouldNotBeNull();
+        if (change == "unchanged") saved.ShouldBeSameAs(candidate);
+        else
+        {
+            saved.ShouldBeSameAs(original);
+            saved.GetHistorySnapshot().ShouldBe(expected);
+            saved.Metadata.ShouldBe(original.Metadata);
+        }
+        original.GetHistorySnapshot().ShouldNotContain(e => e.IsCompactionSummary);
+    }
+
+    [Theory]
+    [InlineData("seal")]
+    [InlineData("expire")]
+    [InlineData("rebind")]
+    [InlineData("delete")]
+    public async Task FencedSave_LifecycleChangesDuringLegacyStamp_DoesNotOverwriteOrResurrect(string change)
+    {
+        var conversations = Substitute.For<IConversationStore>();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new InMemorySessionStore(null, conversations);
+        var current = await store.GetOrCreateAsync(SessionId.Create(), AgentId.From("agent-a"));
+        current.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "original" });
+        var original = current.GetHistorySnapshot().ToArray();
+        var candidate = current.CreateDetachedCopy();
+        // Exercise save-time legacy repair on a candidate missing its conversation stamp while
+        // the write fence still identifies the authoritative conversation captured by the caller.
+        current.ConversationId = ConversationId.Create();
+        var fence = SessionWriteFence.Capture(current);
+        candidate.AddEntry(new SessionEntry { Role = MessageRole.System, Content = "detached summary", IsCompactionSummary = true });
+        var legacy = new Conversation
+        {
+            ConversationId = ConversationId.Create(), AgentId = current.AgentId,
+            Title = LegacyConversationResolver.LegacyTitleFor(current.AgentId),
+            Initiator = CitizenId.Of(current.AgentId), ActiveSessionId = current.SessionId
+        };
+        conversations.ListAsync(Arg.Any<AgentId?>(), Arg.Any<CancellationToken>()).Returns(async _ =>
+        {
+            entered.TrySetResult();
+            await release.Task;
+            return (IReadOnlyList<Conversation>)[legacy];
+        });
+
+        var pending = store.SaveAsync(candidate, fence);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        try
+        {
+            if (change == "delete") await store.DeleteAsync(current.SessionId);
+            else if (change == "expire")
+            {
+                var row = (await store.ListCleanupPlanAsync(10, includeBytes: false)).Rows.ShouldHaveSingleItem();
+                (await store.ExpireIfMatchesAsync(SessionCleanupFence.Capture(row), DateTimeOffset.UtcNow))
+                    .ShouldBe(SessionMutationOutcome.Applied);
+            }
+            else
+            {
+                current.ConversationId = ConversationId.Create();
+                if (change == "seal") current.Status = SessionStatus.Sealed;
+                await store.SaveAsync(current);
+            }
+        }
+        finally { release.TrySetResult(); }
+
+        (await pending).ShouldBe(SessionSaveOutcome.Rebound);
+        var saved = await store.GetAsync(current.SessionId);
+        if (change == "delete") saved.ShouldBeNull();
+        else
+        {
+            saved.ShouldNotBeNull();
+            saved.ShouldBeSameAs(current);
+            saved.GetHistorySnapshot().ShouldBe(original);
+            saved.GetHistorySnapshot().ShouldNotContain(entry => entry.IsCompactionSummary);
+            saved.Status.ShouldBe(current.Status);
+            saved.ConversationId.ShouldBe(current.ConversationId);
+        }
+    }
+
     [Fact]
     public async Task GetOrCreateAsync_WithUnknownSession_CreatesSession()
     {

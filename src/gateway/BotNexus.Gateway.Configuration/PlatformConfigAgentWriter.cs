@@ -52,7 +52,8 @@ public sealed class PlatformConfigAgentWriter : IAgentConfigurationWriter
             entry["provider"] = descriptor.ApiProvider;
             entry["model"] = descriptor.ModelId;
             entry["displayName"] = descriptor.DisplayName;
-            entry["enabled"] = true;
+            // Omission is not an enable request: preserve stored state on partial/legacy saves.
+            entry["enabled"] = descriptor.Enabled ?? entry["enabled"]?.GetValue<bool>() ?? true;
 
             // Simple scalar surface.
             SetOptionalString(entry, "emoji", descriptor.Emoji);
