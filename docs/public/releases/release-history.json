@@ -2,6 +2,178 @@
   "schemaVersion": "1.0.0",
   "releases": [
     {
+      "version": "0.52.0",
+      "tag": "v0.52.0",
+      "commit": "a62c58a03521775b2bf0f410971bbd7d10a238c3",
+      "releasedAt": "2026-10-28",
+      "releaseUrl": "https://github.com/sytone/botnexus/releases/tag/v0.52.0",
+      "documentationUrl": "https://sytone.github.io/botnexus/releases/v0.52.0/",
+      "categories": [
+        {
+          "name": "Features",
+          "changes": [
+            {
+              "summary": "**cron:** Probe for work before invoking an agent (#5008)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**plugins:** Select repository marketplace skills from cli (#5040)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Bound tool-result budgets and finalize without tools (#5028)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Persist bounded peer dialogue admission (#5052)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Preflight explicit legacy relationships (#5003)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Coordinate current-session conversation compaction (#5032)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Bug Fixes",
+          "changes": [
+            {
+              "summary": "**exports:** Preserve legacy tool results through cleanup (#5006)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Propagate cancellation before disposing tool link (#5009)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Recover malformed store-backed json projections (#5053)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**copilot:** Classify bounded oauth http rejections (#5039)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**plugins:** Reject unsafe git sources and withhold fetch diagnostics (#5017)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Persist presence-aware agent policy edits (#4980)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Retry in-band responses failures (#5023)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Propagate recovery save cancellation (#5001)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Add bounded retained child inspection (#5024)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Bound tool transcript reads and enforce ownership (#5038)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**browser:** Align adapter with pinned cli command contract (#5013)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Exclude terminal recovery candidates (#5026)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**portal:** Hide unsupported mobile agent settings (#5022)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tests:** Align fixtures with source and session contracts (#5076)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**agents:** Preserve queued provider recovery admission order (#4939)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**cron:** Retain interrupted trigger execution evidence (#5000)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**process:** Synchronize unresolved cleanup with validated main (#4968)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tests:** Assert discarded context snapshots structurally (#5091)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Documentation",
+          "changes": [
+            {
+              "summary": "**agents:** Clarify shared conversation delivery boundaries (#5049)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**tests:** Reconcile test taxonomy contributor guidance (#5015)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Refactor",
+          "changes": [
+            {
+              "summary": "**gateway:** Document residual core reference reasons (#5010)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**gateway:** Add gateway-owned tool contracts (#4999)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Testing",
+          "changes": [
+            {
+              "summary": "**scenarios:** Capture concurrent inbound progress (#5042)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**config:** Cover collection reload and process restart (#5021)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**sessions:** Bound candidate query temporary write costs (#5027)",
+              "documentationUrls": []
+            },
+            {
+              "summary": "**channels:** Cover compaction sink failure isolation (#5030)",
+              "documentationUrls": []
+            }
+          ]
+        },
+        {
+          "name": "Miscellaneous",
+          "changes": [
+            {
+              "summary": "**repo:** Improve issue form evidence and context prompts (#5090)",
+              "documentationUrls": []
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.51.0",
       "tag": "v0.51.0",
       "commit": "651f59f4f8b9630e8656a54e34adfc556fc6e466",
