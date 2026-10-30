@@ -169,6 +169,167 @@ public sealed class ProviderRecoveryCoordinatorTests
     }
 
     [Fact]
+    public async Task NonTransientProbeRelease_ReopensWithCappedCooldownAndAllowsLaterRecovery()
+    {
+        var clock = new ManualClock();
+        var observed = new List<ProviderRecoveryObservation>();
+        var coordinator = CreateCoordinator(clock, threshold: 1, maxQueue: 1,
+            maxOpen: TimeSpan.FromSeconds(3), observe: observed.Add);
+        var opener = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(10), CancellationToken.None);
+        opener.ReportTransientFailure(null);
+        clock.Advance(TimeSpan.FromSeconds(1), dispatch: false);
+        var probe = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(10), CancellationToken.None);
+        probe.IsProbe.ShouldBeTrue();
+        var generation = coordinator.GetSnapshot(Scope).Generation;
+
+        probe.ReportNonTransientFailure();
+
+        var abandoned = coordinator.GetSnapshot(Scope);
+        abandoned.State.ShouldBe(ProviderRecoveryState.Open);
+        abandoned.Generation.ShouldBe(generation + 1);
+        abandoned.InFlightCalls.ShouldBe(0);
+        abandoned.DistinctTransientFailures.ShouldBe(1);
+        abandoned.NextProbeAt.ShouldBe(clock.UtcNow + TimeSpan.FromSeconds(2));
+        observed.ShouldNotContain(x => x.Stage == ProviderRecoveryStage.Recovered);
+
+        using var cancellation = new CancellationTokenSource();
+        var queued = coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
+        queued.IsCompleted.ShouldBeFalse("an abandoned probe must retain the recovery floor");
+        await Should.ThrowAsync<ProviderRecoveryQueueFullException>(async () =>
+            await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(10), CancellationToken.None));
+        cancellation.Cancel();
+        await Should.ThrowAsync<ProviderRecoveryCancelledException>(() => queued);
+        clock.Advance(TimeSpan.FromSeconds(2), dispatch: false);
+        var next = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(10), CancellationToken.None);
+        next.IsProbe.ShouldBeTrue();
+        next.ReportNonTransientFailure();
+        coordinator.GetSnapshot(Scope).NextProbeAt.ShouldBe(clock.UtcNow + TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromSeconds(3), dispatch: false);
+        var recovered = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(10), CancellationToken.None);
+        recovered.IsProbe.ShouldBeTrue();
+        recovered.ReportSuccess();
+        coordinator.GetSnapshot(Scope).State.ShouldBe(ProviderRecoveryState.Closed);
+        coordinator.GetSnapshot(Scope).InFlightCalls.ShouldBe(0);
+        coordinator.GetSnapshot(Scope).DistinctTransientFailures.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task QueuedDuringProbe_RearmsAfterReopenWithoutAnotherArrival(bool transient)
+    {
+        var clock = new ManualClock();
+        var coordinator = CreateCoordinator(clock, threshold: 1, maxQueue: 2, maxConcurrent: 1);
+        var opener = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(20), CancellationToken.None);
+        opener.ReportTransientFailure(null);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var probe = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(20), CancellationToken.None);
+        var first = coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(20), CancellationToken.None).AsTask();
+        var second = coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(20), CancellationToken.None).AsTask();
+        var rearmed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        clock.DelayScheduled = delay =>
+        {
+            if (delay == TimeSpan.FromSeconds(2))
+                rearmed.TrySetResult();
+        };
+
+        if (transient)
+            probe.ReportTransientFailure(null);
+        else
+            probe.ReportNonTransientFailure();
+
+        await rearmed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        first.IsCompleted.ShouldBeFalse("the recovery floor remains authoritative");
+        second.IsCompleted.ShouldBeFalse();
+        clock.Advance(TimeSpan.FromSeconds(2));
+        var next = await first.WaitAsync(TimeSpan.FromSeconds(5));
+        next.IsProbe.ShouldBeTrue();
+        second.IsCompleted.ShouldBeFalse("only the FIFO head can own the next probe");
+        coordinator.GetSnapshot(Scope).InFlightCalls.ShouldBe(1);
+        var generation = coordinator.GetSnapshot(Scope).Generation;
+        probe.ReportSuccess();
+        coordinator.GetSnapshot(Scope).Generation.ShouldBe(generation);
+        coordinator.GetSnapshot(Scope).State.ShouldBe(ProviderRecoveryState.HalfOpen);
+        next.ReportSuccess();
+        var released = await second.WaitAsync(TimeSpan.FromSeconds(5));
+        released.IsProbe.ShouldBeFalse();
+        released.ReportSuccess();
+        coordinator.GetSnapshot(Scope).InFlightCalls.ShouldBe(0);
+        coordinator.GetSnapshot(Scope).QueuedCalls.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task QueuedDuringProbe_RearmPreservesCancellationAndDeadline(bool cancel)
+    {
+        var clock = new ManualClock();
+        var coordinator = CreateCoordinator(clock, threshold: 1);
+        var opener = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(20), CancellationToken.None);
+        opener.ReportTransientFailure(null);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var probe = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(20), CancellationToken.None);
+        using var cancellation = new CancellationTokenSource();
+        var queued = coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(1), cancellation.Token).AsTask();
+        var rearmed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        clock.DelayScheduled = delay =>
+        {
+            if (delay == TimeSpan.FromSeconds(1))
+                rearmed.TrySetResult();
+        };
+        probe.ReportNonTransientFailure();
+        await rearmed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancel)
+        {
+            cancellation.Cancel();
+            await Should.ThrowAsync<ProviderRecoveryCancelledException>(() => queued.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        else
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await Should.ThrowAsync<ProviderRecoveryDeadlineExceededException>(() => queued.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        coordinator.GetSnapshot(Scope).InFlightCalls.ShouldBe(0);
+        coordinator.GetSnapshot(Scope).State.ShouldBe(ProviderRecoveryState.Open);
+    }
+
+    [Fact]
+    public async Task StaleNonTransientRelease_CannotDisplaceCurrentProbeAfterAbandonment()
+    {
+        var clock = new ManualClock();
+        var coordinator = CreateCoordinator(clock, threshold: 1);
+        var opener = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(10), CancellationToken.None);
+        var stale = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(10), CancellationToken.None);
+        opener.ReportTransientFailure(null);
+        clock.Advance(TimeSpan.FromSeconds(1), dispatch: false);
+        var abandoned = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(10), CancellationToken.None);
+        abandoned.ReportNonTransientFailure();
+        coordinator.GetSnapshot(Scope).State.ShouldBe(ProviderRecoveryState.Open);
+        clock.Advance(TimeSpan.FromSeconds(2), dispatch: false);
+        var current = await coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(10), CancellationToken.None);
+        current.IsProbe.ShouldBeTrue();
+        var generation = coordinator.GetSnapshot(Scope).Generation;
+
+        stale.ReportNonTransientFailure();
+        abandoned.ReportNonTransientFailure();
+        abandoned.ReportSuccess();
+
+        var snapshot = coordinator.GetSnapshot(Scope);
+        snapshot.State.ShouldBe(ProviderRecoveryState.HalfOpen);
+        snapshot.Generation.ShouldBe(generation);
+        snapshot.InFlightCalls.ShouldBe(1);
+        snapshot.NextProbeAt.ShouldBeNull();
+        using var cancellation = new CancellationTokenSource();
+        var competing = coordinator.AcquireAsync(Scope, Guid.NewGuid(), TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
+        competing.IsCompleted.ShouldBeFalse();
+        cancellation.Cancel();
+        await Should.ThrowAsync<ProviderRecoveryCancelledException>(() => competing);
+        current.ReportSuccess();
+        coordinator.GetSnapshot(Scope).State.ShouldBe(ProviderRecoveryState.Closed);
+        coordinator.GetSnapshot(Scope).InFlightCalls.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task ArrivalAtCooldownBoundary_AdmitsQueuedCallersInOrderBeforeNewcomer()
     {
         var clock = new ManualClock();
@@ -486,6 +647,7 @@ public sealed class ProviderRecoveryCoordinatorTests
         }
 
         public bool HoldCancellation { get; init; }
+        public Action<TimeSpan>? DelayScheduled { get; set; }
 
         public DateTimeOffset GetUtcNow() => UtcNow;
 
@@ -509,6 +671,7 @@ public sealed class ProviderRecoveryCoordinatorTests
                     completion.TrySetCanceled(cancellationToken);
                 }
             });
+            DelayScheduled?.Invoke(delay);
             return completion.Task;
         }
 

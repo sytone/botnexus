@@ -93,6 +93,61 @@ public class ResponsesInBandRetryTests
         fixture.Attempts.ShouldBe(1);
         fixture.Coordinator.GetSnapshot(fixture.Scope).State.ShouldNotBe(ProviderRecoveryState.Closed);
         fixture.Events.OfType<ProviderRecoveryEvent>().ShouldNotContain(x => x.Observation.Stage == ProviderRecoveryStage.Recovered);
+        fixture.Events.OfType<ProviderRecoveryEvent>().ShouldNotContain(x => x.Observation.Stage == ProviderRecoveryStage.RetryScheduled);
+        var released = fixture.Coordinator.GetSnapshot(fixture.Scope);
+        released.State.ShouldBe(ProviderRecoveryState.Open);
+        released.InFlightCalls.ShouldBe(0);
+        released.DistinctTransientFailures.ShouldBe(10);
+        released.NextProbeAt.ShouldNotBeNull();
+        if (code is "invalid_api_key" or "insufficient_quota")
+        {
+            fixture.Suspensions.IsSuspended(fixture.Scope.Provider, fixture.Scope.AuthProfile).ShouldBeTrue();
+            await Should.ThrowAsync<ProviderExhaustedException>(() => fixture.RunAsync());
+            fixture.Attempts.ShouldBe(1, "abandoning a probe must not bypass credential suspension");
+        }
+        fixture.AdvanceToNextProbe();
+        var admission = fixture.Coordinator.AcquireAsync(fixture.Scope, Guid.NewGuid(), TimeSpan.FromSeconds(1), CancellationToken.None);
+        admission.IsCompletedSuccessfully.ShouldBeTrue("later admission must not remain stranded in HalfOpen");
+        var laterProbe = await admission;
+        laterProbe.IsProbe.ShouldBeTrue();
+        fixture.Attempts.ShouldBe(1, "coordinator admission must not replay the failed run");
+        laterProbe.ReportSuccess();
+        fixture.Coordinator.GetSnapshot(fixture.Scope).State.ShouldBe(ProviderRecoveryState.Closed);
+    }
+
+    [Fact]
+    public async Task RunAsync_CancelledHalfOpenProbe_ReopensWithoutRetryAndAllowsLaterRun()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var fixture = new Fixture(true, attempt =>
+        {
+            if (attempt != 1)
+                return Success();
+            cancellation.Cancel();
+            return [Failure()];
+        });
+        await fixture.OpenCircuitAsync();
+        var generation = fixture.Coordinator.GetSnapshot(fixture.Scope).Generation;
+
+        await Should.ThrowAsync<OperationCanceledException>(() => fixture.RunAsync(cancellation.Token));
+
+        fixture.Attempts.ShouldBe(1);
+        var released = fixture.Coordinator.GetSnapshot(fixture.Scope);
+        released.State.ShouldBe(ProviderRecoveryState.Open);
+        released.Generation.ShouldBe(generation + 1);
+        released.InFlightCalls.ShouldBe(0);
+        released.DistinctTransientFailures.ShouldBe(10);
+        released.NextProbeAt.ShouldNotBeNull();
+        fixture.Suspensions.IsSuspended(fixture.Scope.Provider, fixture.Scope.AuthProfile).ShouldBeFalse();
+        fixture.Events.OfType<ProviderRecoveryEvent>().ShouldNotContain(x => x.Observation.Stage == ProviderRecoveryStage.Recovered);
+        fixture.Events.OfType<ProviderRecoveryEvent>().ShouldNotContain(x => x.Observation.Stage == ProviderRecoveryStage.RetryScheduled);
+
+        fixture.AdvanceToNextProbe();
+        var result = await fixture.RunAsync();
+        fixture.Attempts.ShouldBe(2);
+        result.OfType<AssistantAgentMessage>().ShouldContain(x => x.Content == "recovered");
+        fixture.Coordinator.GetSnapshot(fixture.Scope).State.ShouldBe(ProviderRecoveryState.Closed);
+        fixture.Coordinator.GetSnapshot(fixture.Scope).InFlightCalls.ShouldBe(0);
     }
 
     [Fact]
@@ -230,6 +285,12 @@ public class ResponsesInBandRetryTests
             }
             Coordinator.GetSnapshot(Scope).State.ShouldBe(ProviderRecoveryState.Open);
             _now += TimeSpan.FromSeconds(3);
+        }
+        public void AdvanceToNextProbe()
+        {
+            var nextProbeAt = Coordinator.GetSnapshot(Scope).NextProbeAt;
+            nextProbeAt.ShouldNotBeNull();
+            _now = nextProbeAt.Value;
         }
         public Task<IReadOnlyList<AgentMessage>> RunAsync(CancellationToken ct = default, IReadOnlyList<IAgentTool>? tools = null)
         {
