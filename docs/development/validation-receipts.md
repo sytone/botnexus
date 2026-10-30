@@ -96,3 +96,63 @@ identity field matches.
 
 - **[running-tests.md](running-tests.md)** - impacted-test selection and firewall rules
 - **[azure-build-test-runner.md](azure-build-test-runner.md)** - remote Azure validation
+
+## Recover an interrupted Azure receipt wait
+
+For contributors using remote validation, `Invoke-AzureBuildTest.ps1` now prints a
+**Recovery context** path before waiting. `-NoWait` also returns it as `ContextPath`.
+The context is stored under the worktree's Git directory, not in the temporary
+download directory. Keep that file and the candidate unchanged.
+
+If the client stops waiting, do not start a second validation run. With PowerShell 7,
+Azure CLI, and access to the original job and artifact storage, run this from the
+repository root. Replace the two variables with the original context and worktree:
+
+```powershell
+scripts/repo/Resume-AzureBuildTest.ps1 -ContextPath $contextPath -WorktreePath $worktree
+```
+
+This queries the **existing execution** and downloads its original artifact prefix.
+It does not upload source, start another execution, or delete remote artifacts.
+A running or failed execution is rejected. Try recovery again only after you have
+confirmed that the original execution succeeded; recovery does not wait or poll.
+
+Recovery requires the provider's successful execution status and matching run/mode
+environment, canonical `result.json`, verified source digest, and complete numeric test
+results. It recomputes HEAD, base commit, prospective tree and source fingerprint.
+Changed candidates, missing or malformed evidence, incomplete tests and fixture failures
+cannot produce a receipt. The normal strict gate can reuse the resulting receipt.
+
+Identical recovery is safe to repeat and concurrent identical writers converge.
+Before execution starts, the launcher persists the current receipt's byte hash (or
+explicit absence) with the start fingerprint. Finalization takes a bounded exclusive
+worktree lock and replaces the singleton receipt only if that predecessor still matches.
+The previous receipt is archived by byte hash in the Git validation directory. Normal
+subsequent runs and recovery can therefore replace the expected old receipt without
+manual deletion. A distinct intervening writer wins: a late conflicting run fails closed
+and cannot overwrite its receipt. Do not delete or edit receipts to bypass that conflict.
+Strict mode checks `playwright.log` in the fresh canonical download before merging local
+artifacts, so a stale local copy cannot certify a run.
+Older runs without the persisted start context cannot use this recovery path. Recovery
+also requires that the original artifacts still exist remotely; normal successful runs
+may already have cleaned them up. Use `-KeepRemoteArtifacts` when starting a run whose
+remote evidence needs to remain available after success.
+
+### Run the isolated recovery regressions
+
+CORE runs the .NET suite; it does **not** automatically run these PowerShell fixtures.
+From the exact candidate checkout, run these explicit commands separately in the isolated
+Linux validation environment and retain their output alongside CORE evidence:
+
+```powershell
+pwsh -NoProfile -File scripts/repo/Test-AzureBuildTestRecovery.ps1
+pwsh -NoProfile -File scripts/repo/Test-AzureBuildTestFinalization.ps1
+Import-Module Pester -RequiredVersion 5.7.1
+Invoke-Pester -Path ./scripts/repo/Test-SourceSnapshot.ps1 -Output Detailed
+```
+
+These fixtures use synthetic Git repositories and provider/runner documents, with Azure
+commands fenced offline. They do not start Azure executions, gateways or product test
+hosts. The source-snapshot fixture includes two case-sensitive filesystem assertions that
+require Linux; a Windows result cannot substitute for them. The finalization fixture
+also starts two bounded synthetic PowerShell children to test distinct concurrent writers.
