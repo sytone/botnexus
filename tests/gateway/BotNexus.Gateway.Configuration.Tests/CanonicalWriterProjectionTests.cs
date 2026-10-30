@@ -53,15 +53,24 @@ public sealed class CanonicalWriterProjectionTests : IDisposable
         JsonNode.DeepEquals(observed, before).ShouldBeTrue("the mutation must see SQLite, never the projection");
         var expected = before.DeepClone().AsObject();
         expected["gateway"].ShouldBeOfType<JsonObject>()["listenUrl"] = "http://localhost:6000";
-        var actualProjection = Parse(await File.ReadAllTextAsync(ConfigPath));
+        JsonObject actualProjection = new();
+        if (projection == "absent")
+        {
+            File.Exists(ConfigPath).ShouldBeFalse();
+            writer.Backends.Select(backend => backend.Name).ShouldBe(new[] { "sqlite" });
+        }
+        else
+        {
+            actualProjection = Parse(await File.ReadAllTextAsync(ConfigPath));
+        }
         if (projection == "malformed")
         {
             JsonNode.DeepEquals(actualProjection, expected).ShouldBeTrue(
                 "only malformed JSON is rebuilt from the full canonical state, including unknown keys and explicit nulls");
         }
-        else
+        else if (projection != "absent")
         {
-            // Match the established CLI delta contract: patch valid JSON, or start empty when
+            // Existing projections retain the delta contract: patch valid JSON, or start empty when
             // absent/empty/null. Unchanged canonical siblings belong to SQLite, not this projection.
             var expectedProjection = projection == "conflicting"
                 ? Parse(oldProjection.ShouldNotBeNull()) : new JsonObject();
@@ -91,7 +100,8 @@ public sealed class CanonicalWriterProjectionTests : IDisposable
         }
         JsonNode.DeepEquals(ConfigDocumentRehydrator.Rehydrate(afterEntries), expected).ShouldBeTrue();
         Directory.GetFiles(_directory, "*.tmp").ShouldBeEmpty();
-        AssertOwnerOnly(ConfigPath);
+        if (projection != "absent")
+            AssertOwnerOnly(ConfigPath);
 
         var backups = new ConfigBackupService(BackupDirectory, _fileSystem).List();
         if (oldProjection is null)
@@ -102,6 +112,109 @@ public sealed class CanonicalWriterProjectionTests : IDisposable
             (await File.ReadAllTextAsync(backup.FullPath)).ShouldBe(oldProjection);
             AssertOwnerOnly(backup.FullPath);
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Mutation_ProjectionRemovedAfterConstruction_RemainsAbsent(bool noOp)
+    {
+        await ConfigStoreBootstrap.PopulateAsync(StorePath, Parse(Seed));
+        await File.WriteAllTextAsync(ConfigPath, Seed);
+        var writer = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
+        File.Delete(ConfigPath);
+        await writer.MutateAsync(root =>
+        {
+            if (!noOp)
+                root["gateway"].ShouldBeOfType<JsonObject>()["listenUrl"] = "http://localhost:6000";
+        }, "absent-at-persistence");
+        File.Exists(ConfigPath).ShouldBeFalse();
+        writer.Backends.Select(backend => backend.Name).ShouldBe(new[] { "sqlite" });
+        Directory.Exists(BackupDirectory).ShouldBeFalse();
+        var entries = await new SqliteConfigStore($"Data Source={StorePath}").ReadEntriesAsync();
+        entries["gateway.listenUrl"].Value.ShouldBe(noOp ? "\"http://localhost:5000\"" : "\"http://localhost:6000\"");
+        entries["channels.telegram.botToken"].Value.ShouldBe("\"canonical-secret\"");
+    }
+
+    [Fact]
+    public async Task Mutation_ProjectionRemovedInsideLock_RemainsAbsent()
+    {
+        await ConfigStoreBootstrap.PopulateAsync(StorePath, Parse(Seed));
+        await File.WriteAllTextAsync(ConfigPath, Seed);
+        var writer = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
+        await writer.MutateAsync(root =>
+        {
+            File.Delete(ConfigPath);
+            root["gateway"].ShouldBeOfType<JsonObject>()["listenUrl"] = "http://localhost:6000";
+        }, "removed-under-lock");
+        File.Exists(ConfigPath).ShouldBeFalse();
+        writer.Backends.Select(backend => backend.Name).ShouldBe(new[] { "sqlite" });
+        var entries = await new SqliteConfigStore($"Data Source={StorePath}").ReadEntriesAsync();
+        entries["gateway.listenUrl"].Value.ShouldBe("\"http://localhost:6000\"");
+        entries["channels.telegram.botToken"].Value.ShouldBe("\"canonical-secret\"");
+    }
+
+    [Fact]
+    public async Task AbsentProjection_StoreFailure_IsNamedAndNeverCreatesJson()
+    {
+        await ConfigStoreBootstrap.PopulateAsync(StorePath, Parse(Seed));
+        var store = new SqliteConfigStore($"Data Source={StorePath}");
+        var writer = new PlatformConfigWriter(ConfigPath, _fileSystem, null,
+            new FanOutConfigurationWriter([
+                new JsonConfigurationWriter(ConfigPath, _fileSystem), new UnavailableStoreWriter()
+            ]), store);
+        var failure = await Should.ThrowAsync<AggregateException>(() => writer.MutateAsync(
+            root => root["gateway"].ShouldBeOfType<JsonObject>()["listenUrl"] = "http://localhost:6000",
+            "store-failure"));
+        failure.Message.ShouldContain("Applied to: none");
+        failure.InnerExceptions.ShouldHaveSingleItem().Message.ShouldContain("'sqlite'");
+        File.Exists(ConfigPath).ShouldBeFalse();
+        Directory.Exists(BackupDirectory).ShouldBeFalse();
+        var entries = await store.ReadEntriesAsync();
+        entries["gateway.listenUrl"].Value.ShouldBe("\"http://localhost:5000\"");
+        writer.Backends.Select(backend => backend.Name).ShouldBe(new[] { "sqlite" });
+    }
+
+    private sealed class UnavailableStoreWriter : IConfigurationWriter
+    {
+        public string Name => "sqlite";
+        public Task WriteAsync(JsonObject document, string reason, CancellationToken cancellationToken = default)
+            => Task.FromException(new IOException("store unavailable"));
+        public Task ApplyChangeSetAsync(ConfigChangeSet changes, string reason, CancellationToken cancellationToken = default)
+            => Task.FromException(new IOException("store unavailable"));
+    }
+
+    [Fact]
+    public async Task JsonOnlyFirstMutation_CreatesOwnerOnlyFileAndReportsJson()
+    {
+        var writer = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
+        await writer.MutateAsync(root => root["version"] = 1, "first-write");
+        Parse(await File.ReadAllTextAsync(ConfigPath))["version"].ShouldNotBeNull().GetValue<int>().ShouldBe(1);
+        writer.Backends.Select(backend => backend.Name).ShouldBe(new[] { "json" });
+        File.Exists(StorePath).ShouldBeFalse();
+        AssertOwnerOnly(ConfigPath);
+    }
+
+    [Fact]
+    public async Task ExplicitJsonWrite_CreatesAbsentProjectionEvenBesideStore()
+    {
+        await ConfigStoreBootstrap.PopulateAsync(StorePath, Parse(Seed));
+        var writer = new JsonConfigurationWriter(ConfigPath, _fileSystem);
+        await writer.WriteAsync(Parse(Seed), "explicit-export");
+        JsonNode.DeepEquals(Parse(await File.ReadAllTextAsync(ConfigPath)), Parse(Seed)).ShouldBeTrue();
+        AssertOwnerOnly(ConfigPath);
+    }
+
+    [Fact]
+    public async Task RejectedStoreOnlyMutation_DoesNotCreateProjectionOrBackup()
+    {
+        await ConfigStoreBootstrap.PopulateAsync(StorePath, Parse(Seed));
+        var writer = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
+        var errors = await writer.MutateDocumentValidatedAsync(_ => "deliberate rejection", "reject");
+        errors.ShouldBe(new[] { "deliberate rejection" });
+        File.Exists(ConfigPath).ShouldBeFalse();
+        Directory.Exists(BackupDirectory).ShouldBeFalse();
+        JsonNode.DeepEquals((await writer.ReadAsync()), Parse(Seed)).ShouldBeTrue();
     }
 
     [Fact]

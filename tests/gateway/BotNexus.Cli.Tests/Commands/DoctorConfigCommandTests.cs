@@ -272,21 +272,28 @@ public sealed class DoctorConfigCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task DoctorConfig_StoreOnlyLegacyExtensions_YesWritesCanonicalStoreAndJsonMirror()
+    public async Task DoctorConfig_StoreOnlyLegacyExtensions_YesWritesCanonicalStoreWithoutCreatingProjection()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"botnexus-doctor-store-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         var configPath = Path.Combine(directory, "config.json");
         var storePath = Path.Combine(directory, ConfigStoreBootstrap.StoreFileName);
         var store = new BotNexus.Gateway.Configuration.Store.SqliteConfigStore($"Data Source={storePath}");
-        await store.WriteDocumentAsync(JsonNode.Parse(LegacyExtensionsJson)!.AsObject());
+        await store.WriteDocumentAsync(JsonNode.Parse(LegacyExtensionsJson).ShouldBeOfType<JsonObject>());
+        File.Exists(configPath).ShouldBeFalse();
+        var writer = CliConfigMutation.CreateWriter(configPath);
+        var authority = writer.Backends.Where(backend => backend.WinsOnRead).ShouldHaveSingleItem();
+        authority.Name.ShouldBe("sqlite");
+        authority.Location.ShouldBe(storePath);
+        JsonNode.DeepEquals(JsonNode.Parse((await writer.ReadDocumentAsync()).ToJsonString()),
+            JsonNode.Parse(LegacyExtensionsJson)).ShouldBeTrue();
         try
         {
             var result = await new DoctorConfigCommand().ExecuteAsync(
                 configPath, autoApply: true, dryRun: false, verbose: false, CancellationToken.None);
 
             result.ShouldBe(0);
-            File.Exists(configPath).ShouldBeTrue();
+            File.Exists(configPath).ShouldBeFalse("ordinary doctor repairs must not recreate an absent projection");
             var stored = ConfigDocument.Parse(ConfigDocumentRehydrator.Rehydrate(await store.ReadEntriesAsync()).ToJsonString());
             LegacyGatewayExtensionsMigration.IsApplicable(stored).ShouldBeFalse();
             stored.TryGetString("gateway.extensionLoader.path", out var loaderPath).ShouldBeTrue();
@@ -295,6 +302,12 @@ public sealed class DoctorConfigCommandTests : IDisposable
                 "the legacy migration preserves false, then the separately accepted extensions-block doctor check enables the loader");
             stored.ToJsonString().ShouldContain("canonicalUnknown");
             stored.ToJsonString().ShouldContain("\"token\": null");
+            ConfigStoreBootstrap.ReleaseConnections(storePath);
+            var reloaded = await CliConfigMutation.ReadAsync(configPath, CancellationToken.None);
+            JsonNode.DeepEquals(JsonNode.Parse(reloaded.ToJsonString()),
+                JsonNode.Parse(stored.ToJsonString())).ShouldBeTrue();
+            PlatformConfigLoader.ValidateRawJson(reloaded.ToJsonString()).ShouldBeEmpty();
+            File.Exists(configPath).ShouldBeFalse();
         }
         finally
         {

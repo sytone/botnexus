@@ -76,14 +76,19 @@ public sealed class PlatformConfigWriter
     /// </summary>
     /// <remarks>
     /// Defaults to JSON-only, which is byte-identical to the behaviour before the writer seam
-    /// existed. A host that has a configuration store registers both, and then every write reaches
-    /// both - which is what stops a store-backed installation reading one document while the file
-    /// holds another.
+    /// existed. A host with a configuration store registers both. Ordinary mutations update an
+    /// existing JSON projection but preserve its absence; SQLite retains the full authoritative
+    /// document. Explicit full-document backend writes still reach every registered backend.
     /// </remarks>
     private readonly Writers.IConfigurationWriter _writer;
 
-    /// <summary>The exact persistence backends registered for this writer.</summary>
-    public IReadOnlyList<Writers.ConfigurationBackendDescriptor> Backends => _writer.Backends;
+    private IReadOnlyList<Writers.ConfigurationBackendDescriptor>? _mutationBackends;
+
+    /// <summary>
+    /// Backends selected by the latest locked persistence operation, or registered backends before
+    /// the first operation. An absent store-backed JSON projection is not reported as saved.
+    /// </summary>
+    public IReadOnlyList<Writers.ConfigurationBackendDescriptor> Backends => _mutationBackends ?? _writer.Backends;
 
     /// <summary>
     /// Store consulted for the pristine document when no config file exists. Null for file-only
@@ -954,8 +959,8 @@ public sealed class PlatformConfigWriter
     /// </para>
     /// <para>
     /// Nothing is lost by delegating: with only the JSON backend registered this is the same code
-    /// reached through one interface call. With a store also registered, every write now lands in
-    /// both - which is what the read path has assumed since the store became reachable (#3514).
+    /// reached through one interface call. With a store also registered, mutations update SQLite
+    /// and any existing JSON projection; an absent projection is not recreated.
     /// </para>
     /// </remarks>
     /// <param name="pristine">
@@ -964,6 +969,16 @@ public sealed class PlatformConfigWriter
     /// </param>
     private Task WriteRootAsync(JsonObject root, string reason, JsonObject? pristine, CancellationToken ct)
     {
+        // Evaluate while MutateCoreAsync holds both locks, not when the factory is constructed:
+        // a projection removed before this mutation must stay absent. Explicit full-document
+        // writes and JSON-only first writes retain intentional file creation. Store ownership,
+        // not a caller option or a filename-shaped identity, determines this policy.
+        var projectionFreeFanOut = pristine is not null && _pristineStore is not null
+            && !_fileSystem.File.Exists(_configPath)
+                ? _writer as Writers.FanOutConfigurationWriter
+                : null;
+        _mutationBackends = projectionFreeFanOut?.BackendsWithoutJsonProjection ?? _writer.Backends;
+
         if (pristine is null)
         {
             // No before-image: the caller cannot say what changed, so a full replace is the only
@@ -985,9 +1000,12 @@ public sealed class PlatformConfigWriter
         }
 
         // Carry the complete before-image as an optional fallback for malformed JSON projections.
-        // Valid or absent projections and row backends keep applying only the diff. The canonical
-        // read already succeeded; this is not a whole-store replacement or source-read fallback.
-        return _writer.ApplyChangeSetAsync(changes, pristine, reason, ct);
+        // Existing projections and row backends keep applying only the diff. An absent
+        // store-backed projection was omitted above; the store keeps the complete sibling state.
+        // The canonical read already succeeded; this is not a source-read fallback.
+        return projectionFreeFanOut is not null
+            ? projectionFreeFanOut.ApplyChangeSetWithoutJsonProjectionAsync(changes, pristine, reason, ct)
+            : _writer.ApplyChangeSetAsync(changes, pristine, reason, ct);
     }
 
     // #2357: Windows fails File.Move(..., overwrite: true) with UnauthorizedAccessException when

@@ -298,14 +298,31 @@ public sealed class ConfigDocument
     /// </remarks>
     public bool TrySetFrom(string path, object? value, out string error)
     {
-        if (!ConfigPathBinding.TryRecognise(path, out error))
+        if (!ConfigPathBinding.TryRecognise(path, out var declaredType, out error))
             return false;
 
         var node = value is null
             ? null
             : JsonSerializer.SerializeToNode(value, value.GetType(), WriteOptions);
 
-        return _root.TrySet(path, node, out error);
+        if (declaredType is not null)
+            return _root.TrySet(path, node, out error);
+
+        // Opaque edits must recheck the latest shape inside the writer lock. Preflight's
+        // typed graph cannot authorize replacing a concurrently changed scalar or padding
+        // a shrunken array. Stage the complete raw candidate without a typed roundtrip.
+        if (!StrictOpaqueConfigEdit.TrySet(_root, path, node, out var updated, out error))
+            return false;
+        var candidate = updated?.AsObject();
+        if (candidate is null)
+        {
+            error = $"Path '{path}' must preserve the configuration object.";
+            return false;
+        }
+        _root.Clear();
+        foreach (var pair in candidate)
+            _root[pair.Key] = pair.Value?.DeepClone();
+        return true;
     }
 
     /// <summary>Sets <paramref name="path"/> to an object built from <paramref name="values"/>.</summary>
