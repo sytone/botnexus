@@ -82,6 +82,29 @@ Grant the identity the least-privilege inference role applicable to the resource
 
 The endpoint must use HTTPS on the default port and end in `/openai/v1`. BotNexus sends Responses requests to `/openai/v1/responses` and refuses redirects so a bearer token is not forwarded to another origin.
 
+### Check a Foundry connection
+
+Run these commands in the same home as the running gateway. Replace `azure-foundry-example` with your configured provider instance name:
+
+```powershell
+botnexus provider list
+botnexus provider test --name azure-foundry-example
+```
+
+The list shows the selected authentication mode as **configured; not validated**. Listing settings does not acquire a token or prove that the gateway has activated those settings.
+
+The test asks the running gateway to check the instance's models endpoint using its configured identity or API key. It does not generate a response, follow redirects, or try another authentication mode. A successful check proves access to that endpoint, not permission to run every model deployment. Send a small chat request with an agent assigned to the instance to check deployment inference separately.
+
+| Diagnostic | What to check |
+| --- | --- |
+| Credential unavailable | Make the selected identity source available to the gateway's operating-system account. |
+| Token acquisition failed | Check the selected Azure identity and its sign-in configuration. |
+| HTTP 401 | Check the credential and expected audience `https://ai.azure.com/.default`. This status alone does not prove a wrong audience. |
+| HTTP 403 | Check the identity's resource permissions and endpoint access policy. This status alone does not identify a missing role. |
+| Redirect, connectivity failure, timeout, or another upstream HTTP status | Check the inference endpoint and service availability. BotNexus does not fall back to another origin, an API key, or an inference request. |
+
+Health checks request cancellation after ten seconds. An implementation of an identity credential must observe cancellation for this deadline to take effect. Diagnostics omit credential values, upstream response bodies, and exception details; do not share secrets when collecting additional troubleshooting information.
+
 ## Configure two provider types for different agents
 
 This example assigns one agent to Copilot and another to OpenAI. It uses supported setup commands, does not put credentials on the command line, and works from PowerShell or Bash.

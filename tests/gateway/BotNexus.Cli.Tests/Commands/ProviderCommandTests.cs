@@ -33,6 +33,36 @@ public partial class ProviderCommandTests : IDisposable
         AnsiConsole.Console = _originalConsole;
     }
 
+    [Theory]
+    [InlineData("entra-default")]
+    [InlineData("managed-identity")]
+    [InlineData("user-assigned-managed-identity")]
+    public async Task ExecuteListAsync_FoundryEntra_DisplaysConfiguredModeNotMissingKey(string mode)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "botnexus-cli-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configPath = Path.Combine(tempDir, "config.json");
+            var command = new ProviderCommand();
+            (await command.ExecuteAddMicrosoftFoundryAsync(
+                configPath, "foundry", "https://example.services.ai.azure.com/openai/v1", mode,
+                mode == "user-assigned-managed-identity" ? "00000000-0000-0000-0000-000000000001" : null,
+                null, "deployment", ["deployment"], true, false, CancellationToken.None)).ShouldBe(0);
+            _output.GetStringBuilder().Clear();
+
+            (await command.ExecuteListAsync(configPath, false, CancellationToken.None)).ShouldBe(0);
+
+            _output.ToString().ShouldContain(mode);
+            _output.ToString().ShouldContain("configured; not validated");
+            _output.ToString().ShouldNotContain("none");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     [Fact]
     public void AuthFileEntry_serializes_in_GatewayAuthManager_compatible_format()
     {
