@@ -419,3 +419,77 @@ becomes `classified-non-progress`. At most sixteen episodes and sixteen opaque G
 references per episode are retained. Raw scope/evidence identities, paths, guidance,
 tool arguments/content, and hidden reasoning are not part of this boundary.
 Display and control-policy details keep their existing behavior and protections.
+
+## Live tool execution capacity
+
+For core integrators, `ProviderRequestContextProvider` supplies one dynamic,
+request-only capacity section after `AgentContextTransformer` and
+`ProviderMessageTransformer`. `AgentOptions` forwards the callback and
+`ToolCapacityObserver` to `AgentLoopConfig`. A null callback, or null/whitespace
+output, selects `DefaultProviderRequestContextProvider`. A custom callback owns
+one section and must render truthful capacity; compose suppliers explicitly,
+not as a multicast delegate.
+
+`ToolCapacitySnapshot` is an immutable scalar view of `ToolNonProgressGuard`'s
+existing run counter. `Used` includes every executed result under existing
+counting semantics, including errors and the whole batch at exhaustion.
+`Remaining` is `max(0, Limit - Used)`. It is not a count of model turns, a
+per-result byte allowance, a context-token estimate, or a wall-clock deadline.
+The hard guard still enforces `MaxToolResults`; advisory text cannot extend it.
+
+`ToolCapacityObserver` receives start, 75%, 90%, and exhaustion once per run,
+in that order. Percentage crossings use integer ceiling semantics: the first
+eligible result count is `ceil(Limit * percentage / 100)`. Tiny limits may
+collapse milestones. A batch that crosses several milestones emits all of
+them with the actual full-batch count, including overshoot, not an interpolated
+count. Steering and progress resets do not clear usage or milestone state.
+
+Every normal attempt, retry, post-compaction request, and tool-free finalizer
+renders current accounting. Retries without tool execution spend no capacity.
+Finalization reports `Finalizing` with zero remaining and retains the existing
+parked outcome. Each run owns its guard and `AgentRunId`; parent and child runs
+must not share a counter through a host subscriber.
+
+The loop copies the outgoing provider message list and appends exactly one
+section. It does not change the stable system prompt, add capacity messages to
+stored history or tool results, or pass them into compaction and transformers.
+The host section is current request context, not durable memory. This does not
+remove capacity claims written independently by the model in earlier prose.
+
+Callbacks have distinct authority:
+
+- Observers run synchronously in registration order through the shared diagnostic
+  dispatcher. Each subscriber exception, including subscriber cancellation, is
+  isolated. Observers must return promptly; no timeout can interrupt synchronous
+  subscriber code.
+- The request-context provider receives immutable run facts and the request's
+  cancellation token, not a mutable transcript. Normal exceptions and operation
+  cancellation propagate before provider invocation. The finalizer applies its
+  existing bounded deadline and preserves its already-decided parked outcome on
+  renderer failure. Renderers must observe cancellation and perform bounded work.
+- Neither callback counts results, resets guards, replays tools, nor approves
+  completion. Custom renderers should discourage redundant counter narration and
+  unsupported completion claims, and must not suggest skipping required checks
+  or restarting automatically to evade the limit.
+
+### Request context is not conversational input
+
+Provider `Message.IsRequestOnlyContext` marks host context at the outgoing request
+boundary. The capacity section remains a provider `UserMessage` so existing wire
+converters retain its visible text. The marker is local metadata, excluded from
+JSON provider fields, and does not change the message's wire role. Message copies
+and compatibility transforms must preserve it.
+
+Consumers that infer conversational origin or select the last user input ignore
+marked messages. Copilot dynamic headers therefore retain user attribution for
+initial input and agent attribution for result-only continuations and retries.
+IntegrationMock catalog selection uses the original conversational script key,
+not host advisory text. Neither consumer recognizes capacity prose or a prefix.
+
+`RunSingleProviderTurnAsync` and `Agent.PromptWithoutToolsAsync` also invoke the
+request-context provider and emit the start observation. They keep tools disabled
+and bypass steering, compaction, retries and completion continuations as before.
+A fresh no-tool run reports zero used, its full configured remaining allowance,
+and `Executing`, not exhausted capacity. Renderer failures and cancellation follow
+the existing one-turn failure/cancellation contract; no provider call starts after
+a failed render.
