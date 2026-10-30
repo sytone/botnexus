@@ -327,7 +327,8 @@ public sealed class SqlitePeerDialogueStoreTests : IDisposable
         {
             await connection.OpenAsync();
             using var command = connection.CreateCommand();
-            command.CommandText = "UPDATE store_meta SET value='2' WHERE key='schema_version'; PRAGMA user_version=2;";
+            var newerVersion = SqlitePeerDialogueStore.CurrentSchemaVersion + 1;
+            command.CommandText = $"UPDATE store_meta SET value='{newerVersion}' WHERE key='schema_version'; PRAGMA user_version={newerVersion};";
             await command.ExecuteNonQueryAsync();
         }
         await Should.ThrowAsync<SqliteSchemaVersionMismatchException>(() => Store().AdmitAsync(Alice, Message(spec)));
