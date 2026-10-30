@@ -21,8 +21,8 @@ namespace BotNexus.Gateway.Tests.Audit;
 /// <see cref="SqliteSessionStore"/> and then reconstruct <c>session_history</c> projections with
 /// a SQL join to <c>tool_invocations</c> on the persisted invocation link and session identity.
 /// Asserting on the in-memory <c>SessionEntry</c> alone would not catch lost durable evidence.
-/// The join restores start arguments and result text only; result arguments remain per-row
-/// evidence and must not be invented from the normalized invocation when absent.
+/// The join restores invocation arguments for starts and marked results, plus result text.
+/// Unmarked historical absence remains distinct from arguments stored on the invocation.
 /// </para>
 /// <para>
 /// The start/result pair survives the normalized write cutover. Raw start arguments and raw
@@ -202,8 +202,7 @@ public sealed class ToolResultRowArgumentsPersistenceTests
                 {
                     kind.ShouldBe("tool-result");
                     reader.IsDBNull(2).ShouldBeTrue();
-                    // Result arguments remain per-row evidence, not a normalized fallback.
-                    reader.GetString(1).ShouldBe(payload.Args);
+                    reader.IsDBNull(1).ShouldBeTrue();
                     results.Add(callId);
                 }
             }
@@ -317,11 +316,11 @@ public sealed class ToolResultRowArgumentsPersistenceTests
         return rows;
     }
 
-    // Match the durable projection: only start args and result text have normalized fallbacks.
+    // Independently reconstruct the durable invocation-backed projection.
     private const string ToolRowProjectionSql = """
         SELECT h.tool_name, h.tool_call_id,
                CASE WHEN h.tool_args IS NOT NULL THEN h.tool_args
-                    WHEN h.message_kind = 'tool-start' THEN i.arguments_json END AS tool_args,
+                    WHEN h.message_kind = 'tool-start' OR h.tool_args_from_invocation=1 THEN i.arguments_json END AS tool_args,
                h.tool_is_error,
                COALESCE(h.content, CASE WHEN h.message_kind = 'tool-result' THEN i.result_content END) AS content,
                h.message_kind

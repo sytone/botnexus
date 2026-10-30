@@ -10,6 +10,28 @@ namespace BotNexus.Gateway.Tests.Sessions;
 public sealed class LegacyToolInvocationBackfillHostedServiceTests
 {
     [Fact]
+    public async Task ExecuteAsync_ProductionMigration_CompletesOneBulkPassWithoutBatchDelays()
+    {
+        var calls = 0;
+        var delays = new List<TimeSpan>();
+        var store = new SqliteSessionStore("Data Source=:memory:", NullLogger<SqliteSessionStore>.Instance,
+            new InMemoryConversationStore());
+        using var service = new LegacyToolInvocationBackfillHostedService(store,
+            _ =>
+            {
+                calls++;
+                return new(new(600,600,300,false,true),new(300,600,12000,-1,-1,false));
+            },
+            (delay, _) => { delays.Add(delay); return Task.CompletedTask; }, new BotNexusMetrics(),
+            NullLogger<LegacyToolInvocationBackfillHostedService>.Instance);
+        await service.StartAsync(CancellationToken.None);
+        await service.ExecuteTask.ShouldNotBeNull().WaitAsync(TimeSpan.FromSeconds(5));
+        await service.StopAsync(CancellationToken.None);
+        calls.ShouldBe(1);
+        delays.ShouldBe([LegacyToolInvocationBackfillHostedService.InitialDelay]);
+    }
+
+    [Fact]
     public async Task StartAsync_InitialDelayIsPending_DoesNotBlockStartup()
     {
         var delayReached = NewSignal();
