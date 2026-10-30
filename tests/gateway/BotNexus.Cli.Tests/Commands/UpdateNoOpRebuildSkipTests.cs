@@ -158,6 +158,8 @@ public sealed class UpdateNoOpRebuildSkipTests
         RunGit(root, $"config user.name {SentinelName}");
         RunGit(root, "config commit.gpgsign false");
 
+        // Match SDK output exclusions: generated binaries and receipts are not source inputs.
+        File.WriteAllText(Path.Combine(root, ".gitignore"), "**/bin/\n**/obj/\n");
         foreach (var relative in TrackedBuildInputs)
         {
             var full = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
@@ -172,6 +174,8 @@ public sealed class UpdateNoOpRebuildSkipTests
         var gatewayDll = UpdateCommand.ResolveGatewayBinaryPath(root);
         Directory.CreateDirectory(Path.GetDirectoryName(gatewayDll)!);
         File.WriteAllText(gatewayDll, "fake assembly");
+        var commit = RunGit(root, "rev-parse HEAD").Trim();
+        UpdateDeploymentIdentity.RecordAsync(gatewayDll, commit, CancellationToken.None).GetAwaiter().GetResult();
 
         return root;
     }
@@ -352,7 +356,7 @@ public sealed class UpdateNoOpRebuildSkipTests
     // ---------------------------------------------------------------------------------------
 
     [Fact]
-    public async Task CanSkipRebuild_IsTrue_WhenNothingChangedAndBinaryExists()
+    public async Task CanSkipRebuild_IsTrue_WhenNothingChangedAndDeploymentVerified()
     {
         var root = CreateCleanRepoWithGatewayBinary();
         try
@@ -361,7 +365,7 @@ public sealed class UpdateNoOpRebuildSkipTests
 
             var canSkip = await cmd.CanSkipForTestAsync(root, CancellationToken.None);
 
-            canSkip.ShouldBeTrue("HEAD did not move, the tree is clean and the binary exists");
+            canSkip.ShouldBeTrue("HEAD did not move, the tree is clean and the successful deployment matches source and binary");
         }
         finally
         {
@@ -369,19 +373,21 @@ public sealed class UpdateNoOpRebuildSkipTests
         }
     }
 
-    [Fact]
-    public async Task CanSkipRebuild_IsTrue_WhenOnlyUntrackedFilesArePresent()
+    [Theory]
+    [InlineData("scratch.log")]
+    [InlineData("src/gateway/BotNexus.Gateway.Api/Untracked.cs")]
+    public async Task CanSkipRebuild_IsFalse_WhenUntrackedFilesArePresent(string relativePath)
     {
         var root = CreateCleanRepoWithGatewayBinary();
         try
         {
-            File.WriteAllText(Path.Combine(root, "scratch.log"), "not a build input");
+            File.WriteAllText(Path.Combine(root, relativePath), "// untracked input");
 
             var cmd = new SkipProbeCommand(NewProcessManager(), pullWasNoOp: true);
 
             var canSkip = await cmd.CanSkipForTestAsync(root, CancellationToken.None);
 
-            canSkip.ShouldBeTrue("untracked files are not compiled into any project");
+            canSkip.ShouldBeFalse("without a safe include policy, any untracked file may affect the build");
         }
         finally
         {

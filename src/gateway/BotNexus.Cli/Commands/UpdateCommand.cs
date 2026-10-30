@@ -106,7 +106,7 @@ internal class UpdateCommand
         var checkSourceOption = new Option<string?>("--source", () => null, "Path to the BotNexus repository root. Defaults to ~/botnexus.");
         var checkLatestOption = new Option<bool>("--latest", "Check against the configured development tip (origin/main) instead of a stable release.");
         var checkVersionOption = new Option<string?>("--version", () => null, "Check against the exact release tag for this semantic version (for example, 1.2.3).");
-        var checkCommand = new Command("check", "Check whether the selected source release is installed.")
+        var checkCommand = new Command("check", "Check source and verified deployment identity (not the running revision).")
         {
             checkSourceOption,
             checkLatestOption,
@@ -148,11 +148,11 @@ internal class UpdateCommand
                 var status = await ResolveReleaseStatusAsync(repoRoot, _releaseRequest, cancellationToken);
                 if (string.Equals(status.Installed.CommitSha, status.Target.CommitSha, StringComparison.OrdinalIgnoreCase))
                 {
-                    AnsiConsole.MarkupLine($"[green]√[/] Already at [dim]{CliText.SafeDisplay(status.Target.SourceName)}[/].");
-                    return 0;
+                    AnsiConsole.MarkupLine($"[green]√[/] Source is current at [dim]{CliText.SafeDisplay(status.Target.SourceName)} ({CliText.SafeDisplay(status.Target.CommitSha)})[/].");
+                    return await ReportDeploymentCheckAsync(repoRoot, cancellationToken);
                 }
 
-                AnsiConsole.MarkupLine($"[yellow]![/] Update available: [dim]{CliText.SafeDisplay(status.Target.SourceName)}[/].");
+                AnsiConsole.MarkupLine($"[yellow]![/] Source update available: [dim]{CliText.SafeDisplay(status.Target.SourceName)} ({CliText.SafeDisplay(status.Target.CommitSha)})[/]. Deployment and running revision not verified.");
                 return 1;
             }
             catch (OperationCanceledException)
@@ -205,12 +205,34 @@ internal class UpdateCommand
             return 1;
         }
 
-        AnsiConsole.MarkupLine("[green]✓[/] Already up to date.");
-        return 0;
+        AnsiConsole.MarkupLine("[green]✓[/] Source is current with origin/main.");
+        try
+        {
+            return await ReportDeploymentCheckAsync(repoRoot, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return CancelledExitCode;
+        }
+    }
+
+    private async Task<int> ReportDeploymentCheckAsync(string repoRoot, CancellationToken cancellationToken)
+    {
+        var commit = GetCommitSha(repoRoot);
+        var verified = await GetWorkingTreeCleanlinessAsync(repoRoot, cancellationToken) == WorkingTreeCleanliness.Clean
+            && await UpdateDeploymentIdentity.MatchesAsync(ResolveGatewayBinaryPath(repoRoot), commit, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        AnsiConsole.MarkupLine(verified
+            ? $"[green]√[/] Verified deployment on disk matches source {CliText.SafeDisplay(commit)}. Running revision not verified."
+            : "[yellow]![/] Deployment is stale or unverified; run botnexus update to reconcile. Running revision not verified.");
+        return verified ? 0 : 1;
     }
 
     internal async Task<int> ExecuteAsync(string repoRoot, string home, int port, bool verbose, CancellationToken cancellationToken)
     {
+        if (cancellationToken.IsCancellationRequested)
+            return CancelledExitCode;
+
         var interactive = AnsiConsole.Profile.Capabilities.Interactive;
 
         // Resolve the immutable target before dirty-tree handling, checkout mutation, or stopping
@@ -256,11 +278,12 @@ internal class UpdateCommand
                     AnsiConsole.MarkupLine($"[red]x[/] {CliText.SafeDisplay(ex.Message)}");
                     return 2;
                 }
-                AnsiConsole.MarkupLine($"[green]√[/] Selected [dim]{CliText.SafeDisplay(status.Target.SourceName)}[/].");
+                AnsiConsole.MarkupLine($"[green]√[/] Selected source [dim]{CliText.SafeDisplay(status.Target.SourceName)} ({CliText.SafeDisplay(status.Target.CommitSha)})[/].");
+                AnsiConsole.MarkupLine("[dim]HEAD is detached at the selected commit; local main was not advanced. Deployment has not yet been reconciled.[/]");
             }
             else
             {
-                AnsiConsole.MarkupLine($"[green]√[/] Already at [dim]{CliText.SafeDisplay(status.Target.SourceName)}[/].");
+                AnsiConsole.MarkupLine($"[green]√[/] Source already at [dim]{CliText.SafeDisplay(status.Target.SourceName)} ({CliText.SafeDisplay(status.Target.CommitSha)})[/]; checking deployment separately.");
             }
         }
         else
@@ -270,28 +293,25 @@ internal class UpdateCommand
                 return pullResult;
         }
 
-        // Step 1b: if the pull genuinely changed nothing, there is nothing to build and no
-        // reason to bounce the gateway. Previously this case still stopped the gateway, ran a
-        // full solution build and restarted - minutes of downtime to produce byte-identical
-        // output.
-        //
-        // CONSERVATIVE BY CONSTRUCTION: this is NOT a "did anything change" heuristic over
-        // build inputs, and it does not try to reason about which sources are newer than which
-        // binaries. It skips ONLY when all four of these hold:
-        //   1. HEAD did not move across the pull,
-        //   2. the working tree is clean (no uncommitted edit could be waiting to compile),
-        //   3. git status was actually readable (an unreadable status is treated as dirty),
-        //   4. the gateway binary that would be launched already exists on disk.
-        // Anything else - any doubt at all - falls through to the full stop/build/deploy/restart
-        // path. A slow update is recoverable; a stale binary after a "successful" update is the
-        // silent-failure class this repo has been fighting.
-        if (await CanSkipRebuildAsync(repoRoot, cancellationToken)
-            && !await HasEnabledExtensionRepositoriesAsync(home, cancellationToken))
+        // A failed build can leave unchanged source and an old DLL. Only a matching
+        // successful-update receipt permits the fast path.
+        bool canSkip;
+        try
+        {
+            canSkip = await CanSkipRebuildAsync(repoRoot, cancellationToken)
+                && !await HasEnabledExtensionRepositoriesAsync(home, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException)
+        {
+            return CancelledExitCode;
+        }
+        if (canSkip)
         {
             // #2772: the old code asserted "gateway left running" from control flow alone. Ask.
             if (IsGatewayRunning(home, repoRoot))
             {
-                AnsiConsole.MarkupLine("[green]\u2713[/] Nothing to rebuild; gateway left running.");
+                AnsiConsole.MarkupLine("[green]\u2713[/] Nothing to rebuild; gateway left running. Verified deployment on disk; running revision not verified.");
                 return 0;
             }
 
@@ -301,6 +321,19 @@ internal class UpdateCommand
 
         // Step 2: Stop gateway BEFORE building — releases file locks on Windows
         var gatewayBinary = ResolveGatewayBinaryPath(repoRoot);
+        // Invalidate before any build can partially replace output. Failed/cancelled attempts
+        // must never reuse prior success evidence at unchanged HEAD.
+        var buildCommit = GetCommitSha(repoRoot);
+        try
+        {
+            UpdateDeploymentIdentity.Invalidate(gatewayBinary);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AnsiConsole.MarkupLine($"[red]✗[/] Cannot invalidate prior deployment identity; update aborted: {CliText.SafeDisplay(ex.Message)}");
+            return 1;
+        }
+
         var gatewayUrl = GatewayProbeUrlResolver.ResolveFromHome(
             fallbackPort: port,
             homePath: home);
@@ -381,7 +414,19 @@ internal class UpdateCommand
 
         // Steps 3 & 4: Build and deploy (gateway is now stopped, no file locks)
         _gatewayBuildFailed = false;
-        var buildResult = await RunBuildAndDeployAsync(repoRoot, home, verbose, cancellationToken);
+        int buildResult;
+        bool buildStartedClean;
+        try
+        {
+            // A clean tree after the build cannot certify output compiled from earlier local
+            // inputs that were removed while the build ran. Require clean source at both ends.
+            buildStartedClean = await GetWorkingTreeCleanlinessAsync(repoRoot, cancellationToken) == WorkingTreeCleanliness.Clean;
+            buildResult = await RunBuildAndDeployAsync(repoRoot, home, verbose, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return CancelledExitCode;
+        }
         if (buildResult != 0 && (buildResult != ExtensionDeploymentFailureExitCode || _gatewayBuildFailed))
         {
             AnsiConsole.MarkupLine($"[red]✗[/] Update build failed (exit code {buildResult}); the update was not applied.");
@@ -402,6 +447,27 @@ internal class UpdateCommand
         // preserved or restored the usable deployment; leaving the stopped gateway offline would
         // turn a recoverable update failure into an outage. Preserve the nonzero update result.
         var restartResult = await RunRestartAsync(home, port, repoRoot, cancellationToken);
+        if (cancellationToken.IsCancellationRequested)
+            return CancelledExitCode;
+        if (restartResult == 0 && buildResult == 0)
+        {
+            try
+            {
+                // Do not certify output if source changed while the build ran.
+                if (buildStartedClean
+                    && string.Equals(buildCommit, GetCommitSha(repoRoot), StringComparison.OrdinalIgnoreCase)
+                    && await GetWorkingTreeCleanlinessAsync(repoRoot, cancellationToken) == WorkingTreeCleanliness.Clean)
+                    await UpdateDeploymentIdentity.RecordAsync(gatewayBinary, buildCommit, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return CancelledExitCode;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                AnsiConsole.MarkupLine($"[yellow]![/] Deployment identity could not be recorded; next update will reconcile: {CliText.SafeDisplay(ex.Message)}");
+            }
+        }
         return restartResult != 0 ? restartResult : buildResult;
     }
 
@@ -563,7 +629,7 @@ internal class UpdateCommand
 
         if (beforeSha == afterSha)
         {
-            AnsiConsole.MarkupLine($"[green]✓[/] Already up to date ([dim]{CliText.SafeDisplay(Short(beforeSha))}[/])");
+            AnsiConsole.MarkupLine($"[green]✓[/] Source already up to date ([dim]{CliText.SafeDisplay(Short(beforeSha))}[/]); deployment not yet verified.");
         }
         else
         {
@@ -1329,11 +1395,12 @@ internal class UpdateCommand
     /// <summary>
     /// Whether the update can return without stopping, rebuilding, deploying and restarting the
     /// gateway. See the call site in <c>ExecuteAsync</c> for the full reasoning; in short this
-    /// returns <c>true</c> only when the repository provably did not move and the artefact that
-    /// would be launched already exists. Every uncertain case returns <c>false</c> (= build).
+    /// returns true only for unchanged clean source and a matching successful deployment receipt.
+    /// Every uncertain case forces reconciliation.
     /// </summary>
     protected virtual async Task<bool> CanSkipRebuildAsync(string repoRoot, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         // The pull step records whether HEAD moved. If it did, always build.
         if (!LastPullWasNoOp)
             return false;
@@ -1344,8 +1411,8 @@ internal class UpdateCommand
         if (status != WorkingTreeCleanliness.Clean)
             return false;
 
-        // If the binary we would start is not there, we obviously have to build it.
-        return File.Exists(ResolveGatewayBinaryPath(repoRoot));
+        return await UpdateDeploymentIdentity.MatchesAsync(
+            ResolveGatewayBinaryPath(repoRoot), GetCommitSha(repoRoot), cancellationToken);
     }
 
     /// <summary>
@@ -1365,10 +1432,10 @@ internal class UpdateCommand
     /// <summary>Tri-state working-tree result; anything other than Clean forces a build.</summary>
     internal enum WorkingTreeCleanliness
     {
-        /// <summary>git status succeeded and reported no tracked modifications.</summary>
+        /// <summary>git status succeeded and reported no tracked modifications or untracked files.</summary>
         Clean,
 
-        /// <summary>git status succeeded and reported tracked modifications.</summary>
+        /// <summary>git status succeeded and reported tracked modifications or untracked files.</summary>
         Dirty,
 
         /// <summary>git status could not be read at all; treated as dirty.</summary>
@@ -1376,9 +1443,9 @@ internal class UpdateCommand
     }
 
     /// <summary>
-    /// Reads the tracked-file cleanliness of the repo. Untracked files are ignored - they are
-    /// not build inputs for any project and never block a pull - but every tracked modification
-    /// and every failure to read status counts against skipping.
+    /// Reads source cleanliness for deployment identity, independently of pull/stash rules.
+    /// SDK projects can include untracked source files. Without a safe include policy, every
+    /// untracked file, tracked modification and failure to read status prevents verification.
     /// Delegates to <see cref="GetWorkingTreeStatusAsync"/> so there is exactly ONE git-status
     /// implementation: a second parser would be free to drift from the dirty/untracked split the
     /// pull path already depends on.
@@ -1390,7 +1457,7 @@ internal class UpdateCommand
         if (status.WasCanceled || status.ExitCode != 0)
             return WorkingTreeCleanliness.Unknown;
 
-        return status.DirtyPaths.Count == 0
+        return status.DirtyPaths.Count == 0 && status.UntrackedPaths.Count == 0
             ? WorkingTreeCleanliness.Clean
             : WorkingTreeCleanliness.Dirty;
     }
