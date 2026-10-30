@@ -157,7 +157,7 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         reloaded.ShouldNotBeNull();
         reloaded.GetHistorySnapshot().Select(entry => (entry.Content, entry.ToolArgs, entry.Kind)).ShouldBe([
             ("started", arguments, (MessageKind?)MessageKind.ToolStart),
-            (result, "{\"duplicate\":true}", (MessageKind?)MessageKind.ToolResult)]);
+            (result, arguments, (MessageKind?)MessageKind.ToolResult)]);
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         await store.SaveAsync(session);
 
         // Seed the pre-cutover duplicated layout explicitly: live writes are narrow now.
-        await RestoreLegacyPayloadsAsync("cleanup");
+        await RestoreLegacyPayloadsAsync("cleanup", "duplicate");
         var first = store.CleanupLegacyToolPayloads(10);
         var second = store.CleanupLegacyToolPayloads(10);
 
@@ -196,7 +196,7 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         reloaded.ShouldNotBeNull();
         reloaded.GetHistorySnapshot().Select(entry => (entry.Content, entry.ToolArgs, entry.Kind, entry.Timestamp)).ShouldBe([
             ("started", arguments, (MessageKind?)MessageKind.ToolStart, startedAt),
-            (result, (string?)null, (MessageKind?)MessageKind.ToolResult, completedAt)]);
+            (result, arguments, (MessageKind?)MessageKind.ToolResult, completedAt)]);
 
         reloaded.ReplaceHistory(reloaded.GetHistorySnapshot());
         await reloadedStore.SaveAsync(reloaded);
@@ -225,7 +225,7 @@ public sealed class ToolInvocationSchemaTests : IDisposable
             session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = result, ToolName = "read", ToolCallId = call, ToolArgs = duplicate, Kind = MessageKind.ToolResult, Timestamp = startedAt.AddSeconds(2) });
         }
         await store.SaveAsync(session);
-        await RestoreLegacyPayloadsAsync("restart");
+        await RestoreLegacyPayloadsAsync("restart", duplicate);
         await using var connection = await OpenAsync();
         var originalHistory = await ReadTableBytesAsync(connection, "session_history");
         var originalInvocations = await ReadTableBytesAsync(connection, "tool_invocations");
@@ -290,9 +290,9 @@ public sealed class ToolInvocationSchemaTests : IDisposable
             reloaded.ShouldNotBeNull();
             reloaded.GetHistorySnapshot().Select(entry => (entry.ToolCallId, entry.Content, entry.ToolArgs, entry.Kind, entry.Timestamp)).ShouldBe([
                 ("first", "started", arguments, (MessageKind?)MessageKind.ToolStart, startedAt),
-                ("first", result, (string?)null, (MessageKind?)MessageKind.ToolResult, startedAt.AddSeconds(2)),
+                ("first", result, arguments, (MessageKind?)MessageKind.ToolResult, startedAt.AddSeconds(2)),
                 ("second", "started", arguments, (MessageKind?)MessageKind.ToolStart, startedAt),
-                ("second", result, (string?)null, (MessageKind?)MessageKind.ToolResult, startedAt.AddSeconds(2))]);
+                ("second", result, arguments, (MessageKind?)MessageKind.ToolResult, startedAt.AddSeconds(2))]);
             // Restart without a persisted cursor must also be a no-op.
             var repeated = freshStore.CleanupLegacyToolPayloads(2);
             repeated.ScannedInvocations.ShouldBe(0);
@@ -315,6 +315,7 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         var values = columns.Select(column =>
         {
             var expression = projectCleanup && column == "tool_args" ? "NULL"
+                : projectCleanup && column == "tool_args_from_invocation" ? "CASE WHEN message_kind='tool-result' AND tool_args IS NOT NULL THEN 1 ELSE tool_args_from_invocation END"
                 : projectCleanup && column == "content" ? "CASE WHEN message_kind='tool-result' THEN NULL ELSE content END"
                 : $"\"{column}\"";
             return $"typeof({expression}),hex(CAST({expression} AS BLOB))";
@@ -432,7 +433,7 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         await store.SaveAsync(session);
         // This fixture exercises historical duplicate cleanup, not the normalized-only live
         // writer. Restore the pre-cutover payload layout before applying each protection.
-        await RestoreLegacyPayloadsAsync("disposition");
+        await RestoreLegacyPayloadsAsync("disposition", duplicate);
         await using var connection = await OpenAsync();
         await using (var change = connection.CreateCommand())
         {
@@ -966,17 +967,19 @@ public sealed class ToolInvocationSchemaTests : IDisposable
         }
     }
 
-    private async Task RestoreLegacyPayloadsAsync(string sessionId)
+    private async Task RestoreLegacyPayloadsAsync(string sessionId, string? resultArguments = null)
     {
         await using var connection = await OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE session_history AS h SET
-                tool_args=CASE WHEN h.message_kind='tool-start' THEN i.arguments_json ELSE h.tool_args END,
+                tool_args=CASE WHEN h.message_kind='tool-start' THEN i.arguments_json ELSE $resultArgs END,
+                tool_args_from_invocation=0,
                 content=CASE WHEN h.message_kind='tool-result' THEN i.result_content ELSE h.content END
             FROM tool_invocations i WHERE h.tool_invocation_id=i.id AND h.session_id=$session
             """;
         command.Parameters.AddWithValue("$session", sessionId);
+        command.Parameters.AddWithValue("$resultArgs", (object?)resultArguments ?? DBNull.Value);
         await command.ExecuteNonQueryAsync();
     }
 
