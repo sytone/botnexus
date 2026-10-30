@@ -1279,13 +1279,14 @@ botnexus config schema --output my-schema.json
 
 ## config store
 
-Manage the SQLite configuration store (`config.sqlite`). When the store is enabled it serves
-configuration to the gateway and **its values win over `config.json`**; the file stays on disk and
-is never modified by these commands.
+Manage the SQLite configuration store (`config.sqlite`). The runtime adds compatibility JSON first
+and SQLite second: SQL wins matching keys, but JSON can still supply keys missing from SQL. This is
+not a SQLite-only runtime cutover. Use the supported CLI rather than hand-editing a generated
+compatibility projection.
 
 ### Usage
 
-```powershell
+```bash
 botnexus config store <COMMAND> [OPTIONS]
 ```
 
@@ -1293,63 +1294,132 @@ botnexus config store <COMMAND> [OPTIONS]
 
 | Subcommand | Description |
 |---|---|
-| `enable` | Create `config.sqlite` from the current `config.json`. The store then serves configuration, with its values winning over the file. |
-| `status` | Report whether the store exists and how many entries it holds. |
-| `disable` | Delete `config.sqlite`. The gateway returns to file-only configuration on the next start. |
+| `enable` | Create `config.sqlite` from the current raw `config.json`. Restart the gateway for the newly created store to take effect. |
+| `status` | Report whether the store exists and how many entries it holds. This is not a parity check. |
+| `parity` | Independently compare complete SQL and compatibility documents without changing configuration; report status and aggregate counts only. |
+| `reconcile` | Preview a validated, complete SQL-first union; no configuration is changed. |
+| `reconcile --apply` | Explicitly persist a newly previewed and rechecked complete union through the canonical writer. |
+| `disable` | Delete the SQLite store without prompting. After restart the gateway uses JSON only; SQL-only or differing values can be lost. |
 
 ### Options
 
 | Option | Default | Description |
 |---|---|---|
-| `--target` | resolved config directory | Directory holding `config.json`; the store is placed alongside it. |
+| `--target` | resolved config directory | BotNexus home holding the compatibility document and adjacent SQLite store. |
+| `--apply` | `false` | For `reconcile` only: persist the validated union. Without it, preview only. |
 
-### Behaviour
+### Behavior and safety
 
-- `enable` reads the **raw** JSON document rather than a bound config object. Binding collapses
-  "key absent" and "key present and null" into the same null, and the store records those two
-  states distinctly — populating from a bound object would silently rewrite every deliberate null
-  as an absence.
-- `enable` reports how many entries were imported and requires a **gateway restart** to take
-  effect. It exits `1` if `config.json` is missing (run `botnexus init` first) or is not a JSON
-  object.
-- `status` exits `0` in both states: it prints `Configuration store not enabled.` when `config.sqlite`
-  is absent, and the entry count plus the store-wins note when it is present.
-- Targeted mutations such as `config set`, `agent`, `locations`, and `provider` writes update
-  `config.json` and the enabled store together. Their success receipt lists the backends actually
-  registered for that write and marks SQLite as winning on read; a partial fan-out is an error and
-  does not print a success receipt.
-- `disable` needs **no `--commit` flag and prompts for nothing** — unlike
-  [`config restore`](#config-restore), which overwrites the source document. The store is a derived
-  copy of `config.json`, which is left untouched, so a disable discards nothing that
-  `config store enable` cannot regenerate. Disabling an absent store is a no-op that exits `0`.
+- `enable` reads the raw JSON object, preserving the distinction between an absent key and an
+  explicit `null`. It exits `1` when the file is missing or is not a JSON object.
+- `status` exits `0` for an absent store and for an existing readable store. An entry count does
+  not prove the SQL and compatibility documents agree.
+- Ordinary targeted edits, including `config set` and purpose-built provider and agent writes,
+  apply the requested changes to registered backends. They preserve unrelated drift rather than
+  reconciling complete documents. A partial fan-out is an error, not a successful migration.
+- Parity inspection and reconciliation preview use SQLite read-only access, including committed
+  write-ahead-log (WAL) data. They do not change configuration values, schema, or revision; initialize
+  or migrate stores; or narrow permissions. SQLite may create or update WAL/shared-memory (SHM)
+  coordination bookkeeping: unchanged sidecar bytes are not guaranteed. Backends are inspected
+  independently, not as one atomic cross-store snapshot. `parity` does not reconcile configuration.
+- `reconcile` keeps SQL values for shared leaf conflicts and imports compatibility-only fields,
+  including unknown fields and explicit nulls, when safe. Unsafe container shapes, ambiguous keys,
+  unsupported schema, lossy representations, and failed validation or section guards cause refusal.
+  Apply requires a current canonical SQL store; reconciliation is not a schema upgrade.
+- Apply rechecks the independently read documents under the normal configuration lock and refuses
+  stale or unsafe state. Persistence is **not a cross-store transaction**. I/O failure or interruption
+  can leave partial changes. Reinspect parity before deciding how to recover or retry.
+- Before applying or intentionally removing a backend, secure independent, recoverable backups of
+  both backends. A JSON-only backup cannot recover SQL-only values. Use a SQLite-aware backup that
+  includes committed write-ahead-log data, not a copy of only the active main database file.
+- `disable` needs no `--commit` flag and prompts for nothing. It does not reconcile or export SQL
+  values first. Do not treat it as a lossless rollback. Resolve drift, recheck parity while writes
+  are stable, and retain backups before any intentional removal. An absent store is a no-op with
+  exit `0`.
+
+### Inspection limits
+
+Parity inspection and reconciliation preview enforce these resource bounds. Inputs exceeding a
+bound cannot supply a readable backend for parity and cause reconciliation to be refused; they
+are not silently truncated. These are inspection limits, not general configuration-write limits.
+
+| Input | Maximum |
+|---|---|
+| Compatibility JSON | 4 MiB (4,194,304 bytes) |
+| SQL entries | 10,000 rows |
+| Aggregate SQL key-path and value data | 4 MiB of UTF-8 bytes; explicit null adds no value bytes |
+| Parsed JSON and rehydrated document depth | 32 |
+
+Additional key/path, node-count, schema, identity, and shape checks can also refuse input. A
+within-limit document is not automatically safe or valid.
+
+### Parity output and exit codes
+
+Output uses fixed status and availability labels. Difference counts appear only when both documents
+can be compared. Keys, values, paths, hashes, and exception payloads are omitted, including in
+verbose mode. Counts are structural: a missing property or subtree counts once, and arrays are
+compared as whole values, not element-by-element counts.
+
+**Illustrative output, not an executed result:**
+
+```text
+Parity: drift
+SQL: readable
+Compatibility: readable
+SQL-only: 1
+Compatibility-only: 2
+Changed: 1
+Read-only inspection; no configuration was changed. Keys and values are omitted.
+```
+
+| Code | Status | Meaning |
+|---|---|---|
+| `0` | `clean` | Both complete documents were readable and equivalent. |
+| `2` | `drift` | Both were readable and differed. |
+| `1` | `unreadable` | At least one backend could not safely supply a complete document. |
+| `3` | `disabled` | SQL absent; compatibility document readable. No comparison. |
+| `3` | `absent` | Both backends absent. No comparison. |
+| `3` | `sql-only` | SQL readable; compatibility document absent. No comparison. |
+
+`sql-only` is not `clean`. A comparison does not prove migration completion, runtime cutover, or
+backup recoverability. A settings snapshot is also not a parity report: with a populated SQL store,
+it returns the canonical writer's SQL-derived document, not the full blended runtime configuration.
+
+### Reconciliation exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Preview passed, or explicit apply completed. Preview success does not mean anything was persisted. |
+| `1` | Refused by safety/state checks, or apply failed. Failure during persistence can be partial. |
+
+An interruption can also leave partial persistence. Do not depend on a particular cancellation exit
+code; inspect the stores before retrying.
 
 ### Examples
 
-**Enable the store:**
+**Enable and inspect the store:**
 
-```powershell
+```bash
 botnexus config store enable
-```
-
-Output:
-
-```text
-Configuration store enabled. ~/.botnexus/config.sqlite
-  184 entries imported from config.json.
-  Restart the gateway for the store to take effect.
-```
-
-**Check status:**
-
-```powershell
 botnexus config store status
 ```
 
-**Return to file-only configuration:**
+**Inspect drift and preview reconciliation without changing configuration:**
 
-```powershell
-botnexus config store disable
+```bash
+botnexus config store parity
+botnexus config store reconcile
 ```
+
+**Apply only after reviewing the preview and securing independent backups:**
+
+```bash
+botnexus config store reconcile --apply
+botnexus config store parity
+```
+
+See [Configuration store](configuration.md#configuration-store-sqlite) for current read behavior,
+backup cautions, and the distinction between reconciliation and backend retirement.
 
 ---
 
