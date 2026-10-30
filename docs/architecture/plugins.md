@@ -600,3 +600,9 @@ If the catalog cannot be written, the install does **not** fail: the content is 
 reporting a failed install the caller could act on destructively is worse than an unverifiable
 plugin. Failing open here hands out no trust, because a missing catalog is itself a refusal under
 `Enforce`.
+
+## Marketplace registry
+
+See [Marketplace registration](../development/marketplace-registration.md) for the configuration-only
+registry, CLI commands, API contract, and limits. Registration does not clone or install content;
+disabling or removing a registration does not uninstall installed plugins.
