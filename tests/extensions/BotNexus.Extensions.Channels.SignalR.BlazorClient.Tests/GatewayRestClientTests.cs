@@ -95,6 +95,23 @@ public sealed class GatewayRestClientTests
     }
 
     [Fact]
+    public async Task GetAllConversationsAsync_encodes_absolute_cutoff_and_preserves_unbounded_overload()
+    {
+        var (client, handler) = CreateClient();
+        handler.SetResponse("/api/conversations", "[]");
+        var cutoff = new DateTimeOffset(2026, 10, 27, 12, 34, 56, TimeSpan.FromHours(5.5));
+        await client.GetAllConversationsAsync(cutoff);
+        var uri = new Uri(handler.LastRequestUrl ?? throw new InvalidOperationException("No request"));
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        DateTimeOffset.Parse(query["activitySince"].ToString(), System.Globalization.CultureInfo.InvariantCulture)
+            .ShouldBe(cutoff);
+        query.Count.ShouldBe(1);
+        await client.GetAllConversationsAsync((DateTimeOffset?)null);
+        handler.LastRequestUrl.ShouldEndWith("/api/conversations?effectiveActivity=true");
+        await client.GetAllConversationsAsync(CancellationToken.None);
+        handler.LastRequestUrl.ShouldEndWith("/api/conversations");
+    }
+    [Fact]
     public async Task GetHistoryAsync_calls_correct_url_with_limit_and_offset()
     {
         var (client, handler) = CreateClient();

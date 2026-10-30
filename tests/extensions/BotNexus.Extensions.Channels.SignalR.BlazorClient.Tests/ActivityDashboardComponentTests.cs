@@ -25,7 +25,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
 
         _store.Agents.Returns(new Dictionary<string, AgentState>().AsReadOnly());
         _store.GetAgent(Arg.Any<string>()).Returns((AgentState?)null);
-        _rest.GetAllConversationsAsync(Arg.Any<CancellationToken>())
+        _rest.GetAllConversationsAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyList<ConversationSummaryDto>>(Array.Empty<ConversationSummaryDto>()));
 
         _ctx.Services.AddSingleton(_store);
@@ -59,7 +59,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
             Purpose: purpose);
 
     private void SetupConversations(params ConversationSummaryDto[] conversations) =>
-        _rest.GetAllConversationsAsync(Arg.Any<CancellationToken>())
+        _rest.GetAllConversationsAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyList<ConversationSummaryDto>>(conversations));
 
     private void SetupSessions(params (string Id, string Status)[] sessions) =>
@@ -80,7 +80,215 @@ public sealed class ActivityDashboardComponentTests : IDisposable
                 sessions.Length,
                 false));
 
+    [Theory]
+    [InlineData("Week", 7)]
+    [InlineData("Month", 30)]
+    [InlineData("Any", 0)]
+    [InlineData("Today", -1)]
+    public void Recency_changes_request_the_matching_server_window(string window, int days)
+    {
+        var before = DateTimeOffset.UtcNow;
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-recency']").Change(window);
+        var after = DateTimeOffset.UtcNow;
+        var calls = _rest.ReceivedCalls()
+            .Where(c => c.GetMethodInfo().Name == nameof(IGatewayRestClient.GetAllConversationsAsync))
+            .Select(c => c.GetArguments()).Where(a => a.Length == 2).ToList();
+        calls.Count.ShouldBe(2);
+        ((DateTimeOffset?)calls[0][0]).ShouldNotBeNull();
+        var initial = (DateTimeOffset?)calls[0][0];
+        initial.GetValueOrDefault().ShouldBeInRange(before.AddHours(-24), after.AddHours(-24));
+        var cutoff = (DateTimeOffset?)calls[1][0];
+        if (days == 0)
+            cutoff.ShouldBeNull();
+        else if (days == -1)
+            cutoff.ShouldBe(new DateTimeOffset(DateTime.Today));
+        else
+        {
+            cutoff.ShouldNotBeNull();
+            cutoff.GetValueOrDefault().ShouldBeInRange(before.AddDays(-days), after.AddDays(-days));
+        }
+    }
+    [Fact]
+    public async Task Poll_refresh_reuses_selected_bounded_query_and_reset_restores_day()
+    {
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-recency']").Change("Week");
+        // Invoke the same load target used by the polling callback without a wall-clock delay.
+        var load = typeof(ActivityDashboard).GetMethod("LoadAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Missing polling load target");
+        var before = DateTimeOffset.UtcNow;
+        await cut.InvokeAsync(async () => await ((Task?)load.Invoke(cut.Instance, null)
+            ?? throw new InvalidOperationException("Missing load task")));
+        var after = DateTimeOffset.UtcNow;
+        var calls = _rest.ReceivedCalls()
+            .Where(c => c.GetMethodInfo().Name == nameof(IGatewayRestClient.GetAllConversationsAsync))
+            .Select(c => c.GetArguments()).Where(a => a.Length == 2).ToList();
+        calls.Count.ShouldBe(3);
+        ((DateTimeOffset?)calls[^1][0]).GetValueOrDefault()
+            .ShouldBeInRange(before.AddDays(-7), after.AddDays(-7));
+        cut.Find("[data-testid='activity-summary-conversations']").Click();
+        await _rest.Received(2).GetAllConversationsAsync(
+            Arg.Is<DateTimeOffset?>(at => at.HasValue && at.Value > before.AddHours(-25)),
+            Arg.Any<CancellationToken>());
+    }
+    [Fact]
+    public void Expanding_window_fetches_older_rows_and_reset_excludes_them_again()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var conversations = new[]
+        {
+            Conv("recent"),
+            Conv("week") with { UpdatedAt = now.AddDays(-3) },
+            Conv("month") with { UpdatedAt = now.AddDays(-20) },
+            Conv("history") with { UpdatedAt = now.AddDays(-90) }
+        };
+        _rest.GetAllConversationsAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
+            .Returns(call => Task.FromResult<IReadOnlyList<ConversationSummaryDto>>(
+                conversations.Where(c => call.ArgAt<DateTimeOffset?>(0) is not { } since
+                    || c.UpdatedAt >= since).ToArray()));
+        var cut = _ctx.Render<ActivityDashboard>();
+        RowIds(cut).ShouldBe(new[] { "recent" });
+        cut.Find("[data-testid='activity-filter-recency']").Change("Week");
+        RowIds(cut).ShouldBe(new[] { "recent", "week" });
+        cut.Find("[data-testid='activity-filter-recency']").Change("Month");
+        RowIds(cut).ShouldBe(new[] { "recent", "week", "month" });
+        cut.Find("[data-testid='activity-filter-recency']").Change("Any");
+        RowIds(cut).ShouldBe(new[] { "recent", "week", "month", "history" });
+        cut.Find("[data-testid='activity-summary-conversations']").Click();
+        RowIds(cut).ShouldBe(new[] { "recent" });
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Older_poll_cannot_replace_newer_any_time_rows_or_error(bool olderFails)
+    {
+        SetupConversations(Conv("initial"));
+        var cut = _ctx.Render<ActivityDashboard>();
+        var pending = new TaskCompletionSource<IReadOnlyList<ConversationSummaryDto>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _rest.GetAllConversationsAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
+            .Returns(pending.Task);
+        var load = typeof(ActivityDashboard).GetMethod("LoadAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Missing polling load target");
+        Task older = Task.CompletedTask;
+        await cut.InvokeAsync(() =>
+        {
+            older = (Task?)load.Invoke(cut.Instance, null)
+                ?? throw new InvalidOperationException("Missing load task");
+        });
+        SetupConversations(Conv("recent"), Conv("history") with
+        {
+            CreatedAt = DateTimeOffset.UtcNow.AddDays(-90),
+            UpdatedAt = DateTimeOffset.UtcNow.AddDays(-90)
+        });
+        await cut.Find("[data-testid='activity-filter-recency']")
+            .ChangeAsync(new ChangeEventArgs { Value = "Any" });
+        RowIds(cut).ShouldBe(new[] { "recent", "history" });
+        if (olderFails)
+            pending.SetException(new HttpRequestException("stale poll failure"));
+        else
+            pending.SetResult(new[] { Conv("stale") });
+        await older.WaitAsync(TimeSpan.FromSeconds(10));
+        await cut.InvokeAsync(() => cut.Render());
+        RowIds(cut).ShouldBe(new[] { "recent", "history" });
+        cut.FindAll("[data-testid='activity-error']").ShouldBeEmpty();
+        cut.FindAll("[data-testid='activity-loading']").ShouldBeEmpty();
+        cut.Find("[data-testid='activity-summary-conversations'] .activity-summary-value")
+            .TextContent.ShouldBe("2");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Older_completion_cannot_clear_newer_loading_state(bool olderFails)
+    {
+        var cut = _ctx.Render<ActivityDashboard>();
+        var olderReply = new TaskCompletionSource<IReadOnlyList<ConversationSummaryDto>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var newerReply = new TaskCompletionSource<IReadOnlyList<ConversationSummaryDto>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var load = typeof(ActivityDashboard).GetMethod("LoadAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Missing polling load target");
+        var loading = typeof(ActivityDashboard).GetField("_isLoading",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Missing loading state");
+        _rest.GetAllConversationsAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
+            .Returns(olderReply.Task);
+        Task older = Task.CompletedTask;
+        await cut.InvokeAsync(() =>
+        {
+            older = (Task?)load.Invoke(cut.Instance, null)
+                ?? throw new InvalidOperationException("Missing load task");
+        });
+        var newerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _rest.GetAllConversationsAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                newerStarted.SetResult();
+                return newerReply.Task;
+            });
+        var newer = cut.Find("[data-testid='activity-filter-recency']")
+            .ChangeAsync(new ChangeEventArgs { Value = "Any" });
+        await newerStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        if (olderFails)
+            olderReply.SetException(new HttpRequestException("stale failure"));
+        else
+            olderReply.SetResult(new[] { Conv("stale") });
+        await older.WaitAsync(TimeSpan.FromSeconds(10));
+        await cut.InvokeAsync(() =>
+        {
+            loading.GetValue(cut.Instance).ShouldBe(true);
+            cut.FindAll("[data-testid='activity-error']").ShouldBeEmpty();
+        });
+        newerReply.SetResult(new[] { Conv("latest") });
+        await newer.WaitAsync(TimeSpan.FromSeconds(10));
+        RowIds(cut).ShouldBe(new[] { "latest" });
+        loading.GetValue(cut.Instance).ShouldBe(false);
+    }
+
     // ── Structure ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Initial_load_selects_rolling_last_24_hours()
+    {
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        cut.Find("[data-testid='activity-filter-recency']").GetAttribute("value")
+            .ShouldBe("Last24Hours");
+        cut.Find("[data-testid='activity-filter-recency'] option[value='Last24Hours']")
+            .TextContent.ShouldBe("Last 24 hours");
+    }
+
+    [Fact]
+    public void Recency_can_expand_to_any_time_and_reset_returns_to_last_24_hours()
+    {
+        var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-recency']").Change("Any");
+        cut.Find("[data-testid='activity-filter-recency']").GetAttribute("value").ShouldBe("Any");
+
+        cut.Find("[data-testid='activity-summary-conversations']").Click();
+
+        cut.Find("[data-testid='activity-filter-recency']").GetAttribute("value")
+            .ShouldBe("Last24Hours");
+    }
+
+    [Fact]
+    public void Initial_load_excludes_activity_older_than_rolling_day()
+    {
+        SetupConversations(Conv("recent"), Conv("old") with
+        {
+            CreatedAt = DateTimeOffset.UtcNow.AddDays(-3),
+            UpdatedAt = DateTimeOffset.UtcNow.AddHours(-25)
+        });
+
+        var cut = _ctx.Render<ActivityDashboard>();
+
+        cut.WaitForAssertion(() => RowIds(cut).ShouldBe(new[] { "recent" }));
+    }
 
     [Fact]
     public void Renders_header_and_filter_bar()
@@ -274,7 +482,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
     [Fact]
     public void Shows_error_state_when_load_fails()
     {
-        _rest.GetAllConversationsAsync(Arg.Any<CancellationToken>())
+        _rest.GetAllConversationsAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
             .Returns<Task<IReadOnlyList<ConversationSummaryDto>>>(_ => throw new HttpRequestException("boom"));
 
         var cut = _ctx.Render<ActivityDashboard>();
@@ -375,7 +583,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
         Assert.DoesNotContain("Archived scheduled", cut.Markup);
         Assert.Equal("", cut.Find("[data-testid='activity-filter-agent']").GetAttribute("value"));
         Assert.Equal(ActivityStatusFilter.Active.ToString(), cut.Find("[data-testid='activity-filter-status']").GetAttribute("value"));
-        Assert.Equal(ActivityRecencyWindow.Any.ToString(), cut.Find("[data-testid='activity-filter-recency']").GetAttribute("value"));
+        Assert.Equal(ActivityRecencyWindow.Last24Hours.ToString(), cut.Find("[data-testid='activity-filter-recency']").GetAttribute("value"));
         Assert.False(cut.Find("[data-testid='activity-filter-cron']").HasAttribute("aria-pressed"));
     }
 
@@ -822,6 +1030,7 @@ public sealed class ActivityDashboardComponentTests : IDisposable
             PinnedConv("pinned", isPinned: true, updatedAt: now.AddDays(-3)));
 
         var cut = _ctx.Render<ActivityDashboard>();
+        cut.Find("[data-testid='activity-filter-recency']").Change("Any");
         cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-testid='activity-row']").Count));
 
         Assert.Equal(new[] { "pinned", "loose" }, RowIds(cut));

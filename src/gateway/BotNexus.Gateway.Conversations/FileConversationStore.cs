@@ -459,6 +459,22 @@ public sealed class FileConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(
+        DateTimeOffset? activitySince, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var all = await ListAsync(ct: ct).ConfigureAwait(false);
+        return [.. all
+            .Where(c => c.Status == ConversationStatus.Active && c.ParentConversationId is null)
+            .Select(c => (Conversation: c, Activity: ConversationStoreShared.EffectiveActivity(c)))
+            .Where(x => activitySince is null || x.Activity >= activitySince.Value)
+            .OrderByDescending(x => x.Conversation.IsPinned)
+            .ThenByDescending(x => x.Conversation.PinnedAt)
+            .ThenByDescending(x => x.Activity)
+            .ThenBy(x => x.Conversation.ConversationId.Value, StringComparer.Ordinal)
+            .Select(x => ToSummary(x.Conversation) with { UpdatedAt = x.Activity })];
+    }
+    /// <inheritdoc />
     public async Task<IReadOnlyList<ConversationRetentionCandidate>> GetRetentionCandidatesAsync(
         ConversationSource? source = null,
         CancellationToken ct = default)

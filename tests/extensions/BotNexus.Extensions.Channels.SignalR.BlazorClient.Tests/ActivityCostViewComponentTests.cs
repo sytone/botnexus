@@ -184,7 +184,11 @@ public sealed class ActivityCostViewComponentTests : IDisposable
         Seed(conversations, [new ConversationCostDto("sub", 3, 30, 1)]);
 
         var costCut = _ctx.Render<ActivityCostView>(p => p.Add(c => c.Now, Now));
+        _rest.GetAllConversationsAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<ConversationSummaryDto>>(conversations));
         var mainCut = _ctx.Render<ActivityDashboard>();
+        // Compare badges across all history; this fixture predates the rolling Activity window.
+        mainCut.Find("[data-testid='activity-filter-recency']").Change("Any");
 
         var costBadge = costCut.Find("[data-testid='activity-cost-origin-badge']");
         var mainBadge = mainCut.Find("[data-testid='activity-origin-badge']");

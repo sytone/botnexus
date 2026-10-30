@@ -17,7 +17,9 @@ public enum ActivityRecencyWindow
     Week,
 
     /// <summary>Only conversations updated within a rolling 30-day window.</summary>
-    Month
+    Month,
+    /// <summary>Only conversations updated within a rolling 24-hour window.</summary>
+    Last24Hours
 }
 
 /// <summary>
@@ -1203,6 +1205,7 @@ public static class ActivityDashboardProjection
     private static bool MatchesRecency(DateTimeOffset updatedAt, ActivityRecencyWindow window, DateTimeOffset now) =>
         window switch
         {
+            ActivityRecencyWindow.Last24Hours => updatedAt >= now.AddHours(-24),
             ActivityRecencyWindow.Today => updatedAt.ToLocalTime().Date == now.ToLocalTime().Date,
             ActivityRecencyWindow.Week => updatedAt >= now.AddDays(-7),
             ActivityRecencyWindow.Month => updatedAt >= now.AddDays(-30),
