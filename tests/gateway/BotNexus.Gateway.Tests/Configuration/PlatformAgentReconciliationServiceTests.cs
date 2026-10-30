@@ -83,15 +83,15 @@ public sealed class PlatformAgentReconciliationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_InsertsTrailguide_WhenAgentsSectionIsAbsentEntirely()
+    public async Task StartAsync_DefersTrailguide_WhenAgentsSectionIsAbsentEntirely()
     {
         await WriteConfigAsync(new JsonObject { ["gateway"] = new JsonObject() });
 
         await CreateService().StartAsync(CancellationToken.None);
 
         var root = await ReadConfigAsync();
-        root["agents"].ShouldNotBeNull();
-        root["agents"]!.AsObject().ShouldContainKey(TrailguideId);
+        root.ContainsKey("agents").ShouldBeFalse("no placeholder or empty section should be persisted without prerequisites");
+        BackupCount().ShouldBe(0);
     }
 
     [Fact]
@@ -343,20 +343,17 @@ public sealed class PlatformAgentReconciliationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartAsync_InsertsDisabledEntryWithActionableDescription_WhenNoProviderResolvable()
+    public async Task StartAsync_DefersEntryWithoutWriting_WhenNoProviderResolvable()
     {
-        // Step 4 end-to-end: never guess a provider; insert disabled and say what to do.
+        // #4934: absence, not an invalid disabled placeholder, is the unresolved representation.
         await WriteConfigAsync(new JsonObject { ["agents"] = new JsonObject() });
+        var before = await File.ReadAllBytesAsync(_configPath);
 
         await CreateService().StartAsync(CancellationToken.None);
 
-        var entry = (await ReadConfigAsync())["agents"]![TrailguideId]!.AsObject();
-        entry["enabled"]!.GetValue<bool>().ShouldBeFalse();
-        entry.ShouldNotContainKey("provider");
-        var description = entry["description"]!.GetValue<string>();
-        description.ShouldBe(BundledPlatformAgents.UnresolvedProviderDescription);
-        description.ShouldContain("provider");
-        description.ShouldContain("enabled");
+        (await ReadConfigAsync())["agents"]!.AsObject().ShouldNotContainKey(TrailguideId);
+        (await File.ReadAllBytesAsync(_configPath)).ShouldBe(before);
+        BackupCount().ShouldBe(0);
     }
 
     [Fact]
