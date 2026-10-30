@@ -1,0 +1,222 @@
+@using System.Net
+@inject IGatewayRestClient GatewayRestClient
+@implements IDisposable
+
+<div class="skills-security-review" data-testid="skills-security-review">
+    <header class="skills-security-header">
+        <div>
+            <h3>Security review</h3>
+            <p>Review unresolved critical scanner findings before acknowledging their exact evidence.</p>
+        </div>
+        <button type="button" class="workspace-btn" data-testid="security-refresh" @onclick="RefreshAsync" disabled="@(_loading || _submitting)">Refresh / rescan</button>
+    </header>
+
+    @if (_loading)
+    {
+        <div class="workspace-state" role="status">Scanning shared skills…</div>
+    }
+    else if (_unauthorized)
+    {
+        <div class="workspace-state workspace-state-error" role="alert">Administrator access is required to review skill security findings.</div>
+    }
+    else if (!string.IsNullOrWhiteSpace(_loadError))
+    {
+        <div class="workspace-state workspace-state-error" role="alert">@_loadError</div>
+    }
+    else if (_response is null || _response.Findings.Count == 0)
+    {
+        <div class="workspace-state">No unresolved critical findings.</div>
+    }
+    else
+    {
+        @if (_response.IsTruncated)
+        {
+            <p class="workspace-state workspace-state-error">Results are truncated. Resolve findings, then rescan for the remainder.</p>
+        }
+
+        <div class="skills-security-findings">
+            @foreach (var finding in _response.Findings)
+            {
+                var key = Key(finding);
+                <article class="skills-security-finding" data-testid="security-finding">
+                    <div class="skills-security-finding-heading">
+                        <h4>@finding.Skill</h4>
+                        <span class="skills-security-severity">@finding.Severity</span>
+                    </div>
+                    <dl class="skills-security-evidence">
+                        <dt>Rule</dt><dd>@finding.RuleId</dd>
+                        <dt>File</dt><dd>@(finding.RelativePath ?? "Unavailable")@FormatLine(finding.Line)</dd>
+                        <dt>Scope</dt><dd>@finding.Scope</dd>
+                        <dt>Scanner</dt><dd>@finding.ScannerVersion</dd>
+                        <dt>Finding ID</dt><dd><code>@finding.ScannerFindingId</code></dd>
+                        <dt>File SHA-256</dt><dd><code>@(finding.FileSha256 ?? "Unavailable")</code></dd>
+                        <dt>Revision ID</dt><dd><code>@(finding.RevisionId ?? "Unavailable")</code></dd>
+                    </dl>
+
+                    @if (!finding.IsComplete)
+                    {
+                        <p class="workspace-state workspace-state-error">Evidence incomplete: @(finding.MissingReason ?? "unknown reason"). This finding cannot be acknowledged.</p>
+                    }
+                    else
+                    {
+                        <label class="skills-security-reason">
+                            Reason
+                            <textarea data-testid="security-reason" maxlength="1000" value="@ReasonFor(finding)" @oninput="e => SetReason(finding, e.Value?.ToString())"></textarea>
+                        </label>
+                        <label class="skills-security-confirm">
+                            <input type="checkbox" data-testid="security-confirm" checked="@ConfirmedFor(finding)" @onchange="e => SetConfirmed(finding, e.Value is true)" />
+                            I reviewed this exact finding and file revision.
+                        </label>
+                        <button type="button" class="workspace-btn workspace-btn-danger" data-testid="security-acknowledge" disabled="@(!CanSubmit(finding) || _submitting)" @onclick="() => AcknowledgeAsync(finding)">
+                            @(_submitting ? "Saving…" : "Acknowledge finding")
+                        </button>
+                    }
+
+                    @if (_submissionErrors.TryGetValue(key, out var submissionError))
+                    {
+                        <p class="workspace-state workspace-state-error" role="alert">@submissionError</p>
+                    }
+                </article>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private readonly CancellationTokenSource _cts = new();
+    private readonly Dictionary<string, string> _reasons = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _confirmed = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _submissionErrors = new(StringComparer.Ordinal);
+    private SkillSecurityFindingsDto? _response;
+    private bool _loading = true;
+    private bool _submitting;
+    private bool _unauthorized;
+    private bool _disposed;
+    private string? _loadError;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private Task RefreshAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _unauthorized = false;
+        _loadError = null;
+        try
+        {
+            _response = await GatewayRestClient.GetSkillSecurityFindingsAsync(_cts.Token)
+                ?? new SkillSecurityFindingsDto([], false);
+        }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized)
+        {
+            _unauthorized = true;
+        }
+        catch (HttpRequestException ex)
+        {
+            _loadError = string.IsNullOrWhiteSpace(ex.Message)
+                ? "Unable to scan shared skills. Refresh to try again."
+                : $"Unable to scan shared skills: {ex.Message}";
+        }
+        catch
+        {
+            _loadError = "Unable to scan shared skills. Refresh to try again.";
+        }
+        finally
+        {
+            if (!_disposed)
+                _loading = false;
+        }
+    }
+
+    private async Task AcknowledgeAsync(SkillSecurityFindingDto finding)
+    {
+        if (!CanSubmit(finding) || finding.RelativePath is null || finding.FileSha256 is null)
+            return;
+
+        var key = Key(finding);
+        _submitting = true;
+        _submissionErrors.Remove(key);
+        try
+        {
+            var result = await GatewayRestClient.AcknowledgeSkillSecurityFindingAsync(
+                new SkillSecurityAcknowledgementDto(
+                    finding.Skill,
+                    finding.RuleId,
+                    finding.RelativePath,
+                    finding.Severity,
+                    finding.ScannerFindingId,
+                    finding.FileSha256,
+                    true,
+                    ReasonFor(finding).Trim()),
+                _cts.Token);
+
+            if (!result.IsSuccess)
+            {
+                _submissionErrors[key] = SubmissionError(result);
+                return;
+            }
+
+            _reasons.Remove(key);
+            _confirmed.Remove(key);
+            await LoadAsync();
+        }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (HttpRequestException ex)
+        {
+            _submissionErrors[key] = string.IsNullOrWhiteSpace(ex.Message)
+                ? "The acknowledgement could not be submitted. Refresh and try again."
+                : $"The acknowledgement could not be submitted: {ex.Message}";
+        }
+        catch
+        {
+            _submissionErrors[key] = "The acknowledgement could not be submitted. Refresh and try again.";
+        }
+        finally
+        {
+            if (!_disposed)
+                _submitting = false;
+        }
+    }
+
+    private static string SubmissionError(SkillSecurityAcknowledgementResult result)
+    {
+        var prefix = result.StatusCode switch
+        {
+            HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized => "Administrator access is required to acknowledge skill security findings.",
+            HttpStatusCode.Conflict => "Finding changed. Refresh and review the current evidence before acknowledging it.",
+            HttpStatusCode.BadRequest => "The acknowledgement was rejected.",
+            _ => "The acknowledgement was not accepted. Refresh and try again."
+        };
+        return string.IsNullOrWhiteSpace(result.ErrorText) ? prefix : $"{prefix} {result.ErrorText}";
+    }
+
+    private static string FormatLine(int? line) => line is > 0 ? $":{line}" : string.Empty;
+    private static string Key(SkillSecurityFindingDto finding) => finding.RevisionId ?? finding.ScannerFindingId;
+    private string ReasonFor(SkillSecurityFindingDto finding) => _reasons.GetValueOrDefault(Key(finding), string.Empty);
+    private bool ConfirmedFor(SkillSecurityFindingDto finding) => _confirmed.Contains(Key(finding));
+    private bool CanSubmit(SkillSecurityFindingDto finding) => finding.IsComplete && ConfirmedFor(finding) && !string.IsNullOrWhiteSpace(ReasonFor(finding));
+    private void SetReason(SkillSecurityFindingDto finding, string? value) => _reasons[Key(finding)] = value ?? string.Empty;
+
+    private void SetConfirmed(SkillSecurityFindingDto finding, bool confirmed)
+    {
+        if (confirmed)
+            _confirmed.Add(Key(finding));
+        else
+            _confirmed.Remove(Key(finding));
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

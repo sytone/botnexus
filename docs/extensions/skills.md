@@ -270,3 +270,11 @@ The telemetry surface is passive — it never changes skill discovery, loading, 
 - [Skills Guide](/skills) — comprehensive guide to writing and using skills
 - [Extension Development](../extension-development.md) — building custom extensions
 - [Prompt Pipeline](../development/prompt-pipeline.md) — how skills integrate with the prompt system
+
+## Review critical security findings
+
+Administrators can open **Skills > Security review** to rescan shared skills and review unresolved critical scanner findings. The page exposes bounded metadata only: skill, rule, relative path, line, scanner identity, and file/revision hashes; it never returns source text or absolute paths.
+
+Acknowledging a finding requires a nonblank reason and explicit confirmation. Review and acknowledgement are separate operations: viewing a finding never enables the skill. The gateway re-reads and rescans the exact current file inside the canonical configuration mutation before persisting the acknowledgement. If the file or finding changed, the request returns a conflict; refresh and review the new evidence rather than retrying the stale acknowledgement. Incomplete evidence cannot be acknowledged.
+
+The acknowledgement is stored under `agents.defaults.extensions.botnexus-skills.securityAcknowledgements`. The canonical configuration writer persists it to the active configuration backend, including the SQLite configuration store when enabled; do not insert SQL rows or edit the array through the generic schema form. The Security review page is the supported operator workflow, so searching gateway logs is no longer required to discover or approve these findings.
