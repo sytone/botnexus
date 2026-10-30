@@ -28,12 +28,11 @@ public class UpdateCommandRecoveryTests
     }
 
     private sealed class FailedBuildCommand(IGatewayProcessManager manager, MockFileSystem fs, int result = 17)
-        : UpdateCommand(manager, fs)
+        : CompatibleUpdateFixture(manager, fs)
     {
         internal Action? DuringBuild { get; set; }
         internal bool UseActualBuildStep { get; set; }
         internal int CandidateRestarts { get; private set; }
-        protected override Task<int> RunGitPullStepAsync(string repoRoot, bool verbose, CancellationToken cancellationToken) => Task.FromResult(0);
         protected override Task<bool> CanSkipRebuildAsync(string repoRoot, CancellationToken cancellationToken) => Task.FromResult(false);
         protected override Task<bool> WaitForPortFreeAsync(int port, CancellationToken cancellationToken) => Task.FromResult(true);
         protected override Task<int> RunBuildAndDeployAsync(string repoRoot, string home, bool verbose, CancellationToken cancellationToken)
