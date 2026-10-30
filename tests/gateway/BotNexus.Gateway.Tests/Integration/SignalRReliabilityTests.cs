@@ -1,3 +1,4 @@
+using System.IO.Abstractions;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -13,9 +14,11 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Api;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Dispatching;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Tests.Helpers;
+using BotNexus.Gateway.Tools;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -23,6 +26,7 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using GatewaySessionStatus = BotNexus.Gateway.Abstractions.Models.SessionStatus;
 
 using BotNexus.Gateway.Tests;
@@ -645,13 +649,134 @@ public sealed class SignalRReliabilityTests : IAsyncDisposable
 
 
     /// <summary>
-    /// Placeholder for <see href="https://github.com/sytone/botnexus/issues/383">#383</see>:
-    /// canvas HTML is not persisted across reconnect and is invisible to a second browser.
-    /// Tracked here so the scenario lights up automatically once the fix lands.
+    /// Pins #383 / #4625: tool-rendered HTML survives a real SignalR disconnect and is
+    /// available to a browser that missed the live event. The portal hydrates canvas on
+    /// conversation selection via REST, not by replaying CanvasUpdated on reconnect.
     /// </summary>
-    [Fact(Skip = "Blocked by #383: canvas HTML is not persisted across reconnect.")]
-    public Task Canvas_PersistsAcrossReconnect_AndIsVisibleToSecondBrowser()
-        => Task.CompletedTask;
+    [Fact]
+    public async Task Canvas_PersistsAcrossReconnect_AndIsVisibleToSecondBrowser()
+    {
+        var root = Directory.CreateTempSubdirectory("botnexus-canvas-4625-").FullName;
+        try
+        {
+            await using var factory = CreateTestFactory(services =>
+            {
+                // Keep the gateway's ConversationCanvasNotifier registration: removing it
+                // must break this test. Only replace the shared harness's in-memory store.
+                services.Replace(ServiceDescriptor.Singleton<IConversationStore>(_ =>
+                    new FileConversationStore(root, NullLogger<FileConversationStore>.Instance, new FileSystem())));
+                // The test harness bypasses extension discovery, which registers this in production.
+                services.TryAddEnumerable(ServiceDescriptor.Singleton<IAgentCanvasNotifier, SignalRCanvasNotifier>());
+            });
+            using var cts = CreateTimeout();
+            await RegisterAgentAsync(factory, cts.Token);
+
+            var conversationId = ConversationId.From($"canvas-{Guid.NewGuid():N}");
+            var otherConversationId = ConversationId.From($"canvas-other-{Guid.NewGuid():N}");
+            var agentId = AgentId.From(TestAgentId);
+            var store = factory.Services.GetRequiredService<IConversationStore>();
+            foreach (var id in new[] { conversationId, otherConversationId })
+            {
+                await store.CreateAsync(new Conversation
+                {
+                    ConversationId = id,
+                    AgentId = agentId,
+                    Visibility = ConversationVisibility.UserFacing
+                }, cts.Token);
+            }
+
+            string CanvasPath(ConversationId id)
+                => $"/api/agents/{TestAgentId}/conversations/{Uri.EscapeDataString(id.Value)}/canvas";
+
+            using var firstHttp = factory.CreateClient();
+            await using var first = await CreateStartedConnection(factory, cts.Token);
+            await first.InvokeAsync("SubscribeAgents", new[] { TestAgentId }, cts.Token);
+            var originalConnectionId = first.ConnectionId;
+            originalConnectionId.ShouldNotBeNullOrWhiteSpace();
+
+            using (var empty = await firstHttp.GetAsync(CanvasPath(conversationId), cts.Token))
+                empty.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+            const string html = "<!doctype html><html><body><h1>Primary canvas — #4625</h1><p data-id=\"a\">A &amp; B</p></body></html>";
+            const string otherHtml = "<!doctype html><html><body><h1>Other conversation</h1></body></html>";
+            var liveEvent = new TaskCompletionSource<(string AgentId, string ConversationId, string Html)>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            using var subscription = first.On<string, string, string>("CanvasUpdated", (agent, conversation, content) =>
+                liveEvent.TrySetResult((agent, conversation, content)));
+
+            // Exactly the production tool -> DI notifiers -> persistence + SignalR path.
+            // Never seed CanvasHtml or PUT it through REST: either would hide a broken notifier.
+            var notifiers = factory.Services.GetServices<IAgentCanvasNotifier>().ToArray();
+            var tool = new CanvasTool(agentId, conversationId, store, notifiers);
+            await tool.ExecuteAsync("render-primary", new Dictionary<string, object?>
+            {
+                ["action"] = "render", ["html"] = html
+            }, cts.Token);
+            var delivered = await liveEvent.Task.WaitAsync(cts.Token);
+            delivered.AgentId.ShouldBe(TestAgentId);
+            delivered.ConversationId.ShouldBe(conversationId.Value);
+            delivered.Html.ShouldBe(html);
+
+            // Await the transport stop itself, rather than inferring disconnect from a delay.
+            await first.StopAsync(cts.Token);
+            first.State.ShouldBe(HubConnectionState.Disconnected);
+            subscription.Dispose();
+
+            using (var untouched = await firstHttp.GetAsync(CanvasPath(otherConversationId), cts.Token))
+                untouched.StatusCode.ShouldBe(HttpStatusCode.NoContent,
+                    "rendering one conversation must not populate another conversation for the same agent");
+
+            var otherTool = new CanvasTool(agentId, otherConversationId, store, notifiers);
+            await otherTool.ExecuteAsync("render-other", new Dictionary<string, object?>
+            {
+                ["action"] = "render", ["html"] = otherHtml
+            }, cts.Token);
+
+            // A fresh store instance proves the payloads reached disk, not a shared object/cache.
+            var diskReader = new FileConversationStore(root, NullLogger<FileConversationStore>.Instance, new FileSystem());
+            var persisted = await diskReader.GetAsync(conversationId, cts.Token);
+            persisted.ShouldNotBeNull();
+            persisted.CanvasHtml.ShouldBe(html);
+            var persistedOther = await diskReader.GetAsync(otherConversationId, cts.Token);
+            persistedOther.ShouldNotBeNull();
+            persistedOther.CanvasHtml.ShouldBe(otherHtml);
+
+            await HubFixtureGuard.StartGuardedAsync(first, "SignalRReliabilityTests", cts.Token,
+                testName: nameof(Canvas_PersistsAcrossReconnect_AndIsVisibleToSecondBrowser));
+            first.State.ShouldBe(HubConnectionState.Connected);
+            first.ConnectionId.ShouldNotBeNullOrWhiteSpace();
+            first.ConnectionId.ShouldNotBe(originalConnectionId);
+            await first.InvokeAsync("SubscribeAgents", new[] { TestAgentId }, cts.Token);
+
+            // Match SelectConversationAsync's lazy REST hydration after a missed live event.
+            using (var hydrated = await firstHttp.GetAsync(CanvasPath(conversationId), cts.Token))
+            {
+                hydrated.StatusCode.ShouldBe(HttpStatusCode.OK);
+                hydrated.Content.Headers.ContentType?.MediaType.ShouldBe("text/html");
+                (await hydrated.Content.ReadAsStringAsync(cts.Token)).ShouldBe(html);
+            }
+
+            // This browser did not exist at either render; it has its own SignalR and HTTP clients.
+            using var secondHttp = factory.CreateClient();
+            await using var second = await CreateStartedConnection(factory, cts.Token);
+            second.ConnectionId.ShouldNotBeNullOrWhiteSpace();
+            second.ConnectionId.ShouldNotBe(first.ConnectionId);
+            await second.InvokeAsync("SubscribeAgents", new[] { TestAgentId }, cts.Token);
+            foreach (var (id, expected) in new[] { (conversationId, html), (otherConversationId, otherHtml) })
+            {
+                using var hydrated = await secondHttp.GetAsync(CanvasPath(id), cts.Token);
+                hydrated.StatusCode.ShouldBe(HttpStatusCode.OK);
+                hydrated.Content.Headers.ContentType?.MediaType.ShouldBe("text/html");
+                (await hydrated.Content.ReadAsStringAsync(cts.Token)).ShouldBe(expected,
+                    "a fresh browser must hydrate the exact HTML belonging to the selected conversation");
+            }
+        }
+        finally
+        {
+            // The factory and all clients are disposed before deleting this test-owned root.
+            Directory.Delete(root, recursive: true);
+        }
+    }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
