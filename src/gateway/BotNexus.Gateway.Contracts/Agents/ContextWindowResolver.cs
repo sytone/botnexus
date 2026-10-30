@@ -1,5 +1,3 @@
-using BotNexus.Agent.Providers.Core.Models;
-
 namespace BotNexus.Gateway.Abstractions.Agents;
 
 /// <summary>
@@ -31,18 +29,12 @@ public static class ContextWindowResolver
     /// specific, so it wins over the registered model's default.
     /// </param>
     /// <param name="model">
-    /// The registered model the run is bound to, or <see langword="null"/> when the model could not
-    /// be resolved from the registry.
+    /// The registered model's declarations projected at the isolation boundary, or
+    /// <see langword="null"/> when the model could not be resolved from the registry.
     /// </param>
     /// <returns>The resolved window in tokens, or <see langword="null"/> when unresolvable.</returns>
-    public static int? Resolve(int? effectiveOverride, LlmModel? model)
-        => ResolveBudget(effectiveOverride, overrideSource: null, new ContextBudgetDiagnostics
-        {
-            ModelContextWindowTokens = model?.ContextWindow,
-            ModelContextWindowSource = model?.ContextWindowSource,
-            ModelMaxOutputTokens = model?.MaxTokens,
-            ModelMaxOutputSource = model?.MaxTokensSource
-        }).EffectiveWorkingBudgetTokens;
+    public static int? Resolve(int? effectiveOverride, ContextBudgetDiagnostics? model)
+        => ResolveBudget(effectiveOverride, overrideSource: null, model).EffectiveWorkingBudgetTokens;
 
     /// <summary>
     /// Resolves the same working window together with its selection origin and independent model

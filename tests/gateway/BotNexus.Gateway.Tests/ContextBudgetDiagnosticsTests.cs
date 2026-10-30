@@ -2,6 +2,7 @@ using System.Text.Json;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Isolation;
 
 namespace BotNexus.Gateway.Tests;
 
@@ -26,7 +27,7 @@ public sealed class ContextBudgetDiagnosticsTests
         budget.ModelMaxOutputTokens.ShouldBe(128_000);
         budget.ModelContextWindowSource.ShouldBe("configured-model");
         budget.ModelMaxOutputSource.ShouldBe("configured-model");
-        ContextWindowResolver.Resolve(selectedOverride, Model()).ShouldBe(expectedBudget);
+        ContextWindowResolver.Resolve(selectedOverride, Declarations(Model())).ShouldBe(expectedBudget);
     }
 
     [Fact]
@@ -118,13 +119,7 @@ public sealed class ContextBudgetDiagnosticsTests
         json.RootElement.GetRawText().ShouldNotContain("128000");
     }
 
-    private static ContextBudgetDiagnostics Declarations(LlmModel? model) => new()
-    {
-        ModelContextWindowTokens = model?.ContextWindow,
-        ModelContextWindowSource = model?.ContextWindowSource,
-        ModelMaxOutputTokens = model?.MaxTokens,
-        ModelMaxOutputSource = model?.MaxTokensSource
-    };
+    private static ContextBudgetDiagnostics? Declarations(LlmModel? model) => model.ToContextDeclarations();
 
     private static LlmModel Model() => new("large", "Large", "test-api", "dynamic", "", false, ["text"],
         new ModelCost(0, 0, 0, 0), 1_050_000, 128_000,

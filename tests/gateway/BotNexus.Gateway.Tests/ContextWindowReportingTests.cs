@@ -2,6 +2,7 @@ using System.Text.Json;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Api.Controllers;
+using BotNexus.Gateway.Isolation;
 using Shouldly;
 
 namespace BotNexus.Gateway.Tests;
@@ -18,7 +19,7 @@ public sealed class ContextWindowReportingTests
 {
     private static readonly JsonSerializerOptions Wire = new(JsonSerializerDefaults.Web);
 
-    private static LlmModel Model(int contextWindow) => new(
+    private static ContextBudgetDiagnostics? Model(int contextWindow) => new LlmModel(
         Id: "m",
         Name: "M",
         Api: "anthropic-messages",
@@ -28,7 +29,7 @@ public sealed class ContextWindowReportingTests
         Input: ["text"],
         Cost: new ModelCost(0, 0, 0, 0),
         ContextWindow: contextWindow,
-        MaxTokens: 1000);
+        MaxTokens: 1000).ToContextDeclarations();
 
     private static JsonDocument Response(int totalTokens, int? window) => JsonDocument.Parse(
         JsonSerializer.Serialize(

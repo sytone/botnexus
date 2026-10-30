@@ -1,5 +1,3 @@
-using BotNexus.Agent.Providers.Core.Models;
-
 namespace BotNexus.Gateway.Abstractions.Agents;
 
 /// <summary>
@@ -44,7 +42,7 @@ public sealed record EffectiveExecutionSettings(
     string? Provider,
     string? Model,
     string? DescriptorDefaultModel,
-    ThinkingLevel? Thinking,
+    ExecutionThinkingLevel? Thinking,
     int? ContextWindow)
 {
     /// <summary>
@@ -54,12 +52,12 @@ public sealed record EffectiveExecutionSettings(
     /// </summary>
     public string? ThinkingWireToken => Thinking switch
     {
-        ThinkingLevel.Minimal => "minimal",
-        ThinkingLevel.Low => "low",
-        ThinkingLevel.Medium => "medium",
-        ThinkingLevel.High => "high",
-        ThinkingLevel.ExtraHigh => "xhigh",
-        ThinkingLevel.Max => "max",
+        ExecutionThinkingLevel.Minimal => "minimal",
+        ExecutionThinkingLevel.Low => "low",
+        ExecutionThinkingLevel.Medium => "medium",
+        ExecutionThinkingLevel.High => "high",
+        ExecutionThinkingLevel.ExtraHigh => "xhigh",
+        ExecutionThinkingLevel.Max => "max",
         _ => null
     };
 

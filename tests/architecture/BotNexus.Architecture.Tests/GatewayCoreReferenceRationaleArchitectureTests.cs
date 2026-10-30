@@ -5,7 +5,7 @@ namespace BotNexus.Architecture.Tests;
 /// <summary>
 /// Keeps the temporary #3040 reference debt attached to its actual project edge, without granting
 /// an implementation-facing exemption or requiring that edge to survive the #3251 child migrations.
-/// The ten-member equality IL fence remains the authority for public signature leakage.
+/// The shrink-only equality IL fence remains the authority for public signature leakage.
 /// </summary>
 public sealed class GatewayCoreReferenceRationaleArchitectureTests : ArchitectureTest
 {
@@ -111,7 +111,8 @@ public sealed class GatewayCoreReferenceRationaleArchitectureTests : Architectur
     private static string[] RequiredTerms(string project) => project switch
     {
         "Contracts" => ["Temporary", "not an implementation-facing exemption", "#3040", "#3251",
-            "IAgentTool", "#3446", "LlmModel", "ThinkingLevel", "transitively", "#3445"],
+            "IAgentTool", "#3446", "IAgentHandleInspector.ResolveTool", "IAgentToolFactory.CreateTools",
+            "CommandExecutionContext.ResolveSessionTool"],
         "Abstractions" => ["Temporary", "not an implementation-facing exemption", "#3040", "#3251",
             "AgentToolContribution.Tools", "IAgentTool", "#3446"],
         _ => throw new ArgumentOutOfRangeException(nameof(project), project, "Unknown fenced project")

@@ -1,4 +1,4 @@
-using BotNexus.Agent.Providers.Core.Models;
+using ThinkingLevel = BotNexus.Gateway.Abstractions.Agents.ExecutionThinkingLevel;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Agents;
 
