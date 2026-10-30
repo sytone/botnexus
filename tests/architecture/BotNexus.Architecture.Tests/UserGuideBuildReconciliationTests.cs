@@ -120,6 +120,93 @@ public sealed class UserGuideBuildReconciliationTests : ArchitectureTest, IDispo
         }
     }
 
+    [Fact]
+    public async Task ResolveProjectStaticWebAssets_CompetingConfigurationPreservesRegisteredGuide()
+    {
+        var sourceRoot = Path.Combine(_root, "docs");
+        var guideSource = Path.Combine(sourceRoot, "user-guide");
+        Directory.CreateDirectory(Path.Combine(guideSource, "nested"));
+        await File.WriteAllTextAsync(Path.Combine(guideSource, "held.md"), "held by Debug");
+        await File.WriteAllTextAsync(Path.Combine(guideSource, "nested", "current.md"), "current");
+        await File.WriteAllTextAsync(Path.Combine(guideSource, "guide-index.json"), "{}");
+        await File.WriteAllTextAsync(Path.Combine(sourceRoot, "skills.md"), "skills");
+
+        var replacementRoot = Path.Combine(_root, "replacement");
+        Directory.CreateDirectory(Path.Combine(replacementRoot, "user-guide"));
+        await File.WriteAllTextAsync(Path.Combine(replacementRoot, "user-guide", "renamed.md"), "Release");
+        await File.WriteAllTextAsync(Path.Combine(replacementRoot, "user-guide", "guide-index.json"), "{}");
+        await File.WriteAllTextAsync(Path.Combine(replacementRoot, "skills.md"), "skills");
+
+        var fixture = XDocument.Load(ClientProject);
+        var project = fixture.Root;
+        project.ShouldNotBeNull();
+        foreach (var dependency in project.Descendants()
+                     .Where(node => node.Name.LocalName is "PackageReference" or "ProjectReference" or "ServiceWorker")
+                     .ToArray())
+            dependency.Remove();
+        project.Add(new XElement("PropertyGroup",
+            new XElement("TargetFramework", "net10.0"),
+            new XElement("UserGuideSourceRoot", sourceRoot),
+            new XElement("WasmEnableHotReload", "false")));
+
+        // Deterministically place Release reconciliation after Debug registers Content but
+        // before the real SDK opens those files. Different source inventories expose deletion
+        // without relying on a narrow filesystem race or sleeps. No SDK assertion is replaced.
+        project.Add(new XElement("Target",
+            new XAttribute("Name", "CompetingConfiguration"),
+            new XAttribute("BeforeTargets", "ResolveProjectStaticWebAssets"),
+            new XAttribute("DependsOnTargets", "CopyUserGuide"),
+            new XAttribute("Condition", "'$(Configuration)' == 'Debug'"),
+            new XElement("MSBuild",
+                new XAttribute("Projects", "$(MSBuildProjectFullPath)"),
+                new XAttribute("Targets", "CopyUserGuide"),
+                new XAttribute("Properties", $"Configuration=Release;UserGuideSourceRoot={replacementRoot}"))));
+        var fixturePath = Path.Combine(_root, "competing-guide.csproj");
+        fixture.Save(fixturePath);
+        var legacyGuide = Path.Combine(_root, "wwwroot", "guide");
+        Directory.CreateDirectory(legacyGuide);
+        var legacyFile = Path.Combine(legacyGuide, "stale.md");
+        await File.WriteAllTextAsync(legacyFile, "legacy generated output");
+
+        var expected = new[] { "guide/guide-index.json", "guide/held.md", "guide/nested/current.md", "guide/skills.md" };
+        (await ResolveCompetingGuideAsync(fixturePath)).ShouldBe(expected);
+        (await ResolveCompetingGuideAsync(fixturePath)).ShouldBe(expected);
+
+        File.Delete(Path.Combine(guideSource, "held.md"));
+        await File.WriteAllTextAsync(Path.Combine(guideSource, "renamed.md"), "renamed");
+        var incremental = await ResolveCompetingGuideAsync(fixturePath);
+        incremental.ShouldBe(new[] { "guide/guide-index.json", "guide/nested/current.md", "guide/renamed.md", "guide/skills.md" });
+        Directory.Delete(Path.Combine(_root, "obj", "Debug"), recursive: true);
+        (await ResolveCompetingGuideAsync(fixturePath)).ShouldBe(incremental);
+        (await File.ReadAllTextAsync(legacyFile)).ShouldBe("legacy generated output",
+            "legacy shared output is ignored, not deleted out from under another consumer");
+    }
+
+    private static async Task<string[]> ResolveCompetingGuideAsync(string fixturePath)
+    {
+        var output = await RunMsBuildAsync(fixturePath,
+            "-t:ResolveProjectStaticWebAssets", "-getItem:StaticWebAsset");
+        using var inventory = JsonDocument.Parse(output);
+        var guideAssets = inventory.RootElement.GetProperty("Items").GetProperty("StaticWebAsset")
+            .EnumerateArray().Where(asset =>
+                asset.GetProperty("RelativePath").GetString()?.StartsWith("guide/", StringComparison.Ordinal) == true)
+            .ToArray();
+        guideAssets.ShouldAllBe(asset => File.Exists(asset.GetProperty("Identity").GetString()));
+        guideAssets.ShouldAllBe(asset => asset.GetProperty("AssetKind").GetString() == "All");
+        guideAssets.ShouldAllBe(asset => (asset.GetProperty("Identity").GetString() ?? string.Empty)
+            .Contains($"{Path.DirectorySeparatorChar}Debug{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
+        // ContentRoot must map the logical guide URL back to its physical generated file,
+        // including consumers which use a file provider rather than the publish copy list.
+        guideAssets.ShouldAllBe(asset => Path.GetFullPath(Path.Combine(
+            asset.GetProperty("ContentRoot").GetString() ?? string.Empty,
+            (asset.GetProperty("RelativePath").GetString() ?? string.Empty)
+                .Replace("#[.{fingerprint}]?", string.Empty, StringComparison.Ordinal)))
+            == asset.GetProperty("Identity").GetString());
+        return guideAssets.Select(asset => (asset.GetProperty("RelativePath").GetString() ?? string.Empty)
+                .Replace("#[.{fingerprint}]?", string.Empty, StringComparison.Ordinal))
+            .OrderBy(path => path, StringComparer.Ordinal).ToArray();
+    }
+
     private string ClientProject => Repository.Path(
         "src", "extensions", "BotNexus.Extensions.Channels.SignalR.BlazorClient",
         "BotNexus.Extensions.Channels.SignalR.BlazorClient.csproj");
