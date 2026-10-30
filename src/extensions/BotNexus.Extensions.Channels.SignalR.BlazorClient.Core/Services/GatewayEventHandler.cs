@@ -284,6 +284,21 @@ public sealed class GatewayEventHandler : IGatewayEventHandler, IDisposable
         if (convId is not null && agent!.Conversations.GetValueOrDefault(convId) is { } conv)
         {
             conv.StreamState.EndRun("RunEnded");
+            // Content belongs only to the event's conversation, never the displayed-pane recovery.
+            var notice = BotNexus.Gateway.Abstractions.Models.ToolResultBudgetNotice.Create(
+                evt.Completion?.StopReason,
+                evt.Completion?.GuardObservations?.Any(guard => guard.AbsoluteLimitReached) == true,
+                evt.Completion?.ToolResultBudget);
+            if (notice is not null && !conv.Messages.Any(message =>
+                message.Kind == BotNexus.Gateway.Abstractions.Models.ToolResultBudgetNotice.Kind
+                && message.AgentRunId == evt.AgentRunId))
+            {
+                conv.AppendMessage(new ChatMessage("System", notice, DateTimeOffset.UtcNow)
+                {
+                    Kind = BotNexus.Gateway.Abstractions.Models.ToolResultBudgetNotice.Kind,
+                    AgentRunId = evt.AgentRunId
+                });
+            }
             // #2439: the run loop drains the follow-up queue BEFORE it can end (AgentLoopRunner
             // seeds another turn from a drained follow-up and continues), so once RunEnded lands
             // nothing can still be pending — whatever was queued was injected or discarded.

@@ -176,6 +176,10 @@ public static class TranscriptReconciler
 
     private static string? StableKeyOf(ChatMessage message)
     {
+        if (message.Kind == BotNexus.Gateway.Abstractions.Models.ToolResultBudgetNotice.Kind
+            && !string.IsNullOrEmpty(message.AgentRunId))
+            return $"budget\u001f{message.AgentRunId}";
+
         // Tool calls already have a stable identity shared by live and REST rows; prefer it even
         // after the REST projection also supplies a transcript entry id.
         if (!string.IsNullOrEmpty(message.ToolCallId))

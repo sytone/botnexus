@@ -428,6 +428,24 @@ public static class StreamingSessionHelper
             }
         }
 
+        // A host-authored row survives both history endpoints, even when the optional model
+        // summary is empty. Do not mix it into AssistantContent or the provider's final text.
+        var budgetNotice = ToolResultBudgetNotice.Create(runCompletion?.StopReason,
+            runCompletion?.GuardObservations?.Any(guard => guard.AbsoluteLimitReached) == true,
+            runCompletion?.ToolResultBudget);
+        if (budgetNotice is not null && !session.GetHistorySnapshot().Any(entry =>
+            entry.ResolveKind().Value == ToolResultBudgetNotice.Kind && entry.AgentRunId == agentRunId))
+        {
+            session.AddEntry(new SessionEntry
+            {
+                AgentRunId = agentRunId,
+                Role = MessageRole.System,
+                Content = budgetNotice,
+                Kind = MessageKind.FromString(ToolResultBudgetNotice.Kind),
+                PersistenceKey = agentRunId is { } noticeRun ? $"tool-result-budget:{noticeRun.Value}" : null
+            });
+        }
+
         // Persist the authoritative finalization signal alongside the session before the same
         // final save that commits the transcript. This keeps history/debug callers truthful after a
         // restart instead of forcing them to infer completion from inactivity (#4165). Assign even
