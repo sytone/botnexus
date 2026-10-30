@@ -55,7 +55,7 @@ try {
     }
     Set-Content -LiteralPath (Join-Path $root 'candidate.txt') -Value 'candidate'
     & git -C $root add .
-    & git -C $root -c user.name=Fixture -c user.email=fixture@example.invalid commit --quiet -m fixture
+    & git -C $root -c user.name=Fixture -c user.email=fixture@example.com commit --quiet -m fixture
     if ($LASTEXITCODE -ne 0) {
         throw 'Fixture Git commit failed.'
     }
@@ -231,7 +231,7 @@ try {
     }
     $context.fingerprint = & (Join-Path $PSScriptRoot 'Get-WorktreeValidationFingerprint.ps1') -WorktreePath $root -BaseRef refs/heads/comparison
     $tree = (& git -C $root rev-parse 'HEAD^{tree}').Trim()
-    $newBase = (& git -C $root -c user.name=Fixture -c user.email=fixture@example.invalid commit-tree $tree -p $head -m comparison).Trim()
+    $newBase = (& git -C $root -c user.name=Fixture -c user.email=fixture@example.com commit-tree $tree -p $head -m comparison).Trim()
     if ($LASTEXITCODE -ne 0) {
         throw 'Fixture comparison commit failed.'
     }

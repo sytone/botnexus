@@ -26,7 +26,7 @@ try {
     }
     Set-Content -LiteralPath (Join-Path $root 'candidate.txt') -Value 'candidate'
     & git -C $root add .
-    & git -C $root -c user.name=Fixture -c user.email=fixture@example.invalid commit --quiet -m fixture
+    & git -C $root -c user.name=Fixture -c user.email=fixture@example.com commit --quiet -m fixture
     if ($LASTEXITCODE -ne 0) {
         throw 'Fixture Git commit failed.'
     }
