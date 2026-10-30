@@ -2,6 +2,7 @@ using System.Collections;
 using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using BotNexus.Gateway.Abstractions.Configuration;
 
 namespace BotNexus.Gateway.Configuration;
@@ -23,10 +24,14 @@ public sealed class ConfigPathResolver : IConfigPathResolver
 
         object? current = config;
         Type currentType = config.GetType();
-        foreach (var token in tokens)
+        var start = ResolveAgentDefaults(config, tokens, createMissing: false, ref current, ref currentType);
+        foreach (var token in tokens.Skip(start))
         {
             if (!TryResolveToken(current, currentType, token, createMissing: false, out current, out currentType, out _, out error))
+            {
+                error = $"Path '{path}': {error}";
                 return false;
+            }
         }
 
         value = current;
@@ -39,13 +44,41 @@ public sealed class ConfigPathResolver : IConfigPathResolver
         if (!TryParsePath(path, out var tokens, out error))
             return false;
 
+        if (config is PlatformConfig && ConfigPathBinding.TryRecognise(path, out var declaredType, out _)
+            && declaredType is null)
+            return TrySetOpaqueValue(config, path, tokens, value, out error);
+
         object? current = config;
         Type currentType = config.GetType();
 
-        for (var i = 0; i < tokens.Count; i++)
+        var start = ResolveAgentDefaults(config, tokens, createMissing: true, ref current, ref currentType);
+        for (var i = start; i < tokens.Count; i++)
         {
             var token = tokens[i];
             var isLast = i == tokens.Count - 1;
+
+            // Stop at the opaque boundary. JsonElement is immutable: edit a detached subtree
+            // and assign once only after the entire remaining path has succeeded.
+            var memberToken = new PathToken(token.Name, null, token.Raw);
+            if (!TryResolveToken(current, currentType, memberToken, createMissing: true,
+                    out var member, out var memberType, out var assignMember, out error))
+            {
+                error = $"Path '{path}': {error}";
+                return false;
+            }
+            if (memberType == typeof(JsonElement))
+            {
+                if (!TrySetJsonValue(member is JsonElement json ? json : default,
+                        tokens, i, value, path, out var updated, out error))
+                    return false;
+                if (assignMember is null)
+                {
+                    error = $"Path '{path}' is not writable.";
+                    return false;
+                }
+                assignMember(updated);
+                return true;
+            }
 
             if (isLast)
             {
@@ -95,6 +128,136 @@ public sealed class ConfigPathResolver : IConfigPathResolver
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         WalkPaths(config, config.GetType(), string.Empty, paths, new HashSet<object>(ReferenceEqualityComparer.Instance));
         return paths.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    // agents.defaults is extracted from Agents by the loader. Resolve declared shared settings
+    // there, but retain the existing AgentConfig coercion path for other recognised agent leaves
+    // (for example thinking). The CLI persists only the addressed raw leaf, not either DTO.
+    private static int ResolveAgentDefaults(object config, IReadOnlyList<PathToken> tokens,
+        bool createMissing, ref object? current, ref Type currentType)
+    {
+        if (config is not PlatformConfig platform || tokens.Count < 3
+            || !tokens[0].Name.Equals("agents", StringComparison.OrdinalIgnoreCase)
+            || !tokens[1].Name.Equals("defaults", StringComparison.OrdinalIgnoreCase)
+            || tokens[0].Index is not null || tokens[1].Index is not null
+            || FindProperty(typeof(AgentDefaultsConfig), tokens[2].Name) is null)
+            return 0;
+
+        if (createMissing)
+            platform.AgentDefaults ??= new AgentDefaultsConfig();
+        current = platform.AgentDefaults;
+        currentType = typeof(AgentDefaultsConfig);
+        return 2;
+    }
+
+    private static bool TrySetOpaqueValue(object config, string path, IReadOnlyList<PathToken> tokens,
+        object? value, out string error)
+    {
+        object? current = config;
+        var currentType = config.GetType();
+        var pending = new List<Action>();
+        var start = ResolveAgentDefaults(config, tokens, createMissing: false, ref current, ref currentType);
+        if (start == 2 && current is null && config is PlatformConfig platform)
+        {
+            var defaults = new AgentDefaultsConfig();
+            current = defaults;
+            pending.Add(() => platform.AgentDefaults = defaults);
+        }
+        for (var i = start; i < tokens.Count; i++)
+        {
+            var token = tokens[i];
+            var member = new PathToken(token.Name, null, token.Raw);
+            if (!TryResolveToken(current, currentType, member, true, out var child,
+                    out var childType, out var assign, out error, pending))
+            {
+                error = $"Path '{path}': {error}";
+                return false;
+            }
+            if ((Nullable.GetUnderlyingType(childType) ?? childType) == typeof(JsonElement))
+            {
+                // Nullable opaque properties retain their CLR null contract for a whole-value
+                // clear. Nested writes still materialize and edit JSON through the strict primitive.
+                var wholeValue = i == tokens.Count - 1 && token.Index is null;
+                var clearNullable = Nullable.GetUnderlyingType(childType) is not null && wholeValue
+                    && (value is null || value is string text
+                        && text.Equals("null", StringComparison.OrdinalIgnoreCase));
+                if (!TrySetJsonValue(child is JsonElement json ? json : default,
+                        tokens, i, value, path, out var updated, out error))
+                    return false;
+                if (assign is null)
+                {
+                    error = $"Path '{path}' is not writable.";
+                    return false;
+                }
+                foreach (var attach in pending)
+                    attach();
+                assign(clearNullable ? null : updated);
+                return true;
+            }
+            if (token.Index is not null)
+            {
+                if (!TryResolveToken(child, childType, new PathToken(string.Empty, token.Index, token.Raw),
+                        true, out child, out childType, out _, out error, pending))
+                {
+                    error = $"Path '{path}': {error}";
+                    return false;
+                }
+            }
+            current = child;
+            currentType = childType;
+        }
+        error = $"Path '{path}' did not reach a writable opaque JSON value.";
+        return false;
+    }
+
+    private static bool TrySetJsonValue(JsonElement original, IReadOnlyList<PathToken> tokens,
+        int boundary, object? value, string path, out JsonElement updated, out string error)
+    {
+        updated = original;
+        error = string.Empty;
+        JsonNode? replacement;
+        try
+        {
+            if (value is string text)
+            {
+                try
+                {
+                    replacement = JsonNode.Parse(text);
+                }
+                catch (JsonException)
+                {
+                    replacement = JsonValue.Create(text);
+                }
+            }
+            else
+            {
+                replacement = JsonSerializer.SerializeToNode(value);
+            }
+
+            var root = original.ValueKind == JsonValueKind.Undefined
+                ? null
+                : JsonNode.Parse(original.GetRawText());
+            // The boundary's name already addressed the CLR dictionary entry; its optional
+            // index still belongs to the opaque JSON subtree.
+            var suffix = tokens[boundary].Index is { } index ? $"[{index}]" : string.Empty;
+            var tail = string.Join('.', tokens.Skip(boundary + 1).Select(token => token.Raw));
+            if (tail.Length > 0)
+                suffix += suffix.Length > 0 ? "." + tail : tail;
+            if (suffix.Length == 0)
+                root = replacement;
+            else if (!StrictOpaqueConfigEdit.TrySet(root, suffix, replacement, out root, out error))
+            {
+                error = $"Path '{path}': {error}";
+                return false;
+            }
+            updated = JsonSerializer.SerializeToElement(root);
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            error = $"Path '{path}': {ex.Message}";
+            return false;
+        }
     }
 
     private static void WalkPaths(
@@ -241,7 +404,8 @@ public sealed class ConfigPathResolver : IConfigPathResolver
         out object? resolvedValue,
         out Type resolvedType,
         out Action<object?>? assign,
-        out string error)
+        out string error,
+        List<Action>? pending = null)
     {
         error = string.Empty;
         assign = null;
@@ -258,13 +422,13 @@ public sealed class ConfigPathResolver : IConfigPathResolver
 
         if (!string.IsNullOrWhiteSpace(token.Name))
         {
-            if (!ResolveMember(node, token, createMissing, out node, out error))
+            if (!ResolveMember(node, token, createMissing, out node, out error, pending))
                 return false;
         }
 
         if (token.Index is not null)
         {
-            if (!ResolveIndex(node, token, createMissing, out node, out error))
+            if (!ResolveIndex(node, token, createMissing, out node, out error, pending))
                 return false;
         }
 
@@ -285,13 +449,32 @@ public sealed class ConfigPathResolver : IConfigPathResolver
         PathToken token,
         bool createMissing,
         out ResolvedNode resolved,
-        out string error)
+        out string error,
+        List<Action>? pending = null)
     {
         error = string.Empty;
         resolved = node;
 
         var current = node.Value;
         var currentType = node.Type;
+
+        if (current is JsonElement json)
+        {
+            if (json.ValueKind != JsonValueKind.Object)
+            {
+                error = $"Segment '{token.Raw}' requires a JSON object, not {json.ValueKind}.";
+                return false;
+            }
+            foreach (var jsonProperty in json.EnumerateObject())
+            {
+                if (!jsonProperty.Name.Equals(token.Name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                resolved = new ResolvedNode(jsonProperty.Value.Clone(), typeof(JsonElement), null);
+                return true;
+            }
+            error = $"JSON property '{token.Name}' does not exist.";
+            return false;
+        }
 
         if (TryGetDictionaryValueType(currentType, out var dictionaryValueType))
         {
@@ -309,7 +492,11 @@ public sealed class ConfigPathResolver : IConfigPathResolver
                 if (!TryCreateInstance(dictionaryValueType, out existing, out error))
                     return false;
 
-                dictionary[key] = existing;
+                var created = existing;
+                if (pending is null)
+                    dictionary[key] = created;
+                else
+                    pending.Add(() => dictionary[key] = created);
             }
 
             resolved = new ResolvedNode(existing, dictionaryValueType, value => dictionary[key] = value);
@@ -342,7 +529,11 @@ public sealed class ConfigPathResolver : IConfigPathResolver
                 return false;
             }
 
-            property.SetValue(current, propertyValue);
+            var created = propertyValue;
+            if (pending is null)
+                property.SetValue(current, created);
+            else
+                pending.Add(() => property.SetValue(current, created));
         }
 
         var assign = property.CanWrite
@@ -362,7 +553,8 @@ public sealed class ConfigPathResolver : IConfigPathResolver
         PathToken token,
         bool createMissing,
         out ResolvedNode resolved,
-        out string error)
+        out string error,
+        List<Action>? pending = null)
     {
         error = string.Empty;
         resolved = node;
@@ -371,10 +563,37 @@ public sealed class ConfigPathResolver : IConfigPathResolver
         var childType = node.Type;
         var parentAssign = node.Assign;
 
+        if (child is JsonElement json)
+        {
+            var jsonIndex = token.Index.GetValueOrDefault();
+            if (json.ValueKind != JsonValueKind.Array)
+            {
+                error = $"Segment '{token.Raw}' requires a JSON array, not {json.ValueKind}.";
+                return false;
+            }
+            if (jsonIndex < 0 || jsonIndex >= json.GetArrayLength())
+            {
+                error = $"Index {jsonIndex} is out of range for '{token.Raw}'.";
+                return false;
+            }
+            resolved = new ResolvedNode(json[jsonIndex].Clone(), typeof(JsonElement), null);
+            return true;
+        }
+
         if (!TryGetListElementType(childType, out var elementType))
         {
             error = $"Segment '{token.Raw}' cannot be indexed because '{childType.Name}' is not a list.";
             return false;
+        }
+
+        if (pending is not null && child is IList existingList)
+        {
+            if (!TryCreateListInstance(childType, out var copy, out error) || copy is not IList copiedList)
+                return false;
+            foreach (var item in existingList)
+                copiedList.Add(item);
+            child = copiedList;
+            pending.Add(() => parentAssign?.Invoke(copiedList));
         }
 
         if (child is null)
@@ -387,7 +606,11 @@ public sealed class ConfigPathResolver : IConfigPathResolver
 
             if (!TryCreateListInstance(childType, out child, out error))
                 return false;
-            parentAssign?.Invoke(child);
+            var created = child;
+            if (pending is null)
+                parentAssign?.Invoke(created);
+            else
+                pending.Add(() => parentAssign?.Invoke(created));
         }
 
         if (child is not IList list)
@@ -777,10 +1000,11 @@ public sealed class ConfigPathResolver : IConfigPathResolver
                || target == typeof(DateTimeOffset)
                || target == typeof(TimeSpan)
                || target == typeof(Guid)
-               || target == typeof(Uri);
+               || target == typeof(Uri)
+               || target == typeof(JsonElement);
     }
 
-    private static bool TryParsePath(string? path, out IReadOnlyList<PathToken> tokens, out string error)
+    internal static bool TryParsePath(string? path, out IReadOnlyList<PathToken> tokens, out string error)
     {
         error = string.Empty;
         if (string.IsNullOrWhiteSpace(path))
@@ -885,7 +1109,7 @@ public sealed class ConfigPathResolver : IConfigPathResolver
         return true;
     }
 
-    private readonly record struct PathToken(string Name, int? Index, string Raw)
+    internal readonly record struct PathToken(string Name, int? Index, string Raw)
     {
         public bool IsTerminalListOnly => string.IsNullOrWhiteSpace(Name) && Index is not null;
     }
