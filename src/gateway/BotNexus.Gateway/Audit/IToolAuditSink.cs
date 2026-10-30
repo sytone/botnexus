@@ -86,6 +86,9 @@ public interface IToolAuditSink
     /// <param name="response">The blocking-run response.</param>
     /// <returns>The tool timeline in execution order; empty when no tools ran.</returns>
     IReadOnlyList<ToolInvocationRecord> CaptureBlockingRun(AgentResponse response);
+
+    /// <summary>Sanitises incomplete non-thinking prose with the sink's configured result policy.</summary>
+    string? SanitizePartialText(string? text);
 }
 
 /// <summary>
@@ -227,6 +230,15 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
         }
 
         return rows;
+    }
+
+    /// <inheritdoc/>
+    public string? SanitizePartialText(string? text)
+    {
+        var sanitized = _policy.Create(0, "partial", "agent_converse", null, text, false, false, null, null).ResultContent;
+        // Receipt metadata is always bounded, even when tool-result retention is unlimited.
+        return sanitized is null ? null : StreamingSessionHelper.TruncateToolResult(
+            sanitized, ToolInvocationRecordPolicy.DefaultMaxBytes);
     }
 
     /// <inheritdoc/>

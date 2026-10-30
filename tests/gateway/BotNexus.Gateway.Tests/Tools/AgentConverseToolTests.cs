@@ -183,7 +183,10 @@ public sealed class AgentConverseToolTests
         var root = payload.RootElement;
         root.GetProperty("cancellationCause").GetString().ShouldBe("targetUnavailable");
         root.GetProperty("targetState").GetString().ShouldBe("busy");
-        root.GetProperty("retryAdvised").GetBoolean().ShouldBeTrue();
+        // Busy is a catch-time observation, not proof that a previous mutation never ran.
+        root.GetProperty("retryAdvised").GetBoolean().ShouldBeFalse();
+        root.GetProperty("evidence").ValueKind.ShouldBe(JsonValueKind.Null);
+        root.GetProperty("message").GetString().ShouldNotBeNull().ShouldContain("reconcile");
         root.GetProperty("message").GetString().ShouldNotBeNull()
             .ShouldContain("busy");
     }
@@ -718,6 +721,10 @@ public sealed class AgentConverseToolTests
         captured!.CallChain.ShouldHaveSingleItem().Value.ShouldBe("test-agent");
         captured.MaxTurns.ShouldBe(3);
         ReadText(result).ShouldContain("\"sessionId\"");
+        using var payload = JsonDocument.Parse(ReadText(result));
+        payload.RootElement.TryGetProperty("cancelled", out _).ShouldBeFalse();
+        payload.RootElement.TryGetProperty("evidence", out _).ShouldBeFalse();
+        payload.RootElement.GetProperty("finalResponse").GetString().ShouldBe("Done");
     }
 
     [Fact]

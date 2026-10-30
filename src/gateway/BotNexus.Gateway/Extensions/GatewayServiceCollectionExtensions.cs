@@ -219,7 +219,8 @@ public static class GatewayServiceCollectionExtensions
         // through this single implementation, so the audit guarantee no longer depends on which
         // transport the caller picked.
         services.TryAddSingleton<BotNexus.Gateway.Audit.IToolAuditSink>(
-            _ => BotNexus.Gateway.Audit.DefaultToolAuditSink.Instance);
+            sp => new BotNexus.Gateway.Audit.DefaultToolAuditSink(
+                new ToolInvocationRecordPolicy(redactor: sp.GetRequiredService<ISecretRedactor>())));
         services.AddSingleton<AgentExchangeBudgetTracker>();
         // #3494: per-agent inbound admission control. MUST be a singleton - a per-scope queue would
         // gate nothing, since two concurrent exchanges targeting one agent would each see their own
