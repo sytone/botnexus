@@ -48,8 +48,8 @@ public sealed class ModelsController : ControllerBase
                 : new[] { agent.ApiProvider };
 
             var agentModels = agentProviders
-                .SelectMany(currentProvider => _modelFilter.GetModelsForAgent(currentProvider, agent.AllowedModelIds))
-                .Select(model => new ModelInfo(
+                .SelectMany(currentProvider => _modelFilter.GetModelsForAgent(currentProvider, agent.AllowedModelIds)
+                    .Select(model => new ModelInfo(
                     Name: model.Name,
                     ModelId: model.Id,
                     Id: model.Id,
@@ -59,7 +59,8 @@ public sealed class ModelsController : ControllerBase
                     ContextWindow: model.ContextWindow,
                     MaxTokens: model.MaxTokens,
                     ContextWindowSource: model.ContextWindowSource,
-                    MaxTokensSource: model.MaxTokensSource))
+                    MaxTokensSource: model.MaxTokensSource,
+                    ProviderInstance: currentProvider)))
                 .OrderBy(model => model.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -123,6 +124,7 @@ public sealed class ModelsController : ControllerBase
 /// <param name="MaxTokens">Registered maximum output tokens, or null when unavailable.</param>
 /// <param name="ContextWindowSource">Context declaration origin, not a provider-verification claim.</param>
 /// <param name="MaxTokensSource">Output declaration origin, not a provider-verification claim.</param>
+/// <param name="ProviderInstance">Provider instance used to obtain this agent-scoped choice; preserves authored aliases without conflating them with catalog provider names.</param>
 public sealed record ModelInfo(
     string Name,
     string ModelId,
@@ -133,5 +135,6 @@ public sealed record ModelInfo(
     int? ContextWindow = null,
     int? MaxTokens = null,
     string? ContextWindowSource = null,
-    string? MaxTokensSource = null
+    string? MaxTokensSource = null,
+    string? ProviderInstance = null
 );
