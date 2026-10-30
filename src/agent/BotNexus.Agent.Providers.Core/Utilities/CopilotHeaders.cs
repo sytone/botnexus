@@ -15,7 +15,8 @@ public static class CopilotHeaders
     /// </summary>
     public static string InferInitiator(IReadOnlyList<Message> messages)
     {
-        var last = messages.Count > 0 ? messages[^1] : null;
+        // Wire-visible host context must not make a result-only continuation user-initiated.
+        var last = messages.LastOrDefault(message => !message.IsRequestOnlyContext);
         return last is UserMessage ? "user" : "agent";
     }
 

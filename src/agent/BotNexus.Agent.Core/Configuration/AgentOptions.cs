@@ -97,6 +97,8 @@ namespace BotNexus.Agent.Core.Configuration;
 /// injection, and terminal disposition; policy exceptions and cancellation propagate.
 /// </param>
 /// <param name="MaxToolResults">Executed-result budget per run, default 128. Values outside 1–1000000 are rejected. Checked after entire batches.</param>
+/// <param name="ProviderRequestContextProvider">Optional request-only dynamic context renderer; null uses the core live capacity section. Normal failures and cancellation propagate; finalizer failures preserve its parked outcome.</param>
+/// <param name="ToolCapacityObserver">Optional informational start/75%/90%/exhaustion sink, isolated per subscriber through the diagnostic dispatcher. No control authority.</param>
 /// <remarks>
 /// AgentOptions is passed to the Agent constructor and frozen for the lifetime of the agent.
 /// InitialState is used to seed AgentState - changes to InitialState after construction have no effect.
@@ -135,4 +137,6 @@ public record AgentOptions(
     Loop.IProviderRecoveryCoordinator? RecoveryCoordinator = null,
     TimeSpan? RecoveryAdmissionTimeout = null,
     ToolProgressPolicy? ToolProgressPolicy = null,
-    int MaxToolResults = 128);
+    int MaxToolResults = 128,
+    ProviderRequestContextProvider? ProviderRequestContextProvider = null,
+    ToolCapacityObserver? ToolCapacityObserver = null);
