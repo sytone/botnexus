@@ -89,4 +89,4 @@ jobs:
             await run({ github, context, core });
 
       - name: Unit-test the guard script
-        run: node --test .github/scripts/pr-conventions-guard.test.mjs
+        run: node --test .github/scripts/pr-conventions-guard.test.mjs .github/scripts/contributor-usability.test.mjs
