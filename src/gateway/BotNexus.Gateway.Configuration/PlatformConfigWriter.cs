@@ -43,7 +43,7 @@ namespace BotNexus.Gateway.Configuration;
 /// no bypass flag. New write methods must route through <see cref="MutateCoreAsync" /> rather than
 /// re-implementing the read/mutate/validate/write sequence, or they will silently opt out of it.</para>
 /// </remarks>
-public sealed class PlatformConfigWriter
+public sealed partial class PlatformConfigWriter
 {
     private static readonly SemaphoreSlim WriteLock = new(1, 1);
     private static readonly JsonSerializerOptions PlatformReadOptions = new()
@@ -794,7 +794,8 @@ public sealed class PlatformConfigWriter
         bool validateCandidate,
         IReadOnlyCollection<string>? namedSections,
         CancellationToken ct,
-        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null,
+        ConfigReconciliationPreview? reconciliation = null)
     {
         // Lock order is always semaphore -> cross-process file lock (#2134). See
         // CrossProcessConfigLock for the ordering/deadlock argument: the semaphore keeps this
@@ -804,51 +805,98 @@ public sealed class PlatformConfigWriter
         try
         {
             using var crossProcess = await CrossProcessConfigLock.AcquireAsync(_configPath, _fileSystem, ct);
-            var root = await ReadRootAsync(ct);
+            ConfigReconciliationPreview? current = null;
+            if (reconciliation is not null)
+            {
+                // Do not call ReadRootAsync here: it initializes SQL and falls back on empty SQL.
+                // Both independent before-images must be re-read under the canonical lock.
+                current = await PreviewReconciliationAsync(_configPath, ct);
+                if (!current.CanApply)
+                    return [current.Outcome];
+                if (current.SqlRevision != reconciliation.SqlRevision
+                    || current.CompatibilityRevision != reconciliation.CompatibilityRevision)
+                    return ["Reconciliation refused: a backend changed after preview; preview again."];
+            }
+            var root = current?.Sql?.DeepClone().AsObject() ?? await ReadRootAsync(ct);
 
             // Snapshot the pristine document: mutations edit root in place, so this is the only
             // moment the pre-mutation state still exists to compare against.
             var pristine = root.DeepClone().AsObject();
 
+            if (current?.Candidate is { } reconciliationCandidate)
+            {
+                root.Clear();
+                foreach (var pair in reconciliationCandidate)
+                    root[pair.Key] = pair.Value?.DeepClone();
+            }
             var mutationError = await mutation(root);
             if (!string.IsNullOrWhiteSpace(mutationError))
                 return [mutationError];
 
-            var destroyed = ConfigSectionGuard.FindDestroyedSections(pristine, root, namedSections);
-            if (destroyed.Count > 0)
-                return [ConfigSectionGuard.FormatRejection(_configPath, destroyed)];
-
-            if (additionalValidation is not null)
+            var validationErrors = ValidateMutation(pristine, root, validateCandidate, namedSections, additionalValidation, _configPath);
+            if (validationErrors.Count > 0)
+                return validationErrors;
+            if (current is not null)
             {
-                var additionalErrors = additionalValidation(pristine, root);
-                if (additionalErrors.Count > 0)
-                    return additionalErrors;
+                if (current.Compatibility is { } compatibility)
+                {
+                    var compatibilityErrors = ValidateMutation(compatibility, root, true, null, null);
+                    if (compatibilityErrors.Count > 0)
+                        return compatibilityErrors;
+                }
+                // An explicit complete-union operation, not a change to ordinary delta semantics.
+                // The established fan-out reports partial backend failure by throwing.
+                if (!JsonNode.DeepEquals(current.Sql, root) || !JsonNode.DeepEquals(current.Compatibility, root))
+                    await _writer.WriteAsync(root, reason, ct);
             }
-
-            // Ceiling constraints apply even to legacy raw mutation paths. Validate only this
-            // new policy here; unrelated legacy configuration remains load-tolerated.
-            var ceilingErrors = ValidateCompactionCeilings(root);
-            if (ceilingErrors.Count > 0)
-                return ceilingErrors;
-
-            if (validateCandidate)
+            else
             {
-                // Validate the complete candidate document, not just the mutated fragment: a
-                // locally plausible edit can still violate a cross-field rule elsewhere in the
-                // graph.
-                var candidateJson = root.ToJsonString(PlatformPersistOptions);
-                var errors = PlatformConfigLoader.ValidateRawJson(candidateJson);
-                if (errors.Count > 0)
-                    return errors;
+                await WriteRootAsync(root, reason, pristine, ct);
             }
-
-            await WriteRootAsync(root, reason, pristine, ct);
             return [];
         }
         finally
         {
             WriteLock.Release();
         }
+    }
+
+    private static IReadOnlyList<string> ValidateMutation(
+        JsonObject pristine,
+        JsonObject root,
+        bool validateCandidate,
+        IReadOnlyCollection<string>? namedSections,
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation,
+        string configPath = "configuration")
+    {
+        var destroyed = ConfigSectionGuard.FindDestroyedSections(pristine, root, namedSections);
+        if (destroyed.Count > 0)
+            return [ConfigSectionGuard.FormatRejection(configPath, destroyed)];
+
+        if (additionalValidation is not null)
+        {
+            var additionalErrors = additionalValidation(pristine, root);
+            if (additionalErrors.Count > 0)
+                return additionalErrors;
+        }
+
+        // Ceiling constraints apply even to legacy raw mutation paths. Validate only this
+        // new policy here; unrelated legacy configuration remains load-tolerated.
+        var ceilingErrors = ValidateCompactionCeilings(root);
+        if (ceilingErrors.Count > 0)
+            return ceilingErrors;
+
+        if (validateCandidate)
+        {
+            // Validate the complete candidate document, not just the mutated fragment: a
+            // locally plausible edit can still violate a cross-field rule elsewhere in the graph.
+            var candidateJson = root.ToJsonString(PlatformPersistOptions);
+            var errors = PlatformConfigLoader.ValidateRawJson(candidateJson);
+            if (errors.Count > 0)
+                return errors;
+        }
+
+        return [];
     }
 
     private static IReadOnlyList<string> ValidateCompactionCeilings(JsonObject root)
