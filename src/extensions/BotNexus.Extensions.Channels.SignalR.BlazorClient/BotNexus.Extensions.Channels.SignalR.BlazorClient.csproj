@@ -5,7 +5,6 @@
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
     <ServiceWorkerAssetsManifest>service-worker-assets.js</ServiceWorkerAssetsManifest>
     <UserGuideSourceRoot Condition="'$(UserGuideSourceRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\docs</UserGuideSourceRoot>
-    <UserGuideOutputRoot Condition="'$(UserGuideOutputRoot)' == ''">$(MSBuildThisFileDirectory)wwwroot</UserGuideOutputRoot>
   </PropertyGroup>
 
   <ItemGroup>
@@ -31,20 +30,23 @@
     field names and a model catalogue full of ids that no longer resolve, and both cost real
     debugging time. One source cannot disagree with itself.
 
-    Copied rather than <Content Include> with a Link, because Blazor's static web asset pipeline
-    only publishes files that physically live under wwwroot. The destination is gitignored; it is
-    build output, not source.
+    Generated files belong to this configuration/target framework's intermediate output, never
+    shared source wwwroot. Content Link metadata gives the SDK the same wwwroot/guide URLs while
+    keeping a concurrent Release build from deleting files already registered by Debug.
 
     ResolveProjectStaticWebAssets consumes Content items evaluated before targets run, rather than
     enumerating wwwroot. Reconcile and refresh the owned Content inventory before that target so
     clean and incremental builds register the same assets, including removed or renamed sources.
   -->
   <Target Name="CopyUserGuide" BeforeTargets="ResolveProjectStaticWebAssets;BeforeBuild">
-    <!-- wwwroot/guide is generated and exclusively owned by this target. Recreate only that
-         bounded directory so removed or renamed sources cannot survive incremental builds. -->
+    <PropertyGroup>
+      <!-- Resolve here: the SDK finalizes IntermediateOutputPath after project evaluation. -->
+      <UserGuideOutputRoot Condition="'$(UserGuideOutputRoot)' == ''">$(IntermediateOutputPath)user-guide</UserGuideOutputRoot>
+    </PropertyGroup>
     <ItemGroup>
-      <!-- Remove evaluated items while stale files still exist for wildcard expansion. -->
-      <Content Remove="$([MSBuild]::MakeRelative('$(MSBuildProjectDirectory)', '$(UserGuideOutputRoot)'))\guide\**" />
+      <!-- Ignore legacy generated source-tree output without deleting another build's files. -->
+      <Content Remove="wwwroot\guide\**" />
+      <Content Remove="$(UserGuideOutputRoot)\guide\**" />
     </ItemGroup>
     <RemoveDir Directories="$(UserGuideOutputRoot)\guide" />
     <ItemGroup>
@@ -62,9 +64,11 @@
           DestinationFolder="$(UserGuideOutputRoot)\guide"
           SkipUnchangedFiles="true" />
     <ItemGroup>
-      <!-- Replace evaluation-time entries, never append a second registration. Keep paths
-           project-relative so the SDK's wwwroot/** discovery pattern and removal agree. -->
-      <Content Include="$([MSBuild]::MakeRelative('$(MSBuildProjectDirectory)', '$(UserGuideOutputRoot)'))\guide\**"
+      <!-- Link is the SDK's logical discovery path; Identity remains configuration-owned. -->
+      <_UserGuideContent Include="$(UserGuideOutputRoot)\guide\**" />
+      <Content Include="@(_UserGuideContent)"
+               Link="wwwroot\guide\%(_UserGuideContent.RecursiveDir)%(_UserGuideContent.Filename)%(_UserGuideContent.Extension)"
+               ContentRoot="$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(UserGuideOutputRoot)'))"
                CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
   </Target>
