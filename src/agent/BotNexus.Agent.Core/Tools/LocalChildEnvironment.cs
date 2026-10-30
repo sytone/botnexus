@@ -12,7 +12,8 @@ public static class LocalChildEnvironment
     // Exact names only. Keep this reviewed set in sync with the shell-execution documentation.
     private static readonly string[] WindowsEssentials =
         ["PATH", "PATHEXT", "SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP",
-         "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA"];
+         "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+         "PROCESSOR_ARCHITECTURE", "ProgramFiles", "ProgramFiles(x86)"];
     private static readonly string[] PosixEssentials =
         ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE", "TZ"];
 

@@ -53,6 +53,7 @@ Only these names are copied, when present and non-null:
 | --- | --- | --- |
 | Windows | `PATH`, `PATHEXT`, `SystemRoot`, `WINDIR`, `ComSpec` | Executable lookup and Windows command/runtime paths |
 | Windows | `TEMP`, `TMP` | Temporary files |
+| Windows | `PROCESSOR_ARCHITECTURE`, `ProgramFiles`, `ProgramFiles(x86)` | Process architecture and installed-program paths used by runtimes and SDK tools |
 | Windows | `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA` | User home and application-data paths |
 | Linux/POSIX | `PATH`, `HOME` | Executable lookup and user home |
 | Linux/POSIX | `TMPDIR`, `TMP`, `TEMP` | Temporary files |
