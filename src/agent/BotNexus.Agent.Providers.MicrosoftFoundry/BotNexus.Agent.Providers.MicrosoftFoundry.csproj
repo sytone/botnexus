@@ -9,6 +9,7 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Agent.Providers.MicrosoftFoundry.Tests" />
+    <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\BotNexus.Agent.Providers.Core\BotNexus.Agent.Providers.Core.csproj" />
