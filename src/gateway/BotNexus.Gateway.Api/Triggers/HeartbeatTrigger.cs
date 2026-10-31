@@ -13,8 +13,8 @@ namespace BotNexus.Gateway.Api.Triggers;
 
 /// <summary>
 /// Internal trigger for heartbeat-scheduled sessions (<see cref="TriggerType.Heartbeat"/>).
-/// Routes into the agent's active soul session when soul is enabled, keeping heartbeat turns
-/// in today's soul context.  Falls back to a stable per-agent heartbeat conversation otherwise.
+/// Uses a fresh session in the stable per-agent heartbeat conversation so interactive
+/// and soul conversations cannot suppress or race heartbeat run admission.
 ///
 /// Phase 2: after each heartbeat turn, if the assistant response is a heartbeat acknowledgement
 /// (contains "HEARTBEAT_OK" within <see cref="AckMaxCharsDefault"/> chars), the user+assistant
@@ -47,42 +47,10 @@ public sealed class HeartbeatTrigger(
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
 
         var descriptor = registry.Get(agentId);
-        // A scheduled model selection must not mutate the shared interactive soul session
-        // or its cached handle. Pinned occurrences use the existing isolated heartbeat path.
-        if (descriptor?.Soul?.Enabled == true && string.IsNullOrWhiteSpace(request?.ModelOverride))
-            return await RunInSoulSessionAsync(agentId, prompt, descriptor, request, ct).ConfigureAwait(false);
-
+        // Ownership checks must not share run admission or mutable routing with an
+        // interactive/soul conversation. Each occurrence gets its own session under
+        // the existing stable heartbeat conversation, regardless of agent activity.
         return await RunInHeartbeatSessionAsync(agentId, prompt, descriptor, request, ct).ConfigureAwait(false);
-    }
-
-    // -----------------------------------------------------------------
-    // Soul path - reuse today's active soul session
-    // -----------------------------------------------------------------
-    private async Task<SessionId> RunInSoulSessionAsync(
-        AgentId agentId,
-        string prompt,
-        AgentDescriptor? descriptor,
-        InternalTriggerRequest? request,
-        CancellationToken ct)
-    {
-        // P9-E (#645): soul sessions no longer carry SessionType.Soul. Discovery uses
-        // the canonical Metadata["soulDate"] tag that SoulTrigger.InitializeSoulSession
-        // stamps on every soul session, gated on Active status.
-        var allSessions = await sessions.ListAsync(agentId, ct).ConfigureAwait(false);
-        var soulSession = allSessions
-            .Where(s => s.Status == GatewaySessionStatus.Active && s.Metadata.ContainsKey("soulDate"))
-            .OrderByDescending(s => s.UpdatedAt)
-            .FirstOrDefault();
-
-        if (soulSession is null)
-        {
-            logger.LogDebug(
-                "HeartbeatTrigger: no active soul session for '{AgentId}', falling back to heartbeat session.",
-                agentId);
-            return await RunInHeartbeatSessionAsync(agentId, prompt, descriptor, request, ct).ConfigureAwait(false);
-        }
-
-        return await ExecuteInSessionAsync(agentId, soulSession.SessionId, prompt, descriptor, request, ct).ConfigureAwait(false);
     }
 
     // -----------------------------------------------------------------
@@ -132,7 +100,7 @@ public sealed class HeartbeatTrigger(
         var session = preloadedSession
             ?? await sessions.GetOrCreateAsync(sessionId, agentId, ct).ConfigureAwait(false);
 
-        // Both the stable heartbeat and active soul paths must publish the occurrence's
+        // The heartbeat session must publish the occurrence's
         // selection before the supervisor resolves or reuses its handle.
         if (string.IsNullOrWhiteSpace(request?.ModelOverride))
             session.Metadata.Remove("modelOverride");

@@ -260,18 +260,23 @@ public sealed class HeartbeatActionTests
     }
 
     // -----------------------------------------------------------------
-    // Defer-when-active-run (#1500)
+    // Heartbeats remain independent of other active conversations.
     // -----------------------------------------------------------------
 
-    [Fact]
-    public async Task ExecuteAsync_ScheduledHeartbeat_DefersWhenAgentRunIsActive()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task ExecuteAsync_ScheduledHeartbeat_FiresWhenAgentRunsAreActive(int activeConversations)
     {
         var action = new HeartbeatAction();
         var trigger = new Mock<IInternalTrigger>();
         var registry = new Mock<IAgentRegistry>();
-        var supervisor = BuildSupervisorWithInstance("agent-a", isRunning: true);
+        var supervisor = BuildSupervisorWithInstance("agent-a", isRunning: true, instanceCount: activeConversations);
+        var sessionId = SessionId.From("heartbeat:agent-a:concurrent");
 
         trigger.SetupGet(v => v.Type).Returns(TriggerType.Heartbeat);
+        trigger.Setup(v => v.CreateSessionAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()))
+            .ReturnsAsync(sessionId);
         registry.Setup(v => v.Get(AgentId.From("agent-a"))).Returns((AgentDescriptor?)null);
 
         var services = new ServiceCollection()
@@ -285,8 +290,9 @@ public sealed class HeartbeatActionTests
 
         trigger.Verify(v => v.CreateSessionAsync(
             It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<InternalTriggerRequest?>()),
-            Times.Never);
-        context.SessionId.ShouldBeNull();
+            Times.Once);
+        context.SessionId.ShouldNotBeNull();
+        context.SessionId.Value.ShouldBe(sessionId);
     }
 
     [Fact]
@@ -585,26 +591,29 @@ public sealed class HeartbeatActionTests
         };
 
     /// <summary>
-    /// Builds a mock <see cref="IAgentSupervisor"/> holding a single live instance for the given
-    /// agent, with a handle whose <c>IsRunning</c> reflects <paramref name="isRunning"/>.
+    /// Builds a mock <see cref="IAgentSupervisor"/> holding distinct conversation instances
+    /// for the given agent, with handles whose <c>IsRunning</c> reflects <paramref name="isRunning"/>.
     /// </summary>
-    private static Mock<IAgentSupervisor> BuildSupervisorWithInstance(string agentId, bool isRunning)
+    private static Mock<IAgentSupervisor> BuildSupervisorWithInstance(string agentId, bool isRunning, int instanceCount = 1)
     {
         var id = AgentId.From(agentId);
-        var sessionId = SessionId.From($"chat:{agentId}:20260101000000:sessabcd");
-        var instance = new AgentInstance
-        {
-            InstanceId = $"{agentId}:{sessionId.Value}",
-            AgentId = id,
-            SessionId = sessionId,
-            IsolationStrategy = "in-process"
-        };
-        var handle = new Mock<IAgentHandle>();
-        handle.SetupGet(h => h.IsRunning).Returns(isRunning);
-
+        var instances = new List<AgentInstance>();
         var supervisor = new Mock<IAgentSupervisor>();
-        supervisor.Setup(s => s.GetAllInstances()).Returns([instance]);
-        supervisor.Setup(s => s.GetHandle(id, sessionId)).Returns(handle.Object);
+        for (var index = 0; index < instanceCount; index++)
+        {
+            var sessionId = SessionId.From($"chat:{agentId}:conversation-{index}");
+            instances.Add(new AgentInstance
+            {
+                InstanceId = $"{agentId}:{sessionId.Value}",
+                AgentId = id,
+                SessionId = sessionId,
+                IsolationStrategy = "in-process"
+            });
+            var handle = new Mock<IAgentHandle>();
+            handle.SetupGet(h => h.IsRunning).Returns(isRunning);
+            supervisor.Setup(s => s.GetHandle(id, sessionId)).Returns(handle.Object);
+        }
+        supervisor.Setup(s => s.GetAllInstances()).Returns(instances);
         return supervisor;
     }
 

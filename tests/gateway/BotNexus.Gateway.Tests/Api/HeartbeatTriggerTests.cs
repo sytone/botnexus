@@ -42,7 +42,7 @@ public sealed class HeartbeatTriggerTests
     }
 
     [Fact]
-    public async Task CreateSessionAsync_SoulAgent_WithActiveSoulSession_UsesIt()
+    public async Task CreateSessionAsync_SoulAgent_WithActiveSoulSession_UsesIndependentHeartbeatSession()
     {
         var agentId = AgentId.From("agent-a");
         var soulSessionId = SessionId.From("agent-a::soul::2026-05-18");
@@ -62,12 +62,53 @@ public sealed class HeartbeatTriggerTests
         var handle = new Mock<IAgentHandle>();
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = "HEARTBEAT_OK" });
-        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, soulSessionId, It.IsAny<CancellationToken>()))
+        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
 
         var sessionId = await trigger.CreateSessionAsync(agentId, "Heartbeat ping");
 
-        sessionId.ShouldBe(soulSessionId);
+        sessionId.ShouldNotBe(soulSessionId);
+        sessionId.Value.ShouldStartWith("heartbeat:");
+        existingSoulSession.GetHistorySnapshot().ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateSessionAsync_SoulAgent_UsesIndependentHeartbeatSessionRegardlessOfActivity(bool isRunning)
+    {
+        var agentId = AgentId.From("agent-a");
+        var soulSessionId = SessionId.From("agent-a::soul::2026-05-18");
+        var (trigger, mocks) = BuildTriggerWithMocks(soul: true);
+        var soulSession = new GatewaySession
+        {
+            SessionId = soulSessionId,
+            AgentId = agentId,
+            Status = GatewaySessionStatus.Active,
+            Metadata = new Dictionary<string, object?> { ["soulDate"] = "2026-05-18" }
+        };
+        soulSession.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "ongoing work" });
+        mocks.Sessions.Setup(s => s.ListAsync(agentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([soulSession]);
+        mocks.Sessions.Setup(s => s.GetOrCreateAsync(soulSessionId, agentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(soulSession);
+        var busyHandle = new Mock<IAgentHandle>(MockBehavior.Strict);
+        busyHandle.SetupGet(h => h.IsRunning).Returns(isRunning);
+        mocks.Supervisor.Setup(s => s.GetHandle(agentId, soulSessionId)).Returns(busyHandle.Object);
+        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, soulSessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(busyHandle.Object);
+        var captured = SetupPromptCapture(mocks, agentId);
+        // Keep the busy session strict so an accidental prompt cannot masquerade as success.
+        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, soulSessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(busyHandle.Object);
+
+        var sessionId = await trigger.CreateSessionAsync(agentId, "Heartbeat ping");
+
+        sessionId.ShouldNotBe(soulSessionId);
+        sessionId.Value.ShouldStartWith("heartbeat:");
+        captured.Prompt.ShouldBe("Heartbeat ping");
+        busyHandle.Verify(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        soulSession.GetHistorySnapshot().Select(e => e.Content).ShouldBe(["ongoing work"]);
     }
 
     [Fact]
@@ -129,26 +170,8 @@ public sealed class HeartbeatTriggerTests
     }
 
     // -----------------------------------------------------------------
-    // Phase 2 race-safety regression suite (#573)
-    //
-    // The shared `ExecuteInSessionAsync` runs both the soul path (which
-    // reuses today's active soul session — concurrent activity is real)
-    // and the heartbeat path (which mints a unique per-run sessionId, so
-    // no concurrent activity is possible). All three tests below drive
-    // the soul path to exercise the race window.
-    //
-    // Before #573 the trigger snapshotted history, appended the heartbeat
-    // user, awaited the (slow) LLM call, then on ack unconditionally
-    // called `session.ReplaceHistory(preSnapshot)` followed by
-    // `session.UpdatedAt = preTime`. Both writes were race-unsafe:
-    //  - HIGH-1: any AddEntry between snapshot and ReplaceHistory was
-    //    silently dropped by the apply.
-    //  - HIGH-2: any AddEntry between TryReplace and the UpdatedAt
-    //    assignment was overwritten with the stale pre-heartbeat time.
-    //
-    // Post-fix the trigger uses `AddEntryAndSnapshot` (atomic) and
-    // `TryReplaceHistoryFromSnapshot(..., restoreUpdatedAtOnApplied: ...)`
-    // (UpdatedAt restoration inside the runtime lock on Applied only).
+    // Transcript pruning remains safe on the isolated heartbeat session.
+    // These tests retain the concurrent append and compaction assertions.
     // -----------------------------------------------------------------
 
     [Fact]
@@ -158,7 +181,7 @@ public sealed class HeartbeatTriggerTests
         var sessionId = SessionId.From("agent-a::soul::2026-05-31");
         var preHeartbeatTime = new DateTimeOffset(2026, 5, 31, 12, 0, 0, TimeSpan.Zero);
 
-        var (trigger, mocks) = BuildTriggerWithMocks(soul: true);
+        var (trigger, mocks) = BuildTriggerWithMocks(soul: false);
         var soulSession = new GatewaySession
         {
             SessionId = sessionId,
@@ -177,13 +200,13 @@ public sealed class HeartbeatTriggerTests
 
         mocks.Sessions.Setup(s => s.ListAsync(agentId, It.IsAny<CancellationToken>()))
             .ReturnsAsync([soulSession]);
-        mocks.Sessions.Setup(s => s.GetOrCreateAsync(sessionId, agentId, It.IsAny<CancellationToken>()))
+        mocks.Sessions.Setup(s => s.GetOrCreateAsync(It.IsAny<SessionId>(), agentId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(soulSession);
 
         var handle = new Mock<IAgentHandle>();
         handle.Setup(h => h.PromptAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentResponse { Content = "HEARTBEAT_OK" });
-        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, sessionId, It.IsAny<CancellationToken>()))
+        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
 
         await trigger.CreateSessionAsync(agentId, "ping");
@@ -200,7 +223,7 @@ public sealed class HeartbeatTriggerTests
         var sessionId = SessionId.From("agent-a::soul::2026-05-31");
         var preHeartbeatTime = new DateTimeOffset(2026, 5, 31, 12, 0, 0, TimeSpan.Zero);
 
-        var (trigger, mocks) = BuildTriggerWithMocks(soul: true);
+        var (trigger, mocks) = BuildTriggerWithMocks(soul: false);
         var soulSession = new GatewaySession
         {
             SessionId = sessionId,
@@ -215,7 +238,7 @@ public sealed class HeartbeatTriggerTests
 
         mocks.Sessions.Setup(s => s.ListAsync(agentId, It.IsAny<CancellationToken>()))
             .ReturnsAsync([soulSession]);
-        mocks.Sessions.Setup(s => s.GetOrCreateAsync(sessionId, agentId, It.IsAny<CancellationToken>()))
+        mocks.Sessions.Setup(s => s.GetOrCreateAsync(It.IsAny<SessionId>(), agentId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(soulSession);
 
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -228,7 +251,7 @@ public sealed class HeartbeatTriggerTests
                 var content = await release.Task.WaitAsync(ct).ConfigureAwait(false);
                 return new AgentResponse { Content = content };
             });
-        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, sessionId, It.IsAny<CancellationToken>()))
+        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
 
         var triggerTask = trigger.CreateSessionAsync(agentId, "ping");
@@ -255,7 +278,7 @@ public sealed class HeartbeatTriggerTests
         var agentId = AgentId.From("agent-a");
         var sessionId = SessionId.From("agent-a::soul::2026-05-31");
 
-        var (trigger, mocks) = BuildTriggerWithMocks(soul: true);
+        var (trigger, mocks) = BuildTriggerWithMocks(soul: false);
         var soulSession = new GatewaySession
         {
             SessionId = sessionId,
@@ -271,7 +294,7 @@ public sealed class HeartbeatTriggerTests
 
         mocks.Sessions.Setup(s => s.ListAsync(agentId, It.IsAny<CancellationToken>()))
             .ReturnsAsync([soulSession]);
-        mocks.Sessions.Setup(s => s.GetOrCreateAsync(sessionId, agentId, It.IsAny<CancellationToken>()))
+        mocks.Sessions.Setup(s => s.GetOrCreateAsync(It.IsAny<SessionId>(), agentId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(soulSession);
 
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -284,7 +307,7 @@ public sealed class HeartbeatTriggerTests
                 var content = await release.Task.WaitAsync(ct).ConfigureAwait(false);
                 return new AgentResponse { Content = content };
             });
-        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, sessionId, It.IsAny<CancellationToken>()))
+        mocks.Supervisor.Setup(s => s.GetOrCreateAsync(agentId, It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(handle.Object);
 
         var triggerTask = trigger.CreateSessionAsync(agentId, "ping");
