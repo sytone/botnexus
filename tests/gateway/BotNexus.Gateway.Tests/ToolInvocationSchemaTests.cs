@@ -797,6 +797,163 @@ public sealed class ToolInvocationSchemaTests : IDisposable
             "the cursor must not spill payloads from earlier candidates; " + cursorDiagnostic);
     }
 
+    [Theory]
+    [InlineData(512)]
+    [InlineData(2048)]
+    public async Task CleanupLegacyToolPayloads_CandidateReaderBoundsTemporaryLogicalHighwater(int invocationCount)
+    {
+        const int batchSize = 17;
+        const int payloadBytes = 16384;
+        const int cacheKibibytes = 64;
+        // Simultaneous logical EOF is independent of cumulative temporary writes and
+        // physical allocation. Both allowances depend on the window, never the corpus.
+        const long candidateBudget = 4L * payloadBytes + 4096; // 69,632 bytes.
+        const long windowBudget = batchSize * candidateBudget; // 1,183,744 bytes.
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("logical-scratch-cost"), AgentId.From("agent"));
+        await store.SaveAsync(session);
+        using var observer = new Sessions.TemporaryFileLogicalFootprintVfs();
+        using (var lease = observer.OpenConnection(DatabasePath))
+        {
+            // Trusted borrow: all commands/readers and native observations stay inside
+            // this lease. Only the lease owns connection disposal; no raw resources escape.
+            var connection = lease.Connection;
+            observer.VerifySameNativeLibrary(connection);
+            var handle = connection.Handle ?? throw new InvalidOperationException("SQLite connection must be open.");
+            var sqliteVersion = SQLitePCL.raw.sqlite3_libversion_number();
+            sqliteVersion.ShouldBe(3053003, "exercise the pinned SQLite 3.53.3 native library");
+            _ = ReadTemporaryWriteBytes(handle, reset: true);
+            ReadTemporaryWriteBytes(handle).ShouldBe(0);
+            await using (var configure = connection.CreateCommand())
+            {
+                configure.CommandText = $"PRAGMA temp_store=FILE; PRAGMA main.cache_size=-{cacheKibibytes}; PRAGMA threads=0;";
+                await configure.ExecuteNonQueryAsync();
+            }
+            (await ScalarLongAsync(connection, "PRAGMA temp_store")).ShouldBe(1);
+            (await ScalarLongAsync(connection, "PRAGMA main.cache_size")).ShouldBe(-cacheKibibytes);
+            (await ScalarLongAsync(connection, "PRAGMA threads")).ShouldBe(0);
+            _output.WriteLine($"sqlite_version={sqliteVersion}, corpus={invocationCount}, window={batchSize}, payload_bytes={payloadBytes}, temp_store=1, main_cache_kibibytes={cacheKibibytes}, sorter_threads=0");
+
+            await using (var seed = connection.CreateCommand())
+            {
+                seed.CommandText = """
+                    WITH RECURSIVE sequence(value) AS (
+                        SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < $count)
+                    INSERT INTO tool_invocations(session_id,tool_call_id,arguments_json,status,is_error,result_content,retention_state)
+                    SELECT 'logical-scratch-cost','call-' || value,'{}','success',0,$payload,'hot' FROM sequence;
+                    INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,tool_args,message_kind,tool_invocation_id)
+                    SELECT session_id,'tool','start','a',tool_call_id,'{}','tool-start',id
+                    FROM tool_invocations ORDER BY id DESC;
+                    INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,message_kind,tool_invocation_id)
+                    SELECT session_id,'tool',$payload,'b',tool_call_id,'tool-result',id
+                    FROM tool_invocations ORDER BY id DESC;
+                    """;
+                seed.Parameters.AddWithValue("$count", invocationCount);
+                seed.Parameters.AddWithValue("$payload", new string('x', payloadBytes));
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            observer.EnsureValid();
+            observer.CurrentOpenTemporaryLogicalBytes.ShouldBe(0);
+            observer.ScratchCloseCount.ShouldBe(observer.ScratchOpenCount);
+            observer.Reset();
+            _ = ReadTemporaryWriteBytes(handle, reset: true);
+            ReadTemporaryWriteBytes(handle).ShouldBe(0);
+            observer.PeakOpenTemporaryLogicalBytes.ShouldBe(0);
+            var controlRows = 0;
+            await using (var control = connection.CreateCommand())
+            {
+                // Deliberately non-index order, carrying payload through a real sorter.
+                // This is a spill control, not a copy of the production candidate SQL.
+                control.CommandText = """
+                    SELECT content FROM session_history
+                    WHERE message_kind='tool-result'
+                    ORDER BY -tool_invocation_id
+                    """;
+                await using var reader = await control.ExecuteReaderAsync();
+                while (await reader.ReadAsync()) controlRows++;
+            }
+            observer.EnsureValid();
+            var controlWrites = ReadTemporaryWriteBytes(handle);
+            var controlPeak = observer.PeakOpenTemporaryLogicalBytes;
+            var controlDiagnostic = $"phase=spill-control, sqlite_version={sqliteVersion}, corpus={invocationCount}, window={batchSize}, cursor=none, rows={controlRows}, cumulative_temporary_write_bytes={controlWrites}, peak_open_temporary_logical_bytes={controlPeak}, current_open_temporary_logical_bytes={observer.CurrentOpenTemporaryLogicalBytes}, scratch_opens={observer.ScratchOpenCount}, scratch_closes={observer.ScratchCloseCount}, flags={string.Join(',', observer.ScratchFlags)}, budget={windowBudget}";
+            _output.WriteLine(controlDiagnostic);
+            controlRows.ShouldBe(invocationCount, controlDiagnostic);
+            observer.ScratchOpenCount.ShouldBeGreaterThan(0, controlDiagnostic);
+            controlPeak.ShouldBeGreaterThan(windowBudget,
+                "the logical EOF observer must detect a real whole-corpus spill; " + controlDiagnostic);
+            controlWrites.ShouldBeGreaterThan(windowBudget,
+                "the independent cumulative-write counter must detect the same spill; " + controlDiagnostic);
+            observer.CurrentOpenTemporaryLogicalBytes.ShouldBe(0, controlDiagnostic);
+            observer.ScratchCloseCount.ShouldBe(observer.ScratchOpenCount, controlDiagnostic);
+
+            var readWindow = typeof(LegacyToolPayloadCleanup).GetMethod("ReadCandidateWindow",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            readWindow.ShouldNotBeNull();
+            var statements = new List<string>();
+            var priorWrites = controlWrites;
+            foreach (var (cursor, expectedRows, budget) in new[]
+            {
+                (0L, batchSize, windowBudget),
+                ((long)invocationCount - 1, 1, candidateBudget),
+                ((long)invocationCount, 0, candidateBudget)
+            })
+            {
+                // Reset only after every scratch file has closed. Prove a clean epoch
+                // separately for logical residency and the cumulative-write counter.
+                observer.EnsureValid();
+                observer.CurrentOpenTemporaryLogicalBytes.ShouldBe(0);
+                observer.ScratchCloseCount.ShouldBe(observer.ScratchOpenCount);
+                observer.Reset();
+                observer.PeakOpenTemporaryLogicalBytes.ShouldBe(0);
+                observer.ScratchOpenCount.ShouldBe(0);
+                observer.ScratchCloseCount.ShouldBe(0);
+                ReadTemporaryWriteBytes(handle, reset: true).ShouldBe(priorWrites);
+                ReadTemporaryWriteBytes(handle).ShouldBe(0);
+
+                object? window;
+                SQLitePCL.raw.sqlite3_trace(handle,
+                    new SQLitePCL.strdelegate_trace((_, sql) => statements.Add(sql)), null);
+                try
+                {
+                    // Execute the actual private reader, never a copied SQL approximation.
+                    window = readWindow.Invoke(null, [connection, batchSize, cursor]);
+                }
+                finally
+                {
+                    SQLitePCL.raw.sqlite3_trace(handle, (SQLitePCL.strdelegate_trace?)null, null);
+                }
+                var candidates = window as System.Collections.ICollection
+                    ?? throw new InvalidOperationException("Candidate reader must return a collection.");
+                observer.EnsureValid();
+                var writes = ReadTemporaryWriteBytes(handle);
+                var peak = observer.PeakOpenTemporaryLogicalBytes;
+                var diagnostic = $"phase=actual-reader, sqlite_version={sqliteVersion}, corpus={invocationCount}, window={batchSize}, cursor={cursor}, rows={candidates.Count}, cumulative_temporary_write_bytes={writes}, peak_open_temporary_logical_bytes={peak}, current_open_temporary_logical_bytes={observer.CurrentOpenTemporaryLogicalBytes}, scratch_opens={observer.ScratchOpenCount}, scratch_closes={observer.ScratchCloseCount}, flags={string.Join(',', observer.ScratchFlags)}, budget={budget}";
+                _output.WriteLine(diagnostic);
+                candidates.Count.ShouldBe(expectedRows, diagnostic);
+                peak.ShouldBeLessThanOrEqualTo(budget,
+                    "candidate discovery must bound simultaneous temporary logical EOF before payload aggregation; " + diagnostic);
+                writes.ShouldBeLessThanOrEqualTo(budget,
+                    "cumulative temporary writes remain a separate bounded metric; " + diagnostic);
+                observer.CurrentOpenTemporaryLogicalBytes.ShouldBe(0, diagnostic);
+                observer.ScratchCloseCount.ShouldBe(observer.ScratchOpenCount, diagnostic);
+                priorWrites = writes;
+            }
+
+            // Explain only after all measured epochs; use the exact traced production
+            // statements, so diagnostics cannot silently drift to a test-owned query.
+            statements.Count.ShouldBe(3);
+            foreach (var statement in statements)
+            {
+                var plan = await ReadStringsAsync(connection, "EXPLAIN QUERY PLAN " + statement, ordinal: 3);
+                _output.WriteLine($"sqlite_version={sqliteVersion}, corpus={invocationCount}, actual production statement: {statement}; plan: {string.Join("; ", plan)}");
+            }
+        }
+        observer.ActiveConnectionCount.ShouldBe(0);
+        observer.OpenFileCount.ShouldBe(0);
+        observer.EnsureValid();
+    }
+
     private long ReadTemporaryWriteBytes(SQLitePCL.sqlite3 handle, bool reset = false)
     {
         // SQLITE_DBSTATUS_TEMPBUF_SPILL=13 reports cumulative temporary-file WRITE
