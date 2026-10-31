@@ -92,6 +92,12 @@ for non-portal changes and `full` when the browser/E2E projects genuinely need t
 
 Results are downloaded to `artifacts/azure-buildtest/<run-id>/`. The script returns a failing exit status when the Azure execution or test process fails.
 
+Bounded and diagnostic child processes explicitly use the caller's PowerShell
+filesystem location as their working directory. The runner selects the verified
+source root before launching them. This also applies to the CORE helper used by
+GitHub Actions: a different process-wide current directory must not make relative
+paths such as `tests/dirs.proj` appear missing.
+
 ### Phase timings
 
 Each run records how long every phase took, in `runner-timing.log` and in the `timings` object inside `result.json` (#2889):

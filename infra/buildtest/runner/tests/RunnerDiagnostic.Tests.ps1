@@ -33,6 +33,25 @@ try {
     Check ($echo.ExitCode -eq 0 -and -not $echo.TimedOut) 'Synthetic argument child failed.'
     $actual = @(Get-Content -LiteralPath (Join-Path $root 'echo.log') -Raw | ConvertFrom-Json)
     Check (($actual | ConvertTo-Json -Compress) -ceq ($argsList | ConvertTo-Json -Compress)) "Arguments were split or changed. actual=$($actual | ConvertTo-Json -Compress) expected=$($argsList | ConvertTo-Json -Compress)"
+    $sourceDirectory = Join-Path $root 'source with spaces'
+    [IO.Directory]::CreateDirectory($sourceDirectory) | Out-Null
+    Set-Content -LiteralPath (Join-Path $sourceDirectory 'relative-probe.ps1') -Value 'Write-Output diagnostic-source-directory'
+    $savedProcessDirectory = [Environment]::CurrentDirectory
+    Push-Location $sourceDirectory
+    try {
+        [Environment]::CurrentDirectory = $root
+        $directoryLog = Join-Path $root 'directory.log'
+        $directoryRun = Invoke-DiagnosticProcess -FilePath 'pwsh' `
+            -ArgumentList @('-NoProfile', '-File', 'relative-probe.ps1') `
+            -LogPath $directoryLog -TimeoutSeconds 20 -EvidenceRoot $root `
+            -CaptureReserveSeconds 8 -DumpTimeoutSeconds 3 -KillReserveSeconds 2 -PollMilliseconds 50
+    }
+    finally {
+        [Environment]::CurrentDirectory = $savedProcessDirectory
+        Pop-Location
+    }
+    Check ($directoryRun.ExitCode -eq 0 -and -not $directoryRun.TimedOut -and $directoryRun.CleanupComplete) 'Diagnostic child did not use the caller source directory.'
+    Check ((Get-Content -LiteralPath $directoryLog -Raw).Contains('diagnostic-source-directory')) 'Diagnostic relative child path did not execute.'
     Add-Type -Path (Join-Path $repo 'tools/BotNexus.TestEventCollector/EventJournal.cs')
     $journalPath = Join-Path $root 'events.jsonl'
     $journal = [BotNexus.TestEventCollector.EventJournal]::new($journalPath)

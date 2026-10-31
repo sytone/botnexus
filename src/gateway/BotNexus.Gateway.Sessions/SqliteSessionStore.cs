@@ -188,6 +188,15 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
     public LegacyToolInvocationBackfillReport BackfillLegacyToolInvocations(int batchSize) =>
         LegacyToolInvocationBackfill.RunConnectionString(_connectionString, batchSize, commit: true);
 
+    /// <summary>Resumes a finite historical backfill using a transactionally persisted checkpoint.</summary>
+    public LegacyToolInvocationBackfillReport ResumeLegacyToolBackfill(int batchSize) =>
+        LegacyToolInvocationBackfill.Resume(_connectionString, batchSize);
+
+    /// <summary>Resumes bounded payload and orphan passes without revisiting completed windows.</summary>
+    public LegacyToolPayloadCleanupReport ResumeLegacyToolPayloadCleanup(int batchSize) =>
+        LegacyToolPayloadCleanup.Resume(_connectionString, batchSize,
+            sessionId => _cache.Remove(SessionId.From(sessionId)));
+
     /// <summary>Commits one bounded cleanup batch after legacy rows have been normalized.</summary>
     public LegacyToolPayloadCleanupReport CleanupLegacyToolPayloads(int batchSize, long afterInvocationId = 0)
     {
@@ -1924,6 +1933,19 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
+            CREATE TABLE IF NOT EXISTS legacy_tool_migration (
+                id INTEGER PRIMARY KEY CHECK (id=1),
+                phase INTEGER NOT NULL DEFAULT 0 CHECK (phase BETWEEN 0 AND 3),
+                history_boundary INTEGER NOT NULL,
+                history_cursor INTEGER NOT NULL DEFAULT 0,
+                invocation_boundary INTEGER NOT NULL DEFAULT 0,
+                cleanup_cursor INTEGER NOT NULL DEFAULT 0,
+                orphan_cursor INTEGER NOT NULL DEFAULT 0,
+                cleaned_invocations INTEGER NOT NULL DEFAULT 0,
+                protected_invocations INTEGER NOT NULL DEFAULT 0,
+                cleared_bytes INTEGER NOT NULL DEFAULT 0,
+                orphaned_invocations_deleted INTEGER NOT NULL DEFAULT 0
+            );
             CREATE TABLE IF NOT EXISTS tool_invocations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,

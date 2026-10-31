@@ -218,6 +218,7 @@ function New-DiagnosticOwnedProcess {
     $config | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath "$base.json" -Encoding utf8NoBOM
     $pwsh=(Get-Command pwsh -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $info=[Diagnostics.ProcessStartInfo]::new(); $info.UseShellExecute=$false; $info.RedirectStandardOutput=$true; $info.RedirectStandardError=$true
+    $info.WorkingDirectory=(Get-Location).ProviderPath
     if ($IsLinux) { $info.FileName=$setsid.Source; [void]$info.ArgumentList.Add('--'); [void]$info.ArgumentList.Add($pwsh) } else { $info.FileName=$pwsh }
     foreach ($a in @('-NoProfile','-File',(Join-Path $PSScriptRoot 'DiagnosticOwnedCommand.ps1'),"$base.json")) { [void]$info.ArgumentList.Add($a) }
     $process=[Diagnostics.Process]::new(); $process.StartInfo=$info; $job=$null

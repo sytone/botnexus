@@ -195,6 +195,49 @@ CREATE INDEX idx_sessions_created_at ON sessions(created_at);
 
 **Key behaviors:** Parameterized queries throughout, conflict-targeted upserts for the session row, JSON serialization for complex fields (`participants_json`, `metadata`), lazy schema initialization via `EnsureCreatedAsync`, and ISO 8601 date formatting. Session history lives in the separate `session_history` table and is append-oriented: an ordinary aggregate save inserts only the unpersisted tail. Explicit destructive mutations such as compaction projection or crash-sentinel cleanup reconcile rows by their durable `session_history.id`, preserving unchanged row identities and deleting only rows that were explicitly removed. Whole-session history deletion is reserved for deleting the session itself or repairing a dangling session whose owning conversation no longer exists. The existing `session.save` activity reports bounded `append`/`reconcile` mode plus numeric inserted, updated, and deleted row counts; no session or row identifier is added as a mutation tag.
 
+### Historical tool-payload migration
+
+For developers and operators investigating SQLite maintenance, the gateway's
+`LegacyToolInvocationBackfillHostedService` runs a finite migration after a one-minute startup
+delay. It pauses one second between bounded, 100-ID windows instead of using one large write
+transaction. The `legacy_tool_migration` row persists progress in the session database:
+
+| Phase | Work and checkpoint |
+| --- | --- |
+| `0` — backfill | Capture `history_boundary` once; seek forward through the partial index of unlinked tool rows using `history_cursor`. Normalize legacy rows and link each batch with one set-based update. Run-correlated rows are left unchanged but do not stall the cursor. |
+| `1` — payloads | Capture `invocation_boundary` when backfill ends. Scan primary-key windows up to that boundary using `cleanup_cursor`, including windows with no eligible payloads. |
+| `2` — orphans | Independently scan the same finite invocation range using `orphan_cursor`. Delete only invocations with neither an owning session nor linked history. |
+| `3` — complete | Stop maintenance. A restart reads the completion marker without rescanning transcript payloads. |
+
+Each checkpoint commits in the same transaction as its batch's changes. A failure rolls both
+back; the worker logs it and retries after five minutes. Maintenance connections use a
+one-second SQLite busy timeout rather than waiting behind foreground writes for the default
+timeout. This limits lock waiting, not total batch execution time: large individual payloads
+can still take longer to read and hash. Verification runs inside the bounded write transaction
+so a concurrent writer cannot change evidence between verification and clearing.
+
+Cleanup clears only redundant `tool_args` and tool-result `content` columns, in one set-based
+update over verified invocation IDs. Transcript rows, IDs, ordering, and invocation links
+remain. Exact session/call identity, start/result cardinality, arguments, timestamps, error
+state, UTF-8 byte count, and SHA-256 evidence must agree. Errors, incomplete/non-hot
+invocations, ambiguous pairs, and mismatches retain their historical data. Session cache
+entries are invalidated only after a successful cleanup commit.
+
+Batch logs include the next phase, both durable cursors, scanned/cleaned counts, protected
+candidate counts, bytes cleared, and orphans deleted. Persisted `cleaned_invocations`,
+`protected_invocations`, `cleared_bytes`, and `orphaned_invocations_deleted` accumulate
+committed results without running whole-database counts. Protected counts cover candidates
+that reached parity verification, not all retained history. Completion means the finite
+passes finished, **not** that protected payloads were deleted. New normalized writes do not
+extend the historical migration.
+
+The existing `botnexus debug sessions backfill-tool-invocations` command remains a separate
+one-shot backfill: preview is read-only; `--commit` applies one explicitly requested batch.
+It does not reset or advance the automatic migration checkpoint. Do not reset checkpoints
+to force deletion of protected data. Clearing payload columns frees reusable SQLite pages;
+it does not shrink the database file, run `VACUUM`, or guarantee that unrelated message
+timeouts disappear.
+
 ### History entry flags
 
 The `session_history` table stores the full transcript — *nothing is ever deleted by compaction*. Three boolean flags determine how the runtime interprets each entry:

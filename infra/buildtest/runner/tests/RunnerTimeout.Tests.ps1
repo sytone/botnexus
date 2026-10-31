@@ -252,6 +252,27 @@ try {
     $script:failures += "22: argv probe did not emit parseable JSON: $($_.Exception.Message)"
 }
 
+# 23. PowerShell location and the process-wide current directory can differ.
+$sourceDirectory = Join-Path $root 'source with spaces'
+New-Item -ItemType Directory -Path $sourceDirectory | Out-Null
+Set-Content -LiteralPath (Join-Path $sourceDirectory 'relative-probe.ps1') -Value 'Write-Output bounded-source-directory'
+$savedProcessDirectory = [Environment]::CurrentDirectory
+Push-Location $sourceDirectory
+try {
+    [Environment]::CurrentDirectory = $root
+    $directoryLog = Join-Path $root 'directory.log'
+    $directoryRun = Invoke-BoundedProcess -FilePath $pwshPath `
+        -ArgumentList @('-NoProfile', '-File', 'relative-probe.ps1') `
+        -LogPath $directoryLog -TimeoutSeconds 20 -PollMilliseconds 100
+    Assert-Equal 0 $directoryRun.ExitCode '23: relative child path did not resolve from the caller location.'
+    Assert-True ((Get-Content -LiteralPath $directoryLog -Raw) -match 'bounded-source-directory') `
+        '23: child did not execute the source-directory probe.'
+}
+finally {
+    [Environment]::CurrentDirectory = $savedProcessDirectory
+    Pop-Location
+}
+
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 
 if ($script:failures.Count) {

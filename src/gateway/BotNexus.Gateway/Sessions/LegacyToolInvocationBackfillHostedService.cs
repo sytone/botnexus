@@ -8,7 +8,7 @@ namespace BotNexus.Gateway.Sessions;
 
 /// <summary>
 /// Gradually normalizes legacy SQLite tool-call transcript rows after startup without delaying
-/// host readiness. Linked rows are the durable checkpoint, so restarts naturally resume the work.
+/// host readiness. Durable phase checkpoints prevent rescanning completed historical windows.
 /// </summary>
 public sealed class LegacyToolInvocationBackfillHostedService : BackgroundService
 {
@@ -34,8 +34,8 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
         IMetrics? metrics = null)
         : this(
             sessionStore,
-            static (store, batchSize) => store.BackfillLegacyToolInvocations(batchSize),
-            static (store, batchSize, afterInvocationId) => store.CleanupLegacyToolPayloads(batchSize, afterInvocationId),
+            static (store, batchSize) => store.ResumeLegacyToolBackfill(batchSize),
+            static (store, batchSize, _) => store.ResumeLegacyToolPayloadCleanup(batchSize),
             Task.Delay,
             metrics,
             logger)
@@ -75,23 +75,28 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
         }
 
         long cleanupCursor = 0;
+        var backfillComplete = false;
         while (!stoppingToken.IsCancellationRequested)
         {
             TimeSpan? nextDelay = null;
             try
             {
-                LegacyToolInvocationBackfillReport report;
-                try
+                if (!backfillComplete)
                 {
-                    report = _runBatch(_store, BatchSize);
+                    LegacyToolInvocationBackfillReport report;
+                    try
+                    {
+                        report = _runBatch(_store, BatchSize);
+                    }
+                    catch
+                    {
+                        _metrics.RecordFailure();
+                        throw;
+                    }
+                    _metrics.RecordCommitted(report);
+                    backfillComplete = !report.HasMore;
                 }
-                catch
-                {
-                    _metrics.RecordFailure();
-                    throw;
-                }
-                _metrics.RecordCommitted(report);
-                if (report.HasMore)
+                if (!backfillComplete)
                 {
                     nextDelay = BatchDelay;
                 }
@@ -110,12 +115,16 @@ public sealed class LegacyToolInvocationBackfillHostedService : BackgroundServic
                     cleanupCursor = cleanup.LastScannedInvocationId;
                     _cleanupMetrics.RecordCommitted(cleanup);
                     _logger.LogInformation(
-                        "Legacy tool payload cleanup batch scanned {ScannedInvocations} invocation(s), cleaned {CleanedInvocations} invocation(s) and {CleanedRows} row(s), cleared {ClearedBytes} byte(s), and removed {OrphanedInvocationsDeleted} orphaned invocation(s); more candidate work: {HasMore}.",
+                        "Legacy tool payload cleanup batch scanned {ScannedInvocations} invocation(s), cleaned {CleanedInvocations} invocation(s) and {CleanedRows} row(s), cleared {ClearedBytes} byte(s), protected {ProtectedInvocations} candidate(s), and removed {OrphanedInvocationsDeleted} orphaned invocation(s); phase: {Phase}, durable cleanup cursor: {CleanupCursor}, orphan cursor: {OrphanCursor}; more migration work: {HasMore}.",
                         cleanup.ScannedInvocations,
                         cleanup.CleanedInvocations,
                         cleanup.CleanedRows,
                         cleanup.ClearedBytes,
+                        cleanup.ProtectedInvocations,
                         cleanup.OrphanedInvocationsDeleted,
+                        cleanup.Phase,
+                        cleanupCursor,
+                        cleanup.LastScannedOrphanId,
                         cleanup.HasMore);
                     if (!cleanup.HasMore)
                         return;
