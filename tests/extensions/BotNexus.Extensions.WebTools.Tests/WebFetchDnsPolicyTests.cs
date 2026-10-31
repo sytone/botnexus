@@ -477,6 +477,103 @@ public sealed class WebFetchDnsPolicyTests
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Harness_CancelledResolverBeforePublication_WaitsForActualTask(bool completesSynchronously)
+    {
+        var releaseResolver = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var drained = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var beforePublication = new TaskCompletionSource<Task<IPAddress[]>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var publicationReleased = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var publish = new ManualResetEventSlim();
+        using var cancellation = new CancellationTokenSource();
+        await using var harness = new Harness(async (_, token) =>
+        {
+            var observedCancellation = false;
+            try
+            {
+                token.CanBeCanceled.ShouldBeTrue();
+                token.IsCancellationRequested.ShouldBeFalse("DNS must begin before caller cancellation");
+                cancellation.Cancel();
+                token.IsCancellationRequested.ShouldBeTrue("caller cancellation must reach DNS synchronously");
+                if (!completesSynchronously)
+                    await releaseResolver.Task;
+                await Task.Delay(Timeout.Infinite, token);
+                return [];
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                observedCancellation = true;
+                throw;
+            }
+            finally
+            {
+                drained.TrySetResult(observedCancellation);
+            }
+        }, beforeResolutionPublication: resolution =>
+        {
+            // Hold the synchronous wrapper, not a replacement resolver Task. The actual Task
+            // can cancel and drain while the queue is still empty on either completion path.
+            beforePublication.TrySetResult(resolution);
+            try
+            {
+                publish.Wait(TimeSpan.FromSeconds(30)).ShouldBeTrue("the test must release task publication");
+            }
+            finally
+            {
+                publicationReleased.TrySetResult(true);
+            }
+        });
+        // The controlled wrapper may block even when the resolver completes synchronously.
+        // Keep that work off this test continuation so it can explicitly release publication.
+        var pending = Task.Run(() => harness.FetchAsync(Origin, cancellation.Token));
+        try
+        {
+            var resolution = await beforePublication.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            resolution.IsCompleted.ShouldBe(completesSynchronously,
+                "the two cases must exercise completed-return and suspended resolver paths");
+            releaseResolver.TrySetResult(true);
+            await Should.ThrowAsync<OperationCanceledException>(async () =>
+                await resolution.WaitAsync(TimeSpan.FromSeconds(30)));
+            (await drained.Task.WaitAsync(TimeSpan.FromSeconds(30))).ShouldBeTrue();
+            // Caller cancellation can return before the held connect callback publishes.
+            var text = await pending.WaitAsync(TimeSpan.FromSeconds(30));
+            harness.ResolutionTasks.ShouldBeEmpty("publication is explicitly held after resolver drain");
+
+            var assertions = AssertResolverCancellationAsync(harness);
+            try
+            {
+                // All resolver work is terminal and this async helper has run synchronously
+                // to its first incomplete await. No elapsed-time observation proves absence:
+                // removing the publication await faults at the empty queue before returning.
+                assertions.IsCompleted.ShouldBeFalse("resolver assertions must wait for task publication");
+            }
+            finally
+            {
+                publish.Set();
+                // Observe a missing-wait mutation's empty-queue failure as well as success.
+                await assertions.WaitAsync(TimeSpan.FromSeconds(30));
+            }
+            harness.ResolutionTasks.ShouldHaveSingleItem().ShouldBeSameAs(resolution);
+            text.ShouldBe("Request cancelled.");
+            text.ShouldNotContain("timed out", Case.Insensitive);
+            text.ShouldNotContain("HTTP error", Case.Insensitive);
+            text.ShouldNotContain("DNS", Case.Insensitive);
+            text.ShouldNotContain(Body);
+            harness.Resolutions.ShouldBe(["origin.policy.test"]);
+            harness.Fixture.Endpoints.ShouldBeEmpty();
+            harness.Fixture.Requests.ShouldBeEmpty();
+        }
+        finally
+        {
+            releaseResolver.TrySetResult(true);
+            publish.Set();
+            await pending.WaitAsync(TimeSpan.FromSeconds(30));
+            await publicationReleased.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+    }
+
     private static async Task AssertDnsCancellationAsync(Action onEntered, Task releaseResolver)
     {
         var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -516,9 +613,7 @@ public sealed class WebFetchDnsPolicyTests
         var pending = harness.FetchAsync(Origin, cancellation.Token);
         // Deadlines diagnose a stuck fixture only; no elapsed-time condition drives success.
         await Task.WhenAll(drained.Task, pending).WaitAsync(TimeSpan.FromSeconds(30));
-        var resolution = harness.ResolutionTasks.ShouldHaveSingleItem();
-        await Should.ThrowAsync<OperationCanceledException>(async () => await resolution);
-        resolution.IsCanceled.ShouldBeTrue("the actual resolver task must be terminal before checking the connector");
+        await AssertResolverCancellationAsync(harness);
         (await drained.Task).ShouldBeTrue("the resolver must unwind through actual cancellation");
         cancelled.Task.IsCompletedSuccessfully.ShouldBeTrue("DNS must observe caller cancellation before draining");
         await cancelled.Task;
@@ -532,6 +627,16 @@ public sealed class WebFetchDnsPolicyTests
         harness.Resolutions.ShouldBe(["origin.policy.test"]);
         harness.Fixture.Endpoints.ShouldBeEmpty();
         harness.Fixture.Requests.ShouldBeEmpty();
+    }
+
+    private static async Task AssertResolverCancellationAsync(Harness harness)
+    {
+        // Resolver drain and caller completion do not order the wrapper's queue write.
+        // Publication is signalled only after the actual resolver Task has been enqueued.
+        await harness.ResolutionPublished.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var resolution = harness.ResolutionTasks.ShouldHaveSingleItem();
+        await Should.ThrowAsync<OperationCanceledException>(async () => await resolution);
+        resolution.IsCanceled.ShouldBeTrue("the actual resolver task must be terminal before checking the connector");
     }
 
     [Fact]
@@ -598,6 +703,7 @@ public sealed class WebFetchDnsPolicyTests
     {
         public ConcurrentQueue<string> Resolutions { get; } = new();
         public ConcurrentQueue<Task<IPAddress[]>> ResolutionTasks { get; } = new();
+        public TaskCompletionSource<bool> ResolutionPublished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public LoopbackFixture Fixture { get; } = new();
         public DelegatingHandler Transport { get; }
         private WebFetchTool Tool { get; }
@@ -606,7 +712,8 @@ public sealed class WebFetchDnsPolicyTests
             Func<string, CancellationToken, Task<IPAddress[]>> resolver,
             bool allowPrivate = false,
             IReadOnlyList<string>? blockedHosts = null,
-            IWebProxy? proxy = null)
+            IWebProxy? proxy = null,
+            Action<Task<IPAddress[]>>? beforeResolutionPublication = null)
         {
             // Bind before opening any listener, so RED is a precise missing-guard assertion.
             var type = RequireTransportType();
@@ -621,7 +728,9 @@ public sealed class WebFetchDnsPolicyTests
             {
                 Resolutions.Enqueue(host);
                 var pending = resolver(host, token);
+                beforeResolutionPublication?.Invoke(pending);
                 ResolutionTasks.Enqueue(pending);
+                ResolutionPublished.TrySetResult(true);
                 return pending;
             };
             Func<IPEndPoint, CancellationToken, ValueTask<Stream>> connect = Fixture.ConnectAsync;
