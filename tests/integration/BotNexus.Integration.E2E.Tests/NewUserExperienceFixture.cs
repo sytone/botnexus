@@ -26,7 +26,7 @@ namespace BotNexus.Integration.E2E.Tests;
 /// tests can skip gracefully and the install/provisioning diagnostics surface
 /// in test output rather than as opaque collection-fixture exceptions.
 /// </summary>
-public sealed class NewUserExperienceFixture : IAsyncLifetime
+public sealed partial class NewUserExperienceFixture : IAsyncLifetime
 {
     private const string PackageId = "BotNexus.Cli";
     private static readonly TimeSpan PackTimeout = TimeSpan.FromMinutes(5);
@@ -251,6 +251,9 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
                 return;
             }
 
+            if (QuickModelAcceptance)
+                await ConfigureQuickModelAcceptanceAsync();
+
             GatewayPort = PickFreePort();
             Log.Add($"[gateway] picked port {GatewayPort}");
 
@@ -263,6 +266,8 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
                 ["BOTNEXUS_HOME"] = Home,
                 ["BOTNEXUS_MOCK_CATALOG"] = CatalogPath,
             };
+            if (QuickModelAcceptance)
+                env["BOTNEXUS_DATA_DIR"] = AcceptanceData;
             _gateway = ProcessRunner.StartBackground(
                 CliExecutablePath,
                 $"gateway start --attached --skip-build --source \"{repoRoot}\" --target \"{Home}\" --port {GatewayPort}",
@@ -290,7 +295,9 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        if (_gateway is not null)
+        if (QuickModelAcceptance && _gateway is not null)
+            await StopQuickModelGatewayAsync();
+        else if (_gateway is not null)
             await _gateway.DisposeAsync();
         try
         {
@@ -398,6 +405,11 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
         {
             ["BOTNEXUS_HOME"] = null,
         };
+        if (QuickModelAcceptance)
+        {
+            env["BOTNEXUS_HOME"] = Home;
+            env["BOTNEXUS_DATA_DIR"] = AcceptanceData;
+        }
         Log.Add($"[cli] {verb} {args}");
         var result = await ProcessRunner.RunAsync(
             CliExecutablePath, $"{verb} {args}", environment: env, timeout: CliTimeout);
@@ -416,6 +428,11 @@ public sealed class NewUserExperienceFixture : IAsyncLifetime
     private async Task<bool> AgentExistsAsync(string id)
     {
         var env = new Dictionary<string, string?> { ["BOTNEXUS_HOME"] = null };
+        if (QuickModelAcceptance)
+        {
+            env["BOTNEXUS_HOME"] = Home;
+            env["BOTNEXUS_DATA_DIR"] = AcceptanceData;
+        }
         var result = await ProcessRunner.RunAsync(
             CliExecutablePath, $"agent show {id} --json --target \"{Home}\"",
             environment: env, timeout: CliTimeout);

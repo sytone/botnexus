@@ -41,10 +41,14 @@
                                 <label>@field.Label</label>
                                 @if (field.Key == AgentConfigSnapshotBuilder.ModelKey && _availableModels.Count > 0)
                                 {
-                                    <select class="config-select" @bind="_selectedModel">
+                                    <select class="config-select" aria-label="Model" @bind="_selectedModel" disabled="@_saving">
+                                        @if (!string.IsNullOrEmpty(_selectedModel) && !_availableModels.Any(model => model.ModelId == _selectedModel))
+                                        {
+                                            <option value="@_selectedModel" disabled>@_selectedModel (not currently available)</option>
+                                        }
                                         @foreach (var model in _availableModels)
                                         {
-                                            <option value="@model">@model</option>
+                                            <option value="@(model.ModelId)">@(model.Name) (@(model.ModelId))</option>
                                         }
                                     </select>
                                 }
@@ -113,7 +117,12 @@
 
                     @if (_error is not null)
                     {
-                        <div class="config-error">@_error</div>
+                        <div class="config-error" role="alert">@_error</div>
+                    }
+
+                    @if (_modelSaveStatus is not null)
+                    {
+                        <div role="status">@_modelSaveStatus</div>
                     }
 
                     @* Per-session tool overlay (#3271). Sits alongside the model/thinking/context
@@ -147,7 +156,7 @@
                             <Icon Name="copy" Size="14" Class="bn-icon-inherit" /><text>Copy</text>
                         }
                     </button>
-                    @if (_availableModels.Count > 0 && _selectedModel != _snapshot?.Field(AgentConfigSnapshotBuilder.ModelKey)?.Value)
+                    @if (_availableModels.Count > 0 && !string.IsNullOrEmpty(_selectedModel) && _selectedModel != _savedModel)
                     {
                         <button class="config-save-btn" @onclick="SaveModel" disabled="@_saving">
                             @(_saving ? "Saving…" : "Save Model")
@@ -208,8 +217,10 @@
     private AgentConfigSnapshot? _snapshot;
 
     private AgentDescriptorDto? _descriptor;
-    private List<string> _availableModels = [];
+    private List<AgentModelChoice> _availableModels = [];
     private string _selectedModel = "";
+    private string? _savedModel;
+    private string? _modelSaveStatus;
     private Dictionary<string, bool> _inheritedFields = new(StringComparer.OrdinalIgnoreCase);
     private List<ExtensionDetailDto> _toolExtensions = [];
     private readonly Dictionary<string, JsonObject> _extensionValues = new(StringComparer.OrdinalIgnoreCase);
@@ -236,10 +247,15 @@
 
     public async Task Open()
     {
+        var hadModelSaveStatus = _modelSaveStatus is not null;
         _showPanel = true;
         _loading = true;
         _error = null;
         _copied = false;
+        _modelSaveStatus = null;
+        _availableModels = [];
+        _selectedModel = "";
+        _savedModel = null;
         StateHasChanged();
 
         try
@@ -255,7 +271,25 @@
                 // why the shared type itself cannot be referenced from a WASM client.
                 _descriptor = await Http.GetFromJsonAsync<AgentDescriptorDto>($"{apiBase}agents/{AgentId}");
                 _selectedModel = _descriptor?.ModelId ?? "";
+                _savedModel = _descriptor?.ModelId;
                 LoadExtensionValues();
+                // Reopen must not replace a confirmed authored selection with a stale registry value.
+                try
+                {
+                    var authored = await Http.GetFromJsonAsync<AuthoredModelConfiguration>($"{apiBase}agents/{Uri.EscapeDataString(AgentId)}/configuration");
+                    if (!string.IsNullOrEmpty(authored?.Model)
+                        && string.Equals(authored.Provider, _descriptor?.ApiProvider, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _selectedModel = authored.Model;
+                        _savedModel = authored.Model;
+                        if (hadModelSaveStatus || authored.Model != _descriptor?.ModelId)
+                            _modelSaveStatus = ModelSaveStatus(authored, _descriptor);
+                    }
+                }
+                catch
+                {
+                    // Read-only display still works when authored configuration is unavailable.
+                }
             }
             catch
             {
@@ -278,8 +312,13 @@
 
             try
             {
-                var models = await Http.GetFromJsonAsync<List<string>>($"{apiBase}agents/{AgentId}/models");
-                _availableModels = models ?? [];
+                var models = await Http.GetFromJsonAsync<List<AgentModelChoice>>($"{apiBase}agents/{Uri.EscapeDataString(AgentId)}/models");
+                // The quick editor changes only the model, never the authored provider instance.
+                _availableModels = (models ?? [])
+                    .Where(model => !string.IsNullOrWhiteSpace(model.ModelId)
+                        && string.Equals(model.ProviderInstance ?? model.Provider, _descriptor?.ApiProvider, StringComparison.OrdinalIgnoreCase))
+                    .DistinctBy(model => model.ModelId)
+                    .ToList();
             }
             catch
             {
@@ -559,38 +598,101 @@
 
     private async Task SaveModel()
     {
-        if (string.IsNullOrEmpty(_selectedModel) || RestClient.ApiBaseUrl is null)
+        if (_saving || string.IsNullOrEmpty(_selectedModel) || RestClient.ApiBaseUrl is not { } apiBase)
             return;
+        if (!_availableModels.Any(model => model.ModelId == _selectedModel))
+        {
+            _error = "Select an allowed model for this agent's provider.";
+            return;
+        }
 
+        var selected = _selectedModel;
+        var provider = _descriptor?.ApiProvider;
+        var agentPath = $"{apiBase}agents/{Uri.EscapeDataString(AgentId)}";
         _saving = true;
         _error = null;
+        _modelSaveStatus = null;
+        var persisted = false;
 
         try
         {
-            var payload = new { model = _selectedModel };
-            var response = await Http.PutAsJsonAsync($"{RestClient.ApiBaseUrl}agents/{AgentId}", payload);
-            if (response.IsSuccessStatusCode)
+            // Presence-aware edit: do not round-trip the lossy descriptor or send unrelated fields.
+            using var response = await Http.PatchAsJsonAsync($"{agentPath}/configuration", new { model = selected });
+            if (!response.IsSuccessStatusCode)
             {
-                if (_descriptor is not null)
-                {
-                    _descriptor = _descriptor with { ModelId = _selectedModel };
-                    RebuildSnapshot(_context, _contextUnavailable);
-                }
+                _error = $"Save failed: {await ReadModelSaveErrorAsync(response)}";
+                return;
             }
-            else
+
+            var authored = await Http.GetFromJsonAsync<AuthoredModelConfiguration>($"{agentPath}/configuration");
+            if (authored?.Model != selected || !string.Equals(authored.Provider, provider, StringComparison.OrdinalIgnoreCase))
             {
-                _error = $"Save failed: {response.StatusCode}";
+                _error = "Save readback did not match the selected model and provider. Reopen configuration to check persisted state.";
+                return;
             }
+            persisted = true;
+            _savedModel = authored.Model;
+
+            // The canonical save is not a readiness acknowledgement: registry reload is debounced.
+            var effective = await Http.GetFromJsonAsync<AgentDescriptorDto>(agentPath);
+            if (effective is not null)
+            {
+                _descriptor = effective;
+                await ComputeInheritanceBadgesAsync(apiBase);
+                RebuildSnapshot(_context, _contextUnavailable);
+            }
+            _modelSaveStatus = ModelSaveStatus(authored, effective);
         }
         catch (Exception ex)
         {
-            _error = $"Save failed: {ex.Message}";
+            _error = persisted
+                ? $"Model saved, but effective configuration readback failed: {ex.Message}. Reopen configuration to refresh."
+                : $"Save or persisted readback failed: {ex.Message}. Reopen configuration to check persisted state before retrying.";
         }
         finally
         {
             _saving = false;
         }
     }
+
+    private static async Task<string> ReadModelSaveErrorAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            var root = document.RootElement;
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array)
+                {
+                    var messages = errors.EnumerateArray()
+                        .Where(error => error.ValueKind == JsonValueKind.String)
+                        .Select(error => error.GetString())
+                        .Where(error => !string.IsNullOrWhiteSpace(error));
+                    var message = string.Join("; ", messages);
+                    if (message.Length > 0) return message;
+                }
+                foreach (var key in new[] { "error", "detail", "title" })
+                    if (root.TryGetProperty(key, out var error) && error.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(error.GetString()))
+                        return error.GetString() ?? response.StatusCode.ToString();
+            }
+        }
+        catch (JsonException)
+        {
+            // Non-JSON failures still carry the HTTP status; never render raw response markup.
+        }
+        return response.StatusCode.ToString();
+    }
+
+    private static string ModelSaveStatus(AuthoredModelConfiguration authored, AgentDescriptorDto? effective) =>
+        effective is not null && effective.ModelId == authored.Model
+            && string.Equals(effective.ApiProvider, authored.Provider, StringComparison.OrdinalIgnoreCase)
+            ? $"Saved model {authored.Model}; effective configuration matches. Existing sessions may retain their current model."
+            : $"Saved model {authored.Model}; runtime update pending (current model: {effective?.ModelId ?? "unavailable"}). Reopen configuration to refresh. Existing sessions may retain their current model.";
+
+    private sealed record AgentModelChoice(string ModelId, string Name, string Provider, string? ProviderInstance = null);
+    private sealed record AuthoredModelConfiguration(string? Model, string? Provider);
 
     private sealed class EffectiveAgentConfigResponse
     {

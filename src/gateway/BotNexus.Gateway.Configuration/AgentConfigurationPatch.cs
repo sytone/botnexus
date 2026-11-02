@@ -160,7 +160,30 @@ public static class AgentConfigurationEditor
             {
                 var candidate = root.Deserialize<PlatformConfig>(Options) ?? new PlatformConfig();
                 var errors = PlatformConfigAgentSource.ValidateCandidate(candidate, AgentId.From(storedKey), modelRegistry);
-                return errors.Count == 0 ? null : string.Join("; ", errors);
+                if (errors.Count > 0) return string.Join("; ", errors);
+                // Validate model edits against the resulting authored candidate while still under
+                // the writer lock. The descriptor validator checks capabilities, not selection policy.
+                if (writes.Concat(patch.Inherit ?? []).Any(name => name is "model" or "provider" or "allowedModels"))
+                {
+                    var selected = candidate.Agents?[storedKey];
+                    if (selected is null) return "Agent not found.";
+                    if (selected.AllowedModels is { Count: > 0 } allowed
+                        && !allowed.Contains(selected.Model ?? "", StringComparer.OrdinalIgnoreCase))
+                        return $"Model '{selected.Model}' is not allowed for this agent.";
+                    if (candidate.Providers?.TryGetValue(selected.Provider ?? "", out var provider) == true)
+                    {
+                        if (!provider.Enabled)
+                            return $"Provider '{selected.Provider}' is disabled.";
+                        if (provider.ResolveChatModels() is { } providerAllowed
+                            && !providerAllowed.Contains(selected.Model ?? "", StringComparer.OrdinalIgnoreCase))
+                            return $"Model '{selected.Model}' is not allowed for provider '{selected.Provider}'.";
+                    }
+                    if (modelRegistry is null)
+                        return "Model registry is unavailable. Model, provider and allowedModels edits cannot be validated; retry when the registry is available.";
+                    if (modelRegistry.GetModel(selected.Provider ?? "", selected.Model ?? "") is null)
+                        return $"Model '{selected.Model}' is not registered for provider '{selected.Provider}'.";
+                }
+                return null;
             }
             catch (JsonException)
             {

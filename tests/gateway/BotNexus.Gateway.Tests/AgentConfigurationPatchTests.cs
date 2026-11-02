@@ -12,7 +12,8 @@ namespace BotNexus.Gateway.Tests;
 public sealed class AgentConfigurationPatchTests
 {
     // Reflection lets the first-written regression execute against the pre-fix assembly too.
-    private static async Task<IActionResult> Patch(PlatformConfigWriter writer, string json, string id = "sample")
+    private static async Task<IActionResult> Patch(PlatformConfigWriter writer, string json, string id = "sample",
+        BotNexus.Agent.Providers.Core.Registry.ModelRegistry? modelRegistry = null)
     {
         var method = typeof(AgentsController).GetMethod("PatchConfiguration");
         Assert.NotNull(method);
@@ -20,7 +21,7 @@ public sealed class AgentConfigurationPatchTests
         var controller = new AgentsController(
             Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentRegistry>(),
             Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor>(),
-            Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>());
+            Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>(), modelRegistry: modelRegistry);
         var invocation = method.Invoke(controller, [id, request, writer, CancellationToken.None]);
         var task = Assert.IsAssignableFrom<Task<IActionResult>>(invocation);
         return await task;
@@ -227,7 +228,12 @@ public sealed class AgentConfigurationPatchTests
                 agent["extensions"] = JsonNode.Parse("""{"custom":{"token":"keep"}}""");
                 agent["isolationOptions"] = JsonNode.Parse("""{"future":"keep"}""");
             }, "test");
-            Assert.IsType<OkObjectResult>(await Patch(writer, """{"description":"Updated","emoji":"X","thinking":"high","toolIds":["read"],"allowedModels":["test"],"memory":{"search":{"defaultTopK":7}},"heartbeat":{"intervalMinutes":15},"soul":{"timezone":"UTC"}}"""));
+            // Selection-policy edits require the same registered model identity as the runtime.
+            var models = new BotNexus.Agent.Providers.Core.Registry.ModelRegistry();
+            models.Register("test", new BotNexus.Agent.Providers.Core.Models.LlmModel(
+                Id: "test", Name: "test", Api: "completions", Provider: "test", BaseUrl: "https://example.invalid",
+                Reasoning: true, Input: ["text"], Cost: new(0m, 0m, 0m, 0m), ContextWindow: 128_000, MaxTokens: 16_000));
+            Assert.IsType<OkObjectResult>(await Patch(writer, """{"description":"Updated","emoji":"X","thinking":"high","toolIds":["read"],"allowedModels":["test"],"memory":{"search":{"defaultTopK":7}},"heartbeat":{"intervalMinutes":15},"soul":{"timezone":"UTC"}}""", modelRegistry: models));
             Assert.IsType<OkObjectResult>(await Patch(writer, """{"toolPolicy":{"denied":["shell"]},"sessionAccess":{"level":"all"}}"""));
             var agent = Assert.IsType<JsonObject>((await writer.ReadAsync())["agents"]?["sample"]);
             Assert.Equal("Updated", agent["description"]?.GetValue<string>());
