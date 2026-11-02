@@ -16,7 +16,7 @@ namespace BotNexus.Extensions.Channels.Matrix.Tests;
 /// Each test is named for the acceptance clause it holds, so a regression that removes the
 /// load-on-start or the write-after-process fails a test that says so by name rather than producing
 /// an anonymous red. All waits go through <see cref="TestAwait.EventuallyAsync(Func{bool}, string,
-/// TimeSpan?, TimeSpan?, CancellationToken, Func{TimeSpan, CancellationToken, Task})"/> so no test
+/// TimeSpan?, TimeSpan?, CancellationToken, Func{TimeSpan, CancellationToken, Task}, TimeProvider)"/> so no test
 /// here sleeps for a fixed wall-clock duration.
 /// </remarks>
 public sealed class MatrixSyncCursorPersistenceTests
