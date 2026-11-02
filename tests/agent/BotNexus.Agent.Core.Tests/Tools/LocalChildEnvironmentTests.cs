@@ -54,7 +54,7 @@ public sealed class LocalChildEnvironmentTests
     public void Populate_ReviewedEssentialsAndCasingAreExact(bool windows)
     {
         string[] expected = windows
-            ? ["PATH", "PATHEXT", "SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA"]
+            ? ["PATH", "PATHEXT", "SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROCESSOR_ARCHITECTURE", "ProgramFiles", "ProgramFiles(x86)"]
             : ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE", "TZ"];
         var ambient = expected.ToDictionary(name => name, name => (string?)"synthetic-essential", StringComparer.Ordinal);
         foreach (var name in expected) ambient[name + "_SECRET"] = "synthetic-prefix";
@@ -68,6 +68,45 @@ public sealed class LocalChildEnvironmentTests
         target.Count.ShouldBe(windows ? 1 : 2);
         target["path"].ShouldBe("explicit");
         if (!windows) target["PATH"].ShouldBe("ambient");
+    }
+
+    [Theory]
+    [InlineData("PROCESSOR_ARCHITECTURE", "AMD64")]
+    [InlineData("ProgramFiles", "C:\\Program Files")]
+    [InlineData("ProgramFiles(x86)", "C:\\Program Files (x86)")]
+    public void Populate_WindowsRuntimeEssentialsPreserveValuesAndExactCasingRules(string name, string value)
+    {
+        var mixedCase = name.ToLowerInvariant();
+        var ambient = new Dictionary<string, string?>
+        {
+            [mixedCase] = value,
+            [name + "_SECRET"] = "synthetic-prefix-secret",
+            [name + "_TOKEN"] = "synthetic-prefix-token",
+            ["CUSTOM_TOKEN"] = "synthetic-custom"
+        };
+        var target = new Dictionary<string, string?>(StringComparer.Ordinal) { ["STALE_TOKEN"] = "stale" };
+        LocalChildEnvironment.Populate(target, ambient, windows: true);
+        target.Count.ShouldBe(1);
+        target[mixedCase].ShouldBe(value);
+
+        LocalChildEnvironment.Populate(target, ambient,
+            overrides: new Dictionary<string, string> { [name] = "explicit" }, windows: true);
+        target.Count.ShouldBe(1);
+        target[name].ShouldBe("explicit");
+
+        LocalChildEnvironment.Populate(target, new Dictionary<string, string?> { [name] = null }, windows: true);
+        target.ShouldBeEmpty();
+        LocalChildEnvironment.Populate(target, new Dictionary<string, string?>(), windows: true);
+        target.ShouldBeEmpty();
+
+        LocalChildEnvironment.Populate(target, ambient, windows: false);
+        target.ShouldBeEmpty();
+        LocalChildEnvironment.Populate(target, new Dictionary<string, string?> { [name] = value }, windows: false);
+        target.ShouldBeEmpty();
+        LocalChildEnvironment.Populate(target, ambient,
+            overrides: new Dictionary<string, string> { [name] = "explicit" }, windows: false);
+        target.Count.ShouldBe(1);
+        target[name].ShouldBe("explicit");
     }
 
     [Theory]
