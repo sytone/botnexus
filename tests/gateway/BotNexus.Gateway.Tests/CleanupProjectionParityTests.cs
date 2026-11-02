@@ -44,10 +44,9 @@ public sealed class CleanupProjectionParityTests : IDisposable
         await CleanupAndAssertRawAsync();
 
         var after = await HistoryAsync();
-        // Cleanup intentionally drops only the safe result row's redundant args. The start
-        // remains authoritative; every other field (including persisted identity) is unchanged.
-        after.ShouldBe(before.Select(entry => entry.ToolCallId == "safe" && entry.Kind == MessageKind.ToolResult
-            ? entry with { ToolArgs = null } : entry));
+        // Physical duplicates disappear, but invocation-backed arguments preserve the complete
+        // visible projection, including persisted identity, ordering and result arguments.
+        after.ShouldBe(before);
         after.Single(entry => entry.ToolCallId == "safe" && entry.Kind == MessageKind.ToolStart).ToolArgs.ShouldBe(Arguments);
         after.Single(entry => entry.ToolCallId == "safe" && entry.Kind == MessageKind.ToolResult).Content.ShouldBe(Result);
         await AssertPagesAsync(after);

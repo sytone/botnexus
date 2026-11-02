@@ -174,8 +174,9 @@ public sealed class DefaultToolAuditSink : IToolAuditSink
             ToolName = toolName,
             ToolCallId = toolCallId,
             ToolIsError = isError,
-            // #2906 AC1/AC2: the result row is self-describing. The caller re-supplies the same
-            // arguments the start row carried, so no consumer needs a self-join on tool_call_id.
+            // Carry execution arguments to the persistence boundary (also used by result-only
+            // blocking runs). SQLite stores them on the invocation, never on result history.
+            // Arguments are execution input, not a second post-execution projection.
             ToolArgs = NormalizeArguments(serializedArguments),
             Kind = MessageKind.ToolResult,
             PersistenceKey = toolName is "spawn_subagent" or "manage_subagent" && !string.IsNullOrWhiteSpace(toolCallId)

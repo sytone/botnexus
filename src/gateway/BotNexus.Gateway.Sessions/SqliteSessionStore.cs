@@ -105,6 +105,11 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
     // carries its full history) capped by LRU so a long-running gateway does not
     // retain every session ever touched. Cold reads fall through to SQLite.
     private readonly BoundedLruCache<SessionId, GatewaySession> _cache;
+    // Generation capture, compare/publication and invalidation share one short synchronous
+    // gate. Never hold it across SQL, awaits or session locks. A global scalar is bounded;
+    // unrelated invalidations may reject a cache fill but cannot publish stale history.
+    private readonly object _cachePublicationGate = new();
+    private long _cacheGeneration;
     private bool _initialized;
 
     /// <summary>
@@ -139,6 +144,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
     internal Func<Task>? AfterSubAgentReceiptCommitAsync { get; set; }
     internal Func<CancellationToken, Task>? BeforeLegacyAgentIdMigrationTransactionAsync { get; set; }
     internal Func<CancellationToken, Task>? BeforeLegacyAgentIdColumnDropAsync { get; set; }
+    // Deterministic cache-load/publication interleaving seam; production leaves it null.
+    internal Func<SessionId, CancellationToken, Task>? BeforeSessionCachePublicationAsync { get; set; }
     internal int LastHistoryRowsMutated { get; private set; }
     internal bool LastHistoryWriteReconciled { get; private set; }
 
@@ -184,6 +191,39 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         _agentIdCache = new BoundedLruCache<ConversationId, AgentId>(cacheCapacity);
     }
 
+    private long CaptureCacheGeneration()
+    {
+        lock (_cachePublicationGate)
+            return _cacheGeneration;
+    }
+
+    private void InvalidateCachedSession(SessionId sessionId)
+    {
+        lock (_cachePublicationGate)
+        {
+            _cacheGeneration++;
+            _cache.Remove(sessionId);
+        }
+    }
+
+    private async Task PublishCachedSessionAsync(SessionId sessionId, GatewaySession session,
+        long generation, CancellationToken cancellationToken)
+    {
+        if (BeforeSessionCachePublicationAsync is { } beforePublication)
+            await beforePublication(sessionId, cancellationToken).ConfigureAwait(false);
+        lock (_cachePublicationGate)
+        {
+            if (generation == _cacheGeneration)
+                _cache.Set(sessionId, session);
+        }
+    }
+
+    /// <summary>Commits a complete legacy tool migration and invalidates affected session caches.</summary>
+    public LegacyToolMigrationReport MigrateLegacyToolData() =>
+        LegacyToolInvocationBackfill.RunAllConnectionString(
+            _connectionString,
+            sessionId => InvalidateCachedSession(SessionId.From(sessionId)));
+
     /// <summary>Commits one bounded legacy tool-invocation normalization batch.</summary>
     public LegacyToolInvocationBackfillReport BackfillLegacyToolInvocations(int batchSize) =>
         LegacyToolInvocationBackfill.RunConnectionString(_connectionString, batchSize, commit: true);
@@ -193,7 +233,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
     {
         return LegacyToolPayloadCleanup.RunConnectionString(
             _connectionString, batchSize, afterInvocationId,
-            sessionId => _cache.Remove(SessionId.From(sessionId)));
+            sessionId => InvalidateCachedSession(SessionId.From(sessionId)));
     }
 
     /// <inheritdoc />
@@ -205,6 +245,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
 
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var cacheGeneration = CaptureCacheGeneration();
         if (_cache.TryGet(sessionId, out var cached))
         {
             metric?.Complete();
@@ -213,7 +254,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
 
         var loaded = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (loaded is not null)
-            _cache.Set(sessionId, loaded);
+            await PublishCachedSessionAsync(sessionId, loaded, cacheGeneration, cancellationToken).ConfigureAwait(false);
 
         metric?.Complete();
         return loaded;
@@ -269,7 +310,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         foreach (var changedId in changedIds)
-            _cache.Remove(changedId);
+            InvalidateCachedSession(changedId);
 
         return changedIds.Count;
     }
@@ -283,18 +324,19 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
 
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
+        var cacheGeneration = CaptureCacheGeneration();
         if (_cache.TryGet(sessionId, out var cached))
             return cached;
 
         var loaded = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (loaded is not null)
         {
-            _cache.Set(sessionId, loaded);
+            await PublishCachedSessionAsync(sessionId, loaded, cacheGeneration, cancellationToken).ConfigureAwait(false);
             return loaded;
         }
 
         var session = CreateSession(sessionId, agentId, null, _redactor);
-        _cache.Set(sessionId, session);
+        await PublishCachedSessionAsync(sessionId, session, cacheGeneration, cancellationToken).ConfigureAwait(false);
         return session;
     }
 
@@ -342,7 +384,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             // rows that this aggregate did not observe and deliberately did not own or delete.
             // Eviction preserves O(delta) writes while making the next read materialize the
             // authoritative union of durable rows (#3983).
-            _cache.Remove(session.SessionId);
+            InvalidateCachedSession(session.SessionId);
         }
         finally { sessionLock.Dispose(); }
     }
@@ -425,11 +467,11 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 // A successful fenced save can still originate from an aggregate retained across
                 // an independent narrow append. Evict after either outcome so the next read sees
                 // every durable row rather than the caller's potentially stale snapshot (#3983).
-                _cache.Remove(session.SessionId);
+                InvalidateCachedSession(session.SessionId);
                 return SessionSaveOutcome.Persisted;
             }
 
-            _cache.Remove(session.SessionId);
+            InvalidateCachedSession(session.SessionId);
             if (persisted == SessionSaveOutcome.Conflict)
                 return SessionSaveOutcome.Conflict;
             _logger.LogInformation(
@@ -540,7 +582,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
 
             // The cached aggregate no longer reflects the row; drop it so the next read re-materialises
             // the merged transcript rather than serving a pre-append snapshot.
-            _cache.Remove(sessionId);
+            InvalidateCachedSession(sessionId);
             return new SessionAppendMutationResult(SessionMutationOutcome.Applied, redacted.Count);
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
@@ -609,7 +651,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             // Commit synchronously after the final deadline check. SQLite's native busy_timeout
             // bounds lock waiting, and Commit returning is the definitive durability boundary.
             transaction.Commit();
-            _cache.Remove(sessionId);
+            InvalidateCachedSession(sessionId);
             return new SessionAppendMutationResult(SessionMutationOutcome.Applied, redacted.Count);
         }
         catch (SqliteException ex) when (ex.SqliteErrorCode is 5 or 6)
@@ -701,7 +743,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             writeCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
             await writeCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-            _cache.Remove(sessionId);
+            InvalidateCachedSession(sessionId);
             return new SessionMetadataMutationResult(SessionMutationOutcome.Applied, metadata);
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
@@ -752,7 +794,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             command.Parameters.AddWithValue("$expectedStatus", current.Value.ToString());
             var affected = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-            _cache.Remove(sessionId);
+            InvalidateCachedSession(sessionId);
 
             // Zero rows means the persisted status string moved between the probe and the UPDATE
             // (or is a legacy alias such as 'closed' that ParseStatus normalises). Re-read and
@@ -915,11 +957,12 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                    COUNT(h.id) AS message_count,
                    length(CAST(COALESCE(c.metadata, '') AS BLOB))
                      + COALESCE(SUM(CASE WHEN h.id IS NULL THEN 0 ELSE 64
-                       + length(CAST(COALESCE(h.content, '') AS BLOB))
+                       + length(CAST(COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END, '') AS BLOB))
                        + length(CAST(COALESCE(h.tool_name, '') AS BLOB))
                        + length(CAST(COALESCE(h.tool_call_id, '') AS BLOB)) END), 0) AS bytes
             FROM candidates c
             LEFT JOIN session_history h ON h.session_id = c.id
+            LEFT JOIN tool_invocations i ON i.id = h.tool_invocation_id AND i.session_id = h.session_id
             GROUP BY c.id, c.conversation_id, c.status, c.updated_at, c.metadata
             ORDER BY c.id
             """
@@ -955,7 +998,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             AddCleanupFenceParameters(command, fence);
             return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
-        _cache.Remove(fence.SessionId);
+        InvalidateCachedSession(fence.SessionId);
         return affected > 0 ? SessionMutationOutcome.Applied : SessionMutationOutcome.Conflict;
     }
 
@@ -989,7 +1032,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return deleted;
         }, cancellationToken: cancellationToken).ConfigureAwait(false);
-        _cache.Remove(fence.SessionId);
+        InvalidateCachedSession(fence.SessionId);
         return affected > 0 ? SessionMutationOutcome.Applied : SessionMutationOutcome.Conflict;
     }
 
@@ -1009,7 +1052,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
 
         await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        _cache.Remove(sessionId);
+        InvalidateCachedSession(sessionId);
 
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -1049,14 +1092,15 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         await DrainActiveRunForArchiveAsync(sessionId, cancellationToken).ConfigureAwait(false);
 
         using var sessionLock = await AcquireSessionLockAsync(sessionId, cancellationToken).ConfigureAwait(false);
-        _cache.Remove(sessionId);
+        InvalidateCachedSession(sessionId);
+        var cacheGeneration = CaptureCacheGeneration();
 
         var session = await LoadSessionAsync(sessionId, cancellationToken).ConfigureAwait(false);
         if (session is not null)
         {
             session.Status = SessionStatus.Sealed;
             session.UpdatedAt = DateTimeOffset.UtcNow;
-            _cache.Set(sessionId, session);
+            await PublishCachedSessionAsync(sessionId, session, cacheGeneration, cancellationToken).ConfigureAwait(false);
             await RetryOnTransientAsync(async () =>
             {
                 await using var connection = CreateConnection();
@@ -1093,6 +1137,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 ids.Add(SessionId.From(reader.GetString(0)));
         }
 
+        var cacheGeneration = CaptureCacheGeneration();
         var sessions = new List<GatewaySession>(ids.Count);
         foreach (var sessionId in ids)
         {
@@ -1119,7 +1164,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
 
             if (session is not null)
             {
-                _cache.Set(sessionId, session);
+                await PublishCachedSessionAsync(sessionId, session, cacheGeneration, cancellationToken).ConfigureAwait(false);
                 sessions.Add(session);
             }
         }
@@ -1510,6 +1555,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             """;
         command.Parameters.AddWithValue("$conversationId", conversationId.Value);
 
+        var cacheGeneration = CaptureCacheGeneration();
         var sessions = new List<GatewaySession>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -1519,7 +1565,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 ?? await LoadSessionAsync(connection, sessionId, cancellationToken).ConfigureAwait(false);
             if (session is not null)
             {
-                _cache.Set(sessionId, session);
+                await PublishCachedSessionAsync(sessionId, session, cacheGeneration, cancellationToken).ConfigureAwait(false);
                 if (agentId is null || session.AgentId == agentId)
                     sessions.Add(session);
             }
@@ -1861,6 +1907,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                      // gain the column on first open; existing rows read back as false.
                      ("is_replay_banner", "INTEGER NOT NULL DEFAULT 0"),
                      ("tool_args", "TEXT"),
+                     // Distinguishes result arguments stored on the invocation from historical NULL projections.
+                     ("tool_args_from_invocation", "INTEGER NOT NULL DEFAULT 0"),
                      ("tool_is_error", "INTEGER NOT NULL DEFAULT 0"),
                      ("is_crash_sentinel", "INTEGER NOT NULL DEFAULT 0"),
                      ("is_history", "INTEGER NOT NULL DEFAULT 0"),
@@ -2147,7 +2195,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             await deleteSession.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
             // Evict any cached copy so a later read cannot resurrect the healed row.
-            _cache.Remove(SessionId.From(sessionId));
+            InvalidateCachedSession(SessionId.From(sessionId));
         }
 
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -2377,7 +2425,9 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             SELECT h.id, h.persistence_key, h.role,
                    COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END) AS content,
                    h.timestamp, h.tool_name, h.tool_call_id, h.is_compaction_summary,
-                   CASE WHEN h.tool_args IS NOT NULL THEN h.tool_args WHEN h.message_kind='tool-start' THEN i.arguments_json END AS tool_args,
+                   CASE WHEN h.tool_args IS NOT NULL THEN h.tool_args
+                        WHEN h.message_kind='tool-start' OR (h.message_kind='tool-result' AND h.tool_args_from_invocation=1)
+                        THEN i.arguments_json END AS tool_args,
                    h.tool_is_error, h.is_crash_sentinel, h.is_history, h.trigger_type, h.thinking_content,
                    h.message_kind, h.sender_id, h.is_replay_banner, h.agent_run_id, h.tool_is_incomplete
             FROM session_history h
@@ -2517,7 +2567,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 SELECT id, persistence_key,
                        tool_invocation_id IS NOT NULL AND
                        ((message_kind='tool-start' AND tool_args IS NULL)
-                         OR (message_kind='tool-result' AND content IS NULL))
+                         OR (message_kind='tool-result' AND content IS NULL)
+                         OR (message_kind='tool-result' AND tool_args_from_invocation=1 AND tool_args IS NULL))
                 FROM session_history WHERE session_id = $sessionId
                 """;
             selectCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
@@ -2619,7 +2670,9 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             select.Transaction = transaction;
             select.CommandText = """
                 SELECT h.id, h.message_kind, h.role, h.tool_call_id, h.tool_name,
-                       CASE WHEN h.tool_args IS NOT NULL THEN h.tool_args WHEN h.message_kind='tool-start' THEN i.arguments_json END,
+                       CASE WHEN h.tool_args_from_invocation=1 THEN i.arguments_json
+                            WHEN h.tool_args IS NOT NULL THEN h.tool_args
+                            WHEN h.message_kind='tool-start' THEN i.arguments_json END,
                        COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END),
                        h.timestamp, h.tool_is_error, h.agent_run_id, h.tool_is_incomplete
                 FROM session_history h
@@ -2771,7 +2824,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 persistence_key = $persistenceKey,
                 agent_run_id = $agentRunId,
                 tool_is_incomplete = $toolIsIncomplete,
-                tool_invocation_id = NULL
+                tool_invocation_id = NULL,
+                tool_args_from_invocation = 0
             WHERE id = $id AND session_id = $sessionId
               AND (
                   role IS NOT $role OR
@@ -2781,7 +2835,9 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                   tool_name IS NOT $toolName OR
                   tool_call_id IS NOT $toolCallId OR
                   is_compaction_summary IS NOT $isCompactionSummary OR
-                  CASE WHEN tool_args IS NOT NULL THEN tool_args WHEN message_kind='tool-start' THEN
+                  CASE WHEN tool_args_from_invocation=1 THEN
+                      (SELECT arguments_json FROM tool_invocations WHERE id=tool_invocation_id AND session_id=$sessionId)
+                       WHEN tool_args IS NOT NULL THEN tool_args WHEN message_kind='tool-start' THEN
                       (SELECT arguments_json FROM tool_invocations WHERE id=tool_invocation_id AND session_id=$sessionId) END IS NOT $toolArgs OR
                   tool_is_error IS NOT $toolIsError OR
                   is_crash_sentinel IS NOT $isCrashSentinel OR
@@ -2901,8 +2957,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         await using var insertCommand = connection.CreateCommand();
         insertCommand.Transaction = transaction;
         insertCommand.CommandText = """
-            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id, is_replay_banner, persistence_key, agent_run_id, tool_is_incomplete)
-            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind, $senderId, $isReplayBanner, $persistenceKey, $agentRunId, $toolIsIncomplete)
+            INSERT INTO session_history (session_id, role, content, timestamp, tool_name, tool_call_id, is_compaction_summary, tool_args, tool_is_error, is_crash_sentinel, is_history, trigger_type, thinking_content, message_kind, sender_id, is_replay_banner, persistence_key, agent_run_id, tool_is_incomplete, tool_args_from_invocation)
+            VALUES ($sessionId, $role, $content, $timestamp, $toolName, $toolCallId, $isCompactionSummary, $toolArgs, $toolIsError, $isCrashSentinel, $isHistory, $triggerType, $thinkingContent, $messageKind, $senderId, $isReplayBanner, $persistenceKey, $agentRunId, $toolIsIncomplete, $toolArgsFromInvocation)
             ON CONFLICT(session_id, persistence_key) WHERE persistence_key IS NOT NULL DO NOTHING
             RETURNING id
             """;
@@ -2930,6 +2986,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         var pPersistenceKey = insertCommand.Parameters.AddWithValue("$persistenceKey", DBNull.Value);
         var pAgentRunId = insertCommand.Parameters.AddWithValue("$agentRunId", DBNull.Value);
         var pIncomplete = insertCommand.Parameters.AddWithValue("$toolIsIncomplete", 0);
+        var pArgsFromInvocation = insertCommand.Parameters.AddWithValue("$toolArgsFromInvocation", 0);
 
         await using var existingIdCommand = connection.CreateCommand();
         existingIdCommand.Transaction = transaction;
@@ -2953,7 +3010,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             pToolName.Value = (object?)entry.ToolName ?? DBNull.Value;
             pToolCallId.Value = (object?)entry.ToolCallId ?? DBNull.Value;
             pIsCompactionSummary.Value = entry.IsCompactionSummary ? 1 : 0;
-            pToolArgs.Value = entry.Kind == MessageKind.ToolStart && entry.ToolCallId is not null
+            pToolArgs.Value = (entry.Kind == MessageKind.ToolStart || entry.Kind == MessageKind.ToolResult) && entry.ToolCallId is not null
                 ? DBNull.Value : (object?)entry.ToolArgs ?? DBNull.Value;
             pToolIsError.Value = entry.ToolIsError ? 1 : 0;
             pIsCrashSentinel.Value = entry.IsCrashSentinel ? 1 : 0;
@@ -2969,6 +3026,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             pPersistenceKey.Value = entry.PersistenceKey;
             pAgentRunId.Value = (object?)entry.AgentRunId?.Value ?? DBNull.Value;
             pIncomplete.Value = entry.ToolIsIncomplete ? 1 : 0;
+            pArgsFromInvocation.Value = entry.Kind == MessageKind.ToolResult && entry.ToolCallId is not null && entry.ToolArgs is not null ? 1 : 0;
             var insertedId = await insertCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
             long durableId;
             if (insertedId is long newId)
@@ -3020,8 +3078,12 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         {
             select.Transaction = transaction;
             select.CommandText = """
-                SELECT message_kind, role, tool_call_id, tool_name, tool_args, content, timestamp, tool_is_error, tool_invocation_id, agent_run_id, tool_is_incomplete
-                FROM session_history WHERE id = $historyRowId AND session_id = $sessionId
+                SELECT h.message_kind, h.role, h.tool_call_id, h.tool_name,
+                       CASE WHEN h.tool_args_from_invocation=1 THEN i.arguments_json ELSE h.tool_args END,
+                       h.content, h.timestamp, h.tool_is_error, h.tool_invocation_id, h.agent_run_id, h.tool_is_incomplete
+                FROM session_history h
+                LEFT JOIN tool_invocations i ON i.id=h.tool_invocation_id AND i.session_id=h.session_id
+                WHERE h.id = $historyRowId AND h.session_id = $sessionId
                 """;
             select.Parameters.AddWithValue("$historyRowId", historyRowId);
             select.Parameters.AddWithValue("$sessionId", sessionId.Value);
@@ -3121,7 +3183,10 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 SELECT id FROM tool_invocations WHERE session_id = $sessionId AND tool_call_id = $toolCallId),
                 tool_args = CASE WHEN message_kind='tool-start' AND $freshTypedStart=1 THEN
                     CASE WHEN $arguments IS (SELECT arguments_json FROM tool_invocations WHERE session_id=$sessionId AND tool_call_id=$toolCallId)
-                         THEN NULL ELSE $arguments END ELSE tool_args END
+                         THEN NULL ELSE $arguments END
+                    WHEN message_kind='tool-result' THEN NULL ELSE tool_args END,
+                tool_args_from_invocation = CASE WHEN message_kind='tool-result' AND $arguments IS NOT NULL
+                    THEN 1 ELSE 0 END
             WHERE id = $historyRowId AND session_id = $sessionId
             """;
         link.Parameters.AddWithValue("$freshTypedStart", insertedEntry?.Kind == MessageKind.ToolStart ? 1 : 0);
@@ -3137,7 +3202,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
     // Equality permits re-narrowing only for rows that were already normalized markers,
     // or fresh typed inserts. It is not authority to clean historical payloads: that belongs
     // exclusively to LegacyToolPayloadCleanup's stricter gates. Capture provenance inside
-    // the existing transaction/scan, without a schema change or another session-wide pass.
+    // the existing transaction/scan, without another session-wide pass.
     private static async Task<HashSet<long>> MaterializeToolPayloadsAsync(
         SqliteConnection connection, SqliteTransaction transaction, SessionId sessionId,
         CancellationToken cancellationToken, string? normalizedKey = null)
@@ -3151,12 +3216,15 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             """;
         command.CommandText = $"""
             UPDATE session_history AS h SET
-                tool_args = CASE WHEN h.message_kind='tool-start' THEN COALESCE(h.tool_args, i.arguments_json) ELSE h.tool_args END,
+                tool_args = CASE WHEN h.message_kind='tool-start' OR (h.message_kind='tool-result' AND h.tool_args_from_invocation=1)
+                    THEN COALESCE(h.tool_args, i.arguments_json) ELSE h.tool_args END,
+                tool_args_from_invocation = CASE WHEN h.message_kind='tool-result' AND h.tool_args_from_invocation=1 THEN 0 ELSE h.tool_args_from_invocation END,
                 content = CASE WHEN h.message_kind='tool-result' THEN COALESCE(h.content, i.result_content) ELSE h.content END
             FROM tool_invocations i
             WHERE h.session_id=$sessionId AND h.tool_invocation_id=i.id AND i.session_id=h.session_id
               {invocationFilter}
               AND ((h.message_kind='tool-start' AND h.tool_args IS NULL AND i.arguments_json IS NOT NULL)
+                OR (h.message_kind='tool-result' AND h.tool_args_from_invocation=1 AND h.tool_args IS NULL AND i.arguments_json IS NOT NULL)
                 OR (h.message_kind='tool-result' AND h.content IS NULL AND i.result_content IS NOT NULL))
             RETURNING id
             """;
@@ -3180,12 +3248,14 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         command.Transaction = transaction;
         command.CommandText = $"""
             UPDATE session_history AS h SET
-                tool_args = CASE WHEN h.message_kind='tool-start' AND h.tool_args IS i.arguments_json THEN NULL ELSE h.tool_args END,
+                tool_args = CASE WHEN h.message_kind='tool-result' OR (h.message_kind='tool-start' AND h.tool_args IS i.arguments_json) THEN NULL ELSE h.tool_args END,
+                tool_args_from_invocation = CASE WHEN h.message_kind='tool-result' AND h.tool_args IS NOT NULL
+                    THEN 1 ELSE h.tool_args_from_invocation END,
                 content = CASE WHEN h.message_kind='tool-result' AND h.content IS i.result_content THEN NULL ELSE h.content END
             FROM tool_invocations i
             WHERE h.session_id=$sessionId AND h.tool_invocation_id=i.id AND i.session_id=h.session_id
               AND h.id IN ({string.Join(',', narrowPayloadRowIds)})
-              AND ((h.message_kind='tool-start' AND h.tool_args IS NOT NULL AND h.tool_args IS i.arguments_json)
+              AND (((h.message_kind='tool-start' AND h.tool_args IS i.arguments_json OR h.message_kind='tool-result') AND h.tool_args IS NOT NULL)
                 OR (h.message_kind='tool-result' AND h.content IS NOT NULL AND h.content IS i.result_content))
             """;
         command.Parameters.AddWithValue("$sessionId", sessionId.Value);
@@ -3439,7 +3509,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 await beforeCommit(cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            _cache.Remove(parentSessionId);
+            InvalidateCachedSession(parentSessionId);
             if (AfterSubAgentReceiptCommitAsync is { } afterCommit)
                 await afterCommit().ConfigureAwait(false);
             return entries[0].Content;

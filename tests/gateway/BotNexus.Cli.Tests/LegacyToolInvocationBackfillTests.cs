@@ -52,6 +52,50 @@ public sealed class LegacyToolInvocationBackfillTests : IDisposable
     }
 
     [Fact]
+    public void RunAll_ProcessesMoreThanOneHundredRowsInOneIdempotentTransaction()
+    {
+        ClearCorpus();
+        InsertLargeBackfillCorpus(10000);
+
+        var report = LegacyToolInvocationBackfill.RunAll(_databasePath);
+
+        report.Backfill.ShouldBe(new LegacyToolInvocationBackfillReport(20000, 20000, 10000, false, true));
+        Count("session_history WHERE session_id='large' AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))").ShouldBe(0);
+        Count("tool_invocations WHERE session_id='large'").ShouldBe(10000);
+        Count("session_history WHERE session_id='large' AND tool_invocation_id IS NOT NULL").ShouldBe(20000);
+        LegacyToolInvocationBackfill.RunAll(_databasePath)
+            .Backfill.ShouldBe(new LegacyToolInvocationBackfillReport(0, 0, 0, false, true));
+    }
+
+    [Fact]
+    public void RunAll_LinkFailureRollsBackInvocationPopulationAndCanRestart()
+    {
+        ClearCorpus();
+        InsertLargeBackfillCorpus(2);
+        using (var connection = new SqliteConnection($"Data Source={_databasePath};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TRIGGER reject_bulk_link BEFORE UPDATE OF tool_invocation_id ON session_history BEGIN SELECT RAISE(ABORT, 'injected bulk link failure'); END";
+            command.ExecuteNonQuery();
+        }
+
+        var failure = Should.Throw<SqliteException>(() => LegacyToolInvocationBackfill.RunAll(_databasePath));
+        failure.Message.ShouldContain("injected bulk link failure");
+        Count("tool_invocations WHERE session_id='large'").ShouldBe(0);
+        Count("session_history WHERE session_id='large' AND tool_invocation_id IS NOT NULL").ShouldBe(0);
+
+        using (var connection = new SqliteConnection($"Data Source={_databasePath};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "DROP TRIGGER reject_bulk_link";
+            command.ExecuteNonQuery();
+        }
+        LegacyToolInvocationBackfill.RunAll(_databasePath).Backfill.LinkedRows.ShouldBe(4);
+    }
+
+    [Fact]
     public void Run_CommitPairsRowsAndNormalizesArgumentsStatusesAndResultEvidence()
     {
         const string result = "r\u00e9sultat";
@@ -102,10 +146,45 @@ public sealed class LegacyToolInvocationBackfillTests : IDisposable
     }
 
     [Fact]
+    public void RunAll_NullTimestampPairsPreserveStartAuthorityAndOutcomes()
+    {
+        ClearCorpus();
+        InsertNullTimestampSplitBatchCorpus();
+
+        LegacyToolInvocationBackfill.RunAll(_databasePath).Backfill.LinkedRows.ShouldBe(4);
+
+        var failed = ReadInvocation("null-times", "start-then-result");
+        failed.Arguments.ShouldBe("{\"authority\":\"start\"}");
+        failed.ToolName.ShouldBe("authoritative-start");
+        failed.Status.ShouldBe("error");
+        failed.IsError.ShouldBeTrue();
+        failed.StartedAt.ShouldBeNull();
+        failed.CompletedAt.ShouldBeNull();
+        failed.ResultContent.ShouldBe("failed result");
+        var succeeded = ReadInvocation("null-times", "result-then-start");
+        succeeded.Arguments.ShouldBe("{\"authority\":\"late-start\"}");
+        succeeded.ToolName.ShouldBe("authoritative-late-start");
+        succeeded.Status.ShouldBe("success");
+        succeeded.IsError.ShouldBeFalse();
+        succeeded.StartedAt.ShouldBeNull();
+        succeeded.CompletedAt.ShouldBeNull();
+        succeeded.ResultContent.ShouldBe("successful result");
+    }
+
+    [Fact]
     public void Run_RejectsNonPositiveBatchSize()
     {
         Action act = () => LegacyToolInvocationBackfill.Run(_databasePath, batchSize: 0, commit: false);
         Should.Throw<ArgumentOutOfRangeException>(act).Message.ShouldContain("positive");
+    }
+
+    private void ClearCorpus()
+    {
+        using var connection = new SqliteConnection($"Data Source={_databasePath};Pooling=False");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM session_history; DELETE FROM tool_invocations";
+        command.ExecuteNonQuery();
     }
 
     private void CreateCorpus()
@@ -134,6 +213,26 @@ public sealed class LegacyToolInvocationBackfillTests : IDisposable
               ('s2', 'tool', 'other session', '2026-01-01T00:00:06Z', 'read', 'complete', NULL, 0, 'tool-result'),
               ('s1', 'assistant', 'ordinary', '2026-01-01T00:00:07Z', NULL, NULL, NULL, 0, 'message');
             """;
+        command.ExecuteNonQuery();
+    }
+
+    private void InsertLargeBackfillCorpus(int invocationCount)
+    {
+        using var connection = new SqliteConnection($"Data Source={_databasePath};Pooling=False");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            WITH RECURSIVE sequence(value) AS (
+                SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < $count)
+            INSERT INTO session_history(session_id, role, content, timestamp, tool_name, tool_call_id, tool_args, message_kind)
+            SELECT 'large', 'assistant', 'start', 'a', 'probe', 'call-' || value, '{\"canonical\":' || value || '}', 'tool-start' FROM sequence;
+            WITH RECURSIVE sequence(value) AS (
+                SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < $count)
+            INSERT INTO session_history(session_id, role, content, timestamp, tool_name, tool_call_id, tool_args, message_kind)
+            SELECT 'large', 'tool', 'résultat-' || value, 'b', 'probe', 'call-' || value, '{\"different-result-projection\":true}', 'tool-result'
+            FROM sequence;
+            """;
+        command.Parameters.AddWithValue("$count", invocationCount);
         command.ExecuteNonQuery();
     }
 
