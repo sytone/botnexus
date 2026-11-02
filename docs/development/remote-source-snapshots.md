@@ -83,7 +83,7 @@ Run from the task checkout in PowerShell 7 (Pester 6.0.1):
 
 ```powershell
 Import-Module Pester -RequiredVersion 6.0.1
-Invoke-Pester -Path ./scripts/repo/SourceSnapshot.Tests.ps1 -Output Detailed
+Invoke-Pester -Path ./scripts/repo/Test-SourceSnapshot.ps1 -Output Detailed
 ```
 
 The suite uses isolated offline Git fixtures with synthetic identities and executes the
