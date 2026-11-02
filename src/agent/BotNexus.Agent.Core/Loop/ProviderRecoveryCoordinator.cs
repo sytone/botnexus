@@ -189,7 +189,10 @@ public sealed class ProviderRecoveryLease
     /// <summary>Reports a transient call failure and optional capped provider recovery floor.</summary>
     public void ReportTransientFailure(TimeSpan? retryAfter) => Report(LeaseOutcome.Transient, retryAfter);
 
-    /// <summary>Releases admission without affecting transient circuit health.</summary>
+    /// <summary>
+    /// Releases admission without counting a transient failure or declaring recovery. An abandoned
+    /// current half-open probe returns to the bounded open cooldown so a later call can probe.
+    /// </summary>
     public void ReportNonTransientFailure() => Report(LeaseOutcome.NonTransient, null);
 
     private void Report(LeaseOutcome outcome, TimeSpan? retryAfter)
@@ -357,7 +360,18 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
                 state.Generation++;
                 state.Failures.Clear();
                 state.ReopenCount = 0;
+                SignalStateChange(state);
                 Notify(lease.Scope, state, ProviderRecoveryStage.Recovered, lease.Observe);
+            }
+            else if (outcome == ProviderRecoveryLease.LeaseOutcome.NonTransient
+                     && lease.IsProbe
+                     && lease.Generation == state.Generation
+                     && state.State == ProviderRecoveryState.HalfOpen)
+            {
+                // Cancellation or a non-transient result is not evidence of provider recovery.
+                // Relinquish this generation's probe through the existing bounded cooldown;
+                // otherwise HalfOpen would retain ownership after its only probe has left.
+                Open(lease.Scope, state, now, null, lease.Observe);
             }
 
             DrainWaiters(lease.Scope, state, now);
@@ -378,10 +392,14 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
             }
 
             DateTimeOffset? probeAt;
+            Task stateChanged;
             lock (_sync)
             {
                 var state = GetOrCreate(waiter.Scope);
+                // Capture the schedule and its change signal atomically so a reopen between
+                // this read and awaiting cannot strand a caller on its old deadline alone.
                 probeAt = state.State == ProviderRecoveryState.Open ? state.NextProbeAt : null;
+                stateChanged = state.StateChanged.Task;
             }
 
             using var wake = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -392,7 +410,7 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
 
             try
             {
-                var completed = await Task.WhenAny(waiter.Completion.Task, deadlineTask, probeTask).ConfigureAwait(false);
+                var completed = await Task.WhenAny(waiter.Completion.Task, deadlineTask, probeTask, stateChanged).ConfigureAwait(false);
                 if (completed == waiter.Completion.Task)
                 {
                     wake.Cancel();
@@ -426,6 +444,12 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
                 RemoveAndFail(waiter, new ProviderRecoveryCancelledException(waiter.Scope.Provider, cancellationToken));
                 return;
             }
+            finally
+            {
+                // Disposing a linked source alone does not cancel its timers. Every rearm,
+                // admission, cancellation or deadline must retire both losing delay tasks.
+                wake.Cancel();
+            }
         }
     }
 
@@ -452,6 +476,7 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
             // fence: after this admission the circuit is HalfOpen, so no second probe can enter.
             state.State = ProviderRecoveryState.HalfOpen;
             state.InFlight++;
+            SignalStateChange(state);
             return new ProviderRecoveryLease(this, scope, incidentId, state.Generation, isProbe: true, observe);
         }
 
@@ -527,7 +552,15 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
         var floor = retryAfter is { } guidance && guidance > local ? guidance : local;
         var bounded = floor > _options.EffectiveMaxOpenDuration ? _options.EffectiveMaxOpenDuration : floor;
         state.NextProbeAt = now + bounded;
+        SignalStateChange(state);
         Notify(scope, state, ProviderRecoveryStage.CircuitOpened, observe);
+    }
+
+    private static void SignalStateChange(ScopeState state)
+    {
+        var previous = state.StateChanged;
+        state.StateChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        previous.TrySetResult();
     }
 
     private void Notify(
@@ -573,6 +606,8 @@ public sealed class ProviderRecoveryCoordinator : IProviderRecoveryCoordinator
 
     private sealed class ScopeState
     {
+        public TaskCompletionSource StateChanged { get; set; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         public ProviderRecoveryState State { get; set; }
         public long Generation { get; set; }
         public int InFlight { get; set; }
