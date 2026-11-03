@@ -7,7 +7,7 @@ config-json|src/extensions/BotNexus.Extensions.Channels.Matrix/MatrixChannelAdap
 config-json|src/extensions/BotNexus.Extensions.Channels.ServiceBus/ServiceBusChannelAdapter.cs|1
 config-json|src/extensions/BotNexus.Extensions.Channels.Telegram/TelegramChannelAdapter.cs|1
 config-json|src/gateway/BotNexus.Cli/Commands/AgentCommands.cs|11
-config-json|src/gateway/BotNexus.Cli/Commands/ConfigCommands.cs|18
+config-json|src/gateway/BotNexus.Cli/Commands/ConfigCommands.cs|16
 config-json|src/gateway/BotNexus.Cli/Commands/Doctor/ConfigHealthCheck.cs|2
 config-json|src/gateway/BotNexus.Cli/Commands/Doctor/FeatureFlagChecks.cs|1
 config-json|src/gateway/BotNexus.Cli/Commands/Doctor/IDoctorCheck.cs|1
