@@ -384,8 +384,22 @@ After the startup delay, the SQLite worker performs a set-based SQL pass rather 
 restarting 100-row discovery batches. In one transaction it populates missing execution
 records, links history rows, clears redundant payloads, and records completion in
 `legacy_tool_bulk_migration`. Errors roll back the data and completion record together.
-A completed migration is skipped on subsequent restarts. Manual bounded maintenance
-APIs remain available for compatibility; the automatic worker uses the bulk pass.
+Completion is versioned. Version 1 populates and links missing execution records.
+Version 2 also removes exact duplicate fields from already-linked legacy rows whose
+`message_kind` is NULL. A database with version 1 already complete runs only the cleanup
+upgrade: it does not repopulate executions, relink history, or replace the original
+completion record. Data changes and the version 2 record commit together. A failure
+rolls back both, and a later attempt can retry. Once version 2 completes, later
+restarts skip the pass. Manual bounded maintenance APIs remain available for
+compatibility; the automatic worker uses the bulk pass.
+
+Legacy arguments and content are checked independently against the linked invocation
+in the same session. Only exact copies are cleared. Distinct start arguments and
+result bodies remain in history. The `tool_args_from_invocation` and
+`tool_content_from_invocation` flags record which absent fields must be reconstructed.
+They preserve NULL message kinds and distinguish removed copies from historically
+absent fields. History reads, bounded scans, byte accounting, and later writes use
+these flags. The upgrade does not infer a start/result label from payload presence.
 
 SQL joins and byte equality protect unique result bodies. The pass does not hydrate
 payloads into managed objects or reread each row for a second verification. It covers

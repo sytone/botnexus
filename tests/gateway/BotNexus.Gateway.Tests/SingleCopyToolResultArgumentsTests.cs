@@ -608,6 +608,194 @@ public sealed class SingleCopyToolResultArgumentsTests : IDisposable
         reader.IsDBNull(4).ShouldBeTrue();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BulkMigration_AlreadyLinkedUntypedRowsClearOnlyEqualPayloadsAndPreserveProjection(bool alreadyMigrated)
+    {
+        const string arguments = "{\"unicode\":\"α✓\"}";
+        const string result = "résultat ✓";
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("linked-untyped"), AgentId.From("agent"));
+        var sink = new DefaultToolAuditSink();
+        foreach (var call in new[] { "equal", "distinct", "typed", "both" })
+            session.AddEntries([sink.ProjectStart(call, "probe", arguments), sink.ProjectResult(call, "probe", result, false, 0, arguments)]);
+        await store.SaveAsync(session);
+        await using (var connection = await OpenAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE session_history AS h
+                SET tool_args=CASE WHEN h.tool_call_id='both' THEN i.arguments_json
+                        WHEN h.message_kind='tool-start' THEN
+                            CASE WHEN h.tool_call_id='equal' THEN i.arguments_json ELSE 'distinct arguments' END END,
+                    content=CASE WHEN h.message_kind='tool-result' THEN
+                        CASE WHEN h.tool_call_id IN ('equal','both') THEN i.result_content ELSE 'distinct result' END ELSE h.content END,
+                    tool_args_from_invocation=0,
+                    message_kind=CASE WHEN h.tool_call_id='typed' THEN h.message_kind END
+                FROM tool_invocations i WHERE i.id=h.tool_invocation_id;
+                CREATE TRIGGER preserve_invocations BEFORE UPDATE ON tool_invocations
+                BEGIN SELECT RAISE(ABORT,'upgrade must not rewrite invocations'); END;
+                CREATE TRIGGER preserve_links BEFORE UPDATE OF tool_invocation_id ON session_history
+                BEGIN SELECT RAISE(ABORT,'upgrade must not relink history'); END;
+                """;
+            if (alreadyMigrated)
+                command.CommandText += "CREATE TABLE legacy_tool_bulk_migration(version INTEGER PRIMARY KEY,completed_at TEXT NOT NULL); INSERT INTO legacy_tool_bulk_migration VALUES(1,'original completion');";
+            await command.ExecuteNonQueryAsync();
+        }
+        // Populate this store's cache from the legacy representation before maintenance.
+        store = CreateStore();
+        var before = (await store.GetAsync(session.SessionId)).ShouldNotBeNull().GetHistorySnapshot();
+        var report = store.MigrateLegacyToolData();
+        report.Backfill.LinkedRows.ShouldBe(0);
+        report.Cleanup.CleanedRows.ShouldBe(4);
+        report.Cleanup.ClearedBytes.ShouldBe(3 * Encoding.UTF8.GetByteCount(arguments) + 2 * Encoding.UTF8.GetByteCount(result));
+        await using (var connection = await OpenAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT COUNT(*) FROM session_history WHERE tool_call_id='equal' AND (tool_args IS NOT NULL OR (message_kind='tool-result' AND content IS NOT NULL))";
+            Convert.ToInt64(await command.ExecuteScalarAsync()).ShouldBe(0);
+            command.CommandText = "SELECT COUNT(*) FROM session_history WHERE tool_call_id IN ('distinct','typed') AND (tool_args='distinct arguments' OR content='distinct result')";
+            Convert.ToInt64(await command.ExecuteScalarAsync()).ShouldBe(4);
+            command.CommandText = "SELECT COUNT(*) FROM legacy_tool_bulk_migration WHERE version IN (1,2)";
+            Convert.ToInt64(await command.ExecuteScalarAsync()).ShouldBe(2);
+            if (alreadyMigrated)
+            {
+                command.CommandText = "SELECT completed_at FROM legacy_tool_bulk_migration WHERE version=1";
+                (await command.ExecuteScalarAsync()).ShouldBe("original completion");
+            }
+        }
+        var after = (await store.GetAsync(session.SessionId)).ShouldNotBeNull();
+        after.GetHistorySnapshot().Select(entry => (entry.ToolCallId, entry.ToolArgs, entry.Content, entry.Timestamp, entry.ToolIsError, entry.Kind))
+            .ShouldBe(before.Select(entry => (entry.ToolCallId, entry.ToolArgs, entry.Content, entry.Timestamp, entry.ToolIsError, entry.Kind)));
+        var scan = await CreateStore().ScanHistoryAsync(session.SessionId, new SessionHistoryScan(AgentId.From("agent"), 10, 65536));
+        scan.Entries.Select(entry => entry.Content).ShouldBe(before.Select(entry => entry.Content));
+        after.ReplaceHistory(after.GetHistorySnapshot());
+        // Replacement may legitimately reconcile invocations; remove only the test's guards.
+        await using (var connection = await OpenAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "DROP TRIGGER preserve_invocations; DROP TRIGGER preserve_links";
+            await command.ExecuteNonQueryAsync();
+        }
+        await store.SaveAsync(after);
+        var reloaded = (await CreateStore().GetAsync(session.SessionId)).ShouldNotBeNull();
+        reloaded.GetHistorySnapshot().Select(entry => (entry.ToolArgs, entry.Content))
+            .ShouldBe(before.Select(entry => (entry.ToolArgs, entry.Content)));
+        CreateStore().MigrateLegacyToolData().Cleanup.CleanedRows.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task BulkMigration_LegacyFieldsAreIndependentAndForeignSessionLinksStayUntouched()
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("legacy-fields"), AgentId.From("agent"));
+        await store.GetOrCreateAsync(SessionId.From("other-session"), AgentId.From("agent"));
+        var sink = new DefaultToolAuditSink();
+        session.AddEntries([sink.ProjectStart("call", "probe", "{}"), sink.ProjectResult("call", "probe", "canonical result", false, 0)]);
+        await store.SaveAsync(session);
+        await using (var connection = await OpenAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DELETE FROM session_history;
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,tool_args,tool_invocation_id)
+                SELECT 'legacy-fields','tool','distinct result','2026-01-01T00:00:00Z','call',arguments_json,id FROM tool_invocations;
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,tool_args,tool_invocation_id)
+                SELECT 'legacy-fields','tool',result_content,'2026-01-01T00:00:01Z','call','distinct args',id FROM tool_invocations;
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,tool_args,tool_invocation_id)
+                SELECT 'legacy-fields','tool',NULL,'2026-01-01T00:00:02Z','call',NULL,id FROM tool_invocations;
+                -- Model a corrupt link inherited from a database predating the insert guard.
+                -- This affects only the isolated fixture; production keeps its integrity trigger.
+                DROP TRIGGER trg_session_history_tool_invocation_insert;
+                INSERT INTO session_history(session_id,role,content,timestamp,tool_call_id,tool_args,tool_invocation_id)
+                SELECT 'other-session','tool',result_content,'2026-01-01T00:00:03Z','call',arguments_json,id FROM tool_invocations;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+        var before = (await CreateStore().GetAsync(session.SessionId)).ShouldNotBeNull().GetHistorySnapshot();
+        var report = store.MigrateLegacyToolData();
+        report.Cleanup.CleanedRows.ShouldBe(2);
+        report.Cleanup.ClearedBytes.ShouldBe(Encoding.UTF8.GetByteCount("{}canonical result"));
+        await using (var connection = await OpenAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT COUNT(*) FROM session_history WHERE session_id='other-session' AND tool_args='{}' AND content='canonical result' AND tool_args_from_invocation=0 AND tool_content_from_invocation=0";
+            Convert.ToInt64(await command.ExecuteScalarAsync()).ShouldBe(1);
+            command.CommandText = "SELECT COUNT(*) FROM session_history WHERE session_id='legacy-fields' AND tool_args_from_invocation=0 AND tool_content_from_invocation=0 AND tool_args IS NULL AND content IS NULL";
+            Convert.ToInt64(await command.ExecuteScalarAsync()).ShouldBe(1);
+        }
+        var after = (await CreateStore().GetAsync(session.SessionId)).ShouldNotBeNull().GetHistorySnapshot();
+        after.Select(entry => (entry.ToolArgs, entry.Content, entry.Kind))
+            .ShouldBe(before.Select(entry => (entry.ToolArgs, entry.Content, entry.Kind)));
+    }
+
+    [Fact]
+    public async Task BulkMigration_LaterWritesDoNotUseOneFieldMarkerToClearAnotherField()
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("field-provenance"), AgentId.From("agent"));
+        var sink = new DefaultToolAuditSink();
+        session.AddEntries([sink.ProjectStart("call", "probe", "{}"), sink.ProjectResult("call", "probe", "old result", false, 0)]);
+        await store.SaveAsync(session);
+        await using (var connection = await OpenAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE session_history AS h SET tool_args=i.arguments_json, content='later result',
+                    message_kind=NULL, tool_args_from_invocation=0
+                FROM tool_invocations i WHERE i.id=h.tool_invocation_id AND h.message_kind='tool-start';
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+        store.MigrateLegacyToolData().Cleanup.CleanedRows.ShouldBe(1);
+        await store.AppendEntriesAsync(session.SessionId, [sink.ProjectResult("call", "probe", "later result", false, 0)]);
+        await using var raw = await OpenAsync();
+        await using var query = raw.CreateCommand();
+        query.CommandText = "SELECT content,tool_content_from_invocation FROM session_history WHERE message_kind IS NULL";
+        await using var reader = await query.ExecuteReaderAsync();
+        (await reader.ReadAsync()).ShouldBeTrue();
+        reader.GetString(0).ShouldBe("later result");
+        reader.GetInt64(1).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task BulkMigration_VersionTwoFailureRollsBackWithoutReplayingVersionOne()
+    {
+        var store = CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("upgrade-rollback"), AgentId.From("agent"));
+        var sink = new DefaultToolAuditSink();
+        session.AddEntries([sink.ProjectStart("call", "probe", "{}"), sink.ProjectResult("call", "probe", "result", false, 0)]);
+        await store.SaveAsync(session);
+        await using (var connection = await OpenAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                UPDATE session_history AS h SET tool_args=CASE WHEN h.message_kind='tool-start' THEN i.arguments_json END,
+                    content=CASE WHEN h.message_kind='tool-result' THEN i.result_content ELSE h.content END,
+                    message_kind=NULL FROM tool_invocations i WHERE i.id=h.tool_invocation_id;
+                CREATE TABLE legacy_tool_bulk_migration(version INTEGER PRIMARY KEY,completed_at TEXT NOT NULL);
+                INSERT INTO legacy_tool_bulk_migration VALUES(1,'original completion');
+                CREATE TRIGGER reject_upgrade BEFORE UPDATE ON session_history
+                WHEN NEW.content IS NULL BEGIN SELECT RAISE(ABORT,'injected upgrade failure'); END;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+        Should.Throw<SqliteException>(() => store.MigrateLegacyToolData()).Message.ShouldContain("injected upgrade failure");
+        await using (var connection = await OpenAsync())
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT COUNT(*) FROM session_history WHERE message_kind IS NULL AND content IS NOT NULL";
+            Convert.ToInt64(await command.ExecuteScalarAsync()).ShouldBe(2);
+            command.CommandText = "SELECT COUNT(*) FROM legacy_tool_bulk_migration WHERE version=2";
+            Convert.ToInt64(await command.ExecuteScalarAsync()).ShouldBe(0);
+            command.CommandText = "DROP TRIGGER reject_upgrade";
+            await command.ExecuteNonQueryAsync();
+        }
+        CreateStore().MigrateLegacyToolData().Cleanup.CleanedRows.ShouldBe(2);
+        CreateStore().MigrateLegacyToolData().Cleanup.CleanedRows.ShouldBe(0);
+    }
+
     private SqliteSessionStore CreateStore()
         => new(ConnectionString, NullLogger<SqliteSessionStore>.Instance, _conversations);
 

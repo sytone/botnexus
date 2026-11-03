@@ -32,10 +32,10 @@ public sealed partial class SqliteSessionStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT h.role, h.timestamp, length(CAST(COALESCE(h.content,
-                       CASE WHEN h.message_kind='tool-result' THEN i.result_content END, '') AS BLOB)),
+                       CASE WHEN h.message_kind='tool-result' OR h.tool_content_from_invocation=1 THEN i.result_content END, '') AS BLOB)),
                    CASE WHEN length(CAST(COALESCE(h.content,
-                       CASE WHEN h.message_kind='tool-result' THEN i.result_content END, '') AS BLOB)) <= $characters
-                       THEN COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END, '') END
+                       CASE WHEN h.message_kind='tool-result' OR h.tool_content_from_invocation=1 THEN i.result_content END, '') AS BLOB)) <= $characters
+                       THEN COALESCE(h.content, CASE WHEN h.message_kind='tool-result' OR h.tool_content_from_invocation=1 THEN i.result_content END, '') END
             FROM session_history h
             JOIN sessions s ON s.id=h.session_id AND s.conversation_id=$conversation
             LEFT JOIN tool_invocations i ON i.id=h.tool_invocation_id AND i.session_id=h.session_id
