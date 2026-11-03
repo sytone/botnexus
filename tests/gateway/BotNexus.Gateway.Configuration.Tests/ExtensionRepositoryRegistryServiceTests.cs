@@ -93,20 +93,38 @@ public sealed class ExtensionRepositoryRegistryServiceTests : IDisposable
         ConfigStoreBootstrap.ReleaseConnections(_storePath);
         File.Exists(_configPath).ShouldBeFalse();
 
+        var writer = ConfigWriterFactory.Create(_configPath, _fileSystem);
+        var authority = writer.Backends.Where(backend => backend.WinsOnRead).ShouldHaveSingleItem();
+        authority.Name.ShouldBe("sqlite");
+        authority.Location.ShouldBe(_storePath);
+        var before = await writer.ReadDocumentAsync();
+        before.TryGetString("gateway.defaultTimezone", out var timezone).ShouldBeTrue();
+        timezone.ShouldBe("UTC");
+
         var service = CreateService();
         await service.AddAsync("store-only", "https://example.test/extensions.git", "main");
         (await service.ListAsync()).ShouldHaveSingleItem().Id.ShouldBe("store-only");
         await service.UpdateAsync("store-only", "ssh://git@example.test/extensions.git", "stable", false);
 
-        File.Exists(_configPath).ShouldBeTrue(
-            "the existing configuration writer may recreate its synchronized JSON projection; " +
-            "the command must still succeed when the operation starts with no config.json");
+        File.Exists(_configPath).ShouldBeFalse(
+            "ordinary store-backed mutations must preserve an absent JSON projection");
         var stored = await new SqliteConfigStore($"Data Source={_storePath}").ReadEntriesAsync();
         stored["extensionRepositories.store-only.repositoryUrl"].Value.ShouldBe("\"ssh://git@example.test/extensions.git\"");
         stored["extensionRepositories.store-only.requestedRef"].Value.ShouldBe("\"stable\"");
         stored["extensionRepositories.store-only.enabled"].Value.ShouldBe("true");
         stored["extensionRepositories.store-only.updatesEnabled"].Value.ShouldBe("false");
         stored["gateway.defaultTimezone"].Value.ShouldBe("\"UTC\"");
+
+        ConfigStoreBootstrap.ReleaseConnections(_storePath);
+        var reloaded = (await CreateService().ListAsync()).ShouldHaveSingleItem();
+        reloaded.Id.ShouldBe("store-only");
+        reloaded.RepositoryUrl.ShouldBe("ssh://git@example.test/extensions.git");
+        reloaded.RequestedRef.ShouldBe("stable");
+        reloaded.Enabled.ShouldBeTrue();
+        reloaded.UpdatesEnabled.ShouldBeFalse();
+        var document = await ConfigWriterFactory.Create(_configPath, _fileSystem).ReadAsync();
+        JsonNode.DeepEquals(document, ConfigDocumentRehydrator.Rehydrate(stored)).ShouldBeTrue();
+        File.Exists(_configPath).ShouldBeFalse();
     }
 
     [Theory]

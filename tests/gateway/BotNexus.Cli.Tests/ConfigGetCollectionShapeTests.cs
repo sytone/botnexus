@@ -73,7 +73,7 @@ public sealed class ConfigGetCollectionShapeTests
 
             // Replace populated -> empty -> explicit null -> populated, using a new command and
             // checkpointing and copying the SQLite file into a fresh home before every get.
-            // The writer may create JSON, but the fresh home must work without that projection.
+            // Neither writes nor fresh-home reads may create the absent projection.
             foreach (var shape in new[] { populated, empty, "null", populated })
             {
                 output.GetStringBuilder().Clear();
@@ -123,22 +123,16 @@ public sealed class ConfigGetCollectionShapeTests
     private static async Task<string> ForkSqliteOnlyHomeAsync(string directory, string configPath,
         string storePath, string keyPath, string shape)
     {
-        // JsonConfigurationWriter patches only changed keys into an absent JSON backend. The
-        // complete document lives in SQLite; assert the JSON delta too, then copy only SQLite
-        // into a fresh home so JSON cannot satisfy the following get in place of composition.
-        File.Exists(configPath).ShouldBeTrue();
-        var expectedDelta = new JsonObject();
-        var segments = keyPath.Split('.');
-        var parent = expectedDelta;
-        foreach (var segment in segments[..^1])
-        {
-            var child = new JsonObject();
-            parent[segment] = child;
-            parent = child;
-        }
-        parent[segments[^1]] = JsonNode.Parse(shape);
-        var projection = await File.ReadAllTextAsync(configPath);
-        JsonNode.DeepEquals(JsonNode.Parse(projection), expectedDelta).ShouldBeTrue(projection);
+        // A normal canonical store mutation must preserve the absence of its JSON projection.
+        // Check the requested shape from SQLite before copying to a fresh store-only home.
+        File.Exists(configPath).ShouldBeFalse();
+        var persisted = ConfigDocumentRehydrator.Rehydrate(await ReadEntriesAsync(storePath));
+        var document = ConfigDocument.Parse(persisted.ToJsonString());
+        document.Exists(keyPath).ShouldBeTrue();
+        JsonNode? actualShape = persisted;
+        foreach (var segment in keyPath.Split('.'))
+            actualShape = actualShape.ShouldBeOfType<JsonObject>()[segment];
+        JsonNode.DeepEquals(actualShape, JsonNode.Parse(shape)).ShouldBeTrue();
         using (var connection = new SqliteConnection($"Data Source={storePath}"))
         {
             await connection.OpenAsync();
