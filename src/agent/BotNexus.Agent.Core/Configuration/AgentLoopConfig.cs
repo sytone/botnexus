@@ -136,6 +136,8 @@ namespace BotNexus.Agent.Core.Configuration;
 /// and cancellation propagate; an unclassified result resets repeated non-progress tracking.
 /// </param>
 /// <param name="MaxToolResults">Executed-result budget per run, default 128. Values outside 1–1000000 are rejected. Checked after entire batches.</param>
+/// <param name="ProviderRequestContextProvider">Optional request-only dynamic context renderer; null uses the core live capacity section. Normal failures and cancellation propagate; finalizer failures preserve its parked outcome.</param>
+/// <param name="ToolCapacityObserver">Optional informational start/75%/90%/exhaustion sink, isolated per subscriber through the diagnostic dispatcher. No control authority.</param>
 /// <remarks>
 /// AgentLoopConfig is built from AgentOptions at the start of each run.
 /// It is immutable and passed through the loop to ensure consistent configuration.
@@ -174,7 +176,9 @@ public record AgentLoopConfig(
     IProviderRecoveryCoordinator? RecoveryCoordinator = null,
     TimeSpan? RecoveryAdmissionTimeout = null,
     ToolProgressPolicy? ToolProgressPolicy = null,
-    int MaxToolResults = 128)
+    int MaxToolResults = 128,
+    ProviderRequestContextProvider? ProviderRequestContextProvider = null,
+    ToolCapacityObserver? ToolCapacityObserver = null)
 {
     /// <summary>Largest supported executed-result budget; zero never means unlimited.</summary>
     public const int MaximumToolResults = 1_000_000;

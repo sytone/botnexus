@@ -167,8 +167,13 @@ public class AgentLoopRunnerContextCompactionTests
         providerContexts.Count.ShouldBe(2);
         providerContexts[1].SystemPrompt.ShouldBe("durable compaction summary");
         providerContexts[1].Messages.OfType<BotNexus.Agent.Providers.Core.Models.UserMessage>()
+            .Where(message => !message.IsRequestOnlyContext)
             .Select(message => message.Content.Text)
             .ShouldBe(["retained tail"]);
+        var capacity = providerContexts[1].Messages.Where(message => message.IsRequestOnlyContext)
+            .ShouldHaveSingleItem().ShouldBeOfType<BotNexus.Agent.Providers.Core.Models.UserMessage>();
+        capacity.Content.Text.ShouldNotBeNull().ShouldContain("used=1; limit=128; remaining=127");
+        providerContexts[1].Messages.Count.ShouldBe(2);
         providerContexts[1].Messages.OfType<ToolResultMessage>().ShouldBeEmpty(
             "the next provider request must use the refreshed compacted snapshot, not stale tool output");
     }
@@ -220,8 +225,13 @@ public class AgentLoopRunnerContextCompactionTests
         observed.ShouldNotBeNull();
         observed.SystemPrompt.ShouldBe("compacted system prompt");
         observed.Messages.OfType<BotNexus.Agent.Providers.Core.Models.UserMessage>()
+            .Where(message => !message.IsRequestOnlyContext)
             .Select(message => message.Content.Text)
             .ShouldBe(["compacted visible tail"]);
+        var capacity = observed.Messages.Where(message => message.IsRequestOnlyContext)
+            .ShouldHaveSingleItem().ShouldBeOfType<BotNexus.Agent.Providers.Core.Models.UserMessage>();
+        capacity.Content.Text.ShouldNotBeNull().ShouldContain("used=0; limit=128; remaining=128");
+        observed.Messages.Count.ShouldBe(2);
     }
 
     [Fact]

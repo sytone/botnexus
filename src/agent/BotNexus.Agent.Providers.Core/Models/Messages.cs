@@ -12,7 +12,17 @@ namespace BotNexus.Agent.Providers.Core.Models;
 /// <summary>
 /// Represents message.
 /// </summary>
-public abstract record Message(long Timestamp);
+public abstract record Message(long Timestamp)
+{
+    /// <summary>
+    /// Marks host-supplied request context that remains visible in the model payload but is not
+    /// conversational input. Origin inference and input-key selection must ignore such messages.
+    /// Defaults to false for ordinary user, assistant and tool messages. Copies and transformations
+    /// must preserve this metadata; it is never serialized as a provider wire field.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsRequestOnlyContext { get; init; }
+}
 
 /// <summary>
 /// Represents user message.
