@@ -319,6 +319,24 @@ public sealed class ActivityDashboardProjectionTests
         Assert.Contains(rows, r => r.ConversationId == "c2");
     }
 
+    [Fact]
+    public void Rolling_day_is_inclusive_and_today_keeps_local_calendar_meaning()
+    {
+        var localNow = new DateTimeOffset(2026, 10, 28, 12, 0, 0, TimeZoneInfo.Local.GetUtcOffset(new DateTime(2026, 10, 28)));
+        var conversations = new[]
+        {
+            Conv("boundary", updatedAt: localNow.AddHours(-24)),
+            Conv("old", updatedAt: localNow.AddHours(-24).AddTicks(-1)),
+            Conv("today", updatedAt: localNow.AddHours(-1))
+        };
+        ActivityDashboardProjection.Project(conversations,
+            new ActivityDashboardFilter(Recency: ActivityRecencyWindow.Last24Hours), localNow)
+            .Select(r => r.ConversationId).ShouldBe(new[] { "today", "boundary" });
+        ActivityDashboardProjection.Project(conversations,
+            new ActivityDashboardFilter(Recency: ActivityRecencyWindow.Today), localNow)
+            .Select(r => r.ConversationId).ShouldBe(new[] { "today" });
+        new ActivityDashboardFilter().Recency.ShouldBe(ActivityRecencyWindow.Any);
+    }
     // ── Recency filter ─────────────────────────────────────────────────────
 
     [Fact]
@@ -348,7 +366,7 @@ public sealed class ActivityDashboardProjectionTests
             Conv("old", updatedAt: Now.AddDays(-300))
         };
 
-        var rows = ActivityDashboardProjection.Project(conversations, new ActivityDashboardFilter(), Now);
+        var rows = ActivityDashboardProjection.Project(conversations, new ActivityDashboardFilter(Recency: ActivityRecencyWindow.Any), Now);
 
         Assert.Equal(2, rows.Count);
     }

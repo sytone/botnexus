@@ -71,8 +71,18 @@ write permission. Per-reader read-state is observer state and remains available.
 | Parameter | In | Type | Notes |
 |-----------|----|------|-------|
 | `agentId` | query | string | Optional. When omitted, returns global active summaries. When set, returns conversations relevant to that agent (owned + participating). |
+| `activitySince` | query | ISO 8601 timestamp | Optional inclusive lower bound for effective last activity. Filters before summary projection; SQLite also applies the bound before participant enrichment. |
+| `effectiveActivity` | query | bool | Defaults to `false`. Set to `true` to return effective last activity without a lower bound. A supplied `activitySince` also enables effective activity. |
 
-Returns `200 OK` with a JSON array of conversation summaries (active only).
+Returns `200 OK` with a JSON array of conversation summaries (active, top-level conversations only).
+Effective last activity is the latest creation, update, binding inbound, or binding outbound timestamp,
+returned as `updatedAt`. Calls that omit both Activity parameters retain their existing unbounded
+query and update-timestamp meaning. Agent-relative queries retain owner and participant relevance.
+
+The Activity overview selects **Last 24 hours** by default. Initial load, polling, filter changes,
+and reset send the matching server cutoff. Last 7 days and Last 30 days use rolling windows;
+Today uses local midnight. Any time sends `effectiveActivity=true` without a cutoff, so older
+conversations can return without changing the timestamp meaning. Cost reporting defaults are unchanged.
 
 ### `GET /api/conversations/costs`
 

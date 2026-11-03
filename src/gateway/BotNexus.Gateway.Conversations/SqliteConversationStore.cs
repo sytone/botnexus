@@ -1081,7 +1081,24 @@ public sealed class SqliteConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(CancellationToken ct = default)
+        => GetSummariesCoreAsync(null, false, ct);
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(
+        DateTimeOffset? activitySince, CancellationToken ct = default)
+        => GetSummariesCoreAsync(activitySince, true, ct);
+
+    // SQLite date functions lose sub-millisecond precision. The connection-local function
+    // compares UTC ticks, including legacy offset timestamps, without changing stored data.
+    private const string EffectiveActivitySql = """
+        max(activity_ticks(c.created_at), activity_ticks(c.updated_at),
+            coalesce((SELECT max(max(coalesce(activity_ticks(ab.last_inbound_at), activity_ticks(c.updated_at)),
+                                         coalesce(activity_ticks(ab.last_outbound_at), activity_ticks(c.updated_at))))
+                      FROM conversation_bindings ab WHERE ab.conversation_id = c.id), activity_ticks(c.updated_at)))
+        """;
+    private async Task<IReadOnlyList<ConversationSummary>> GetSummariesCoreAsync(
+        DateTimeOffset? activitySince, bool effectiveActivity, CancellationToken ct)
     {
         using var activity = ActivitySource.StartActivity("conversation.get_summaries", ActivityKind.Internal);
         using var metric = _storeMetrics?.Start("conversation", "get_summaries");
@@ -1091,7 +1108,7 @@ public sealed class SqliteConversationStore : IConversationStore
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         await using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT
                 c.id,
                 c.agent_id,
@@ -1101,7 +1118,7 @@ public sealed class SqliteConversationStore : IConversationStore
                 c.status,
                 c.active_session_id,
                 c.created_at,
-                c.updated_at,
+                c.updated_at{(effectiveActivity ? $", {EffectiveActivitySql} AS effective_activity_ticks" : string.Empty)},
                 COUNT(b.binding_id) AS binding_count,
                 c.instructions,
                 c.kind,
@@ -1119,13 +1136,17 @@ public sealed class SqliteConversationStore : IConversationStore
                 c.pinned_at
             FROM conversations c
             LEFT JOIN conversation_bindings b ON b.conversation_id = c.id
-            WHERE c.status = 'Active' AND c.parent_conversation_id IS NULL
+            WHERE c.status = 'Active' AND c.parent_conversation_id IS NULL{(activitySince is null ? string.Empty : $" AND {EffectiveActivitySql} >= $activitySince")}
             GROUP BY c.id, c.agent_id, c.title, c.purpose, c.is_default, c.status, c.active_session_id, c.created_at, c.updated_at, c.instructions, c.kind, c.source, c.source_id, c.visibility, c.is_pinned, c.pinned_at
-            ORDER BY c.is_pinned DESC, c.pinned_at DESC, c.updated_at DESC
+            ORDER BY c.is_pinned DESC, c.pinned_at DESC, {(effectiveActivity ? "effective_activity_ticks" : "c.updated_at")} DESC
             """;
 
         var summaries = new List<ConversationSummary>();
-        var rosters = await LoadActiveParticipantRostersAsync(connection, ct).ConfigureAwait(false);
+        connection.CreateFunction<string?, long?>("activity_ticks", value => value is null ? null
+            : DateTimeOffset.Parse(value, System.Globalization.CultureInfo.InvariantCulture).UtcTicks, isDeterministic: true);
+        if (activitySince is not null)
+            command.Parameters.AddWithValue("$activitySince", activitySince.Value.UtcTicks);
+        var rosters = await LoadActiveParticipantRostersAsync(connection, ct, activitySince).ConfigureAwait(false);
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
@@ -1133,8 +1154,11 @@ public sealed class SqliteConversationStore : IConversationStore
             // #1627: the summary row ordinals live in SqliteDataReaderExtensions.MapSummary - the
             // single source of truth shared with the full-conversation mapper. The roster is
             // resolved once via the batch query above (#1427) to avoid an N+1 participant lookup.
-            summaries.Add(reader.MapSummary(
-                rosters.TryGetValue(conversationId, out var roster) ? roster : []));
+            var summary = reader.MapSummary(
+                rosters.TryGetValue(conversationId, out var roster) ? roster : []);
+            summaries.Add(effectiveActivity
+                ? summary with { UpdatedAt = new DateTimeOffset(reader.GetInt64(reader.GetOrdinal("effective_activity_ticks")), TimeSpan.Zero) }
+                : summary);
         }
 
         metric?.Complete(summaries.Count);
@@ -1221,7 +1245,7 @@ public sealed class SqliteConversationStore : IConversationStore
     /// </summary>
     private static async Task<Dictionary<string, IReadOnlyList<ParticipantSummary>>> LoadActiveParticipantRostersAsync(
         SqliteConnection connection,
-        CancellationToken ct)
+        CancellationToken ct, DateTimeOffset? activitySince = null)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -1232,6 +1256,12 @@ public sealed class SqliteConversationStore : IConversationStore
             ORDER BY p.citizen_kind ASC, p.citizen_id ASC
             """;
 
+        if (activitySince is not null)
+        {
+            command.CommandText = command.CommandText.Replace("WHERE c.status = 'Active'",
+                $"WHERE c.status = 'Active' AND c.parent_conversation_id IS NULL AND {EffectiveActivitySql} >= $activitySince", StringComparison.Ordinal);
+            command.Parameters.AddWithValue("$activitySince", activitySince.Value.UtcTicks);
+        }
         var rosters = new Dictionary<string, List<ParticipantSummary>>(StringComparer.Ordinal);
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))

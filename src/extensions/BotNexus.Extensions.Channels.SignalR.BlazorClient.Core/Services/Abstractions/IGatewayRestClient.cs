@@ -1,4 +1,4 @@
-﻿namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
+namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
 /// All portal REST traffic. Nothing else.
@@ -33,6 +33,13 @@ public interface IGatewayRestClient
     /// so it can render one cross-platform activity view without fanning out a per-agent request.
     /// </summary>
     Task<IReadOnlyList<ConversationSummaryDto>> GetAllConversationsAsync(
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Activity overview query with an inclusive absolute last-activity cutoff.
+    /// Null explicitly requests all history with effective creation/update/binding timestamps;
+    /// the token-only overload preserves the legacy unbounded update timestamps.</summary>
+    Task<IReadOnlyList<ConversationSummaryDto>> GetAllConversationsAsync(
+        DateTimeOffset? activitySince,
         CancellationToken cancellationToken = default);
 
     /// <summary>GET /api/conversations/{conversationId}/history?limit={limit}&amp;offset={offset}</summary>

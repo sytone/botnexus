@@ -418,23 +418,30 @@ public sealed class ConversationsController : ControllerBase
     /// recently updated first, with a deterministic <see cref="ConversationId"/> tie-breaker.
     /// </remarks>
     /// <param name="agentId">Optional. Filter to conversations relevant to this agent.</param>
+    /// <param name="activitySince">Optional inclusive Activity last-activity cutoff; omitted callers remain unbounded.</param>
+    /// <param name="effectiveActivity">Opt in to effective creation/update/binding timestamps even without a cutoff.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Array of conversation summaries.</returns>
     [HttpGet]
     [ProducesResponseType(typeof(IReadOnlyList<ConversationSummary>), StatusCodes.Status200OK)]
     public async Task<ActionResult> List(
         [FromQuery] string? agentId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        [FromQuery] DateTimeOffset? activitySince = null,
+        [FromQuery] bool effectiveActivity = false)
     {
         if (string.IsNullOrWhiteSpace(agentId))
         {
-            var allSummaries = await _conversations.GetSummariesAsync(cancellationToken);
+            var allSummaries = activitySince is null && !effectiveActivity
+                ? await _conversations.GetSummariesAsync(cancellationToken)
+                : await _conversations.GetSummariesAsync(activitySince, cancellationToken);
             return Ok(allSummaries);
         }
 
         var citizen = CitizenId.Of(AgentId.From(agentId));
         var relevant = await _conversations.ListForCitizenAsync(citizen, cancellationToken);
 
+        var activityQuery = effectiveActivity || activitySince.HasValue;
         var summaries = relevant
             .Where(c => c.Status == ConversationStatus.Active)
             // #2338: a nested sub-agent run is not independently addressable - it surfaces only by
@@ -442,11 +449,21 @@ public sealed class ConversationsController : ControllerBase
             // agent-scoped branch consistent with the global GetSummariesAsync branch above, which
             // applies the same rule in the store.
             .Where(c => c.ParentConversationId is null)
+            // The agent-scoped path keeps citizen relevance while applying the same effective
+            // timestamp as the global Activity query. Legacy callers keep raw update timestamps.
+            .Select(c => ToSummary(c) with
+            {
+                UpdatedAt = activityQuery
+                    ? c.ChannelBindings.SelectMany(b => new[] { b.LastInboundAt, b.LastOutboundAt })
+                        .Append(c.CreatedAt).Append(c.UpdatedAt)
+                        .Where(at => at.HasValue).Max(at => at.GetValueOrDefault())
+                    : c.UpdatedAt
+            })
+            .Where(c => activitySince is null || c.UpdatedAt >= activitySince.Value)
             .OrderByDescending(c => c.IsPinned)
             .ThenByDescending(c => c.PinnedAt)
             .ThenByDescending(c => c.UpdatedAt)
-            .ThenBy(c => c.ConversationId.Value, StringComparer.Ordinal)
-            .Select(ToSummary)
+            .ThenBy(c => c.ConversationId, StringComparer.Ordinal)
             .ToList();
 
         return Ok(summaries);
