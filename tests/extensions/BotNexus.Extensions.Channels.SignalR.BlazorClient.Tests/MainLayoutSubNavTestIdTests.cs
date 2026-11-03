@@ -238,6 +238,9 @@ public sealed class MainLayoutSubNavTestIdTests : IDisposable
         var explorer = cut.FindAll("[data-testid='subnav-skills-explorer']");
         Assert.Single(explorer);
         Assert.Equal("skills/explorer", explorer[0].GetAttribute("href"));
+        var security = cut.FindAll("[data-testid='subnav-skills-security']");
+        Assert.Single(security);
+        Assert.Equal("skills/security", security[0].GetAttribute("href"));
     }
 
     /// <summary>

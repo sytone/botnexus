@@ -22,6 +22,9 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
     private const int MaximumTreeDepthLimit = 5;
     private const int MaximumFileReadBytes = 512 * 1024;
     private const int MaximumAcknowledgementReasonLength = 1000;
+    internal const int MaximumSecurityFindings = 100;
+    internal const int MaximumScannedSkills = 100;
+    internal const int MaximumScannedFiles = 2_000;
     private const string CallerIdentityItemKey = "BotNexus.Gateway.CallerIdentity";
 
     /// <inheritdoc />
@@ -34,12 +37,100 @@ public sealed class SkillsEndpointContributor : IEndpointContributor
         // "telemetry" is matched as a literal segment rather than a skills-relative file path.
         group.MapGet("/telemetry", (ISkillUsageTelemetry? telemetry) => GetTelemetry(telemetry));
         group.MapGet("/telemetry/{skillName}", (string skillName, ISkillUsageTelemetry? telemetry) => GetTelemetryForSkill(skillName, telemetry));
+        group.MapGet("/security-findings", (HttpContext context, IFileSystem fs, PlatformConfigWriter writer) =>
+            GetSecurityFindings(context, fs, writer));
         group.MapPost("/security-acknowledgements", (SkillSecurityAcknowledgementRequest request, HttpContext context,
             IFileSystem fs, PlatformConfigWriter writer, ISecurityEventSink securityEvents) =>
             AcknowledgeSecurityFinding(request, context, fs, writer, securityEvents));
         group.MapGet("/{**path}", (string path, IFileSystem fs) => GetSkillsPath(path, fs));
         group.MapPut("/{**path}", (string path, IFileSystem fs, HttpRequest req) => WriteSkillsPath(path, fs, req));
         group.MapDelete("/{**path}", (string path, IFileSystem fs, bool force = false) => DeleteSkillsPath(path, fs, force));
+    }
+
+    /// <summary>Returns a bounded, source-free snapshot of unresolved shared-skill critical findings.</summary>
+    internal static Task<IResult> GetSecurityFindings(HttpContext context, IFileSystem fileSystem, PlatformConfigWriter writer)
+        => GetSecurityFindings(context, fileSystem, writer, GetSkillsRootPath());
+
+    internal static async Task<IResult> GetSecurityFindings(
+        HttpContext context, IFileSystem fileSystem, PlatformConfigWriter writer, string skillsRoot)
+    {
+        if (!TryGetAdmin(context, out _))
+            return Results.Forbid();
+
+        var document = await writer.ReadDocumentAsync(context.RequestAborted);
+        var acknowledgements = ReadDefaultAcknowledgements(document.ToJsonString());
+        var findings = new List<SkillSecurityFindingEvidence>();
+        var truncated = false;
+        var normalizedRoot = NormalizePath(fileSystem, skillsRoot);
+        if (fileSystem.Directory.Exists(normalizedRoot))
+        {
+            var scannedSkills = 0;
+            var scannedFiles = 0;
+            foreach (var skillDir in fileSystem.Directory.EnumerateDirectories(normalizedRoot)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                if (scannedSkills == MaximumScannedSkills || scannedFiles == MaximumScannedFiles)
+                {
+                    truncated = true;
+                    break;
+                }
+
+                var skillName = fileSystem.Path.GetFileName(skillDir);
+                if (!SkillParser.IsValidName(skillName))
+                    continue;
+
+                scannedSkills++;
+                var remainingFiles = MaximumScannedFiles - scannedFiles;
+                var scan = SkillSecurityScanner.ScanDirectory(
+                    skillDir, maxFiles: remainingFiles, fileSystem: fileSystem);
+                scannedFiles += scan.ScannedFiles;
+                foreach (var finding in SkillDiscovery.FindUnacknowledgedCriticalFindings(
+                    scan, skillName, skillDir, SkillSource.Global, fileSystem, acknowledgements))
+                {
+                    if (findings.Count == MaximumSecurityFindings)
+                    {
+                        truncated = true;
+                        break;
+                    }
+                    findings.Add(finding);
+                }
+                if (truncated)
+                    break;
+            }
+        }
+
+        return Results.Ok(new SkillSecurityFindingsResponse { Findings = findings, IsTruncated = truncated });
+    }
+
+    private static IReadOnlyList<SkillSecurityAcknowledgement> ReadDefaultAcknowledgements(string json)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            var node = document.RootElement;
+            foreach (var name in new[] { "agents", "defaults", "extensions", SkillsExtensionJson.ExtensionId, "securityAcknowledgements" })
+            {
+                if (node.ValueKind != System.Text.Json.JsonValueKind.Object)
+                    return [];
+                var found = false;
+                foreach (var property in node.EnumerateObject())
+                {
+                    if (!property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    node = property.Value;
+                    found = true;
+                    break;
+                }
+                if (!found)
+                    return [];
+            }
+            return System.Text.Json.JsonSerializer.Deserialize<List<SkillSecurityAcknowledgement>>(
+                node.GetRawText(), SkillsExtensionJson.Options) ?? [];
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return [];
+        }
     }
 
     /// <summary>
