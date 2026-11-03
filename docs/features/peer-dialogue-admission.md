@@ -1,4 +1,4 @@
-# Durable peer-dialogue admission
+# Durable peer-dialogue admission and delivery evidence
 
 The peer-dialogue admission store is a backend foundation for interactive agent conversations.
 It does **not** enable an asynchronous peer tool, dispatch a message, wake an agent, or return a
@@ -48,10 +48,44 @@ started, a tool has run, a response exists, or an external side effect can safel
 Pending evidence remains inspectable after dialogue closure or expiry; a future dispatcher must
 check lifecycle and current authorization before execution.
 
-The next runtime integration must add fenced delivery/start/completion transitions, correlated
-reply intents, safe busy/idle delivery, restart reconciliation, cancellation, and execution
-resource limits. It must not replay uncertain external effects or replenish shared budgets on
-restart. A caller waiting for a peer must not occupy an executor merely to wait.
+## Fenced delivery lifecycle
+
+The store also provides delivery reservations and retained execution evidence. These operations
+are not a dispatcher and do not invoke an agent:
+
+- `ClaimAsync` reserves a message for its recipient with a unique run owner, increasing generation,
+  and a positive lease of at most five minutes. An expired reservation can be reclaimed only
+  before execution starts.
+- `StartAsync` records the start boundary for the exact live reservation. It authorizes start
+  once. A repeated start is rejected, even when the owner is unchanged.
+- An expired started attempt becomes `Uncertain`, never automatically pending again. If a start
+  acknowledgement is lost, the caller must inspect evidence rather than execute again.
+- `CompleteAsync` retains the actual supplied output. Successful completion can admit one
+  opposite-direction reply in the same transaction as the completion and shared turn charge.
+  Equal completion retries reconcile without charging again. Changed results conflict.
+- Closure, expiry, exhaustion, identity conflicts, failed execution, or invalid reply content
+  suppress the reply without replacing the retained output with a synthetic response.
+- Either member can cancel unstarted work. Cancelling started work records uncertainty; it does
+  not prove that an external operation stopped. Completed evidence remains available.
+
+`GetDeliveryAsync` reports the current lifecycle separately from immutable admission evidence.
+`ListPendingAsync` still lists original pending admissions, including messages whose lifecycle
+has since changed. It is not a work queue or permission to run a message. Dispatchers must use
+claim/start and current authorization, not replay this list.
+
+Schema 2 adds delivery evidence to existing schema-1 stores without rewriting admitted messages
+or refunding their shared turns. A newer unsupported schema is rejected before modification.
+Rolling back to the schema-1 implementation cannot open a schema-2 store; preserve the database
+and use a compatible reader rather than removing version metadata.
+
+## Remaining runtime integration
+
+The runtime still must authenticate and authorize actual endpoints, capture only the current
+turn's authored output, and connect the lifecycle to normal inbound processing. Safe busy/idle
+delivery, restart reconciliation, and execution resource limits remain required. It must not
+replay uncertain external effects or replenish shared budgets on restart. A caller waiting for
+a peer must not occupy an executor merely to wait. The store alone does not demonstrate an
+alternating exchange between two models.
 
 The broader collaboration scenario also requires invitation, actual subsequent-message fan-out,
 addressed recipients, producing-speaker provenance, and desktop/mobile participant and thread UI.
