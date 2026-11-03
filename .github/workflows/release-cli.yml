@@ -108,6 +108,10 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "prev_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
 
+      - name: Validate updater release compatibility
+        shell: pwsh
+        run: ./scripts/repo/Test-UpdaterCompatibility.ps1 -ReleaseVersion '${{ steps.version.outputs.version }}'
+
       - name: Resolve immutable release source
         id: release_source
         shell: bash

@@ -60,6 +60,18 @@ internal static class ReleaseTargetGitResolver
         return new ReleaseUpdateStatus(new ReleaseIdentity(null, installed.Output.Trim()), target);
     }
 
+    internal static async Task<string?> ReadTargetFileAsync(
+        string repoRoot, ResolvedReleaseTarget target, string path, CancellationToken cancellationToken)
+    {
+        // Never read the working tree or a movable branch/tag. Only the commit resolved above.
+        if (target.CommitSha.Length != 40 || !target.CommitSha.All(Uri.IsHexDigit))
+            return null;
+        var result = await RunGitAsync(repoRoot, ["show", $"{target.CommitSha}:{path}"], cancellationToken);
+        if (result.Cancelled)
+            throw new OperationCanceledException(cancellationToken);
+        return result.ExitCode == 0 ? result.Output : null;
+    }
+
     internal static async Task CheckoutAsync(
         string repoRoot,
         ResolvedReleaseTarget target,

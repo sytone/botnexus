@@ -58,5 +58,12 @@ internal static partial class CliText
     /// through this helper - sanitisation would change the payload bytes (#3208 AC4).
     /// </remarks>
     public static string SafeDisplay(string? value)
-        => Markup.Escape(ResidualControls().Replace(AnsiStripper.Strip(value ?? string.Empty), string.Empty));
+        => Markup.Escape(SafePlainDisplay(value));
+
+    /// <summary>
+    /// Removes terminal controls for literal console diagnostics without introducing Spectre
+    /// markup escapes or wrapping copy-pasteable commands.
+    /// </summary>
+    public static string SafePlainDisplay(string? value)
+        => ResidualControls().Replace(AnsiStripper.Strip(value ?? string.Empty), string.Empty);
 }
