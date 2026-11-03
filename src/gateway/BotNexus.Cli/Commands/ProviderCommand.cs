@@ -584,7 +584,7 @@ internal sealed class ProviderCommand
 
         foreach (var (name, provider) in config.Providers)
         {
-            var authDisplay = GetAuthDisplay(provider.ApiKey);
+            var authDisplay = GetAuthDisplay(provider);
             table.AddRow(
                 name,
                 provider.Enabled ? "[green]Yes[/]" : "[red]No[/]",
@@ -950,8 +950,21 @@ internal sealed class ProviderCommand
         }
     }
 
-    private static string GetAuthDisplay(string? apiKey)
+    private static string GetAuthDisplay(ProviderConfig provider)
     {
+        if (string.Equals(provider.Type, "microsoft-foundry", StringComparison.OrdinalIgnoreCase))
+        {
+            var mode = provider.Authentication?.Type?.Trim().ToLowerInvariant();
+            return mode switch
+            {
+                "entra-default" or "managed-identity" or "user-assigned-managed-identity" =>
+                    $"[cyan]{mode} (configured; not validated)[/]",
+                "api-key" when !string.IsNullOrWhiteSpace(provider.ApiKey) => "[green]api-key (configured; not validated)[/]",
+                _ => "[yellow]authentication incomplete[/]"
+            };
+        }
+
+        var apiKey = provider.ApiKey;
         if (string.IsNullOrWhiteSpace(apiKey))
             return "[dim]none[/]";
         if (apiKey.StartsWith("auth:", StringComparison.OrdinalIgnoreCase))

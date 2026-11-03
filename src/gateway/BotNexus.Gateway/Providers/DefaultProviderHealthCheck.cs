@@ -7,24 +7,26 @@ using Microsoft.Extensions.Logging;
 namespace BotNexus.Gateway.Providers;
 
 /// <summary>
-/// Default provider health check implementation that validates credential availability
-/// and model registration without making live API calls. Providers that support
-/// endpoint probing can extend this with HTTP checks in the future.
+/// Dispatches provider-owned health policies when available; otherwise validates generic
+/// credential availability and model registration without making live API calls.
 /// </summary>
 public sealed class DefaultProviderHealthCheck : IProviderHealthCheck
 {
     private readonly ModelRegistry _modelRegistry;
     private readonly GatewayAuthManager _authManager;
     private readonly ILogger<DefaultProviderHealthCheck> _logger;
+    private readonly ApiProviderRegistry? _apiProviders;
 
     public DefaultProviderHealthCheck(
         ModelRegistry modelRegistry,
         GatewayAuthManager authManager,
-        ILogger<DefaultProviderHealthCheck> logger)
+        ILogger<DefaultProviderHealthCheck> logger,
+        ApiProviderRegistry? apiProviders = null)
     {
         _modelRegistry = modelRegistry ?? throw new ArgumentNullException(nameof(modelRegistry));
         _authManager = authManager ?? throw new ArgumentNullException(nameof(authManager));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _apiProviders = apiProviders;
     }
 
     /// <inheritdoc/>
@@ -47,6 +49,14 @@ public sealed class DefaultProviderHealthCheck : IProviderHealthCheck
         // Check model registration
         var models = _modelRegistry.GetModels(providerId);
         var modelCount = models.Count;
+
+        // Resolve via the registered model's wire API, not a provider-name/type heuristic.
+        // Instance-owned providers must never fall back to the generic API-key resolver.
+        if (modelCount > 0 && _apiProviders?.Get(models[0].Api) is IProviderHealthCheck healthCheck)
+        {
+            var result = await healthCheck.CheckAsync(models[0].Provider, cancellationToken).ConfigureAwait(false);
+            return result with { ProviderId = providerId, ModelCount = modelCount };
+        }
 
         // Check credential availability
         bool hasCredentials;

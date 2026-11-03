@@ -11,7 +11,7 @@ namespace BotNexus.Agent.Providers.Core.Registry;
 public sealed class ApiProviderRegistry
 {
     private sealed record Registration(IApiProvider Provider, string? SourceId, IReadOnlySet<ProviderCapability> Capabilities);
-    private sealed class GuardedProvider(IApiProvider inner) : IApiProvider
+    private class GuardedProvider(IApiProvider inner) : IApiProvider
     {
         public string Api => inner.Api;
         public ProviderCapabilities Capabilities => inner.Capabilities;
@@ -49,6 +49,14 @@ public sealed class ApiProviderRegistry
         }
     }
 
+    // Preserve optional health policy without advertising it for providers that do not own one.
+    private sealed class GuardedHealthProvider(IApiProvider inner, IProviderHealthCheck healthCheck)
+        : GuardedProvider(inner), IProviderHealthCheck
+    {
+        public Task<ProviderHealthResult> CheckAsync(string providerId, CancellationToken cancellationToken = default) =>
+            healthCheck.CheckAsync(providerId, cancellationToken);
+    }
+
     private readonly ConcurrentDictionary<string, Registration> _registry = new();
 
     /// <summary>
@@ -66,7 +74,10 @@ public sealed class ApiProviderRegistry
         var declared = capabilities is null || capabilities.Count == 0
             ? ProviderCapabilitySets.ChatOnly
             : new HashSet<ProviderCapability>(capabilities);
-        _registry[provider.Api] = new Registration(new GuardedProvider(provider), sourceId, declared);
+        IApiProvider guarded = provider is IProviderHealthCheck healthCheck
+            ? new GuardedHealthProvider(provider, healthCheck)
+            : new GuardedProvider(provider);
+        _registry[provider.Api] = new Registration(guarded, sourceId, declared);
     }
 
     /// <summary>
