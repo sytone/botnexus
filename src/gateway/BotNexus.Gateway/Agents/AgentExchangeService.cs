@@ -316,11 +316,25 @@ public sealed class AgentExchangeService : IAgentExchangeService
             session,
             sendTurnAsync: async (turn, message, ct) =>
             {
-                targetHandle ??= await _supervisor.GetOrCreateAsync(request.TargetId, sessionId, ct).ConfigureAwait(false);
-
                 var exchangeId = Guid.NewGuid().ToString("N");
-                AgentExchangeCompletionGate.PrepareTurn(session.Metadata, exchangeId);
-                await _sessionStore.SaveAsync(session, ct).ConfigureAwait(false);
+                try
+                {
+                    targetHandle ??= await _supervisor.GetOrCreateAsync(request.TargetId, sessionId, ct).ConfigureAwait(false);
+
+                    AgentExchangeCompletionGate.PrepareTurn(session.Metadata, exchangeId);
+                    await _sessionStore.SaveAsync(session, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException interrupted)
+                {
+                    // This boundary is before PromptAsync: no work was dispatched this turn.
+                    await ReloadCancellationHistoryAsync(session).ConfigureAwait(false);
+                    var evidence = CreateCancellationEvidence(session, conversation.ConversationId,
+                        turn == 0 ? "neverDispatched" : "betweenTurns");
+                    session.Metadata["interruptedExchangeEvidence"] = evidence;
+                    await SaveCancellationEvidenceAsync(session).ConfigureAwait(false);
+                    throw new AgentExchangeCancelledException(evidence,
+                        ct.IsCancellationRequested ? ct : interrupted.CancellationToken);
+                }
 
                 AgentResponse response;
                 try
@@ -329,13 +343,50 @@ public sealed class AgentExchangeService : IAgentExchangeService
                 }
                 catch (AgentPromptInterruptedException interrupted)
                 {
-                    // The engine has already added the user row. Keep partial tool evidence, not
-                    // unfinished assistant prose, and persist with a token independent of the run.
-                    foreach (var entry in _toolAudit.ProjectBlockingRun(_toolAudit.CaptureBlockingRun(interrupted.PartialResponse)))
-                        session.AddEntry(entry);
-                    await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
-                    throw new OperationCanceledException("Agent exchange turn was interrupted.", interrupted,
+                    // Keep prose as explicitly incomplete metadata, never as a final assistant row.
+                    // Use the same sanitisation policy as tool evidence; do not persist exception or
+                    // completion detail, which may contain provider diagnostics or thinking.
+                    await ReloadCancellationHistoryAsync(session).ConfigureAwait(false);
+                    var partial = interrupted.PartialResponse;
+                    var records = _toolAudit.CaptureBlockingRun(partial);
+                    foreach (var entry in _toolAudit.ProjectBlockingRun(records))
+                    {
+                        // A separate write-ahead aggregate may already have committed this result.
+                        // Only authoritative run/call identity permits suppression; legacy unknown
+                        // identities must not collapse unrelated invocations with reused call IDs.
+                        var retained = session.GetHistorySnapshot().Any(row =>
+                            row.Role == MessageRole.Tool && row.Kind == MessageKind.ToolResult
+                            && entry.AgentRunId is { } run && row.AgentRunId == run
+                            && !string.IsNullOrWhiteSpace(entry.ToolCallId)
+                            && row.ToolCallId == entry.ToolCallId
+                            && row.ToolIsIncomplete == entry.ToolIsIncomplete);
+                        if (!retained)
+                            session.AddEntry(entry);
+                    }
+                    var safeText = _toolAudit.SanitizePartialText(partial.Content);
+                    var evidence = CreateCancellationEvidence(session, conversation.ConversationId,
+                        "promptInterrupted") with
+                    {
+                        PartialText = safeText,
+                        Usage = partial.Usage,
+                        RunUsage = partial.RunUsage
+                    };
+                    session.Metadata["interruptedExchangeEvidence"] = evidence;
+                    await SaveCancellationEvidenceAsync(session).ConfigureAwait(false);
+                    throw new AgentExchangeCancelledException(evidence,
                         ct.IsCancellationRequested ? ct : interrupted.CancellationToken);
+                }
+                catch (OperationCanceledException interrupted)
+                {
+                    // PromptAsync was entered, but this handle supplied no partial response.
+                    // Retain only known progress, never invent a never-dispatched outcome.
+                    await ReloadCancellationHistoryAsync(session).ConfigureAwait(false);
+                    var evidence = CreateCancellationEvidence(session, conversation.ConversationId, "promptInterrupted");
+                    session.Metadata["interruptedExchangeEvidence"] = evidence;
+                    await SaveCancellationEvidenceAsync(session).ConfigureAwait(false);
+                    // Preserve the original exception/message and inner-cancellation lifecycle.
+                    interrupted.Data[nameof(AgentExchangeCancellationEvidence)] = evidence;
+                    throw;
                 }
                 var responseText = response.Content ?? string.Empty;
                 // #2614 AC4: capture the tool timeline this turn executed and hand it to the shared
@@ -413,6 +464,93 @@ public sealed class AgentExchangeService : IAgentExchangeService
             cancellationToken).ConfigureAwait(false);
 
         return result;
+    }
+
+    private async Task SaveCancellationEvidenceAsync(GatewaySession session)
+    {
+        try
+        {
+            await _sessionStore.SaveAsync(session, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // The receipt remains available on the cancellation, but is not necessarily durable.
+            // Diagnostic persistence must not replace the cancellation that owns the lifecycle.
+            _logger.LogWarning(ex,
+                "Could not persist cancellation evidence for exchange session '{SessionId}'.", session.SessionId);
+        }
+    }
+
+    private async Task ReloadCancellationHistoryAsync(GatewaySession session)
+    {
+        try
+        {
+            await MergeCancellationHistoryAsync(session).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Continue with locally available evidence, including any partial response. A failed
+            // refresh must not prevent capture or turn caller cancellation into a sealed error.
+            _logger.LogWarning(ex,
+                "Could not refresh cancellation history for exchange session '{SessionId}'; using available evidence.",
+                session.SessionId);
+        }
+    }
+
+    private async Task MergeCancellationHistoryAsync(GatewaySession session)
+    {
+        // Write-ahead audit uses its own aggregate. Reload with an uncancelled token so
+        // independently committed results participate in the receipt, not just local rows.
+        var latest = await _sessionStore.GetAsync(session.SessionId, CancellationToken.None).ConfigureAwait(false);
+        if (latest is null || ReferenceEquals(latest, session))
+            return;
+
+        // Keep the working aggregate: the turn engine still owns this reference, including
+        // unsaved user/prior-turn rows. Append only durable rows it has not already observed;
+        // replacing history would discard pending turns or mark unrelated rows for deletion.
+        var local = session.GetHistorySnapshot();
+        var ids = local.Where(row => row.PersistenceId is > 0).Select(row => row.PersistenceId).ToHashSet();
+        var keys = local.Where(row => row.PersistenceKey is not null).Select(row => row.PersistenceKey).ToHashSet(StringComparer.Ordinal);
+        foreach (var row in latest.GetHistorySnapshot())
+        {
+            if ((row.PersistenceId is > 0 && ids.Contains(row.PersistenceId))
+                || (row.PersistenceKey is { } key && keys.Contains(key))
+                || local.Contains(row))
+                continue;
+            session.AddEntry(row);
+        }
+
+        // Subsequent cancellation/deadline lifecycle saves still use the working aggregate.
+        // Preserve the authoritative metadata, including deletions, rather than writing stale
+        // unrelated values back. The catches add only their own receipt after this refresh.
+        session.Metadata.Clear();
+        foreach (var (key, value) in latest.Metadata)
+            session.Metadata[key] = value;
+    }
+
+    private static AgentExchangeCancellationEvidence CreateCancellationEvidence(
+        GatewaySession session, ConversationId conversationId, string phase)
+    {
+        // Count retained results across ALL turns, not starts or just this prompt's records.
+        // Write-ahead and blocking projections can describe the same run-scoped invocation.
+        var results = session.GetHistorySnapshot()
+            .Where(row => row.Role == MessageRole.Tool && row.Kind == MessageKind.ToolResult)
+            .Select((row, index) => new
+            {
+                Row = row,
+                Key = row.AgentRunId is { } run && !string.IsNullOrWhiteSpace(row.ToolCallId)
+                    ? $"run:{run.Value.Length}:{run.Value}:{row.ToolCallId}"
+                    : row.PersistenceKey ?? $"row:{index}"
+            })
+            .GroupBy(item => item.Key, StringComparer.Ordinal)
+            .Select(group => group.Last().Row)
+            .ToArray();
+        return new AgentExchangeCancellationEvidence
+        {
+            ConversationId = conversationId, SessionId = session.SessionId, Phase = phase,
+            CompletedToolCount = results.Count(row => row.ToolIsIncomplete != true),
+            IncompleteToolCount = results.Count(row => row.ToolIsIncomplete == true)
+        };
     }
 
     /// <summary>

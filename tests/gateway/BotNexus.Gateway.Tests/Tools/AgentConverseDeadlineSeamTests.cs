@@ -62,7 +62,8 @@ public sealed class AgentConverseDeadlineSeamTests
         // Only a lower budget bound: the seam snapshot above, not elapsed < 6s, proves that
         // the engine beat the backstop. Allow modest timer/rounding jitter at the 1s boundary.
         report.GetProperty("elapsedSeconds").GetDouble().ShouldBeGreaterThanOrEqualTo(0.8d);
-        report.GetProperty("retryAdvised").GetBoolean().ShouldBeTrue();
+        report.GetProperty("retryAdvised").GetBoolean().ShouldBeFalse();
+        AssertDispatchedEvidence(report);
         var message = report.GetProperty("message").GetString().ShouldNotBeNull();
         message.ShouldContain("timed out");
         message.ShouldContain("budget was exhausted");
@@ -182,6 +183,19 @@ public sealed class AgentConverseDeadlineSeamTests
         report.GetProperty("timeoutSeconds").GetInt32().ShouldBe(timeoutSeconds);
         report.GetProperty("targetAgentId").GetString().ShouldBe("agent-c");
         report.GetProperty("message").GetString().ShouldNotBeNull().ShouldNotContain("A task was canceled");
+        AssertDispatchedEvidence(report);
+    }
+
+    private static void AssertDispatchedEvidence(JsonElement report)
+    {
+        report.GetProperty("message").GetString().ShouldNotBeNull().ShouldContain("reconcile");
+        var evidence = report.GetProperty("evidence");
+        evidence.GetProperty("phase").GetString().ShouldBe("promptInterrupted");
+        evidence.GetProperty("sessionId").GetString().ShouldNotBeNullOrWhiteSpace();
+        evidence.GetProperty("conversationId").GetString().ShouldNotBeNullOrWhiteSpace();
+        evidence.GetProperty("completedToolCount").GetInt32().ShouldBe(0);
+        evidence.GetProperty("incompleteToolCount").GetInt32().ShouldBe(0);
+        evidence.GetProperty("partialText").ValueKind.ShouldBe(JsonValueKind.Null);
     }
 
     private sealed class ExchangeHarness
