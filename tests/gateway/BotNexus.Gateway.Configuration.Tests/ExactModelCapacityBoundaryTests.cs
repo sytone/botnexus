@@ -50,7 +50,8 @@ public sealed class ExactModelCapacityBoundaryTests : IDisposable
         {
             var fs = new MockFileSystem();
             fs.AddFile(path, new MockFileData(Document(Map)));
-            monitor = PlatformConfigurationSources.BuildMonitor(path, fs);
+            monitor = PlatformConfigurationSources.BuildMonitor(path, fs,
+                authorityFactory: new TestConfigAuthorityFactory());
         }
         AssertExact(monitor.CurrentValue);
     }
@@ -66,7 +67,7 @@ public sealed class ExactModelCapacityBoundaryTests : IDisposable
     }
 
     [Fact]
-    public async Task SqliteOptionsMonitor_AbsentStoreMapInheritsJsonMap()
+    public async Task SqliteOptionsMonitor_AbsentStoreMapDoesNotResurrectJsonMap()
     {
         var path = Path.Combine(_directory, "config.json");
         File.WriteAllText(path, Document(Map));
@@ -74,7 +75,7 @@ public sealed class ExactModelCapacityBoundaryTests : IDisposable
         await ConfigStoreBootstrap.PopulateAsync(storePath,
             JsonNode.Parse("""{"providers":{"custom":{"chat":{"defaultModel":"other"}}}}""").ShouldBeOfType<JsonObject>());
         var config = PlatformConfigurationSources.BuildMonitor(path).CurrentValue;
-        AssertExact(config);
+        Capacities(config).ShouldBeEmpty();
         config.Providers.ShouldNotBeNull()["custom"].Chat.ShouldNotBeNull().DefaultModel.ShouldBe("other");
     }
 

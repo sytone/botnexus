@@ -1,6 +1,8 @@
 using BotNexus.Gateway.Api.Configuration;
 using BotNexus.Gateway.Api.Models;
 using BotNexus.Gateway.Configuration;
+using BotNexus.Gateway.Configuration.Writers;
+using System.Collections.Immutable;
 using BotNexus.Gateway.Abstractions.Extensions;
 using BotNexus.Gateway.Extensions;
 using Microsoft.AspNetCore.Mvc;
@@ -138,11 +140,11 @@ public sealed class ConfigController : ControllerBase
             if (!result.Success)
                 return BadRequest(new ConfigPatchResponse(false, null, result.Errors));
 
-            return Ok(new ConfigPatchResponse(true, result.Revision, []));
+            return Ok(new ConfigPatchResponse(true, result.Revision, []) { Warnings = result.Warnings });
         }
         catch (PlatformConfigConcurrencyException ex)
         {
-            return Conflict(new ConfigPatchResponse(false, ex.ActualRevision, [ex.Message]));
+            return Conflict(new ConfigPatchResponse(false, ex.ActualRevision, ["Configuration has changed. Reload it before saving again."]));
         }
     }
 
@@ -195,8 +197,8 @@ public sealed class ConfigController : ControllerBase
 
         try
         {
-            await writer.UpdateSectionAsync(section, value, ct, additionalValidation: ScopeValidation(extensionLoader));
-            return Ok(new { message = $"Section '{section}' updated. Changes will be applied automatically." });
+            var result = await writer.UpdateSectionWithResultAsync(section, value, ct, additionalValidation: ScopeValidation(extensionLoader));
+            return Ok(new { message = $"Section '{section}' updated. Changes will be applied automatically.", warnings = result.Warnings });
         }
         catch (PlatformConfigSectionGuardException ex)
         {
@@ -221,8 +223,8 @@ public sealed class ConfigController : ControllerBase
 
         try
         {
-            await writer.UpdateSectionEntryAsync(section, key, value, ct, ScopeValidation(extensionLoader));
-            return Ok(new { message = $"Entry '{key}' in section '{section}' updated." });
+            var result = await writer.UpdateSectionEntryWithResultAsync(section, key, value, ct, ScopeValidation(extensionLoader));
+            return Ok(new { message = $"Entry '{key}' in section '{section}' updated.", warnings = result.Warnings });
         }
         catch (PlatformConfigSectionGuardException ex)
         {
@@ -252,7 +254,7 @@ public sealed class ConfigController : ControllerBase
         if (!result.Success)
             return BadRequest(string.Join("; ", result.Errors));
 
-        return Ok(new { message = $"Entry '{key}' removed from section '{section}'." });
+        return Ok(new { message = $"Entry '{key}' removed from section '{section}'.", warnings = result.Warnings });
     }
 
     /// <summary>
@@ -664,7 +666,17 @@ public sealed record ConfigPatchRequest(IReadOnlyList<ConfigPatchOperationDto> O
 /// <param name="Success">Whether the batch committed.</param>
 /// <param name="Revision">The revision now on disk: the new one on success, the current one on conflict.</param>
 /// <param name="Errors">Rejection messages; empty on success.</param>
-public sealed record ConfigPatchResponse(bool Success, string? Revision, IReadOnlyList<string> Errors);
+public sealed record ConfigPatchResponse(bool Success, string? Revision, IReadOnlyList<string> Errors)
+{
+    private ImmutableArray<ConfigurationProjectionWarning> _warnings = [];
+
+    /// <summary>Safe post-commit diagnostics for this request only; missing fields from older servers mean none.</summary>
+    public ImmutableArray<ConfigurationProjectionWarning> Warnings
+    {
+        get => _warnings;
+        init => _warnings = value.IsDefault ? [] : value;
+    }
+}
 
 /// <summary>
 /// Result of a platform configuration validation check.

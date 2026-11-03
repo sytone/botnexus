@@ -43,6 +43,15 @@ public sealed class JsonConfigurationWriter : IConfigurationWriter
     private readonly string _configPath;
     private readonly IFileSystem _fileSystem;
     private readonly ConfigBackupService? _backup;
+    internal static readonly ConfigurationProjectionWarning RefreshWarning = new(
+        "configuration-projection-refresh-failed",
+        "Configuration committed to SQLite; the existing JSON output projection could not be refreshed.");
+    private static readonly ConfigurationProjectionWarning BackupPermissionWarning = new(
+        "configuration-backup-permissions-failed",
+        "Configuration committed to SQLite; permissions on a JSON backup could not be restricted.");
+    private static readonly ConfigurationProjectionWarning ProjectionPermissionWarning = new(
+        "configuration-projection-permissions-failed",
+        "Configuration committed to SQLite; JSON output permissions could not be restricted.");
 
     /// <summary>Creates a writer for <paramref name="configPath"/>.</summary>
     public JsonConfigurationWriter(string configPath, IFileSystem fileSystem, ConfigBackupService? backup = null)
@@ -136,8 +145,39 @@ public sealed class JsonConfigurationWriter : IConfigurationWriter
         return string.IsNullOrWhiteSpace(text) ? null : JsonNode.Parse(text)?.AsObject();
     }
 
+    /// <summary>Refreshes a complete output snapshot without ever creating an absent projection.</summary>
+    public async Task RefreshExistingAsync(JsonObject document, string reason, CancellationToken cancellationToken = default)
+    {
+        if (_fileSystem.File.Exists(_configPath))
+            await WriteCoreAsync(document, reason, cancellationToken, existingOnly: true).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Best-effort output refresh after authority commit. Retains earlier permission warnings even
+    /// if a later output step fails. Never use for pre-commit bootstrap or ordinary raw JSON writes.
+    /// </summary>
+    public async Task<ConfigurationWriteResult> RefreshExistingWithResultAsync(JsonObject document, string reason,
+        CancellationToken cancellationToken = default)
+    {
+        var warnings = new List<ConfigurationProjectionWarning>();
+        try
+        {
+            if (_fileSystem.File.Exists(_configPath))
+                await WriteCoreAsync(document, reason, cancellationToken, existingOnly: true, warnings).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            warnings.Add(RefreshWarning);
+        }
+        return new(warnings);
+    }
+
     /// <inheritdoc />
-    public async Task WriteAsync(JsonObject document, string reason, CancellationToken cancellationToken = default)
+    public Task WriteAsync(JsonObject document, string reason, CancellationToken cancellationToken = default)
+        => WriteCoreAsync(document, reason, cancellationToken, existingOnly: false);
+
+    private async Task WriteCoreAsync(JsonObject document, string reason, CancellationToken cancellationToken, bool existingOnly,
+        List<ConfigurationProjectionWarning>? warnings = null)
     {
         ArgumentNullException.ThrowIfNull(document);
 
@@ -152,7 +192,12 @@ public sealed class JsonConfigurationWriter : IConfigurationWriter
         }
 
         // (2) Backup.
-        _backup?.Backup(_configPath, reason);
+        // Record this outcome before fallible retention work; a pruning failure must not erase it.
+        _backup?.Backup(_configPath, reason, permissions =>
+        {
+            if (permissions == FilePermissionOutcome.Failed)
+                warnings?.Add(BackupPermissionWarning);
+        });
 
         // (5) Directory creation.
         var directory = _fileSystem.Path.GetDirectoryName(_configPath);
@@ -165,9 +210,13 @@ public sealed class JsonConfigurationWriter : IConfigurationWriter
         {
             await _fileSystem.File.WriteAllTextAsync(tempPath, json, cancellationToken);
 
-            SecureFilePermissions.RestrictToOwner(_fileSystem, tempPath);
-            await ReplaceWithRetryAsync(tempPath, cancellationToken);
-            SecureFilePermissions.RestrictToOwner(_fileSystem, _configPath);
+            var beforePermissions = SecureFilePermissions.RestrictToOwner(_fileSystem, tempPath);
+            if (beforePermissions == FilePermissionOutcome.Failed)
+                warnings?.Add(ProjectionPermissionWarning);
+            await ReplaceWithRetryAsync(tempPath, cancellationToken, existingOnly);
+            var afterPermissions = SecureFilePermissions.RestrictToOwner(_fileSystem, _configPath);
+            if (afterPermissions == FilePermissionOutcome.Failed && beforePermissions != FilePermissionOutcome.Failed)
+                warnings?.Add(ProjectionPermissionWarning);
         }
         finally
         {
@@ -179,7 +228,7 @@ public sealed class JsonConfigurationWriter : IConfigurationWriter
     /// <summary>
     /// Replaces the destination, retrying while a competing reader holds a handle (#2357).
     /// </summary>
-    private async Task ReplaceWithRetryAsync(string tempPath, CancellationToken ct)
+    private async Task ReplaceWithRetryAsync(string tempPath, CancellationToken ct, bool existingOnly)
     {
         var delayMs = 5;
         for (var attempt = 1; ; attempt++)
@@ -192,7 +241,7 @@ public sealed class JsonConfigurationWriter : IConfigurationWriter
                     _fileSystem.File.Replace(
                         tempPath, _configPath, destinationBackupFileName: null, ignoreMetadataErrors: true);
                 }
-                else
+                else if (!existingOnly)
                 {
                     _fileSystem.File.Move(tempPath, _configPath, overwrite: true);
                 }

@@ -1,3 +1,4 @@
+using BotNexus.Persistence.Sqlite;
 using System.IO.Abstractions;
 using System.Text.Json;
 using BotNexus.Gateway.Configuration;
@@ -19,8 +20,15 @@ namespace BotNexus.Gateway.Tests;
 /// categorically by <c>WorldIdSingleDerivationArchitectureTests</c> rather than by a behaviour test,
 /// because "nobody else reads the key" is a property of the whole source tree, not of one code path.
 /// </remarks>
-public sealed class WorldIdTests
+[Collection("IntegrationTests")]
+public sealed class WorldIdTests : IDisposable
 {
+    // This nonparallel fixture owns a clean identity scope, including any prior host's memo.
+    public WorldIdTests() => SqliteStoreIdentityGuard.Reset();
+
+    // xUnit disposes this fixture after each test, while the nonparallel collection owns the guard.
+    public void Dispose() => SqliteStoreIdentityGuard.Reset();
+
     /// <summary>Acceptance criterion 1: <c>worldId</c> is a recognised property and reaches the schema.</summary>
     [Fact]
     public void WorldId_IsRecognisedConfigProperty_AndAppearsInGeneratedSchema()
@@ -133,11 +141,18 @@ public sealed class WorldIdTests
         services.AddSingleton<IFeatureManager>(new AllOffFeatureManager());
         services.AddSingleton<IFileSystem>(new FileSystem());
         services.AddPlatformConfiguration(configPath);
-        await using var provider = services.BuildServiceProvider();
-
-        await RunWorldIdBootstrapAsync(services, provider);
-
-        return (provider.GetRequiredService<WorldId>(), provider.GetRequiredService<WorldIdOrigin>());
+        try
+        {
+            await using var provider = services.BuildServiceProvider();
+            await RunWorldIdBootstrapAsync(services, provider);
+            return (provider.GetRequiredService<WorldId>(), provider.GetRequiredService<WorldIdOrigin>());
+        }
+        finally
+        {
+            // TwoHomesInSameRun models two sequential hosts in one process. Dispose the first
+            // provider before releasing its identity and verified-path memo for the second host.
+            SqliteStoreIdentityGuard.Reset();
+        }
     }
 
     /// <summary>

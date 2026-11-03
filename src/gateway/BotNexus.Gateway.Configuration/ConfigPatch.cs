@@ -1,5 +1,7 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.Json.Nodes;
+using BotNexus.Gateway.Configuration.Writers;
 
 namespace BotNexus.Gateway.Configuration;
 
@@ -212,4 +214,14 @@ public static class ConfigPatchApplier
 /// <param name="Success">Whether the batch was applied and persisted.</param>
 /// <param name="Revision">The revision now committed on disk (present on success).</param>
 /// <param name="Errors">Rejection messages; empty on success.</param>
-public sealed record ConfigPatchResult(bool Success, string? Revision, IReadOnlyList<string> Errors);
+public sealed record ConfigPatchResult(bool Success, string? Revision, IReadOnlyList<string> Errors)
+{
+    private ImmutableArray<ConfigurationProjectionWarning> _warnings = [];
+
+    /// <summary>Operation-owned post-commit warnings; always an initialized immutable collection.</summary>
+    public ImmutableArray<ConfigurationProjectionWarning> Warnings
+    {
+        get => _warnings;
+        init => _warnings = value.IsDefault ? [] : value;
+    }
+}

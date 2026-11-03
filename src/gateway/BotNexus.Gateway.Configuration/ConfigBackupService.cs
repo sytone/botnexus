@@ -46,13 +46,19 @@ public sealed class ConfigBackupService
     /// No-op if the config file does not exist yet.
     /// Prunes oldest backups when the count would exceed <see cref="MaxBackups"/>.
     /// </summary>
-    public void Backup(string configPath, string reason)
+    /// <returns>The backup permission outcome, or Skipped if no source exists.</returns>
+    public FilePermissionOutcome Backup(string configPath, string reason)
+        => Backup(configPath, reason, permissionObserver: null);
+
+    // Post-commit projection diagnostics must observe permission failure before pruning can throw.
+    // The ordinary/pre-commit entry point still propagates every copy or pruning exception.
+    internal FilePermissionOutcome Backup(string configPath, string reason, Action<FilePermissionOutcome>? permissionObserver)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
 
         if (!_fileSystem.File.Exists(configPath))
-            return;
+            return FilePermissionOutcome.Skipped;
 
         _fileSystem.Directory.CreateDirectory(_backupsDirectory);
 
@@ -66,9 +72,11 @@ public sealed class ConfigBackupService
         // the same owner-only narrowing as the live file. File.Copy does NOT carry the source
         // permissions across on POSIX (the new file gets the process umask), so securing only
         // config.json would leave up to MaxBackups readable copies of the same secrets behind.
-        SecureFilePermissions.RestrictToOwner(_fileSystem, backupPath);
+        var permissions = SecureFilePermissions.RestrictToOwner(_fileSystem, backupPath);
+        permissionObserver?.Invoke(permissions);
 
         Prune();
+        return permissions;
     }
 
     /// <summary>

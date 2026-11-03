@@ -274,7 +274,7 @@ public sealed class AgentsController : ControllerBase
     {
         if (!TryParseAgentId(agentId, out var parsed, out var error)) return BadRequest(new { error });
         var key = parsed.GetValueOrDefault().Value;
-        var document = await writer.ReadDocumentAsync(cancellationToken);
+        var (document, revision) = await writer.ReadDocumentWithRevisionAsync(cancellationToken);
         var storedKey = document.FindEntryKey("agents", key);
         if (storedKey is null || storedKey.Equals("defaults", StringComparison.OrdinalIgnoreCase)) return NotFound();
         var root = new System.Text.Json.Nodes.JsonObject
@@ -284,6 +284,8 @@ public sealed class AgentsController : ControllerBase
                 [storedKey] = System.Text.Json.Nodes.JsonNode.Parse(document.DescribeEntry("agents", storedKey) ?? "{}")
             }
         };
+        Response.Headers["X-BotNexus-Config-Revision"] = revision;
+        Response.Headers.CacheControl = "no-store";
         return Content(root.ReadEditableConfiguration(AgentId.From(storedKey)).ToJsonString(), "application/json");
     }
 
@@ -294,10 +296,27 @@ public sealed class AgentsController : ControllerBase
         if (!TryParseAgentId(agentId, out var parsed, out var error)) return BadRequest(new { error });
         var key = parsed.GetValueOrDefault().Value;
         if (key.Equals("defaults", StringComparison.OrdinalIgnoreCase)) return NotFound();
-        var errors = await AgentConfigurationEditor.ApplyAsync(writer, parsed.GetValueOrDefault(), patch, cancellationToken, _modelRegistry);
-        if (errors.Contains("Agent not found.")) return NotFound();
-        if (errors.Count > 0) return BadRequest(new { errors });
-        return Ok(new { saved = true });
+        string? expectedRevision = null;
+        if (Request.Headers.TryGetValue("X-BotNexus-Config-Revision", out var revisions))
+        {
+            if (revisions.Count != 1 || string.IsNullOrWhiteSpace(revisions[0]))
+                return BadRequest(new { error = "Supply exactly one nonblank configuration revision." });
+            // Tokens are opaque: do not trim, parse, or disclose them in error responses.
+            expectedRevision = revisions[0];
+        }
+        try
+        {
+            var result = await AgentConfigurationEditor.ApplyWithResultAsync(writer, parsed.GetValueOrDefault(), patch,
+                cancellationToken, _modelRegistry, expectedRevision);
+            var errors = result.Errors;
+            if (errors.Contains("Agent not found.")) return NotFound();
+            if (errors.Length > 0) return BadRequest(new { errors });
+            return Ok(new { saved = true, warnings = result.Warnings });
+        }
+        catch (PlatformConfigConcurrencyException)
+        {
+            return Conflict(new { error = "Configuration has changed. Reload it before saving again." });
+        }
     }
 
     private ActionResult LifecycleError(AgentLifecycleException ex) => ex.Kind switch

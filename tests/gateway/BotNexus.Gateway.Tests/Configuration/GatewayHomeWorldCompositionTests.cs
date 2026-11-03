@@ -1,3 +1,4 @@
+using BotNexus.Persistence.Sqlite;
 using System.Text.Json;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -12,8 +13,12 @@ namespace BotNexus.Gateway.Tests.Configuration;
 /// file-store containment guards are independently tested; these tests prove the production DI path
 /// actually supplies both with the one world identity resolved from platform configuration.
 /// </summary>
+[Collection("IntegrationTests")]
 public sealed class GatewayHomeWorldCompositionTests : IDisposable
 {
+    // This nonparallel fixture owns a clean identity scope, including any prior host's memo.
+    public GatewayHomeWorldCompositionTests() => SqliteStoreIdentityGuard.Reset();
+
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
         "botnexus-home-world-composition",
@@ -111,6 +116,8 @@ public sealed class GatewayHomeWorldCompositionTests : IDisposable
 
     public void Dispose()
     {
+        // Release this fixture's process-wide identity before another physical store test runs.
+        SqliteStoreIdentityGuard.Reset();
         if (Directory.Exists(_root))
             Directory.Delete(_root, recursive: true);
     }

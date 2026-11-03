@@ -132,7 +132,9 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _onLoadFailure?.Invoke("Configuration store could not be read; retaining previous values.", ex);
+                if (_acceptedRawDocument is null)
+                    throw new InvalidDataException("Configuration authority could not be read during initial load.", ex);
+                _onLoadFailure?.Invoke("Configuration authority could not be read; retaining accepted SQLite values.", ex);
                 return false;
             }
 
@@ -151,8 +153,10 @@ public sealed class SqliteConfigurationProvider : ConfigurationProvider, IDispos
             }
             catch (Exception ex)
             {
+                if (_acceptedRawDocument is null)
+                    throw new InvalidDataException("Configuration authority could not be materialised during initial load.", ex);
                 _onLoadFailure?.Invoke(
-                    "Configuration store contents could not be materialised; retaining previous values.", ex);
+                    "Configuration authority could not be materialised; retaining accepted SQLite values.", ex);
                 return false;
             }
 

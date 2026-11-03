@@ -64,7 +64,8 @@ public sealed class WorldIdPersistenceServiceTests : IDisposable
         var identity = WorldIdResolver.Resolve(ConfigPath, _real, out var generated);
         generated.ShouldBeTrue();
         var backend = new CountingWriter(new JsonConfigurationWriter(ConfigPath, _real));
-        var writer = new PlatformConfigWriter(ConfigPath, _real, backup: null, writer: backend);
+        var writer = new PlatformConfigWriter(ConfigPath, _real, backup: null, writer: backend,
+            pristineStore: new TestConfigStore(new JsonObject()));
         await new WorldIdPersistenceService(writer, identity, new WorldIdOrigin(generated),
             NullLogger<WorldIdPersistenceService>.Instance).StartAsync(default);
 
@@ -127,7 +128,9 @@ public sealed class WorldIdPersistenceServiceTests : IDisposable
     }
 
     private WorldIdPersistenceService Create(IFileSystem fileSystem, bool generated, IConfigurationWriter? backend = null)
-        => new(new PlatformConfigWriter(ConfigPath, fileSystem, backup: null, writer: backend), Identity,
+        => new(new PlatformConfigWriter(ConfigPath, fileSystem, backup: null,
+                writer: backend ?? new JsonConfigurationWriter(ConfigPath, fileSystem),
+                pristineStore: new TestConfigStore(new JsonObject())), Identity,
             new WorldIdOrigin(generated), NullLogger<WorldIdPersistenceService>.Instance);
 
     private sealed class CountingWriter(IConfigurationWriter inner) : IConfigurationWriter

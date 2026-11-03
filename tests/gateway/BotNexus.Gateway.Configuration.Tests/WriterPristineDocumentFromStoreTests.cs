@@ -128,7 +128,8 @@ public sealed class WriterPristineDocumentFromStoreTests : IDisposable
     public async Task WriteWithNoFileAndNoStore_StillStartsFromAnEmptyDocument()
     {
         var recorder = new RecordingWriter();
-        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: recorder);
+        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: recorder,
+            pristineStore: new TestConfigStore(new JsonObject()));
 
         await writer.MutateAsync(
             root => root["gateway"] = new JsonObject { ["listenUrl"] = "http://localhost:6000" },

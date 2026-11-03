@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using BotNexus.Gateway.Api.Controllers;
 using BotNexus.Gateway.Configuration;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using Xunit;
@@ -20,7 +21,10 @@ public sealed class AgentConfigurationPatchTests
         var controller = new AgentsController(
             Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentRegistry>(),
             Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor>(),
-            Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>());
+            Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>())
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
         var invocation = method.Invoke(controller, [id, request, writer, CancellationToken.None]);
         var task = Assert.IsAssignableFrom<Task<IActionResult>>(invocation);
         return await task;
@@ -121,7 +125,10 @@ public sealed class AgentConfigurationPatchTests
             var agent = (canonical.Agents ?? throw new InvalidOperationException())["sample"];
             Assert.Equal(91, agent.ToolTimeoutSeconds);
             Assert.Equal("test", agent.Model);
-            var controller = new AgentsController(Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentRegistry>(), Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor>(), Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>());
+            var controller = new AgentsController(Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentRegistry>(), Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor>(), Moq.Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>())
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+            };
             var get = typeof(AgentsController).GetMethod("GetConfiguration") ?? throw new InvalidOperationException();
             var read = await (Task<IActionResult>)(get.Invoke(controller, ["sample", Writer(), CancellationToken.None]) ?? throw new InvalidOperationException());
             var body = JsonNode.Parse(Assert.IsType<ContentResult>(read).Content ?? "")?.AsObject() ?? throw new InvalidOperationException();
@@ -200,7 +207,10 @@ public sealed class AgentConfigurationPatchTests
             Assert.Equal(1, root["agents"]?["SaMpLe"]?["toolTimeoutSeconds"]?.GetValue<int>());
             Assert.Equal("SaMpLe", Assert.Single(Assert.IsType<JsonObject>(root["agents"])).Key);
             var controller = new AgentsController(Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentRegistry>(),
-                Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor>(), Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>());
+                Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor>(), Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>())
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+            };
             var read = Assert.IsType<ContentResult>(await controller.GetConfiguration("sample", writer, CancellationToken.None));
             Assert.Equal(1, JsonNode.Parse(read.Content ?? "")?["toolTimeoutSeconds"]?.GetValue<int>());
             var config = await writer.ReadPlatformConfigAsync();
@@ -336,7 +346,10 @@ public sealed class AgentConfigurationPatchTests
                 Reasoning: false, Input: ["text"], Cost: new(0m, 0m, 0m, 0m), ContextWindow: 128_000, MaxTokens: 16_000));
             var controller = new AgentsController(Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentRegistry>(),
                 Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor>(),
-                Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>(), modelRegistry: models);
+                Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>(), modelRegistry: models)
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+            };
             var before = await File.ReadAllTextAsync(path);
             foreach (var patch in new[] { new AgentConfigurationPatch { Thinking = "high" }, new AgentConfigurationPatch { ContextWindow = 1_000_000 } })
                 Assert.IsType<BadRequestObjectResult>(await controller.PatchConfiguration("sample", patch, writer, CancellationToken.None));
@@ -359,7 +372,10 @@ public sealed class AgentConfigurationPatchTests
             }, "test");
             var before = await File.ReadAllTextAsync(path);
             var controller = new AgentsController(Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentRegistry>(),
-                Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor>(), Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>());
+                Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentSupervisor>(), Mock.Of<BotNexus.Gateway.Abstractions.Agents.IAgentConfigurationWriter>())
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+            };
             var result = Assert.IsType<ContentResult>(await controller.GetConfiguration("sample", writer, CancellationToken.None));
             var body = JsonNode.Parse(result.Content ?? "")?.AsObject() ?? throw new InvalidOperationException();
             Assert.False(body.ContainsKey("extensions"));

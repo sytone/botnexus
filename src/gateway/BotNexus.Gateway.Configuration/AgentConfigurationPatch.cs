@@ -133,8 +133,15 @@ public static class AgentConfigurationEditor
     }
 
     /// <summary>Validates the resulting runtime candidate under the canonical writer lock before persisting explicit edits.</summary>
-    public static Task<IReadOnlyList<string>> ApplyAsync(PlatformConfigWriter writer, AgentId agentId, AgentConfigurationPatch patch, CancellationToken ct, ModelRegistry? modelRegistry = null)
-        => writer.MutateValidatedAsync(root =>
+    public static async Task<IReadOnlyList<string>> ApplyAsync(PlatformConfigWriter writer, AgentId agentId, AgentConfigurationPatch patch, CancellationToken ct, ModelRegistry? modelRegistry = null)
+        => (await ApplyWithResultAsync(writer, agentId, patch, ct, modelRegistry)).Errors;
+
+    /// <summary>
+    /// Applies an operator batch with optional revision checking before the editor runs, retaining
+    /// this save's own rejection messages and post-commit warnings for its caller.
+    /// </summary>
+    public static Task<ConfigMutationResult> ApplyWithResultAsync(PlatformConfigWriter writer, AgentId agentId, AgentConfigurationPatch patch, CancellationToken ct, ModelRegistry? modelRegistry = null, string? expectedRevision = null)
+        => writer.MutateValidatedWithResultAsync(root =>
         {
             if (root["agents"] is not JsonObject agents) return "Agent not found.";
             var storedKey = agents.Select(p => p.Key).FirstOrDefault(k => string.Equals(k, agentId.Value, StringComparison.OrdinalIgnoreCase));
@@ -166,7 +173,7 @@ public static class AgentConfigurationEditor
             {
                 return "The resulting agent configuration has invalid field types or nulls.";
             }
-        }, "agent-operator-edit", ct, namedSections: ["agents"]);
+        }, "agent-operator-edit", ct, namedSections: ["agents"], expectedRevision: expectedRevision);
 
     /// <summary>
     /// Redacts through ConfigController's whole-document seam, then returns only supported editor

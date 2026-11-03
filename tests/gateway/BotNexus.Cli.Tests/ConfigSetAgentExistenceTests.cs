@@ -186,32 +186,28 @@ public sealed class ConfigSetAgentExistenceTests : IDisposable
     public async Task Set_agent_removed_after_snapshot_does_not_recreate_it(bool sqlite, string path, string value)
     {
         await EnableStoreAsync(sqlite);
-        using var resolver = new PausingResolver();
-        var pending = Task.Run(() => new ConfigCommands(resolver).ExecuteSetAsync(path, value, _path, false, CancellationToken.None));
-        try
+        // false exercises legacy bootstrap; true starts with prepopulated SQLite authority.
+        File.Exists(_storePath).ShouldBe(sqlite);
+        var phases = new List<string>();
+        (string Document, string Revision, byte[] Projection)? removed = null;
+        var resolver = new AfterCoercionResolver(async () =>
         {
-            await resolver.Coerced.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            // The CLI has already loaded and coerced the old typed snapshot. Commit the removal
-            // through the real canonical writer before allowing the CLI's locked callback to run.
-            (await CliConfigMutation.CreateWriter(_path).MutateDocumentValidatedAsync(document =>
-            {
-                return document.TryRemoveEntry("agents", "assistant", out var error) ? null : error;
-            }, "test-concurrent-removal", CancellationToken.None)).ShouldBeEmpty();
-            var removed = await SnapshotAsync();
-            resolver.Resume.Set();
-            (await pending.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBe(1);
-            _output.ToString().ShouldContain(path);
-            _output.ToString().ShouldContain("assistant");
-            _output.ToString().ShouldContain("agents list");
-            _output.ToString().ShouldContain("agents add");
-            await AssertUnchangedAsync(removed);
-            (await CliConfigMutation.ReadAsync(_path, CancellationToken.None)).FindEntryKey("agents", "assistant").ShouldBeNull();
-        }
-        finally
-        {
-            resolver.Resume.Set();
-            await pending.WaitAsync(TimeSpan.FromSeconds(10));
-        }
+            removed = await RemoveAgentAndSnapshotAsync(phases);
+        }, phases);
+
+        // The resolver callback completes on this call stack before ApplyAsync can acquire its
+        // locks. No second CLI task, release signal, diagnostic clock, or cleanup await is needed.
+        (await new ConfigCommands(resolver).ExecuteSetAsync(path, value, _path, false, CancellationToken.None)).ShouldBe(1);
+        phases.Add("cli-rejected");
+        resolver.SetCalls.ShouldBe(1);
+        resolver.CallbackCalls.ShouldBe(1);
+        phases.ShouldBe(new[] { "coerced", "removal-committed", "removed-snapshot", "callback-returned", "cli-rejected" });
+        _output.ToString().ShouldContain(path);
+        _output.ToString().ShouldContain("assistant");
+        _output.ToString().ShouldContain("agents list");
+        _output.ToString().ShouldContain("agents add");
+        await AssertUnchangedAsync(removed ?? throw new InvalidOperationException("Removal snapshot was not captured."));
+        (await CliConfigMutation.ReadAsync(_path, CancellationToken.None)).FindEntryKey("agents", "assistant").ShouldBeNull();
     }
 
     [Theory]
@@ -231,6 +227,113 @@ public sealed class ConfigSetAgentExistenceTests : IDisposable
         PlatformConfigLoader.ValidateRawJson(document.ToJsonString()).ShouldBeEmpty();
     }
 
+    private async Task<(string Document, string Revision, byte[] Projection)> RemoveAgentAndSnapshotAsync(List<string> phases)
+    {
+        var writer = CliConfigMutation.CreateWriter(_path);
+        var backend = writer.Backends.ShouldHaveSingleItem();
+        backend.Name.ShouldBe("sqlite");
+        Path.GetFullPath(backend.Location).ShouldBe(Path.GetFullPath(_storePath));
+        backend.WinsOnRead.ShouldBeTrue();
+        (await writer.ReadDocumentAsync()).FindEntryKey("agents", "assistant").ShouldNotBeNull();
+        (await writer.MutateDocumentValidatedAsync(document =>
+        {
+            return document.TryRemoveEntry("agents", "assistant", out var error) ? null : error;
+        }, "test-concurrent-removal", CancellationToken.None)).ShouldBeEmpty();
+        phases.Add("removal-committed");
+        (await writer.ReadDocumentAsync()).FindEntryKey("agents", "assistant").ShouldBeNull();
+        var removed = await SnapshotAsync();
+        phases.Add("removed-snapshot");
+        return removed;
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    public async Task Set_after_coercion_callback_failure_or_abort_preserves_state(
+        bool sqlite, bool removeFirst, bool cancel)
+    {
+        await EnableStoreAsync(sqlite);
+        File.Exists(_storePath).ShouldBe(sqlite);
+        var before = await SnapshotAsync();
+        var phases = new List<string>();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Exception primary = cancel
+            ? new OperationCanceledException("Callback aborted before CLI mutation.", cancellation.Token)
+            : new InvalidOperationException("Primary callback failure before CLI mutation.");
+        var resolver = new AfterCoercionResolver(async () =>
+        {
+            if (removeFirst)
+                before = await RemoveAgentAndSnapshotAsync(phases);
+            phases.Add("callback-failed");
+            // Return a faulted task as well as covering the real async writer/snapshot above.
+            // The synchronous bridge must unwrap this exact exception, not AggregateException.
+            await Task.FromException(primary);
+        }, phases);
+
+        Func<Task> command = () => new ConfigCommands(resolver).ExecuteSetAsync(
+            "agents.assistant.provider", "copilot", _path, false, CancellationToken.None);
+        var observed = cancel
+            ? await Should.ThrowAsync<OperationCanceledException>(command)
+            : (Exception)await Should.ThrowAsync<InvalidOperationException>(command);
+        ReferenceEquals(observed, primary).ShouldBeTrue();
+        if (observed is OperationCanceledException aborted)
+            aborted.CancellationToken.ShouldBe(cancellation.Token);
+        resolver.SetCalls.ShouldBe(1);
+        resolver.CallbackCalls.ShouldBe(1);
+        phases.ShouldBe(removeFirst
+            ? new[] { "coerced", "removal-committed", "removed-snapshot", "callback-failed" }
+            : new[] { "coerced", "callback-failed" });
+        await AssertUnchangedAsync(before);
+        var agent = (await CliConfigMutation.ReadAsync(_path, CancellationToken.None)).FindEntryKey("agents", "assistant");
+        if (removeFirst)
+            agent.ShouldBeNull();
+        else
+            agent.ShouldBe("assistant");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task After_coercion_callback_is_one_shot_and_restores_context_on_success_or_failure(bool fail)
+    {
+        var config = await CliConfigMutation.CreateWriter(_path).ReadPlatformConfigAsync();
+        var phases = new List<string>();
+        var primary = new InvalidOperationException("Primary callback failure.");
+        var resolver = new AfterCoercionResolver(() =>
+        {
+            SynchronizationContext.Current.ShouldBeNull();
+            TaskScheduler.Current.ShouldBe(TaskScheduler.Default);
+            return fail ? Task.FromException(primary) : Task.CompletedTask;
+        }, phases);
+        resolver.TrySetValue(config, "agents.assistant.provider", "copilot", out var error).ShouldBeTrue(error);
+        var original = SynchronizationContext.Current;
+        var callerContext = new SynchronizationContext();
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(callerContext);
+            Action read = () => resolver.TryGetValue(config, "agents.assistant.provider", out _, out _);
+            if (fail)
+                ReferenceEquals(Should.Throw<InvalidOperationException>(read), primary).ShouldBeTrue();
+            else
+                read();
+            ReferenceEquals(SynchronizationContext.Current, callerContext).ShouldBeTrue();
+            Should.Throw<InvalidOperationException>(read).Message.ShouldContain("one-shot");
+            resolver.CallbackCalls.ShouldBe(1);
+            ReferenceEquals(SynchronizationContext.Current, callerContext).ShouldBeTrue();
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(original);
+        }
+    }
+
     private class ObservingResolver : IConfigPathResolver
     {
         private readonly ConfigPathResolver _inner = new();
@@ -245,18 +348,44 @@ public sealed class ConfigSetAgentExistenceTests : IDisposable
         public IReadOnlyList<string> GetAvailablePaths(object config) => _inner.GetAvailablePaths(config);
     }
 
-    private sealed class PausingResolver : ObservingResolver, IDisposable
+    private sealed class AfterCoercionResolver(Func<Task> afterCoercion, List<string> phases) : ObservingResolver
     {
-        public TaskCompletionSource<bool> Coerced { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public ManualResetEventSlim Resume { get; } = new(false);
+        private Func<Task>? _afterCoercion = afterCoercion;
+        public int CallbackCalls { get; private set; }
+
         public override bool TryGetValue(object config, string path, out object? value, out string error)
         {
             var result = base.TryGetValue(config, path, out value, out error);
-            Coerced.TrySetResult(true);
-            if (!Resume.Wait(TimeSpan.FromSeconds(10)))
-                throw new TimeoutException("Test did not release the CLI after concurrent removal.");
+            result.ShouldBeTrue(error);
+            SetCalls.ShouldBe(1);
+            phases.Add("coerced");
+            var callback = Interlocked.Exchange(ref _afterCoercion, null)
+                ?? throw new InvalidOperationException("The after-coercion callback is one-shot.");
+
+            // IConfigPathResolver is synchronous, but the canonical writer/snapshot are async.
+            // Start the entire callback with no SynchronizationContext, not merely a final
+            // ConfigureAwait(false): nested writer awaits must not capture xUnit's blocked
+            // context. A custom TaskScheduler could pose the same cycle, so fail before calling
+            // the callback in that unsupported environment. No Task.Run or second worker is
+            // queued; I/O continuations use the default scheduler and need no test-side resume.
+            TaskScheduler.Current.ShouldBe(TaskScheduler.Default);
+            var context = SynchronizationContext.Current;
+            try
+            {
+                SynchronizationContext.SetSynchronizationContext(null);
+                CallbackCalls++;
+                callback().GetAwaiter().GetResult();
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(context);
+            }
+
+            // GetAwaiter preserves the original exception; finally only restores context, never
+            // awaits another task that could replace it. The callback is terminal before return
+            // or throw, so fixture disposal cannot race an outstanding CLI/removal operation.
+            phases.Add("callback-returned");
             return result;
         }
-        public void Dispose() => Resume.Dispose();
     }
 }

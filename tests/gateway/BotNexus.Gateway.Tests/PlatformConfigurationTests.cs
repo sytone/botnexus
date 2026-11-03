@@ -1,3 +1,4 @@
+using BotNexus.Persistence.Sqlite;
 using BotNexus.Domain.Primitives;
 using System.Diagnostics;
 using System.IO.Abstractions;
@@ -18,8 +19,15 @@ using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Tests;
 
-public sealed class PlatformConfigurationTests
+[Collection("IntegrationTests")]
+public sealed class PlatformConfigurationTests : IDisposable
 {
+    // This nonparallel fixture owns a clean identity scope, including any prior host's memo.
+    public PlatformConfigurationTests() => SqliteStoreIdentityGuard.Reset();
+
+    // xUnit disposes this fixture after each test, while the nonparallel collection owns the guard.
+    public void Dispose() => SqliteStoreIdentityGuard.Reset();
+
     [Fact]
     public async Task PlatformConfigLoader_LoadAsync_WhenFileMissing_ReturnsDefaultConfig()
     {

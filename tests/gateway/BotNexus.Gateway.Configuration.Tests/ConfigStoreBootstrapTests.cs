@@ -54,7 +54,7 @@ public sealed class ConfigStoreBootstrapTests : IDisposable
     {
         WriteConfig("""{ "gateway": { "listenUrl": "http://localhost:5000" } }""");
 
-        // Before: file only.
+        // First composition imports the raw legacy document.
         BuildPipeline()["gateway:listenUrl"].ShouldBe("http://localhost:5000");
 
         // Enable the store from the current document.
@@ -75,8 +75,7 @@ public sealed class ConfigStoreBootstrapTests : IDisposable
     }
 
     /// <summary>
-    /// Deleting the store returns the gateway to file-only configuration. The documented rollback
-    /// must actually work.
+    /// A manually removed authority triggers a new verified bootstrap, never a JSON runtime provider.
     /// </summary>
     /// <remarks>
     /// The release-then-delete order is the fix for a real operator-facing defect, not a test
@@ -87,7 +86,7 @@ public sealed class ConfigStoreBootstrapTests : IDisposable
     /// running <c>config store disable</c> after <c>config store status</c> would have seen.
     /// </remarks>
     [Fact]
-    public async Task AfterDelete_ConfigurationReturnsToTheFile()
+    public async Task AfterDelete_BootstrapPublishesNewVerifiedAuthorityInsteadOfJsonProvider()
     {
         WriteConfig("""{ "gateway": { "listenUrl": "http://localhost:5000" } }""");
 
@@ -100,17 +99,18 @@ public sealed class ConfigStoreBootstrapTests : IDisposable
         ConfigStoreBootstrap.ReleaseConnections(StorePath);
         File.Delete(StorePath);
 
-        BuildPipeline()["gateway:listenUrl"].ShouldBe(
-            "http://localhost:5000",
-            "deleting config.db must return configuration to the file");
+        var rebuilt = BuildPipeline();
+        rebuilt["gateway:listenUrl"].ShouldBe("http://localhost:5000");
+        File.Exists(StorePath).ShouldBeTrue();
+        rebuilt.ShouldBeAssignableTo<IConfigurationRoot>().Providers.ShouldHaveSingleItem()
+            .ShouldBeOfType<SqliteConfigurationProvider>();
     }
 
     /// <summary>
-    /// No store means byte-identical file-only behaviour - an installation that never opts in is
-    /// unaffected.
+    /// An absent authority imports legacy JSON before composing its sole SQLite provider.
     /// </summary>
     [Fact]
-    public void WithNoStore_ConfigurationComesFromTheFile()
+    public void WithNoStore_LegacyDocumentIsImportedBeforeComposition()
     {
         WriteConfig("""{ "gateway": { "listenUrl": "http://localhost:5000", "defaultAgentId": "alpha" } }""");
 
@@ -119,23 +119,24 @@ public sealed class ConfigStoreBootstrapTests : IDisposable
         var config = BuildPipeline();
         config["gateway:listenUrl"].ShouldBe("http://localhost:5000");
         config["gateway:defaultAgentId"].ShouldBe("alpha");
+        File.Exists(StorePath).ShouldBeTrue();
+        config.ShouldBeAssignableTo<IConfigurationRoot>().Providers.ShouldHaveSingleItem()
+            .ShouldBeOfType<SqliteConfigurationProvider>();
     }
 
     /// <summary>
-    /// An empty store contributes no keys, so the file continues to serve every value. This is what
-    /// makes registering the provider safe rather than destructive.
+    /// Empty authority is a complete initialized document; stale JSON cannot supply missing keys.
     /// </summary>
     [Fact]
-    public async Task WithEmptyStore_TheFileStillServesEveryValue()
+    public async Task WithEmptyStore_ProjectionCannotResurrectDeletedValues()
     {
         WriteConfig("""{ "gateway": { "listenUrl": "http://localhost:5000" } }""");
 
         await ConfigStoreBootstrap.PopulateAsync(StorePath, new JsonObject());
 
         File.Exists(StorePath).ShouldBeTrue();
-        BuildPipeline()["gateway:listenUrl"].ShouldBe(
-            "http://localhost:5000",
-            "an empty store must not erase configuration");
+        BuildPipeline()["gateway:listenUrl"].ShouldBeNull("an initialized empty authority must remain empty");
+        (await new Store.SqliteConfigStore($"Data Source={StorePath}").ReadEntriesAsync()).ShouldBeEmpty();
     }
 
     /// <summary>

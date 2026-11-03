@@ -1,3 +1,4 @@
+using BotNexus.Persistence.Sqlite;
 using System.Net;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -12,7 +13,16 @@ namespace BotNexus.Gateway.Tests.Api;
 
 // CWD and PATH are process-wide: this collection must not overlap other collections.
 [CollectionDefinition("IntegrationTests", DisableParallelization = true)]
-public sealed class IntegrationTestsCollection;
+public sealed class IntegrationTestsCollection : ICollectionFixture<SqliteIdentityCollectionFixture>;
+
+/// <summary>
+/// Releases identity installed by gateway-host tests when their exclusive collection finishes.
+/// Direct composition fixtures also reset after each test so sequential homes cannot share a memo.
+/// </summary>
+public sealed class SqliteIdentityCollectionFixture : IDisposable
+{
+    public void Dispose() => SqliteStoreIdentityGuard.Reset();
+}
 
 [Collection("IntegrationTests")]
 public sealed class VersionProvenanceTests

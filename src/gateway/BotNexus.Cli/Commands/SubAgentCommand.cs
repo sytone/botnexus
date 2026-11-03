@@ -29,6 +29,8 @@ internal sealed class SubAgentCommand
     internal const string SubAgentWorkspaceDirectoryName = SubAgentWorkspaceRootResolver.DefaultDirectoryName;
 
     private readonly IFileSystem _fileSystem;
+    private readonly Func<string, IFileSystem, PlatformConfig> _readConfig;
+    private readonly Func<string?, string> _resolveSessionsDb;
 
     public SubAgentCommand()
         : this(new FileSystem())
@@ -37,9 +39,15 @@ internal sealed class SubAgentCommand
 
     // Test seam: inject a MockFileSystem so the list/prune paths can be exercised without touching
     // the real temp directory.
-    internal SubAgentCommand(IFileSystem fileSystem)
+    internal SubAgentCommand(
+        IFileSystem fileSystem,
+        Func<string, IFileSystem, PlatformConfig>? readConfig = null,
+        Func<string?, string>? resolveSessionsDb = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
+        _readConfig = readConfig ?? PlatformConfigAccessor.Shared.Get;
+        // Instance-only seams keep command-handler tests away from ambient physical stores.
+        _resolveSessionsDb = resolveSessionsDb ?? ResolveSessionsDb;
     }
 
     public Command Build(Option<string?> targetOption)
@@ -55,7 +63,8 @@ internal sealed class SubAgentCommand
         listCommand.SetHandler(context =>
         {
             var target = context.ParseResult.GetValueForOption(targetOption);
-            context.ExitCode = ExecuteList(ResolveSessionsDb(target), ResolveWorkspaceRoot(target));
+            var workspaceRoot = ResolveWorkspaceRoot(target);
+            context.ExitCode = ExecuteList(_resolveSessionsDb(target), workspaceRoot);
             return Task.CompletedTask;
         });
 
@@ -69,7 +78,8 @@ internal sealed class SubAgentCommand
         {
             var target = context.ParseResult.GetValueForOption(targetOption);
             var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
-            context.ExitCode = ExecutePrune(ResolveSessionsDb(target), ResolveWorkspaceRoot(target), dryRun);
+            var workspaceRoot = ResolveWorkspaceRoot(target);
+            context.ExitCode = ExecutePrune(_resolveSessionsDb(target), workspaceRoot, dryRun);
             return Task.CompletedTask;
         });
 
@@ -96,30 +106,18 @@ internal sealed class SubAgentCommand
         => SubAgentWorkspaceRootResolver.Resolve(LoadConfiguredWorkspaceRoot(target), _fileSystem);
 
     /// <summary>
-    /// Reads the optional <c>gateway.subAgents.workspaceRoot</c> override from the platform config
-    /// under the resolved home directory. A missing or unreadable config yields <c>null</c> so the
-    /// resolver falls back to the historical temp-root default - the CLI must never fail to list or
-    /// prune just because config could not be loaded.
+    /// Reads the optional <c>gateway.subAgents.workspaceRoot</c> override from canonical
+    /// configuration under the resolved home. Only a successful read with an absent, null or
+    /// whitespace override permits the historical default. Authority, bootstrap, access and parse
+    /// failures must propagate before listing or destructive cleanup can plan against another root.
     /// </summary>
     private string? LoadConfiguredWorkspaceRoot(string? target)
     {
-        try
-        {
-            var configPath = _fileSystem.Path.Combine(CliPaths.ResolveTarget(target), "config.json");
-
-            // Resolved through IPlatformConfigAccessor (#3824), so this sees the same effective
-            // configuration as the gateway - JSON plus the SQLite store, store winning. It used to
-            // call PlatformConfigLoader.Load, which could not see the store and returned an
-            // all-defaults PlatformConfig when config.json was absent. The absence check is gone
-            // deliberately: under #3823 a missing file is the normal case and the store is the only
-            // source, so returning early on it is exactly the bug.
-            var config = PlatformConfigAccessor.Shared.Get(configPath, _fileSystem);
-            return config.Gateway?.SubAgents?.WorkspaceRoot;
-        }
-        catch
-        {
-            return null;
-        }
+        var configPath = _fileSystem.Path.Combine(CliPaths.ResolveTarget(target), "config.json");
+        // The central accessor owns SQLite authority and legacy import. Never fall back to a
+        // generated JSON projection or reinterpret a failed authority read as default settings.
+        var config = _readConfig(configPath, _fileSystem);
+        return config.Gateway?.SubAgents?.WorkspaceRoot;
     }
 
     /// <summary>

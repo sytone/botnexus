@@ -377,6 +377,15 @@ public sealed class SqliteConfigurationProviderTests
     /// which terminates the process - the hazard is identical here.
     /// </summary>
     [Fact]
+    public void UnreadableStore_ColdLoadFailsClosed()
+    {
+        var store = new FakeStore { ReadFailure = new IOException("unreadable-store") };
+        using var provider = new SqliteConfigurationProvider(store);
+        Should.Throw<InvalidDataException>(() => provider.Load()).Message.ShouldContain("initial load");
+        provider.TryGet("gateway:port", out _).ShouldBeFalse();
+    }
+
+    [Fact]
     public void UnreadableStore_RetainsPreviousValues_AndDoesNotThrow()
     {
         var store = new FakeStore();

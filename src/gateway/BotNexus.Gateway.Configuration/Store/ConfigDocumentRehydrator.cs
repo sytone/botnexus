@@ -52,6 +52,10 @@ public static class ConfigDocumentRehydrator
         ArgumentNullException.ThrowIfNull(entries);
 
         var root = new JsonObject();
+        var activeLeafPaths = entries
+            .Where(static pair => pair.Value.State is not (ConfigValueState.Unset or ConfigValueState.Unknown))
+            .Select(static pair => pair.Key)
+            .ToHashSet(StringComparer.Ordinal);
 
         // Ordinal sort makes the reconstruction deterministic. Two runs over the same rows must
         // produce byte-identical JSON, otherwise a parity check comparing serialised text would
@@ -66,6 +70,21 @@ public static class ConfigDocumentRehydrator
             if (entry.State is ConfigValueState.Unset or ConfigValueState.Unknown)
             {
                 continue;
+            }
+
+            // Stored objects and JSON nulls are leaves too, not containers or absent values.
+            // Check every dotted ancestor against the complete active key set: sorted neighbours
+            // need not be related ("a", "a-other", "a.b"), and row order carries no authority.
+            for (var separator = path.IndexOf('.'); separator >= 0; separator = path.IndexOf('.', separator + 1))
+            {
+                var ancestor = path[..separator];
+                if (activeLeafPaths.Contains(ancestor))
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot rebuild configuration path '{path}': ancestor '{ancestor}' is already a " +
+                        "stored leaf. Two stored entries describe incompatible document shapes, which " +
+                        "means the store's contents are inconsistent and must not be treated as authoritative.");
+                }
             }
 
             Place(root, path, entry);

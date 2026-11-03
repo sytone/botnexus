@@ -34,7 +34,7 @@ public sealed class CanonicalWriterProjectionTests : IDisposable
     [InlineData("empty")]
     [InlineData("whitespace")]
     [InlineData("null")]
-    public async Task Mutation_PreservesCanonicalSiblingsAndRepairsOnlyMalformedProjection(string projection)
+    public async Task Mutation_PreservesCanonicalSiblingsAndRefreshesEveryExistingProjection(string projection)
     {
         var before = Parse(Seed);
         await ConfigStoreBootstrap.PopulateAsync(StorePath, before);
@@ -44,7 +44,7 @@ public sealed class CanonicalWriterProjectionTests : IDisposable
         var writer = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
         JsonObject? observed = null;
 
-        await writer.MutateAsync(root =>
+        var outcome = await writer.MutateWithResultAsync(root =>
         {
             observed = root.DeepClone().AsObject();
             root["gateway"].ShouldBeOfType<JsonObject>()["listenUrl"] = "http://localhost:6000";
@@ -53,32 +53,18 @@ public sealed class CanonicalWriterProjectionTests : IDisposable
         JsonNode.DeepEquals(observed, before).ShouldBeTrue("the mutation must see SQLite, never the projection");
         var expected = before.DeepClone().AsObject();
         expected["gateway"].ShouldBeOfType<JsonObject>()["listenUrl"] = "http://localhost:6000";
-        var actualProjection = Parse(await File.ReadAllTextAsync(ConfigPath));
-        if (projection == "malformed")
-        {
-            JsonNode.DeepEquals(actualProjection, expected).ShouldBeTrue(
-                "only malformed JSON is rebuilt from the full canonical state, including unknown keys and explicit nulls");
-        }
+        if (projection == "absent")
+            File.Exists(ConfigPath).ShouldBeFalse("an absent output projection must stay absent");
         else
         {
-            // Match the established CLI delta contract: patch valid JSON, or start empty when
-            // absent/empty/null. Unchanged canonical siblings belong to SQLite, not this projection.
-            var expectedProjection = projection == "conflicting"
-                ? Parse(oldProjection.ShouldNotBeNull()) : new JsonObject();
-            expectedProjection["gateway"] ??= new JsonObject();
-            expectedProjection["gateway"].ShouldBeOfType<JsonObject>()["listenUrl"] = "http://localhost:6000";
-            JsonNode.DeepEquals(actualProjection, expectedProjection).ShouldBeTrue(
-                "valid or absent projections must retain delta-patch behavior, not be reconstructed");
-            actualProjection.ContainsKey("agents").ShouldBeFalse();
-            actualProjection.ContainsKey("unmodelled").ShouldBeFalse();
-            actualProjection["gateway"].ShouldBeOfType<JsonObject>().ContainsKey("defaultTimezone").ShouldBeFalse();
-            if (projection == "conflicting")
-            {
-                actualProjection["channels"].ShouldBeOfType<JsonObject>()["telegram"]
-                    .ShouldBeOfType<JsonObject>()["botToken"].ShouldNotBeNull().GetValue<string>().ShouldBe("stale-secret");
-                actualProjection["projectionOnly"].ShouldNotBeNull().GetValue<bool>().ShouldBeTrue();
-            }
+            var actualProjection = Parse(await File.ReadAllTextAsync(ConfigPath));
+            JsonNode.DeepEquals(actualProjection, expected).ShouldBeTrue(
+                "every existing projection must contain the complete canonical snapshot, never stale siblings");
+            actualProjection.ContainsKey("projectionOnly").ShouldBeFalse();
+            actualProjection["channels"].ShouldBeOfType<JsonObject>()["telegram"]
+                .ShouldBeOfType<JsonObject>()["botToken"].ShouldNotBeNull().GetValue<string>().ShouldBe("canonical-secret");
         }
+        outcome.Warnings.ShouldBeEmpty();
 
         var afterEntries = await store.ReadEntriesAsync();
         afterEntries.Keys.Order().ShouldBe(beforeEntries.Keys.Order());
@@ -91,7 +77,8 @@ public sealed class CanonicalWriterProjectionTests : IDisposable
         }
         JsonNode.DeepEquals(ConfigDocumentRehydrator.Rehydrate(afterEntries), expected).ShouldBeTrue();
         Directory.GetFiles(_directory, "*.tmp").ShouldBeEmpty();
-        AssertOwnerOnly(ConfigPath);
+        if (projection != "absent")
+            AssertOwnerOnly(ConfigPath);
 
         var backups = new ConfigBackupService(BackupDirectory, _fileSystem).List();
         if (oldProjection is null)
@@ -110,13 +97,15 @@ public sealed class CanonicalWriterProjectionTests : IDisposable
         const string malformed = "not-json";
         await File.WriteAllTextAsync(ConfigPath, malformed);
         var mutationCalled = false;
-        var writer = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
-
-        await Should.ThrowAsync<JsonException>(() => writer.MutateAsync(root =>
+        await Should.ThrowAsync<JsonException>(async () =>
         {
-            mutationCalled = true;
-            root["version"] = 2;
-        }, "must-fail"));
+            var writer = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
+            await writer.MutateAsync(root =>
+            {
+                mutationCalled = true;
+                root["version"] = 2;
+            }, "must-fail");
+        });
 
         mutationCalled.ShouldBeFalse();
         (await File.ReadAllTextAsync(ConfigPath)).ShouldBe(malformed);
@@ -155,12 +144,14 @@ public sealed class CanonicalWriterProjectionTests : IDisposable
         await File.WriteAllTextAsync(BackupDirectory, "blocked");
         var writer = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
 
-        var failure = await Should.ThrowAsync<AggregateException>(() => writer.MutateAsync(
+        var outcome = await writer.MutateWithResultAsync(
             root => root["gateway"].ShouldBeOfType<JsonObject>()["listenUrl"] = "http://localhost:6000",
-            "backup-failure"));
+            "backup-failure");
 
-        failure.Message.ShouldContain("Applied to: sqlite");
-        failure.InnerExceptions.ShouldHaveSingleItem().Message.ShouldContain("'json'");
+        var warning = outcome.Warnings.ShouldHaveSingleItem();
+        warning.Code.ShouldBe("configuration-projection-refresh-failed");
+        warning.Message.ShouldContain("committed to SQLite");
+        warning.Message.ShouldNotContain("canonical-secret");
         (await File.ReadAllTextAsync(ConfigPath)).ShouldBe(malformed);
         var entries = await new SqliteConfigStore($"Data Source={StorePath}").ReadEntriesAsync();
         entries["gateway.listenUrl"].Value.ShouldBe("\"http://localhost:6000\"");
@@ -180,6 +171,22 @@ public sealed class CanonicalWriterProjectionTests : IDisposable
 
         (await File.ReadAllTextAsync(ConfigPath)).ShouldBe(malformed);
         Directory.Exists(BackupDirectory).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task NoOpAfterProjectionFailure_ReturnsEmptyWarningsWithoutChangingHeldResult()
+    {
+        await ConfigStoreBootstrap.PopulateAsync(StorePath, Parse(Seed));
+        await File.WriteAllTextAsync(ConfigPath, "not-json");
+        await File.WriteAllTextAsync(BackupDirectory, "blocked");
+        var writer = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
+        var first = await writer.MutateWithResultAsync(root => root["version"] = 2, "warning");
+        first.Warnings.ShouldHaveSingleItem();
+        var second = await writer.MutateWithResultAsync(_ => { }, "no-op");
+        second.Warnings.ShouldBeEmpty();
+        first.Warnings.ShouldHaveSingleItem();
+        (await writer.ReadAsync())["version"].ShouldNotBeNull().GetValue<int>().ShouldBe(2);
+        (await File.ReadAllTextAsync(ConfigPath)).ShouldBe("not-json");
     }
 
     private async Task<string?> SetProjectionAsync(string projection)

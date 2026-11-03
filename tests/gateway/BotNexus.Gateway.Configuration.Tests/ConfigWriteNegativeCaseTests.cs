@@ -687,7 +687,8 @@ public sealed class ConfigWriteNegativeCaseTests : IDisposable
             """);
 
         var backend = new RecordingBackend();
-        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: backend);
+        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: backend,
+            pristineStore: new TestConfigStore(JsonNode.Parse(await File.ReadAllTextAsync(_configPath)).ShouldBeOfType<JsonObject>()));
 
         await writer.MutateDocumentAsync(
             document => document.Set("gateway.publicBaseUrl", "https://b"),
@@ -723,7 +724,8 @@ public sealed class ConfigWriteNegativeCaseTests : IDisposable
         await SeedAsync(large.ToJsonString());
 
         var backend = new RecordingBackend();
-        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: backend);
+        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: backend,
+            pristineStore: new TestConfigStore(JsonNode.Parse(await File.ReadAllTextAsync(_configPath)).ShouldBeOfType<JsonObject>()));
 
         await writer.UpdateSectionEntryAsync(
             "providers", "p7", JsonNode.Parse("""{"model":"changed"}""")!, CancellationToken.None);
@@ -746,7 +748,8 @@ public sealed class ConfigWriteNegativeCaseTests : IDisposable
             """);
 
         var backend = new RecordingBackend();
-        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: backend);
+        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: backend,
+            pristineStore: new TestConfigStore(JsonNode.Parse(await File.ReadAllTextAsync(_configPath)).ShouldBeOfType<JsonObject>()));
 
         var errors = await writer.MutateValidatedAsync(
             root =>
@@ -773,7 +776,8 @@ public sealed class ConfigWriteNegativeCaseTests : IDisposable
         await SeedAsync("""{"gateway":{"listenUrl":"http://a"}}""");
 
         var backend = new RecordingBackend();
-        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: backend);
+        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: backend,
+            pristineStore: new TestConfigStore(JsonNode.Parse(await File.ReadAllTextAsync(_configPath)).ShouldBeOfType<JsonObject>()));
 
         await writer.MutateDocumentAsync(
             document => document.Set("gateway.listenUrl", "http://a"),
@@ -794,7 +798,8 @@ public sealed class ConfigWriteNegativeCaseTests : IDisposable
         await SeedAsync("""{"providers":{"a":{"apiKey":"sk-a"},"b":{"apiKey":"sk-b"}}}""");
 
         var backend = new RecordingBackend();
-        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: backend);
+        var writer = new PlatformConfigWriter(_configPath, _fileSystem, backup: null, writer: backend,
+            pristineStore: new TestConfigStore(JsonNode.Parse(await File.ReadAllTextAsync(_configPath)).ShouldBeOfType<JsonObject>()));
 
         await writer.RemoveSectionEntryAsync("providers", "b", CancellationToken.None);
 

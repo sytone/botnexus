@@ -1,44 +1,32 @@
-using System.IO.Abstractions.TestingHelpers;
-using BotNexus.Cli.Commands;
+using System.Text.Json.Nodes;
 using BotNexus.Gateway.Configuration;
 
 namespace BotNexus.Cli.Tests;
 
 /// <summary>
-/// Pins that <c>subagent workspace list|prune</c> resolves the same configurable workspace root as
-/// the gateway (#2040): the historical temp-root default when no override is configured, and the
-/// configured <c>gateway.subAgents.workspaceRoot</c> when one is present in the platform config.
-/// This guarantees the CLI reaper and the gateway can never target different directories.
+/// Pins the shared default/custom root contract using initialized canonical configuration authority.
+/// Workspace paths remain mock-backed so these tests cannot touch physical default workspaces.
 /// </summary>
 public sealed class SubAgentCommandWorkspaceRootTests
 {
     [Fact]
-    public void ResolveWorkspaceRoot_WhenNoConfig_UsesTempDefault()
+    public async Task ResolveWorkspaceRoot_WhenNoConfig_UsesTempDefault()
     {
-        var fs = new MockFileSystem();
-        var command = new SubAgentCommand(fs);
-        var home = fs.Path.Combine(fs.Path.GetTempPath(), "home-no-config");
-        fs.Directory.CreateDirectory(home);
+        using var fixture = new CleanupCommandFixture();
+        await fixture.SeedAuthorityAsync(new JsonObject());
 
-        var expected = fs.Path.Combine(
-            fs.Path.GetTempPath(), SubAgentWorkspaceRootResolver.DefaultDirectoryName);
-
-        command.ResolveWorkspaceRoot(home).ShouldBe(expected);
+        fixture.Command().ResolveWorkspaceRoot(fixture.Home).ShouldBe(fixture.DefaultRoot);
+        fixture.DefaultRoot.ShouldBe(fixture.Workspaces.Path.Combine(
+            fixture.Workspaces.Path.GetTempPath(), SubAgentWorkspaceRootResolver.DefaultDirectoryName));
     }
 
     [Fact]
-    public void ResolveWorkspaceRoot_WhenConfigOverride_UsesConfiguredRoot()
+    public async Task ResolveWorkspaceRoot_WhenConfigOverride_UsesConfiguredRoot()
     {
-        var fs = new MockFileSystem();
-        var home = fs.Path.Combine(fs.Path.GetTempPath(), "home-with-config");
-        fs.Directory.CreateDirectory(home);
-        var configured = fs.Path.Combine(fs.Path.GetTempPath(), "custom-cli-root");
-        var json = "{\"gateway\":{\"subAgents\":{\"workspaceRoot\":\"" +
-            configured.Replace("\\", "\\\\") + "\"}}}";
-        fs.File.WriteAllText(fs.Path.Combine(home, "config.json"), json);
+        using var fixture = new CleanupCommandFixture();
+        await fixture.SeedAuthorityAsync(fixture.CustomDocument());
 
-        var command = new SubAgentCommand(fs);
-
-        command.ResolveWorkspaceRoot(home).ShouldBe(fs.Path.GetFullPath(configured));
+        fixture.Command().ResolveWorkspaceRoot(fixture.Home).ShouldBe(
+            fixture.Workspaces.Path.GetFullPath(fixture.CustomRoot));
     }
 }

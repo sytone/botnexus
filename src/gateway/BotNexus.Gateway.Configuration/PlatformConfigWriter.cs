@@ -75,10 +75,8 @@ public sealed class PlatformConfigWriter
     /// The backends this writer persists to (#3527).
     /// </summary>
     /// <remarks>
-    /// Defaults to JSON-only, which is byte-identical to the behaviour before the writer seam
-    /// existed. A host that has a configuration store registers both, and then every write reaches
-    /// both - which is what stops a store-backed installation reading one document while the file
-    /// holds another.
+    /// Default constructors and the factory use mandatory SQLite authority. An explicit backend
+    /// requires an explicit matching pristine authority; no constructor selects JSON implicitly.
     /// </remarks>
     private readonly Writers.IConfigurationWriter _writer;
 
@@ -86,10 +84,9 @@ public sealed class PlatformConfigWriter
     public IReadOnlyList<Writers.ConfigurationBackendDescriptor> Backends => _writer.Backends;
 
     /// <summary>
-    /// Store consulted for the pristine document when no config file exists. Null for file-only
-    /// installations, which is every caller that has not been given a store.
+    /// Complete pristine authority consulted for every read, including an initialized empty document.
     /// </summary>
-    private readonly IConfigStore? _pristineStore;
+    private readonly IConfigStore _pristineStore;
 
     public PlatformConfigWriter(string configPath, IFileSystem fileSystem, ConfigBackupService? backup = null)
         : this(configPath, fileSystem, backup, writer: null)
@@ -100,8 +97,8 @@ public sealed class PlatformConfigWriter
     /// Creates a writer that persists through <paramref name="writer"/>.
     /// </summary>
     /// <param name="writer">
-    /// The persistence backend. <see langword="null"/> builds the JSON-only writer, preserving the
-    /// existing behaviour for every caller that has not been given a store.
+    /// Null selects mandatory physical SQLite. A custom backend must use the overload that
+    /// explicitly supplies its matching pristine authority.
     /// </param>
     public PlatformConfigWriter(
         string configPath,
@@ -117,10 +114,8 @@ public sealed class PlatformConfigWriter
     /// when no config file exists.
     /// </summary>
     /// <param name="pristineStore">
-    /// Store consulted for the before-document when the config file is absent. <see langword="null"/>
-    /// keeps the file-only behaviour. Supplying it is what makes a store-only installation safe; see
-    /// <see cref="ReadRootAsync"/> for why an empty fallback is actively dangerous rather than merely
-    /// incomplete.
+    /// Complete before-document authority, required with an explicit backend. A null value never
+    /// enables JSON fallback. Default construction opens mandatory physical SQLite.
     /// </param>
     public PlatformConfigWriter(
         string configPath,
@@ -129,11 +124,25 @@ public sealed class PlatformConfigWriter
         Writers.IConfigurationWriter? writer,
         IConfigStore? pristineStore)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
+        ArgumentNullException.ThrowIfNull(fileSystem);
         _configPath = configPath;
         _fileSystem = fileSystem;
         _backup = backup;
-        _pristineStore = pristineStore;
-        _writer = writer ?? new Writers.JsonConfigurationWriter(configPath, fileSystem, backup);
+        if (writer is null)
+        {
+            if (pristineStore is not null)
+                throw new ArgumentException("An injected authority requires an explicit matching write backend.", nameof(writer));
+            var binding = Writers.ConfigWriterFactory.CreateBinding(configPath, fileSystem, backup);
+            _pristineStore = binding.Authority.Store;
+            _writer = binding.Writer;
+        }
+        else
+        {
+            _pristineStore = pristineStore ?? throw new ArgumentNullException(nameof(pristineStore),
+                "An explicit write backend requires an explicit pristine authority; JSON fallback is not supported.");
+            _writer = writer;
+        }
     }
 
     // Identity bootstrap must detect an unwritable mount before the timed writer lock. File
@@ -172,33 +181,44 @@ public sealed class PlatformConfigWriter
         => new(await ReadRootAsync(ct));
 
     /// <summary>
+    /// Reads one canonical document and its opaque whole-root revision together, before any
+    /// caller projection or redaction. The advisory snapshot is rechecked under both mutation locks.
+    /// </summary>
+    public async Task<(ConfigDocument Document, string Revision)> ReadDocumentWithRevisionAsync(CancellationToken ct = default)
+    {
+        var (root, revision) = await ReadWithRevisionAsync(ct);
+        return (new ConfigDocument(root), revision);
+    }
+
+    /// <summary>
     /// Applies a canonical-path mutation and persists it only when the resulting complete candidate
     /// document validates. The <see cref="ConfigDocument"/> overload of
     /// <see cref="MutateValidatedAsync(Func{JsonObject, string?}, string, CancellationToken, IReadOnlyCollection{string}?)"/>,
     /// so a consumer never needs to name a JSON node type.
     /// </summary>
-    public async Task<IReadOnlyList<string>> MutateDocumentValidatedAsync(
+    public async Task<ConfigMutationResult> MutateDocumentValidatedWithResultAsync(
         Func<ConfigDocument, string?> mutation,
         string reason,
         CancellationToken ct = default,
-        IReadOnlyCollection<string>? namedSections = null)
+        IReadOnlyCollection<string>? namedSections = null,
+        string? expectedRevision = null)
     {
         ArgumentNullException.ThrowIfNull(mutation);
-        return await MutateValidatedAsync(root => mutation(new ConfigDocument(root)), reason, ct, namedSections);
+        return await MutateValidatedWithResultAsync(root => mutation(new ConfigDocument(root)), reason, ct, namedSections, expectedRevision);
     }
 
     /// <summary>
     /// Applies a canonical-path mutation and persists it. The <see cref="ConfigDocument"/> overload
     /// of <see cref="MutateAsync(Action{JsonObject}, string, CancellationToken, IReadOnlyCollection{string}?)"/>.
     /// </summary>
-    public async Task MutateDocumentAsync(
+    public async Task<ConfigMutationResult> MutateDocumentWithResultAsync(
         Action<ConfigDocument> mutation,
         string reason,
         CancellationToken ct = default,
         IReadOnlyCollection<string>? namedSections = null)
     {
         ArgumentNullException.ThrowIfNull(mutation);
-        await MutateAsync(root => mutation(new ConfigDocument(root)), reason, ct, namedSections);
+        return await MutateWithResultAsync(root => mutation(new ConfigDocument(root)), reason, ct, namedSections);
     }
 
     /// <summary>
@@ -239,13 +259,13 @@ public sealed class PlatformConfigWriter
     /// full authoritative section from disk (e.g. LocationsController, which must be
     /// able to delete entries by omission) get a straight replace.
     /// </param>
-    public async Task UpdateSectionAsync(
+    public async Task<ConfigMutationResult> UpdateSectionWithResultAsync(
         string sectionName,
         JsonNode value,
         CancellationToken ct = default,
         bool merge = true,
         Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
-        => await MutateAsync(
+        => await MutateWithResultAsync(
             root =>
             {
                 // #2816: sectionName is declared to the guard below, so this path may legitimately
@@ -317,7 +337,7 @@ public sealed class PlatformConfigWriter
     /// other path and is refused if it silently flattens something. Pass the section names only
     /// from a caller whose declared job is to regenerate those sections wholesale.
     /// </param>
-    public async Task UpdatePlatformConfigAsync(
+    public async Task<ConfigMutationResult> UpdatePlatformConfigWithResultAsync(
         PlatformConfig config,
         string reason,
         CancellationToken ct = default,
@@ -325,7 +345,7 @@ public sealed class PlatformConfigWriter
         IReadOnlyCollection<string>? namedSections = null)
     {
         ArgumentNullException.ThrowIfNull(config);
-        await MutateAsync(root =>
+        return await MutateWithResultAsync(root =>
         {
             // The check runs inside the writer lock, against the root that was read inside the
             // same lock, so no writer can interleave between the comparison and the replace.
@@ -399,8 +419,8 @@ public sealed class PlatformConfigWriter
     /// </param>
     /// <param name="reason">Backup reason label recorded when the write proceeds.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>The rejection messages; empty when the mutation was validated and persisted.</returns>
-    public async Task<IReadOnlyList<string>> MutateSectionAsync(
+    /// <returns>Immutable rejection messages and this operation's post-commit output warnings.</returns>
+    public async Task<ConfigMutationResult> MutateSectionWithResultAsync(
         string sectionName,
         Func<JsonObject, string?> mutation,
         string reason,
@@ -411,7 +431,7 @@ public sealed class PlatformConfigWriter
 
         // #2816: this call names exactly one section, so the guard permits it to empty that one
         // and nothing else - a mutation aimed at gateway still cannot flatten channels.
-        return await MutateValidatedAsync(
+        return await MutateValidatedWithResultAsync(
             root =>
             {
                 if (root[sectionName] is not JsonObject section)
@@ -531,12 +551,14 @@ public sealed class PlatformConfigWriter
     {
         ArgumentNullException.ThrowIfNull(operations);
 
+        // Preserve the established empty-patch contract: no work, even for a cancelled caller.
         if (operations.Count == 0)
             return new ConfigPatchResult(true, null, []);
+        ct.ThrowIfCancellationRequested();
 
         string? committedRevision = null;
 
-        var errors = await MutateCoreAsync(
+        var outcome = await MutateCoreAsync(
             root =>
             {
                 // The comparison runs inside the writer lock against the root read inside the same
@@ -570,9 +592,9 @@ public sealed class PlatformConfigWriter
             ct,
             additionalValidation);
 
-        return errors.Count > 0
-            ? new ConfigPatchResult(false, null, errors)
-            : new ConfigPatchResult(true, committedRevision, []);
+        return outcome.Errors.Length > 0
+            ? new ConfigPatchResult(false, null, outcome.Errors) { Warnings = outcome.Warnings }
+            : new ConfigPatchResult(true, committedRevision, []) { Warnings = outcome.Warnings };
     }
 
     /// <summary>
@@ -615,13 +637,13 @@ public sealed class PlatformConfigWriter
     /// <summary>
     /// Updates a keyed entry within a section (e.g., providers.github-copilot).
     /// </summary>
-    public async Task UpdateSectionEntryAsync(
+    public async Task<ConfigMutationResult> UpdateSectionEntryWithResultAsync(
         string sectionName,
         string key,
         JsonNode value,
         CancellationToken ct = default,
         Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
-        => await MutateAsync(root =>
+        => await MutateWithResultAsync(root =>
         {
             if (root[sectionName] is not JsonObject section)
             {
@@ -659,7 +681,7 @@ public sealed class PlatformConfigWriter
     /// destructive-section guard (#2816) permits this write to empty or remove them. Leave
     /// <see langword="null" /> for a targeted edit that is not supposed to destroy anything.
     /// </param>
-    public async Task MutateAsync(
+    public async Task<ConfigMutationResult> MutateWithResultAsync(
         Action<JsonObject> mutation,
         string reason,
         CancellationToken ct = default,
@@ -667,7 +689,7 @@ public sealed class PlatformConfigWriter
         Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
     {
         ArgumentNullException.ThrowIfNull(mutation);
-        await MutateAsync(root =>
+        return await MutateWithResultAsync(root =>
         {
             mutation(root);
             return Task.CompletedTask;
@@ -685,7 +707,7 @@ public sealed class PlatformConfigWriter
     /// The candidate document would have destroyed a populated top-level section that
     /// <paramref name="namedSections" /> does not name. Nothing was written.
     /// </exception>
-    public async Task MutateAsync(
+    public async Task<ConfigMutationResult> MutateWithResultAsync(
         Func<JsonObject, Task> mutation,
         string reason,
         CancellationToken ct = default,
@@ -694,7 +716,7 @@ public sealed class PlatformConfigWriter
     {
         ArgumentNullException.ThrowIfNull(mutation);
 
-        var errors = await MutateCoreAsync(
+        var outcome = await MutateCoreAsync(
             async root =>
             {
                 await mutation(root);
@@ -706,11 +728,11 @@ public sealed class PlatformConfigWriter
             ct,
             additionalValidation);
 
-        // This overload has no error channel in its signature, so a guard rejection must throw or
-        // it would be indistinguishable from a successful write - which is precisely the silent
-        // failure mode #2816 is about.
-        if (errors.Count > 0)
-            throw new PlatformConfigSectionGuardException(errors[0]);
+        // Retain the raw mutation contract: guard rejection throws, including through legacy Task
+        // wrappers. Validated mutations instead return rejection messages without persisting.
+        if (outcome.Errors.Length > 0)
+            throw new PlatformConfigSectionGuardException(outcome.Errors[0]);
+        return outcome;
     }
 
     /// <summary>
@@ -740,18 +762,23 @@ public sealed class PlatformConfigWriter
     /// caller-presentable message to abort the write (for example an unresolvable key path).
     /// </param>
     /// <param name="reason">Backup reason label recorded when the write proceeds.</param>
-    /// <returns>The rejection messages; empty when the mutation was validated and persisted.</returns>
+    /// <returns>Immutable rejection messages and this operation's post-commit output warnings.</returns>
     /// <param name="namedSections">
     /// Top-level sections the caller explicitly declares it is operating on, so the
     /// destructive-section guard (#2816) permits this write to empty or remove them. A guard
     /// rejection is returned through the same error list as a validation failure, so existing
     /// callers report it and exit non-zero without any change.
     /// </param>
-    public async Task<IReadOnlyList<string>> MutateValidatedAsync(
+    /// <param name="expectedRevision">
+    /// Optional opaque token from the canonical read. A mismatch throws before the callback runs,
+    /// even for an empty or invalid edit. Null retains the legacy unguarded behavior.
+    /// </param>
+    public async Task<ConfigMutationResult> MutateValidatedWithResultAsync(
         Func<JsonObject, string?> mutation,
         string reason,
         CancellationToken ct = default,
-        IReadOnlyCollection<string>? namedSections = null)
+        IReadOnlyCollection<string>? namedSections = null,
+        string? expectedRevision = null)
     {
         ArgumentNullException.ThrowIfNull(mutation);
 
@@ -760,7 +787,8 @@ public sealed class PlatformConfigWriter
             reason,
             validateCandidate: true,
             namedSections,
-            ct);
+            ct,
+            expectedRevision: expectedRevision);
     }
 
     /// <summary>
@@ -788,13 +816,14 @@ public sealed class PlatformConfigWriter
     /// Only the validated write paths do; the raw <c>MutateAsync</c> paths historically do not, and
     /// turning that on here would change behaviour well beyond #2816.
     /// </param>
-    private async Task<IReadOnlyList<string>> MutateCoreAsync(
+    private async Task<ConfigMutationResult> MutateCoreAsync(
         Func<JsonObject, Task<string?>> mutation,
         string reason,
         bool validateCandidate,
         IReadOnlyCollection<string>? namedSections,
         CancellationToken ct,
-        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null,
+        string? expectedRevision = null)
     {
         // Lock order is always semaphore -> cross-process file lock (#2134). See
         // CrossProcessConfigLock for the ordering/deadlock argument: the semaphore keeps this
@@ -806,30 +835,39 @@ public sealed class PlatformConfigWriter
             using var crossProcess = await CrossProcessConfigLock.AcquireAsync(_configPath, _fileSystem, ct);
             var root = await ReadRootAsync(ct);
 
+            // Compare only after both locks and the canonical read, before any editor callback,
+            // validation, backup, or projection work. A queued token can become stale while waiting.
+            if (expectedRevision is not null)
+            {
+                var actual = ComputeRevision(root);
+                if (!string.Equals(actual, expectedRevision, StringComparison.Ordinal))
+                    throw new PlatformConfigConcurrencyException(_configPath, expectedRevision, actual);
+            }
+
             // Snapshot the pristine document: mutations edit root in place, so this is the only
             // moment the pre-mutation state still exists to compare against.
             var pristine = root.DeepClone().AsObject();
 
             var mutationError = await mutation(root);
             if (!string.IsNullOrWhiteSpace(mutationError))
-                return [mutationError];
+                return new([mutationError], []);
 
             var destroyed = ConfigSectionGuard.FindDestroyedSections(pristine, root, namedSections);
             if (destroyed.Count > 0)
-                return [ConfigSectionGuard.FormatRejection(_configPath, destroyed)];
+                return new([ConfigSectionGuard.FormatRejection(_configPath, destroyed)], []);
 
             if (additionalValidation is not null)
             {
                 var additionalErrors = additionalValidation(pristine, root);
                 if (additionalErrors.Count > 0)
-                    return additionalErrors;
+                    return new(additionalErrors, []);
             }
 
             // Ceiling constraints apply even to legacy raw mutation paths. Validate only this
             // new policy here; unrelated legacy configuration remains load-tolerated.
             var ceilingErrors = ValidateCompactionCeilings(root);
             if (ceilingErrors.Count > 0)
-                return ceilingErrors;
+                return new(ceilingErrors, []);
 
             if (validateCandidate)
             {
@@ -839,11 +877,11 @@ public sealed class PlatformConfigWriter
                 var candidateJson = root.ToJsonString(PlatformPersistOptions);
                 var errors = PlatformConfigLoader.ValidateRawJson(candidateJson);
                 if (errors.Count > 0)
-                    return errors;
+                    return new(errors, []);
             }
 
-            await WriteRootAsync(root, reason, pristine, ct);
-            return [];
+            var write = await WriteRootAsync(root, reason, pristine, ct);
+            return new([], write.Warnings);
         }
         finally
         {
@@ -895,8 +933,8 @@ public sealed class PlatformConfigWriter
     /// <summary>
     /// Removes a keyed entry from a section.
     /// </summary>
-    public async Task RemoveSectionEntryAsync(string sectionName, string key, CancellationToken ct = default)
-        => await MutateAsync(root =>
+    public async Task<ConfigMutationResult> RemoveSectionEntryWithResultAsync(string sectionName, string key, CancellationToken ct = default)
+        => await MutateWithResultAsync(root =>
         {
             if (root[sectionName] is JsonObject section)
                 section.Remove(key);
@@ -907,11 +945,8 @@ public sealed class PlatformConfigWriter
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The authoritative store is the source when configured and populated. The file is the fallback
-    /// when no store document exists, matching the runtime configuration pipeline's store-last,
-    /// store-wins precedence. A JSON mirror may exist beside an enabled store; reading that lower-
-    /// precedence mirror first would make a mutation derive from configuration the runtime does not
-    /// actually use.
+    /// Every read uses the complete authority, including zero entries. JSON is never an input or a
+    /// fallback here: a projection beside the store cannot resurrect missing or deleted keys.
     /// </para>
     /// <para>
     /// <b>Why this is not merely a tidy-up.</b> This document is the <em>before</em> side of
@@ -925,20 +960,8 @@ public sealed class PlatformConfigWriter
     /// </remarks>
     private async Task<JsonObject> ReadRootAsync(CancellationToken ct)
     {
-        if (_pristineStore is not null)
-        {
-            var entries = await _pristineStore.ReadEntriesAsync(ct);
-            if (entries.Count > 0)
-                return ConfigDocumentRehydrator.Rehydrate(entries);
-        }
-
-        if (_fileSystem.File.Exists(_configPath))
-        {
-            var json = await _fileSystem.File.ReadAllTextAsync(_configPath, ct);
-            return JsonNode.Parse(json)?.AsObject() ?? new JsonObject();
-        }
-
-        return new JsonObject();
+        var entries = await _pristineStore.ReadEntriesAsync(ct);
+        return ConfigDocumentRehydrator.Rehydrate(entries);
     }
 
     /// <summary>
@@ -962,13 +985,16 @@ public sealed class PlatformConfigWriter
     /// The document as it was before the mutation, when available. Supplying it lets the write be
     /// expressed as the keys that actually changed (#3532) rather than as a whole-document replace.
     /// </param>
-    private Task WriteRootAsync(JsonObject root, string reason, JsonObject? pristine, CancellationToken ct)
+    private async Task<Writers.ConfigurationWriteResult> WriteRootAsync(JsonObject root, string reason, JsonObject? pristine, CancellationToken ct)
     {
         if (pristine is null)
         {
             // No before-image: the caller cannot say what changed, so a full replace is the only
             // honest write. This is the import path, where replacing everything is the intent.
-            return _writer.WriteAsync(root, reason, ct);
+            if (_writer is Writers.AuthorityConfigurationWriter authority)
+                return await authority.WriteWithResultAsync(root, reason, ct);
+            await _writer.WriteAsync(root, reason, ct);
+            return Writers.ConfigurationWriteResult.Empty;
         }
 
         // Diff document-against-document. The mutation has already produced the desired JSON in
@@ -981,13 +1007,16 @@ public sealed class PlatformConfigWriter
         {
             // A mutation that changed nothing must not churn the file mtime or the backup history,
             // or an unchanged save becomes indistinguishable from a real one.
-            return Task.CompletedTask;
+            return Writers.ConfigurationWriteResult.Empty;
         }
 
         // Carry the complete before-image as an optional fallback for malformed JSON projections.
         // Valid or absent projections and row backends keep applying only the diff. The canonical
         // read already succeeded; this is not a whole-store replacement or source-read fallback.
-        return _writer.ApplyChangeSetAsync(changes, pristine, reason, ct);
+        if (_writer is Writers.AuthorityConfigurationWriter authorityWriter)
+            return await authorityWriter.ApplyChangeSetWithResultAsync(changes, reason, ct);
+        await _writer.ApplyChangeSetAsync(changes, pristine, reason, ct);
+        return Writers.ConfigurationWriteResult.Empty;
     }
 
     // #2357: Windows fails File.Move(..., overwrite: true) with UnauthorizedAccessException when
@@ -1061,4 +1090,86 @@ public sealed class PlatformConfigWriter
             return false;
         }
     }
+
+    /// <summary>Compatibility wrapper; use MutateDocumentValidatedWithResultAsync to report this save's warnings.</summary>
+    public async Task<IReadOnlyList<string>> MutateDocumentValidatedAsync(
+        Func<ConfigDocument, string?> mutation,
+        string reason,
+        CancellationToken ct = default,
+        IReadOnlyCollection<string>? namedSections = null)
+        => (await MutateDocumentValidatedWithResultAsync(mutation, reason, ct, namedSections)).Errors;
+
+    /// <summary>Compatibility wrapper; use MutateDocumentWithResultAsync to report this save's warnings.</summary>
+    public async Task MutateDocumentAsync(
+        Action<ConfigDocument> mutation,
+        string reason,
+        CancellationToken ct = default,
+        IReadOnlyCollection<string>? namedSections = null)
+        => _ = await MutateDocumentWithResultAsync(mutation, reason, ct, namedSections);
+
+    /// <summary>Compatibility wrapper; use UpdateSectionWithResultAsync to report this save's warnings.</summary>
+    public async Task UpdateSectionAsync(
+        string sectionName,
+        JsonNode value,
+        CancellationToken ct = default,
+        bool merge = true,
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
+        => _ = await UpdateSectionWithResultAsync(sectionName, value, ct, merge, additionalValidation);
+
+    /// <summary>Compatibility wrapper; use UpdatePlatformConfigWithResultAsync to report this save's warnings.</summary>
+    public async Task UpdatePlatformConfigAsync(
+        PlatformConfig config,
+        string reason,
+        CancellationToken ct = default,
+        string? expectedRevision = null,
+        IReadOnlyCollection<string>? namedSections = null)
+        => _ = await UpdatePlatformConfigWithResultAsync(config, reason, ct, expectedRevision, namedSections);
+
+    /// <summary>Compatibility wrapper; use MutateSectionWithResultAsync to report this save's warnings.</summary>
+    public async Task<IReadOnlyList<string>> MutateSectionAsync(
+        string sectionName,
+        Func<JsonObject, string?> mutation,
+        string reason,
+        CancellationToken ct = default)
+        => (await MutateSectionWithResultAsync(sectionName, mutation, reason, ct)).Errors;
+
+    /// <summary>Compatibility wrapper; use UpdateSectionEntryWithResultAsync to report this save's warnings.</summary>
+    public async Task UpdateSectionEntryAsync(
+        string sectionName,
+        string key,
+        JsonNode value,
+        CancellationToken ct = default,
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
+        => _ = await UpdateSectionEntryWithResultAsync(sectionName, key, value, ct, additionalValidation);
+
+    /// <summary>Compatibility wrapper; use MutateWithResultAsync to report this save's warnings.</summary>
+    public async Task MutateAsync(
+        Action<JsonObject> mutation,
+        string reason,
+        CancellationToken ct = default,
+        IReadOnlyCollection<string>? namedSections = null,
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
+        => _ = await MutateWithResultAsync(mutation, reason, ct, namedSections, additionalValidation);
+
+    /// <summary>Compatibility wrapper; use MutateWithResultAsync to report this save's warnings.</summary>
+    public async Task MutateAsync(
+        Func<JsonObject, Task> mutation,
+        string reason,
+        CancellationToken ct = default,
+        IReadOnlyCollection<string>? namedSections = null,
+        Func<JsonObject, JsonObject, IReadOnlyList<string>>? additionalValidation = null)
+        => _ = await MutateWithResultAsync(mutation, reason, ct, namedSections, additionalValidation);
+
+    /// <summary>Compatibility wrapper; use MutateValidatedWithResultAsync to report this save's warnings.</summary>
+    public async Task<IReadOnlyList<string>> MutateValidatedAsync(
+        Func<JsonObject, string?> mutation,
+        string reason,
+        CancellationToken ct = default,
+        IReadOnlyCollection<string>? namedSections = null)
+        => (await MutateValidatedWithResultAsync(mutation, reason, ct, namedSections)).Errors;
+
+    /// <summary>Compatibility wrapper; use RemoveSectionEntryWithResultAsync to report this save's warnings.</summary>
+    public async Task RemoveSectionEntryAsync(string sectionName, string key, CancellationToken ct = default)
+        => _ = await RemoveSectionEntryWithResultAsync(sectionName, key, ct);
+
 }
