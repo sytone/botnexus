@@ -957,7 +957,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                    COUNT(h.id) AS message_count,
                    length(CAST(COALESCE(c.metadata, '') AS BLOB))
                      + COALESCE(SUM(CASE WHEN h.id IS NULL THEN 0 ELSE 64
-                       + length(CAST(COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END, '') AS BLOB))
+                       + length(CAST(COALESCE(h.content, CASE WHEN (h.message_kind='tool-result' OR h.tool_content_from_invocation=1) THEN i.result_content END, '') AS BLOB))
                        + length(CAST(COALESCE(h.tool_name, '') AS BLOB))
                        + length(CAST(COALESCE(h.tool_call_id, '') AS BLOB)) END), 0) AS bytes
             FROM candidates c
@@ -1909,6 +1909,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                      ("tool_args", "TEXT"),
                      // Distinguishes result arguments stored on the invocation from historical NULL projections.
                      ("tool_args_from_invocation", "INTEGER NOT NULL DEFAULT 0"),
+                     // Explicit provenance preserves NULL-kind and historically absent content.
+                     ("tool_content_from_invocation", "INTEGER NOT NULL DEFAULT 0"),
                      ("tool_is_error", "INTEGER NOT NULL DEFAULT 0"),
                      ("is_crash_sentinel", "INTEGER NOT NULL DEFAULT 0"),
                      ("is_history", "INTEGER NOT NULL DEFAULT 0"),
@@ -2423,10 +2425,10 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         historyCommand.Transaction = transaction;
         historyCommand.CommandText = """
             SELECT h.id, h.persistence_key, h.role,
-                   COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END) AS content,
+                   COALESCE(h.content, CASE WHEN (h.message_kind='tool-result' OR h.tool_content_from_invocation=1) THEN i.result_content END) AS content,
                    h.timestamp, h.tool_name, h.tool_call_id, h.is_compaction_summary,
                    CASE WHEN h.tool_args IS NOT NULL THEN h.tool_args
-                        WHEN h.message_kind='tool-start' OR (h.message_kind='tool-result' AND h.tool_args_from_invocation=1)
+                        WHEN h.message_kind='tool-start' OR h.tool_args_from_invocation=1
                         THEN i.arguments_json END AS tool_args,
                    h.tool_is_error, h.is_crash_sentinel, h.is_history, h.trigger_type, h.thinking_content,
                    h.message_kind, h.sender_id, h.is_replay_banner, h.agent_run_id, h.tool_is_incomplete
@@ -2568,7 +2570,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                        tool_invocation_id IS NOT NULL AND
                        ((message_kind='tool-start' AND tool_args IS NULL)
                          OR (message_kind='tool-result' AND content IS NULL)
-                         OR (message_kind='tool-result' AND tool_args_from_invocation=1 AND tool_args IS NULL))
+                         OR (tool_args_from_invocation=1 AND tool_args IS NULL)
+                         OR (tool_content_from_invocation=1 AND content IS NULL))
                 FROM session_history WHERE session_id = $sessionId
                 """;
             selectCommand.Parameters.AddWithValue("$sessionId", sessionId.Value);
@@ -2670,10 +2673,10 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             select.Transaction = transaction;
             select.CommandText = """
                 SELECT h.id, h.message_kind, h.role, h.tool_call_id, h.tool_name,
-                       CASE WHEN h.tool_args_from_invocation=1 THEN i.arguments_json
-                            WHEN h.tool_args IS NOT NULL THEN h.tool_args
+                       CASE WHEN h.tool_args IS NOT NULL THEN h.tool_args
+                            WHEN h.tool_args_from_invocation=1 THEN i.arguments_json
                             WHEN h.message_kind='tool-start' THEN i.arguments_json END,
-                       COALESCE(h.content, CASE WHEN h.message_kind='tool-result' THEN i.result_content END),
+                       COALESCE(h.content, CASE WHEN (h.message_kind='tool-result' OR h.tool_content_from_invocation=1) THEN i.result_content END),
                        h.timestamp, h.tool_is_error, h.agent_run_id, h.tool_is_incomplete
                 FROM session_history h
                 LEFT JOIN tool_invocations i ON i.id=h.tool_invocation_id AND i.session_id=h.session_id
@@ -2825,19 +2828,19 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 agent_run_id = $agentRunId,
                 tool_is_incomplete = $toolIsIncomplete,
                 tool_invocation_id = NULL,
-                tool_args_from_invocation = 0
+                tool_args_from_invocation = 0,
+                tool_content_from_invocation = 0
             WHERE id = $id AND session_id = $sessionId
               AND (
                   role IS NOT $role OR
-                  COALESCE(content, CASE WHEN message_kind='tool-result' THEN
+                  COALESCE(content, CASE WHEN message_kind='tool-result' OR tool_content_from_invocation=1 THEN
                       (SELECT result_content FROM tool_invocations WHERE id=tool_invocation_id AND session_id=$sessionId) END) IS NOT $content OR
                   timestamp IS NOT $timestamp OR
                   tool_name IS NOT $toolName OR
                   tool_call_id IS NOT $toolCallId OR
                   is_compaction_summary IS NOT $isCompactionSummary OR
-                  CASE WHEN tool_args_from_invocation=1 THEN
-                      (SELECT arguments_json FROM tool_invocations WHERE id=tool_invocation_id AND session_id=$sessionId)
-                       WHEN tool_args IS NOT NULL THEN tool_args WHEN message_kind='tool-start' THEN
+                  CASE WHEN tool_args IS NOT NULL THEN tool_args
+                       WHEN tool_args_from_invocation=1 OR message_kind='tool-start' THEN
                       (SELECT arguments_json FROM tool_invocations WHERE id=tool_invocation_id AND session_id=$sessionId) END IS NOT $toolArgs OR
                   tool_is_error IS NOT $toolIsError OR
                   is_crash_sentinel IS NOT $isCrashSentinel OR
@@ -3079,7 +3082,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             select.Transaction = transaction;
             select.CommandText = """
                 SELECT h.message_kind, h.role, h.tool_call_id, h.tool_name,
-                       CASE WHEN h.tool_args_from_invocation=1 THEN i.arguments_json ELSE h.tool_args END,
+                       COALESCE(h.tool_args, CASE WHEN h.tool_args_from_invocation=1 THEN i.arguments_json END),
                        h.content, h.timestamp, h.tool_is_error, h.tool_invocation_id, h.agent_run_id, h.tool_is_incomplete
                 FROM session_history h
                 LEFT JOIN tool_invocations i ON i.id=h.tool_invocation_id AND i.session_id=h.session_id
@@ -3209,6 +3212,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        // Keep per-field provenance while materialized; re-narrowing consumes it only
+        // after the shared invocation has changed. Raw values win in all interim reads.
         // Live writes seek one invocation before visiting its linked history. A nullable-key
         // OR predicate instead makes SQLite walk the entire session under the writer lock.
         var invocationFilter = normalizedKey is null ? "" : """
@@ -3216,16 +3221,15 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             """;
         command.CommandText = $"""
             UPDATE session_history AS h SET
-                tool_args = CASE WHEN h.message_kind='tool-start' OR (h.message_kind='tool-result' AND h.tool_args_from_invocation=1)
+                tool_args = CASE WHEN h.message_kind='tool-start' OR h.tool_args_from_invocation=1
                     THEN COALESCE(h.tool_args, i.arguments_json) ELSE h.tool_args END,
-                tool_args_from_invocation = CASE WHEN h.message_kind='tool-result' AND h.tool_args_from_invocation=1 THEN 0 ELSE h.tool_args_from_invocation END,
-                content = CASE WHEN h.message_kind='tool-result' THEN COALESCE(h.content, i.result_content) ELSE h.content END
+                content = CASE WHEN h.message_kind='tool-result' OR h.tool_content_from_invocation=1 THEN COALESCE(h.content, i.result_content) ELSE h.content END
             FROM tool_invocations i
             WHERE h.session_id=$sessionId AND h.tool_invocation_id=i.id AND i.session_id=h.session_id
               {invocationFilter}
               AND ((h.message_kind='tool-start' AND h.tool_args IS NULL AND i.arguments_json IS NOT NULL)
-                OR (h.message_kind='tool-result' AND h.tool_args_from_invocation=1 AND h.tool_args IS NULL AND i.arguments_json IS NOT NULL)
-                OR (h.message_kind='tool-result' AND h.content IS NULL AND i.result_content IS NOT NULL))
+                OR (h.tool_args_from_invocation=1 AND h.tool_args IS NULL AND i.arguments_json IS NOT NULL)
+                OR ((h.message_kind='tool-result' OR h.tool_content_from_invocation=1) AND h.content IS NULL AND i.result_content IS NOT NULL))
             RETURNING id
             """;
         command.Parameters.AddWithValue("$sessionId", sessionId.Value);
@@ -3246,17 +3250,25 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
             return;
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        // A materialized legacy field keeps its provenance flag until this statement. Raw
+        // values take precedence while materialized. Each flag grants permission only for
+        // its own field; row-level eligibility must never authorize clearing the other field.
         command.CommandText = $"""
             UPDATE session_history AS h SET
-                tool_args = CASE WHEN h.message_kind='tool-result' OR (h.message_kind='tool-start' AND h.tool_args IS i.arguments_json) THEN NULL ELSE h.tool_args END,
-                tool_args_from_invocation = CASE WHEN h.message_kind='tool-result' AND h.tool_args IS NOT NULL
-                    THEN 1 ELSE h.tool_args_from_invocation END,
-                content = CASE WHEN h.message_kind='tool-result' AND h.content IS i.result_content THEN NULL ELSE h.content END
+                tool_args = CASE WHEN h.message_kind='tool-result' OR
+                    ((h.message_kind='tool-start' OR h.tool_args_from_invocation=1) AND h.tool_args IS i.arguments_json)
+                    THEN NULL ELSE h.tool_args END,
+                tool_args_from_invocation = CASE WHEN h.message_kind='tool-result' AND h.tool_args IS NOT NULL THEN 1
+                    WHEN h.message_kind IS NULL THEN CASE WHEN h.tool_args_from_invocation=1 AND h.tool_args IS i.arguments_json THEN 1 ELSE 0 END
+                    ELSE h.tool_args_from_invocation END,
+                tool_content_from_invocation = CASE WHEN h.message_kind IS NULL THEN
+                    CASE WHEN h.tool_content_from_invocation=1 AND h.content IS i.result_content THEN 1 ELSE 0 END
+                    ELSE h.tool_content_from_invocation END,
+                content = CASE WHEN (h.message_kind='tool-result' OR h.tool_content_from_invocation=1)
+                    AND h.content IS i.result_content THEN NULL ELSE h.content END
             FROM tool_invocations i
             WHERE h.session_id=$sessionId AND h.tool_invocation_id=i.id AND i.session_id=h.session_id
               AND h.id IN ({string.Join(',', narrowPayloadRowIds)})
-              AND (((h.message_kind='tool-start' AND h.tool_args IS i.arguments_json OR h.message_kind='tool-result') AND h.tool_args IS NOT NULL)
-                OR (h.message_kind='tool-result' AND h.content IS NOT NULL AND h.content IS i.result_content))
             """;
         command.Parameters.AddWithValue("$sessionId", sessionId.Value);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -3477,7 +3489,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 FROM tool_invocations i
                 LEFT JOIN session_history h ON h.tool_invocation_id=i.id AND h.session_id=i.session_id
                     AND (h.message_kind='tool-result'
-                         OR (h.message_kind IS NULL AND h.role='tool' AND h.tool_args IS NULL))
+                         OR (h.message_kind IS NULL AND h.role='tool' AND
+                             COALESCE(h.tool_args, CASE WHEN h.tool_args_from_invocation=1 THEN i.arguments_json END) IS NULL))
                 WHERE i.session_id=$parent AND i.tool_call_id=$call
                 LIMIT 2
                 """;

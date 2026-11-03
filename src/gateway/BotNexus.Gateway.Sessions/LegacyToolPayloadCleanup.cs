@@ -10,44 +10,61 @@ public static class LegacyToolPayloadCleanup
 {
     internal static (LegacyToolPayloadCleanupReport Report, IReadOnlyList<string> SessionIds) ClearAllInTransaction(
         SqliteConnection connection,
-        SqliteTransaction transaction)
+        SqliteTransaction transaction,
+        bool populatedLegacyRows)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = "SELECT EXISTS(SELECT 1 FROM pragma_table_info('session_history') WHERE name='tool_args_from_invocation')";
-        var hasMarker = Convert.ToInt32(command.ExecuteScalar()) != 0;
-        var marker = hasMarker ? ", tool_args_from_invocation=CASE WHEN h.message_kind='tool-result' AND h.tool_args IS NOT NULL THEN 1 ELSE h.tool_args_from_invocation END" : string.Empty;
-        // Arguments on a result are not independent evidence. The linked execution owns them.
-        // Result bodies, unlike arguments, are cleared only when SQL proves they are retained.
-        // No managed payload hydration, hashing, or second per-row verification pass is needed.
+        var hasArgumentsMarker = Convert.ToInt32(command.ExecuteScalar()) != 0;
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM pragma_table_info('session_history') WHERE name='tool_content_from_invocation')";
+        var hasContentMarker = Convert.ToInt32(command.ExecuteScalar()) != 0;
+        // Minimal operator-created/older schemas need the same durable reconstruction contract
+        // as a store initialized by the gateway. DDL and cleared data commit atomically.
+        if (!hasArgumentsMarker)
+        {
+            command.CommandText = "ALTER TABLE session_history ADD COLUMN tool_args_from_invocation INTEGER NOT NULL DEFAULT 0";
+            command.ExecuteNonQuery();
+        }
+        if (!hasContentMarker)
+        {
+            command.CommandText = "ALTER TABLE session_history ADD COLUMN tool_content_from_invocation INTEGER NOT NULL DEFAULT 0";
+            command.ExecuteNonQuery();
+        }
+        // Freeze per-field parity, not a guessed start/result classification. Legacy rows may
+        // hold both arguments and a result; NULL kind and historically absent values stay intact.
+        // Typed result arguments retain the existing canonical-execution contract.
         command.CommandText = """
             CREATE TEMP TABLE legacy_cleanup_rows AS
             SELECT h.id,h.session_id,h.tool_invocation_id,
-                   CASE WHEN h.message_kind='tool-result'
-                             OR h.message_kind='tool-start' AND h.tool_args IS i.arguments_json
-                        THEN 1 ELSE 0 END AS clear_args,
-                   CASE WHEN h.message_kind='tool-result' AND h.content IS i.result_content THEN 1 ELSE 0 END AS clear_content,
-                   CASE WHEN h.message_kind='tool-result'
-                             OR h.message_kind='tool-start' AND h.tool_args IS i.arguments_json
-                        THEN COALESCE(length(CAST(h.tool_args AS BLOB)),0) ELSE 0 END
-                   + CASE WHEN h.message_kind='tool-result' AND h.content IS i.result_content
-                        THEN COALESCE(length(CAST(h.content AS BLOB)),0) ELSE 0 END AS bytes
+                   h.tool_args IS NOT NULL AND
+                       (h.message_kind='tool-result' OR h.tool_args IS i.arguments_json) AS clear_args,
+                   h.content IS NOT NULL AND h.content IS i.result_content AND
+                       (h.message_kind='tool-result' OR h.message_kind IS NULL) AS clear_content,
+                   CASE WHEN h.tool_args IS NOT NULL AND
+                             (h.message_kind='tool-result' OR h.tool_args IS i.arguments_json)
+                        THEN length(CAST(h.tool_args AS BLOB)) ELSE 0 END
+                   + CASE WHEN h.content IS NOT NULL AND h.content IS i.result_content AND
+                               (h.message_kind='tool-result' OR h.message_kind IS NULL)
+                        THEN length(CAST(h.content AS BLOB)) ELSE 0 END AS bytes
             FROM session_history h JOIN tool_invocations i ON i.id=h.tool_invocation_id AND i.session_id=h.session_id
-            WHERE h.message_kind IN ('tool-start','tool-result')
-              AND ((h.tool_args IS NOT NULL AND (h.message_kind='tool-result' OR h.message_kind='tool-start' AND h.tool_args IS i.arguments_json))
-                OR (h.message_kind='tool-result' AND h.content IS NOT NULL AND h.content IS i.result_content));
+            WHERE (h.message_kind IN ('tool-start','tool-result') OR (h.message_kind IS NULL AND h.role='tool'))
+              AND ((h.tool_args IS NOT NULL AND (h.message_kind='tool-result' OR h.tool_args IS i.arguments_json))
+                OR (h.content IS NOT NULL AND h.content IS i.result_content AND
+                    (h.message_kind='tool-result' OR h.message_kind IS NULL)));
             CREATE UNIQUE INDEX legacy_cleanup_rows_id ON legacy_cleanup_rows(id);
-            """;
-        command.ExecuteNonQuery();
-        command.CommandText = $"""
             UPDATE session_history AS h
             SET tool_args=CASE WHEN c.clear_args=1 THEN NULL ELSE h.tool_args END,
-                content=CASE WHEN c.clear_content=1 THEN NULL ELSE h.content END{marker}
+                content=CASE WHEN c.clear_content=1 THEN NULL ELSE h.content END,
+                tool_args_from_invocation=CASE WHEN c.clear_args=1 THEN 1 ELSE h.tool_args_from_invocation END,
+                tool_content_from_invocation=CASE WHEN c.clear_content=1 THEN 1 ELSE h.tool_content_from_invocation END
             FROM legacy_cleanup_rows c WHERE h.id=c.id;
             """;
         command.ExecuteNonQuery();
         var sessions = new List<string>();
-        command.CommandText = "SELECT session_id FROM legacy_cleanup_rows UNION SELECT session_id FROM legacy_tool_rows";
+        command.CommandText = populatedLegacyRows
+            ? "SELECT session_id FROM legacy_cleanup_rows UNION SELECT session_id FROM legacy_tool_rows"
+            : "SELECT DISTINCT session_id FROM legacy_cleanup_rows";
         using (var reader = command.ExecuteReader())
             while (reader.Read()) sessions.Add(reader.GetString(0));
         command.CommandText = "SELECT COUNT(DISTINCT tool_invocation_id),COUNT(*),COALESCE(SUM(bytes),0) FROM legacy_cleanup_rows";
@@ -55,11 +72,13 @@ public static class LegacyToolPayloadCleanup
         using (var reader = command.ExecuteReader())
         {
             reader.Read();
-            report = new(reader.GetInt32(0),reader.GetInt32(1),reader.GetInt64(2),-1,-1,false);
+            report = new(reader.GetInt32(0), reader.GetInt32(1), reader.GetInt64(2), -1, -1, false);
         }
-        command.CommandText = "DROP TABLE legacy_cleanup_rows; DROP TABLE legacy_tool_rollup; DROP TABLE legacy_tool_evidence; DROP TABLE legacy_tool_affected; DROP TABLE legacy_tool_rows";
+        command.CommandText = "DROP TABLE legacy_cleanup_rows";
+        if (populatedLegacyRows)
+            command.CommandText += "; DROP TABLE legacy_tool_rollup; DROP TABLE legacy_tool_evidence; DROP TABLE legacy_tool_affected; DROP TABLE legacy_tool_rows";
         command.ExecuteNonQuery();
-        return (report,sessions);
+        return (report, sessions);
     }
 
     internal static LegacyToolPayloadCleanupReport RunConnectionString(string connectionString, int batchSize, long afterInvocationId = 0, Action<string>? invalidateSession = null)
