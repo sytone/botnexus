@@ -17,6 +17,8 @@ public sealed class PluginLifecycleServiceContributor : IServiceContributor
     /// <inheritdoc />
     public void ConfigureServices(IServiceCollection services)
     {
+        services.TryAddSingleton<MarketplaceRegistryService>(serviceProvider =>
+            new MarketplaceRegistryService(serviceProvider.GetRequiredService<PlatformConfigWriter>()));
         services.TryAddSingleton<PluginStateStore>(serviceProvider =>
         {
             var home = serviceProvider.GetRequiredService<BotNexusHome>();
