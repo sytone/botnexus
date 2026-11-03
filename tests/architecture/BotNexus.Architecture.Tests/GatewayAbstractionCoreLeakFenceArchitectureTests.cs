@@ -47,16 +47,17 @@ public sealed class GatewayAbstractionCoreLeakFenceArchitectureTests
     /// <c>Assembly|DeclaringType.Member -> LeakedType</c>. This list may only shrink.
     ///
     /// <para>
-    /// Two clusters remain, both deliberately out of this slice because neither can be retyped
-    /// without a cascade far larger than the message seam this change closes:
+    /// The tool cluster remains under #3446; retyping it requires a separate extension-wide migration:
     /// </para>
     /// <list type="bullet">
     ///   <item><b><c>IAgentTool</c></b> - the tool-contribution surface. Giving the gateway its own
     ///   tool abstraction means retyping every tool implementation across the extension projects.</item>
-    ///   <item><b>provider models</b> (<c>LlmModel</c>, <c>ThinkingLevel</c>) - model and thinking
-    ///   resolution genuinely speaks the provider registry's vocabulary; a gateway mirror would need
-    ///   its own model catalogue to be meaningful rather than a rename.</item>
     /// </list>
+    /// <para>
+    /// The provider-model cluster is GONE as of #3445: gateway-owned projections preserve the
+    /// registry's declarations and thinking selection, with conversion only in Gateway/Isolation.
+    /// The provider registry remains the sole catalogue owner. Do not re-add those leaks.
+    /// </para>
     /// <para>
     /// The transcript-message cluster is GONE as of #3251: <c>IAgentHandle.FollowUpAsync</c> now
     /// takes the gateway's own <c>AgentTranscriptMessage</c>, mapped to core in
@@ -74,11 +75,6 @@ public sealed class GatewayAbstractionCoreLeakFenceArchitectureTests
         "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Agents.IAgentToolFactory.CreateTools -> BotNexus.Agent.Core.Tools.IAgentTool",
         "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Extensions.CommandExecutionContext.ResolveSessionTool -> BotNexus.Agent.Core.Tools.IAgentTool",
 
-        // Provider-model cluster.
-        "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Agents.ContextWindowResolver.Resolve -> BotNexus.Agent.Providers.Core.Models.LlmModel",
-        "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Agents.EffectiveExecutionSettings..ctor -> BotNexus.Agent.Providers.Core.Models.ThinkingLevel",
-        "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Agents.EffectiveExecutionSettings.Deconstruct -> BotNexus.Agent.Providers.Core.Models.ThinkingLevel",
-        "BotNexus.Gateway.Contracts|BotNexus.Gateway.Abstractions.Agents.EffectiveExecutionSettings.Thinking -> BotNexus.Agent.Providers.Core.Models.ThinkingLevel"
     ];
 
     /// <summary>

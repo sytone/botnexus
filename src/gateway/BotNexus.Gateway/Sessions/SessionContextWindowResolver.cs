@@ -6,6 +6,7 @@ using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Isolation;
 using Microsoft.Extensions.Logging;
 
 namespace BotNexus.Gateway.Sessions;
@@ -79,13 +80,7 @@ public sealed class SessionContextWindowResolver : ISessionContextWindowResolver
             effective.ContextWindow,
             conversation?.ContextWindowOverride.HasValue == true ? "conversation"
                 : descriptor?.ContextWindow.HasValue == true ? "agent" : null,
-            new ContextBudgetDiagnostics
-            {
-                ModelContextWindowTokens = model?.ContextWindow,
-                ModelContextWindowSource = model?.ContextWindowSource,
-                ModelMaxOutputTokens = model?.MaxTokens,
-                ModelMaxOutputSource = model?.MaxTokensSource
-            });
+            model.ToContextDeclarations());
         var resolved = budget.EffectiveWorkingBudgetTokens;
 
         _logger.LogDebug(
