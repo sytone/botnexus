@@ -47,16 +47,6 @@ public static class BundledPlatformAgents
     /// </summary>
     public const string DefinitionVersionMetadataKey = "definitionVersion";
 
-    /// <summary>
-    /// Description used when no provider/model could be resolved, so the entry is inserted
-    /// disabled. It has to tell the operator what to do, because nothing else will.
-    /// </summary>
-    public const string UnresolvedProviderDescription =
-        "Guided onboarding agent for BotNexus. Disabled because no configured agent supplied a "
-        + "provider and model to copy. Set 'provider' and 'model' on agents."
-        + TrailguideAgentId
-        + " and set 'enabled': true to use it.";
-
     /// <summary>Description used when the entry is inserted ready to run.</summary>
     public const string DefaultDescription =
         "Guided onboarding agent for BotNexus. Explains the platform, its concepts and how to get started.";

@@ -598,8 +598,10 @@ curl http://localhost:5005/api/agents
 
 ## Bundled Agents
 
-BotNexus ships a small catalog of **bundled agents** and reconciles them into your
-`config.json` at gateway startup. Today the catalog contains one entry: **Nexus Trailguide**
+BotNexus ships a small catalog of **bundled agents** and adds missing entries to your
+canonical configuration at gateway startup when an eligible provider and model are available.
+If `config.sqlite` exists, SQLite is authoritative; do not hand-edit a generated `config.json`
+projection. Today the catalog contains one entry: **Nexus Trailguide**
 (`nexus-trailguide`), a guided onboarding agent that explains the platform, its concepts and
 how to get started.
 
@@ -610,7 +612,7 @@ newly shipped agent.
 ### What Trailguide is — and is not
 
 Trailguide is an **ordinary config-defined agent**, not a code-owned built-in. Its complete
-definition lives in your `config.json` under `agents.nexus-trailguide`, and you can read,
+definition lives in your configuration under `agents.nexus-trailguide`, and you can read,
 edit, disable or re-point it with exactly the same keys as any agent you wrote yourself.
 Nothing about it is immutable.
 
@@ -622,13 +624,13 @@ The entry the gateway inserts is deliberately minimal. It carries only:
 | `emoji` | shipped template |
 | `description` | shipped template |
 | `provider`, `model` | adopted from your configuration — see below |
-| `enabled` | `true`, or `false` when no provider/model could be resolved |
+| `enabled` | `true` for a newly inserted complete entry; existing values are preserved |
 | `definitionVersion` | stamped by the reconciler |
+| `extensions.botnexus-skills` | enables and auto-loads the two bundled Trailguide skills |
 
-That is the whole configuration entry. In particular the shipped template declares **no `toolIds` and no
-Skills configuration**, so Trailguide inherits whatever `agents.defaults` your installation
-applies, the same as any other agent that omits those keys. If you want Trailguide
-constrained, set `toolIds` on it yourself - it is your entry to edit.
+The shipped template declares no `toolIds`. If you want Trailguide constrained, set `toolIds`
+on it yourself — it is your entry to edit. Omission does not merge `agents.defaults` into
+an agent's configuration.
 
 Trailguide ships with a curated workspace corpus. BotNexus writes Trailguide-specific `SOUL.md`
 and `AGENTS.md` files. Together they define its voice, require answers to be grounded in the
@@ -675,9 +677,8 @@ The contract is deliberately narrow:
 - **Ordered before agent registration**, so an inserted entry is live in the same startup
   rather than only after a further restart.
 
-A `definitionVersion` field is stamped on the inserted entry so a future release can tell
-"never seen this agent" apart from "has an older shipped shape" without diffing free-form
-JSON.
+A `definitionVersion` field records the shipped template version. It does not prove that
+BotNexus owns an existing entry or permit automatic repair of user configuration.
 
 ### Which provider and model it adopts
 
@@ -686,9 +687,33 @@ A newly inserted entry copies provider and model from your own configuration, in
 1. The `gateway.defaultAgentId` agent, when it declares a valid provider and model — this is
    the installation's own answer to "which model do I use".
 2. Otherwise, the first **enabled** config agent with a valid provider and model.
-3. Otherwise nothing is guessed: the entry is inserted **disabled**, with a description
-   telling you to set `provider` and `model` on `agents.nexus-trailguide` and flip
-   `enabled` to `true`.
+3. Otherwise insertion is **deferred**: the entry stays absent, and startup logs explain
+   that a provider and model are needed. Configure an eligible agent with both fields, then
+   restart the gateway to retry. BotNexus does not create an incomplete disabled placeholder.
+
+A complete entry is inserted enabled. An existing entry is never changed, including one you
+have disabled or customized.
+
+### Recovering an older incomplete entry
+
+Older versions could persist a disabled Trailguide entry without a provider and model.
+Startup leaves that entry unchanged and logs recovery guidance. Disabled agents still require
+both fields, so unrelated configuration changes can fail until you correct the entry.
+
+**CLI:** Do not use two separate `config set` commands to repair two missing fields: each
+save validates the whole configuration. There is no dedicated CLI partial-edit command for
+this recovery.
+
+**Web interface:** For an existing object entry, open `/agents/nexus-trailguide` in your
+BotNexus web interface. Under **Identity & Model**, select **Provider instance** and **Model**,
+then choose **Save Changes** once. Leave the enabled setting and other fields unchanged to
+preserve your opt-out and customizations. Both prerequisites must be saved together in one
+validated configuration edit; saving only one can still fail.
+
+If the editor cannot load the entry or rejects the save, contact installation support. A
+`null`, text, or numeric entry is not an editable agent object and needs explicit review of
+the canonical configuration; startup does not delete or replace it. Do not repair any of these
+states by hand-editing a generated JSON projection.
 
 ### Disabling versus deleting
 
@@ -697,9 +722,11 @@ These two look similar and behave completely differently. Pick deliberately:
 | Action | Effect |
 | --- | --- |
 | `"enabled": false` on `agents.nexus-trailguide` | **Persistent opt-out.** The agent is not registered and does not appear in the UI. The key still exists, so the insert-only rule guarantees the gateway never overwrites your choice — it survives every restart and update. |
-| Delete the `agents.nexus-trailguide` key | **Temporary.** The next startup sees a missing entry and re-inserts a fresh one, adopting provider and model again. |
+| Delete the `agents.nexus-trailguide` key | **Temporary.** A later startup can insert a fresh enabled entry once an eligible provider/model pair is available. Until then, the entry stays absent with a setup diagnostic. |
 
-If you want Trailguide gone, disable it. Deleting it is a way to *reset* it, not to remove it.
+For a persistent opt-out, keep a complete entry and disable it. Deleting the entry is not a
+persistent opt-out: an eligible startup can create it again. Disabling an incomplete entry
+does not remove its provider/model requirements.
 
 Disabling an agent changes only whether it is registered. It does **not** delete its
 workspace directory under `~/.botnexus/agents/nexus-trailguide/`, its memory files, or any
