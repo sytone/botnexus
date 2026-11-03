@@ -376,9 +376,23 @@ When a new release is available:
 botnexus update
 ```
 
-By default this resolves the highest stable `v<semver>` release tag, checks out its immutable commit, builds, deploys extensions and restarts the gateway when an update is needed. Use `botnexus update --latest` for the configured development tip (`origin/main`) or `botnexus update --version 1.2.3` for the exact `v1.2.3` tag. `botnexus update check` accepts the same selectors; `--latest` and `--version` cannot be combined.
+By default this resolves the highest stable `v<semver>` release tag, checks out its immutable commit, builds, deploys extensions and restarts the gateway when reconciliation is needed. Use `botnexus update --latest` for the configured development tip (`origin/main`) or `botnexus update --version 1.2.3` for the exact `v1.2.3` tag. `botnexus update check` accepts the same selectors; `--latest` and `--version` cannot be combined.
 
-The source checkout is resolved before the gateway is stopped or the checkout is changed, and a dirty checkout is still refused by default. Choose a maintenance window and review [the CLI reference](cli-reference.md#update) before updating. This is separate from the packaged CLI tool: update that package with `dotnet tool update -g BotNexus.Cli`.
+**Source status:** The deployment-identity and diagnostic details here describe the candidate implementation for [#5055](https://github.com/sytone/botnexus/issues/5055), not a verified named release.
+
+When `--latest` changes the checkout, it selects an immutable SHA from `origin/main` and leaves `HEAD` detached: the checkout points directly to that commit, and local `main` is not advanced. The printed selected SHA identifies source, not a successful deployment.
+
+Check source and deployment separately:
+
+```bash
+botnexus update check
+```
+
+Use the same selector and `--source` location as your update. “Source is current” means the checkout matches the selected SHA. A verified deployment on disk additionally needs a successful-update receipt matching that source SHA and the gateway DLL's SHA-256 hash. The receipt is written only after the gateway build and restart succeed and failure-isolated extension reconciliation completes, with an unchanged source SHA and no tracked modifications or Git-reported untracked files both before the build and after restart. Extension reconciliation can report nonfatal failures; the receipt does **not** prove extension deployment succeeded or identify the revision loaded by the running gateway, cover every dependency, or lock out concurrent updates. The running revision remains **unverified**.
+
+A missing, stale, corrupt, or mismatched receipt requires reconciliation. Retry your normal update after a build failure even if source is already current; a checkout at the selected SHA is not proof that the update was applied. An unchanged successful matching receipt can skip rebuilding only when the existing clean-source and extension-repository safety checks also allow it. See [the update reference](cli-reference.md#selected-source-deployed-files-and-running-revision) for the exact scope.
+
+The source target is resolved before the gateway is stopped or the checkout is changed, and a dirty checkout is still refused by default. Release selection does not bypass checkout safety checks. Choose a maintenance window and review [the CLI reference](cli-reference.md#update) before updating. This is separate from the packaged CLI tool: update that package with `dotnet tool update -g BotNexus.Cli`.
 
 ### Health diagnostics
 
@@ -452,6 +466,20 @@ The configuration-backup surface does not include the following. Back them up at
 | "No providers found" in health check | No provider is configured | Run `botnexus provider setup` and then `botnexus validate` |
 | Agent not appearing | Agent is absent or disabled | Run `botnexus agent list`, then add or enable it through the CLI |
 | Extension loading warnings | Missing extension folders on first run | Expected — folders are created on-demand |
+
+### Update build fails with a NuGet `path1` error
+
+For the specific build error `Value cannot be null. (Parameter 'path1')` observed with reused MSBuild workers, shutting down the MSBuild server allowed a subsequent build to recover. This is a recovery step, not a proven root cause or proof of an SDK regression.
+
+**Wait until related builds are idle.** This command shuts down the MSBuild build server and may affect other builds using it. It does not stop the BotNexus gateway:
+
+```bash
+dotnet build-server shutdown --msbuild
+```
+
+Then retry your normal `botnexus update` command with the same selector and source location. Do not reset the checkout, kill all .NET processes, or delete package caches as part of this recovery. If it fails again, stop and retain the output for investigation.
+
+The compact build display includes errors without diagnostic codes. If a build exits nonzero without a recognized error, it shows bounded recent output rather than implying success. Use `--verbose` on your update command for additional output; retained lines and diagnostics are still bounded. Remove secrets and private paths before sharing it. See [build-failure diagnostics](cli-reference.md#build-failures-and-targeted-msbuild-recovery).
 
 ---
 

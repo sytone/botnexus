@@ -401,7 +401,8 @@ public class UpdateCommandTests
             exitCode.ShouldBe(0);
         });
 
-        output.ShouldContain("Already up to date");
+        output.ShouldContain("Source already up to date");
+        output.ShouldContain("deployment not yet verified");
         output.ShouldNotContain("Changes applied:");
     }
 
@@ -479,7 +480,7 @@ public class UpdateCommandTests
     }
 
     [Fact]
-    public async Task CheckAsync_WhenRepositoryIsUpToDate_ReturnsZero()
+    public async Task CheckAsync_WhenSourceIsCurrentButDeploymentUnverified_ReturnsOne()
     {
         var pm = Substitute.For<IGatewayProcessManager>();
         var cmd = new ScriptedUpdateCheckCommand(
@@ -489,7 +490,7 @@ public class UpdateCommandTests
 
         var exitCode = await cmd.CheckAsync("unused", verbose: false, CancellationToken.None);
 
-        exitCode.ShouldBe(0);
+        exitCode.ShouldBe(1);
     }
 
     [Fact]

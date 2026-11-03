@@ -2472,7 +2472,9 @@ botnexus locations delete docs
 
 ## update
 
-Resolve a source release, check out its immutable commit, build, deploy extensions, and restart the BotNexus gateway. The default target is the highest stable `v<semver>` tag. Run without a subcommand to apply the update; use `check` to compare the installed commit with the same resolved target without applying it. This does not update the packaged `BotNexus.Cli` dotnet tool.
+Resolve a source release, check out its immutable commit, build, deploy extensions, and restart the BotNexus gateway. The default target is the highest stable `v<semver>` tag. Run without a subcommand to apply the update; use `check` to compare source and on-disk deployment identity with the same resolved target without applying it. This does not update the packaged `BotNexus.Cli` dotnet tool.
+
+**Source status:** The deployment-identity and build-diagnostic behavior below describes the candidate implementation for [#5055](https://github.com/sytone/botnexus/issues/5055), not a verified named release.
 
 ### Usage
 
@@ -2484,7 +2486,7 @@ botnexus update [COMMAND] [OPTIONS]
 
 | Command | Description |
 |---------|-------------|
-| `check` | Resolve the selected release and compare it with the installed source commit (does not apply it). |
+| `check` | Resolve the selected release, compare source, and check the successful-update receipt against the gateway DLL on disk. Does not apply the update or verify the running revision. |
 
 ### Options
 
@@ -2499,6 +2501,24 @@ botnexus update [COMMAND] [OPTIONS]
 | `--verbose` | `update`, `check` | Show detailed update output. |
 
 `--stash` and `--force` cannot be combined. `--latest` and `--version` also cannot be combined (exit code `2`). Target resolution and failure happen before dirty-tree handling, checkout mutation, or gateway stop.
+
+### Selected source, deployed files, and running revision
+
+These are three separate states:
+
+| State | What the command establishes |
+|---|---|
+| Source is current | The checkout's `HEAD` matches the selected immutable commit SHA. This alone does not establish a successful build or deployment. |
+| Verified deployment on disk | A successful-update receipt matches the source SHA and the SHA-256 hash of `BotNexus.Gateway.Api.dll` on disk, with no tracked modifications or Git-reported untracked files. |
+| Running revision | **Not verified.** A running or healthy gateway is not proof that it loaded the selected revision. |
+
+When `--latest` needs to change the checkout, it selects the fetched `origin/main` SHA and checks out that immutable commit with detached `HEAD`. Detached means the checkout points directly to a commit, not a local branch. Local `main` is not advanced. Exact-release selection also checks out an immutable commit. These selectors do not bypass dirty-tree handling or other checkout safety checks.
+
+The `Selected source` output includes the source name and full SHA. It confirms selection and checkout, not deployment success. If the source already matches, the command reports that separately and still checks deployment.
+
+The receipt is stored beside the gateway DLL as `BotNexus.Gateway.Api.dll.update-identity.json`. It is invalidated before a build and recorded only after the gateway build and restart succeed and failure-isolated extension reconciliation completes, provided the source SHA is unchanged and Git reports no tracked modifications or untracked files both before the build and after restart. A missing, stale, unreadable, corrupt, or mismatched receipt forces reconciliation rather than an “already current” shortcut. After a failed build, retry the normal update even if the checkout already has the selected SHA: it is not deployed-current.
+
+A rebuild can be skipped only when source has not changed, Git reports no tracked modifications or untracked files, the successful receipt still matches the DLL, and no enabled extension repositories require reconciliation. The command separately checks gateway liveness: it leaves a running gateway alone or starts one if none is running. Extension reconciliation can report nonfatal failures, so the receipt does not prove that extension deployment succeeded. The receipt is local reconciliation evidence, not full dependency-closure verification, an attestation, proof of the revision loaded in memory, or a concurrency lock.
 
 ### Uncommitted changes in the deployment repo
 
@@ -2531,9 +2551,10 @@ own remediation line instead of a raw git error.
 
 | Code | Meaning |
 |------|--------|
-| `0` | Up to date |
-| `1` | Updates available |
-| `2` | Check failed |
+| `0` | Selected source is current and the on-disk deployment receipt matches; running revision remains unverified |
+| `1` | Source update available, or deployment is stale/unverified and needs reconciliation |
+| `2` | Check failed or selectors conflict |
+| `130` | Cancelled |
 
 ### Examples
 
@@ -2557,6 +2578,20 @@ botnexus update --stash
 # Update and throw away local edits in the deployment repo
 botnexus update --force
 ```
+
+### Build failures and targeted MSBuild recovery
+
+The compact build output includes errors without diagnostic codes, such as NuGet `error : Value cannot be null. (Parameter 'path1')`. A nonzero build exit with no recognized error includes bounded recent stdout/stderr context; it must not be read as a successful build with zero errors. Use the same update command with `--verbose` for additional build output. Retained lines and diagnostics are bounded, so verbose output is not an unlimited raw log. Remove secrets and private paths before sharing diagnostics.
+
+For that specific NuGet `path1` failure observed with reused MSBuild workers, shutting down the MSBuild server allowed a subsequent build to recover. This is confirmed recovery evidence, not a proven root cause or proof of an SDK regression.
+
+**Wait until related builds are idle.** The following command shuts down the MSBuild server and can affect other builds using it; it does not stop the BotNexus gateway:
+
+```bash
+dotnet build-server shutdown --msbuild
+```
+
+Then retry your normal `botnexus update` command with the same selector and source options. Do not reset the checkout, kill all .NET processes, or delete package caches as part of this recovery. If it still fails, stop and retain the diagnostic output for investigation.
 
 ---
 

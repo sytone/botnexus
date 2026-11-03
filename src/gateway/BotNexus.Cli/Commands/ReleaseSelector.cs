@@ -52,12 +52,12 @@ internal static class ReleaseTargetGitResolver
         var tip = await RunGitAsync(repoRoot, ["rev-parse", "origin/main"], cancellationToken);
         EnsureSucceeded(tip, "Could not resolve the configured development tip origin/main.");
 
-        var installed = await RunGitAsync(repoRoot, ["rev-parse", "HEAD"], cancellationToken);
-        EnsureSucceeded(installed, "Could not resolve the installed source revision.");
+        var source = await RunGitAsync(repoRoot, ["rev-parse", "HEAD"], cancellationToken);
+        EnsureSucceeded(source, "Could not resolve the source checkout revision.");
 
         var metadata = refs.Output + Environment.NewLine + $"refs/heads/main\0\0{tip.Output.Trim()}";
         var target = Resolve(request, metadata, localFormat: true);
-        return new ReleaseUpdateStatus(new ReleaseIdentity(null, installed.Output.Trim()), target);
+        return new ReleaseUpdateStatus(new ReleaseIdentity(null, source.Output.Trim()), target);
     }
 
     internal static async Task CheckoutAsync(
