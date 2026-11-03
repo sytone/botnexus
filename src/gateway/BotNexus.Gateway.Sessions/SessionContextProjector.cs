@@ -54,12 +54,13 @@ public static class SessionContextProjector
     /// <em>next</em> call in a continuous session. Counts every entry that will be
     /// sent on that call — Tool and non-summary System entries included, because in
     /// a continuous run they sit beside their paired Assistant <c>tool_use</c> (and
-    /// the agent's system prompt) in the live message list. Only entries that the
-    /// compactor itself or a crash has already removed from the LLM view are
-    /// excluded.
+    /// the agent's system prompt) in the live message list. Excludes folded entries,
+    /// crash placeholders, notifications, and host-owned tool-result budget notices
+    /// that are retained only for transcript presentation.
     /// </summary>
     public static bool IsVisibleInLiveContext(SessionEntry entry) =>
-        !entry.IsHistory && !entry.IsCrashSentinel && !entry.Role.Equals(MessageRole.Notification);
+        !entry.IsHistory && !entry.IsCrashSentinel && !entry.Role.Equals(MessageRole.Notification)
+        && !string.Equals(entry.Kind?.Value, ToolResultBudgetNotice.Kind, StringComparison.Ordinal);
 
     /// <summary>
     /// The billable character cost of a single entry: every field of it that is serialised into the

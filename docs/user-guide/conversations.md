@@ -74,6 +74,18 @@ Sessions come and go; the conversation persists. This has practical implications
 
 ---
 
+## When a run reaches its tool-result budget
+
+The desktop and mobile portal show a notice when a run stops at its tool-result budget. A tool result is the outcome of an executed tool call, not a chat message or a model turn.
+
+The notice says that work is incomplete and parked. Review the retained results, then send a new message with direction for what to do next. The notice itself does not resume work or replay tool calls. An optional agent summary may appear separately; the notice does not depend on that summary.
+
+When the run supplies measured counts, the notice shows the limit, executed results, and overshoot. Parallel tool calls that were already dispatched can finish beyond the limit. Older stop evidence may have no counts; the portal does not guess them. A semantic non-progress stop is different and does not produce this budget notice.
+
+The notice is saved in conversation history, so it remains visible after refresh. A repeated delivery of the same identified run does not add another notice. This does not add notices retroactively to older sessions that have no saved notice row.
+
+---
+
 ## Conversations between channels (fan-out)
 
 When an agent responds, the response is delivered to **all active bindings** on that conversation — not just the channel the message came from. This is called **fan-out**.

@@ -309,6 +309,8 @@ public sealed record RunCompletionSignal(
     string? WakeCondition,
     int ContinuationAttempts)
 {
+    /// <summary>Authoritative budget counts; absent for legacy runs or other stop reasons.</summary>
+    public ToolResultBudgetSignal? ToolResultBudget { get; init; }
     /// <summary>Bounded payload-free guard evidence projected from the core.</summary>
     public IReadOnlyList<GuardObservation> GuardObservations { get; init; } = [];
     /// <summary>Canonical session-metadata key for the latest authoritative run completion.</summary>
