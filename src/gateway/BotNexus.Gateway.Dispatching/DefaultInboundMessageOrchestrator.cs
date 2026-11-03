@@ -94,6 +94,12 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         "Your message is queued behind a turn that has not finished. It has not been lost and will " +
         "be processed when that turn completes.";
 
+    // A broken adapter must not hold the FIFO worker or shutdown drain indefinitely.
+    private static readonly TimeSpan FailureFeedbackTimeout = TimeSpan.FromSeconds(3);
+    private const string ProcessingFailureMessage =
+        "Your message could not be processed because an internal error occurred.";
+
+    private readonly Func<TimeSpan, CancellationToken, Task> _failureFeedbackDelay;
     private readonly IInboundMessageProcessor _processor;
     private readonly ILogger<DefaultInboundMessageOrchestrator> _logger;
     private readonly IChannelManager? _channelManager;
@@ -128,6 +134,11 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     /// FIFO queue. When either is absent the orchestrator queues unconditionally, which is exactly
     /// its pre-#3028 behaviour — so the many direct-construction call sites in tests and hosts keep
     /// working unchanged, and the steering path is opt-in at composition time rather than implicit.
+    /// <para>
+    /// <paramref name="failureFeedbackDelay"/> supplies the hard failure-feedback wait deadline;
+    /// the default is a three-second delay. Tests may supply an explicit deadline signal. This
+    /// bounds waiting for the adapter's returned task, not synchronous adapter code or delivery.
+    /// </para>
     /// </remarks>
     public DefaultInboundMessageOrchestrator(
         IInboundMessageProcessor processor,
@@ -139,7 +150,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         TimeSpan? queueWaitTimeout = null,
         Func<TimeSpan, CancellationToken, Task>? queueDelay = null,
         Func<Task<InboundDispatchResult>, CancellationToken, Task<InboundDispatchResult>>? waitForRunningCompletion = null,
-        IActivityBroadcaster? activityBroadcaster = null)
+        IActivityBroadcaster? activityBroadcaster = null,
+        Func<TimeSpan, CancellationToken, Task>? failureFeedbackDelay = null)
     {
         ArgumentNullException.ThrowIfNull(processor);
         ArgumentNullException.ThrowIfNull(logger);
@@ -148,6 +160,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
             throw new ArgumentOutOfRangeException(nameof(queueCapacity), queueCapacity,
                 "Queue capacity must be positive.");
         }
+        _failureFeedbackDelay = failureFeedbackDelay ?? Task.Delay;
         _processor = processor;
         _logger = logger;
         _channelManager = channelManager;
@@ -194,7 +207,11 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
 
         var queueKey = GetQueueKey(message);
         var queueItem = new QueuedInboundMessage(message);
-        return TryWriteToLiveQueue(queueKey, queueItem);
+        if (!TryWriteToLiveQueue(queueKey, queueItem))
+            return false;
+
+        ObserveAbandonedCompletion(queueItem);
+        return true;
     }
 
     /// <inheritdoc />
@@ -636,6 +653,95 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         }
     }
 
+    private async Task SendProcessingFailureFeedbackAsync(InboundMessage message)
+    {
+        if (_channelManager is null)
+            return;
+
+        CancellationTokenSource? feedbackCancellation = null;
+        try
+        {
+            // Resolution belongs inside the best-effort boundary too. No persistence lookup:
+            // retain the failed submission's identity, including transport request correlation.
+            var channel = _channelManager.Get(message.ChannelType);
+            if (channel is null)
+                return;
+
+            var hints = InboundMessageRoutingHints.FromMessage(message);
+            // Only the independent hard deadline requests cancellation, through observed
+            // CancelAsync. A CTS timer could run throwing adapter callbacks on its timer thread.
+            feedbackCancellation = new CancellationTokenSource();
+            using var delayCancellation = new CancellationTokenSource();
+            var deadline = _failureFeedbackDelay(FailureFeedbackTimeout, delayCancellation.Token);
+            var send = channel.SendAsync(new OutboundMessage
+            {
+                ChannelType = message.ChannelType,
+                ChannelAddress = message.ChannelAddress,
+                ConversationId = hints.RequestedConversationId?.Value,
+                SessionId = hints.RequestedSessionId?.Value,
+                ChannelRequestId = message.ChannelRequestId,
+                Content = ProcessingFailureMessage
+            }, feedbackCancellation.Token);
+
+            // Observe the ACTUAL send even if the hard wait expires. Cancellation is only a
+            // request: an adapter may ignore it and later deliver or fault. Never replay it.
+            var observedSend = ObserveFailureFeedbackAsync(send, message);
+            if (await Task.WhenAny(observedSend, deadline).ConfigureAwait(false) == deadline)
+            {
+                _logger.LogWarning(
+                    "Processing-failure feedback wait expired for channel '{ChannelType}'; " +
+                    "the send may still complete. No retry will be attempted.", message.ChannelType);
+                // Transfer ownership before detaching cleanup. Adapter callbacks must neither
+                // hold this FIFO worker nor lose registrations when this method returns.
+                var cleanupOwner = feedbackCancellation;
+                feedbackCancellation = null;
+                _ = CancelAndDisposeFailureFeedbackAsync(cleanupOwner, message);
+            }
+            else
+            {
+                await observedSend.ConfigureAwait(false);
+            }
+            await delayCancellation.CancelAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex,
+                "Failed to send processing-failure feedback for channel '{ChannelType}'", message.ChannelType);
+        }
+        finally
+        {
+            feedbackCancellation?.Dispose();
+        }
+    }
+
+    private async Task CancelAndDisposeFailureFeedbackAsync(
+        CancellationTokenSource cancellation, InboundMessage message)
+    {
+        try
+        {
+            await ObserveFailureFeedbackAsync(cancellation.CancelAsync(), message).ConfigureAwait(false);
+        }
+        finally
+        {
+            // If a callback never returns, cleanup retains the source. Never dispose it
+            // while callbacks are running or registrations are still waiting to execute.
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task ObserveFailureFeedbackAsync(Task send, InboundMessage message)
+    {
+        try
+        {
+            await send.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex,
+                "Failed to send processing-failure feedback for channel '{ChannelType}'", message.ChannelType);
+        }
+    }
+
     private SessionQueueState CreateSessionQueueState(string queueKey)
     {
         var queue = Channel.CreateBounded<QueuedInboundMessage>(new BoundedChannelOptions(_queueCapacity)
@@ -696,6 +802,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                     _logger.LogError(ex,
                         "Error processing queued inbound message for queue '{QueueKey}'",
                         queueKey);
+                    await SendProcessingFailureFeedbackAsync(item.Message).ConfigureAwait(false);
                     item.Completion.TrySetException(ex);
                 }
                 finally
