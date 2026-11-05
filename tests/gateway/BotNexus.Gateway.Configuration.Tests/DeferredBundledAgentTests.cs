@@ -1,5 +1,7 @@
 using System.IO.Abstractions;
 using System.Text.Json.Nodes;
+using BotNexus.Agent.Providers.Core.Models;
+using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Configuration.Store;
 using BotNexus.Gateway.Configuration.Writers;
@@ -104,37 +106,73 @@ public sealed class DeferredBundledAgentTests : IDisposable
         root["agents"].ShouldBeOfType<JsonObject>()[GuideId] = existing;
         var writer = await SeedAsync(root, sqlite);
         var before = await File.ReadAllBytesAsync(ConfigPath);
+        var storeBefore = sqlite ? await ReadStoreSnapshotAsync() : null;
+        var registry = CreateRecoveryRegistry();
         var logger = new RecordingLogger();
 
         await ReconcileAsync(writer, logger);
         (await File.ReadAllBytesAsync(ConfigPath)).ShouldBe(before);
+        await AssertUnchangedAsync(writer, root, before, storeBefore);
         logger.Messages.ShouldContain(message => message.Contains(GuideId, StringComparison.Ordinal)
             && message.Contains("PATCH /api/agents/", StringComparison.Ordinal)
             && message.Contains("provider", StringComparison.Ordinal)
             && message.Contains("model", StringComparison.Ordinal)
             && message.Contains("together", StringComparison.Ordinal));
         (await SetUnrelatedAsync(writer)).ShouldNotBeEmpty("existing invalid state must not bypass whole-document validation");
+        await AssertUnchangedAsync(writer, root, before, storeBefore);
         var enableErrors = await AgentConfigurationEditor.ApplyAsync(writer, AgentId.From(GuideId),
             new AgentConfigurationPatch { Enabled = true }, CancellationToken.None);
         enableErrors.ShouldNotBeEmpty();
         (await File.ReadAllBytesAsync(ConfigPath)).ShouldBe(before);
+        await AssertUnchangedAsync(writer, root, before, storeBefore);
         var partialErrors = await AgentConfigurationEditor.ApplyAsync(writer, AgentId.From(GuideId),
-            new AgentConfigurationPatch { Provider = "github-copilot" }, CancellationToken.None);
+            new AgentConfigurationPatch { Provider = "github-copilot" }, CancellationToken.None, registry);
         partialErrors.ShouldNotBeEmpty("both missing prerequisites must be corrected atomically");
+        partialErrors.ShouldHaveSingleItem().ShouldBe("ModelId is required.");
         (await File.ReadAllBytesAsync(ConfigPath)).ShouldBe(before);
+        await AssertUnchangedAsync(writer, root, before, storeBefore);
+
+        // A complete pair still fails closed when the canonical editor has no registry.
+        var missingRegistryErrors = await AgentConfigurationEditor.ApplyAsync(writer, AgentId.From(GuideId),
+            new AgentConfigurationPatch { Provider = "github-copilot", Model = "gpt-4.1" }, CancellationToken.None);
+        missingRegistryErrors.ShouldHaveSingleItem().ShouldBe(
+            "Model registry is unavailable. Model, provider and allowedModels edits cannot be validated; retry when the registry is available.");
+        await AssertUnchangedAsync(writer, root, before, storeBefore);
+
+        // The populated registry contains the recovery model, but not this selection.
+        registry.GetModel("github-copilot", "gpt-4.1").ShouldNotBeNull();
+        registry.GetModel("github-copilot", "unregistered-model").ShouldBeNull();
+        var unregisteredErrors = await AgentConfigurationEditor.ApplyAsync(writer, AgentId.From(GuideId),
+            new AgentConfigurationPatch { Provider = "github-copilot", Model = "unregistered-model" }, CancellationToken.None, registry);
+        unregisteredErrors.ShouldHaveSingleItem().ShouldBe(
+            "Model 'unregistered-model' is not registered for provider 'github-copilot'.");
+        await AssertUnchangedAsync(writer, root, before, storeBefore);
 
         // This is the existing operator API's canonical patch path, not startup auto-repair.
         var recoveryErrors = await AgentConfigurationEditor.ApplyAsync(writer, AgentId.From(GuideId),
-            new AgentConfigurationPatch { Provider = "github-copilot", Model = "gpt-4.1" }, CancellationToken.None);
+            new AgentConfigurationPatch { Provider = "github-copilot", Model = "gpt-4.1" }, CancellationToken.None, registry);
         recoveryErrors.ShouldBeEmpty();
+        var expectedDocument = root.DeepClone().AsObject();
+        expectedDocument["agents"]?[GuideId]?["provider"] = "github-copilot";
+        expectedDocument["agents"]?[GuideId]?["model"] = "gpt-4.1";
+        JsonNode.DeepEquals(await ReadAuthoritativeAsync(sqlite), expectedDocument).ShouldBeTrue();
         var restarted = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
+        AssertBackends(restarted, sqlite);
         await ReconcileAsync(restarted, logger);
+        JsonNode.DeepEquals(await ReadAuthoritativeAsync(sqlite), expectedDocument).ShouldBeTrue();
+        JsonNode.DeepEquals(await restarted.ReadAsync(), expectedDocument).ShouldBeTrue();
         var recovered = (await restarted.ReadAsync())["agents"]?[GuideId];
         var expected = existing.DeepClone().AsObject();
         expected["provider"] = "github-copilot";
         expected["model"] = "gpt-4.1";
         JsonNode.DeepEquals(recovered, expected).ShouldBeTrue("all custom fields and the opt-out must survive explicit recovery");
         (await SetUnrelatedAsync(restarted)).ShouldBeEmpty();
+        expectedDocument["gateway"]?["walCheckpointIntervalMinutes"] = 6;
+        var finalRestart = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
+        AssertBackends(finalRestart, sqlite);
+        JsonNode.DeepEquals(await ReadAuthoritativeAsync(sqlite), expectedDocument).ShouldBeTrue();
+        JsonNode.DeepEquals(await finalRestart.ReadAsync(), expectedDocument).ShouldBeTrue();
+        JsonNode.DeepEquals(JsonNode.Parse(await File.ReadAllTextAsync(ConfigPath)), expectedDocument).ShouldBeTrue();
     }
 
     [Theory]
@@ -232,7 +270,68 @@ public sealed class DeferredBundledAgentTests : IDisposable
         await File.WriteAllTextAsync(ConfigPath, root.ToJsonString());
         if (sqlite)
             await ConfigStoreBootstrap.PopulateAsync(StorePath, root);
-        return ConfigWriterFactory.Create(ConfigPath, _fileSystem);
+        var writer = ConfigWriterFactory.Create(ConfigPath, _fileSystem);
+        AssertBackends(writer, sqlite);
+        JsonNode.DeepEquals(await ReadAuthoritativeAsync(sqlite), root).ShouldBeTrue();
+        JsonNode.DeepEquals(await writer.ReadAsync(), root).ShouldBeTrue();
+        return writer;
+    }
+
+    private void AssertBackends(PlatformConfigWriter writer, bool sqlite)
+    {
+        StorePath.ShouldBe(Path.Combine(_directory, ConfigStoreBootstrap.StoreFileName));
+        File.Exists(StorePath).ShouldBe(sqlite);
+        writer.Backends.Count.ShouldBe(sqlite ? 2 : 1);
+        var json = writer.Backends.Where(backend => backend.Name == "json").ShouldHaveSingleItem();
+        json.Location.ShouldBe(ConfigPath);
+        json.WinsOnRead.ShouldBeFalse("the JSON descriptor never claims precedence over a store");
+        if (sqlite)
+        {
+            var store = writer.Backends.Where(backend => backend.Name == "sqlite").ShouldHaveSingleItem();
+            store.Location.ShouldBe(StorePath);
+            store.WinsOnRead.ShouldBeTrue();
+        }
+        else
+        {
+            writer.Backends.ShouldNotContain(backend => backend.Name == "sqlite");
+        }
+    }
+
+    private Task<ConfigStoreSnapshot> ReadStoreSnapshotAsync()
+        => new SqliteConfigStore($"Data Source={StorePath}").ReadSnapshotAsync();
+
+    private async Task<JsonObject> ReadAuthoritativeAsync(bool sqlite)
+        => sqlite
+            ? ConfigDocumentRehydrator.Rehydrate((await ReadStoreSnapshotAsync()).Entries)
+            : JsonNode.Parse(await File.ReadAllTextAsync(ConfigPath)).ShouldBeOfType<JsonObject>();
+
+    private async Task AssertUnchangedAsync(PlatformConfigWriter writer, JsonObject expected,
+        byte[] projectionBefore, ConfigStoreSnapshot? storeBefore)
+    {
+        (await File.ReadAllBytesAsync(ConfigPath)).ShouldBe(projectionBefore);
+        if (storeBefore is not null)
+        {
+            var actual = await ReadStoreSnapshotAsync();
+            actual.Revision.ShouldBe(storeBefore.Revision);
+            actual.Entries.OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                .ShouldBe(storeBefore.Entries.OrderBy(entry => entry.Key, StringComparer.Ordinal));
+        }
+        else
+        {
+            File.Exists(StorePath).ShouldBeFalse();
+        }
+        JsonNode.DeepEquals(await ReadAuthoritativeAsync(storeBefore is not null), expected).ShouldBeTrue();
+        JsonNode.DeepEquals(await writer.ReadAsync(), expected).ShouldBeTrue();
+    }
+
+    private static ModelRegistry CreateRecoveryRegistry()
+    {
+        var registry = new ModelRegistry();
+        registry.Register("github-copilot", new LlmModel(
+            Id: "gpt-4.1", Name: "Recovery fixture", Api: "openai-completions", Provider: "github-copilot",
+            BaseUrl: "https://example.invalid", Reasoning: false, Input: ["text"],
+            Cost: new ModelCost(0, 0, 0, 0), ContextWindow: 128_000, MaxTokens: 16_000));
+        return registry;
     }
 
     private static Task ReconcileAsync(PlatformConfigWriter writer, ILogger logger)
