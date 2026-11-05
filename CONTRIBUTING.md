@@ -229,8 +229,17 @@ Blazor `.razor` component requires a corresponding bUnit component test.
 The authoritative pre-push gate is:
 
 ```powershell
-scripts/repo/Validate-PreCommit.ps1
+scripts/repo/Invoke-PreCommitValidation.ps1
 ```
+
+The canonical command was renamed from `scripts/repo/Validate-PreCommit.ps1` to
+`scripts/repo/Invoke-PreCommitValidation.ps1`. This is a breaking path change: the old
+file is removed, with no alias or wrapper. Update external scripts and local skill
+references before invoking validation. This repository change does not migrate those
+external consumers. Parameters, mode selection, approval checks and exit behavior stay
+the same. The policy identity changes, so pre-migration receipts must not be reused.
+The paired offline fixtures are now `Test-PreCommitValidation.ps1` and
+`Test-AzureBuildTestArtifacts.ps1` under `scripts/repo/`.
 
 Mode is selected via `BOTNEXUS_VALIDATION_MODE` (`local` or `remote`); the
 operational default is **`remote`** (#2158). Local validation spawns real gateway
@@ -240,7 +249,7 @@ only when remote infrastructure is genuinely unavailable:
 
 ```powershell
 $env:BOTNEXUS_VALIDATION_MODE = 'local'
-scripts/repo/Validate-PreCommit.ps1
+scripts/repo/Invoke-PreCommitValidation.ps1
 ```
 
 Install the versioned git hooks (the #1602 `core.bare` guard on push). There is

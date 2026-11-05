@@ -37,8 +37,20 @@ $script:ReceiptSchemaVersion = 2
 
 function Invoke-ReceiptGit {
     <#
-        Runs git against a repository and returns trimmed stdout. Throws on failure so
-        callers never proceed on a partially-computed identity.
+    .SYNOPSIS
+    Runs Git and returns trimmed stdout, rejecting failed identity queries.
+    .DESCRIPTION
+    Runs Git and returns trimmed stdout, rejecting failed identity queries. Throws on invalid required inputs; does not certify validation.
+    .PARAMETER RepoRoot
+    Git repository root.
+    .PARAMETER Arguments
+    Explicit Git argument vector.
+    .PARAMETER AllowFailure
+    Returns null rather than throwing for an expected failed query.
+    .EXAMPLE
+    Invoke-ReceiptGit -RepoRoot $repo -Arguments @('rev-parse', 'HEAD')
+    .OUTPUTS
+    System.String. Trimmed stdout or null for an allowed failure.
     #>
     param(
         [Parameter(Mandatory)][string]$RepoRoot,
@@ -48,7 +60,9 @@ function Invoke-ReceiptGit {
 
     $output = & git -C $RepoRoot @Arguments 2>&1
     if ($LASTEXITCODE -ne 0) {
-        if ($AllowFailure) { return $null }
+        if ($AllowFailure) {
+            return $null
+        }
         throw "git $($Arguments -join ' ') failed: $($output -join [Environment]::NewLine)"
     }
     return ($output -join [Environment]::NewLine).Trim()
@@ -56,8 +70,16 @@ function Invoke-ReceiptGit {
 
 function Get-ContentHash {
     <#
-        Returns a lowercase SHA-256 hex digest over UTF-8 bytes of the supplied string.
-        Used for stable, cross-platform policy/toolchain fingerprints.
+    .SYNOPSIS
+    Hashes UTF8 text for portable policy and toolchain identity.
+    .DESCRIPTION
+    Hashes UTF8 text for portable policy and toolchain identity. Throws on invalid required inputs; does not certify validation.
+    .PARAMETER Text
+    Text hashed as UTF8 bytes.
+    .EXAMPLE
+    Get-ContentHash -Text 'policy-v1'
+    .OUTPUTS
+    System.String. Lowercase SHA256.
     #>
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
     $bytes = [Text.Encoding]::UTF8.GetBytes($Text)
@@ -66,9 +88,18 @@ function Get-ContentHash {
 
 function Get-FileHashOrEmpty {
     <#
-        Returns "<relativePath>:<sha256>" for a file, or "<relativePath>:absent" when it
-        does not exist. Absence is part of the identity: adding or removing a lock file
-        must invalidate old receipts.
+    .SYNOPSIS
+    Includes both file content and absence in a path-qualified fingerprint.
+    .DESCRIPTION
+    Includes both file content and absence in a path-qualified fingerprint. Throws on invalid required inputs; does not certify validation.
+    .PARAMETER RepoRoot
+    Git repository root.
+    .PARAMETER RelativePath
+    Repository-relative policy or toolchain file.
+    .EXAMPLE
+    Get-FileHashOrEmpty -RepoRoot $repo -RelativePath 'global.json'
+    .OUTPUTS
+    System.String. Relative path and digest or absent marker.
     #>
     param(
         [Parameter(Mandatory)][string]$RepoRoot,
@@ -85,8 +116,16 @@ function Get-FileHashOrEmpty {
 
 function Resolve-BotNexusRepoRoot {
     <#
-        Resolves the top-level working directory for a worktree path. Throws when the
-        path is not inside a git repository.
+    .SYNOPSIS
+    Resolves a candidate to its actual Git worktree root.
+    .DESCRIPTION
+    Resolves a candidate to its actual Git worktree root. Throws on invalid required inputs; does not certify validation.
+    .PARAMETER WorktreePath
+    Candidate directory inside a Git worktree.
+    .EXAMPLE
+    Resolve-BotNexusRepoRoot -WorktreePath $repo
+    .OUTPUTS
+    System.String. Absolute Git worktree root.
     #>
     param([string]$WorktreePath = (Get-Location).Path)
     $root = Invoke-ReceiptGit -RepoRoot $WorktreePath -Arguments @('rev-parse', '--show-toplevel')
@@ -106,6 +145,12 @@ function Get-BotNexusStagedTreeHash {
         (the staged snapshot). This is the content address of exactly what would be
         committed - it ignores unstaged/untracked working-tree changes, which is the
         whole point of the exact-content rule.
+    .PARAMETER RepoRoot
+    Absolute Git candidate root.
+    .EXAMPLE
+    Get-BotNexusStagedTreeHash -RepoRoot $repo
+    .OUTPUTS
+    System.String. Prospective staged Git tree hash.
     #>
     param([Parameter(Mandatory)][string]$RepoRoot)
 
@@ -120,12 +165,18 @@ function Get-BotNexusStagedTreeHash {
         }
         $env:GIT_INDEX_FILE = $tempIndex
         $tree = Invoke-ReceiptGit -RepoRoot $RepoRoot -Arguments @('write-tree')
-        if ([string]::IsNullOrWhiteSpace($tree)) { throw 'Unable to compute staged tree hash.' }
+        if ([string]::IsNullOrWhiteSpace($tree)) {
+            throw 'Unable to compute staged tree hash.'
+        }
         return $tree
     }
     finally {
-        if ($null -ne $previousIndex) { $env:GIT_INDEX_FILE = $previousIndex }
-        else { Remove-Item Env:GIT_INDEX_FILE -ErrorAction SilentlyContinue }
+        if ($null -ne $previousIndex) {
+            $env:GIT_INDEX_FILE = $previousIndex
+        }
+        else {
+            Remove-Item Env:GIT_INDEX_FILE -ErrorAction SilentlyContinue
+        }
         Remove-Item $tempIndex -Force -ErrorAction SilentlyContinue
         Remove-Item "$tempIndex.lock" -Force -ErrorAction SilentlyContinue
     }
@@ -142,6 +193,12 @@ function Test-BotNexusWorkingTreeClean {
         staged content for tracked files. Untracked files that are not staged do not
         affect the tracked build/test graph and are ignored here; the caller is expected
         to run from a materialized snapshot when that guarantee is insufficient.
+    .PARAMETER RepoRoot
+    Absolute Git candidate root.
+    .EXAMPLE
+    Test-BotNexusWorkingTreeClean -RepoRoot $repo
+    .OUTPUTS
+    System.Boolean. Whether tracked working content matches the index.
     #>
     param([Parameter(Mandatory)][string]$RepoRoot)
     $dirty = Invoke-ReceiptGit -RepoRoot $RepoRoot -Arguments @('diff', '--name-only')
@@ -158,6 +215,18 @@ function Get-BotNexusValidationIdentity {
         identity, prospective staged tree hash, base commit, policy hash (validation
         scripts + safety-net patterns), and toolchain hash (SDK + tool manifest/lock).
         Two identities are equivalent only when all of these match.
+    .PARAMETER WorktreePath
+    Candidate directory inside its worktree.
+    .PARAMETER BaseRef
+    Git comparison base used in the receipt identity.
+    .PARAMETER Configuration
+    Build configuration identity.
+    .PARAMETER TargetFramework
+    Target framework identity.
+    .EXAMPLE
+    Get-BotNexusValidationIdentity -WorktreePath $repo -BaseRef HEAD
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject. Candidate, policy and toolchain identity.
     #>
     param(
         [string]$WorktreePath = (Get-Location).Path,
@@ -175,7 +244,9 @@ function Get-BotNexusValidationIdentity {
     $tree = Get-BotNexusStagedTreeHash -RepoRoot $repoRoot
 
     $repoIdentity = Invoke-ReceiptGit -RepoRoot $repoRoot -Arguments @('config', '--get', 'remote.origin.url') -AllowFailure
-    if ([string]::IsNullOrWhiteSpace($repoIdentity)) { $repoIdentity = 'local' }
+    if ([string]::IsNullOrWhiteSpace($repoIdentity)) {
+        $repoIdentity = 'local'
+    }
     # Strip embedded credentials so the receipt is portable and not secret-bearing.
     $repoIdentity = $repoIdentity -replace '://[^@/]+@', '://'
 
@@ -183,7 +254,7 @@ function Get-BotNexusValidationIdentity {
     # patterns. Changing what "required validation" means invalidates old receipts.
     $policyInputs = @(
         Get-FileHashOrEmpty -RepoRoot $repoRoot -RelativePath 'scripts/repo/ValidationReceipt.psm1'
-        Get-FileHashOrEmpty -RepoRoot $repoRoot -RelativePath 'scripts/repo/Validate-PreCommit.ps1'
+        Get-FileHashOrEmpty -RepoRoot $repoRoot -RelativePath 'scripts/repo/Invoke-PreCommitValidation.ps1'
         Get-FileHashOrEmpty -RepoRoot $repoRoot -RelativePath 'scripts/repo/Invoke-LocalValidation.ps1'
         Get-FileHashOrEmpty -RepoRoot $repoRoot -RelativePath 'scripts/repo/test-impacted.ps1'
         'safety-nets:Architecture.Tests,Scenarios.Tests'
@@ -202,7 +273,12 @@ function Get-BotNexusValidationIdentity {
     $sdkVersion = $null
     $globalJson = Join-Path $repoRoot 'global.json'
     if (Test-Path $globalJson) {
-        try { $sdkVersion = (Get-Content $globalJson -Raw | ConvertFrom-Json).sdk.version } catch { $sdkVersion = $null }
+        try {
+            $sdkVersion = (Get-Content $globalJson -Raw | ConvertFrom-Json).sdk.version
+        }
+        catch {
+            $sdkVersion = $null
+        }
     }
 
     return [pscustomobject]@{
@@ -231,19 +307,31 @@ function Get-BotNexusReceiptPath {
           2. BOTNEXUS_VALIDATION_RECEIPT environment variable (container/CI exchange).
           3. Default: <git-common-dir>/botnexus-validation/receipt.json, which is shared
              across all linked worktrees and is never a tracked workspace file.
+    .PARAMETER WorktreePath
+    Candidate directory inside its worktree.
+    .PARAMETER Path
+    Optional explicit portable receipt path.
+    .EXAMPLE
+    Get-BotNexusReceiptPath -WorktreePath $repo
+    .OUTPUTS
+    System.String. Explicit, environment-selected or Git-common receipt path.
     #>
     param(
         [string]$WorktreePath = (Get-Location).Path,
         [string]$Path
     )
-    if (-not [string]::IsNullOrWhiteSpace($Path)) { return $Path }
+    if (-not [string]::IsNullOrWhiteSpace($Path)) {
+        return $Path
+    }
     if (-not [string]::IsNullOrWhiteSpace($env:BOTNEXUS_VALIDATION_RECEIPT)) {
         return $env:BOTNEXUS_VALIDATION_RECEIPT
     }
     $repoRoot = Resolve-BotNexusRepoRoot -WorktreePath $WorktreePath
     # git-common-dir is shared by all linked worktrees, so receipts survive worktree churn.
     $commonDir = Invoke-ReceiptGit -RepoRoot $repoRoot -Arguments @('rev-parse', '--git-common-dir')
-    if (-not [IO.Path]::IsPathRooted($commonDir)) { $commonDir = Join-Path $repoRoot $commonDir }
+    if (-not [IO.Path]::IsPathRooted($commonDir)) {
+        $commonDir = Join-Path $repoRoot $commonDir
+    }
     return Join-Path (Join-Path $commonDir 'botnexus-validation') 'receipt.json'
 }
 
@@ -259,7 +347,34 @@ function New-BotNexusValidationReceipt {
         the staged snapshot for tracked files, the function refuses to emit a reusable
         receipt (returns $null) unless -AllowDirtyWorkingTree is set (used by producers
         that already validated a materialized snapshot).
+    .NOTES
+    WhatIf resolves the destination but performs no candidate-index computation, environment changes, receipt directory creation, temporary writes or replacement.
+    .PARAMETER Scope
+    Successful validation scope being certified.
+    .PARAMETER TestProjects
+    Projects actually validated by the successful producer.
+    .PARAMETER WorktreePath
+    Candidate directory inside its worktree.
+    .PARAMETER BaseRef
+    Git comparison base used in the receipt identity.
+    .PARAMETER Configuration
+    Build configuration identity.
+    .PARAMETER TargetFramework
+    Target framework identity.
+    .PARAMETER Path
+    Optional explicit portable receipt path.
+    .PARAMETER RunId
+    Producer run identity.
+    .PARAMETER Ttl
+    Optional receipt lifetime from current UTC time.
+    .PARAMETER AllowDirtyWorkingTree
+    Allows emission only when caller already validated a materialized snapshot.
+    .EXAMPLE
+    New-BotNexusValidationReceipt -Scope strict -TestProjects @('Fixture.Tests') -WorktreePath $repo -WhatIf
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject. Installed path and receipt; null on declined emission or preview.
     #>
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][ValidateSet('impacted', 'full', 'strict', 'playwright')][string]$Scope,
         [Parameter(Mandatory)][string[]]$TestProjects,
@@ -273,6 +388,11 @@ function New-BotNexusValidationReceipt {
         [switch]$AllowDirtyWorkingTree
     )
 
+    $receiptPath = Get-BotNexusReceiptPath -WorktreePath $WorktreePath -Path $Path
+    if (-not $PSCmdlet.ShouldProcess($receiptPath, 'Atomically write validation receipt')) {
+        return $null
+    }
+
     $identity = Get-BotNexusValidationIdentity -WorktreePath $WorktreePath -BaseRef $BaseRef -Configuration $Configuration -TargetFramework $TargetFramework
 
     if (-not $AllowDirtyWorkingTree -and -not (Test-BotNexusWorkingTreeClean -RepoRoot $identity.repoRoot)) {
@@ -281,7 +401,12 @@ function New-BotNexusValidationReceipt {
     }
 
     $now = [DateTime]::UtcNow
-    $expires = if ($Ttl) { $now.Add($Ttl).ToString('o') } else { $null }
+    $expires = if ($Ttl) {
+        $now.Add($Ttl).ToString('o')
+    }
+    else {
+        $null
+    }
     $receipt = [ordered]@{
         schemaVersion = $script:ReceiptSchemaVersion
         repository = $identity.repository
@@ -303,7 +428,6 @@ function New-BotNexusValidationReceipt {
         expiresUtc = $expires
     }
 
-    $receiptPath = Get-BotNexusReceiptPath -WorktreePath $WorktreePath -Path $Path
     $directory = Split-Path $receiptPath -Parent
     if (-not [string]::IsNullOrWhiteSpace($directory) -and -not (Test-Path $directory)) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
@@ -322,13 +446,26 @@ function Remove-BotNexusValidationReceipt {
     .SYNOPSIS
         Removes any receipt for the repository. Call at the start of a producing run so a
         failed or interrupted run cannot leave a stale-but-matching receipt behind.
+    .DESCRIPTION
+    Invalidates prior evidence before a new validation run. Preview never deletes it.
+    .PARAMETER WorktreePath
+    Candidate directory inside its worktree.
+    .PARAMETER Path
+    Optional explicit portable receipt path.
+    .EXAMPLE
+    Remove-BotNexusValidationReceipt -WorktreePath $repo -WhatIf
+    .OUTPUTS
+    None. Removes the selected receipt only when ShouldProcess approves.
     #>
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [string]$WorktreePath = (Get-Location).Path,
         [string]$Path
     )
     $receiptPath = Get-BotNexusReceiptPath -WorktreePath $WorktreePath -Path $Path
-    Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
+    if ($PSCmdlet.ShouldProcess($receiptPath, 'Remove validation receipt')) {
+        Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Test-BotNexusValidationReceipt {
@@ -344,6 +481,22 @@ function Test-BotNexusValidationReceipt {
         targetFramework) equals the current computed identity. Any other condition
         returns Match=$false with the specific mismatch reason, so callers re-run
         validation (fail closed).
+    .PARAMETER WorktreePath
+    Candidate directory inside its worktree.
+    .PARAMETER BaseRef
+    Git comparison base used in the receipt identity.
+    .PARAMETER Configuration
+    Build configuration identity.
+    .PARAMETER TargetFramework
+    Target framework identity.
+    .PARAMETER Path
+    Optional explicit portable receipt path.
+    .PARAMETER RequiredScopes
+    Accepted successful validation scopes.
+    .EXAMPLE
+    Test-BotNexusValidationReceipt -WorktreePath $repo -RequiredScopes strict
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject. Match, rejection reason and parsed evidence.
     #>
     param(
         [string]$WorktreePath = (Get-Location).Path,

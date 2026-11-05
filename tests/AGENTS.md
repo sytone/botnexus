@@ -139,7 +139,7 @@ dotnet build src/dirs.proj
 scripts/repo/test-impacted.ps1 -DryRun
 
 # Normal candidate gate (remote by default)
-scripts/repo/Validate-PreCommit.ps1
+scripts/repo/Invoke-PreCommitValidation.ps1
 
 # Explicit remote non-browser CORE execution for this worktree
 scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>

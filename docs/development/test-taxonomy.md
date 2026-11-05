@@ -61,7 +61,7 @@ dotnet build tests/gateway/BotNexus.Gateway.Tests/BotNexus.Gateway.Tests.csproj
 For ordinary code changes, use the strict candidate gate from [root AGENTS.md](https://github.com/sytone/botnexus/blob/main/AGENTS.md#validation). Remote validation is the default; do not replace it with impacted-only selection:
 
 ```powershell
-scripts/repo/Validate-PreCommit.ps1
+scripts/repo/Invoke-PreCommitValidation.ps1
 ```
 
 To explicitly run remote non-browser CORE for a task worktree, replace `<worktree>` with its path:
