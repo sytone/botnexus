@@ -69,6 +69,66 @@ public sealed class PluginStateStore
         return JsonSerializer.Deserialize<List<InstalledPlugin>>(json, SerializerOptions) ?? [];
     }
 
+    /// <summary>
+    /// Resolves execution policy from this configured store, binding exact identity to a canonical
+    /// direct-child directory. Unlike inspection reads, absent, empty, null or ambiguous state is an error.
+    /// </summary>
+    /// <param name="name">Requested plugin identity.</param>
+    /// <param name="directory">Directory whose content would execute.</param>
+    /// <returns>The single authoritative record, including its effective activation policy.</returns>
+    public InstalledPlugin ResolveForExecution(string name, string directory)
+    {
+        if (!new PluginManifestParser().ParseManifest(JsonSerializer.Serialize(new { name })).IsValid)
+            throw new InvalidDataException("Invalid installed plugin identity.");
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var root = Path.TrimEndingDirectorySeparator(_fileSystem.Path.GetFullPath(PluginRoot));
+        var actual = Path.TrimEndingDirectorySeparator(_fileSystem.Path.GetFullPath(directory));
+        var expected = Path.TrimEndingDirectorySeparator(_fileSystem.Path.GetFullPath(_fileSystem.Path.Combine(root, name)));
+        if (!string.Equals(actual, expected, comparison))
+            throw new InvalidDataException("Installed plugin identity and directory do not agree.");
+
+        // Reject aliases rather than trying to infer authority through a filesystem link.
+        for (var current = actual; current is not null; current = _fileSystem.Path.GetDirectoryName(current))
+        {
+            if ((_fileSystem.File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Installed plugin path contains a filesystem link.");
+        }
+        if ((_fileSystem.File.GetAttributes(_statePath) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Installed plugin policy must not be a filesystem link.");
+
+        // No File.Exists precheck: inaccessible/missing policy must throw, not become native admission.
+        var json = _fileSystem.File.ReadAllText(_statePath);
+        using var document = JsonDocument.Parse(json);
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("Installed plugin policy must be an array.");
+        RejectDuplicateFields(document.RootElement);
+        var records = JsonSerializer.Deserialize<List<InstalledPlugin?>>(json, SerializerOptions)
+            ?? throw new InvalidDataException("Installed plugin policy is unavailable.");
+        var names = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        foreach (var record in records)
+        {
+            if (record is null || string.IsNullOrWhiteSpace(record.Name) || !names.Add(record.Name))
+                throw new InvalidDataException("Installed plugin policy has ambiguous identities.");
+        }
+        return records.SingleOrDefault(record => record is not null && string.Equals(record.Name, name, StringComparison.Ordinal))
+            ?? throw new InvalidDataException("No authoritative installed policy matches this plugin.");
+    }
+
+    private static void RejectDuplicateFields(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!names.Add(property.Name)) throw new InvalidDataException("Installed plugin policy has duplicate fields.");
+                RejectDuplicateFields(property.Value);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+            foreach (var item in element.EnumerateArray()) RejectDuplicateFields(item);
+    }
+
     /// <summary>Returns the record for <paramref name="name"/>, or <c>null</c> when not installed.</summary>
     /// <param name="name">Plugin identifier.</param>
     public InstalledPlugin? Find(string name) =>

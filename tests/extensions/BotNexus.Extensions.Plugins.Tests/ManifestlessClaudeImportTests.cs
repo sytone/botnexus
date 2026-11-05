@@ -79,15 +79,15 @@ public sealed class ManifestlessClaudeImportTests : IDisposable
     }
 
     [Fact]
-    public async Task Install_UnsupportedDiscoveredPaths_ReportAllBeforePromotion()
+    public async Task Install_UnsupportedDiscoveredPaths_ImportSkillsAndReportCategories()
     {
         var files = Skills();
         foreach (var path in new[] { "hooks/hooks.json", "commands/run.md", "agents/worker.json", "lsp/config.json", ".mcp.json", ".lsp.json", ".botnexus-plugin/mcp.json" })
             files[path] = "{}";
         _fetcher.Enqueue("v1", files);
         var result = await Install("operator-name");
-        foreach (var field in new[] { "hooks", "commands", "agents", "lsp", ".mcp.json", ".lsp.json", ".botnexus-plugin/mcp.json" })
-            AssertRejected(result, field);
+        result.Outcome.ShouldBe(PluginOperationOutcome.Installed);
+        result.Plugin.ShouldNotBeNull().SkippedComponents.ShouldBe(["agents", "commands", "hooks", "mcp", "lsp"]);
     }
 
     [Fact]
@@ -151,11 +151,11 @@ public sealed class ManifestlessClaudeImportTests : IDisposable
         (await Install("operator-name")).Outcome.ShouldBe(PluginOperationOutcome.Installed);
         var receipt = JsonSerializer.Serialize(_store.Find("operator-name"));
         var unsafeFiles = Skills();
-        unsafeFiles["hooks/hooks.json"] = "{}";
+        unsafeFiles[".claude-plugin/plugin.json"] = "{\"name\":\"renamed\"}";
         _fetcher.Enqueue("v2", unsafeFiles);
         var rejected = await _manager.UpdateAsync("operator-name");
         rejected.Outcome.ShouldBe(PluginOperationOutcome.Failed);
-        rejected.Errors.ShouldContain(error => error.Field == "hooks");
+        rejected.Errors.ShouldContain(error => error.Field == "name");
         JsonSerializer.Serialize(_store.Find("operator-name")).ShouldBe(receipt);
         File.ReadAllText(Path.Combine(_root, "operator-name", "skills", "greet", "SKILL.md")).ShouldBe("# greet");
         _fetcher.Enqueue("v3", new Dictionary<string, string> { ["skills/new/SKILL.md"] = "# new" });

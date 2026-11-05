@@ -95,6 +95,11 @@
           DestinationFolder="@(CompatibilityHostArtifact->'%(RootDir)%(Directory)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(Agent365CompatibilityProbeArtifact)"
           DestinationFolder="@(CompatibilityHostArtifact->'%(RootDir)%(Directory)')" SkipUnchangedFiles="true" />
+    <!-- Synthetic lifetime controls run only this existing framework-only executable, with
+         its own framework runtimeconfig; no product host or testhost closure is needed. -->
+    <Copy SourceFiles="@(CompatibilityProbeArtifact)" DestinationFolder="$(TargetDir)process-probe" />
+    <Copy SourceFiles="@(CompatibilityProbeArtifact->'%(RootDir)%(Directory)%(Filename).runtimeconfig.json')"
+          DestinationFolder="$(TargetDir)process-probe" />
     <WriteLinesToFile File="$(TargetDir)compatibility-host-artifact.txt"
                       Lines="@(CompatibilityHostArtifact)" Overwrite="true" WriteOnlyWhenDifferent="true" />
     <WriteLinesToFile File="$(TargetDir)compatibility-extension-artifacts.txt"

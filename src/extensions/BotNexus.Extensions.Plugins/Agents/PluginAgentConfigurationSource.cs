@@ -141,6 +141,9 @@ public sealed class PluginAgentConfigurationSource : IAgentConfigurationSource
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            // The import policy is checked before any descriptor payload is opened.
+            if (plugin.SkillsOnly) continue;
+
             var agentsDir = _fileSystem.Path.Combine(_pluginRoot, plugin.Name, AgentsDirectoryName);
             if (!_fileSystem.Directory.Exists(agentsDir))
                 continue;

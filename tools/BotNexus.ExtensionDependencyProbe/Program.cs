@@ -5,6 +5,16 @@ using System.Runtime.Loader;
 // processor, send a message, or request a token. All endpoints/keys below are dummy inputs.
 try
 {
+    if (args.Length > 1 && args[0] == "process-lifetime")
+    {
+        await ProcessLifetimeProbe.RunAsync(args);
+        return 0;
+    }
+    if (args.Length > 0 && args[0] == "plugin-closure")
+    {
+        await PluginClosureProbe.RunAsync(args);
+        return 0;
+    }
     if (args.Length != 3)
         throw new ArgumentException("Expected host assembly, extension assembly, and authentication mode.");
     var hostPath = Path.GetFullPath(args[0]);

@@ -1,4 +1,5 @@
 using BotNexus.Agent.Core.Tools;
+using BotNexus.Extensions.Plugins.Lifecycle;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -47,6 +48,9 @@ public sealed class PluginMcpServerRegistrar
     private readonly IMcpServerHost _manager;
     private readonly IPluginTrustEvaluator _trust;
     private readonly ILogger _logger;
+    private readonly PluginStateStore? _installedStore;
+    private readonly NativePluginMcpAuthority? _standaloneAuthority;
+    private readonly IPluginMcpDeclarationReader _declarationReader;
     private readonly Dictionary<string, List<string>> _registered = new(StringComparer.Ordinal);
     private readonly object _gate = new();
 
@@ -54,14 +58,23 @@ public sealed class PluginMcpServerRegistrar
     /// <param name="manager">The existing MCP server manager plugin servers are registered with.</param>
     /// <param name="trust">Trust evaluator consulted before any server is started.</param>
     /// <param name="logger">Optional logger.</param>
+    /// <param name="installedStore">Authoritative configured installed store. Missing store denies installed registration.</param>
+    /// <param name="declarationReader">Declaration reader, called only after admission and trust.</param>
+    /// <param name="standaloneAuthority">Explicit disjoint standalone authority; omission disables standalone registration.</param>
     public PluginMcpServerRegistrar(
         IMcpServerHost manager,
         IPluginTrustEvaluator? trust = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        PluginStateStore? installedStore = null,
+        IPluginMcpDeclarationReader? declarationReader = null,
+        NativePluginMcpAuthority? standaloneAuthority = null)
     {
         _manager = manager ?? throw new ArgumentNullException(nameof(manager));
         _trust = trust ?? DisabledPluginTrustEvaluator.Instance;
         _logger = logger ?? NullLogger.Instance;
+        _installedStore = installedStore;
+        _standaloneAuthority = standaloneAuthority;
+        _declarationReader = declarationReader ?? new FilePluginMcpDeclarationReader();
     }
 
     /// <summary>Scoped server ids currently registered for a plugin.</summary>
@@ -92,6 +105,60 @@ public sealed class PluginMcpServerRegistrar
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginName);
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginDirectory);
 
+        try
+        {
+            if (_installedStore is null)
+                return Refused(pluginName, "Authoritative installed plugin policy is not configured.");
+            var record = _installedStore.ResolveForExecution(pluginName, pluginDirectory);
+            if (record.SkillsOnly)
+                return Refused(pluginName, "Plugin has skills-only support; MCP content remains inactive.");
+        }
+        catch (Exception ex) when (IsAdmissionFailure(ex))
+        {
+            return Refused(pluginName, "Authoritative installed plugin policy is unavailable or does not match; MCP registration refused.");
+        }
+        return await RegisterAdmittedAsync(pluginName, Path.TrimEndingDirectorySeparator(Path.GetFullPath(pluginDirectory)),
+            declaredPath, useToolPrefix, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Registers a separately validated native-only standalone package, never inferred from missing installed state.</summary>
+    /// <param name="admission">Native admission returned by the validating factory; revalidated before use.</param>
+    /// <param name="declaredPath">Optional native declaration path.</param>
+    /// <param name="useToolPrefix">Whether to prefix bridged tool names.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<PluginMcpRegistration> RegisterNativeAsync(
+        NativePluginMcpAdmission admission,
+        string? declaredPath = null,
+        bool useToolPrefix = true,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(admission);
+        try
+        {
+            if (_installedStore is null || _standaloneAuthority is null
+                || !ReferenceEquals(admission.Authority, _standaloneAuthority)
+                || !_standaloneAuthority.Matches(_installedStore))
+                return Refused(admission.Name, "Explicit matching standalone and installed authority is required.");
+            var current = NativePluginMcpAdmission.Admit(admission.Directory, _standaloneAuthority);
+            if (!string.Equals(current.Name, admission.Name, StringComparison.Ordinal))
+                return Refused(admission.Name, "Native admission identity changed.");
+        }
+        catch (Exception ex) when (IsAdmissionFailure(ex))
+        {
+            return Refused(admission.Name, "Native-only standalone admission is no longer valid.");
+        }
+        return await RegisterAdmittedAsync(admission.Name, admission.Directory, declaredPath,
+            useToolPrefix, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool IsAdmissionFailure(Exception exception) => exception is IOException or InvalidDataException
+        or UnauthorizedAccessException or System.Text.Json.JsonException or ArgumentException or NotSupportedException;
+
+    private static PluginMcpRegistration Refused(string name, string reason) => new(name, [], [], reason);
+
+    private async Task<PluginMcpRegistration> RegisterAdmittedAsync(string pluginName, string pluginDirectory,
+        string? declaredPath, bool useToolPrefix, CancellationToken cancellationToken)
+    {
         var decision = _trust.Evaluate(pluginName, pluginDirectory);
         if (!decision.Trusted)
         {
@@ -114,7 +181,7 @@ public sealed class PluginMcpServerRegistrar
             }
         }
 
-        var declaration = PluginMcpDeclarationReader.Read(pluginDirectory, declaredPath);
+        var declaration = _declarationReader.Read(pluginDirectory, declaredPath);
         if (!declaration.IsValid)
         {
             _logger.LogWarning(
