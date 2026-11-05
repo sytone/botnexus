@@ -186,7 +186,7 @@ Describe 'Fenced sender qualification and resume' {
         }
         $hooks = Join-Path $script:root 'empty-hooks'
         [IO.Directory]::CreateDirectory($hooks) | Out-Null
-        & git -C $script:candidate -c user.name=Fixture -c user.email=fixture@example.invalid -c core.hooksPath=$hooks commit --quiet -m fixture
+        & git -C $script:candidate -c user.name=Fixture -c user.email=fixture@example.com -c core.hooksPath=$hooks commit --quiet -m fixture
         if ($LASTEXITCODE) {
             throw 'Fixture commit failed.'
         }

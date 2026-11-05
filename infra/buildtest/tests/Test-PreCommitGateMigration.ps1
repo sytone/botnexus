@@ -52,7 +52,7 @@ Describe 'Scoped canonical validation gate migration' {
             }
             $hooks = Join-Path $root '.git/empty-hooks'
             [IO.Directory]::CreateDirectory($hooks) | Out-Null
-            & git -C $root -c user.name=Fixture -c user.email=fixture@example.invalid -c core.hooksPath=$hooks commit --quiet -m fixture
+            & git -C $root -c user.name=Fixture -c user.email=fixture@example.com -c core.hooksPath=$hooks commit --quiet -m fixture
             if ($LASTEXITCODE) {
                 throw 'Fixture commit failed.'
             }

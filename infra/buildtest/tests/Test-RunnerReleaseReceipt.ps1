@@ -116,7 +116,7 @@ Describe 'Real receipt boundary compatibility' {
         }
         $emptyHooks = Join-Path $script:root 'empty-hooks'
         [IO.Directory]::CreateDirectory($emptyHooks) | Out-Null
-        & git -C $script:candidate -c user.name=Fixture -c user.email=fixture@example.invalid -c core.hooksPath=$emptyHooks commit --quiet -m fixture
+        & git -C $script:candidate -c user.name=Fixture -c user.email=fixture@example.com -c core.hooksPath=$emptyHooks commit --quiet -m fixture
         if ($LASTEXITCODE -ne 0) {
             throw 'Synthetic Git commit failed.'
         }

@@ -414,7 +414,7 @@ try {
     $local = Initialize-CommandScript -Directory $repo -Name 'local.ps1' -Marker $marker -ExitCode 9
     Write-Receipt -Repository $repo
     $before = & $fingerprintScript -WorktreePath $repo
-    $newBase = Invoke-IsolatedGit -Arguments @('-C', $repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit-tree', $before.tree, '-p', $before.head, '-m', 'base-only fixture')
+    $newBase = Invoke-IsolatedGit -Arguments @('-C', $repo, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.com', 'commit-tree', $before.tree, '-p', $before.head, '-m', 'base-only fixture')
     if ($LASTEXITCODE -ne 0) {
         throw 'Unable to construct synthetic comparison commit.'
     }
