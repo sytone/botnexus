@@ -47,15 +47,15 @@ public sealed class ClaudePluginImportTests : IDisposable
     }
 
     [Fact]
-    public async Task Install_UnsupportedDeclarations_ReportEveryFieldBeforePromotion()
+    public async Task Install_UnsupportedDeclarations_ImportSkillsAndReportEveryCategory()
     {
         _fetcher.Enqueue("v1", Content("""{"name":"example","hooks":{"Stop":[]},"commands":["./cmd"],"agents":"./other","mcpServers":{"server":{"command":"never-run"}},"lspServers":{}}"""));
         var result = await Install();
-        AssertRejected(result, "hooks", "commands", "agents", "mcpServers", "lspServers");
+        AssertPartial(result, "agents", "commands", "hooks", "mcp", "lsp");
     }
 
     [Fact]
-    public async Task Install_ConventionalUnsupportedContent_ReportEveryDiscoveredPath()
+    public async Task Install_ConventionalUnsupportedContent_RemainsInactive()
     {
         var files = Content();
         files["hooks/hooks.json"] = "{}";
@@ -64,7 +64,7 @@ public sealed class ClaudePluginImportTests : IDisposable
         files[".mcp.json"] = "{\"mcpServers\":{\"bad\":{\"command\":\"never-run\"}}}";
         files[".botnexus-plugin/mcp.json"] = "{}";
         _fetcher.Enqueue("v1", files);
-        AssertRejected(await Install(), "hooks", "commands", "agents", ".mcp.json", ".botnexus-plugin/mcp.json");
+        AssertPartial(await Install(), "agents", "commands", "hooks", "mcp");
         (await new PluginAgentConfigurationSource(_root).LoadAsync()).ShouldBeEmpty();
     }
 
@@ -95,7 +95,7 @@ public sealed class ClaudePluginImportTests : IDisposable
     [Fact]
     public async Task Install_DualIdentityOrBehaviorConflict_Rejects()
     {
-        foreach (var claude in new[] { "{\"name\":\"other\"}", "{\"name\":\"example\",\"hooks\":{}}", "{\"name\":\"example\",\"skills\":\"./custom\"}" })
+        foreach (var claude in new[] { "{\"name\":\"other\"}", "{\"name\":\"example\",\"skills\":\"./custom\"}" })
         {
             var files = Content(claude);
             files[".botnexus-plugin/plugin.json"] = "{\"name\":\"example\"}";
@@ -129,17 +129,17 @@ public sealed class ClaudePluginImportTests : IDisposable
     }
 
     [Fact]
-    public async Task Update_UnsupportedRevision_LeavesInstalledContentAndReceiptUntouched()
+    public async Task Update_DuplicateEnvelope_LeavesInstalledContentAndReceiptUntouched()
     {
         _fetcher.Enqueue("v1", Content());
         (await Install()).Outcome.ShouldBe(PluginOperationOutcome.Installed);
         var receipt = JsonSerializer.Serialize(_store.Find("example"));
         var files = Content();
-        files["agents/worker.json"] = "{\"id\":\"worker\"}";
+        files[".claude-plugin/plugin.json"] = "{\"name\":\"example\",\"name\":\"other\"}";
         _fetcher.Enqueue("v2", files);
         var result = await _manager.UpdateAsync("example");
         result.Outcome.ShouldBe(PluginOperationOutcome.Failed);
-        result.Errors.ShouldContain(error => error.Field.Contains("agents", StringComparison.Ordinal));
+        result.Errors.ShouldContain(error => error.Field.Contains("name", StringComparison.Ordinal));
         JsonSerializer.Serialize(_store.Find("example")).ShouldBe(receipt);
         File.Exists(Path.Combine(_root, "example", "agents", "worker.json")).ShouldBeFalse();
         _fetcher.Enqueue("v3", Content("{\"name\":\"example\",\"version\":\"2.0.0\"}"));
@@ -171,14 +171,22 @@ public sealed class ClaudePluginImportTests : IDisposable
     }
 
     [Fact]
-    public async Task Install_DualNativeUnsupportedDeclarations_Rejects()
+    public async Task Install_DualNativeComponentsStayInactive_CustomSkillsReject()
     {
         foreach (var declaration in new[] { "\"hooks\":\"./custom.json\"", "\"agents\":[\"./custom\"]", "\"commands\":[]", "\"mcpServers\":\"./custom.json\"", "\"skills\":[\"./custom\"]" })
         {
             var files = Content();
             files[".botnexus-plugin/plugin.json"] = "{\"name\":\"example\"," + declaration + "}";
             _fetcher.Enqueue("v1", files);
-            AssertRejected(await Install());
+            var result = await Install();
+            if (declaration.StartsWith("\"skills", StringComparison.Ordinal))
+                AssertRejected(result, "skills");
+            else
+            {
+                result.Outcome.ShouldBe(PluginOperationOutcome.Installed);
+                result.Plugin.ShouldNotBeNull().SkillsOnly.ShouldBeTrue();
+                _manager.Remove("example");
+            }
         }
     }
 
@@ -338,6 +346,15 @@ public sealed class ClaudePluginImportTests : IDisposable
     }
 
     private Task<PluginOperationResult> Install() => _manager.InstallAsync(new PluginInstallRequest { Source = "https://example.com/fake.git" });
+
+    private static void AssertPartial(PluginOperationResult result, params string[] categories)
+    {
+        result.Outcome.ShouldBe(PluginOperationOutcome.Installed);
+        var plugin = result.Plugin.ShouldNotBeNull();
+        plugin.SkillsOnly.ShouldBeTrue();
+        foreach (var category in categories) plugin.SkippedComponents.ShouldContain(category);
+        plugin.Warnings.ShouldNotBeEmpty();
+    }
 
     private void AssertRejected(PluginOperationResult result, params string[] fields)
     {

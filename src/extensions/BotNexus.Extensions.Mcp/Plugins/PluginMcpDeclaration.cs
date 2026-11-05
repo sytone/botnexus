@@ -42,6 +42,21 @@ public sealed record PluginMcpDeclaration(
 /// plugin manifest contract makes that distinction deliberately, so this reader honours it by
 /// probing the conventional locations rather than returning empty.
 /// </remarks>
+public interface IPluginMcpDeclarationReader
+{
+    /// <summary>Reads an admitted plugin's declaration; never called before policy and trust gates.</summary>
+    PluginMcpDeclaration Read(string pluginDirectory, string? declaredPath);
+}
+
+/// <summary>Production adapter for the existing declaration reader.</summary>
+public sealed class FilePluginMcpDeclarationReader : IPluginMcpDeclarationReader
+{
+    /// <inheritdoc />
+    public PluginMcpDeclaration Read(string pluginDirectory, string? declaredPath) =>
+        PluginMcpDeclarationReader.Read(pluginDirectory, declaredPath);
+}
+
+/// <summary>Existing bounded file declaration parser, independent of activation policy.</summary>
 public static class PluginMcpDeclarationReader
 {
     /// <summary>Conventional declaration paths, probed in order when the manifest names none.</summary>

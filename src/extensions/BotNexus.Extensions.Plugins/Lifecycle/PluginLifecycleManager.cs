@@ -142,6 +142,8 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 ResolvedVersion = staged.ResolvedVersion!,
                 ManifestVersion = manifest.Version,
                 ManifestFormat = staged.Format,
+                SkillsOnly = staged.SkillsOnly,
+                SkippedComponents = staged.SkippedComponents ?? [],
                 UpdatesEnabled = request.UpdatesEnabled,
                 InstalledAtUtc = _timeProvider.GetUtcNow(),
                 Files = files,
@@ -266,6 +268,8 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
                 MarketplaceCatalogPath = staged.MarketplaceCatalogPath,
                 MarketplaceSourcePath = staged.MarketplaceSourcePath,
                 ManifestFormat = staged.Format,
+                SkillsOnly = staged.SkillsOnly,
+                SkippedComponents = staged.SkippedComponents ?? [],
                 InstalledAtUtc = _timeProvider.GetUtcNow(),
                 Files = files,
             };
@@ -377,7 +381,9 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
         PluginOperationResult? Failure,
         PluginManifestFormat Format = PluginManifestFormat.Native,
         string? MarketplaceCatalogPath = null,
-        string? MarketplaceSourcePath = null);
+        string? MarketplaceSourcePath = null,
+        bool SkillsOnly = false,
+        IReadOnlyList<string>? SkippedComponents = null);
 
     // Fetch and validate in a scratch directory under the OS temp root. Nothing here is inside
     // the plugin root, so a fault at any point in this method leaves the plugin root untouched -
@@ -486,13 +492,13 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
             var manifest = imported.Manifest;
             if (marketplacePluginName is not null)
             {
-                var errors = PluginImportAdapter.ValidateDiscoveredComponents(staging);
-                foreach (var (field, declared) in new[]
+                var errors = new List<PluginValidationError>();
+                imported = imported with
                 {
-                    ("hooks", manifest.Hooks is not null), ("commands", manifest.Commands is not null),
-                    ("agents", manifest.Agents is not null), ("mcpServers", manifest.McpServers is not null),
-                })
-                    if (declared) errors.Add(new(field, "Marketplace selection supports conventional skills only."));
+                    SkillsOnly = true,
+                    SkippedComponents = PluginComponentPolicy.Normalize((imported.SkippedComponents ?? [])
+                        .Concat(PluginComponentPolicy.Discover(staging)).Concat(PluginComponentPolicy.Declared(manifest))),
+                };
                 if (manifest.Skills is { } skills && (skills.Count != 1 || skills[0] is not ("./skills" or "skills")))
                     errors.Add(new("skills", "Marketplace selection requires conventional skills."));
                 if (errors.Count > 0)
@@ -511,7 +517,7 @@ public sealed class PluginLifecycleManager : IPluginUpdateService
             }
 
             return new StagedPlugin(staging, fetch.ResolvedVersion, manifest, null, imported.Format,
-                marketplaceCatalogPath, marketplaceSourcePath);
+                marketplaceCatalogPath, marketplaceSourcePath, imported.SkillsOnly, imported.SkippedComponents);
         }
         catch
         {

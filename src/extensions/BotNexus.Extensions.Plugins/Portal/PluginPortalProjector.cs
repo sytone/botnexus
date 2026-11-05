@@ -66,6 +66,9 @@ public sealed class PluginPortalProjector
         return new PluginPortalRow
         {
             Name = plugin.Name,
+            SkillsOnly = plugin.SkillsOnly,
+            SkippedComponents = PluginComponentPolicy.Normalize(plugin.SkippedComponents),
+            Warnings = plugin.Warnings,
             Source = plugin.Source,
             Reference = plugin.Reference,
             ResolvedVersion = plugin.ResolvedVersion,

@@ -101,22 +101,26 @@ public sealed class LegacyPluginImportTests : IDisposable
     }
 
     [Fact]
-    public async Task Install_UnsupportedBaselineCannotBeHiddenByEnhancement()
+    public async Task Install_UnsupportedBaselineIsReportedWithEnhancement()
     {
         var files = Content("""{"name":"example","hooks":{},"agents":[],"commands":[],"mcpServers":{},"lspServers":{}}""");
         files[".botnexus-plugin/plugin.json"] = "{\"name\":\"example\"}";
         _fetcher.Enqueue("v1", files);
-        Rejected(await Install(), "hooks", "agents", "commands", "mcpServers", "lspServers");
+        var record = (await Install()).Plugin.ShouldNotBeNull();
+        record.SkillsOnly.ShouldBeTrue();
+        record.SkippedComponents.ShouldBe(["agents", "commands", "hooks", "mcp", "lsp"]);
     }
 
     [Fact]
-    public async Task Install_UnsupportedDiscoveredPaths_AllReported()
+    public async Task Install_UnsupportedDiscoveredPaths_AllCategoriesReported()
     {
         var files = Content();
         foreach (var path in new[] { "mcp.json", ".mcp.json", ".botnexus-plugin/mcp.json", "com.github.copilot/config.json", "agents/worker.json", "hooks/hooks.json", "commands/run.md" })
             files[path] = "{}";
         _fetcher.Enqueue("v1", files);
-        Rejected(await Install(), "mcp.json", ".mcp.json", ".botnexus-plugin/mcp.json", "com.github.copilot", "agents", "hooks", "commands");
+        var record = (await Install()).Plugin.ShouldNotBeNull();
+        record.SkillsOnly.ShouldBeTrue();
+        record.SkippedComponents.ShouldBe(["agents", "commands", "hooks", "mcp"]);
         (await new PluginAgentConfigurationSource(_root).LoadAsync()).ShouldBeEmpty();
     }
 
@@ -143,14 +147,20 @@ public sealed class LegacyPluginImportTests : IDisposable
     }
 
     [Fact]
-    public async Task Install_EnhancementCannotAddOrHideBehavior()
+    public async Task Install_EnhancementComponentsStayInactive_CustomSkillsReject()
     {
         foreach (var declaration in new[] { "\"hooks\":\"./custom.json\"", "\"agents\":[]", "\"commands\":[]", "\"mcpServers\":\"./custom.json\"", "\"skills\":[]", "\"skills\":[\"custom\"]" })
         {
             var files = Content();
             files[".botnexus-plugin/plugin.json"] = "{" + declaration + "}";
             _fetcher.Enqueue("v1", files);
-            Rejected(await Install(), declaration.Split('"')[1]);
+            var result = await Install();
+            if (declaration.StartsWith("\"skills", StringComparison.Ordinal)) Rejected(result, "skills");
+            else
+            {
+                result.Plugin.ShouldNotBeNull().SkillsOnly.ShouldBeTrue();
+                _manager.Remove("example");
+            }
         }
     }
 
@@ -163,11 +173,11 @@ public sealed class LegacyPluginImportTests : IDisposable
         var local = Path.Combine(_root, "example", "skills", "local.txt");
         File.WriteAllText(local, "local");
         var bad = Content();
-        bad["mcp.json"] = "{}";
+        bad["plugin.json"] = "{\"name\":\"other\"}";
         _fetcher.Enqueue("v2", bad);
         var rejected = await _manager.UpdateAsync("example");
         rejected.Outcome.ShouldBe(PluginOperationOutcome.Failed);
-        rejected.Errors.ShouldContain(error => error.Field == "mcp.json");
+        rejected.Errors.ShouldContain(error => error.Field == "name");
         JsonSerializer.Serialize(_store.Find("example")).ShouldBe(receipt);
         var next = Content("{\"name\":\"example\",\"version\":\"2.0.0\"}");
         next["botnexus-plugin.json"] = "{\"description\":\"enhanced\"}";

@@ -53,6 +53,24 @@ public sealed record InstalledPlugin
     [JsonPropertyName("manifestFormat")]
     public PluginManifestFormat ManifestFormat { get; init; } = PluginManifestFormat.Native;
 
+    private bool _skillsOnly;
+
+    /// <summary>Effective activation policy. Foreign and marketplace records cannot opt out; old native records stay compatible.</summary>
+    [JsonPropertyName("skillsOnly")]
+    public bool SkillsOnly
+    {
+        get => _skillsOnly || ManifestFormat != PluginManifestFormat.Native || MarketplacePluginName is not null;
+        init => _skillsOnly = value;
+    }
+
+    /// <summary>Known inactive component categories recorded during validated staging.</summary>
+    [JsonPropertyName("skippedComponents")]
+    public IReadOnlyList<string> SkippedComponents { get; init; } = [];
+
+    /// <summary>Bounded sanitized diagnostics derived from effective policy, including for older records.</summary>
+    [JsonPropertyName("warnings")]
+    public IReadOnlyList<string> Warnings => PluginComponentPolicy.Warnings(SkillsOnly, SkippedComponents);
+
     /// <summary>
     /// Whether update may replace this plugin's content. Defaults to <c>true</c> - the settled
     /// decision in #2623 is that pinning is opt-in, so a plugin installed without an explicit

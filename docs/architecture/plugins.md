@@ -69,17 +69,19 @@ Optional enhancement metadata is selected in this order:
 
 The enhancement may omit identity and other baseline metadata. Missing fields inherit from
 the baseline; non-conflicting object fields merge recursively. Contradictory duplicate values
-fail with a diagnostic naming both files. The selected nested enhancement takes precedence
-over the root form; a malformed selected enhancement never falls back. Both source files stay
+fail with a diagnostic naming both files. The selected nested manifest entry takes precedence
+over the root form; a malformed selected enhancement never falls back. A metadata directory
+containing only preserved components (for example `mcp.json`) does not select a missing manifest;
+in that case the root enhancement is used when present. Both source files stay
 in the exact-file ownership and trust catalog. Removing enhancement metadata on a subsequent
 update leaves the basic legacy package valid.
 
-This slice adds metadata only, not new executable capabilities. Explicit hooks, commands,
-agents, MCP and LSP declarations or discovered behavior paths are rejected before promotion,
-including `mcp.json`, `com.github.copilot`, and `.claude-plugin`. Native enhancements cannot
-add these behaviors or redirect/narrow the portable skills directory. Unknown fields, duplicate
-JSON fields, links, path aliases and case-insensitive collisions fail closed. Native-only and
-Claude-only inputs retain their existing behavior.
+This import adds no executable capabilities. Known hooks, commands, agents, MCP and LSP
+components are preserved as inactive owned files. Their declarations are classified, not
+interpreted or externally resolved. Native enhancements cannot activate these components or
+redirect/narrow the portable skills directory. A second foreign metadata envelope remains an
+error (except the explicitly selected root marketplace catalog). Unknown fields, duplicate
+JSON fields, links, path aliases and case-insensitive collisions still fail closed.
 
 Receipts record `manifestFormat: "Legacy"`; updates revalidate the source and removal uses the
 existing exact-file receipt, preserving unowned files. Versioned Agent Plugins manifests,
@@ -100,15 +102,15 @@ manifest. Original plugin files remain part of the installed file receipt.
 | Claude `.claude-plugin/plugin.json` only | Required native-compatible `name`; optional `description`, `version`, `author`, `homepage`, `repository`, `license`, `keywords`, validated against native metadata rules. Unknown fields and duplicate fields, including nested duplicates, fail. |
 | Conventional `skills/` | Supported through the existing skill-root resolver and skill discovery. |
 | Claude `skills` declaration | Omitted, `"./skills"`, `"skills"`, or a one-element array containing either path. Empty, custom, additional or escaping paths fail rather than being ignored. |
-| Claude hooks, commands, agents, MCP or LSP declarations | Rejected, even when the declared value is empty. All offending fields are reported. |
-| Discovered behavior in a Claude or manifestless import | `hooks`, `commands`, `agents`, `lsp`, `.mcp.json`, `.lsp.json` and `.botnexus-plugin/mcp.json` paths are rejected, whether files or directories. Omitting declarations cannot bypass the check. |
-| Both manifests | Native whole-manifest authority, with no metadata inheritance. Both manifests must stay within conventional skills; native unsupported component declarations or custom skill paths fail too. Claude content must pass the bounded checks and declare the same identity. A malformed present native manifest fails; there is no Claude fallback. |
+| Claude hooks, commands, agents, MCP or LSP declarations | Preserved but inactive, including empty values. Fixed warnings report each skipped category; unsupported internals are not interpreted. |
+| Discovered behavior in a Claude or manifestless import | Conventional agents, commands, hooks, MCP and LSP paths are classified without opening their payloads. Files remain owned, but cannot activate. |
+| Both manifests | Native whole-manifest authority, with no metadata inheritance. Execution stays skills-only even when native metadata wins; known component declarations are skipped, while custom skill paths still fail. Claude content must pass the bounded checks and declare the same identity. A malformed present native manifest fails; there is no Claude fallback. |
 | Missing both manifests | Requires an explicit `PluginInstallRequest.Name` validated by the native identity schema and at least one regular `skills/<skill>/SKILL.md` file with canonical spelling. Missing or empty skills, a loose root `SKILL.md`, and nested-only skill files do not qualify. No manifest is written to disk. |
 | Missing or invalid manifestless identity | Rejected. No identity is inferred from the source, checkout directory, or skill name. |
 | Present malformed or linked metadata | Rejected, never reinterpreted as manifestless content. Native manifest validation remains authoritative when present. |
 | Claude and manifestless path safety | Staging preflight rejects symbolic links and reparse points (including dangling links), nonportable names, case-insensitive destination collisions, and noncanonical conventional root names. Manifestless skill entry files must be spelled `SKILL.md`. |
 | Claude/Copilot marketplace relative selection | Explicit `PluginInstallRequest.MarketplacePluginName` selects one entry from the fetched repository's `.claude-plugin/marketplace.json` or `.github/plugin/marketplace.json`; see the limited matrix below. No automatic reinterpretation of ordinary requests. |
-| Consent, UI or extra component execution | No expansion in this stage; unsupported content fails rather than producing partial success. |
+| Consent, UI or extra component execution | No expansion in this stage; known unsupported components yield explicit partial-support warnings, never execution. |
 
 The installed receipt stores `manifestFormat` as `"Native"` or `"Claude"` for the selected
 manifest, including `"Claude"` for accepted manifestless imports. Manifestless receipts keep the
@@ -123,6 +125,37 @@ existing skill validation and content-trust policies still apply.
 The strict native schema and `PluginManifestParser.ParsePluginDirectory` remain native-only.
 The separate adapter is a lifecycle import boundary, not a general Claude manifest parser or
 a promise that arbitrary Claude plugins work in BotNexus.
+
+## Persisted partial-support policy
+
+For developers integrating plugin consumers, `InstalledPlugin.SkillsOnly` is the activation
+boundary. Foreign, manifestless, dual-manifest and explicitly selected marketplace imports
+persist this policy. `SkippedComponents` records the fixed categories `agents`, `commands`,
+`hooks`, `mcp` and `lsp`. The agent source checks policy before opening descriptors. The MCP
+registrar requires a configured `PluginStateStore` and resolves the exact identity and canonical
+direct-child directory before trust evaluation, declaration parsing or server start. Missing,
+unreadable, null or ambiguous policy is refused; a missing record never means native. Linked
+policy/content paths are refused. Standalone native registration is a separate `RegisterNativeAsync`
+path with a validated `NativePluginMcpAdmission` bound to an explicitly configured
+`NativePluginMcpAuthority`. That authority requires a standalone root disjoint from the configured
+installed root. All installed-root descendants are denied regardless of missing, null, blank or
+unreadable installed state. The registrar requires the same authority instance and installed
+boundary, revalidates the admission, and rejects linked paths plus foreign/installed ancestry.
+An absent record or native-shaped nested payload never grants standalone authority. Without
+explicit authority configuration this alternative is unavailable. These are point-in-time
+checks, not a concurrent filesystem-tamper transaction. No foreign hook, command or LSP execution path is added.
+
+Install/update API receipts and get/list projections expose `skillsOnly`, `skippedComponents`
+and `warnings`. The CLI prints this structured JSON unchanged. Warnings use at most six fixed
+messages and contain no publisher-controlled payload, path, command or URL. Skills-only policy
+is reported even when there are no skipped categories. Successful replacement refreshes policy
+and categories; pinned and same-revision operations report the existing installed state.
+
+Older Claude/Legacy records remain skills-only even without the new policy field. Older native
+records keep native behavior, unless they recorded explicit marketplace selection. A stored
+false value cannot override a foreign format. Original manifests are never rewritten. Updates
+still validate before replacing content; removal uses exact file ownership and preserves local
+unowned files. This is not arbitrary schema support, dependency installation or foreign execution.
 
 ## Marketplaces
 
@@ -169,14 +202,14 @@ Marketplace registration persistence, catalog browsing and init/UI selection rem
 | Unsupported selected sources | Typed objects (including GitHub, git, URL, package and other remote forms), absolute paths, URIs, traversal, backslashes, percent encoding, empty/dot segments, trailing slash except `./`, and nonportable segments fail. |
 | Safety and bounds | Catalog reads stop at 1 MiB plus one byte and reject over-limit UTF-8 bytes. Duplicate fields anywhere and duplicate plugin names fail. The entire fetched source must pass link/reparse-point, portable-name and collision preflight before metadata is opened; this intentionally rejects unsafe unselected siblings too. |
 | Unselected entries | Never fetched, promoted or activated. Their names/source presence and global duplicate fields are checked; unsupported source types or component declarations in unselected entries do not activate anything. |
-| Imported components | Existing conventional-skills importer, catalog generation, trust checks and exact-file receipts remain in use. Selected native-only manifests also cannot enable hooks, commands, agents, MCP or custom skill paths. Native whole-manifest authority is preserved, not merged with catalog metadata. Selected root `plugin.json` packages use the existing bounded legacy importer and its additive enhancement rules. |
+| Imported components | Existing conventional-skills discovery, trust checks and exact-file receipts remain in use. Selected native-only manifests have skills-only activation policy too. Known components stay inactive; custom skill paths still fail. Native metadata authority and legacy additive enhancement rules remain unchanged. |
 | Update/removal | A rejected staged candidate preserves the previous receipt and content. A successful update refreshes revision, files and trust catalog; removal deletes only recorded files. Existing pinning and same-revision behavior are unchanged. |
 
 The link-free preflight is deliberately stricter than checking only the selected subtree.
 This stage does not provide arbitrary HTTP catalog loading, full upstream schema validation,
 plugin dependency resolution, marketplace version constraints, component overrides, consent or
-foreign hook execution. A root-source plugin that declares hooks (including Ponytail-shaped
-inputs) remains unsupported rather than being installed with hooks silently dropped.
+foreign hook execution. A selected root-source plugin with known component declarations can import its skills. Its hooks
+and other unsupported components remain on disk and are explicitly reported as inactive.
 
 ## Schema is the single source of truth
 
