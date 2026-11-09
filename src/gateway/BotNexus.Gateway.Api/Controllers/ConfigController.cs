@@ -546,11 +546,12 @@ public sealed class ConfigController : ControllerBase
 
         var candidateProviders = TryGetObject(candidate, "providers");
         var affectedProviders = previousProviders
-            .Where(entry => entry.Value is JsonObject previous && IsEnabled(previous))
+            // Removal must also protect legacy assignments to an already-disabled provider.
+            .Where(entry => entry.Value is JsonObject)
             .Where(entry =>
                 !TryGetProperty(candidateProviders, entry.Key, out var current) ||
                 current is not JsonObject currentProvider ||
-                !IsEnabled(currentProvider))
+                (entry.Value is JsonObject previous && IsEnabled(previous) && !IsEnabled(currentProvider)))
             .Select(entry => entry.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (affectedProviders.Count == 0)
