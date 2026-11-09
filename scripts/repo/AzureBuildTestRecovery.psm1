@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'SourceSnapshot.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'RunnerReleaseCompatibility.psm1') -Force
 
 function Write-AzureBuildTestEvidence {
     <#
@@ -193,7 +194,13 @@ function Complete-AzureBuildTestRecovery {
     .DESCRIPTION
     Requires provider terminal success and execution template run/mode identity, the
     persisted start fingerprint, canonical runner source proof and complete numeric test
-    counters. Replaces the normal strict-consumer receipt using the persisted predecessor token.
+    counters. Requires a v2 launch binding equal to current external operator approval,
+    actual provider image and image-entrypoint-v1 configuration without overrides.
+    Replaces the normal strict-consumer receipt using the persisted predecessor token.
+    The trusted coordinator selects BOTNEXUS_RUNNER_RELEASE_MANIFEST outside candidate
+    configuration under ordinary existing user-profile permissions. Trusts that coordinator
+    and the local shell; native peer tool restrictions do not imply OS/shell isolation or
+    operator-only ACL protection. Keep the external profile and candidate paths stable.
     Does not contact Azure or start any execution. The caller must fetch Provider directly
     from Azure and Result from that run's artifact prefix, not accept arbitrary local JSON.
     .PARAMETER Context
@@ -220,7 +227,7 @@ function Complete-AzureBuildTestRecovery {
         [Parameter(Mandatory)][string]$WorktreePath,
         [string]$ArtifactPath
     )
-    if ($Context.version -isnot [int] -and $Context.version -isnot [long] -or $Context.version -ne 1) {
+    if ($Context.version -isnot [int] -and $Context.version -isnot [long] -or $Context.version -notin @(1, 2)) {
         throw 'Invalid recovery context version.'
     }
     if ($Context.runId -cnotmatch '^[A-Za-z0-9-]+$' -or $Context.executionName -cnotmatch '^[A-Za-z0-9-]+$' -or
@@ -282,9 +289,34 @@ function Complete-AzureBuildTestRecovery {
     if ($current.sourceSnapshot.digest -cne $fingerprint.sourceSnapshot.digest) {
         throw 'Source changed before receipt; source digest differs.'
     }
+    if ($Context.version -ne 2 -or -not $Context.PSObject.Properties['runnerRelease'] -or
+        -not $Context.PSObject.Properties['executionConfiguration']) {
+        $record = [Management.Automation.ErrorRecord]::new(
+            [InvalidOperationException]::new('A v2 launch binding is required; legacy contexts cannot self-upgrade approval.'),
+            'RunnerReleaseCompatibilityContext', [Management.Automation.ErrorCategory]::InvalidData, $Context)
+        $PSCmdlet.ThrowTerminatingError($record)
+    }
+    $providerImage = if ($containers[0].PSObject.Properties['image']) {
+        [string]$containers[0].image
+    }
+    else {
+        ''
+    }
+    $bindingParameters = @{
+        Binding = $Context.runnerRelease
+        ManifestPath = $env:BOTNEXUS_RUNNER_RELEASE_MANIFEST
+        CandidateRoot = $WorktreePath
+        DeployedImage = $providerImage
+        Mode = $Context.mode
+        ExecutionConfiguration = $Context.executionConfiguration
+        Container = $containers[0]
+    }
+    $runnerRelease = Assert-RunnerReleaseBinding @bindingParameters
     $gitDirectory = (Invoke-SnapshotGit $WorktreePath @('rev-parse', '--absolute-git-dir')).Trim()
     $receipt = [ordered]@{
-        version = 1
+        version = 2
+        runnerRelease = $runnerRelease
+        executionConfiguration = 'image-entrypoint-v1'
         sourceSnapshot = $Result.sourceSnapshot
         fingerprint = $fingerprint.fingerprint
         head = $fingerprint.head

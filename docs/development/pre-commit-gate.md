@@ -20,7 +20,7 @@ BotNexus has two local gates. Conflating them is what made the old hook unusable
 
 | | Pre-commit hook (advisory) | Pre-push / authoritative gate |
 |---|---|---|
-| Command | `Validate-PreCommit.ps1 -Hook` | `Validate-PreCommit.ps1` |
+| Command | `Invoke-PreCommitValidation.ps1 -Hook` | `Invoke-PreCommitValidation.ps1` |
 | Build | impacted projects only | one full solution build |
 | Tests | impacted projects only | impacted + architecture/scenario safety nets |
 | Playwright | no | yes (strict mode) |

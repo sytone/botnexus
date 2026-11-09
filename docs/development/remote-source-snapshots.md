@@ -50,30 +50,49 @@ restored exactly, including removing the environment entry when originally absen
 
 The fingerprint includes HEAD, base commit, normalized candidate tree, and raw manifest
 digest under `botnexus-validation-exact-source-v1`. This invalidates old fingerprints.
-`Validate-PreCommit.ps1` need not read the proof field to reject legacy receipts: its
-existing fingerprint comparison cannot match the old hashing domain.
+Old fingerprints cannot match the new hashing domain. The current `Invoke-PreCommitValidation.ps1`
+also explicitly checks the v2 receipt version, verified source proof and release binding.
+
+The sender also requires [current external runner qualification](runner-release-contract.md).
+The immutable image, qualified execution-input digest and raw candidate snapshot are separate
+identities. Unrelated application/test `.cs` changes do not normally alter the qualified-input
+digest, but do alter candidate proof. Compatible execution-input changes may be externally
+requalified against the same immutable image; a mismatch does not automatically require deployment.
 
 The sender requires matching source version/digest/run ID, successful execution and test
 exit, the requested mode, a complete nonempty test result, consistent nonnegative integer
 counters, no failures/fixture failures, and existing core/full count floors. Deliberate
 skips retain the runner's existing policy and must be accounted for. Strict mode still
 requires the Playwright artifact. Every mode emits the runner test contract; missing
-results never qualify. Receipts retain their reader-compatible outer version and include
-the verified source proof. Failure occurs before receipt creation and before success output.
+results never qualify. Azure receipts and launch contexts use outer version 2 and include
+the release binding and `image-entrypoint-v1` execution policy. Launch contexts retain the
+candidate fingerprint and source digest; receipts also include the verified version 1 source
+proof. Old contexts and receipts cannot self-upgrade. Failure occurs before receipt creation
+and before success output.
 
 ## Operator rollout and evidence boundary
 
-An operator must build and deploy the updated runner image through the normal infrastructure
-workflow, then use the matching sender/fingerprint implementation. This change does not
-modify the Dockerfile: the new entrypoint deliberately imports the verifier from the payload.
-An old image does not understand this payload. Missing proof yields an explicit operator
-compatibility/deployment error, not a fallback or automatic bootstrap. This stage neither
-changes Azure resources nor deploys/restarts any running service.
+Qualification of the image against the execution inputs remains a separate reviewed decision.
+The trusted coordinator selects an external profile through `BOTNEXUS_RUNNER_RELEASE_MANIFEST`,
+outside the repository under ordinary existing user-profile permissions. The coordinator and
+local shell are trusted; native peer tool restrictions do not provide OS/shell isolation or
+operator-only ACL/nonreplacement guarantees. A compatible sender
+or receipt change can be requalified against the same image. If the installed image lacks the
+required payload/evidence capability, a separately reviewed installation is needed; do not
+infer that every input change requires a rebuild. The entrypoint imports the verifier from
+the payload, so both trusted tooling and independent qualification matter.
+
+Missing source proof remains a hard compatibility blocker, not a fallback or automatic bootstrap.
+Current approval is reread at upload/start, final certification, cache reuse and recovery.
+Exact manifest-byte changes invalidate old launch bindings, including whitespace-only edits.
+This documentation approves no currently installed image and authorizes no live install,
+deployment, authentication or resource change. See the [release lifecycle and trust limits](runner-release-contract.md).
 
 A core run launched through the **canonical main-checkout wrapper does not exercise these
 unmerged sender/entrypoint changes**. It may validate candidate .NET inputs but is not
-end-to-end evidence for this transport implementation. Deployment plus an explicitly
-matched sender/runner run remains required before claiming remote transport validation.
+end-to-end evidence for this transport implementation. Independent release qualification plus
+an explicitly matched sender/runner run remains required before claiming remote transport
+validation. Deployment is needed only when a separately reviewed image change requires it.
 Linux execution, deployed image compatibility, actual Azure transfer/results, and impacted
 selection behavior without a synthetic commit remain rollout verification items.
 

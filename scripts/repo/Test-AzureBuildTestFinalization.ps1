@@ -46,7 +46,11 @@ function Assert-Rejection {
     }
     throw "Expected rejection was not observed: $Pattern"
 }
-$root = Join-Path ([IO.Path]::GetTempPath()) "finalization-$([guid]::NewGuid().ToString('N'))"
+$savedSelector = $env:BOTNEXUS_RUNNER_RELEASE_MANIFEST
+if (-not $env:BOTNEXUS_TEST_SCRATCH_ROOT) {
+    throw 'Set BOTNEXUS_TEST_SCRATCH_ROOT to owned task scratch.'
+}
+$root = Join-Path $env:BOTNEXUS_TEST_SCRATCH_ROOT "finalization-$([guid]::NewGuid().ToString('N'))"
 [IO.Directory]::CreateDirectory($root) | Out-Null
 try {
     & git -C $root init --quiet
@@ -54,6 +58,9 @@ try {
         throw 'Fixture Git init failed.'
     }
     Set-Content -LiteralPath (Join-Path $root 'candidate.txt') -Value 'candidate'
+    $runnerDirectory = Join-Path $root 'infra/buildtest/runner'
+    [IO.Directory]::CreateDirectory($runnerDirectory) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $runnerDirectory 'entrypoint.ps1'), '# fixture runner')
     & git -C $root add .
     & git -C $root -c user.name=Fixture -c user.email=fixture@example.com commit --quiet -m fixture
     if ($LASTEXITCODE -ne 0) {
@@ -61,7 +68,7 @@ try {
     }
     $fingerprint = & (Join-Path $PSScriptRoot 'Get-WorktreeValidationFingerprint.ps1') -WorktreePath $root -BaseRef HEAD
     $context = [pscustomobject]@{
-        version = 1
+        version = 2
         runId = 'review-run'
         mode = 'core'
         executionName = 'review-execution'
@@ -92,6 +99,28 @@ try {
             }
         }
     }
+    $image = 'fixture.invalid/runner@sha256:' + ('b' * 64)
+    $provider.properties.template.containers[0] | Add-Member -NotePropertyName image -NotePropertyValue $image -Force
+    $relative = 'infra/buildtest/runner/entrypoint.ps1'
+    $content = '# fixture runner'
+    $material = "botnexus-qualified-execution-inputs-v1`0" + ('{0}:{1}{2}:{3}' -f [Text.Encoding]::UTF8.GetByteCount($relative), $relative, [Text.Encoding]::UTF8.GetByteCount($content), $content)
+    $env:BOTNEXUS_RUNNER_RELEASE_MANIFEST = ($root + '.operator-release.json')
+    [ordered]@{
+        schemaVersion = 1
+        releaseId = 'fixture-qualified-1'
+        image = $image
+        approved = $true
+        revoked = $false
+        runnerInputDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($material))).ToLowerInvariant()
+        modes = @('core', 'strict')
+        payloadVersion = 1
+        evidenceVersion = 1
+        capabilities = @('exact-source-v1')
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $env:BOTNEXUS_RUNNER_RELEASE_MANIFEST -Encoding utf8NoBOM
+    Import-Module (Join-Path $PSScriptRoot 'RunnerReleaseCompatibility.psm1') -Force
+    $binding = Assert-RunnerReleaseCompatibility -ManifestPath $env:BOTNEXUS_RUNNER_RELEASE_MANIFEST -CandidateRoot $root -DeployedImage $image -Mode core
+    $context | Add-Member -NotePropertyName runnerRelease -NotePropertyValue $binding
+    $context | Add-Member -NotePropertyName executionConfiguration -NotePropertyValue 'image-entrypoint-v1'
     $result = [pscustomobject]@{
         runId = $context.runId
         mode = 'core'
@@ -250,6 +279,7 @@ try {
     $provider = $goodProvider | ConvertFrom-Json
     $result = $goodResult | ConvertFrom-Json
     $context.mode = 'strict'
+    $context.runnerRelease.mode = 'strict'
     $context.expectedPreviousReceipt = Get-AzureBuildTestReceiptToken -Path $receiptPath
     $provider.properties.template.containers[0].env[1].value = 'strict'
     $result.mode = 'strict'
@@ -400,5 +430,7 @@ catch {
 
 }
 finally {
+    Remove-Item -LiteralPath ($root + '.operator-release.json') -ErrorAction SilentlyContinue
+    $env:BOTNEXUS_RUNNER_RELEASE_MANIFEST = $savedSelector
     Remove-Item -LiteralPath $root -Recurse -Force
 }

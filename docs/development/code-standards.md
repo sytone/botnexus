@@ -262,7 +262,7 @@ on a host with a live gateway. The authoritative gate is the validation script,
 which executes tests remotely:
 
 ```powershell
-scripts/repo/Validate-PreCommit.ps1
+scripts/repo/Invoke-PreCommitValidation.ps1
 ```
 
 Mode is selected by `BOTNEXUS_VALIDATION_MODE` (`local` or `remote`); the

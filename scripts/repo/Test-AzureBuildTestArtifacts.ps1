@@ -1,3 +1,13 @@
+<#
+.SYNOPSIS
+Tests remote artifact placement and advisory provenance wiring offline.
+.DESCRIPTION
+Uses disposable synthetic artifact trees only. No Azure command or product runtime starts.
+.EXAMPLE
+Invoke-Pester -Path ./scripts/repo/Test-AzureBuildTestArtifacts.ps1
+.OUTPUTS
+None. Pester reports filesystem and source-wiring assertions.
+#>
 #Requires -Modules Pester
 # Regression coverage for issue #3115: Invoke-AzureBuildTest.ps1 downloaded run artifacts into
 # artifacts/azure-buildtest/<runId>/<runId>/ while advertising artifacts/azure-buildtest/<runId>/
@@ -16,12 +26,29 @@ BeforeAll {
 
     $script:ScriptPath = Join-Path $PSScriptRoot 'Invoke-AzureBuildTest.ps1'
 
-    $script:Scratch = Join-Path ([IO.Path]::GetTempPath()) ("bn3115-" + [Guid]::NewGuid().ToString('N'))
+    if (-not $env:BOTNEXUS_TEST_SCRATCH_ROOT) {
+        throw 'Set BOTNEXUS_TEST_SCRATCH_ROOT to owned task scratch.'
+    }
+    $script:Scratch = Join-Path $env:BOTNEXUS_TEST_SCRATCH_ROOT ("bn3115-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $script:Scratch -Force | Out-Null
 
     # Reproduces what `az storage blob download-batch --destination <root> --pattern "<runId>/*"`
     # actually writes: every blob laid down under its own full name, run-id prefix included.
-    function New-DownloadedBlobTree {
+    function Initialize-DownloadedBlobTree {
+        <#
+        .SYNOPSIS
+        Creates a synthetic prefixed blob download tree.
+        .DESCRIPTION
+        Writes only into the supplied disposable fixture staging root.
+        .PARAMETER StagingRoot
+        Owned fixture download directory.
+        .PARAMETER RunId
+        Synthetic run prefix.
+        .EXAMPLE
+        Initialize-DownloadedBlobTree -StagingRoot $scratch -RunId fixture-run
+        .OUTPUTS
+        System.String. Fixture run directory.
+        #>
         param([Parameter(Mandatory)][string]$StagingRoot, [Parameter(Mandatory)][string]$RunId)
         $prefixed = Join-Path $StagingRoot $RunId
         New-Item -ItemType Directory -Path (Join-Path $prefixed 'test-results') -Force | Out-Null
@@ -32,24 +59,38 @@ BeforeAll {
         return $prefixed
     }
 
-    function New-Case {
+    function Initialize-ArtifactCase {
+        <#
+        .SYNOPSIS
+        Initializes one disposable artifact placement case.
+        .DESCRIPTION
+        Creates synthetic downloaded files and a separate intended destination.
+        .PARAMETER RunId
+        Synthetic run identifier.
+        .EXAMPLE
+        Initialize-ArtifactCase -RunId fixture-run
+        .OUTPUTS
+        System.Management.Automation.PSCustomObject. Fixture paths.
+        #>
         param([string]$RunId = '20260814120000-abcd1234')
         $case = Join-Path $script:Scratch ("case-" + [Guid]::NewGuid().ToString('N'))
         $staging = Join-Path $case 'staging'
         $destination = Join-Path $case "artifacts/azure-buildtest/$RunId"
         New-Item -ItemType Directory -Path $staging -Force | Out-Null
-        New-DownloadedBlobTree -StagingRoot $staging -RunId $RunId | Out-Null
+        Initialize-DownloadedBlobTree -StagingRoot $staging -RunId $RunId | Out-Null
         [pscustomobject]@{ RunId = $RunId; Staging = $staging; Destination = $destination }
     }
 }
 
 AfterAll {
-    if (Test-Path $script:Scratch) { Remove-Item $script:Scratch -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $script:Scratch) {
+        Remove-Item $script:Scratch -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Describe 'Move-AzureBuildTestArtifacts' {
     It 'places result.json directly in the run directory and it parses as JSON (AC1)' {
-        $case = New-Case
+        $case = Initialize-ArtifactCase
         $returned = Move-AzureBuildTestArtifacts -StagingRoot $case.Staging -RunId $case.RunId -Destination $case.Destination
 
         $contract = Join-Path $case.Destination 'result.json'
@@ -60,7 +101,7 @@ Describe 'Move-AzureBuildTestArtifacts' {
     }
 
     It 'does not create a duplicated runId-inside-runId directory (AC2, AC4 mutation target)' {
-        $case = New-Case
+        $case = Initialize-ArtifactCase
         Move-AzureBuildTestArtifacts -StagingRoot $case.Staging -RunId $case.RunId -Destination $case.Destination | Out-Null
 
         # This is the assertion that reddens if the run-id prefix is ever applied twice again.
@@ -69,7 +110,7 @@ Describe 'Move-AzureBuildTestArtifacts' {
     }
 
     It 'returns the directory that directly contains result.json, so the printed path cannot drift (AC3)' {
-        $case = New-Case
+        $case = Initialize-ArtifactCase
         $reported = Move-AzureBuildTestArtifacts -StagingRoot $case.Staging -RunId $case.RunId -Destination $case.Destination
 
         # The success line prints $OutputPath, which is reassigned from this return value.
@@ -77,7 +118,7 @@ Describe 'Move-AzureBuildTestArtifacts' {
     }
 
     It 'keeps test-results/*.trx reachable under the same run directory (AC5)' {
-        $case = New-Case
+        $case = Initialize-ArtifactCase
         $reported = Move-AzureBuildTestArtifacts -StagingRoot $case.Staging -RunId $case.RunId -Destination $case.Destination
 
         @(Get-ChildItem -Path (Join-Path $reported 'test-results') -Filter '*.trx').Count | Should -Be 1
@@ -86,7 +127,7 @@ Describe 'Move-AzureBuildTestArtifacts' {
 
     It 'is a no-op-safe passthrough when the blob prefix is absent' {
         # If the prefix is ever dropped upstream, flattening must not empty the run directory.
-        $case = New-Case
+        $case = Initialize-ArtifactCase
         $flat = Join-Path $script:Scratch ("flat-" + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $flat -Force | Out-Null
         Set-Content -Path (Join-Path $flat 'result.json') -Value '{"exitCode":0}' -Encoding utf8NoBOM
@@ -157,7 +198,12 @@ Describe 'ConvertTo-CountableArray (#3805 AC1, AC3)' {
     It 'proves the original idiom really does collapse to $null, so this test is not vacuous' {
         # Non-vacuity: without this, the fix above could be trivially satisfied by any value.
         $result = '{"projectCosts":null}' | ConvertFrom-Json
-        $collapsed = if ($result.PSObject.Properties['projectCosts']) { @($result.projectCosts) } else { @() }
+        $collapsed = if ($result.PSObject.Properties['projectCosts']) {
+            @($result.projectCosts)
+        }
+        else {
+            @()
+        }
 
         $null -eq $collapsed | Should -BeTrue -Because 'the if-statement pipeline unrolls @($null)'
         { Set-StrictMode -Version Latest; $collapsed.Count } | Should -Throw -ExpectedMessage "*'Count'*"
@@ -165,7 +211,12 @@ Describe 'ConvertTo-CountableArray (#3805 AC1, AC3)' {
 
     It 'returns a countable empty array when the property is absent entirely' {
         $result = '{"exitCode":1}' | ConvertFrom-Json
-        $value = if ($result.PSObject.Properties['projectCosts']) { $result.projectCosts } else { $null }
+        $value = if ($result.PSObject.Properties['projectCosts']) {
+            $result.projectCosts
+        }
+        else {
+            $null
+        }
         (ConvertTo-CountableArray $value).Count | Should -Be 0
     }
 
@@ -184,7 +235,12 @@ Describe 'ConvertTo-CountableArray (#3805 AC1, AC3)' {
 
     It 'proves the empty-array shape also collapses under the original idiom (non-vacuity)' {
         $result = '{"projectCosts":[]}' | ConvertFrom-Json
-        $collapsed = if ($result.PSObject.Properties['projectCosts']) { @($result.projectCosts) } else { @() }
+        $collapsed = if ($result.PSObject.Properties['projectCosts']) {
+            @($result.projectCosts)
+        }
+        else {
+            @()
+        }
 
         $null -eq $collapsed | Should -BeTrue
         { Set-StrictMode -Version Latest; $collapsed.Count } | Should -Throw -ExpectedMessage "*'Count'*"
@@ -212,7 +268,7 @@ Describe 'Save-AzureBuildTestFailureArtifacts (#3805 AC2)' {
     It 'lands result.json and build.log on disk when the run failed and -OutputPath was not supplied' {
         # -OutputPath unsupplied means $OutputPath defaulted to artifacts/azure-buildtest/<runId>;
         # AC2 requires the files to be THERE, not in the temp staging root that gets deleted.
-        $case = New-Case
+        $case = Initialize-ArtifactCase
         $retained = Save-AzureBuildTestFailureArtifacts -StagingRoot $case.Staging -RunId $case.RunId -Destination $case.Destination
 
         $retained | Should -Be $case.Destination
@@ -221,7 +277,7 @@ Describe 'Save-AzureBuildTestFailureArtifacts (#3805 AC2)' {
     }
 
     It 'survives the temp staging root being deleted afterwards, as the finally block does' {
-        $case = New-Case
+        $case = Initialize-ArtifactCase
         $retained = Save-AzureBuildTestFailureArtifacts -StagingRoot $case.Staging -RunId $case.RunId -Destination $case.Destination
         # Delete ONLY the staging root - that is what the script's finally removes. The destination
         # is deliberately outside it, which is the whole point of retaining before cleanup.
@@ -260,7 +316,13 @@ Describe 'Invoke-AzureBuildTest.ps1 failure-path wiring (#3805)' {
         $script:Source | Should -Match 'Save-AzureBuildTestFailureArtifacts'
 
         $retainAt = $script:Source.IndexOf('Save-AzureBuildTestFailureArtifacts -StagingRoot')
-        $deleteAt = $script:Source.IndexOf('if (Test-Path $tempRoot) { Remove-Item $tempRoot')
+        $deleteMatch = [regex]::Match($script:Source, 'if \(Test-Path \$tempRoot\)\s*\{\s*Remove-Item \$tempRoot')
+        $deleteAt = if ($deleteMatch.Success) {
+            $deleteMatch.Index
+        }
+        else {
+            -1
+        }
         $retainAt | Should -BeGreaterThan 0
         $deleteAt | Should -BeGreaterThan 0
         $retainAt | Should -BeLessThan $deleteAt -Because 'retention after deletion retains nothing'
