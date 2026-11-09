@@ -149,27 +149,41 @@ public static class SecureFilePermissions
     /// </summary>
     /// <param name="fileSystem">The filesystem to inspect through.</param>
     /// <param name="path">Absolute path to the file to inspect.</param>
-    /// <returns>
-    /// <see langword="true"/> when a non-owner principal can read the file;
-    /// <see langword="false"/> when it is owner-only or cannot be determined.
-    /// </returns>
+    /// <returns>True when a non-owner grant is found; unknown permissions are not a finding.</returns>
     public static bool IsReadableByOthers(IFileSystem fileSystem, string path)
+        => IsReadableByOthers(fileSystem, path, failClosed: false);
+
+    /// <summary>
+    /// Checks secret-file protection, optionally rejecting permissions that cannot be determined.
+    /// </summary>
+    /// <param name="fileSystem">Filesystem to inspect.</param>
+    /// <param name="path">Absolute file path.</param>
+    /// <param name="failClosed">
+    /// Treat missing files and undeterminable permissions as unsafe. On Windows also reject
+    /// unrestricted DACLs and nonprivileged modification/security-control grants, not just reads.
+    /// Secret readers must enable this; diagnostic callers may keep the default to avoid reporting
+    /// uncertain findings.
+    /// </param>
+    /// <returns>
+    /// True for a non-owner grant, or an unknown state when <paramref name="failClosed"/> is true.
+    /// </returns>
+    public static bool IsReadableByOthers(IFileSystem fileSystem, string path, bool failClosed)
     {
         ArgumentNullException.ThrowIfNull(fileSystem);
         if (string.IsNullOrWhiteSpace(path))
-            return false;
+            return failClosed;
 
         try
         {
             if (!fileSystem.File.Exists(path))
-                return false;
+                return failClosed;
 
             if (OperatingSystem.IsWindows())
             {
                 if (!File.Exists(path))
-                    return false;
+                    return failClosed;
 
-                return HasWindowsNonOwnerGrant(path);
+                return failClosed ? HasUnsafeWindowsSecretAcl(path) : HasWindowsNonOwnerGrant(path);
             }
 
             var mode = fileSystem.File.GetUnixFileMode(path);
@@ -185,8 +199,8 @@ public static class SecureFilePermissions
                                       or InvalidOperationException
                                       or IdentityNotMappedException)
         {
-            // Undeterminable is not a finding: doctor must not cry wolf on an exotic filesystem.
-            return false;
+            // Doctor avoids uncertain findings; credential readers must reject unknown protection.
+            return failClosed;
         }
     }
 
@@ -244,9 +258,43 @@ public static class SecureFilePermissions
         }
     }
 
+    [SupportedOSPlatform("windows")]
+    private static bool HasUnsafeWindowsSecretAcl(string path)
+    {
+        var security = new FileInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
+        var descriptor = new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0);
+        var hasDacl = (descriptor.ControlFlags & ControlFlags.DiscretionaryAclPresent) != 0
+                      && descriptor.DiscretionaryAcl is not null;
+
+        return HasUnsafeWindowsSecretAcl(descriptor.Owner?.Value, hasDacl,
+            security.GetAccessRules(true, true, typeof(SecurityIdentifier))
+                .Cast<FileSystemAccessRule>()
+                .Select(rule => (rule.IdentityReference.Value, (int)rule.FileSystemRights,
+                    rule.AccessControlType == AccessControlType.Allow,
+                    (rule.PropagationFlags & PropagationFlags.InheritOnly) != 0)));
+    }
+
+    // Keep the policy independent of Windows-only ACL objects so Linux tests exercise it too.
+    // An absent/null DACL grants unrestricted access; an empty DACL grants none. Never substitute
+    // the process identity for an unknown file owner when deciding whether a secret is protected.
+    internal static bool HasUnsafeWindowsSecretAcl(string? owner, bool hasDacl,
+        IEnumerable<(string Principal, int Rights, bool Allow, bool InheritOnly)> rules)
+    {
+        if (!hasDacl || string.IsNullOrWhiteSpace(owner))
+            return true;
+
+        // SYNCHRONIZE (0x00100000) alone cannot read/modify file content or change its security.
+        // Conservatively reject every other nonprivileged allow bit, including native GENERIC_*
+        // masks and unknown rights, rather than maintaining an incomplete read-only blacklist.
+        const int Synchronize = 0x00100000;
+        return rules.Any(rule => rule.Allow && !rule.InheritOnly && (rule.Rights & ~Synchronize) != 0
+            && !string.Equals(rule.Principal, owner, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(rule.Principal, "S-1-5-18", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(rule.Principal, "S-1-5-32-544", StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>
-    /// Returns true when the file's DACL grants read access to a principal that is neither the
-    /// owner nor one of the always-privileged well-known accounts.
+    /// Preserves the doctor's historical read-grant diagnostic, not the strict secret-file policy.
     /// </summary>
     [SupportedOSPlatform("windows")]
     private static bool HasWindowsNonOwnerGrant(string path)

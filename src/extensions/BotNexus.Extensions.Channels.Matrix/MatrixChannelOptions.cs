@@ -28,11 +28,12 @@ public sealed class MatrixAccountConfig
     public string? UserId { get; set; }
 
     /// <summary>
-    /// Matrix access token authenticating this account against the homeserver.
+    /// Matrix access token or a file: reference to an owner-only file containing the token.
+    /// References are resolved when the account client is created, without changing configuration.
     /// </summary>
     [Display(
         Name = "Access token",
-        Description = "Matrix access token for this agent's account. Sensitive: stored and shown masked.",
+        Description = "Matrix access token or file:/absolute/path (file:~/path also supported). Secret files must be owner-only. Stored and shown masked.",
         GroupName = "Matrix",
         Order = 1)]
     [ConfigField(Widget = ConfigFieldWidget.Secret, Group = "matrix", Order = 1, Secret = true)]

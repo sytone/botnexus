@@ -52,6 +52,8 @@ outbound message model has no content-parts contract.
 ## Configuration
 
 Bind under `channels:matrix`. Each entry under `agents` is one Matrix account owned by one agent.
+The following JSON describes the configuration shape, not a file to edit in a running world.
+Use the supported configuration interface for your installation; do not edit a generated projection.
 
 ```json
 {
@@ -65,7 +67,7 @@ Bind under `channels:matrix`. Each entry under `agents` is one Matrix account ow
       "agents": {
         "farnsworth": {
           "userId": "@farnsworth:example.com",
-          "accessToken": "syt_...",
+          "accessToken": "file:~/.botnexus/secrets/matrix-farnsworth",
           "agentId": "farnsworth",
           "autoJoin": true,
           "allowedSenderDomains": ["example.com"],
@@ -73,7 +75,7 @@ Bind under `channels:matrix`. Each entry under `agents` is one Matrix account ow
         },
         "nova": {
           "userId": "@nova:example.com",
-          "accessToken": "syt_...",
+          "accessToken": "file:~/.botnexus/secrets/matrix-nova",
           "autoJoin": false
         }
       }
@@ -98,7 +100,7 @@ Bind under `channels:matrix`. Each entry under `agents` is one Matrix account ow
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `userId` | string | — | **Required.** Fully-qualified Matrix user ID, e.g. `@farnsworth:example.com`. |
-| `accessToken` | string | — | **Required.** Matrix access token. Sensitive; stored and displayed masked. |
+| `accessToken` | string | — | **Required.** Matrix access token or `file:<absolute path>` / `file:~/path` reference to an owner-only token file. Displayed masked. |
 | `agentId` | string | the map key | BotNexus agent inbound messages route to. |
 | `homeserver` | string | the shared value | Per-account homeserver override. |
 | `autoJoin` | boolean | `true` | Whether the account accepts room invites automatically. |
@@ -128,9 +130,30 @@ curl -XPOST https://matrix.example.com/_matrix/client/v3/login \
   -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"farnsworth"},"password":"..."}'
 ```
 
-The `access_token` in the response goes into `accessToken`. The adapter sends it as a
-`Authorization: Bearer` header, never as a query parameter, so it does not land in homeserver access
-logs.
+Prefer storing the response's `access_token` in an owner-only file and setting `accessToken` to a
+reference such as `file:~/.botnexus/secrets/matrix-farnsworth`. Literal tokens remain supported for
+backward compatibility. The adapter sends the resolved token as an `Authorization: Bearer` header,
+never as a query parameter, so it does not land in homeserver access logs.
+
+### File-backed access tokens
+
+Store only the token in the file, not JSON or another reference. On Unix, restrict its permissions
+to the owner (`chmod 600 <token-file>`); on Windows, remove inherited grants and allow only the
+owner, SYSTEM and Administrators. Keep the parent directory protected from other users as well.
+The file must be readable by the gateway's operating-system account. `~` refers to that account's
+home directory, not necessarily the home of the person editing configuration. Absolute Windows
+paths, for example `file:C:\BotNexus\secrets\matrix-token`, are also supported.
+
+Trailing CR/LF characters are removed, so a final newline from an editor is safe. Other token
+characters are preserved. Missing, unreadable, empty or over-permissive files cause the account to
+be skipped with a warning; the reference is never sent as a bearer token. Permission checks that
+cannot be completed also reject the account. Bound configuration keeps the reference rather than
+being replaced with the resolved token.
+
+Resolution happens when the account client is created. After rotating the file, restart the gateway
+through your installation's normal service controls so existing clients use the new token. This
+feature does not automatically migrate existing literal tokens or remove historical copies from
+configuration exports or backups.
 
 ## How it works
 
