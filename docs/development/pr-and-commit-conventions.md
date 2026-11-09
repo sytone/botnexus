@@ -405,3 +405,132 @@ For agent-authored PRs, review in this order — it front-loads the most expensi
 3. The single most critical path in the diff — trace it input-to-output, check zero/max/empty boundaries
    and permission checks on every branch.
 4. The evidence — do the claimed suites and counts match what CI actually ran?
+
+
+## Contributor usability advisory
+
+For contributors and reviewers: this checklist asks whether someone other than the author can
+use a change. The repository-native implementation is an **experimental, warning-only** slice
+of [#3894](https://github.com/sytone/botnexus/issues/3894), not closure of the whole issue.
+It does not migrate or wrap private issue schemas or publication helpers. Those remain local.
+Use `Refs #3894` for this partial work.
+
+The versioned source is `.github/pr-contract.json`, under `contributorUsability`. The PR guard
+reads it, and `.github/scripts/sync-contributor-usability.mjs` derives the PR-template guidance
+and the optional field in every public issue form from the same prompts. Issue authors can
+record intended consumers and evidence to collect; PR authors must replace plans with observed
+results. The new section is not a blocking required section.
+
+### Fill the checklist
+
+Add **Contributor usability** to the PR body. Use the labelled lines in the repository template:
+
+- **Consumers:** name who can use the change, what they do, and supported operating systems.
+- **Setup:** name public prerequisites and setup/configuration, link the user documentation,
+  and document any single-platform limitation. A `docs/` path identifies the page for review;
+  the wording check does not verify that the page exists or is adequate.
+- **Validation:** name a clean temporary home or hermetic fixture (a test isolated from existing
+  machine state), exact commands in backticks, and numeric results. Use `Windows:` and `Linux:`
+  before the respective command/results. Do not copy a result from another operating system.
+- **Private prerequisites:** state `none`. A personal path, private skill, or preseeded database
+  must not be required. Public tools, documented accounts, and user-supplied credentials are
+  prerequisites to disclose, not a reason to publish credentials or private state.
+
+Portable claims need both Windows and Linux evidence. A deliberately Windows-only or Linux-only
+capability is allowed: state that scope in **Consumers**, document the limitation in **Setup**,
+and give execution evidence for that platform. This is not permission to narrow an existing
+cross-platform support promise without review.
+
+For a documentation-only diff, you may instead give a concrete `Docs-only:` rationale explaining
+why runtime provisioning does not apply. The guard checks actual changed file paths, not the PR
+title. Its conservative exemption covers Markdown and documentation image files, plus
+`mkdocs.yml`; executable VitePress configuration and other code do not qualify. An empty file
+list does not establish a documentation-only diff. This rationale cannot prove an unperformed
+clean-install check or make a setup guide accurate.
+
+### Worked examples
+
+These are **illustrative PR-body examples**, not executed BotNexus procedures or validation
+results. The extension, documentation path, fixture script, and counts below are invented to
+show the evidence format. Replace them with actual paths, commands, environments, and observations.
+Never copy sample counts into a real PR.
+
+**Reusable extension/configuration — sufficient checklist shape:**
+
+```text
+## Contributor usability
+Consumers: extension authors configuring Example; platforms: Windows and Linux.
+Setup: public prerequisites and configuration documented in docs/user-guide/example.md.
+Validation: clean temporary home, hermetic fixtures; Windows: `node example.mjs` 4 passed / 0 failed; Linux: `node example.mjs` 4 passed / 0 failed.
+Private prerequisites: none.
+```
+
+The fixture must actually provision all required state independently of the author's home.
+Reviewers still need to inspect its inputs and results; a well-formed declaration is not proof.
+
+**Explicit Windows-only capability — sufficient scoped shape:**
+
+```text
+## Contributor usability
+Consumers: Windows only desktop integrators configuring Example.
+Setup: Windows-only limitation, public prerequisites and configuration in docs/user-guide/example.md.
+Validation: clean temporary home, hermetic fixtures; Windows: `node example.mjs` 4 passed / 0 failed.
+Private prerequisites: none.
+```
+
+**Rejected author-machine-only claim:**
+
+```text
+## Contributor usability
+Consumers: everyone; works for others.
+Setup: only personal paths were redacted; no public setup guide.
+Validation: ran against the existing author home; all tests pass.
+Private prerequisites: requires my private skills and a preseeded database.
+```
+
+Redacting a path does not remove the dependency. Publish a reusable configuration seam and
+public setup instructions, then validate without private state. Also name the consumers and
+platforms, link the user guide, and replace the claim with commands and results. Each failed
+clause produces its own advisory with its failure and remediation, even if the body says it works.
+
+**Documentation-only explanation — no runtime check claimed:**
+
+```text
+## Contributor usability
+Docs-only: clarify the existing PR evidence format; no runtime setup or provisioning changes.
+```
+
+This alternative applies only when the actual changed paths qualify. A `docs:` title on a
+source-code change cannot opt out.
+
+### Maintain and validate the shared wording
+
+Prerequisite: Node.js, as used by the guard workflow. From the repository root, regenerate after
+changing the contract, then check for drift and run the standalone tests:
+
+```powershell
+node .github/scripts/sync-contributor-usability.mjs
+node .github/scripts/sync-contributor-usability.mjs --check
+node --test .github/scripts/pr-conventions-guard.test.mjs .github/scripts/contributor-usability.test.mjs
+```
+
+The generator changes only the generated template/form fragments. The check reports stale files
+with the exact regeneration command. These tests start no gateway. They check advisory decisions
+and shared wording, not extension behavior or clean-install success. The trusted-base guard
+workflow never executes PR-head code; a change to this guard takes effect after reaching the
+trusted base, not while reviewing its own PR.
+
+### Limits and warning-first review
+
+This is a small labelled-text checklist, not a language classifier or behavioral proof. The guard
+cannot inspect private prerequisites, verify a linked guide, authenticate results, or demonstrate
+that a fixture is hermetic. Negative phrases about private skills can also cause false positives.
+Missing labels, unusual result formats, and documentation-file classifications may need refinement.
+An advisory is not independent approval, and silence is not a usability certification.
+
+Before proposing enforcement, sample actual PR advisories, record each clause and its remediation,
+and have reviewers classify true findings, false positives, and missed dependencies against the
+actual diff and execution evidence. Record the sample size and false-positive rate per clause,
+including documentation-only and single-platform changes. Adjust the smallest rule or guidance
+that explains the measured errors and retain regression tests. No measurements or enforcement
+readiness are claimed here; moving these clauses to blocking checks requires a separate decision.

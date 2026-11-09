@@ -24,5 +24,41 @@
   "issueLink": {
     "full": "\\b(?:closes|fixes|resolves)\\s+#(?<issue>\\d+)\\b",
     "partial": "\\brefs:?\\s+#(?<issue>\\d+)\\b"
+  },
+  "contributorUsability": {
+    "version": 1,
+    "section": "Contributor usability",
+    "mode": "advisory",
+    "docsOnly": "Docs-only: give a concrete reason runtime provisioning does not apply. Only documentation-file diffs qualify, regardless of PR title; do not claim an unperformed clean-install check.",
+    "clauses": [
+      {
+        "id": "consumers",
+        "label": "Consumers",
+        "prompt": "Name the consumers and supported platforms (Windows and Linux, or an explicit Windows-only/Linux-only scope).",
+        "failure": "Named consumers or supported platforms are missing or vague."
+      },
+      {
+        "id": "setup",
+        "label": "Setup",
+        "prompt": "Describe public setup/configuration and prerequisites; link the user documentation and any single-platform limitation.",
+        "failure": "Public setup/prerequisites and user documentation are missing."
+      },
+      {
+        "id": "validation",
+        "label": "Validation",
+        "prompt": "Record clean temporary-home or hermetic-fixture validation, exact commands in backticks, and numeric results for each supported platform.",
+        "failure": "Clean/hermetic validation commands and numeric results are missing."
+      },
+      {
+        "id": "private",
+        "label": "Private prerequisites",
+        "prompt": "State 'none'. No author-private skills, personal paths, or preseeded databases may be required; path redaction alone is not reuse.",
+        "failure": "No-private-prerequisites declaration is absent or author-machine-only dependencies are stated."
+      }
+    ],
+    "platforms": {
+      "failure": "Portable claims need Windows and Linux execution evidence; single-platform scope needs documented limitations.",
+      "remediation": "Supply platform-labelled command/results for Windows and Linux, or declare Windows only/Linux only and document that limitation in Setup."
+    }
   }
 }
