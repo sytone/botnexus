@@ -30,7 +30,7 @@ scripts/repo/Invoke-PreCommitValidation.ps1
 
 `-LocalFallback` remains a backward-compatible alias for local mode. The lower-level scripts remain focused diagnostic tools, not substitutes for the strict gate.
 
-**Stage → validate → commit.** Stage the exact snapshot you intend to commit, then run the strict gate, then commit. A successful run emits a content-addressed validation receipt keyed to the staged Git tree hash plus the validation-policy and toolchain identities. The pre-commit hook reuses that receipt to skip redundant build/test only when the exact staged content still matches; any missing, malformed, failed, stale, expired, or mismatched receipt fails closed and reruns validation. See `docs/development/validation-receipts.md`.
+**Stage → commit → validate.** Stage the intended changes, commit them on the isolated development branch, confirm that the candidate has no staged, unstaged or untracked source changes, then run the required validation. A local development commit may be unvalidated; it is not proof of success or permission to push. Fix validation failures in another commit and validate that candidate. Do not amend or add a commit after the qualifying final run without validating the resulting candidate again. The explicit strict gate reuses a successful receipt only when the actual content, HEAD, base, required mode and current validation approval match. Missing, malformed, failed, stale, expired or mismatched evidence fails closed. Keep required validation before every push and readiness claim. See `docs/development/validation-receipts.md`.
 
 ## Documentation Standards
 
@@ -97,7 +97,7 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
 
    The lower-level `test-impacted.ps1 -DryRun` remains useful to preview impacted projects during diagnosis, but it is not an additional pre-push requirement after a qualifying remote receipt.
 
-3. **Zero failures required.** If any test fails, diagnose and fix the issue before proceeding. Do not commit code with failing tests.
+3. **Zero failures required before push or completion.** Local development commits may contain unvalidated work or an intentionally failing tests-first case. Mark that evidence honestly. If validation fails, fix the problem in another commit and validate again; do not push, publish as ready or mark the task complete until the required checks pass. Never weaken or skip assertions to obtain success.
 
 4. **Do not skip or disable tests** to make the suite pass. If a test is failing, the production code or the test itself must be fixed — not removed.
 

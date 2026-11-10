@@ -12,25 +12,39 @@ required validation policy (issue #2143).
 
 ---
 
-## The stage → validate → commit workflow
+## The stage → commit → validate workflow
 
-Explicit validation is a safety catch, not a mandatory duplicate test runner. To benefit
-from receipt reuse, follow this order:
+Commit the final candidate before the authoritative validation run. This gives the run a
+stable commit ID and avoids invalidating its receipt by committing the same content afterward.
 
-1. **Stage the intended snapshot.** `git add` exactly what you plan to commit.
-2. **Run canonical validation** against that staged snapshot:
+1. **Stage the intended changes** in the issue's isolated worktree.
+2. **Commit on the development branch.** Confirm there are no staged, unstaged or untracked
+   source changes left in the candidate. A local development commit is allowed before validation;
+   it is not a success claim or permission to push.
+3. **Run the required validation** against that committed candidate:
 
    ```powershell
    scripts/repo/Invoke-PreCommitValidation.ps1
    ```
 
-   On success this emits a *validation receipt* describing the exact staged content.
-3. **Commit.** A later `Invoke-PreCommitValidation.ps1` run recomputes the staged identity and,
-   if it matches a valid receipt, prints a cache-hit message and returns without rerunning
-   build/tests.
+   Code changes require the strict gate. Documentation-only changes use the documentation
+   build described in `AGENTS.md`, not a remote test run.
+4. **Before push, verify the same candidate.** A later strict-gate invocation can reuse its
+   qualifying receipt without another build/test run. Do not create or amend a commit after
+   final validation and assume the old receipt still applies.
 
-If you change any staged file, the validation policy, or the toolchain between steps 2
-and 3, the receipt no longer matches and the hook falls back to full validation.
+If validation fails, repair the problem in another commit and validate that candidate. Keep
+push, readiness and merge gates unchanged. Cheap compilation and permitted tests-first feedback
+may still run during development; they do not replace final validation. Never use local test
+execution on a live-gateway host as a shortcut.
+
+A commit ID alone is not the reuse key. The remote receipt also binds actual source content,
+base, mode and current runner qualification. Staged, unstaged or untracked source changes,
+a changed HEAD or base, and changed validation inputs can invalidate it. The strict gate checks
+those conditions; do not skip it based on a remembered successful run.
+
+The local/staged receipt format described below remains supported by its existing helpers.
+Its historical design does not change the required contributor order above.
 
 ---
 
