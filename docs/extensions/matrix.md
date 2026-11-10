@@ -58,12 +58,15 @@ configuration backends together. `channels.matrix` is extension-owned configurat
 whole Matrix entry as JSON; the CLI does not currently accept individual paths below it.
 
 ```bash
-botnexus config set channels.matrix '{"homeserver":"https://matrix.example.com","agents":{"farnsworth":{"userId":"@farnsworth:example.com","accessToken":"file:~/.botnexus/secrets/matrix-farnsworth","agentId":"farnsworth","autoJoin":true}}}'
+botnexus config set channels.matrix '{"homeserver":"https://matrix.example.com","agents":{"farnsworth":{"userId":"@farnsworth:example.com","accessToken":"file:~/.botnexus/secrets/matrix-farnsworth","agentId":"farnsworth","autoJoin":true},"nova":{"userId":"@nova:example.com","accessToken":"file:~/.botnexus/secrets/matrix-nova","autoJoin":false}}}'
 ```
 
-The command replaces the `channels.matrix` entry, so include all Matrix accounts and settings you
-want to retain. For a SQLite-backed home, enable the store once with `botnexus config store enable`;
-subsequent `config set` writes go through the central writer. Do not edit a generated projection.
+Add each account as another named entry under `agents`. The command replaces the entire
+`channels.matrix` entry, so include every account and setting you want to keep whenever you run it;
+repeating the command with only a new agent would replace the previous Matrix configuration. The
+CLI does not currently accept individual paths below this extension-owned entry. For a SQLite-backed
+home, enable the store once with `botnexus config store enable`; subsequent `config set` writes go
+through the central writer. Do not edit a generated projection.
 
 ```json
 {
