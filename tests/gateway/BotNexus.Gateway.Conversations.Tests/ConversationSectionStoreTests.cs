@@ -69,6 +69,50 @@ public sealed class ConversationSectionStoreTests
     }
 
     [Theory]
+    [InlineData("memory", false)]
+    [InlineData("memory", true)]
+    [InlineData("sqlite", false)]
+    [InlineData("sqlite", true)]
+    public async Task CreateSection_Empty_Or_Reordered_Groups_Returns_Exact_Stored_Record(string kind, bool hasExistingGroups)
+    {
+        var (store, disposable) = Create(kind);
+        try
+        {
+            var agent = Agent("agent-a");
+            if (hasExistingGroups)
+            {
+                var existing = await store.CreateSectionAsync(NewSection(agent, "Existing"));
+                await store.ReorderGroupsAsync(agent, [Custom(existing)]);
+            }
+            var priorOrder = await store.GetGroupOrderAsync(agent);
+            var input = NewSection(agent, "New section") with
+            {
+                CreatedAt = DateTimeOffset.UnixEpoch,
+                UpdatedAt = DateTimeOffset.UnixEpoch,
+                WorldId = "test-world",
+                IsCollapsed = true
+            };
+
+            var created = await store.CreateSectionAsync(input);
+            var fetched = await store.GetSectionAsync(created.SectionId);
+            var listed = await store.ListSectionsAsync(agent);
+
+            fetched.ShouldNotBeNull();
+            created.UpdatedAt.ShouldBe(fetched.UpdatedAt);
+            created.ShouldBe(fetched);
+            created.ShouldBe(listed.Single(s => s.SectionId == created.SectionId));
+            created.CreatedAt.ShouldBeGreaterThan(DateTimeOffset.UnixEpoch);
+            created.UpdatedAt.ShouldBeGreaterThanOrEqualTo(created.CreatedAt);
+            created.Order.ShouldBe(hasExistingGroups ? 1 : 0);
+            created.Name.ShouldBe(input.Name);
+            created.WorldId.ShouldBe(input.WorldId);
+            created.IsCollapsed.ShouldBeTrue();
+            (await store.GetGroupOrderAsync(agent)).ShouldBe(priorOrder.Concat([Custom(created)]));
+        }
+        finally { disposable?.Dispose(); }
+    }
+
+    [Theory]
     [MemberData(nameof(Stores))]
     public async Task Sections_Are_Scoped_Per_Agent(string kind)
     {

@@ -133,8 +133,12 @@ public sealed class SqliteConversationSectionStore : IConversationSectionStore
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             await WriteOrderCoreAsync(connection, transaction, section.AgentId,
                 order.Append(ConversationSectionOrderEntry.ForSection(section.SectionId)).ToArray(), ct).ConfigureAwait(false);
+            // Saving group order updates the persisted timestamp. Read the final record in this
+            // transaction so the create response matches subsequent reads, not the pre-order insert.
+            var created = await GetSectionCoreAsync(connection, section.SectionId, ct, transaction).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("The newly created section could not be read within its transaction.");
             await transaction.CommitAsync(ct).ConfigureAwait(false);
-            return section with { };
+            return created;
         }
         finally { _writeLock.Release(); }
     }

@@ -49,7 +49,8 @@ public sealed class InMemoryConversationSectionStore : IConversationSectionStore
             };
             _sections.Add(created.SectionId, created);
             SaveOrder(created.AgentId, order.Append(ConversationSectionOrderEntry.ForSection(created.SectionId)).ToArray());
-            return created with { };
+            // SaveOrder replaces stored records with their final order and timestamp.
+            return _sections[created.SectionId] with { };
         }, ct);
 
     /// <inheritdoc />
