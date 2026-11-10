@@ -51,6 +51,7 @@ COPY --from=build /approved-source/skills/botnexus-ui-evidence/container/entrypo
 COPY --from=build /approved-source/skills/botnexus-ui-evidence/container/capture.mjs /app/capture.mjs
 COPY --from=build /approved-source/skills/botnexus-ui-evidence/container/capture-menu.mjs /app/capture-menu.mjs
 COPY --from=build /approved-source/skills/botnexus-ui-evidence/container/capture-sidebar.mjs /app/capture-sidebar.mjs
+COPY --from=build /approved-source/skills/botnexus-ui-evidence/container/failure-diagnostics.mjs /app/failure-diagnostics.mjs
 RUN command -v timeout && chmod 0755 /usr/local/bin/node
 ENV NODE_PATH=/app/playwright/node_modules
 ENTRYPOINT ["timeout","--signal=TERM","--kill-after=10s","1490s","node","/app/entrypoint.mjs"]

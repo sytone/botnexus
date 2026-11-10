@@ -1,6 +1,7 @@
 // Real candidate-only diagnostic. No substituted DOM, CSS, screenshots or scroll input.
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { collectFailure } from './failure-diagnostics.mjs';
 import playwright from '/app/playwright/node_modules/playwright-core/index.js';
 
 const origin = 'http://127.0.0.1:5000';
@@ -14,6 +15,8 @@ const check = (target, passed, detail = '') => {
 const hash = path => crypto.createHash('sha256').update(fs.readFileSync(path)).digest('hex');
 const browser = await playwright.chromium.launch({ headless: true });
 let browserClosed = false, fatal;
+let diagnosticPage;
+const diagnosticContext = { stage: 'setup' };
 const ids = [];
 let sectionId;
 const api = await playwright.request.newContext({ baseURL: origin });
@@ -50,6 +53,21 @@ try {
     for (const [width, height] of [[1440, 900], [600, 844]]) {
       const context = await browser.newContext({ viewport: { width, height }, serviceWorkers: 'block', isMobile: false, hasTouch: false });
       const page = await context.newPage();
+      diagnosticPage = page;
+      Object.assign(diagnosticContext, { stage: 'setup', group: null, width, theme });
+      await page.addInitScript(() => {
+        const events = { scroll: 0, resize: 0, focus: 0, pointer: 0 };
+        window.__sidebarDiagnosticEvents = events;
+        const trace = [];
+        window.__sidebarDiagnosticTrace = trace;
+        for (const [type, key] of [['scroll', 'scroll'], ['resize', 'resize'], ['focusin', 'focus'], ['pointerdown', 'pointer']]) {
+          window.addEventListener(type, () => {
+            events[key] = Math.min(events[key] + 1, 100000);
+            trace.push({ type, expanded: !!document.querySelector('[data-testid="section-actions-trigger"][aria-expanded="true"]'), popover: !!document.querySelector('.conversation-action-overlay:popover-open') });
+            if (trace.length > 32) trace.shift();
+          }, true);
+        }
+      });
       page.setDefaultTimeout(20000);
       page.on('pageerror', error => errors.push(error.message));
       page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
@@ -95,6 +113,7 @@ try {
         && await page.locator(`[data-testid="conversation-group-conversations"] [data-conversation-id="${ids[0]}"]`).count() === 0;
       let builtInMenus = true;
       for (const key of ['pinned', 'scheduled', 'automated', 'conversations']) {
+        Object.assign(diagnosticContext, { stage: 'section-menu', group: key });
         const group = page.locator(`.conversation-list-scroll > [data-testid="conversation-group-${key}"]`);
         await group.locator('[data-testid="section-actions-trigger"]').click();
         const menu = group.getByRole('menu');
@@ -105,6 +124,7 @@ try {
           && await menu.locator('[data-testid="section-rename-btn"], [data-testid="section-delete-btn"]').count() === 0;
         await group.locator('[data-testid="section-menu-dismiss"]').click();
       }
+      diagnosticContext.stage = 'journey';
       // Picker keyboard behavior stays native. Escape must restore focus.
       await trigger.focus();
       await page.keyboard.press('ArrowDown');
@@ -198,6 +218,10 @@ try {
   }
   check('scenario-completed', captures.length === 16);
 } catch (error) {
+  if (diagnosticPage) {
+    try { await collectFailure(diagnosticPage, diagnosticContext, errors); }
+    catch { /* Missing/incomplete diagnostics must never turn a failed run into success. */ }
+  }
   fatal = error.message;
   assertions.push({ kind: 'browserState', target: 'scenario-completed', passed: false, detail: fatal });
 } finally {

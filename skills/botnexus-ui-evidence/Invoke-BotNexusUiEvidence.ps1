@@ -181,7 +181,7 @@ try {
     }
     $buildArguments += $snapshot.context
     Invoke-UiEvidenceRuntime $runtime $buildArguments | Out-Null
-    $cleanup = Invoke-UiEvidenceContainer -Runtime $runtime -Image $image -ContainerName $container -OutputVolumeName $volume -ScenarioJson $scenario -OutputDirectory $output
+    $cleanup = Invoke-UiEvidenceContainer -Runtime $runtime -Image $image -ContainerName $container -OutputVolumeName $volume -ScenarioJson $scenario -OutputDirectory $output -FailureDirectory (Join-Path $ScratchDirectory ("failure-$runId"))
     # Refuse links/directories before reading or rewriting the collected manifest.
     $collected = @(Get-ChildItem -LiteralPath $output -Force)
     Test-UiEvidenceInventory -OutputDirectory $output -Allowed @($collected.Name)

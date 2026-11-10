@@ -110,6 +110,8 @@ Unique task-owned output volume name.
 Serialized supported scenario description.
 .PARAMETER OutputDirectory
 Directory containing only this invocation artifacts.
+.PARAMETER FailureDirectory
+Optional new private diagnostic destination, separate from accepted output. Only fixed failure.json and failure.png are copied on nonzero runtime exit.
 .PARAMETER RuntimeInvoker
 Injectable CLI boundary for synthetic fixtures.
 .EXAMPLE
@@ -126,14 +128,35 @@ function Invoke-UiEvidenceContainer {
         [Parameter(Mandatory)][string]$OutputVolumeName,
         [Parameter(Mandatory)][string]$ScenarioJson,
         [string]$OutputDirectory,
+        [string]$FailureDirectory,
         [scriptblock]$RuntimeInvoker = ${function:Invoke-UiEvidenceRuntime}
     )
+    if ($FailureDirectory -and ((Test-Path -LiteralPath $FailureDirectory) -or ($OutputDirectory -and [IO.Path]::GetFullPath($FailureDirectory) -eq [IO.Path]::GetFullPath($OutputDirectory)))) {
+        throw 'Private failure directory must be new and separate from accepted output.'
+    }
     try {
         & $RuntimeInvoker $Runtime @('volume', 'create', $OutputVolumeName) | Out-Null
         $containerArguments = Get-UiEvidenceContainerArgument -Image $Image -ContainerName $ContainerName -RepositoryPath '/source-built-into-image' -OutputVolumeName $OutputVolumeName -ScenarioJson $ScenarioJson
         & $RuntimeInvoker $Runtime $containerArguments | Out-Null
         $started = & $RuntimeInvoker $Runtime @('start', '--attach', $ContainerName) -AllowFailure
         if ($started.ExitCode -ne 0) {
+            if ($FailureDirectory) {
+                [IO.Directory]::CreateDirectory($FailureDirectory) | Out-Null
+                foreach ($name in @('failure.json', 'failure.png')) {
+                    & $RuntimeInvoker $Runtime @('cp', "${ContainerName}:/evidence-output/private-failure/$name", (Join-Path $FailureDirectory $name)) -AllowFailure | Out-Null
+                }
+                foreach ($entry in @(Get-ChildItem -LiteralPath $FailureDirectory -Force)) {
+                    $limit = if ($entry.Name -eq 'failure.json') {
+                        65536
+                    }
+                    else {
+                        4194304
+                    }
+                    if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $entry.Length -gt $limit) {
+                        throw 'Private failure diagnostic is unsafe or exceeds size limit.'
+                    }
+                }
+            }
             throw "Evidence container exited $($started.ExitCode). $($started.Output)"
         }
         if ($OutputDirectory) {

@@ -63,3 +63,9 @@ The PowerShell module now exposes `Get-UiEvidenceContainerArgument` (formerly `N
 ## Publication boundary
 
 Artifacts are evidence, not authorization to publish, merge or upload them. Review screenshots and sanitized `evidence.json` before attaching them to an issue or pull request. Real browser execution and independent acceptance remain separate stages.
+
+## Private failure diagnostics
+
+For the focused-sidebar scenario only, a failed browser run attempts a sidebar-only screenshot and a bounded structural DOM projection before browser/fixture disposal. The projection includes trigger expanded/focus state, overlay popover/visibility, menu geometry, scroll-owner geometry, recent scroll/resize/focus/pointer state transitions, and categorized page/console errors. It never writes raw HTML, page text/input values, URLs or raw error/log payloads. The screenshot contains only the task-seeded sidebar, not the conversation/configuration page.
+
+On nonzero container exit, the main host helper attempts to copy only `private-failure/failure.json` and `private-failure/failure.png` into a new `failure-<run>` directory under the caller’s private ScratchDirectory BEFORE removing the exact owned container. Missing diagnostics do not convert failure to success; cleanup is still required. Limits are64KiB JSON and4MiB PNG. No gateway logs, config, home/data or arbitrary directory copy is performed. These private artifacts are diagnostic-only, never passing evidence or publication-ready output. A successful sidebar run still requires exactly the original33 accepted files and no diagnostics directory. Review privacy and output handling before the next isolated run.
