@@ -9,26 +9,53 @@ Use `Invoke-BotNexusUiEvidence.ps1` when a change needs reviewable portal eviden
 
 ## Prerequisites and invocation
 
-Docker or Podman must be installed and able to build Linux containers. The normal NuGet global-packages cache is mounted read-only into the image build when `NUGET_PACKAGES` is set, allowing deterministic offline restores after packages have been restored once; no host binaries or BotNexus state are mounted into the runtime container. Run from any directory:
+Docker or Podman must be installed and able to build Linux containers. The normal NuGet global-packages cache is mounted read-only into the image build when `NUGET_PACKAGES` is set. No host binaries, home, data, browser profiles or secrets are mounted into the runtime container. Run from the repository root:
 
 ```powershell
-pwsh -NoProfile -File skills/botnexus-ui-evidence/Invoke-BotNexusUiEvidence.ps1 `
-  -RepositoryPath <worktree> -OutputDirectory <empty-output-directory> `
-  -ViewportWidth 1440 -ViewportHeight 1000 -PromptKey SLOW_STREAM `
-  -PagePath '/release-history' `
-  -Selectors '[data-testid="release-source-status"]','[data-testid="release-history-entry"]' `
-  -AccessibleNames 'Stop agent','Expand composer'
+$evidence = @{
+    RepositoryPath = '<worktree>'
+    OutputDirectory = '<empty-output-directory>'
+    ViewportWidth = 1440
+    ViewportHeight = 1000
+    PromptKey = 'SLOW_STREAM'
+    PagePath = '/release-history'
+    Selectors = @('[data-testid="release-source-status"]', '[data-testid="release-history-entry"]')
+    AccessibleNames = @('Stop agent', 'Expand composer')
+}
+./skills/botnexus-ui-evidence/Invoke-BotNexusUiEvidence.ps1 @evidence
 ```
 
 The image is built from the current worktree, including tracked and untracked source in the build context. The committed revision and a SHA-256 digest of the copied build context are captured inside the image. A temporary integration-mock agent and catalog are provisioned in the container. The real gateway and Playwright Chromium run together on container loopback with external networking disabled. Use `-AccessibleNames` only for exact names expected on the candidate branch; selector assertions remain the portable default.
 
-For the full composer evidence matrix on the candidate branch, use the same invocation with `-CaptureMatrix` and retain the default chat page. The opt-in mode captures desktop idle, mobile idle and active in the actual `/mobile/agent/evidence-agent/conversation/{id}` app route, active pre-token, an active tool-call gap, focused-active, reduced-motion, returned-idle, preference-disabled active, and the desktop bottom-edge pulse at its measured low and high opacity positions. Mobile captures assert the `mobile-composer` test id, `aria-busy`, and the stable `role=status` text while active (and status absence while idle); animation captures assert computed `::before` opacity changes without a motion path. Every image is taken by the in-container browser, paired with DOM/accessibility state assertions and a per-image SHA-256; no image fixtures or host browser are accepted. The original single-capture invocation remains the default.
+For the full composer evidence matrix, add `-CaptureMatrix` and retain the default chat page. It captures eleven real browser states: desktop idle, mobile idle and active in the actual `/mobile/agent/evidence-agent/conversation/{id}` route, active pre-token, an active tool-call gap, focused-active, reduced-motion, returned-idle, preference-disabled active, and measured low/high desktop bottom-edge opacity. Mobile states assert `mobile-composer`, `aria-busy`, and stable active status text or idle status absence. Animation states assert computed `::before` opacity changes without a motion path. The original single-capture invocation remains the default.
+
+## Focused sidebar scenario
+
+Use `-FocusedSidebar` instead of `-CaptureMatrix`:
+
+```powershell
+./skills/botnexus-ui-evidence/Invoke-BotNexusUiEvidence.ps1 -RepositoryPath '<worktree>' -OutputDirectory '<empty-output-directory>' -FocusedSidebar
+```
+
+The scenario seeds 48 task-owned mock agents and 48 conversations through the candidate configuration/API, pins a conversation and assigns another to a custom section. It enables the preference through real settings controls. It captures populated-at-top and scrolled states for Chat and Agents in light/dark themes at 1440x900 and 600x844: **16 PNG/JSON pairs**. Every pair has hashes, actual viewport/theme/section and scroll-owner geometry. Chat uses the inner `.focused-chat-scroll`; Agents uses the outer focused content area. Input checks require actual wheel and native PageDown movement, picker/document stability and Chat header/control stability. Sequential Tab navigation reaches the Chat region through New section; Agents keyboard navigation reaches its first real link. Picker Home/End/Escape focus is checked. Direct peer groups, the custom member link and built-in move-only menus are asserted without menu mutations. Seeding and teardown affect only disposable candidate state.
+
+This is additional candidate evidence, not a replacement for `FocusedSidebarBrowserTests.cs`, the core gate, independent review or the full feature lifecycle qualifications. Synthetic tests validate harness failure behavior; they do not prove the real scenario passes.
 
 ## Outputs and failure behavior
 
-The single-capture workflow proves a real active integration-mock run, then navigates to `PagePath` and validates the requested selectors before capture. The matrix workflow captures eleven real browser screenshots into the output directory plus `evidence.json`; it validates the live composer `aria-busy` state, rendered tool call, focus, reduced-motion computed style, and CSS animation positions and computed bottom-edge opacity pulse. The manifest records source commit/tree, scenario, viewport, screenshot SHA-256, browser/accessibility assertions, the rendered accessible-name census for all four active-run controls, UTC timestamps, and cleanup state. Any missing state, accessible name, inactive run, browser error, corrupt/empty artifact, or hash mismatch fails closed.
-The container, named volume, temporary image, gateway, browser, home, and data are removed on success or failure. The manifest is marked `containerRemoved: true` only after host cleanup. If image build or container startup is unavailable, stop and report that infrastructure failure rather than attempting a host fallback.
+The single-capture workflow proves a real active integration-mock run, then navigates to `PagePath` and validates requested selectors. Matrix outputs include the screenshots plus `evidence.json`; focused-sidebar outputs also include hashed geometry sidecars. Missing state, unsupported scenario, incomplete/duplicate captures, failed or non-boolean assertions, missing/corrupt artifacts, hash mismatch or unproven cleanup fails closed.
+
+The runtime has no external network, a read-only root, task-owned tmpfs home/data/profile and a named output volume. Native GNU `timeout` is PID 1: TERM after 1490 seconds, KILL after a further 10 seconds, bounding the whole container to 1500 seconds. A timeout is failure, not partial success. Host cleanup removes only the unique owned container/volume and requires successful exact-name absence inventories before setting `containerRemoved`. CLI errors and survivors fail closed. Temporary image removal is attempted on every outcome. No logs, configuration, secrets or container IDs are copied into accepted artifacts. If build or startup is unavailable, stop early; do not fall back to a host runtime.
+
+## Synthetic checks (no runtime)
+
+```powershell
+python -B skills/botnexus-ui-evidence/tests/test_focused_sidebar.py
+./skills/botnexus-ui-evidence/tests/Test-BotNexusUiEvidence.ps1
+```
+
+The PowerShell module now exposes `Get-UiEvidenceContainerArgument` (formerly `New-UiEvidenceContainerArguments`); all repository callers use the singular, read-only command name. The fixture script has also been renamed to meet the shared executable Verb-Noun naming standard.
 
 ## Publication boundary
 
-Artifacts are evidence, not authorization to publish, merge, or upload them. Review the screenshots and sanitized `evidence.json` before attaching them to an issue or pull request. No logs, configuration, host paths, secrets, conversation IDs, or container IDs are copied out.
+Artifacts are evidence, not authorization to publish, merge or upload them. Review screenshots and sanitized `evidence.json` before attaching them to an issue or pull request. Real browser execution and independent acceptance remain separate stages.

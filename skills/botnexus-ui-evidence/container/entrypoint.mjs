@@ -64,14 +64,14 @@ try {
   fs.writeFileSync(`${home}/config.json`, JSON.stringify({
     gateway: { listenUrl: 'http://127.0.0.1:5000', defaultAgentId: 'evidence-agent', extensionLoader: { enabled: true }, autoUpdate: { sourcePath: '/app/source', branch: 'main' } },
     providers: { 'integration-mock': { api: 'integration-mock', baseUrl: catalog, defaultModel: 'integration-mock-echo', enabled: true } },
-    agents: { 'evidence-agent': { displayName: 'Evidence Agent', provider: 'integration-mock', model: 'integration-mock-echo', enabled: true } }
+    agents: Object.fromEntries(Array.from({ length: JSON.parse(process.env.BOTNEXUS_EVIDENCE_SCENARIO || '{}').name === 'focused-sidebar' ? 48 : 1 }, (_, index) => [index === 0 ? 'evidence-agent' : `sidebar-agent-${String(index).padStart(2, '0')}`, { displayName: `Evidence Agent ${String(index).padStart(2, '0')}`, provider: 'integration-mock', model: 'integration-mock-echo', enabled: true }]))
   }, null, 2));
   const env = { ...process.env, BOTNEXUS_HOME: home, BOTNEXUS_DATA_DIR: data, BOTNEXUS_EXTENSIONS_PATH: '/app/extensions', BOTNEXUS_MOCK_CATALOG: catalog, ASPNETCORE_URLS: 'http://127.0.0.1:5000', BOTNEXUS_EVIDENCE_STARTED_UTC: startedUtc };
   gateway = spawn('dotnet', ['/app/publish/BotNexus.Gateway.Api.dll'], { env, stdio: ['ignore', fs.openSync('/evidence/gateway.stdout.log', 'a'), fs.openSync('/evidence/gateway.stderr.log', 'a')] });
   await waitForGateway();
   process.env.BOTNEXUS_EVIDENCE_STARTED_UTC = startedUtc;
   const scenario = JSON.parse(process.env.BOTNEXUS_EVIDENCE_SCENARIO || '{}');
-  await import(scenario.name === 'conversation-menu' ? './capture-menu.mjs' : './capture.mjs');
+  await import(scenario.name === 'focused-sidebar' ? './capture-sidebar.mjs' : scenario.name === 'conversation-menu' ? './capture-menu.mjs' : './capture.mjs');
   const gatewayStopped = await stopGateway();
   remove(home); remove(data); remove(catalog);
   const manifestPath = `${output}/evidence.json`;
