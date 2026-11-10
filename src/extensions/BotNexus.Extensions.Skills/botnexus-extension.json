@@ -19,6 +19,14 @@
       "description": "Whether the skills system is enabled for this agent."
     },
     {
+      "id": "allowSymlinkedSkills",
+      "type": "bool",
+      "required": false,
+      "default": "false",
+      "sensitive": false,
+      "description": "Allows linked skill directories and ancestors from trusted repositories. Child links must remain inside the resolved skill directory."
+    },
+    {
       "id": "autoLoad",
       "type": "array",
       "required": false,

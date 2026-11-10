@@ -48,8 +48,7 @@ public static class SkillPathValidator
         string resolved;
         try
         {
-            var remainingLinkResolutions = 256;
-            resolved = ResolvePath(targetPath, fileSystem, ref remainingLinkResolutions);
+            resolved = ResolvePath(targetPath, fileSystem);
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
         {
@@ -70,6 +69,12 @@ public static class SkillPathValidator
         // proof obligation that this line discharges.
         resolvedPath = SkillPath.FromResolved(resolved);
         return true;
+    }
+
+    internal static string ResolvePath(string path, IFileSystem fileSystem)
+    {
+        var remainingLinkResolutions = 256;
+        return ResolvePath(path, fileSystem, ref remainingLinkResolutions);
     }
 
     /// <summary>

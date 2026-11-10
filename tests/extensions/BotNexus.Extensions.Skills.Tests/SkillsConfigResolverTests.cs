@@ -9,6 +9,21 @@ namespace BotNexus.Extensions.Skills.Tests;
 
 public sealed class SkillsConfigResolverTests
 {
+    [Theory]
+    [InlineData(null, "{}", false)]
+    [InlineData(null, """{"allowSymlinkedSkills":true}""", true)]
+    [InlineData("""{"maxLoadedSkills":7}""", """{"allowSymlinkedSkills":true}""", true)]
+    [InlineData("""{"allowSymlinkedSkills":false}""", """{"allowSymlinkedSkills":true}""", false)]
+    [InlineData("""{"AllowSymlinkedSkills":true}""", """{"allowSymlinkedSkills":false}""", true)]
+    [InlineData("""{"allowSymlinkedSkills":true,"AllowSymlinkedSkills":false}""", """{"allowSymlinkedSkills":true}""", false)]
+    public void Resolve_SymlinkPermission_UsesExplicitScopePrecedence(string? named, string defaults, bool expected)
+    {
+        var resolved = SkillsConfigResolver.Resolve(Descriptor(namedJson: named, defaultJson: defaults));
+
+        resolved.ShouldNotBeNull();
+        resolved.AllowSymlinkedSkills.ShouldBe(expected);
+    }
+
     [Fact]
     public void AgentDefaultFalse_DisablesSharedManagementForInheritingAgent()
     {

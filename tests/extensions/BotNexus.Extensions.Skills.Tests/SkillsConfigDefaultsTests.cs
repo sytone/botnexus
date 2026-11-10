@@ -10,6 +10,12 @@ namespace BotNexus.Skills.Tests;
 public sealed class SkillsConfigDefaultsTests
 {
     [Fact]
+    public void AllowSymlinkedSkills_DefaultsToFalse()
+    {
+        new SkillsConfig().AllowSymlinkedSkills.ShouldBeFalse();
+    }
+
+    [Fact]
     public void AllowSkillCreation_DefaultsToTrue()
     {
         var config = new SkillsConfig();

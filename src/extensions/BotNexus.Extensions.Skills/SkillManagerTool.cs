@@ -127,16 +127,23 @@ public sealed class SkillManagerTool(
         if (!TryResolveScope(arguments, out var scope, out var scopeError))
             return Task.FromResult(Error(scopeError));
 
-        return action.ToLowerInvariant() switch
+        try
         {
-            "create" => Task.FromResult(CreateSkill(name, scope, arguments)),
-            "edit" => Task.FromResult(EditSkill(name, arguments)),
-            "patch" => Task.FromResult(PatchSkill(name, arguments)),
-            "delete" => Task.FromResult(DeleteSkill(name)),
-            "write_file" => Task.FromResult(WriteFile(name, arguments)),
-            "remove_file" => Task.FromResult(RemoveFile(name, arguments)),
-            _ => Task.FromResult(Error($"Unknown action: '{action}'. Valid: create, edit, patch, delete, write_file, remove_file."))
-        };
+            return action.ToLowerInvariant() switch
+            {
+                "create" => Task.FromResult(CreateSkill(name, scope, arguments)),
+                "edit" => Task.FromResult(EditSkill(name, arguments)),
+                "patch" => Task.FromResult(PatchSkill(name, arguments)),
+                "delete" => Task.FromResult(DeleteSkill(name)),
+                "write_file" => Task.FromResult(WriteFile(name, arguments)),
+                "remove_file" => Task.FromResult(RemoveFile(name, arguments)),
+                _ => Task.FromResult(Error($"Unknown action: '{action}'. Valid: create, edit, patch, delete, write_file, remove_file."))
+            };
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            return Task.FromResult(Error($"Skill operation failed: {ex.Message}"));
+        }
     }
 
     // ──────────────────────────── create ────────────────────────────────────
@@ -316,7 +323,8 @@ public sealed class SkillManagerTool(
         if (!config.AllowSkillDeletion)
             return Error("Skill deletion is not enabled for this agent (AllowSkillDeletion = false).");
 
-        var skillDir = FindSkillDir(name, out var source);
+        // Removing a linked installation must remove the link, never its repository target.
+        var skillDir = FindSkillDir(name, out var source, resolveRoot: false);
         if (skillDir is null)
             return Error($"Skill '{name}' not found.");
 
@@ -510,7 +518,7 @@ public sealed class SkillManagerTool(
     /// Mirrors SkillDiscovery priority (workspace overrides agent overrides global). Global is included
     /// so shared skills are discoverable; write operations gate Global via AllowSharedSkillManagement.
     /// </summary>
-    private string? FindSkillDir(string name, out SkillSource source)
+    private string? FindSkillDir(string name, out SkillSource source, bool resolveRoot = true)
     {
         foreach (var (dir, src) in new[] {
             (workspaceSkillsDir, SkillSource.Workspace),
@@ -523,7 +531,9 @@ public sealed class SkillManagerTool(
             if (_fs.Directory.Exists(candidate) && _fs.File.Exists(Path.Combine(candidate, "SKILL.md")))
             {
                 source = src;
-                return candidate;
+                return resolveRoot && config.AllowSymlinkedSkills
+                    ? SkillInstallationValidator.ResolveRoot(candidate, _fs, allowSymlinkedSkills: true)
+                    : candidate;
             }
         }
 

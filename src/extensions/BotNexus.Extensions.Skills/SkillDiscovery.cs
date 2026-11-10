@@ -43,6 +43,10 @@ public static class SkillDiscovery
     /// finding NOT covered by an entry still skips the skill. Null or empty leaves the previous
     /// "any critical finding blocks the skill" behaviour unchanged.
     /// </param>
+    /// <param name="allowSymlinkedSkills">
+    /// Authorizes linked skill roots and ancestors, using their canonical directories as boundaries.
+    /// Child links must still remain contained. Defaults to false.
+    /// </param>
     public static IReadOnlyList<SkillDefinition> Discover(
         string? globalSkillsDir,
         string? agentSkillsDir,
@@ -51,7 +55,8 @@ public static class SkillDiscovery
         ILogger? logger = null,
         SkillTrustMode trustMode = SkillTrustMode.Disabled,
         IReadOnlyList<string>? pluginSkillsDirs = null,
-        IReadOnlyList<SkillSecurityAcknowledgement>? securityAcknowledgements = null)
+        IReadOnlyList<SkillSecurityAcknowledgement>? securityAcknowledgements = null,
+        bool allowSymlinkedSkills = false)
     {
         var fs = fileSystem ?? new FileSystem();
         var skills = new Dictionary<string, SkillDefinition>(StringComparer.OrdinalIgnoreCase);
@@ -63,13 +68,13 @@ public static class SkillDiscovery
         {
             foreach (var pluginSkillsDir in pluginSkillsDirs)
             {
-                ScanDirectory(skills, pluginSkillsDir, SkillSource.Plugin, fs, logger, trustMode, securityAcknowledgements);
+                ScanDirectory(skills, pluginSkillsDir, SkillSource.Plugin, fs, logger, trustMode, securityAcknowledgements, allowSymlinkedSkills);
             }
         }
 
-        ScanDirectory(skills, globalSkillsDir, SkillSource.Global, fs, logger, trustMode, securityAcknowledgements);
-        ScanDirectory(skills, agentSkillsDir, SkillSource.Agent, fs, logger, trustMode, securityAcknowledgements);
-        ScanDirectory(skills, workspaceSkillsDir, SkillSource.Workspace, fs, logger, trustMode, securityAcknowledgements);
+        ScanDirectory(skills, globalSkillsDir, SkillSource.Global, fs, logger, trustMode, securityAcknowledgements, allowSymlinkedSkills);
+        ScanDirectory(skills, agentSkillsDir, SkillSource.Agent, fs, logger, trustMode, securityAcknowledgements, allowSymlinkedSkills);
+        ScanDirectory(skills, workspaceSkillsDir, SkillSource.Workspace, fs, logger, trustMode, securityAcknowledgements, allowSymlinkedSkills);
 
         return skills.Values.ToList();
     }
@@ -81,7 +86,8 @@ public static class SkillDiscovery
         IFileSystem fileSystem,
         ILogger? logger,
         SkillTrustMode trustMode,
-        IReadOnlyList<SkillSecurityAcknowledgement>? securityAcknowledgements)
+        IReadOnlyList<SkillSecurityAcknowledgement>? securityAcknowledgements,
+        bool allowSymlinkedSkills)
     {
         if (string.IsNullOrWhiteSpace(directory) || !fileSystem.Directory.Exists(directory))
             return;
@@ -95,8 +101,10 @@ public static class SkillDiscovery
             var dirName = Path.GetFileName(skillDir);
             try
             {
-                var installationFiles = SkillInstallationValidator.CollectFiles(skillDir, fileSystem);
-                var resolvedSkillMdPath = SkillInstallationValidator.ResolveContainedPath(skillMdPath, skillDir, fileSystem);
+                var canonicalRoot = SkillInstallationValidator.ResolveRoot(skillDir, fileSystem, allowSymlinkedSkills);
+                var installationFiles = SkillInstallationValidator.CollectFiles(canonicalRoot, fileSystem);
+                var resolvedSkillMdPath = SkillInstallationValidator.ResolveContainedPath(
+                    fileSystem.Path.Combine(canonicalRoot, SkillFileName), canonicalRoot, fileSystem);
                 var skillFileInfo = fileSystem.FileInfo.New(resolvedSkillMdPath);
                 if (skillFileInfo.Length > MaxSkillFileBytes)
                 {
@@ -107,7 +115,7 @@ public static class SkillDiscovery
                 }
 
                 var content = fileSystem.File.ReadAllText(resolvedSkillMdPath);
-                var skill = SkillParser.Parse(dirName, content, skillDir, source);
+                var skill = SkillParser.Parse(dirName, content, canonicalRoot, source);
 
                 if (!TryValidate(skill, dirName, skillDir, logger, out var reason))
                 {
@@ -120,9 +128,9 @@ public static class SkillDiscovery
                 // Security scan: block skills with critical findings that no operator has
                 // acknowledged. #3355 — a bare count gave the operator nothing to act on, so the
                 // outstanding findings are named individually by relative path and ruleId.
-                var scanSummary = SkillSecurityScanner.ScanDirectory(skillDir, fileSystem: fileSystem);
+                var scanSummary = SkillSecurityScanner.ScanDirectory(canonicalRoot, fileSystem: fileSystem);
                 var outstanding = FindUnacknowledgedCriticalFindings(
-                    scanSummary, skill.Name, skillDir, source, fileSystem, securityAcknowledgements);
+                    scanSummary, skill.Name, canonicalRoot, source, fileSystem, securityAcknowledgements);
 
                 if (outstanding.Count > 0)
                 {
@@ -149,7 +157,7 @@ public static class SkillDiscovery
                 // Trust verification: check script integrity against catalog
                 if (trustMode != SkillTrustMode.Disabled)
                 {
-                    var trustResult = SkillTrustVerifier.Verify(SkillPath.CreateRoot(skillDir, fileSystem), fileSystem);
+                    var trustResult = SkillTrustVerifier.Verify(SkillPath.CreateRoot(canonicalRoot, fileSystem), fileSystem);
                     if (!trustResult.Trusted)
                     {
                         var violations = string.Join("; ", trustResult.Violations);
@@ -170,7 +178,7 @@ public static class SkillDiscovery
 
                 // Enrich the skill with its bundled support files so they can be surfaced
                 // as load-on-demand context without injecting the entire directory.
-                skills[skill.Name] = skill with { LinkedFiles = DiscoverLinkedFiles(skillDir, installationFiles, fileSystem) };
+                skills[skill.Name] = skill with { LinkedFiles = DiscoverLinkedFiles(canonicalRoot, installationFiles, fileSystem) };
             }
             catch (Exception ex)
             {

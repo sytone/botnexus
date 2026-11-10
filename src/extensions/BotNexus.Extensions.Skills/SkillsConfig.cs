@@ -10,6 +10,12 @@ public sealed class SkillsConfig
     /// <summary>Whether the skills system is enabled for this agent. Default: true.</summary>
     public bool Enabled { get; set; } = true;
 
+    /// <summary>
+    /// Allow skill directories or their ancestors to be symbolic links to operator-trusted
+    /// repositories. Defaults to false. Child paths must still resolve inside the physical skill root.
+    /// </summary>
+    public bool AllowSymlinkedSkills { get; set; }
+
     /// <summary>Skill names to always load for this agent.</summary>
     public List<string>? AutoLoad { get; set; }
 

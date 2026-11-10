@@ -12,6 +12,61 @@ namespace BotNexus.Cli.Tests;
 public sealed class ExtensionConfigPathCommandTests
 {
     [Theory]
+    [InlineData("defaults", "absent")]
+    [InlineData("defaults", "corrupt")]
+    [InlineData("defaults", "conflicting")]
+    [InlineData("alpha", "absent")]
+    [InlineData("alpha", "corrupt")]
+    [InlineData("alpha", "conflicting")]
+    public async Task ExecuteSetAsync_SymlinkPermission_TogglesCanonicalStore(string scope, string projection)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "botnexus-symlink-config", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var configPath = Path.Combine(directory, "config.json");
+        var storePath = ConfigStoreBootstrap.ResolveStorePath(configPath, new FileSystem());
+        var originalConsole = AnsiConsole.Console;
+        using var output = new StringWriter();
+        try
+        {
+            await ConfigStoreBootstrap.PopulateAsync(storePath, JsonNode.Parse("""
+                {"agents":{"alpha":{"provider":"copilot","model":"gpt-4.1"},
+                 "defaults":{"extensions":{"botnexus-skills":{"maxLoadedSkills":7}}}}}
+                """).ShouldBeOfType<JsonObject>());
+            if (projection != "absent")
+                await File.WriteAllTextAsync(configPath, projection == "corrupt" ? "not json" :
+                    """{"agents":{"defaults":{"extensions":{"botnexus-skills":{"maxLoadedSkills":99}}}}}""");
+            AnsiConsole.Console = AnsiConsole.Create(new AnsiConsoleSettings
+            {
+                Out = new AnsiConsoleOutput(output), Ansi = AnsiSupport.No
+            });
+            AnsiConsole.Console.Profile.Width = 300;
+            var commands = new ConfigCommands(new ConfigPathResolver());
+            var key = $"agents.{scope}.extensions.botnexus-skills.allowSymlinkedSkills";
+
+            foreach (var value in new[] { "true", "false" })
+            {
+                output.GetStringBuilder().Clear();
+                (await commands.ExecuteSetAsync(key, value, configPath, false, CancellationToken.None))
+                    .ShouldBe(0, output.ToString());
+                output.GetStringBuilder().Clear();
+                (await commands.ExecuteGetAsync(key, configPath, false, CancellationToken.None)).ShouldBe(0);
+                output.ToString().Trim().ShouldBe(value);
+            }
+
+            output.GetStringBuilder().Clear();
+            (await commands.ExecuteGetAsync("agents.defaults.extensions.botnexus-skills.maxLoadedSkills",
+                configPath, false, CancellationToken.None)).ShouldBe(0);
+            output.ToString().Trim().ShouldBe("7");
+        }
+        finally
+        {
+            AnsiConsole.Console = originalConsole;
+            ConfigStoreBootstrap.ReleaseConnections(storePath);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
     [InlineData("metadata")]
     [InlineData("isolationOptions")]
     public async Task ExecuteSetAsync_NullableOpaqueWholeProperty_ReplacesAndClears(string property)

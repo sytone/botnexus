@@ -102,7 +102,8 @@ public sealed class SkillPromptHookHandler
             pluginSkillsDirs: pluginSkillsDirs,
             // #3355: the operator's scoped acknowledgements travel with the same per-agent config
             // that already gates the skills system, so remediation is config-driven and auditable.
-            securityAcknowledgements: config?.SecurityAcknowledgements);
+            securityAcknowledgements: config?.SecurityAcknowledgements,
+            allowSymlinkedSkills: config?.AllowSymlinkedSkills ?? false);
 
         if (allSkills.Count == 0)
             return Task.FromResult<BeforePromptBuildResult?>(null);
