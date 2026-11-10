@@ -34,6 +34,20 @@ const box = async locator => {
 const stationary = (before, after) => ['x', 'y', 'width', 'height'].every(key => Math.abs(before[key] - after[key]) <= 1);
 const geometry = locator => locator.evaluate(el => ({ scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
 const focused = locator => locator.evaluate(el => document.activeElement === el);
+// Observable panel contract: CanEdit controls require a confirmed current snapshot and no writer.
+const sectionsReady = ({ sectionId, memberId, expanded }) => {
+  if (document.querySelector('[data-testid="agent-select"]')?.value !== 'evidence-agent') return false;
+  if (document.querySelector('.conversation-list-loading, [data-testid="sections-loading"], [data-testid="sections-saving"], [data-testid="sections-unavailable"], [data-testid="sections-reconciliation"], [data-testid="sections-unsupported"], [data-testid="sections-saved-refresh-failed"], [data-testid="sections-mutation-error"]')) return false;
+  const enabled = selector => { const element = document.querySelector(selector); return !!element && !element.disabled; };
+  if (!enabled('[data-testid="section-add-btn"]') || !enabled('[data-testid="sections-refresh"]')) return false;
+  for (const key of ['pinned', 'scheduled', 'automated', 'conversations']) {
+    if (!enabled(`.conversation-list-scroll > [data-testid="conversation-group-${key}"] [data-testid="section-actions-trigger"]`)) return false;
+  }
+  const custom = `.conversation-list-scroll > .conversation-group[data-section-id="${sectionId}"]`;
+  if (!enabled(`${custom} [data-testid="section-collapse-toggle"]`)) return false;
+  return !expanded || (document.querySelector(`${custom} [data-testid="section-collapse-toggle"]`)?.getAttribute('aria-expanded') === 'true'
+    && !!document.querySelector(`${custom} [data-conversation-id="${memberId}"] a.conversation-list-item-btn`));
+};
 const openSidebar = async page => {
   const sidebar = page.locator('.main-sidebar');
   await sidebar.waitFor({ state: 'attached', timeout: 60000 });
@@ -90,11 +104,14 @@ try {
         await option.click();
         await page.waitForFunction(value => document.querySelector('[data-testid="focused-section-content"]')?.dataset.section === value, section);
       };
-      await page.locator('[data-testid="agent-select"]').selectOption('evidence-agent');
+      const agentSelect = page.locator('[data-testid="agent-select"]');
+      if (await agentSelect.inputValue() !== 'evidence-agent') await agentSelect.selectOption('evidence-agent');
+      await page.waitForFunction(sectionsReady, { sectionId, memberId: ids[0], expanded: false }, { timeout: 20000 });
       const custom = page.locator(`.conversation-list-scroll > .conversation-group[data-section-id="${sectionId}"]`);
       const toggle = custom.locator('[data-testid="section-collapse-toggle"]');
       if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
       await custom.locator('[data-testid="conversation-section-body"]').waitFor({ state: 'visible' });
+      await page.waitForFunction(sectionsReady, { sectionId, memberId: ids[0], expanded: true }, { timeout: 20000 });
       const member = custom.locator(`[data-conversation-id="${ids[0]}"] a.conversation-list-item-btn`);
       const peerGroups = await page.locator('.conversation-list-scroll > .conversation-group').count() >= 5
         && await page.locator('[data-testid="sections-group-toggle"], [data-testid="chat-sections-body"]').count() === 0;
@@ -103,6 +120,7 @@ try {
       let builtInMenus = true;
       for (const key of ['pinned', 'scheduled', 'automated', 'conversations']) {
         Object.assign(diagnosticContext, { stage: 'section-menu', group: key });
+        await page.waitForFunction(sectionsReady, { sectionId, memberId: ids[0], expanded: true }, { timeout: 20000 });
         const group = page.locator(`.conversation-list-scroll > [data-testid="conversation-group-${key}"]`);
         const menuTrigger = group.locator('[data-testid="section-actions-trigger"]');
         await page.evaluate(() => window.__sidebarDiagnosticMark('before-scroll-into-view'));
