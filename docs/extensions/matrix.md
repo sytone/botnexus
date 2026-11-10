@@ -53,7 +53,17 @@ outbound message model has no content-parts contract.
 
 Bind under `channels:matrix`. Each entry under `agents` is one Matrix account owned by one agent.
 The following JSON describes the configuration shape, not a file to edit in a running world.
-Use the supported configuration interface for your installation; do not edit a generated projection.
+Use the CLI so the central configuration writer updates the JSON and, when enabled, SQLite
+configuration backends together. `channels.matrix` is extension-owned configuration, so set the
+whole Matrix entry as JSON; the CLI does not currently accept individual paths below it.
+
+```bash
+botnexus config set channels.matrix '{"homeserver":"https://matrix.example.com","agents":{"farnsworth":{"userId":"@farnsworth:example.com","accessToken":"file:~/.botnexus/secrets/matrix-farnsworth","agentId":"farnsworth","autoJoin":true}}}'
+```
+
+The command replaces the `channels.matrix` entry, so include all Matrix accounts and settings you
+want to retain. For a SQLite-backed home, enable the store once with `botnexus config store enable`;
+subsequent `config set` writes go through the central writer. Do not edit a generated projection.
 
 ```json
 {
@@ -143,6 +153,8 @@ owner, SYSTEM and Administrators. Keep the parent directory protected from other
 The file must be readable by the gateway's operating-system account. `~` refers to that account's
 home directory, not necessarily the home of the person editing configuration. Absolute Windows
 paths, for example `file:C:\BotNexus\secrets\matrix-token`, are also supported.
+This `file:` form is currently resolved by the Matrix extension for its access-token field; it is
+not yet a general interpolation syntax for arbitrary configuration values.
 
 Trailing CR/LF characters are removed, so a final newline from an editor is safe. Other token
 characters are preserved. Missing, unreadable, empty or over-permissive files cause the account to
