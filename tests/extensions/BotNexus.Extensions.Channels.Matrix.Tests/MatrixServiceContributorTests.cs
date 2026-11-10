@@ -59,7 +59,12 @@ public sealed class MatrixServiceContributorTests
         finally
         {
             if (Directory.Exists(root))
+            {
+                using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+                    $"Data Source={Path.Combine(dataPath, "data", "matrix-sync-cursor.sqlite")};Mode=ReadWriteCreate");
+                Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
                 Directory.Delete(root, recursive: true);
+            }
         }
     }
 
