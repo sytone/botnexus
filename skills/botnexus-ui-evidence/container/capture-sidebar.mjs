@@ -32,6 +32,7 @@ const geometry = locator => locator.evaluate(el => ({ scrollTop: el.scrollTop, s
 const focused = locator => locator.evaluate(el => document.activeElement === el);
 const openSidebar = async page => {
   const sidebar = page.locator('.main-sidebar');
+  await sidebar.waitFor({ state: 'attached', timeout: 60000 });
   if (await sidebar.evaluate(el => el.classList.contains('sidebar-closed'))) await page.locator('.burger-btn').first().click();
 };
 try {
@@ -53,6 +54,7 @@ try {
       page.on('pageerror', error => errors.push(error.message));
       page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
       await page.goto(`${origin}/chat/evidence-agent`, { waitUntil: 'load' });
+      await openSidebar(page);
       await page.locator('[data-testid="agent-select"]').waitFor({ state: 'visible', timeout: 60000 });
       // Match the existing diagnostic: set preferences through the real settings UI.
       const overlay = page.locator('.sidebar-overlay');
@@ -60,6 +62,7 @@ try {
         const bounds = await box(overlay);
         await overlay.click({ position: { x: bounds.width - 8, y: bounds.height - 8 } });
       }
+      await overlay.waitFor({ state: 'hidden' });
       await page.locator('[data-testid="banner-settings-btn"]').click();
       await page.locator('[data-testid="focused-sidebar-toggle"]').setChecked(true);
       await page.locator('[data-testid="theme-select"]').selectOption(theme);
