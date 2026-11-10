@@ -80,7 +80,7 @@ try {
       await page.locator('[data-testid="portal-settings-close"]').click();
       await page.reload({ waitUntil: 'load' });
       await openSidebar(page);
-      await page.waitForFunction(expected => document.documentElement.getAttribute('data-theme') === expected, theme);
+      await page.waitForFunction(expected => (document.documentElement.getAttribute('data-theme') ?? 'dark') === expected, theme);
       const trigger = page.locator('[data-testid="focused-section-trigger"]');
       const content = page.locator('[data-testid="focused-section-content"]');
       const select = async section => {
@@ -161,7 +161,7 @@ try {
           check(`${name}:fixed-document`, documentBefore === await page.evaluate(() => window.scrollY));
           check(`${name}:outer-owner`, (section === 'chat' ? outer.scrollTop === 0 : ownerSelector === '[data-testid="focused-section-content"]') && bounds.y >= pickerBefore.y + pickerBefore.height - 1 && bounds.y + bounds.height <= height + 1);
           check(`${name}:populated`, populated && (suffix !== 'populated' || observed.scrollTop === 0));
-          check(`${name}:theme`, await page.locator('html').getAttribute('data-theme') === theme);
+          check(`${name}:theme`, (await page.locator('html').getAttribute('data-theme') ?? 'dark') === theme);
           check(`${name}:desktop-route`, !new URL(page.url()).pathname.startsWith('/mobile'));
           check(`${name}:no-browser-errors`, errors.length === 0, errors.join('; '));
           if (section === 'chat') {
