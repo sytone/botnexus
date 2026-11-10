@@ -37,7 +37,12 @@ export async function collectFailure(page, context, errors, directory = '/eviden
       scrollOwners: project('.focused-chat-scroll'),
       events: Object.fromEntries(['scroll', 'resize', 'focus', 'pointer'].map(key => [key, Math.min(100000, Math.max(0, Number(window.__sidebarDiagnosticEvents?.[key]) || 0))])),
       recentEvents: (window.__sidebarDiagnosticTrace || []).slice(-32).map(item => ({
-        type: ['scroll', 'resize', 'focusin', 'pointerdown'].includes(item.type) ? item.type : 'other',
+        type: ['scroll', 'resize', 'focusin', 'pointerdown', 'marker'].includes(item.type) ? item.type : 'other',
+        phase: ['setup', 'before-scroll-into-view', 'after-scroll-into-view', 'before-click', 'after-click', 'menu-visible'].includes(item.phase) ? item.phase : 'unknown',
+        sequence: Number.isSafeInteger(item.sequence) && item.sequence >= 0 ? item.sequence : null,
+        target: ['focused-chat-scroll', 'focused-content', 'document', 'section-trigger', 'menu-item', 'menu', 'overlay'].includes(item.target) ? item.target : 'other',
+        scrollTop: typeof item.scrollTop === 'number' && Number.isFinite(item.scrollTop) ? Math.min(10000000, Math.max(-10000000, item.scrollTop)) : null,
+        ownerScrollTop: typeof item.ownerScrollTop === 'number' && Number.isFinite(item.ownerScrollTop) ? Math.min(10000000, Math.max(-10000000, item.ownerScrollTop)) : null,
         expanded: item.expanded === true, popover: item.popover === true
       }))
     };

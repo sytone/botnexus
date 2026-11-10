@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { collectFailure } from './failure-diagnostics.mjs';
+import { installScrollDiagnostics } from './scroll-diagnostics.mjs';
 import playwright from '/app/playwright/node_modules/playwright-core/index.js';
 
 const origin = 'http://127.0.0.1:5000';
@@ -55,19 +56,7 @@ try {
       const page = await context.newPage();
       diagnosticPage = page;
       Object.assign(diagnosticContext, { stage: 'setup', group: null, width, theme });
-      await page.addInitScript(() => {
-        const events = { scroll: 0, resize: 0, focus: 0, pointer: 0 };
-        window.__sidebarDiagnosticEvents = events;
-        const trace = [];
-        window.__sidebarDiagnosticTrace = trace;
-        for (const [type, key] of [['scroll', 'scroll'], ['resize', 'resize'], ['focusin', 'focus'], ['pointerdown', 'pointer']]) {
-          window.addEventListener(type, () => {
-            events[key] = Math.min(events[key] + 1, 100000);
-            trace.push({ type, expanded: !!document.querySelector('[data-testid="section-actions-trigger"][aria-expanded="true"]'), popover: !!document.querySelector('.conversation-action-overlay:popover-open') });
-            if (trace.length > 32) trace.shift();
-          }, true);
-        }
-      });
+      await page.addInitScript(installScrollDiagnostics);
       page.setDefaultTimeout(20000);
       page.on('pageerror', error => errors.push(error.message));
       page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
@@ -115,9 +104,17 @@ try {
       for (const key of ['pinned', 'scheduled', 'automated', 'conversations']) {
         Object.assign(diagnosticContext, { stage: 'section-menu', group: key });
         const group = page.locator(`.conversation-list-scroll > [data-testid="conversation-group-${key}"]`);
-        await group.locator('[data-testid="section-actions-trigger"]').click();
+        const menuTrigger = group.locator('[data-testid="section-actions-trigger"]');
+        await page.evaluate(() => window.__sidebarDiagnosticMark('before-scroll-into-view'));
+        await menuTrigger.scrollIntoViewIfNeeded();
+        await page.evaluate(() => window.__sidebarDiagnosticMark('after-scroll-into-view'));
+        // Observe ordering first: this is not a claim that scroll events have drained.
+        await page.evaluate(() => window.__sidebarDiagnosticMark('before-click'));
+        await menuTrigger.click();
+        await page.evaluate(() => window.__sidebarDiagnosticMark('after-click'));
         const menu = group.getByRole('menu');
         await menu.waitFor({ state: 'visible' });
+        await page.evaluate(() => window.__sidebarDiagnosticMark('menu-visible'));
         builtInMenus &&= await menu.getByRole('menuitem').count() === 2
           && await menu.locator('[data-testid="section-move-up"]').count() === 1
           && await menu.locator('[data-testid="section-move-down"]').count() === 1
