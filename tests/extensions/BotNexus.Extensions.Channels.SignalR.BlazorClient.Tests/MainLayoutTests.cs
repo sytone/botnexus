@@ -703,12 +703,11 @@ public sealed class MainLayoutTests : IDisposable
         var cut = RenderLayout();
 
         // Act: switch to agent a-2 via dropdown.
-        // InvokeAsync ensures the bUnit renderer flushes the full async OnAgentSelected
-        // pipeline (including the await inside) before we assert. This is required because
-        // GlobalErrorBoundary (now wrapping @Body) uses ErrorBoundaryBase, which changes
-        // how bUnit dispatches async component updates.
-        var dropdown = cut.Find(".agent-dropdown-select");
-        await cut.InvokeAsync(() => dropdown.Change("a-2"));
+        // Retain the actual event task: synchronous Change inside InvokeAsync(Action) returns
+        // before OnAgentSelected has awaited its refresh and section load, then navigated.
+        await cut.InvokeAsync(() => cut.Find(".agent-dropdown-select")
+            .TriggerEventAsync("onchange", new ChangeEventArgs { Value = "a-2" }));
+        await _interaction.Received(1).RefreshConversationsAsync("a-2");
 
         // Agent selection navigates to an agent-only route. Home, not the layout, resolves and
         // applies a conversation once that route is rendered.

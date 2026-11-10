@@ -168,4 +168,132 @@ public sealed class ConversationSectionsControllerTests
         result.ShouldBeOfType<NoContentResult>();
         (await store.GetAssignmentsAsync(agent)).ShouldBeEmpty();
     }
+
+    [Fact]
+    public async Task List_Adds_GroupOrder_Without_Changing_Legacy_Response_Constructor()
+    {
+        var controller = CreateController(out _);
+        var payload = (await controller.List(AgentId, CancellationToken.None)).ShouldBeOfType<OkObjectResult>()
+            .Value.ShouldBeOfType<SectionListResponse>();
+        var order = payload.GroupOrder;
+        order.ShouldNotBeNull();
+        order.Select(e => e.System).ShouldBe(["Pinned", "Conversations", "Scheduled", "Webhooks"]);
+        payload.Sections.ShouldBeEmpty();
+        new SectionListResponse([], new Dictionary<string, string>()).GroupOrder.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task GroupOrder_Returns_Normalized_Order_And_Preserves_Omitted_Groups()
+    {
+        var controller = CreateController(out var store);
+        var agent = BotNexus.Domain.Primitives.AgentId.From(AgentId);
+        var section = await store.CreateSectionAsync(new ConversationSection { SectionId = SectionId.Create(), AgentId = agent, Name = "Pinned" });
+        var result = await controller.ReorderGroups(AgentId,
+            new ReorderSectionGroupsRequest([new SectionGroupOrderDto(SectionId: section.SectionId.Value), new SectionGroupOrderDto(System: "Webhooks")]), CancellationToken.None);
+        var order = result.ShouldBeOfType<OkObjectResult>().Value.ShouldBeAssignableTo<IReadOnlyList<SectionGroupOrderDto>>();
+        order.ShouldNotBeNull();
+        order.Select(e => e.System ?? e.SectionId).ShouldBe([section.SectionId.Value, "Webhooks", "Pinned", "Conversations", "Scheduled"]);
+        (await store.ListSectionsAsync(agent)).ShouldHaveSingleItem().Name.ShouldBe("Pinned");
+    }
+
+    [Fact]
+    public async Task GroupOrder_Rejects_Invalid_Union_Enum_Duplicate_Unknown_And_Foreign_Without_Mutation()
+    {
+        var controller = CreateController(out var store);
+        var agent = BotNexus.Domain.Primitives.AgentId.From(AgentId);
+        var foreign = await store.CreateSectionAsync(new ConversationSection { SectionId = SectionId.Create(), AgentId = BotNexus.Domain.Primitives.AgentId.From("foreign"), Name = "Foreign" });
+        var prior = await store.GetGroupOrderAsync(agent);
+        IReadOnlyList<SectionGroupOrderDto?>?[] invalid = [null,
+            [null], [new()], [new(System: "Pinned", SectionId: "sec_a")], [new(System: "Unknown")],
+            [new(System: "0")], [new(SectionId: " ")], [new(SectionId: "sec_missing")],
+            [new(SectionId: foreign.SectionId.Value)], [new(System: "Pinned"), new(System: "Pinned")]];
+        foreach (var entries in invalid)
+        {
+            (await controller.ReorderGroups(AgentId, new ReorderSectionGroupsRequest(entries), CancellationToken.None))
+                .ShouldBeOfType<BadRequestObjectResult>();
+            (await store.GetGroupOrderAsync(agent)).ShouldBe(prior);
+        }
+    }
+
+    [Fact]
+    public async Task Wrong_Route_Agent_Cannot_Update_Delete_Or_Assign_Foreign_Section()
+    {
+        var conversation = ConversationId.Create();
+        var conversations = await SignalRHubTests.CreateUserFacingStoreAsync(conversation.Value, AgentId);
+        var controller = CreateController(out var store, conversations);
+        var foreignAgent = BotNexus.Domain.Primitives.AgentId.From("foreign");
+        var foreign = await store.CreateSectionAsync(new ConversationSection { SectionId = SectionId.Create(), AgentId = foreignAgent, Name = "Kept" });
+        (await controller.Update(AgentId, foreign.SectionId.Value, new UpdateSectionRequest("Changed", true), CancellationToken.None)).ShouldBeOfType<NotFoundResult>();
+        (await controller.Delete(AgentId, foreign.SectionId.Value, CancellationToken.None)).ShouldBeOfType<NotFoundResult>();
+        (await controller.Assign(AgentId, foreign.SectionId.Value, conversation.Value, CancellationToken.None)).ShouldBeOfType<NotFoundObjectResult>();
+        var after = await store.GetSectionAsync(foreign.SectionId);
+        after.ShouldNotBeNull();
+        after.Name.ShouldBe("Kept");
+        after.IsCollapsed.ShouldBeFalse();
+        (await store.GetAssignmentsAsync(foreignAgent)).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("Pinned")]
+    [InlineData("Conversations")]
+    [InlineData("Scheduled")]
+    [InlineData("Webhooks")]
+    public async Task BuiltIns_Are_Not_Custom_Mutation_Targets(string id)
+    {
+        var conversation = ConversationId.Create();
+        var conversations = await SignalRHubTests.CreateUserFacingStoreAsync(conversation.Value, AgentId);
+        var controller = CreateController(out _, conversations);
+        (await controller.Update(AgentId, id, new UpdateSectionRequest("Changed"), CancellationToken.None)).ShouldBeOfType<NotFoundResult>();
+        (await controller.Delete(AgentId, id, CancellationToken.None)).ShouldBeOfType<NotFoundResult>();
+        (await controller.Assign(AgentId, id, conversation.Value, CancellationToken.None)).ShouldBeOfType<NotFoundObjectResult>();
+    }
+
+    [Theory]
+    [InlineData(ConversationVisibility.InspectableReadOnly, 403)]
+    [InlineData(ConversationVisibility.InternalHidden, 404)]
+    public async Task Assignment_Retains_Stored_Visibility_Guard(ConversationVisibility visibility, int status)
+    {
+        var conversations = new InMemoryConversationStore();
+        var conversation = await conversations.CreateAsync(new Conversation
+        {
+            ConversationId = ConversationId.Create(),
+            AgentId = BotNexus.Domain.Primitives.AgentId.From(AgentId),
+            Visibility = visibility
+        });
+        var controller = CreateController(out var store, conversations);
+        var section = await store.CreateSectionAsync(new ConversationSection
+        {
+            SectionId = SectionId.Create(), AgentId = conversation.AgentId, Name = "Kept"
+        });
+        await store.AssignConversationAsync(section.SectionId, conversation.ConversationId);
+        var before = await store.GetAssignmentsAsync(conversation.AgentId);
+        foreach (var result in new[] {
+            await controller.Assign(AgentId, section.SectionId.Value, conversation.ConversationId.Value, CancellationToken.None),
+            await controller.Unassign(AgentId, conversation.ConversationId.Value, CancellationToken.None) })
+        {
+            var actualStatus = result is StatusCodeResult code ? code.StatusCode : result.ShouldBeOfType<ObjectResult>().StatusCode;
+            actualStatus.ShouldBe(status);
+        }
+        (await store.GetAssignmentsAsync(conversation.AgentId)).ShouldBe(before);
+    }
+
+    [Fact]
+    public async Task Assign_Retains_Conversation_Route_Ownership_Guard()
+    {
+        var conversation = ConversationId.Create();
+        var conversations = await SignalRHubTests.CreateUserFacingStoreAsync(conversation.Value, "different-agent");
+        var controller = CreateController(out var store, conversations);
+        var agent = BotNexus.Domain.Primitives.AgentId.From(AgentId);
+        var section = await store.CreateSectionAsync(new ConversationSection { SectionId = SectionId.Create(), AgentId = agent, Name = "Kept" });
+        (await controller.Assign(AgentId, section.SectionId.Value, conversation.Value, CancellationToken.None)).ShouldBeOfType<NotFoundResult>();
+        (await store.GetAssignmentsAsync(agent)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void GroupOrder_Wire_Entries_Contain_Only_Their_Identity()
+    {
+        var options = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+        System.Text.Json.JsonSerializer.Serialize(new SectionGroupOrderDto(System: "Pinned"), options).ShouldBe("{\"system\":\"Pinned\"}");
+        System.Text.Json.JsonSerializer.Serialize(new SectionGroupOrderDto(SectionId: "sec_a"), options).ShouldBe("{\"sectionId\":\"sec_a\"}");
+    }
 }

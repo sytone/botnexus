@@ -149,7 +149,7 @@ public sealed class ConversationSectionAssignTests : IDisposable
 
         cut.WaitForAssertion(() =>
         {
-            var item = cut.Find("[data-testid='section-conversation-item']");
+            var item = cut.Find("[data-section-id='sec_1'] [data-testid='conversation-list-item']");
             Assert.Equal("c-1", item.GetAttribute("data-conversation-id"));
             Assert.Contains("Planning", item.TextContent);
         });

@@ -80,16 +80,6 @@ public sealed class ConversationSectionNavigationTests : IDisposable
     }
 
     /// <summary>
-    /// Expands the "My sections" child, which starts collapsed via a class rather than unmounting.
-    /// </summary>
-    private static void ExpandSections(IRenderedComponent<MainLayout> cut)
-    {
-        var body = cut.Find("[data-testid='chat-sections-body']");
-        if (body.GetAttribute("class")?.Contains("collapsed", StringComparison.Ordinal) == true)
-            cut.Find("[data-testid='sections-group-toggle']").Click();
-    }
-
-    /// <summary>
     /// LOAD-BEARING (#2325 non-vacuity). Clicking a section member must actually navigate to
     /// <c>agent/{agentId}/conversation/{conversationId}</c>. The assertion is on the resulting URI,
     /// so rendering the row as a non-interactive element fails this test: a span cannot be clicked
@@ -106,12 +96,11 @@ public sealed class ConversationSectionNavigationTests : IDisposable
 
         cut.WaitForAssertion(() =>
         {
-            ExpandSections(cut);
-            var member = cut.FindAll("[data-testid='section-conversation-item']")
+            var member = cut.FindAll("[data-section-id='sec_1'] [data-testid='conversation-list-item']")
                 .Single(e => e.GetAttribute("data-conversation-id") == "c-1");
             // Click the row's title element itself. If it is a bare span this is inert and the
             // navigation assertion below never becomes true.
-            member.QuerySelector(".conversation-section-item-title")!.Click();
+            member.QuerySelector(".conversation-list-item-btn")!.Click();
         });
 
         cut.WaitForAssertion(() =>
@@ -134,8 +123,7 @@ public sealed class ConversationSectionNavigationTests : IDisposable
 
         cut.WaitForAssertion(() =>
         {
-            ExpandSections(cut);
-            Assert.Single(cut.FindAll("[data-testid='section-conversation-item']"));
+            Assert.Single(cut.FindAll("[data-section-id='sec_1'] [data-testid='conversation-list-item']"));
         });
 
         cut.WaitForAssertion(() =>

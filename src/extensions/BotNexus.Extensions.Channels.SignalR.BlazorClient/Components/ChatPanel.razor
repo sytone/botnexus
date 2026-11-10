@@ -87,7 +87,8 @@
         </div>
         @if (HasActiveConversation)
         {
-            <ConversationActionMenu Actions="@BuildActiveConversationActions()" />
+            <ConversationActionMenu SubjectAgentId="@AgentId" SubjectConversationId="@ActiveConversation?.ConversationId"
+                                    Actions="@BuildActiveConversationActions()" />
         }
         <div class="chat-header-overflow">
             <button class="chat-header-overflow-trigger"

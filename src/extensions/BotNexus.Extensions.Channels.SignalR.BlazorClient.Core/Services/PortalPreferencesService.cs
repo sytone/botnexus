@@ -107,6 +107,14 @@ public sealed class PortalPreferencesService : IPortalPreferencesService
     }
 
     /// <inheritdoc/>
+    public async Task SetFocusedSidebarAsync(bool enabled)
+    {
+        _current.FocusedSidebar = enabled;
+        await SaveAsync();
+        OnChanged.Invoke();
+    }
+
+    /// <inheritdoc/>
     public async Task SetThemeAsync(string theme)
     {
         _current.Theme = PortalTheme.Normalize(theme);

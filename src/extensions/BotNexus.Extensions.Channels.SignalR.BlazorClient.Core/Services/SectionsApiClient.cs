@@ -1,15 +1,15 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BotNexus.Gateway.Abstractions.Models;
 
 namespace BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
 
 /// <summary>
-/// Client for the gateway user-defined conversation sections REST API
-/// (<c>/api/agents/{agentId}/sections</c>, issue #2124). All section state - names, order, collapsed
-/// preference, and conversation assignments - lives server-side per agent/world, so this client is
-/// the portal's only source of truth for custom sidebar groupings; nothing is cached in browser
-/// local storage.
+/// Server-backed sections API. Failures are explicit: an unavailable list is never an empty
+/// snapshot, and an ambiguous write must be refreshed before a caller attempts another write.
+/// Legacy bool/null signatures remain source compatible, but failures throw SectionsApiException.
 /// </summary>
 public sealed class SectionsApiClient
 {
@@ -18,136 +18,144 @@ public sealed class SectionsApiClient
         PropertyNameCaseInsensitive = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
-
     private readonly HttpClient _http;
 
-    /// <summary>Initialises the client over the portal's configured <see cref="HttpClient"/>.</summary>
+    /// <summary>Uses the portal's configured transport; never stores order in browser preferences.</summary>
     public SectionsApiClient(HttpClient http) => _http = http;
 
     private static string Base(string agentId) => $"/api/agents/{Uri.EscapeDataString(agentId)}/sections";
 
-    /// <summary>Lists the agent's sections and the conversation-to-section assignment map.</summary>
-    public async Task<SectionListDto> ListAsync(string agentId, CancellationToken ct = default)
-    {
-        try
+    /// <summary>Reads independent constituent snapshots; consumers must reconcile their identities.</summary>
+    public Task<SectionListDto> ListAsync(string agentId, CancellationToken ct = default) =>
+        SendAsync(new HttpRequestMessage(HttpMethod.Get, Base(agentId)), false, async response =>
         {
-            var result = await _http.GetFromJsonAsync<SectionListDto>(Base(agentId), JsonOptions, ct);
-            return result ?? SectionListDto.Empty;
-        }
-        catch
-        {
-            return SectionListDto.Empty;
-        }
-    }
+            var dto = await response.Content.ReadFromJsonAsync<SectionListDto>(JsonOptions, ct);
+            if (dto is null || dto.Sections is null || dto.Assignments is null)
+                throw new JsonException("Missing section snapshot.");
+            return dto;
+        }, ct);
 
-    /// <summary>Creates a new section for the agent. Returns the created section, or null on failure.</summary>
-    public async Task<SectionDto?> CreateAsync(string agentId, string name, CancellationToken ct = default)
-    {
-        try
-        {
-            var response = await _http.PostAsJsonAsync(Base(agentId), new { name }, JsonOptions, ct);
-            return response.IsSuccessStatusCode
-                ? await response.Content.ReadFromJsonAsync<SectionDto>(JsonOptions, ct)
-                : null;
-        }
-        catch { return null; }
-    }
+    /// <summary>Creates once; a confirmed write with an unreadable body still requires refresh, not repost.</summary>
+    public async Task<SectionDto?> CreateAsync(string agentId, string name, CancellationToken ct = default) =>
+        await SendAsync(JsonRequest(HttpMethod.Post, Base(agentId), new { name }), true, async response =>
+            await response.Content.ReadFromJsonAsync<SectionDto>(JsonOptions, ct)
+                ?? throw new JsonException("Missing created section."), ct);
 
-    /// <summary>Renames a section and/or sets its collapsed preference.</summary>
-    public async Task<bool> UpdateAsync(string agentId, string sectionId, string? name, bool? isCollapsed, CancellationToken ct = default)
-    {
-        try
-        {
-            var response = await _http.PatchAsJsonAsync(
-                $"{Base(agentId)}/{Uri.EscapeDataString(sectionId)}",
-                new { name, isCollapsed },
-                JsonOptions, ct);
-            return response.IsSuccessStatusCode;
-        }
-        catch { return false; }
-    }
+    /// <summary>Persists custom name/collapse changes; HTTP and transport failures are explicit.</summary>
+    public Task<bool> UpdateAsync(string agentId, string sectionId, string? name, bool? isCollapsed, CancellationToken ct = default) =>
+        SendAsync(JsonRequest(HttpMethod.Patch, $"{Base(agentId)}/{Uri.EscapeDataString(sectionId)}", new { name, isCollapsed }), true, Success, ct);
 
-    /// <summary>Reorders the agent's sections to match the supplied id sequence.</summary>
-    public async Task<bool> ReorderAsync(string agentId, IReadOnlyList<string> sectionIds, CancellationToken ct = default)
-    {
-        try
-        {
-            var response = await _http.PutAsJsonAsync(
-                $"{Base(agentId)}/order",
-                new { sectionIds },
-                JsonOptions, ct);
-            return response.IsSuccessStatusCode;
-        }
-        catch { return false; }
-    }
+    /// <summary>Legacy custom-only reorder; the server retains built-in slots.</summary>
+    public Task<bool> ReorderAsync(string agentId, IReadOnlyList<string> sectionIds, CancellationToken ct = default) =>
+        SendAsync(JsonRequest(HttpMethod.Put, $"{Base(agentId)}/order", new { sectionIds }), true, Success, ct);
 
-    /// <summary>Deletes a section; its conversations return to their system section.</summary>
-    public async Task<bool> DeleteAsync(string agentId, string sectionId, CancellationToken ct = default)
-    {
-        try
-        {
-            var response = await _http.DeleteAsync($"{Base(agentId)}/{Uri.EscapeDataString(sectionId)}", ct);
-            return response.IsSuccessStatusCode;
-        }
-        catch { return false; }
-    }
+    /// <summary>Persists full peer order and returns server canonical order; unsupported servers fail explicitly.</summary>
+    public Task<IReadOnlyList<SectionGroupOrderDto>> ReorderGroupsAsync(string agentId, IReadOnlyList<SectionGroupOrderDto> groupOrder, CancellationToken ct = default) =>
+        SendAsync<IReadOnlyList<SectionGroupOrderDto>>(JsonRequest(HttpMethod.Put, $"{Base(agentId)}/group-order", new { groupOrder }), true,
+            async response => await response.Content.ReadFromJsonAsync<List<SectionGroupOrderDto>>(JsonOptions, ct)
+                ?? throw new JsonException("Missing canonical order."), ct, groupOrderWrite: true);
 
-    /// <summary>Assigns a conversation to a section (replacing any prior assignment).</summary>
-    public async Task<bool> AssignAsync(string agentId, string sectionId, string conversationId, CancellationToken ct = default)
-    {
-        try
-        {
-            var response = await _http.PutAsync(
-                $"{Base(agentId)}/{Uri.EscapeDataString(sectionId)}/conversations/{Uri.EscapeDataString(conversationId)}",
-                content: null, ct);
-            return response.IsSuccessStatusCode;
-        }
-        catch { return false; }
-    }
+    /// <summary>Deletes only the custom section; conversations keep their origin and pin facts.</summary>
+    public Task<bool> DeleteAsync(string agentId, string sectionId, CancellationToken ct = default) =>
+        SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"{Base(agentId)}/{Uri.EscapeDataString(sectionId)}"), true, Success, ct);
 
-    /// <summary>Removes a conversation from its section, returning it to its system section.</summary>
-    public async Task<bool> UnassignAsync(string agentId, string conversationId, CancellationToken ct = default)
+    /// <summary>Sets a custom override; server ownership and conversation write guards remain authoritative.</summary>
+    public Task<bool> AssignAsync(string agentId, string sectionId, string conversationId, CancellationToken ct = default) =>
+        SendAsync(new HttpRequestMessage(HttpMethod.Put, $"{Base(agentId)}/{Uri.EscapeDataString(sectionId)}/conversations/{Uri.EscapeDataString(conversationId)}"), true, Success, ct);
+
+    /// <summary>Removes the override, allowing the next projection to restore the natural home.</summary>
+    public Task<bool> UnassignAsync(string agentId, string conversationId, CancellationToken ct = default) =>
+        SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"{Base(agentId)}/conversations/{Uri.EscapeDataString(conversationId)}"), true, Success, ct);
+
+    private static Task<bool> Success(HttpResponseMessage _) => Task.FromResult(true);
+
+    private static HttpRequestMessage JsonRequest<T>(HttpMethod method, string uri, T body) =>
+        new(method, uri) { Content = JsonContent.Create(body, options: JsonOptions) };
+
+    private async Task<T> SendAsync<T>(HttpRequestMessage request, bool write, Func<HttpResponseMessage, Task<T>> read,
+        CancellationToken ct, bool groupOrderWrite = false)
     {
-        try
+        using (request)
         {
-            var response = await _http.DeleteAsync(
-                $"{Base(agentId)}/conversations/{Uri.EscapeDataString(conversationId)}", ct);
-            return response.IsSuccessStatusCode;
+            var confirmed = false;
+            try
+            {
+                using var response = await _http.SendAsync(request, ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var unsupported = groupOrderWrite && response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotImplemented;
+                    // A server error may follow persistence. Do not promise that retrying POST is safe.
+                    throw new SectionsApiException(unsupported ? "Server support for group ordering is required. Refresh before retrying."
+                        : "The sections request failed.", response.StatusCode, write && (int)response.StatusCode >= 500, false, unsupported);
+                }
+                confirmed = write;
+                return await read(response);
+            }
+            catch (SectionsApiException) { throw; }
+            catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException or NotSupportedException)
+            {
+                throw new SectionsApiException(confirmed ? "Saved, but the response could not be read. Refresh before continuing."
+                    : write ? "The save outcome is unknown. Refresh before continuing." : "Sections could not be loaded. Retry the refresh.",
+                    null, write && !confirmed, confirmed, false, ex);
+            }
         }
-        catch { return false; }
     }
 }
 
-/// <summary>Sections plus the conversation-id to section-id assignment map for an agent.</summary>
+/// <summary>Structured failure information; never use exception text or timestamps as a version token.</summary>
+public sealed class SectionsApiException : Exception
+{
+    /// <summary>Describes safe recovery without exposing server response bodies.</summary>
+    public SectionsApiException(string message, HttpStatusCode? statusCode = null, bool outcomeUnknown = false,
+        bool writeConfirmed = false, bool unsupportedGroupOrder = false, Exception? inner = null) : base(message, inner)
+    {
+        StatusCode = statusCode;
+        OutcomeUnknown = outcomeUnknown;
+        WriteConfirmed = writeConfirmed;
+        UnsupportedGroupOrder = unsupportedGroupOrder;
+    }
+    /// <summary>HTTP status when a response was received.</summary>
+    public HttpStatusCode? StatusCode { get; }
+    /// <summary>The request may have saved; refresh before retrying any mutation.</summary>
+    public bool OutcomeUnknown { get; }
+    /// <summary>A success status was received even though its representation was unreadable.</summary>
+    public bool WriteConfirmed { get; }
+    /// <summary>The unified order endpoint is unavailable; no browser-only fallback is permitted.</summary>
+    public bool UnsupportedGroupOrder { get; }
+}
+
+/// <summary>Independent section, assignment and optional order snapshots from one GET.</summary>
 public sealed class SectionListDto
 {
-    /// <summary>Shared empty instance for error / no-data paths.</summary>
+    /// <summary>Explicit empty data for fixtures/callers; never used for failed reads.</summary>
     public static readonly SectionListDto Empty = new();
-
-    /// <summary>The agent's user-defined sections in display order.</summary>
-    [JsonPropertyName("sections")]
+    /// <summary>Custom records only, retaining the legacy ordering field.</summary>
+    [JsonPropertyName("sections"), JsonRequired]
     public IReadOnlyList<SectionDto> Sections { get; set; } = [];
-
-    /// <summary>Map of conversation id to the section id it is assigned to.</summary>
-    [JsonPropertyName("assignments")]
+    /// <summary>Assignment overrides; stale targets are possible during concurrent mutations.</summary>
+    [JsonPropertyName("assignments"), JsonRequired]
     public IReadOnlyDictionary<string, string> Assignments { get; set; } = new Dictionary<string, string>();
+    /// <summary>Absent/null on older successful servers; use a read-only default projection.</summary>
+    [JsonPropertyName("groupOrder")]
+    public IReadOnlyList<SectionGroupOrderDto>? GroupOrder { get; set; }
 }
 
-/// <summary>Wire representation of a user-defined conversation section.</summary>
+/// <summary>Wire union; reconciliation rejects both/neither and unknown/deleted custom identities.</summary>
+public sealed record SectionGroupOrderDto(
+    [property: JsonPropertyName("system"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BuiltInConversationSection? System = null,
+    [property: JsonPropertyName("sectionId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SectionId = null);
+
+/// <summary>Wire representation of a custom section; names never identify system groups.</summary>
 public sealed class SectionDto
 {
-    /// <summary>Stable unique section identifier.</summary>
+    /// <summary>Stable custom identity, not a display label.</summary>
     [JsonPropertyName("sectionId")] public string SectionId { get; set; } = string.Empty;
-
-    /// <summary>The owning agent id.</summary>
+    /// <summary>Ownership is checked again by the client when reconciling mixed snapshots.</summary>
     [JsonPropertyName("agentId")] public string AgentId { get; set; } = string.Empty;
-
-    /// <summary>Display name shown as the section header.</summary>
+    /// <summary>User-authored heading.</summary>
     [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
-
-    /// <summary>Zero-based ordering position among the agent's sections.</summary>
+    /// <summary>Legacy position among custom groups only.</summary>
     [JsonPropertyName("order")] public int Order { get; set; }
-
-    /// <summary>Whether the section renders collapsed.</summary>
+    /// <summary>Server-backed custom collapse preference.</summary>
     [JsonPropertyName("isCollapsed")] public bool IsCollapsed { get; set; }
 }

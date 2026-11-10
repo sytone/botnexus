@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Configuration;
@@ -8,156 +7,144 @@ using BotNexus.Gateway.Abstractions.Models;
 namespace BotNexus.Gateway.Conversations;
 
 /// <summary>
-/// In-memory <see cref="IConversationSectionStore"/> for development and testing (issue #2124).
-/// Not durable - all sections and assignments are lost on restart. Thread-safe via
-/// <see cref="ConcurrentDictionary{TKey,TValue}"/> and a per-agent lock for the multi-row reorder
-/// and next-order allocation.
+/// Non-durable section store. One store gate serializes reads and all related mutations, including
+/// assignments moving between agents, so callers never observe a partially updated group order.
 /// </summary>
 public sealed class InMemoryConversationSectionStore : IConversationSectionStore
 {
-    private readonly ConcurrentDictionary<string, ConversationSection> _sections = new(StringComparer.Ordinal);
-    // conversationId -> sectionId. A conversation appears at most once, enforcing at-most-one-section.
-    private readonly ConcurrentDictionary<string, string> _assignments = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _agentLocks = new(StringComparer.Ordinal);
+    private readonly Dictionary<SectionId, ConversationSection> _sections = [];
+    private readonly Dictionary<string, string> _assignments = new(StringComparer.Ordinal);
+    private readonly Dictionary<AgentId, IReadOnlyList<ConversationSectionOrderEntry>> _groupOrders = [];
+    private readonly object _gate = new();
     private readonly IWorldContext? _worldContext;
 
-    /// <summary>Initialises a new store without world stamping (tests and bare wire-ups).</summary>
+    /// <summary>Initialises a store without world stamping.</summary>
     public InMemoryConversationSectionStore() { }
 
-    /// <summary>Initialises a new store that stamps the current world id on persisted sections.</summary>
-    /// <param name="worldContext">Resolves the gateway's current world identity for stamping.</param>
+    /// <summary>Initialises a store that stamps the resolved world identity.</summary>
     public InMemoryConversationSectionStore(IWorldContext worldContext) => _worldContext = worldContext;
 
     /// <inheritdoc />
     public Task<IReadOnlyList<ConversationSection>> ListSectionsAsync(AgentId agentId, CancellationToken ct = default)
-    {
-        IReadOnlyList<ConversationSection> results = _sections.Values
-            .Where(s => s.AgentId == agentId)
-            .OrderBy(s => s.Order)
-            .ThenBy(s => s.CreatedAt)
-            .Select(Clone)
-            .ToList();
-        return Task.FromResult(results);
-    }
+        => Locked<IReadOnlyList<ConversationSection>>(() => Owned(agentId).Select(s => s with { }).ToArray(), ct);
 
     /// <inheritdoc />
     public Task<ConversationSection?> GetSectionAsync(SectionId sectionId, CancellationToken ct = default)
-        => Task.FromResult(_sections.TryGetValue(sectionId.Value, out var s) ? Clone(s) : null);
+        => Locked(() => _sections.TryGetValue(sectionId, out var s) ? s with { } : null, ct);
 
     /// <inheritdoc />
-    public async Task<ConversationSection> CreateSectionAsync(ConversationSection section, CancellationToken ct = default)
-    {
-        var gate = GetAgentLock(section.AgentId.Value);
-        await gate.WaitAsync(ct).ConfigureAwait(false);
-        try
+    public Task<ConversationSection> CreateSectionAsync(ConversationSection section, CancellationToken ct = default)
+        => Locked(() =>
         {
-            StampWorldId(section);
-            var nextOrder = _sections.Values.Where(s => s.AgentId == section.AgentId)
-                .Select(s => s.Order)
-                .DefaultIfEmpty(-1)
-                .Max() + 1;
-            section.Order = nextOrder;
-            // CreatedAt is write-once (#2316): rebuild the record rather than mutating it.
-            section = section with { CreatedAt = DateTimeOffset.UtcNow };
-            section.UpdatedAt = section.CreatedAt;
-            if (!_sections.TryAdd(section.SectionId.Value, section))
+            if (_sections.ContainsKey(section.SectionId))
                 throw new InvalidOperationException($"A section with id '{section.SectionId}' already exists.");
-            return Clone(section);
-        }
-        finally { gate.Release(); }
-    }
+            var order = CurrentOrder(section.AgentId);
+            var now = DateTimeOffset.UtcNow;
+            var created = section with
+            {
+                Order = order.Count(e => e.SectionId.HasValue),
+                CreatedAt = now,
+                UpdatedAt = now,
+                WorldId = string.IsNullOrEmpty(section.WorldId) ? _worldContext?.CurrentWorldId ?? string.Empty : section.WorldId
+            };
+            _sections.Add(created.SectionId, created);
+            SaveOrder(created.AgentId, order.Append(ConversationSectionOrderEntry.ForSection(created.SectionId)).ToArray());
+            return created with { };
+        }, ct);
 
     /// <inheritdoc />
     public Task<ConversationSection?> UpdateSectionAsync(SectionId sectionId, string? name, bool? isCollapsed, CancellationToken ct = default)
-    {
-        if (!_sections.TryGetValue(sectionId.Value, out var existing))
-            return Task.FromResult<ConversationSection?>(null);
-
-        if (name is not null)
-            existing.Name = name;
-        if (isCollapsed is not null)
-            existing.IsCollapsed = isCollapsed.Value;
-        existing.UpdatedAt = DateTimeOffset.UtcNow;
-        return Task.FromResult<ConversationSection?>(Clone(existing));
-    }
+        => Locked<ConversationSection?>(() =>
+        {
+            if (!_sections.TryGetValue(sectionId, out var existing))
+                return null;
+            var updated = existing with { Name = name ?? existing.Name, IsCollapsed = isCollapsed ?? existing.IsCollapsed, UpdatedAt = DateTimeOffset.UtcNow };
+            _sections[sectionId] = updated;
+            return updated with { };
+        }, ct);
 
     /// <inheritdoc />
-    public async Task ReorderSectionsAsync(AgentId agentId, IReadOnlyList<SectionId> orderedSectionIds, CancellationToken ct = default)
-    {
-        var gate = GetAgentLock(agentId.Value);
-        await gate.WaitAsync(ct).ConfigureAwait(false);
-        try
+    public Task<IReadOnlyList<ConversationSectionOrderEntry>> GetGroupOrderAsync(AgentId agentId, CancellationToken ct = default)
+        => Locked(() => CurrentOrder(agentId), ct);
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<ConversationSectionOrderEntry>> ReorderGroupsAsync(AgentId agentId,
+        IReadOnlyList<ConversationSectionOrderEntry> orderedGroups, CancellationToken ct = default)
+        => Locked(() =>
         {
-            var owned = _sections.Values.Where(s => s.AgentId == agentId).ToList();
-            var ownedIds = owned.Select(s => s.SectionId.Value).ToHashSet(StringComparer.Ordinal);
-            var order = 0;
-            var placed = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var id in orderedSectionIds)
-            {
-                if (!ownedIds.Contains(id.Value) || !placed.Add(id.Value))
-                    continue;
-                _sections[id.Value].Order = order++;
-                _sections[id.Value].UpdatedAt = DateTimeOffset.UtcNow;
-            }
-            // Any owned section omitted from the supplied order keeps its relative order after the
-            // supplied ones (stable by prior Order then CreatedAt).
-            foreach (var s in owned.Where(s => !placed.Contains(s.SectionId.Value)).OrderBy(s => s.Order).ThenBy(s => s.CreatedAt))
-            {
-                s.Order = order++;
-                s.UpdatedAt = DateTimeOffset.UtcNow;
-            }
-        }
-        finally { gate.Release(); }
-    }
+            var order = ConversationSectionOrderEntry.Reorder(CurrentOrder(agentId), orderedGroups);
+            SaveOrder(agentId, order);
+            return order;
+        }, ct);
+
+    /// <inheritdoc />
+    public Task ReorderSectionsAsync(AgentId agentId, IReadOnlyList<SectionId> orderedSectionIds, CancellationToken ct = default)
+        => Locked(() => SaveOrder(agentId, ConversationSectionOrderEntry.ReorderCustomSlots(CurrentOrder(agentId), orderedSectionIds)), ct);
 
     /// <inheritdoc />
     public Task DeleteSectionAsync(SectionId sectionId, CancellationToken ct = default)
-    {
-        _sections.TryRemove(sectionId.Value, out _);
-        // Remove assignments pointing at the deleted section - returns those conversations to their
-        // system section without touching the conversations themselves.
-        foreach (var kv in _assignments.Where(a => string.Equals(a.Value, sectionId.Value, StringComparison.Ordinal)).ToList())
-            _assignments.TryRemove(kv.Key, out _);
-        return Task.CompletedTask;
-    }
+        => Locked(() =>
+        {
+            if (!_sections.TryGetValue(sectionId, out var section))
+                return;
+            var order = CurrentOrder(section.AgentId).Where(e => e.SectionId != sectionId).ToArray();
+            _sections.Remove(sectionId);
+            foreach (var id in _assignments.Where(a => a.Value == sectionId.Value).Select(a => a.Key).ToArray())
+                _assignments.Remove(id);
+            SaveOrder(section.AgentId, order);
+        }, ct);
 
     /// <inheritdoc />
     public Task AssignConversationAsync(SectionId sectionId, ConversationId conversationId, CancellationToken ct = default)
-    {
-        if (!_sections.ContainsKey(sectionId.Value))
-            throw new InvalidOperationException($"Section '{sectionId}' does not exist.");
-        // Upsert enforces at-most-one-section: overwrite any prior assignment.
-        _assignments[conversationId.Value] = sectionId.Value;
-        return Task.CompletedTask;
-    }
+        => Locked(() =>
+        {
+            if (!_sections.ContainsKey(sectionId))
+                throw new InvalidOperationException($"Section '{sectionId}' does not exist.");
+            _assignments[conversationId.Value] = sectionId.Value;
+        }, ct);
 
     /// <inheritdoc />
     public Task RemoveConversationAsync(ConversationId conversationId, CancellationToken ct = default)
-    {
-        _assignments.TryRemove(conversationId.Value, out _);
-        return Task.CompletedTask;
-    }
+        => Locked(() => { _assignments.Remove(conversationId.Value); }, ct);
 
     /// <inheritdoc />
     public Task<IReadOnlyDictionary<string, string>> GetAssignmentsAsync(AgentId agentId, CancellationToken ct = default)
+        => Locked<IReadOnlyDictionary<string, string>>(() =>
+        {
+            var ids = Owned(agentId).Select(s => s.SectionId.Value).ToHashSet(StringComparer.Ordinal);
+            return _assignments.Where(a => ids.Contains(a.Value)).ToDictionary(a => a.Key, a => a.Value, StringComparer.Ordinal);
+        }, ct);
+
+    private ConversationSection[] Owned(AgentId agentId) => _sections.Values.Where(s => s.AgentId == agentId)
+        .OrderBy(s => s.Order).ThenBy(s => s.CreatedAt).ThenBy(s => s.SectionId.Value, StringComparer.Ordinal).ToArray();
+
+    private IReadOnlyList<ConversationSectionOrderEntry> CurrentOrder(AgentId agentId)
+        => ConversationSectionOrderEntry.Normalize(_groupOrders.GetValueOrDefault(agentId) ?? [], Owned(agentId).Select(s => s.SectionId).ToArray());
+
+    private void SaveOrder(AgentId agentId, IReadOnlyList<ConversationSectionOrderEntry> order)
     {
-        var sectionIds = _sections.Values.Where(s => s.AgentId == agentId)
-            .Select(s => s.SectionId.Value)
-            .ToHashSet(StringComparer.Ordinal);
-        IReadOnlyDictionary<string, string> map = _assignments
-            .Where(a => sectionIds.Contains(a.Value))
-            .ToDictionary(a => a.Key, a => a.Value, StringComparer.Ordinal);
-        return Task.FromResult(map);
+        _groupOrders[agentId] = order.ToArray();
+        var index = 0;
+        var now = DateTimeOffset.UtcNow;
+        foreach (var entry in order)
+        {
+            if (entry.SectionId is { } id)
+                _sections[id] = _sections[id] with { Order = index++, UpdatedAt = now };
+        }
     }
 
-    private SemaphoreSlim GetAgentLock(string agentId)
-        => _agentLocks.GetOrAdd(agentId, static _ => new SemaphoreSlim(1, 1));
-
-    private void StampWorldId(ConversationSection section)
+    private Task<T> Locked<T>(Func<T> action, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(section.WorldId) && _worldContext is not null)
-            section.WorldId = _worldContext.CurrentWorldId;
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+            return Task.FromResult(action());
     }
 
-    private static ConversationSection Clone(ConversationSection s) => s with { };
+    private Task Locked(Action action, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+            action();
+        return Task.CompletedTask;
+    }
 }

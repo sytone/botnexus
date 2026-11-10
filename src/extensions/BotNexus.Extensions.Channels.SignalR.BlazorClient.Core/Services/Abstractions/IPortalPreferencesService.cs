@@ -43,6 +43,9 @@ public interface IPortalPreferencesService
     /// <param name="shell">Requested shell variant; see <see cref="PortalShell"/>.</param>
     Task SetShellAsync(string shell);
 
+    /// <summary>Update the optional focused sidebar and persist it in this browser.</summary>
+    Task SetFocusedSidebarAsync(bool enabled);
+
     /// <summary>
     /// Sets the colour theme, applies it to the document element immediately, and persists it.
     /// </summary>

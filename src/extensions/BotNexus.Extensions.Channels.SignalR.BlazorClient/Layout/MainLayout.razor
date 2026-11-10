@@ -1,4 +1,5 @@
-﻿@inherits LayoutComponentBase
+﻿@using BuiltInConversationSection = BotNexus.Gateway.Abstractions.Models.BuiltInConversationSection
+@inherits LayoutComponentBase
 @inject NavigationManager Nav
 @inject HttpClient Http
 @inject IClientStateStore Store
@@ -11,7 +12,6 @@
 @inject IJSRuntime JS
 @inject IPortalPreferencesService Prefs
 @inject CronApiClient CronApi
-@inject SectionsApiClient SectionsApi
 @inject ConversationSectionsState SectionsState
 @inject ToolsApiClient ToolsApi
 @inject NavOrderApiClient NavOrderApi
@@ -92,10 +92,46 @@
             @* Nav links -- rendered in the user's configured order (#2236). The whole nav is driven
                by a single ordering model: every built-in item has a default order number and the
                user can override any of them; overrides persist server-side and roam with the user. *@
-            <nav class="sidebar-nav">
-                @foreach (var key in OrderedNavKeys())
+            <nav class="sidebar-nav @(Prefs.Current.FocusedSidebar ? "sidebar-nav-focused" : "")" aria-label="Main navigation">
+                @if (Prefs.Current.FocusedSidebar)
                 {
-                    @RenderNavSection(key)
+                    var selected = FocusedSection;
+                    <div class="focused-section-picker">
+                        <button type="button" class="focused-section-trigger" @ref="_sectionTrigger"
+                                data-testid="focused-section-trigger" aria-label="@($"Sidebar section: {SectionLabel(selected)}")"
+                                aria-haspopup="menu" aria-expanded="@(_sectionPickerOpen ? "true" : "false")"
+                                aria-controls="focused-section-menu" @onclick="ToggleSectionPicker"
+                                @onkeydown="HandleSectionTriggerKey">
+                            <Icon Name="@SectionIcon(selected)" /><span>@SectionLabel(selected)</span><span aria-hidden="true">&#x25BE;</span>
+                        </button>
+                        @if (_sectionPickerOpen)
+                        {
+                            <div class="focused-picker-dismiss" @onclick="DismissSectionPicker" aria-hidden="true"></div>
+                            <div id="focused-section-menu" @ref="_sectionMenu" class="focused-section-menu" role="menu" aria-label="Sidebar section"
+                                 @onkeydown="HandleSectionMenuKey" @onkeydown:stopPropagation="true">
+                                @foreach (var key in AvailableNavKeys())
+                                {
+                                    <button type="button" id="@($"focused-option-{key}")" role="menuitemradio"
+                                            @ref="_sectionOptions[key]" tabindex="@(key == _keyboardSection ? 0 : -1)"
+                                            data-section="@key" aria-checked="@(key == selected ? "true" : "false")"
+                                            @onfocus="() => _keyboardSection = key"
+                                            @onclick="() => SelectFocusedSection(key)">
+                                        <Icon Name="@SectionIcon(key)" /><span>@SectionLabel(key)</span>
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </div>
+                    <div class="focused-section-content" data-testid="focused-section-content" data-section="@selected">
+                        @RenderNavSection(selected)
+                    </div>
+                }
+                else
+                {
+                    @foreach (var key in OrderedNavKeys())
+                    {
+                        @RenderNavSection(key)
+                    }
                 }
             </nav>
 
@@ -178,12 +214,9 @@
     private HashSet<string> _cronConversationIds = new(StringComparer.OrdinalIgnoreCase);
     private const string CronCollapsedKey = "botnexus-cron-collapsed";
 
-    // #2441: Tools and My-Sections collapse state persist with the same localStorage key pattern
-    // as the Scheduled group, and both default to collapsed so the nav starts tight.
+    // Tools retains its independent persisted collapse preference.
     private bool _toolsGroupCollapsed = true;
     private const string ToolsCollapsedKey = "botnexus-tools-collapsed";
-    private bool _sectionsGroupCollapsed = true;
-    private const string SectionsCollapsedKey = "botnexus-sections-collapsed";
 
     // #2122: Webhooks is its own section, and Pinned / Conversations became collapsible. All three
     // reuse the exact Scheduled-group persistence pattern (a "true"/"false" string under a
@@ -224,6 +257,99 @@
     // Populated from GET /api/nav-order; on any failure it falls back to the built-in defaults so
     // the nav always renders in a sensible, consistent order.
     private IReadOnlyList<string> _navOrder = NavOrderKeys.DefaultOrder;
+
+    private bool _sectionPickerOpen;
+    private string? _keyboardSection;
+    private ElementReference _sectionTrigger;
+    private ElementReference _sectionMenu;
+    private IJSObjectReference? _focusedSidebarModule;
+    private readonly Dictionary<string, ElementReference> _sectionOptions = new();
+    private bool _focusSectionOption;
+    private bool _focusSectionTrigger;
+
+    private IEnumerable<string> AvailableNavKeys() => OrderedNavKeys()
+        .Select(key => key.ToLowerInvariant())
+        .Where(key => key != NavOrderKeys.Skills || ExtensionFeatures.SkillsEnabled);
+
+    // Route owns selection, including deep links and browser history. Ignore query/fragment.
+    private string FocusedSection
+    {
+        get
+        {
+            var path = Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Trim('/');
+            var segment = path.Split('/')[0].ToLowerInvariant();
+            var key = segment switch
+            {
+                "" or "home" or "release-history" => NavOrderKeys.Home,
+                "agent" => NavOrderKeys.Chat,
+                _ => segment
+            };
+            return AvailableNavKeys().Contains(key) ? key : NavOrderKeys.Home;
+        }
+    }
+
+    private static string SectionLabel(string key) => key switch
+    {
+        NavOrderKeys.Cron => "Cron Jobs",
+        _ => System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(key)
+    };
+
+    private static string SectionIcon(string key) => key == NavOrderKeys.Cron ? "cron-jobs" : key;
+
+    private void OpenSectionPicker()
+    {
+        _sectionPickerOpen = true;
+        _keyboardSection = FocusedSection;
+        _focusSectionOption = true;
+    }
+
+    private void ToggleSectionPicker()
+    {
+        if (_sectionPickerOpen)
+            DismissSectionPicker();
+        else
+            OpenSectionPicker();
+    }
+
+    private void DismissSectionPicker()
+    {
+        _sectionPickerOpen = false;
+        _focusSectionTrigger = true;
+    }
+
+    private void HandleSectionTriggerKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key is "ArrowDown" or "ArrowUp")
+            OpenSectionPicker();
+        else if (e.Key == "Escape")
+            DismissSectionPicker();
+    }
+
+    private void HandleSectionMenuKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        var keys = AvailableNavKeys().ToList();
+        var index = keys.IndexOf(_keyboardSection ?? FocusedSection);
+        switch (e.Key)
+        {
+            case "Escape": DismissSectionPicker(); return;
+            case "Tab": _sectionPickerOpen = false; return;
+            case "ArrowDown": index = (index + 1) % keys.Count; break;
+            case "ArrowUp": index = (index + keys.Count - 1) % keys.Count; break;
+            case "Home": index = 0; break;
+            case "End": index = keys.Count - 1; break;
+            default: return;
+        }
+        _keyboardSection = keys[index];
+        _focusSectionOption = true;
+    }
+
+    private void SelectFocusedSection(string key)
+    {
+        DismissSectionPicker();
+        // Re-selecting Chat preserves its existing conversation deep link.
+        if (key != FocusedSection)
+            Nav.NavigateTo(key == NavOrderKeys.Home ? "" : key);
+    }
 
     private record Announcement(string Id, string Text, string Type = "info");
     private record SidebarAgentItem(string AgentId, string DisplayLabel);
@@ -327,10 +453,13 @@
     /// </param>
     private RenderFragment NavAnchor(string route, RenderFragment label, string? testIdOverride = null) => __builder =>
     {
-        <a href="@route"
-           class="sidebar-nav-item @NavClass(NavKeyForRoute(route))"
-           data-testid="@(testIdOverride ?? NavTestId(route))"
-           data-testid-alias="@(testIdOverride is null ? null : NavTestId(route))">@label</a>
+        @if (!Prefs.Current.FocusedSidebar)
+        {
+            <a href="@route"
+               class="sidebar-nav-item @NavClass(NavKeyForRoute(route))"
+               data-testid="@(testIdOverride ?? NavTestId(route))"
+               data-testid-alias="@(testIdOverride is null ? null : NavTestId(route))">@label</a>
+        }
     };
 
     /// <summary>
@@ -423,7 +552,7 @@
            rendered at all - an empty section should cost zero vertical space. *@
         <div class="sidebar-nav-row">
             @NavAnchor(NavOrderKeys.Tools, @<text><Icon Name="tools" /><span class="sidebar-nav-label">Tools</span></text>)
-            @if (_tools.Count > 0)
+            @if (_tools.Count > 0 && !Prefs.Current.FocusedSidebar)
             {
                 <button class="sidebar-nav-toggle" data-testid="tools-collapse-toggle"
                         aria-expanded="@(!_toolsGroupCollapsed ? "true" : "false")"
@@ -433,7 +562,7 @@
                 </button>
             }
         </div>
-        @if (_tools.Count > 0 && !_toolsGroupCollapsed)
+        @if (_tools.Count > 0 && (Prefs.Current.FocusedSidebar || !_toolsGroupCollapsed))
         {
             <div class="sidebar-subnav" data-testid="tools-subnav">
                 @foreach (var tool in _tools)
@@ -498,161 +627,38 @@
                                 <span class="conversation-new-btn-icon">+</span>
                                 <span class="conversation-new-btn-label">New</span>
                             </button>
+                            <ConversationSectionsPanel @key="_sectionDraftGeneration" @ref="_createPanel"
+                                AgentId="@activeAgent.AgentId" CreateOnly="true" ReadOnly="@activeAgent.IsReadOnly"
+                                DraftScope="@SectionDraftScope" OnCreated="SectionCreated" />
                         }
                     </div>
 
-                    <div class="conversation-list-scroll">
+                    <div class="conversation-list-scroll @(Prefs.Current.FocusedSidebar ? "focused-chat-scroll" : "")"
+                         tabindex="0"
+                         role="region"
+                         aria-label="Conversation groups and sections">
                         @if (activeAgent.IsLoadingConversations)
                         {
                             <div class="conversation-list-loading">Loading conversations&#x2026;</div>
                         }
-                        else if (activeAgent.Conversations.Count == 0)
+                        @if (!activeAgent.IsLoadingConversations && activeAgent.Conversations.Count == 0)
                         {
                             <div class="conversation-list-empty">No conversations yet.</div>
                         }
-                        else
-                        {
-                            var allUserConversations = activeAgent.Conversations.Values
-                                .Where(IsUserFacingConversation)
-                                .OrderByDescending(c => c.IsDefault)
-                                .ThenByDescending(c => c.UpdatedAt)
-                                .ToList();
-                            var pinnedConversations = allUserConversations.Where(IsPinnedConversation).ToList();
-                            var cronConversations = allUserConversations.Where(IsCronConversation).ToList();
-                            @* #2122: webhook-originated runs get their own section. Membership comes
-                               from the SAME typed projection that already computes
-                               ConversationListGroup.Automated - no second classifier, no heuristic.
-                               Pinned still wins over source, and cron is subtracted first so a
-                               conversation can never appear in two groups. *@
-                            var webhookConversations = allUserConversations
-                                .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c) && IsWebhookConversation(c))
-                                .ToList();
-                            @* #2325: a conversation assigned to a user-defined section is rendered by
-                               the sections panel, so subtract it here or it renders twice. Subtraction
-                               composes exactly like pinning/cron: it is applied AFTER pinned, cron and
-                               webhook are hoisted out, so a pinned or scheduled conversation keeps its
-                               existing home and only plain default-list rows can move into a section.
-                               Collapsing a section hides its body but never unmounts an assignment, and
-                               an assignment only exists while the owning section exists (deleting a
-                               section returns its conversations to the default list), so this cannot
-                               strand a conversation with no reachable row. *@
-                            var normalConversations = allUserConversations
-                                .Where(c => !IsPinnedConversation(c) && !IsCronConversation(c) && !IsWebhookConversation(c))
-                                .Where(c => !IsRenderedInSection(activeAgent, c))
-                                .Where(MatchesActivityFilter)
-                                .ToList();
-
-                            @if (pinnedConversations.Count > 0)
-                            {
-                                <div class="conversation-group conversation-group-pinned" data-testid="conversation-group-pinned">
-                                    <button class="conversation-group-header conversation-group-header-toggle"
-                                            data-testid="pinned-group-toggle"
-                                            aria-expanded="@(!_pinnedGroupCollapsed ? "true" : "false")"
-                                            title="@(_pinnedGroupCollapsed ? "Expand pinned" : "Collapse pinned")"
-                                            @onclick="TogglePinnedGroup">
-                                        <span class="group-chevron @(!_pinnedGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                                        <span class="conversation-group-label"><Icon Name="pin" Size="13" /> Pinned</span>
-                                        <span class="conversation-group-count" data-testid="pinned-group-count">@pinnedConversations.Count</span>
-                                    </button>
-                                    @if (!_pinnedGroupCollapsed)
-                                    {
-                                        @foreach (var conversation in pinnedConversations)
-                                        {
-                                            @RenderConversationItem(activeAgent, conversation)
-                                        }
-                                    }
-                                </div>
-                            }
-
-                            <div class="conversation-group conversation-group-conversations" data-testid="conversation-group-conversations">
-                                @* #2122: the header intentionally does NOT use the .conversation-group-label
-                                   class - #2441 replaced the redundant inner "Conversations" heading with the
-                                   filter bar and a test guards that class's absence here. The collapse
-                                   affordance is a real <button> so keyboard activation is native. *@
-                                <button class="conversation-group-header conversation-group-header-toggle"
-                                        data-testid="conversations-group-toggle"
-                                        aria-expanded="@(!_conversationsGroupCollapsed ? "true" : "false")"
-                                        title="@(_conversationsGroupCollapsed ? "Expand conversations" : "Collapse conversations")"
-                                        @onclick="ToggleConversationsGroup">
-                                    <span class="group-chevron @(!_conversationsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                                    <span class="conversation-group-count" data-testid="conversations-group-count">@normalConversations.Count</span>
-                                </button>
-                                <div class="conversation-filter-bar" role="group" aria-label="Filter conversations by recent activity" data-testid="conversation-filter-bar">
-                                    <button type="button"
-                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.None ? "active" : "")"
-                                            data-testid="conversation-filter-none"
-                                            aria-pressed="@(_activityFilter == ConversationActivityFilter.None)"
-                                            title="Show all conversations"
-                                            @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.None)">None</button>
-                                    <button type="button"
-                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.Today ? "active" : "")"
-                                            data-testid="conversation-filter-today"
-                                            aria-pressed="@(_activityFilter == ConversationActivityFilter.Today)"
-                                            title="Conversations updated today"
-                                            @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.Today)">Today</button>
-                                    <button type="button"
-                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.ThisWeek ? "active" : "")"
-                                            data-testid="conversation-filter-week"
-                                            aria-pressed="@(_activityFilter == ConversationActivityFilter.ThisWeek)"
-                                            title="Conversations updated in the last 7 days"
-                                            @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.ThisWeek)">This Week</button>
-                                </div>
-                                @if (!_conversationsGroupCollapsed)
-                                {
-                                    @if (normalConversations.Count == 0 && _activityFilter != ConversationActivityFilter.None)
-                                    {
-                                        <div class="conversation-list-empty" data-testid="conversation-filter-empty">No conversations in this range.</div>
-                                    }
-                                    @foreach (var conversation in normalConversations)
-                                    {
-                                        @RenderConversationItem(activeAgent, conversation)
-                                    }
-                                }
-                            </div>
-
-                            @if (cronConversations.Count > 0)
-                            {
-                                <div class="conversation-group conversation-group-scheduled" data-testid="conversation-group-scheduled">
-                                    <button class="conversation-group-header conversation-group-header-toggle" data-testid="cron-group-toggle" @onclick="ToggleCronGroup">
-                                        <span class="group-chevron @(!_cronGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                                        <span class="conversation-group-label">&#x23F0; Scheduled</span>
-                                        <span class="conversation-group-count" data-testid="cron-group-count">@cronConversations.Count</span>
-                                    </button>
-                                    @if (!_cronGroupCollapsed)
-                                    {
-                                        @foreach (var conversation in cronConversations)
-                                        {
-                                            @RenderConversationItem(activeAgent, conversation)
-                                        }
-                                    }
-                                </div>
-                            }
-
-                            @* #2122: Automated (webhook) runs are their own 4th section rather than
-                               being folded in with Scheduled. Same pattern as the Scheduled group:
-                               real <button> header, own localStorage key, collapsed by default. *@
-                            @if (webhookConversations.Count > 0)
-                            {
-                                <div class="conversation-group conversation-group-automated" data-testid="conversation-group-automated">
-                                    <button class="conversation-group-header conversation-group-header-toggle"
-                                            data-testid="webhook-group-toggle"
-                                            aria-expanded="@(!_webhookGroupCollapsed ? "true" : "false")"
-                                            title="@(_webhookGroupCollapsed ? "Expand webhooks" : "Collapse webhooks")"
-                                            @onclick="ToggleWebhookGroup">
-                                        <span class="group-chevron @(!_webhookGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                                        <span class="conversation-group-label">&#x1F517; Webhooks</span>
-                                        <span class="conversation-group-count" data-testid="webhook-group-count">@webhookConversations.Count</span>
-                                    </button>
-                                    @if (!_webhookGroupCollapsed)
-                                    {
-                                        @foreach (var conversation in webhookConversations)
-                                        {
-                                            @RenderConversationItem(activeAgent, conversation)
-                                        }
-                                    }
-                                </div>
-                            }
+                        @{
+                            // Only actual rows belonging to the active agent enter the shared projection.
+                            // Its full canonical slots survive filtering, empty groups and collapse.
+                            var groups = ConversationSidebarGroups.Project(activeAgent.AgentId,
+                                activeAgent.Conversations.Values, SectionsState.AgentId, SectionsState.Sections,
+                                SectionsState.Assignments, SectionsState.GroupOrder, Store.ActiveSelectionSource,
+                                _cronConversationIds, MatchesActivityFilter);
                         }
+                        <ConversationSectionsPanel @key="_sectionDraftGeneration" @ref="_peerPanel"
+                            AgentId="@activeAgent.AgentId" DraftScope="@SectionDraftScope" ReadOnly="@activeAgent.IsReadOnly"
+                            Groups="@groups" RowContent="@(row => RenderConversationItem(activeAgent, row))"
+                            IsCollapsed="SystemGroupCollapsed" OnToggleSystem="ToggleSystemGroupAsync"
+                            GeneralFilter="RenderGeneralFilter()" FocusSectionId="@_focusCreatedSection"
+                            GeneralFilterEmpty="@(_activityFilter != ConversationActivityFilter.None && groups.First(group => group.Identity.System == BuiltInConversationSection.Conversations).Conversations.Count == 0)" />
 
                         @* Sub-agent sessions *@
                         @foreach (var sub in activeAgent.SubAgents.Values
@@ -676,35 +682,49 @@
             }
         }
 
-        @* #2441: "My sections" is a child of the agent chat section, not a sibling floating at the
-           bottom of the sidebar. It is nested inside the chat region and collapsible so an unused
-           sections feature costs one thin header row instead of a whole block. *@
-        @if (Store.ActiveAgentId is not null &&
-             Store.Agents.TryGetValue(Store.ActiveAgentId, out var sectionsAgent) &&
-             !sectionsAgent.IsReadOnly)
-        {
-            <div class="chat-nav-child" data-testid="chat-sections-child">
-                <button class="conversation-group-header conversation-group-header-toggle chat-nav-child-header"
-                        data-testid="sections-group-toggle"
-                        aria-expanded="@(!_sectionsGroupCollapsed ? "true" : "false")"
-                        @onclick="ToggleSectionsGroup">
-                    <span class="group-chevron @(!_sectionsGroupCollapsed ? "expanded" : "")">&#x25B6;</span>
-                    <span class="conversation-group-label">&#x1F4C1; My sections</span>
-                </button>
-                @* Collapse hides the body via a class rather than unmounting, so the panel keeps its
-                   transient UI state (in-progress create / rename). Section data itself now lives in
-                   the scoped ConversationSectionsState service (#2325), not in this component. *@
-                <div class="chat-nav-child-body @(_sectionsGroupCollapsed ? "collapsed" : "")"
-                     data-testid="chat-sections-body">
-                    <ConversationSectionsPanel AgentId="@sectionsAgent.AgentId"
-                                               TitleResolver="@(id => ResolveConversationTitle(sectionsAgent, id))"
-                                               OnConversationSelected="@(id => SelectConversationAsync(sectionsAgent.AgentId, id))"
-                                               ItemActions="@(id => RenderSectionMemberActions(sectionsAgent, id))"
-                                               OnChanged="HandleSectionsChanged" />
-                </div>
-            </div>
-        }
         </div>@* end sidebar-scroll-region *@
+    };
+
+    private RenderFragment RenderGeneralFilter() => __builder =>
+    {
+        <div class="conversation-filter-bar" role="group" aria-label="Filter conversations by recent activity" data-testid="conversation-filter-bar">
+                                    <button type="button"
+                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.None ? "active" : "")"
+                                            data-testid="conversation-filter-none"
+                                            aria-pressed="@(_activityFilter == ConversationActivityFilter.None)"
+                                            title="Show all conversations"
+                                            @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.None)">None</button>
+                                    <button type="button"
+                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.Today ? "active" : "")"
+                                            data-testid="conversation-filter-today"
+                                            aria-pressed="@(_activityFilter == ConversationActivityFilter.Today)"
+                                            title="Conversations updated today"
+                                            @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.Today)">Today</button>
+                                    <button type="button"
+                                            class="conversation-filter-btn @(_activityFilter == ConversationActivityFilter.ThisWeek ? "active" : "")"
+                                            data-testid="conversation-filter-week"
+                                            aria-pressed="@(_activityFilter == ConversationActivityFilter.ThisWeek)"
+                                            title="Conversations updated in the last 7 days"
+                                            @onclick="() => SetActivityFilterAsync(ConversationActivityFilter.ThisWeek)">This Week</button>
+                                </div>
+    };
+
+    private bool SystemGroupCollapsed(BuiltInConversationSection? section) => section switch
+    {
+        BuiltInConversationSection.Pinned => _pinnedGroupCollapsed,
+        BuiltInConversationSection.Conversations => _conversationsGroupCollapsed,
+        BuiltInConversationSection.Scheduled => _cronGroupCollapsed,
+        BuiltInConversationSection.Webhooks => _webhookGroupCollapsed,
+        _ => false
+    };
+
+    private Task ToggleSystemGroupAsync(BuiltInConversationSection? section) => section switch
+    {
+        BuiltInConversationSection.Pinned => TogglePinnedGroup(),
+        BuiltInConversationSection.Conversations => ToggleConversationsGroup(),
+        BuiltInConversationSection.Scheduled => ToggleCronGroup(),
+        BuiltInConversationSection.Webhooks => ToggleWebhookGroup(),
+        _ => Task.CompletedTask
     };
 
     private RenderFragment RenderConfigurationNav() => __builder =>
@@ -798,6 +818,7 @@
     protected override async Task OnInitializedAsync()
     {
         await EnsurePortalInitializedAsync();
+        await SynchronizeSectionAgent();
         await LoadToolsAsync();
         await LoadNavOrderAsync();
     }
@@ -846,6 +867,22 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (Prefs.Current.FocusedSidebar)
+        {
+            _focusedSidebarModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/focusedSidebar.js");
+            if (_focusedSidebarModule is not null)
+                await _focusedSidebarModule.InvokeVoidAsync("initialize", _sectionTrigger, _sectionPickerOpen ? _sectionMenu : null);
+        }
+        if (_focusSectionTrigger)
+        {
+            _focusSectionTrigger = false;
+            await _sectionTrigger.FocusAsync();
+        }
+        if (_focusSectionOption && _keyboardSection is { } key && _sectionOptions.TryGetValue(key, out var option))
+        {
+            _focusSectionOption = false;
+            await option.FocusAsync();
+        }
         if (firstRender)
         {
             var stored = await JS.InvokeAsync<string?>("localStorage.getItem", SidebarKey);
@@ -862,8 +899,6 @@
             _conversationsGroupCollapsed = conversationsStored == "true";
             var toolsStored = await JS.InvokeAsync<string?>("localStorage.getItem", ToolsCollapsedKey);
             _toolsGroupCollapsed = toolsStored != "false";
-            var sectionsStored = await JS.InvokeAsync<string?>("localStorage.getItem", SectionsCollapsedKey);
-            _sectionsGroupCollapsed = sectionsStored != "false";
             var filterStored = await JS.InvokeAsync<string?>("localStorage.getItem", ActivityFilterKey);
             if (Enum.TryParse<ConversationActivityFilter>(filterStored, out var storedFilter))
                 _activityFilter = storedFilter;
@@ -941,11 +976,48 @@
         await ExtensionFeatures.LoadAsync();
     }
 
-    private void HandleStateChanged() => InvokeAsync(() =>
+    private string? _sectionsAgent;
+    private bool? _draftFocusedMode;
+    private int _sectionDraftGeneration;
+    private ConversationSectionsPanel? _createPanel, _peerPanel;
+    private string? _focusCreatedSection;
+    private string SectionDraftScope => _sectionDraftGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private void InvalidateSectionDrafts()
     {
-        ResolvePendingSelection();
-        StateHasChanged();
-    });
+        ++_sectionDraftGeneration;
+        _createPanel?.ResetDrafts();
+        _peerPanel?.ResetDrafts();
+        _focusCreatedSection = null;
+    }
+
+    // Invoked at lifecycle/store boundaries, never from a RenderFragment or panel mount.
+    // EnsureLoaded invalidates its old scope synchronously before its first await.
+    private Task SynchronizeSectionAgent()
+    {
+        var agent = Store.ActiveAgentId ?? string.Empty;
+        if (_sectionsAgent == agent) return Task.CompletedTask;
+        _sectionsAgent = agent; // Set before Changed can re-enter.
+        InvalidateSectionDrafts();
+        return SectionsState.EnsureLoadedAsync(agent);
+    }
+
+    private void SectionCreated(string sectionId) => _focusCreatedSection = sectionId;
+
+    private void HandleStateChanged()
+    {
+        if (_draftFocusedMode != Prefs.Current.FocusedSidebar)
+        {
+            _draftFocusedMode = Prefs.Current.FocusedSidebar;
+            InvalidateSectionDrafts();
+        }
+        _ = SynchronizeSectionAgent();
+        _ = InvokeAsync(() =>
+        {
+            ResolvePendingSelection();
+            StateHasChanged();
+        });
+    }
 
     // #2246: inbound events never mutate the active view themselves. When one invalidates the current
     // selection (active agent removed, or its active conversation 404'd) the store raises
@@ -970,6 +1042,9 @@
 
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
     {
+        _sectionPickerOpen = false;
+        InvalidateSectionDrafts();
+        _ = InvokeAsync(StateHasChanged);
         var relative = Nav.ToBaseRelativePath(e.Location).TrimEnd('/');
         if (relative == "" || relative.Equals("chat", StringComparison.OrdinalIgnoreCase))
         {
@@ -1017,7 +1092,7 @@
 
     private bool IsOnPage(string page)
     {
-        var uri = Nav.ToBaseRelativePath(Nav.Uri).TrimEnd('/');
+        var uri = Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].TrimEnd('/');
         return uri.Equals(page, StringComparison.OrdinalIgnoreCase)
             || uri.StartsWith(page + "/", StringComparison.OrdinalIgnoreCase);
     }
@@ -1027,8 +1102,11 @@
         var agentId = e.Value?.ToString();
         if (!string.IsNullOrEmpty(agentId))
         {
-            await Interaction.RefreshConversationsAsync(agentId);
             Store.SelectView(agentId, string.Empty, SelectionSource.UserClick);
+            var sectionsLoad = SynchronizeSectionAgent();
+            await Interaction.RefreshConversationsAsync(agentId);
+            await sectionsLoad;
+            if (Store.ActiveAgentId != agentId) return;
             if (Store.GetAgent(agentId) is { } agent && agent.UnreadCount > 0)
                 agent.UnreadCount = 0;
 
@@ -1110,12 +1188,6 @@
         await JS.InvokeVoidAsync("localStorage.setItem", ToolsCollapsedKey, _toolsGroupCollapsed ? "true" : "false");
     }
 
-    private async Task ToggleSectionsGroup()
-    {
-        _sectionsGroupCollapsed = !_sectionsGroupCollapsed;
-        await JS.InvokeVoidAsync("localStorage.setItem", SectionsCollapsedKey, _sectionsGroupCollapsed ? "true" : "false");
-    }
-
     /// <summary>
     /// Recent-activity filter applied to the normal (non-pinned, non-scheduled) conversation list.
     /// Lets the user narrow the drawer to conversations touched today or in the last week without
@@ -1148,41 +1220,11 @@
         await JS.InvokeVoidAsync("localStorage.setItem", ActivityFilterKey, filter.ToString());
     }
 
-    // #2325: the "move to section" menu is a row affordance. An assigned conversation no longer has
-    // a default-list row, so the menu is projected onto its section member row instead - the
-    // affordance moves with the conversation rather than disappearing when it is assigned.
-    private RenderFragment RenderSectionMemberActions(AgentState agent, string conversationId) => __builder =>
-    {
-        @if (agent.Conversations.TryGetValue(conversationId, out var conversation))
-        {
-            <ConversationActionMenu Actions="@BuildConversationActions(agent, conversation)" />
-        }
-    };
-
-    // #2325: true only when this conversation is assigned to a section that WILL actually render a
-    // row for it. Subtracting from the default list is a visibility change, so it is gated on the
-    // section being reachable rather than on the assignment alone:
-    //   * the sections panel is only mounted for a non-read-only agent, so a read-only agent keeps
-    //     every conversation in the default list;
-    //   * an assignment whose section id is not in SectionsState.Sections (deleted server-side, or a
-    //     load that has not landed yet) is ignored, so a stale map can never strand a conversation.
-    // Collapse is deliberately NOT considered: a collapsed section still renders its header and is
-    // one click from its members, exactly as the Pinned group behaves. Assignment composes with the
-    // existing groups rather than overriding them - it is applied only after pinned, cron and
-    // webhook have been hoisted out, so those conversations keep their existing home.
-    private bool IsRenderedInSection(AgentState agent, ConversationState conversation)
-    {
-        if (agent.IsReadOnly)
-            return false;
-        var sectionId = SectionsState.GetAssignedSectionId(conversation.ConversationId);
-        return sectionId is not null
-            && SectionsState.Sections.Any(s => string.Equals(s.SectionId, sectionId, StringComparison.Ordinal));
-    }
-
     private RenderFragment RenderConversationItem(AgentState agent, ConversationState conversation) => __builder =>
     {
         <div class="conversation-list-item" data-testid="conversation-list-item" data-conversation-id="@conversation.ConversationId">
-            <ConversationActionMenu Actions="@BuildConversationActions(agent, conversation)">
+            <ConversationActionMenu SubjectAgentId="@agent.AgentId" SubjectConversationId="@conversation.ConversationId"
+                                    Actions="@BuildConversationActions(agent, conversation)">
                 <a class="conversation-list-item-btn @(Store is IDisplayedConversation displayed && displayed.IsConversationDisplayed(agent.AgentId, conversation.ConversationId) ? "active" : "")"
                    href="agent/@Uri.EscapeDataString(agent.AgentId)/conversation/@Uri.EscapeDataString(conversation.ConversationId)"
                    @onclick="() => SelectConversationAsync(agent.AgentId, conversation.ConversationId)"
@@ -1204,6 +1246,7 @@
     private IReadOnlyList<ConversationActionDefinition> BuildConversationActions(AgentState agent, ConversationState conversation)
     {
         var projection = conversation.Project(Store.ActiveSelectionSource);
+        var generation = _sectionDraftGeneration;
         var currentSectionId = SectionsState.GetAssignedSectionId(conversation.ConversationId);
         var sections = SectionsState.Sections
             .Select(section => new ConversationActionSection(section.SectionId, section.Name,
@@ -1216,9 +1259,13 @@
                 () => RenameConversationFromMenuAsync(agent.AgentId, conversation),
                 pinned => SetConversationPinnedAsync(agent.AgentId, conversation.ConversationId, pinned),
                 () => ArchiveConversationAsync(agent.AgentId, conversation.ConversationId, conversation.Title, projection.IsUnattended),
-                sectionId => sectionId is null
-                    ? UnassignConversationSectionAsync(agent.AgentId, conversation.ConversationId)
-                    : AssignConversationSectionAsync(agent.AgentId, conversation.ConversationId, sectionId)));
+                sectionId => generation != _sectionDraftGeneration ? Task.CompletedTask
+                    : sectionId is null
+                        ? UnassignConversationSectionAsync(agent.AgentId, conversation.ConversationId)
+                        : AssignConversationSectionAsync(agent.AgentId, conversation.ConversationId, sectionId)))
+            .Where(action => !action.Id.StartsWith("move-", StringComparison.Ordinal) ||
+                SectionsState.AgentId == agent.AgentId && SectionsState.CanMutate)
+            .ToArray();
     }
 
     private async Task RenameConversationFromMenuAsync(string agentId, ConversationState conversation)
@@ -1230,16 +1277,16 @@
 
     private async Task AssignConversationSectionAsync(string agentId, string conversationId, string sectionId)
     {
-        if (await SectionsApi.AssignAsync(agentId, sectionId, conversationId))
-            await SectionsState.ReloadAsync();
-        StateHasChanged();
+        if (Store.ActiveAgentId != agentId || SectionsState.AgentId != agentId ||
+            !Store.Agents.TryGetValue(agentId, out var agent) || !agent.Conversations.TryGetValue(conversationId, out var conversation)) return;
+        await SectionsState.AssignAsync(conversation, sectionId, Store.ActiveSelectionSource, agent.IsReadOnly);
     }
 
     private async Task UnassignConversationSectionAsync(string agentId, string conversationId)
     {
-        if (await SectionsApi.UnassignAsync(agentId, conversationId))
-            await SectionsState.ReloadAsync();
-        StateHasChanged();
+        if (Store.ActiveAgentId != agentId || SectionsState.AgentId != agentId ||
+            !Store.Agents.TryGetValue(agentId, out var agent) || !agent.Conversations.TryGetValue(conversationId, out var conversation)) return;
+        await SectionsState.UnassignAsync(conversation, Store.ActiveSelectionSource, agent.IsReadOnly);
     }
 
     // #2441: agent display names and emoji come from user-editable config and may contain embedded
@@ -1477,16 +1524,13 @@
         catch { _cronConversationIds = new(StringComparer.OrdinalIgnoreCase); }
     }
 
-    private static string? ResolveConversationTitle(AgentState agent, string conversationId)
-        => agent.Conversations.TryGetValue(conversationId, out var conv) ? conv.Title : conversationId;
-
-    // Sections changed (create/rename/reorder/delete/assign/remove): re-render so the sidebar reflects
-    // the new custom grouping. The panel owns its own server-persisted state; the layout just repaints.
-    private Task HandleSectionsChanged()
+    public async ValueTask DisposeAsync()
     {
-        StateHasChanged();
-        return Task.CompletedTask;
+        Dispose();
+        if (_focusedSidebarModule is not null)
+        {
+            try { await _focusedSidebarModule.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+        }
     }
-
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

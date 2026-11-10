@@ -34,7 +34,6 @@ src/gateway/BotNexus.Gateway.Contracts/Security/IExecApprovalManager.cs|2
 src/gateway/BotNexus.Gateway.Contracts/Security/ToolPolicy.cs|2
 src/gateway/BotNexus.Gateway.Conversations/ConversationCanvasNotifier.cs|3
 src/gateway/BotNexus.Gateway.Conversations/IConversationAuditLog.cs|1
-src/gateway/BotNexus.Gateway.Conversations/InMemoryConversationSectionStore.cs|1
 src/gateway/BotNexus.Gateway.Conversations/InMemoryConversationStore.cs|1
 src/gateway/BotNexus.Gateway.Sessions/SessionFileNames.cs|3
 src/gateway/BotNexus.Gateway.Sessions/SessionTranscriptRenderer.cs|1

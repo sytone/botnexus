@@ -9,21 +9,16 @@ namespace BotNexus.Gateway.Abstractions.Models;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Ownership / authorization.</b> A section is owned by the sidebar of a single agent within a
-/// single world (<see cref="AgentId"/> + <see cref="WorldId"/>). The world discriminator is stamped
-/// by the store on persistence - exactly as conversations are (Phase 9 / P9-A) - so two worlds that
-/// happen to share an agent id never see each other's sections. Because the portal REST surface is
-/// currently unauthenticated at the transport layer, "per user" is modelled today as "per agent
-/// sidebar in a world": every conversation an agent owns is visible to that agent's portal view, and
-/// so are its sections. When per-principal auth lands (issue #527) the owning citizen should be
-/// stamped alongside the world id and the list/mutation endpoints scoped to the caller's principal.
+/// <b>Ownership / authorization.</b> A custom section belongs to one agent's sidebar. The store
+/// stamps WorldId, but inherited reads are agent/data-root scoped, not WorldId-filtered. This model
+/// does not establish cross-world or per-principal authorization; routes must check target AgentId.
 /// </para>
 /// <para>
 /// A conversation may be assigned to <b>at most one</b> user-defined section
 /// (<c>IConversationSectionStore.AssignConversationAsync</c> is an upsert that replaces any prior
 /// assignment). System attributes - pinning, cron/webhook provenance - are never destroyed by a
-/// custom assignment; the sidebar applies presentation precedence (pinned always renders in Pinned)
-/// on top of the custom grouping.
+/// custom assignment. A valid explicit custom assignment wins presentation placement; removing it
+/// restores the current natural home (Pinned, Scheduled, Webhooks or Conversations).
 /// </para>
 /// </remarks>
 public sealed record ConversationSection
@@ -46,8 +41,8 @@ public sealed record ConversationSection
 
     /// <summary>
     /// Gets or sets the zero-based ordering position of this section relative to the agent's other
-    /// user-defined sections. Lower values render first. Reassigned atomically by
-    /// <c>IConversationSectionStore.ReorderSectionsAsync</c>.
+    /// user-defined sections. This is the custom subsequence of the separate unified peer-group order,
+    /// synchronized atomically by either reorder API.
     /// </summary>
     public int Order { get; set; }
 

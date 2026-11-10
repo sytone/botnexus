@@ -1,0 +1,194 @@
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<button type="button" class="conversation-actions-trigger" data-testid="section-actions-trigger"
+        @ref="_trigger" aria-label="@($"Actions for {Label}")" aria-haspopup="menu"
+        aria-expanded="@(_open ? "true" : "false")" disabled="@Disabled"
+        @onclick="Toggle"><span aria-hidden="true">&#x22EF;</span></button>
+@if (_open)
+{
+    <div class="conversation-action-overlay" popover="manual" @ref="_overlay">
+        <button type="button" class="conversation-action-menu-dismiss" data-testid="section-menu-dismiss"
+                aria-label="Dismiss section actions" @onclick="() => CloseAsync(true)"></button>
+        <div class="conversation-action-menu" role="menu" tabindex="-1" @ref="_menu"
+             aria-label="@($"Actions for {Label}")" style="left:@(_x)px;top:@(_y)px">
+            <button type="button" role="menuitem" tabindex="-1" data-testid="section-move-up"
+                    class="conversation-action-menu-item" disabled="@(!CanMoveUp)" @onclick="() => InvokeActionAsync(OnMoveUp)">Move up</button>
+            <button type="button" role="menuitem" tabindex="-1" data-testid="section-move-down"
+                    class="conversation-action-menu-item" disabled="@(!CanMoveDown)" @onclick="() => InvokeActionAsync(OnMoveDown)">Move down</button>
+            @if (IsCustom)
+            {
+                <button type="button" role="menuitem" tabindex="-1" data-testid="section-rename-btn"
+                        class="conversation-action-menu-item" @onclick="() => InvokeActionAsync(OnRename)">Rename</button>
+                <button type="button" role="menuitem" tabindex="-1" data-testid="section-delete-btn"
+                        class="conversation-action-menu-item destructive" @onclick="() => InvokeActionAsync(OnDelete)">Delete section</button>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string Label { get; set; } = "Section";
+    [Parameter] public bool IsCustom { get; set; }
+    [Parameter] public bool CanMoveUp { get; set; }
+    [Parameter] public bool CanMoveDown { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string Scope { get; set; } = string.Empty;
+    [Parameter] public EventCallback OnMoveUp { get; set; }
+    [Parameter] public EventCallback OnMoveDown { get; set; }
+    [Parameter] public EventCallback OnRename { get; set; }
+    [Parameter] public EventCallback OnDelete { get; set; }
+
+    /// <summary>Captures the parent's lifetime and canonical order at the click, before JS awaits.</summary>
+    [Parameter] public Func<EventCallback, Func<Task>>? CaptureAction { get; set; }
+    /// <summary>Checks the captured parent lifetime even before replacement parameters arrive.</summary>
+    [Parameter] public Func<bool>? IsScopeCurrent { get; set; }
+
+    private ElementReference _trigger, _overlay, _menu;
+    private DotNetObjectReference<ConversationSectionActionMenu>? _reference;
+    private bool _open, _focusMenu, _disposed, _disabled, _custom, _canMoveUp, _canMoveDown;
+    private readonly string _owner = Guid.NewGuid().ToString("N");
+    private long _revision;
+    private string? _token;
+    private sealed record Opening(string Token, ElementReference Overlay, ElementReference Menu, ElementReference Trigger);
+    private Opening? _issued, _retired;
+    private int _generation;
+    private string? _scope;
+    private int _activeIndex;
+    private double _x, _y;
+
+    protected override void OnParametersSet()
+    {
+        if (_scope != Scope || _disabled != Disabled || _custom != IsCustom ||
+            _canMoveUp != CanMoveUp || _canMoveDown != CanMoveDown)
+        {
+            ++_generation;
+            // Logical close clears _open BEFORE its awaits. The issued browser opening can
+            // still own a focus permit (or an undelivered focus call) after that point.
+            // Capture it now, including ABA transitions; never revoke a later opening.
+            _retired = _issued;
+            _open = false;
+            _focusMenu = false;
+        }
+        _scope = Scope;
+        _disabled = Disabled;
+        _custom = IsCustom;
+        _canMoveUp = CanMoveUp;
+        _canMoveDown = CanMoveDown;
+    }
+
+    private bool Current(int generation) => !_disposed && !Disabled && generation == _generation &&
+        (IsScopeCurrent?.Invoke() ?? true);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_disposed) return;
+        var generation = _generation;
+        _reference ??= DotNetObjectReference.Create(this);
+        var trigger = _trigger;
+        // Snapshot both retirement and opening before ANY await. An older render cannot
+        // consume a newer render's pending close or pair its token with replacement elements.
+        var retired = _retired;
+        _retired = null;
+        var opening = Current(generation) && _open && _focusMenu && _token is { } token
+            ? new Opening(token, _overlay, _menu, trigger) : null;
+        var index = _activeIndex;
+        if (opening is not null)
+        {
+            _focusMenu = false;
+            _issued = opening;
+        }
+        // Revoke before any unrelated bind await; JS close(false) also cancels a retired
+        // owner's single-use permit, so a subsequently delivered old focus is inert.
+        if (retired is not null)
+            await JS.InvokeVoidAsync("conversationActionMenu.close", retired.Token, retired.Overlay, false);
+        if (_disposed) return;
+        await JS.InvokeVoidAsync("conversationActionMenu.bindTrigger", trigger, _reference, false);
+        if (opening is null || !Current(generation) || !_open || _token != opening.Token) return;
+        await JS.InvokeVoidAsync("conversationActionMenu.open", opening.Token, opening.Overlay, opening.Menu, opening.Trigger, _reference);
+        if (!Current(generation) || !_open || _token != opening.Token) return;
+        await JS.InvokeVoidAsync("conversationActionMenu.focusItem", opening.Token, opening.Menu, index);
+    }
+
+    private async Task Toggle(MouseEventArgs args)
+    {
+        if (_open) await CloseAsync(true);
+        else Open(args.ClientX, args.ClientY);
+    }
+
+    private void Open(double x, double y, bool last = false)
+    {
+        if (!Current(_generation)) return;
+        ++_generation;
+        _token = $"{_owner}:{++_revision}";
+        _x = x;
+        _y = y;
+        _activeIndex = last ? -1 : 0;
+        _open = true;
+        _focusMenu = true;
+    }
+
+    /// <summary>Opens from synchronous native trigger navigation, preserving permission and parent lifetime guards.</summary>
+    [JSInvokable]
+    public Task OpenFromBrowser(bool last)
+    {
+        if (!Current(_generation)) return Task.CompletedTask;
+        Open(0, 0, last);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private async Task InvokeActionAsync(EventCallback action)
+    {
+        if (!Current(_generation) || !_open) return;
+        // Capture the parent synchronously at the actual user action boundary. Capturing only
+        // after close/focus resumes would bless a detached callback with a new parent generation.
+        var invoke = CaptureAction?.Invoke(action) ?? (() => action.InvokeAsync());
+        var generation = _generation;
+        var token = _token;
+        await CloseAsync(true);
+        if (!Current(generation) || _token != token) return;
+        await invoke();
+    }
+
+    private async Task CloseAsync(bool restoreFocus)
+    {
+        if (_disposed) return;
+        var generation = _generation;
+        _open = false;
+        _focusMenu = false;
+        var opening = _issued;
+        if (opening is null) return;
+        await JS.InvokeVoidAsync("conversationActionMenu.close", opening.Token, opening.Overlay, restoreFocus);
+        if (restoreFocus && Current(generation) && _token == opening.Token)
+            await JS.InvokeVoidAsync("conversationActionMenu.focus", opening.Token, opening.Trigger);
+    }
+
+    /// <summary>Mirrors matching native retirement only; stale callbacks cannot retire or focus a newer owner.</summary>
+    [JSInvokable]
+    public Task DismissFromBrowser(string reason, string token)
+    {
+        if (_disposed || !_open || _token != token) return Task.CompletedTask;
+        _open = _focusMenu = false;
+        return base.InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>Invalidates parent/action continuations before awaiting owner-local browser retirement.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        ++_generation; // Synchronous even when browser cleanup cannot complete yet.
+        _open = _focusMenu = false;
+        _retired = null;
+        var opening = _issued;
+        _reference?.Dispose();
+        try
+        {
+            // Even an action-close that has already cleared _open may still be in flight.
+            if (opening is not null)
+                await JS.InvokeVoidAsync("conversationActionMenu.close", opening.Token, opening.Overlay, false);
+            await JS.InvokeVoidAsync("conversationActionMenu.unbindTrigger", _trigger);
+        }
+        catch (JSDisconnectedException) { }
+    }
+}

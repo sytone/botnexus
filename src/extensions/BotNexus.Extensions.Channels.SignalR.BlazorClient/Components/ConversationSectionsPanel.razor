@@ -1,120 +1,142 @@
-﻿@using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services
+@using BuiltInConversationSection = BotNexus.Gateway.Abstractions.Models.BuiltInConversationSection
 @implements IDisposable
-@inject SectionsApiClient SectionsApi
 @inject ConversationSectionsState SectionsState
 @inject IJSRuntime JS
 
-@* User-defined conversation sections (issue #2124): create / rename / reorder / collapse / delete
-   custom sidebar sections and assign conversations into them. All state persists server-side per
-   agent via SectionsApiClient - never in browser local storage. The section list and assignment map
-   themselves live in the scoped ConversationSectionsState service (issue #2325); this component is
-   a view over that state plus the management affordances. *@
-<div class="conversation-sections" data-testid="conversation-sections">
-    <div class="conversation-sections-header">
-        <span class="conversation-sections-title">My sections</span>
-        <button class="section-add-btn" data-testid="section-add-btn"
-                title="Create a custom section" @onclick="StartCreate">+ Section</button>
-    </div>
-
+@if (CreateOnly)
+{
+    <button type="button" class="section-add-btn" data-testid="section-add-btn" disabled="@(!CanEdit)"
+            title="Create a custom section" @onclick="StartCreate">+ Section</button>
     @if (_creating)
     {
         <div class="section-create-row" data-testid="section-create-row">
-            <input class="section-name-input" data-testid="section-create-input"
-                   placeholder="Section name" @bind="_draftName" @bind:event="oninput" />
-            <button class="section-save-btn" data-testid="section-create-save" @onclick="ConfirmCreateAsync">Save</button>
-            <button class="section-cancel-btn" data-testid="section-create-cancel" @onclick="CancelCreate">Cancel</button>
+            <label for="section-create-name">Section name</label>
+            <input id="section-create-name" class="section-name-input" data-testid="section-create-input"
+                   aria-label="Section name" aria-describedby="section-name-error" @ref="_nameInput"
+                   disabled="@SectionsState.IsSaving" @bind="_draftName" @bind:event="oninput" @onkeydown="CreateKeyAsync" />
+            <button type="button" data-testid="section-create-save" disabled="@(!CanEdit)" @onclick="ConfirmCreateAsync">Create</button>
+            <button type="button" data-testid="section-create-cancel" @onclick="ResetDrafts">Cancel</button>
+            @if (_validation is not null) { <span id="section-name-error" role="alert">@_validation</span> }
         </div>
     }
-
-    @foreach (var (section, index) in SectionsState.Sections.Select((s, i) => (s, i)))
+}
+else
+{
+    @if (SectionsState.IsLoading)
     {
-        <div class="conversation-section" data-testid="conversation-section" data-section-id="@(section.SectionId)">
-            <div class="conversation-section-header">
-                <button class="section-collapse-toggle" data-testid="section-collapse-toggle"
-                        title="@(section.IsCollapsed ? "Expand" : "Collapse")"
-                        @onclick="() => SectionsState.ToggleCollapseAsync(section)">
-                    <span class="group-chevron @(section.IsCollapsed ? "" : "expanded")">&#x25B6;</span>
+        <div role="status" data-testid="sections-loading">Loading sections…</div>
+    }
+    @if (SectionsState.LoadError is not null || !SectionsState.HasSnapshot && !SectionsState.IsLoading)
+    {
+        <div role="alert" data-testid="sections-unavailable">Sections unavailable. @SectionsState.LoadError</div>
+    }
+    @if (SectionsState.RequiresReconciliation)
+    {
+        <div role="alert" data-testid="sections-reconciliation">Section snapshots disagree. Safe groups are shown; refresh before editing.</div>
+    }
+    @if (SectionsState.IsSaving)
+    {
+        <div role="status" data-testid="sections-saving">Saving section changes…</div>
+    }
+    @if (SectionsState.GroupOrderUnsupported)
+    {
+        <div role="alert" data-testid="sections-unsupported">This server does not support peer section ordering. Refresh before continuing.</div>
+    }
+    @if (SectionsState.SavedButRefreshFailed)
+    {
+        <div role="alert" data-testid="sections-saved-refresh-failed">Saved, but refresh failed. Refresh to see the saved result; do not save again.</div>
+    }
+    @if (SectionsState.MutationError is { } mutationError)
+    {
+        <div role="alert" data-testid="sections-mutation-error">@mutationError</div>
+    }
+    <button type="button" data-testid="sections-refresh" class="sections-refresh"
+            disabled="@(SectionsState.IsLoading || SectionsState.IsSaving)" @onclick="SectionsState.RetryAsync">Refresh sections</button>
+
+    @foreach (var (group, index) in Groups.Select((group, index) => (group, index)))
+    {
+        var identity = group.Identity.SectionId ?? group.Identity.System?.ToString() ?? string.Empty;
+        var key = GroupKey(group);
+        var collapsed = group.Section?.IsCollapsed ?? (IsCollapsed?.Invoke(group.Identity.System) ?? false);
+        <div @key="identity" class="conversation-group conversation-group-@key @(group.Section is null ? "" : "conversation-section")"
+             data-testid="@(group.Section is null ? $"conversation-group-{key}" : "conversation-section")"
+             data-group-id="@identity" data-section-id="@group.Section?.SectionId">
+            <div class="peer-section-header">
+                <button type="button" class="conversation-group-header conversation-group-header-toggle"
+                        data-testid="@(group.Section is null ? $"{ToggleKey(group)}-group-toggle" : "section-collapse-toggle")"
+                        @ref="_headers[identity]" aria-label="@($"{(collapsed ? "Expand" : "Collapse")} {group.Label}")"
+                        aria-expanded="@(!collapsed ? "true" : "false")"
+                        disabled="@(group.Section is not null && !CanEdit)" @onclick="() => ToggleAsync(group)">
+                    <span class="group-chevron @(!collapsed ? "expanded" : "")" aria-hidden="true">&#x25B6;</span>
+                    <span class="@(group.Section is null ? group.Identity.System == BuiltInConversationSection.Conversations ? "conversation-general-label" : "conversation-group-label" : "conversation-section-name")"
+                          data-testid="@(group.Section is null ? null : "section-name")">@group.Label</span>
+                    <span class="conversation-group-count" data-testid="@(group.Section is null ? $"{ToggleKey(group)}-group-count" : "section-count")">@group.Conversations.Count</span>
                 </button>
-
-                @if (_editingId == section.SectionId)
-                {
-                    <input class="section-name-input" data-testid="section-rename-input"
-                           @bind="_draftName" @bind:event="oninput" />
-                    <button class="section-save-btn" data-testid="section-rename-save" @onclick="() => ConfirmRenameAsync(section)">Save</button>
-                    <button class="section-cancel-btn" data-testid="section-rename-cancel" @onclick="CancelRename">Cancel</button>
-                }
-                else
-                {
-                    <span class="conversation-section-name" data-testid="section-name">@(section.Name)</span>
-                    <div class="conversation-section-actions">
-                        <button class="section-move-up-btn" data-testid="section-move-up"
-                                disabled="@(index == 0)"
-                                title="Move up" @onclick="() => MoveAsync(index, index - 1)">&#x25B2;</button>
-                        <button class="section-move-down-btn" data-testid="section-move-down"
-                                disabled="@(index == SectionsState.Sections.Count - 1)"
-                                title="Move down" @onclick="() => MoveAsync(index, index + 1)">&#x25BC;</button>
-                        <button class="section-rename-btn" data-testid="section-rename-btn"
-                                title="Rename" @onclick="() => StartRename(section)"><Icon Name="edit" Size="14" Class="bn-icon-inherit" /></button>
-                        <button class="section-delete-btn" data-testid="section-delete-btn"
-                                title="Delete section (conversations return to their default section)"
-                                @onclick="() => DeleteAsync(section)"><Icon Name="delete" Size="13" Class="bn-icon-inherit" /></button>
-                    </div>
-                }
+                <ConversationSectionActionMenu Label="@group.Label" IsCustom="@(group.Section is not null)"
+                    Scope="@($"{ScopeKey}:{_generation}")" Disabled="@(!CanEdit)" CanMoveUp="@(index > 0)" CanMoveDown="@(index < Groups.Count - 1)"
+                    CaptureAction="CaptureMenuAction" IsScopeCurrent="CaptureScopeGuard()"
+                    OnMoveUp="() => MoveAsync(group.Identity, -1)" OnMoveDown="() => MoveAsync(group.Identity, 1)"
+                    OnRename="() => StartRename(group.Section)" OnDelete="() => DeleteAsync(group.Section)" />
             </div>
-
-            @if (!section.IsCollapsed)
+            @if (_editingId == group.Section?.SectionId && _editingId is not null)
             {
-                <div class="conversation-section-body" data-testid="conversation-section-body">
-                    @{
-                        var members = SectionsState.ConversationsFor(section.SectionId);
-                    }
-                    @if (members.Count == 0)
+                <div class="section-create-row">
+                    <label for="section-rename-name">Section name</label>
+                    <input id="section-rename-name" aria-label="Section name" class="section-name-input" data-testid="section-rename-input"
+                           @ref="_nameInput" @bind="_draftName" @bind:event="oninput" disabled="@SectionsState.IsSaving"
+                           @onkeydown="args => RenameKeyAsync(args, group.Section)" />
+                    <button type="button" data-testid="section-rename-save" disabled="@(!CanEdit)" @onclick="() => ConfirmRenameAsync(group.Section)">Save</button>
+                    <button type="button" data-testid="section-rename-cancel" @onclick="ResetDrafts">Cancel</button>
+                    @if (_validation is not null) { <span role="alert">@_validation</span> }
+                </div>
+            }
+            @if (group.Identity.System == BuiltInConversationSection.Conversations)
+            {
+                @GeneralFilter
+                @if (GeneralFilterEmpty && !collapsed)
+                {
+                    <div class="conversation-list-empty" data-testid="conversation-filter-empty">No conversations in this range.</div>
+                }
+            }
+            @if (!collapsed)
+            {
+                <div class="conversation-section-body" data-testid="@(group.Section is null ? null : "conversation-section-body")">
+                    @if (group.Conversations.Count == 0)
                     {
-                        <div class="conversation-section-empty" data-testid="conversation-section-empty">No conversations. Assign from a conversation's menu.</div>
+                        <div class="conversation-section-empty" data-testid="@(group.Section is null ? null : "conversation-section-empty")">No conversations@(group.Section is null ? "." : ". Assign from a conversation's menu.")</div>
                     }
-                    else
+                    @foreach (var row in group.Conversations)
                     {
-                        @foreach (var conversationId in members)
-                        {
-                            @SectionItem(section, conversationId)
-                        }
+                        @if (RowContent is not null) { @RowContent(row) }
                     }
                 </div>
             }
         </div>
     }
-</div>
+}
 
 @code {
-    /// <summary>The agent whose sidebar sections are shown and managed.</summary>
     [Parameter, EditorRequired] public string AgentId { get; set; } = string.Empty;
+    [Parameter] public bool CreateOnly { get; set; }
+    [Parameter] public bool ReadOnly { get; set; }
+    [Parameter] public string DraftScope { get; set; } = string.Empty;
+    [Parameter] public IReadOnlyList<ConversationSidebarGroup> Groups { get; set; } = [];
+    [Parameter] public RenderFragment<ConversationState>? RowContent { get; set; }
+    [Parameter] public RenderFragment? GeneralFilter { get; set; }
+    [Parameter] public bool GeneralFilterEmpty { get; set; }
+    [Parameter] public Func<BuiltInConversationSection?, bool>? IsCollapsed { get; set; }
+    [Parameter] public EventCallback<BuiltInConversationSection?> OnToggleSystem { get; set; }
+    [Parameter] public EventCallback<string> OnCreated { get; set; }
+    [Parameter] public string? FocusSectionId { get; set; }
 
-    /// <summary>
-    /// Resolves a conversation id to its display title so section members render with a label. When
-    /// null or when a title is unknown, the conversation id is shown.
-    /// </summary>
-    [Parameter] public Func<string, string?>? TitleResolver { get; set; }
-
-    /// <summary>Raised after any change so the parent can re-render (e.g. to hide reassigned conversations from system groups).</summary>
-    [Parameter] public EventCallback OnChanged { get; set; }
-    /// <summary>
-    /// Invoked with the conversation id when a section member row is activated (#2325). The parent
-    /// owns selection and routing, so a section member behaves exactly like a default-list row.
-    /// Without a handler here the rendered members are decoration - nothing can open them.
-    /// </summary>
-    [Parameter] public EventCallback<string> OnConversationSelected { get; set; }
-    /// <summary>
-    /// Optional per-member row actions, rendered beside the member title (#2325). Once an assigned
-    /// conversation is subtracted from the default list, the row affordances that lived there - the
-    /// "move to section" menu in particular - would otherwise be unreachable for it. The parent
-    /// supplies them here so a section member row keeps the same affordances as a default-list row.
-    /// </summary>
-    [Parameter] public RenderFragment<string>? ItemActions { get; set; }
-
-    private bool _creating;
-    private string? _editingId;
+    private bool _creating, _focusInput, _subscribed, _disposed;
+    private int _generation;
+    private string? _scope, _editingId, _validation, _focusedSection;
     private string _draftName = string.Empty;
-    private bool _subscribed;
+    private ElementReference _nameInput;
+    private readonly Dictionary<string, ElementReference> _headers = new();
+    private string ScopeKey => $"{AgentId}:{DraftScope}:{CreateOnly}:{ReadOnly}";
+    private bool CanEdit => !_disposed && !ReadOnly && AgentId == SectionsState.AgentId && SectionsState.CanMutate;
 
     protected override void OnInitialized()
     {
@@ -122,107 +144,164 @@
         _subscribed = true;
     }
 
-    protected override async Task OnParametersSetAsync() => await SectionsState.EnsureLoadedAsync(AgentId);
-
-    private void OnStateChanged() => InvokeAsync(StateHasChanged);
-
-    /// <inheritdoc />
-    public void Dispose()
+    protected override void OnParametersSet()
     {
-        if (_subscribed)
+        if (_scope != ScopeKey) { ResetDrafts(); _scope = ScopeKey; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        var agent = AgentId;
+        var generation = _generation;
+        if (!Current(agent, generation)) return;
+        if (_focusInput)
         {
-            SectionsState.Changed -= OnStateChanged;
-            _subscribed = false;
+            _focusInput = false;
+            await _nameInput.FocusAsync();
         }
+        if (!Current(agent, generation)) return;
+        if (!CreateOnly && FocusSectionId is { } id && _focusedSection != id && _headers.TryGetValue(id, out var header))
+        {
+            _focusedSection = id;
+            await header.FocusAsync();
+        }
+    }
+
+    private void OnStateChanged()
+    {
+        if (_disposed) return;
+        // Synchronous invalidation also catches A/B/A while a native confirmation is outstanding.
+        if (AgentId != SectionsState.AgentId) ResetDrafts();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void ResetDrafts()
+    {
+        ++_generation;
+        _creating = false;
+        _editingId = null;
+        _draftName = string.Empty;
+        _validation = null;
+        _focusInput = false;
     }
 
     private void StartCreate()
     {
+        if (!CanEdit) return;
+        ResetDrafts();
         _creating = true;
-        _draftName = string.Empty;
+        _focusInput = true;
     }
 
-    private void CancelCreate() => _creating = false;
+    private bool ValidName()
+    {
+        if (_draftName.Trim().Length is > 0 and <= 100) { _validation = null; return true; }
+        _validation = "Section name must contain 1 to 100 characters.";
+        return false;
+    }
+
+    private bool Current(string agent, int generation) => !_disposed && AgentId == agent && SectionsState.AgentId == agent && generation == _generation;
+
+    private Func<bool> CaptureScopeGuard()
+    {
+        var agent = AgentId;
+        var generation = _generation;
+        return () => CanEdit && Current(agent, generation);
+    }
+
+    private Func<Task> CaptureMenuAction(EventCallback action)
+    {
+        var agent = AgentId;
+        var generation = _generation;
+        var order = SectionsState.GroupOrder.ToArray();
+        var allowed = CanEdit;
+        return () => allowed && CanEdit && Current(agent, generation) && order.SequenceEqual(SectionsState.GroupOrder)
+            ? action.InvokeAsync() : Task.CompletedTask;
+    }
 
     private async Task ConfirmCreateAsync()
     {
-        var name = _draftName?.Trim();
-        if (string.IsNullOrEmpty(name))
-            return;
-        var created = await SectionsApi.CreateAsync(AgentId, name);
-        _creating = false;
-        if (created is not null)
-        {
-            await SectionsState.ReloadAsync();
-            await OnChanged.InvokeAsync();
-        }
+        if (!_creating || !CanEdit || !ValidName()) return;
+        var agent = AgentId;
+        var generation = _generation;
+        var before = SectionsState.Sections.Select(section => section.SectionId).ToHashSet(StringComparer.Ordinal);
+        var saved = await SectionsState.CreateAsync(_draftName.Trim());
+        if (!Current(agent, generation)) return;
+        if (saved || SectionsState.RequiresRefresh) ResetDrafts();
+        if (saved && SectionsState.Sections.FirstOrDefault(section => !before.Contains(section.SectionId)) is { } created)
+            await OnCreated.InvokeAsync(created.SectionId);
     }
 
-    private void StartRename(SectionDto section)
+    private void StartRename(SectionDto? section)
     {
+        if (!CanEdit || section is null) return;
+        ResetDrafts();
         _editingId = section.SectionId;
         _draftName = section.Name;
+        _focusInput = true;
     }
 
-    private void CancelRename() => _editingId = null;
-
-    private async Task ConfirmRenameAsync(SectionDto section)
+    private async Task ConfirmRenameAsync(SectionDto? section)
     {
-        var name = _draftName?.Trim();
-        _editingId = null;
-        if (string.IsNullOrEmpty(name) || string.Equals(name, section.Name, StringComparison.Ordinal))
-            return;
-        if (await SectionsApi.UpdateAsync(AgentId, section.SectionId, name, isCollapsed: null))
-        {
-            await SectionsState.ReloadAsync();
-            await OnChanged.InvokeAsync();
-        }
+        if (!CanEdit || section is null || _editingId != section.SectionId || !ValidName()) return;
+        var agent = AgentId;
+        var generation = _generation;
+        var saved = await SectionsState.RenameAsync(section.SectionId, _draftName.Trim());
+        if (Current(agent, generation) && (saved || SectionsState.RequiresRefresh)) ResetDrafts();
     }
 
-    private async Task MoveAsync(int from, int to)
+    private Task CreateKeyAsync(KeyboardEventArgs args)
     {
-        await SectionsState.MoveAsync(from, to);
-        await OnChanged.InvokeAsync();
+        if (args.Key == "Escape") { ResetDrafts(); return Task.CompletedTask; }
+        return args.Key == "Enter" ? ConfirmCreateAsync() : Task.CompletedTask;
     }
 
-    private async Task DeleteAsync(SectionDto section)
+    private Task RenameKeyAsync(KeyboardEventArgs args, SectionDto? section)
     {
+        if (args.Key == "Escape") { ResetDrafts(); return Task.CompletedTask; }
+        return args.Key == "Enter" ? ConfirmRenameAsync(section) : Task.CompletedTask;
+    }
+
+    private async Task DeleteAsync(SectionDto? section)
+    {
+        if (!CanEdit || section is null) return;
+        var agent = AgentId;
+        var generation = _generation;
+        var id = section.SectionId;
         var confirmed = await JS.InvokeAsync<bool>("confirm",
-            $"Delete section '{section.Name}'? Its conversations return to their default section.");
-        if (!confirmed)
-            return;
-        if (await SectionsApi.DeleteAsync(AgentId, section.SectionId))
-        {
-            await SectionsState.ReloadAsync();
-            await OnChanged.InvokeAsync();
-        }
+            $"Delete section '{section.Name}'? Conversations return to their natural built-in homes, preserving pins and sources; conversations are not deleted.");
+        if (confirmed && Current(agent, generation) && CanEdit) await SectionsState.DeleteAsync(id);
     }
 
-    private async Task RemoveConversationAsync(string conversationId)
+    private async Task MoveAsync(SectionGroupOrderDto identity, int offset)
     {
-        if (await SectionsApi.UnassignAsync(AgentId, conversationId))
-        {
-            await SectionsState.ReloadAsync();
-            await OnChanged.InvokeAsync();
-        }
+        if (!CanEdit) return;
+        // Resolve identity in the current canonical order, never saved visible/numeric indices.
+        // CaptureMenuAction additionally rejects an order changed during menu close/focus.
+        var from = SectionsState.GroupOrder.ToList().IndexOf(identity);
+        if (from >= 0) await SectionsState.MoveGroupAsync(from, from + offset);
     }
 
-    private RenderFragment SectionItem(SectionDto section, string conversationId) => __builder =>
+    private Task ToggleAsync(ConversationSidebarGroup group) => _disposed ? Task.CompletedTask : group.Section is { } section
+        ? CanEdit ? SectionsState.ToggleCollapseAsync(section) : Task.CompletedTask
+        : OnToggleSystem.InvokeAsync(group.Identity.System);
+
+    private static string GroupKey(ConversationSidebarGroup group) => group.Identity.System switch
     {
-        <div class="conversation-section-item" data-testid="section-conversation-item" data-conversation-id="@conversationId">
-            @* #2325: a section member is a real navigable conversation row - an anchor carrying the
-               canonical agent/{agentId}/conversation/{conversationId} href plus a click handler that
-               routes through the parent's selection path, identical to a default-list row. *@
-            <a class="conversation-section-item-title" data-testid="section-conversation-link"
-               href="agent/@Uri.EscapeDataString(AgentId)/conversation/@Uri.EscapeDataString(conversationId)"
-               @onclick="() => OnConversationSelected.InvokeAsync(conversationId)"
-               @onclick:preventDefault="true">@(TitleResolver?.Invoke(conversationId) ?? conversationId)</a>
-            @if (ItemActions is not null)
-            {
-                @ItemActions(conversationId)
-            }
-            <button class="section-remove-conversation-btn" data-testid="section-remove-conversation"
-                    title="Remove from section" @onclick="() => RemoveConversationAsync(conversationId)"><Icon Name="close" Size="14" Class="bn-icon-inherit" /></button>
-        </div>
+        BuiltInConversationSection.Webhooks => "automated",
+        _ => group.Identity.System?.ToString().ToLowerInvariant() ?? "custom"
     };
+    private static string ToggleKey(ConversationSidebarGroup group) => group.Identity.System switch
+    {
+        BuiltInConversationSection.Scheduled => "cron", BuiltInConversationSection.Webhooks => "webhook",
+        _ => GroupKey(group)
+    };
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        ResetDrafts();
+        if (_subscribed) { SectionsState.Changed -= OnStateChanged; _subscribed = false; }
+    }
 }

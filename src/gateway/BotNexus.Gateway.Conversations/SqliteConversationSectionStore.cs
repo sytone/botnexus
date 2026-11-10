@@ -15,7 +15,7 @@ namespace BotNexus.Gateway.Conversations;
 /// a one-time schema initialisation lock, mirroring <see cref="SqliteConversationStore"/>.
 /// </summary>
 /// <remarks>
-/// Two tables:
+/// Custom sections, assignments and additive unified group-order metadata:
 /// <list type="bullet">
 ///   <item><c>conversation_sections</c> - one row per user-defined section (id, agent, world, name,
 ///     order, collapsed, timestamps).</item>
@@ -64,7 +64,7 @@ public sealed class SqliteConversationSectionStore : IConversationSectionStore
             SELECT id, agent_id, world_id, name, section_order, is_collapsed, created_at, updated_at
             FROM conversation_sections
             WHERE agent_id = $agentId
-            ORDER BY section_order ASC, created_at ASC
+            ORDER BY section_order ASC, created_at ASC, id ASC
             """;
         command.Parameters.AddWithValue("$agentId", agentId.Value);
 
@@ -84,9 +84,10 @@ public sealed class SqliteConversationSectionStore : IConversationSectionStore
         return await GetSectionCoreAsync(connection, sectionId, ct).ConfigureAwait(false);
     }
 
-    private static async Task<ConversationSection?> GetSectionCoreAsync(SqliteConnection connection, SectionId sectionId, CancellationToken ct)
+    private static async Task<ConversationSection?> GetSectionCoreAsync(SqliteConnection connection, SectionId sectionId, CancellationToken ct, SqliteTransaction? transaction = null)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT id, agent_id, world_id, name, section_order, is_collapsed, created_at, updated_at
             FROM conversation_sections
@@ -108,15 +109,15 @@ public sealed class SqliteConversationSectionStore : IConversationSectionStore
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
 
-            await using var nextOrderCommand = connection.CreateCommand();
-            nextOrderCommand.CommandText = "SELECT COALESCE(MAX(section_order), -1) + 1 FROM conversation_sections WHERE agent_id = $agentId";
-            nextOrderCommand.Parameters.AddWithValue("$agentId", section.AgentId.Value);
-            section.Order = Convert.ToInt32(await nextOrderCommand.ExecuteScalarAsync(ct).ConfigureAwait(false));
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var order = await ReadOrderCoreAsync(connection, transaction, section.AgentId, ct).ConfigureAwait(false);
+            section.Order = order.Count(e => e.SectionId.HasValue);
             // CreatedAt is write-once (#2316): rebuild the record rather than mutating it.
             section = section with { CreatedAt = DateTimeOffset.UtcNow };
             section.UpdatedAt = section.CreatedAt;
 
             await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO conversation_sections (id, agent_id, world_id, name, section_order, is_collapsed, created_at, updated_at)
                 VALUES ($id, $agentId, $worldId, $name, $order, $collapsed, $createdAt, $updatedAt)
@@ -130,6 +131,9 @@ public sealed class SqliteConversationSectionStore : IConversationSectionStore
             command.Parameters.AddWithValue("$createdAt", section.CreatedAt.ToString("O"));
             command.Parameters.AddWithValue("$updatedAt", section.UpdatedAt.ToString("O"));
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            await WriteOrderCoreAsync(connection, transaction, section.AgentId,
+                order.Append(ConversationSectionOrderEntry.ForSection(section.SectionId)).ToArray(), ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
             return section with { };
         }
         finally { _writeLock.Release(); }
@@ -171,6 +175,45 @@ public sealed class SqliteConversationSectionStore : IConversationSectionStore
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<ConversationSectionOrderEntry>> GetGroupOrderAsync(AgentId agentId, CancellationToken ct = default)
+    {
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            // One database snapshot for section membership and persisted order, including other
+            // store instances. Read normalization never materializes metadata as a side effect.
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var order = await ReadOrderCoreAsync(connection, transaction, agentId, ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            return order;
+        }
+        finally { _writeLock.Release(); }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ConversationSectionOrderEntry>> ReorderGroupsAsync(AgentId agentId,
+        IReadOnlyList<ConversationSectionOrderEntry> orderedGroups, CancellationToken ct = default)
+    {
+        await EnsureCreatedAsync(ct).ConfigureAwait(false);
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var current = await ReadOrderCoreAsync(connection, transaction, agentId, ct).ConfigureAwait(false);
+            var order = ConversationSectionOrderEntry.Reorder(current, orderedGroups);
+            await WriteOrderCoreAsync(connection, transaction, agentId, order, ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            return order;
+        }
+        finally { _writeLock.Release(); }
+    }
+
+    /// <inheritdoc />
     public async Task ReorderSectionsAsync(AgentId agentId, IReadOnlyList<SectionId> orderedSectionIds, CancellationToken ct = default)
     {
         await EnsureCreatedAsync(ct).ConfigureAwait(false);
@@ -179,42 +222,10 @@ public sealed class SqliteConversationSectionStore : IConversationSectionStore
         {
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
-
-            // Load owned sections in current order so omitted ids keep their relative order after the
-            // supplied ones.
-            var owned = new List<string>();
-            await using (var listCommand = connection.CreateCommand())
-            {
-                listCommand.CommandText = "SELECT id FROM conversation_sections WHERE agent_id = $agentId ORDER BY section_order ASC, created_at ASC";
-                listCommand.Parameters.AddWithValue("$agentId", agentId.Value);
-                await using var reader = await listCommand.ExecuteReaderAsync(ct).ConfigureAwait(false);
-                while (await reader.ReadAsync(ct).ConfigureAwait(false))
-                    owned.Add(reader.GetString(0));
-            }
-            var ownedSet = owned.ToHashSet(StringComparer.Ordinal);
-
-            var finalOrder = new List<string>();
-            var placed = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var id in orderedSectionIds)
-            {
-                if (ownedSet.Contains(id.Value) && placed.Add(id.Value))
-                    finalOrder.Add(id.Value);
-            }
-            foreach (var id in owned.Where(id => !placed.Contains(id)))
-                finalOrder.Add(id);
-
-            var now = DateTimeOffset.UtcNow.ToString("O");
             await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
-            for (var i = 0; i < finalOrder.Count; i++)
-            {
-                await using var command = connection.CreateCommand();
-                command.Transaction = transaction;
-                command.CommandText = "UPDATE conversation_sections SET section_order = $order, updated_at = $updatedAt WHERE id = $id";
-                command.Parameters.AddWithValue("$order", i);
-                command.Parameters.AddWithValue("$updatedAt", now);
-                command.Parameters.AddWithValue("$id", finalOrder[i]);
-                await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-            }
+            var current = await ReadOrderCoreAsync(connection, transaction, agentId, ct).ConfigureAwait(false);
+            var order = ConversationSectionOrderEntry.ReorderCustomSlots(current, orderedSectionIds);
+            await WriteOrderCoreAsync(connection, transaction, agentId, order, ct).ConfigureAwait(false);
             await transaction.CommitAsync(ct).ConfigureAwait(false);
         }
         finally { _writeLock.Release(); }
@@ -229,21 +240,100 @@ public sealed class SqliteConversationSectionStore : IConversationSectionStore
         {
             await using var connection = CreateConnection();
             await connection.OpenAsync(ct).ConfigureAwait(false);
-
-            // Delete assignments first (defensive: cascade is enabled, but be explicit so the
-            // conversations return to their system section even if PRAGMA foreign_keys is off).
-            await using (var deleteAssignments = connection.CreateCommand())
-            {
-                deleteAssignments.CommandText = "DELETE FROM conversation_section_assignments WHERE section_id = $id";
-                deleteAssignments.Parameters.AddWithValue("$id", sectionId.Value);
-                await deleteAssignments.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-            }
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(ct).ConfigureAwait(false);
+            var section = await GetSectionCoreAsync(connection, sectionId, ct, transaction).ConfigureAwait(false);
+            if (section is null)
+                return;
+            var current = await ReadOrderCoreAsync(connection, transaction, section.AgentId, ct).ConfigureAwait(false);
+            // Explicit cleanup and order compaction commit with the deletion. Conversations are
+            // never touched, and a failure rolls assignments and all order metadata back together.
             await using var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM conversation_sections WHERE id = $id";
+            command.Transaction = transaction;
+            command.CommandText = """
+                DELETE FROM conversation_section_assignments WHERE section_id = $id;
+                DELETE FROM conversation_section_group_order WHERE section_id = $id;
+                DELETE FROM conversation_sections WHERE id = $id;
+                """;
             command.Parameters.AddWithValue("$id", sectionId.Value);
             await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            await WriteOrderCoreAsync(connection, transaction, section.AgentId,
+                current.Where(e => e.SectionId != sectionId).ToArray(), ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
         }
         finally { _writeLock.Release(); }
+    }
+
+    private static async Task<IReadOnlyList<ConversationSectionOrderEntry>> ReadOrderCoreAsync(
+        SqliteConnection connection, SqliteTransaction transaction, AgentId agentId, CancellationToken ct)
+    {
+        var owned = new List<SectionId>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "SELECT id FROM conversation_sections WHERE agent_id = $agentId ORDER BY section_order, created_at, id";
+            command.Parameters.AddWithValue("$agentId", agentId.Value);
+            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                owned.Add(SectionId.From(reader.GetString(0)));
+        }
+        var persisted = new List<ConversationSectionOrderEntry>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "SELECT system_group, section_id FROM conversation_section_group_order WHERE agent_id = $agentId ORDER BY group_order";
+            command.Parameters.AddWithValue("$agentId", agentId.Value);
+            await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                if (!reader.IsDBNull(0) && reader.IsDBNull(1) &&
+                    Enum.TryParse<BuiltInConversationSection>(reader.GetString(0), out var system) &&
+                    Enum.IsDefined(system) && system.ToString() == reader.GetString(0))
+                    persisted.Add(ConversationSectionOrderEntry.ForSystem(system));
+                else if (reader.IsDBNull(0) && !reader.IsDBNull(1) && !string.IsNullOrWhiteSpace(reader.GetString(1)))
+                    persisted.Add(ConversationSectionOrderEntry.ForSection(SectionId.From(reader.GetString(1))));
+            }
+        }
+        return ConversationSectionOrderEntry.Normalize(persisted, owned);
+    }
+
+    private static async Task WriteOrderCoreAsync(SqliteConnection connection, SqliteTransaction transaction,
+        AgentId agentId, IReadOnlyList<ConversationSectionOrderEntry> order, CancellationToken ct)
+    {
+        await using (var clear = connection.CreateCommand())
+        {
+            clear.Transaction = transaction;
+            clear.CommandText = "DELETE FROM conversation_section_group_order WHERE agent_id = $agentId";
+            clear.Parameters.AddWithValue("$agentId", agentId.Value);
+            await clear.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        var customIndex = 0;
+        var now = DateTimeOffset.UtcNow.ToString("O");
+        for (var i = 0; i < order.Count; i++)
+        {
+            var entry = order[i];
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO conversation_section_group_order (agent_id, group_order, system_group, section_id)
+                VALUES ($agentId, $order, $system, $sectionId);
+                """;
+            command.Parameters.AddWithValue("$agentId", agentId.Value);
+            command.Parameters.AddWithValue("$order", i);
+            command.Parameters.AddWithValue("$system", (object?)entry.System?.ToString() ?? DBNull.Value);
+            command.Parameters.AddWithValue("$sectionId", (object?)entry.SectionId?.Value ?? DBNull.Value);
+            await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            if (entry.SectionId is { } id)
+            {
+                await using var update = connection.CreateCommand();
+                update.Transaction = transaction;
+                update.CommandText = "UPDATE conversation_sections SET section_order = $order, updated_at = $now WHERE id = $id AND agent_id = $agentId";
+                update.Parameters.AddWithValue("$order", customIndex++);
+                update.Parameters.AddWithValue("$now", now);
+                update.Parameters.AddWithValue("$id", id.Value);
+                update.Parameters.AddWithValue("$agentId", agentId.Value);
+                await update.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <inheritdoc />
@@ -350,6 +440,19 @@ public sealed class SqliteConversationSectionStore : IConversationSectionStore
                     conversation_id TEXT PRIMARY KEY,
                     section_id TEXT NOT NULL,
                     assigned_at TEXT NOT NULL,
+                    FOREIGN KEY (section_id) REFERENCES conversation_sections(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS conversation_section_group_order (
+                    agent_id TEXT NOT NULL,
+                    group_order INTEGER NOT NULL,
+                    system_group TEXT NULL,
+                    section_id TEXT NULL,
+                    PRIMARY KEY (agent_id, group_order),
+                    CHECK ((system_group IS NOT NULL AND section_id IS NULL)
+                        OR (system_group IS NULL AND section_id IS NOT NULL)),
+                    UNIQUE (agent_id, system_group),
+                    UNIQUE (agent_id, section_id),
                     FOREIGN KEY (section_id) REFERENCES conversation_sections(id) ON DELETE CASCADE
                 );
 

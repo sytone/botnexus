@@ -605,6 +605,9 @@ public sealed class ChatPanelTests : IDisposable
         _ctx.JSInterop.SetupVoid("BotNexus.attachCodeCopyButtons", _ => true);
         _ctx.JSInterop.SetupVoid("chatScroll.forceScrollToBottom", _ => true);
         _ctx.JSInterop.SetupVoid("chatScroll.observeTopForLoadMore", _ => true);
+        // Read-only rows still bind the menu's context target; keep all unrelated JS strict.
+        _ctx.JSInterop.SetupVoid("conversationActionMenu.bindTrigger", _ => true);
+        _ctx.JSInterop.SetupVoid("conversationActionMenu.unbindTrigger", _ => true);
 
         _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "sub-1").Add(c => c.ConversationId, "subagent-session:sub-1"));
 

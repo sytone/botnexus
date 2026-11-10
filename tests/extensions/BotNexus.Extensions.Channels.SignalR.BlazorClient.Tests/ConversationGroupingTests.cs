@@ -255,7 +255,7 @@ public sealed class ConversationGroupingTests : IDisposable
     }
 
     [Fact]
-    public void PinnedGroup_OnlyShownWhenPinnedExist()
+    public void PinnedGroup_EmptyCanonicalSlotRemainsManageableWithoutTakingNormalRows()
     {
         // Arrange: no pinned conversations
         SeedAgentWithConversations(
@@ -264,11 +264,17 @@ public sealed class ConversationGroupingTests : IDisposable
 
         var cut = RenderLayout();
 
-        // Pinned group should NOT be rendered
-        Assert.Empty(cut.FindAll("[data-testid='conversation-group-pinned']"));
+        // #5095: empty built-ins keep their canonical, manageable slots, but never borrow rows.
+        var pinned = Assert.Single(cut.FindAll("[data-testid='conversation-group-pinned']"));
+        Assert.Empty(pinned.QuerySelectorAll("[data-testid='conversation-list-item']"));
+        Assert.Equal("0", pinned.QuerySelector("[data-testid='pinned-group-count']")?.TextContent.Trim());
+        Assert.NotNull(pinned.QuerySelector("[data-testid='section-actions-trigger']"));
+        Assert.DoesNotContain("Normal Chat", pinned.TextContent);
 
-        // Conversations group should still be present
-        cut.Find("[data-testid='conversation-group-conversations']");
+        var conversations = cut.Find("[data-testid='conversation-group-conversations']");
+        var row = Assert.Single(conversations.QuerySelectorAll("[data-testid='conversation-list-item']"));
+        Assert.Equal("c-1", row.GetAttribute("data-conversation-id"));
+        Assert.Contains("Normal Chat", row.TextContent);
     }
 
     [Fact]

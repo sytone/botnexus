@@ -81,6 +81,16 @@
                     experiments as they become available. Applies immediately and is stored in this browser.
                 </div>
                 <div class="portal-settings-row">
+                    <label class="portal-settings-label" for="portal-focused-sidebar">Focused sidebar</label>
+                    <input id="portal-focused-sidebar" type="checkbox"
+                           data-testid="focused-sidebar-toggle"
+                           checked="@Prefs.Current.FocusedSidebar"
+                           @onchange="ToggleFocusedSidebar" />
+                </div>
+                <div class="portal-settings-hint">
+                    Show one section at a time with a section picker. Applies immediately and is stored in this browser.
+                </div>
+                <div class="portal-settings-row">
                     <label class="portal-settings-label" for="portal-density-select">Interface density</label>
                     <select id="portal-density-select"
                             class="portal-settings-select"
@@ -158,6 +168,9 @@
     {
         await Prefs.SetShellAsync(e.Value?.ToString() ?? PortalShell.Classic);
     }
+
+    private Task ToggleFocusedSidebar(ChangeEventArgs e) =>
+        Prefs.SetFocusedSidebarAsync(e.Value is true);
 
     private async Task ToggleArchiveConfirm(ChangeEventArgs e)
     {

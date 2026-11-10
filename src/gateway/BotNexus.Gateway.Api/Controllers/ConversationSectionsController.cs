@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
@@ -9,15 +10,13 @@ namespace BotNexus.Gateway.Api.Controllers;
 /// <summary>
 /// REST API for user-defined conversation sections (issue #2124) - personal, ordered, collapsible
 /// sidebar groupings and the assignment of conversations into them. All state is persisted
-/// server-side per agent/world via <see cref="IConversationSectionStore"/>, never in browser local
+/// server-side per agent/data root via <see cref="IConversationSectionStore"/>, never in browser local
 /// storage, so a user's organisation survives across browsers, devices, and gateway restarts.
 /// </summary>
 /// <remarks>
-/// <b>Authorization / ownership.</b> Sections are scoped to an agent's sidebar within a world. The
-/// portal transport is currently unauthenticated (see issue #527), so the effective boundary is the
-/// agent + world the store stamps; when per-principal auth lands, these endpoints should additionally
-/// scope to the caller's principal. Mutating endpoints resolve the owning agent from the section row,
-/// so a section id is sufficient to authorize a rename/reorder/delete within the current model.
+/// <b>Authorization / ownership.</b> Mutation targets must belong to the route agent. Conversation
+/// writes also retain the stored visibility and caller-agent guard. The inherited store boundary is
+/// agent/data-root scoped; world stamping alone is not cross-world or per-principal isolation.
 /// </remarks>
 [ApiController]
 [Route("api/agents/{agentId}/sections")]
@@ -45,7 +44,8 @@ public sealed class ConversationSectionsController : ControllerBase
         var assignments = await _sections.GetAssignmentsAsync(agent, ct);
         return Ok(new SectionListResponse(
             sections.Select(ToDto).ToList(),
-            assignments.ToDictionary(kv => kv.Key, kv => kv.Value)));
+            assignments.ToDictionary(kv => kv.Key, kv => kv.Value),
+            (await _sections.GetGroupOrderAsync(agent, ct)).Select(ToGroupDto).ToArray()));
     }
 
     /// <summary>Creates a new section for the agent.</summary>
@@ -80,6 +80,10 @@ public sealed class ConversationSectionsController : ControllerBase
         if (request.Name is not null && ValidateName(request.Name) is { } error)
             return BadRequest(new { error });
 
+        var existing = await _sections.GetSectionAsync(SectionId.From(sectionId), ct);
+        if (existing is null || existing.AgentId != AgentId.From(agentId))
+            return NotFound();
+
         var updated = await _sections.UpdateSectionAsync(
             SectionId.From(sectionId),
             request.Name?.Trim(),
@@ -98,6 +102,46 @@ public sealed class ConversationSectionsController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>Reorders built-in and custom peer groups, returning the complete canonical order.</summary>
+    [HttpPut("group-order")]
+    [ProducesResponseType(typeof(IReadOnlyList<SectionGroupOrderDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult> ReorderGroups(string agentId, [FromBody] ReorderSectionGroupsRequest request, CancellationToken ct)
+    {
+        if (request.GroupOrder is null)
+            return BadRequest(new { error = "groupOrder is required." });
+        var entries = new List<ConversationSectionOrderEntry>();
+        foreach (var dto in request.GroupOrder)
+        {
+            // Validate shape before constructing typed ids. A display name is never an identity,
+            // and numeric strings must not accidentally parse as enum identities.
+            if (dto is null || (dto.System is null) == (dto.SectionId is null))
+                return BadRequest(new { error = "Each group requires exactly one system or sectionId." });
+            if (dto.System is { } systemName)
+            {
+                if (!Enum.TryParse<BuiltInConversationSection>(systemName, out var system) ||
+                    !Enum.IsDefined(system) || system.ToString() != systemName)
+                    return BadRequest(new { error = "Unknown system group." });
+                entries.Add(ConversationSectionOrderEntry.ForSystem(system));
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(dto.SectionId))
+                    return BadRequest(new { error = "sectionId is required for a custom group." });
+                entries.Add(ConversationSectionOrderEntry.ForSection(SectionId.From(dto.SectionId)));
+            }
+        }
+        try
+        {
+            var order = await _sections.ReorderGroupsAsync(AgentId.From(agentId), entries, ct);
+            return Ok(order.Select(ToGroupDto).ToArray());
+        }
+        catch (ArgumentException)
+        {
+            return BadRequest(new { error = "Group order contains a duplicate, unknown or non-owned identity." });
+        }
+    }
+
     /// <summary>
     /// Deletes a section. Its conversations are returned to their system section - they are never
     /// deleted or archived.
@@ -106,7 +150,10 @@ public sealed class ConversationSectionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     public async Task<ActionResult> Delete(string agentId, string sectionId, CancellationToken ct)
     {
-        await _sections.DeleteSectionAsync(SectionId.From(sectionId), ct);
+        var existing = await _sections.GetSectionAsync(SectionId.From(sectionId), ct);
+        if (existing is null || existing.AgentId != AgentId.From(agentId))
+            return NotFound();
+        await _sections.DeleteSectionAsync(existing.SectionId, ct);
         return NoContent();
     }
 
@@ -120,6 +167,10 @@ public sealed class ConversationSectionsController : ControllerBase
             _conversations is null ? null : await _conversations.GetAsync(ConversationId.From(conversationId), ct), AgentId.From(agentId));
         if (clientWriteFailure is not null)
             return clientWriteFailure;
+
+        var target = await _sections.GetSectionAsync(SectionId.From(sectionId), ct);
+        if (target is null || target.AgentId != AgentId.From(agentId))
+            return NotFound(new { error = $"Section '{sectionId}' does not exist." });
 
         try
         {
@@ -155,6 +206,9 @@ public sealed class ConversationSectionsController : ControllerBase
         return null;
     }
 
+    private static SectionGroupOrderDto ToGroupDto(ConversationSectionOrderEntry entry)
+        => new(entry.System?.ToString(), entry.SectionId?.Value);
+
     private static SectionDto ToDto(ConversationSection s) =>
         new(s.SectionId.Value, s.AgentId.Value, s.Name, s.Order, s.IsCollapsed, s.CreatedAt, s.UpdatedAt);
 }
@@ -162,7 +216,9 @@ public sealed class ConversationSectionsController : ControllerBase
 /// <summary>Sections plus the conversation-id to section-id assignment map for the agent.</summary>
 /// <param name="Sections">The agent's user-defined sections in display order.</param>
 /// <param name="Assignments">Map of conversation id to the section id it is assigned to.</param>
-public sealed record SectionListResponse(IReadOnlyList<SectionDto> Sections, IReadOnlyDictionary<string, string> Assignments);
+/// <param name="GroupOrder">Complete peer order; default preserves older response constructors.</param>
+public sealed record SectionListResponse(IReadOnlyList<SectionDto> Sections, IReadOnlyDictionary<string, string> Assignments,
+    IReadOnlyList<SectionGroupOrderDto>? GroupOrder = null);
 
 /// <summary>Wire representation of a user-defined conversation section.</summary>
 public sealed record SectionDto(
@@ -182,3 +238,11 @@ public sealed record UpdateSectionRequest(string? Name = null, bool? IsCollapsed
 
 /// <summary>Request body to reorder an agent's sections.</summary>
 public sealed record ReorderSectionsRequest(IReadOnlyList<string>? SectionIds);
+
+/// <summary>Wire union validated at the boundary; only the populated identity is serialized.</summary>
+public sealed record SectionGroupOrderDto(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? System = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SectionId = null);
+
+/// <summary>Unified peer reorder request; null entries and a missing array are invalid.</summary>
+public sealed record ReorderSectionGroupsRequest(IReadOnlyList<SectionGroupOrderDto?>? GroupOrder);

@@ -6,7 +6,8 @@ namespace BotNexus.Gateway.Abstractions.Conversations;
 /// <summary>
 /// Persistence contract for user-defined conversation sections and their conversation assignments
 /// (issue #2124). Sections are personal, ordered, collapsible groupings scoped to a single agent's
-/// sidebar within a single world; a conversation may belong to at most one section.
+/// sidebar in the current data root; WorldId is stamped, not an inherited read filter.
+/// A conversation may belong to at most one section.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -25,12 +26,24 @@ public interface IConversationSectionStore
     /// </summary>
     Task<IReadOnlyList<ConversationSection>> ListSectionsAsync(AgentId agentId, CancellationToken ct = default);
 
+    /// <summary>Returns all built-ins and owned custom sections in normalized unified order.</summary>
+    Task<IReadOnlyList<ConversationSectionOrderEntry>> GetGroupOrderAsync(AgentId agentId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomically reorders peer groups and synchronizes legacy custom Order. Rejects duplicate,
+    /// unknown and non-owned identities with ArgumentException before mutation. Omitted groups
+    /// append in their prior canonical relative order.
+    /// </summary>
+    Task<IReadOnlyList<ConversationSectionOrderEntry>> ReorderGroupsAsync(AgentId agentId,
+        IReadOnlyList<ConversationSectionOrderEntry> orderedGroups, CancellationToken ct = default);
+
     /// <summary>Gets a single section by id, or <c>null</c> when it does not exist.</summary>
     Task<ConversationSection?> GetSectionAsync(SectionId sectionId, CancellationToken ct = default);
 
     /// <summary>
     /// Creates a new section for the agent. The <see cref="ConversationSection.Order"/> is assigned as
-    /// the next position after the agent's existing sections. Returns the persisted section.
+    /// the next custom position. Appends its unified group slot after every existing group in the same
+    /// atomic mutation. Returns the persisted section.
     /// </summary>
     Task<ConversationSection> CreateSectionAsync(ConversationSection section, CancellationToken ct = default);
 
@@ -42,7 +55,7 @@ public interface IConversationSectionStore
     Task<ConversationSection?> UpdateSectionAsync(SectionId sectionId, string? name, bool? isCollapsed, CancellationToken ct = default);
 
     /// <summary>
-    /// Reorders the agent's sections to match the supplied id sequence. Ids not owned by the agent are
+    /// Reorders custom slots only, preserving system positions in the unified order. Ids not owned by the agent are
     /// ignored; any of the agent's sections omitted from <paramref name="orderedSectionIds"/> keep
     /// their relative order after the supplied ones. Idempotent.
     /// </summary>

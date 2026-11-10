@@ -2,11 +2,10 @@
 @implements IAsyncDisposable
 
 <div class="conversation-action-context-target" data-testid="conversation-action-context-target"
-     tabindex="@(ChildContent is null ? null : "0")"
-     @oncontextmenu="OpenFromContextMenu" @oncontextmenu:preventDefault="true"
-     @onkeydown="HandleTargetKeyDown">
+     @ref="_target" tabindex="@(ChildContent is null ? null : "0")"
+     @oncontextmenu="OpenFromContextMenu" @oncontextmenu:preventDefault="true">
     @ChildContent
-    @if (Actions.Count > 0)
+    @if (HasSubject && Actions.Count > 0)
     {
         <button type="button" class="conversation-actions-trigger" data-testid="conversation-actions-trigger"
                 @ref="_trigger" aria-label="More conversation actions" aria-haspopup="menu"
@@ -22,12 +21,10 @@
         <button type="button" class="conversation-action-menu-dismiss" data-testid="conversation-action-menu-dismiss"
                 aria-label="Dismiss conversation actions" @onclick="Close"></button>
         <div class="conversation-action-menu" data-testid="conversation-action-menu" role="menu" tabindex="-1"
-             @ref="_menu" style="left:@(_x)px;top:@(_y)px" @onkeydown="HandleMenuKeyDown">
-            @for (var i = 0; i < Actions.Count; i++)
+             @ref="_menu" style="left:@(_x)px;top:@(_y)px">
+            @foreach (var action in Actions)
             {
-                var index = i;
-                var action = Actions[index];
-                <button type="button" role="menuitem" tabindex="@(index == _activeIndex ? "0" : "-1")"
+                <button type="button" role="menuitem" tabindex="-1"
                         class="conversation-action-menu-item @(action.IsDestructive ? "destructive" : null)"
                         data-action-id="@action.Id"
                         data-section-id="@(action.Id.StartsWith("move-", StringComparison.Ordinal) && action.Id != "move-none" ? action.Id[5..] : null)"
@@ -40,100 +37,160 @@
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<ConversationActionDefinition> Actions { get; set; } = [];
     [Parameter] public RenderFragment? ChildContent { get; set; }
+    /// <summary>The owning agent of the authorized subject; null/blank fails closed during unresolved renders.</summary>
+    [Parameter] public string? SubjectAgentId { get; set; }
+    /// <summary>The conversation authorized by this render; null/blank prevents opening or invoking actions.</summary>
+    [Parameter] public string? SubjectConversationId { get; set; }
 
-    private ElementReference _trigger;
-    private ElementReference _overlay;
-    private ElementReference _menu;
+    private ElementReference _target, _trigger, _overlay, _menu;
     private DotNetObjectReference<ConversationActionMenu>? _reference;
-    private bool _open;
-    private bool _focusMenu;
+    private readonly string _owner = Guid.NewGuid().ToString("N");
+    private long _revision;
+    private string? _token;
+    // Capture elements with the immutable token BEFORE issuing JS. Never pair an old token
+    // with fields refreshed by a subsequent render of this same component.
+    private sealed record Opening(string Token, ElementReference Overlay, ElementReference Menu, ElementReference Trigger);
+    private Opening? _issued, _retired;
+    private int _generation;
+    private (string? AgentId, string? ConversationId) _subject;
+    private bool HasSubject => !string.IsNullOrWhiteSpace(SubjectAgentId) &&
+        !string.IsNullOrWhiteSpace(SubjectConversationId);
+    private (string Id, string Label, bool IsDestructive)[] _authorization = [];
+    private bool _open, _focusMenu, _disposed;
     private int _activeIndex;
-    private double _x;
-    private double _y;
+    private double _x, _y;
+
+    private bool Current(string token) => !_disposed && HasSubject && _token == token;
+    private bool Current(string token, int generation) => Current(token) && generation == _generation;
+
+    protected override void OnParametersSet()
+    {
+        // Subject identity and permission metadata are separate from delegate identity:
+        // equivalent same-subject renders rebuild callbacks legitimately. Every delivered
+        // subject/permission transition advances the lifetime, including A/B/A and null/A.
+        var subject = (SubjectAgentId, SubjectConversationId);
+        var authorization = Actions.Select(a => (a.Id, a.Label, a.IsDestructive)).ToArray();
+        if (_subject != subject || !_authorization.SequenceEqual(authorization))
+        {
+            ++_generation;
+            _retired = _issued;
+            _open = _focusMenu = false;
+        }
+        _subject = subject;
+        _authorization = authorization;
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!_open || !_focusMenu)
-            return;
-        _focusMenu = false;
+        if (_disposed) return;
         _reference ??= DotNetObjectReference.Create(this);
-        await JS.InvokeVoidAsync("conversationActionMenu.open", _overlay, _menu, _reference);
-        await JS.InvokeVoidAsync("conversationActionMenu.focusItem", _menu, _activeIndex);
+        var retired = _retired;
+        _retired = null;
+        var target = _target;
+        var trigger = _trigger;
+        var hasActions = HasSubject && Actions.Count > 0;
+        var opening = _open && _focusMenu && _token is { } token
+            ? new Opening(token, _overlay, _menu, trigger) : null;
+        var index = _activeIndex;
+        if (opening is not null)
+        {
+            _focusMenu = false;
+            _issued = opening;
+        }
+        if (retired is not null)
+            await JS.InvokeVoidAsync("conversationActionMenu.close", retired.Token, retired.Overlay, false);
+        if (_disposed) return;
+        await JS.InvokeVoidAsync("conversationActionMenu.bindTrigger", target, _reference, true);
+        if (_disposed) return;
+        if (hasActions)
+            await JS.InvokeVoidAsync("conversationActionMenu.bindTrigger", trigger, _reference, false);
+        if (opening is null || !Current(opening.Token) || !_open) return;
+        await JS.InvokeVoidAsync("conversationActionMenu.open", opening.Token, opening.Overlay, opening.Menu, opening.Trigger, _reference);
+        if (!Current(opening.Token) || !_open) return;
+        await JS.InvokeVoidAsync("conversationActionMenu.focusItem", opening.Token, opening.Menu, index);
     }
 
-    private void Toggle(MouseEventArgs args)
+    private async Task Toggle(MouseEventArgs args)
     {
-        if (_open) { Close(); return; }
-        Open(args.ClientX, args.ClientY);
+        if (_open) await Close();
+        else Open(args.ClientX, args.ClientY);
     }
 
     private void OpenFromContextMenu(MouseEventArgs args) => Open(args.ClientX, args.ClientY);
 
-    private void Open(double x, double y)
+    private void Open(double x, double y, bool last = false)
     {
-        if (Actions.Count == 0) return;
+        if (_disposed || !HasSubject || Actions.Count == 0) return;
+        _token = $"{_owner}:{++_revision}";
         _x = x;
         _y = y;
-        _activeIndex = 0;
+        _activeIndex = last ? -1 : 0;
         _open = true;
         _focusMenu = true;
     }
 
-    private void HandleTargetKeyDown(KeyboardEventArgs args)
+    /// <summary>Called only by the native trigger navigation listener; actions remain native clicks.</summary>
+    [JSInvokable]
+    public Task OpenFromBrowser(bool last)
     {
-        if (args.Key is "ContextMenu" || (args.ShiftKey && args.Key == "F10"))
-            Open(0, 0);
-    }
-
-    private async Task HandleMenuKeyDown(KeyboardEventArgs args)
-    {
-        if (args.Key == "Escape") { await CloseAndRestoreFocus(); return; }
-        if (args.Key is "ArrowDown" or "ArrowUp" or "Home" or "End")
-        {
-            _activeIndex = args.Key switch
-            {
-                "ArrowDown" => (_activeIndex + 1) % Actions.Count,
-                "ArrowUp" => (_activeIndex - 1 + Actions.Count) % Actions.Count,
-                "Home" => 0,
-                _ => Actions.Count - 1
-            };
-            await JS.InvokeVoidAsync("conversationActionMenu.focusItem", _menu, _activeIndex);
-            return;
-        }
-        if (args.Key is "Enter" or " ")
-            await InvokeAction(Actions[_activeIndex]);
+        if (_disposed || !HasSubject || Actions.Count == 0) return Task.CompletedTask;
+        Open(0, 0, last);
+        return InvokeAsync(StateHasChanged);
     }
 
     private async Task InvokeAction(ConversationActionDefinition action)
     {
-        _open = false;
-        await action.Invoke();
-        await JS.InvokeVoidAsync("conversationActionMenu.focus", _trigger);
+        if (!_open || _token is not { } token || !Current(token) || !Actions.Contains(action)) return;
+        // Capture the subject authorization lifetime before the first cleanup/focus await.
+        var generation = _generation;
+        await Close();
+        if (!Current(token, generation)) return;
+        var authorized = Actions.FirstOrDefault(a => a.Id == action.Id && a.Label == action.Label &&
+            a.IsDestructive == action.IsDestructive);
+        if (authorized is null) return;
+        // Use the CURRENT authorized callback, not a closure from a previous equivalent
+        // render. Focus is restored before a modal/navigation, never after the action.
+        await authorized.Invoke();
     }
 
-    public void Close() => _open = false;
+    /// <summary>Retires only this captured opening and requests single-use owner-scoped trigger focus.</summary>
+    public async Task Close()
+    {
+        if (_disposed) return;
+        var generation = _generation;
+        _open = _focusMenu = false;
+        var opening = _issued;
+        if (opening is null) return;
+        await JS.InvokeVoidAsync("conversationActionMenu.close", opening.Token, opening.Overlay, true);
+        if (!Current(opening.Token, generation)) return;
+        await JS.InvokeVoidAsync("conversationActionMenu.focus", opening.Token, opening.Trigger);
+        if (!Current(opening.Token, generation)) return;
+    }
 
+    /// <summary>Updates markup only; native JS already retired the matching browser owner synchronously.</summary>
     [JSInvokable]
-    public async Task DismissFromBrowser(string reason)
+    public Task DismissFromBrowser(string reason, string token)
     {
-        if (!_open) return;
-        _open = false;
-        await InvokeAsync(StateHasChanged);
-        await JS.InvokeVoidAsync("conversationActionMenu.focus", _trigger);
+        if (!Current(token) || !_open) return Task.CompletedTask;
+        _open = _focusMenu = false;
+        return InvokeAsync(StateHasChanged);
     }
 
-    private async Task CloseAndRestoreFocus()
-    {
-        _open = false;
-        await JS.InvokeVoidAsync("conversationActionMenu.focus", _trigger);
-    }
-
+    /// <summary>Invalidates callbacks immediately, then retires the last issued opening even after action-close.</summary>
     public async ValueTask DisposeAsync()
     {
-        if (_reference is not null)
+        if (_disposed) return;
+        _disposed = true;
+        _open = _focusMenu = false;
+        var opening = _issued;
+        _reference?.Dispose();
+        try
         {
-            try { await JS.InvokeVoidAsync("conversationActionMenu.close"); } catch { }
-            _reference.Dispose();
+            if (opening is not null)
+                await JS.InvokeVoidAsync("conversationActionMenu.close", opening.Token, opening.Overlay, false);
+            await JS.InvokeVoidAsync("conversationActionMenu.unbindTrigger", _target);
+            await JS.InvokeVoidAsync("conversationActionMenu.unbindTrigger", _trigger);
         }
+        catch (JSDisconnectedException) { }
     }
 }

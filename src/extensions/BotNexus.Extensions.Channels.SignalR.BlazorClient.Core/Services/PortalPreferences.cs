@@ -34,6 +34,9 @@ public sealed class PortalPreferences
     /// </summary>
     public string Shell { get; set; } = PortalShell.Classic;
 
+    /// <summary>Show one sidebar section at a time; independent of the experimental shell.</summary>
+    public bool FocusedSidebar { get; set; }
+
     /// <summary>
     /// Colour theme, emitted as the <c>data-theme</c> attribute on the document element so the
     /// token block in <c>app.css</c> switches every colour at once. Dark is the default because it

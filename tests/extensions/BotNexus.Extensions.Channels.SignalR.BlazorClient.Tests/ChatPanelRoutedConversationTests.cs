@@ -196,6 +196,55 @@ public sealed class ChatPanelRoutedConversationTests : IDisposable
         Assert.DoesNotContain("ACTIVE-TODO-ITEM", todo);
     }
 
+    [Theory]
+    [InlineData("conversationActionMenu.close", false)]
+    [InlineData("conversationActionMenu.focus", false)]
+    [InlineData("conversationActionMenu.close", true)]
+    [InlineData("conversationActionMenu.focus", true)]
+    public async Task ChatPanel_RouteSubjectTransitionCancelsHeldClickWithIdenticalMetadata(string identifier, bool restoreOriginal)
+    {
+        var active = _store.GetConversation("conv-active");
+        active.ShouldNotBeNull();
+        active.IsPinned = false;
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1")
+            .Add(c => c.ConversationId, "conv-active"));
+        var menu = cut.FindComponent<ConversationActionMenu>();
+        menu.Instance.SubjectAgentId.ShouldBe("agent-1");
+        menu.Instance.SubjectConversationId.ShouldBe("conv-active");
+        var metadata = menu.Instance.Actions.Select(a => (a.Id, a.Label, a.IsDestructive)).ToArray();
+        menu.Find("[data-testid='conversation-actions-trigger']").Click();
+        var pending = _ctx.JSInterop.SetupVoid(identifier, _ => true);
+        var click = menu.Find("[data-action-id=pin]").ClickAsync(new());
+        cut.WaitForAssertion(() => pending.Invocations.ShouldHaveSingleItem());
+        cut.Render(p => p.Add(c => c.ConversationId, "conv-routed"));
+        var current = cut.FindComponent<ConversationActionMenu>();
+        current.Instance.ShouldBeSameAs(menu.Instance);
+        current.Instance.SubjectAgentId.ShouldBe("agent-1");
+        current.Instance.SubjectConversationId.ShouldBe("conv-routed");
+        current.Instance.Actions.Select(a => (a.Id, a.Label, a.IsDestructive)).ShouldBe(metadata);
+        if (restoreOriginal)
+            cut.Render(p => p.Add(c => c.ConversationId, "conv-active"));
+        pending.SetVoidResult();
+        await click;
+        var interaction = _ctx.Services.GetRequiredService<IAgentInteractionService>();
+        await interaction.DidNotReceive().SetConversationPinnedAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>());
+        current.Find("[data-testid='conversation-actions-trigger']").Click();
+        await current.Find("[data-action-id=pin]").ClickAsync(new());
+        await interaction.Received(1).SetConversationPinnedAsync("agent-1", restoreOriginal ? "conv-active" : "conv-routed", true);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("missing-conversation")]
+    [InlineData("conv-other")]
+    public void ChatPanel_MissingOrForeignSubjectDoesNotRenderActions(string? conversationId)
+    {
+        var cut = _ctx.Render<ChatPanel>(p => p.Add(c => c.AgentId, "agent-1")
+            .Add(c => c.ConversationId, conversationId));
+        cut.FindComponents<ConversationActionMenu>().ShouldBeEmpty();
+        cut.FindAll("[data-testid='conversation-actions-trigger']").ShouldBeEmpty();
+    }
+
     private static string TodoJson(string text) =>
         $$"""{"items":[{"id":"1","text":"{{text}}","status":"pending"}]}""";
 

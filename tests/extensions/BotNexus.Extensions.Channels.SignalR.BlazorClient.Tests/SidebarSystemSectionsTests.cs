@@ -1,4 +1,5 @@
 using Bunit;
+using BotNexus.Extensions.Channels.SignalR.BlazorClient.Components;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services.SlashCommands;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Layout;
 using BotNexus.Extensions.Channels.SignalR.BlazorClient.Services;
@@ -40,7 +41,7 @@ public sealed class SidebarSystemSectionsTests : IDisposable
 
         var restClient = Substitute.For<IGatewayRestClient>();
         restClient.ApiBaseUrl.Returns("");
-        var http = new HttpClient { BaseAddress = new Uri("http://localhost/") };
+        var http = new HttpClient(new SidebarHttpHandler()) { BaseAddress = new Uri("http://localhost/") };
 
         _ctx.Services.AddSingleton<IClientStateStore>(_store);
         _ctx.Services.AddSingleton(interaction);
@@ -68,6 +69,36 @@ public sealed class SidebarSystemSectionsTests : IDisposable
 
     private IRenderedComponent<MainLayout> RenderLayout() =>
         _ctx.Render<MainLayout>(p => p.Add(c => c.Body, (RenderFragment)(_ => { })));
+
+    // Finish the section snapshot before mounting the layout. Its Changed notifications can
+    // otherwise invalidate the keyed peer panel while the first-render DOM is still in use.
+    // All remaining startup reads use completed in-memory responses, not localhost requests.
+    private async Task<IRenderedComponent<MainLayout>> RenderInteractiveLayoutAsync()
+    {
+        var sections = _ctx.Services.GetRequiredService<ConversationSectionsState>();
+        await sections.EnsureLoadedAsync("a-1");
+        sections.HasSnapshot.ShouldBeTrue();
+        sections.IsLoading.ShouldBeFalse();
+        sections.LoadError.ShouldBeNull();
+        return RenderLayout();
+    }
+
+    private sealed class SidebarHttpHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var json = request.RequestUri?.AbsolutePath switch
+            {
+                "/api/agents/a-1/sections" => """{"sections":[],"assignments":{}}""",
+                "/api/agents" or "/api/tools" or "/api/cron" => "[]",
+                _ => throw new InvalidOperationException($"Unexpected sidebar request: {request.Method} {request.RequestUri}")
+            };
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            });
+        }
+    }
 
     private void Seed(params ConversationSummaryDto[] conversations)
     {
@@ -114,15 +145,17 @@ public sealed class SidebarSystemSectionsTests : IDisposable
         Assert.Contains("Cron Run", cut.Find("[data-testid='conversation-group-scheduled']").TextContent);
     }
 
-    /// <summary>The Automated group is not rendered at all when no webhook conversation exists.</summary>
+    /// <summary>Empty built-ins retain their manageable canonical slots.</summary>
     [Fact]
-    public void AutomatedGroup_NotRendered_WhenNoWebhookConversations()
+    public void AutomatedGroup_EmptyHeaderRemainsManageable()
     {
         Seed(Conv("c-normal", "Normal Chat"));
 
         var cut = RenderLayout();
 
-        Assert.Empty(cut.FindAll("[data-testid='conversation-group-automated']"));
+        var group = cut.Find("[data-testid='conversation-group-automated']");
+        group.QuerySelector("[data-testid='webhook-group-count']")?.TextContent.ShouldBe("0");
+        group.QuerySelector("[data-testid='section-actions-trigger']").ShouldNotBeNull();
     }
 
     /// <summary>First-time user (no persisted key): the Automated group starts collapsed.</summary>
@@ -143,40 +176,69 @@ public sealed class SidebarSystemSectionsTests : IDisposable
     /// reveals the webhook conversation in the group body.
     /// </summary>
     [Fact]
-    public void AutomatedGroup_ToggleIsAButton_AndExpandsOnActivation()
+    public async Task AutomatedGroup_ToggleIsAButton_AndExpandsOnActivation()
     {
         Seed(Conv("c-hook", "Hook Run", source: "Webhook"));
 
-        var cut = RenderLayout();
+        var cut = await RenderInteractiveLayoutAsync();
 
         var toggle = cut.Find("[data-testid='webhook-group-toggle']");
         Assert.Equal("BUTTON", toggle.TagName);
 
-        cut.InvokeAsync(() => cut.Find("[data-testid='webhook-group-toggle']").Click());
+        cut.WaitForAssertion(() =>
+            Assert.Equal("false", cut.Find("[data-testid='webhook-group-toggle']").GetAttribute("aria-expanded")));
+        // The peer panel owns these handlers and can render independently of MainLayout.
+        // Query its current DOM, not the parent's cached descendant markup; await one real click.
+        var peers = cut.FindComponents<ConversationSectionsPanel>().Single(panel => !panel.Instance.CreateOnly);
+        await peers.InvokeAsync(() => peers.Find("[data-testid='webhook-group-toggle']")
+            .TriggerEventAsync("onclick", new Microsoft.AspNetCore.Components.Web.MouseEventArgs()));
 
         cut.WaitForAssertion(() =>
-            Assert.Contains("Hook Run", cut.Find("[data-testid='conversation-group-automated']").TextContent));
+        {
+            var group = cut.Find("[data-testid='conversation-group-automated']");
+            Assert.Contains("Hook Run", group.TextContent);
+            Assert.Equal("true", cut.Find("[data-testid='webhook-group-toggle']").GetAttribute("aria-expanded"));
+            Assert.Single(group.QuerySelectorAll("[data-testid='conversation-list-item']"));
+            Assert.Equal("1", cut.Find("[data-testid='webhook-group-count']").TextContent.Trim());
+        });
+        Assert.Contains(_ctx.JSInterop.Invocations, invocation =>
+            invocation.Identifier == "localStorage.setItem" &&
+            invocation.Arguments.SequenceEqual(new object[] { "botnexus-webhook-collapsed", "false" }));
     }
 
     // ------------------------------------------------- pinned / conversations become collapsible
 
     /// <summary>Pinned gets a real &lt;button&gt; header toggle; activating it hides its items.</summary>
     [Fact]
-    public void PinnedGroup_ToggleIsAButton_AndCollapsesOnActivation()
+    public async Task PinnedGroup_ToggleIsAButton_AndCollapsesOnActivation()
     {
         Seed(Conv("c-pin", "Pinned Chat", pinned: true), Conv("c-normal", "Normal Chat"));
 
-        var cut = RenderLayout();
+        var cut = await RenderInteractiveLayoutAsync();
 
         var toggle = cut.Find("[data-testid='pinned-group-toggle']");
         Assert.Equal("BUTTON", toggle.TagName);
         // Pinned defaults to expanded - it is the user's own explicit shortlist.
         Assert.Contains("Pinned Chat", cut.Find("[data-testid='conversation-group-pinned']").TextContent);
 
-        cut.InvokeAsync(() => cut.Find("[data-testid='pinned-group-toggle']").Click());
+        cut.WaitForAssertion(() =>
+            Assert.Equal("true", cut.Find("[data-testid='pinned-group-toggle']").GetAttribute("aria-expanded")));
+        // Query the event-owning panel's current DOM and await one real click.
+        var peers = cut.FindComponents<ConversationSectionsPanel>().Single(panel => !panel.Instance.CreateOnly);
+        await peers.InvokeAsync(() => peers.Find("[data-testid='pinned-group-toggle']")
+            .TriggerEventAsync("onclick", new Microsoft.AspNetCore.Components.Web.MouseEventArgs()));
 
         cut.WaitForAssertion(() =>
-            Assert.DoesNotContain("Pinned Chat", cut.Find("[data-testid='conversation-group-pinned']").TextContent));
+        {
+            var group = cut.Find("[data-testid='conversation-group-pinned']");
+            Assert.DoesNotContain("Pinned Chat", group.TextContent);
+            Assert.Equal("false", cut.Find("[data-testid='pinned-group-toggle']").GetAttribute("aria-expanded"));
+            Assert.Empty(group.QuerySelectorAll("[data-testid='conversation-list-item']"));
+            Assert.Equal("1", cut.Find("[data-testid='pinned-group-count']").TextContent.Trim());
+        });
+        Assert.Contains(_ctx.JSInterop.Invocations, invocation =>
+            invocation.Identifier == "localStorage.setItem" &&
+            invocation.Arguments.SequenceEqual(new object[] { "botnexus-pinned-collapsed", "true" }));
     }
 
     /// <summary>Pinned collapse state is restored from the persisted localStorage key.</summary>
@@ -195,20 +257,34 @@ public sealed class SidebarSystemSectionsTests : IDisposable
 
     /// <summary>Conversations gets a real &lt;button&gt; header toggle; activating it hides its items.</summary>
     [Fact]
-    public void ConversationsGroup_ToggleIsAButton_AndCollapsesOnActivation()
+    public async Task ConversationsGroup_ToggleIsAButton_AndCollapsesOnActivation()
     {
         Seed(Conv("c-normal", "Normal Chat"));
 
-        var cut = RenderLayout();
+        var cut = await RenderInteractiveLayoutAsync();
 
         var toggle = cut.Find("[data-testid='conversations-group-toggle']");
         Assert.Equal("BUTTON", toggle.TagName);
         Assert.Contains("Normal Chat", cut.Find("[data-testid='conversation-group-conversations']").TextContent);
 
-        cut.InvokeAsync(() => cut.Find("[data-testid='conversations-group-toggle']").Click());
+        cut.WaitForAssertion(() =>
+            Assert.Equal("true", cut.Find("[data-testid='conversations-group-toggle']").GetAttribute("aria-expanded")));
+        // Query the event-owning panel's current DOM and await one real click.
+        var peers = cut.FindComponents<ConversationSectionsPanel>().Single(panel => !panel.Instance.CreateOnly);
+        await peers.InvokeAsync(() => peers.Find("[data-testid='conversations-group-toggle']")
+            .TriggerEventAsync("onclick", new Microsoft.AspNetCore.Components.Web.MouseEventArgs()));
 
         cut.WaitForAssertion(() =>
-            Assert.DoesNotContain("Normal Chat", cut.Find("[data-testid='conversation-group-conversations']").TextContent));
+        {
+            var group = cut.Find("[data-testid='conversation-group-conversations']");
+            Assert.DoesNotContain("Normal Chat", group.TextContent);
+            Assert.Equal("false", cut.Find("[data-testid='conversations-group-toggle']").GetAttribute("aria-expanded"));
+            Assert.Empty(group.QuerySelectorAll("[data-testid='conversation-list-item']"));
+            Assert.Equal("1", cut.Find("[data-testid='conversations-group-count']").TextContent.Trim());
+        });
+        Assert.Contains(_ctx.JSInterop.Invocations, invocation =>
+            invocation.Identifier == "localStorage.setItem" &&
+            invocation.Arguments.SequenceEqual(new object[] { "botnexus-conversations-collapsed", "true" }));
     }
 
     /// <summary>Conversations collapse state is restored from the persisted localStorage key.</summary>
