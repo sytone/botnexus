@@ -92,15 +92,19 @@ public static class LegacyToolInvocationBackfill
             using var transaction = connection.BeginTransaction();
             using var state = connection.CreateCommand();
             state.Transaction = transaction;
-            state.CommandText = "CREATE TABLE IF NOT EXISTS legacy_tool_bulk_migration (version INTEGER PRIMARY KEY, completed_at TEXT NOT NULL); SELECT EXISTS(SELECT 1 FROM legacy_tool_bulk_migration WHERE version=1)";
+            state.CommandText = "CREATE TABLE IF NOT EXISTS legacy_tool_bulk_migration (version INTEGER PRIMARY KEY, completed_at TEXT NOT NULL); SELECT EXISTS(SELECT 1 FROM legacy_tool_bulk_migration WHERE version=2)";
             if (Convert.ToInt32(state.ExecuteScalar()) != 0)
             {
                 transaction.Commit();
                 return new(new(0, 0, 0, false, true), new(0, 0, 0, -1, -1, false));
             }
-            var backfill = PopulateAll(connection, transaction);
-            var cleanup = LegacyToolPayloadCleanup.ClearAllInTransaction(connection, transaction);
-            state.CommandText = "INSERT INTO legacy_tool_bulk_migration(version,completed_at) VALUES(1,strftime('%Y-%m-%dT%H:%M:%fZ','now'))";
+            state.CommandText = "SELECT EXISTS(SELECT 1 FROM legacy_tool_bulk_migration WHERE version=1)";
+            var alreadyPopulated = Convert.ToInt32(state.ExecuteScalar()) != 0;
+            // Version two repairs linked legacy duplicates only. Never replay population or
+            // change normalized evidence when version one has already committed.
+            var backfill = alreadyPopulated ? new LegacyToolInvocationBackfillReport(0, 0, 0, false, true) : PopulateAll(connection, transaction);
+            var cleanup = LegacyToolPayloadCleanup.ClearAllInTransaction(connection, transaction, !alreadyPopulated);
+            state.CommandText = "INSERT OR IGNORE INTO legacy_tool_bulk_migration(version,completed_at) VALUES(1,strftime('%Y-%m-%dT%H:%M:%fZ','now')); INSERT INTO legacy_tool_bulk_migration(version,completed_at) VALUES(2,strftime('%Y-%m-%dT%H:%M:%fZ','now'))";
             state.ExecuteNonQuery();
             transaction.Commit();
             foreach (var sessionId in cleanup.SessionIds)

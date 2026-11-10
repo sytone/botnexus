@@ -1,3 +1,4 @@
+using BotNexus.Domain.Primitives;
 using System.CommandLine;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -57,6 +58,7 @@ internal sealed class PluginCommands
                 !context.ParseResult.GetValueForOption(pin),
                 context.ParseResult.GetValueForOption(marketplacePlugin))));
 
+        command.AddCommand(BuildMarketplace(urlOption, tokenOption, targetOption));
         command.AddCommand(list);
         command.AddCommand(get);
         command.AddCommand(install);
@@ -66,6 +68,55 @@ internal sealed class PluginCommands
         command.AddCommand(BuildNamed("unpin", "Enable updates for a plugin.", HttpMethod.Post, "unpin", urlOption, tokenOption, targetOption));
         return command;
     }
+
+    private Command BuildMarketplace(Option<string> urlOption, Option<string?> tokenOption, Option<string?> targetOption)
+    {
+        var marketplace = new Command("marketplace", "Manage machine-global marketplace registrations (no clone, install, or execution).");
+        var list = new Command("list", "List registered marketplace sources.");
+        list.SetHandler(context => ExecuteAsync(context, urlOption, tokenOption, targetOption, HttpMethod.Get, "api/plugins/marketplaces", null));
+        marketplace.AddCommand(list);
+        foreach (var operation in new[] { "add", "get", "update", "remove", "enable", "disable" })
+        {
+            var id = new Argument<string>("id", "Lowercase marketplace identity.");
+            id.AddValidator(result =>
+            {
+                if (!MarketplaceId.TryFrom(result.GetValueOrDefault<string>(), out _))
+                    result.ErrorMessage = "Marketplace id must use lowercase alphanumeric segments separated by single hyphens (maximum 128 characters).";
+            });
+            var command = new Command(operation, $"{operation} a marketplace registration; installed plugins are unchanged.") { id };
+            if (operation is "add" or "update")
+            {
+                var source = new Argument<string>("source", "Credential-free absolute http, https, or ssh Git repository URL.");
+                var reference = new Option<string?>("--reference", "Optional branch, tag, or commit; omission selects the repository default.");
+                command.AddArgument(source);
+                command.AddOption(reference);
+                command.SetHandler(context =>
+                {
+                    var identity = context.ParseResult.GetValueForArgument(id);
+                    var url = context.ParseResult.GetValueForArgument(source);
+                    var requestedRef = context.ParseResult.GetValueForOption(reference);
+                    object body = operation == "add"
+                        ? new MarketplaceAddWireRequest(identity, url, requestedRef)
+                        : new MarketplaceRegistrationWireRequest(url, requestedRef);
+                    return ExecuteAsync(context, urlOption, tokenOption, targetOption,
+                        operation == "add" ? HttpMethod.Post : HttpMethod.Put,
+                        operation == "add" ? "api/plugins/marketplaces" : $"api/plugins/marketplaces/{Escape(identity)}", body);
+                });
+            }
+            else
+            {
+                command.SetHandler(context => ExecuteAsync(context, urlOption, tokenOption, targetOption,
+                    operation == "get" ? HttpMethod.Get : operation == "remove" ? HttpMethod.Delete : HttpMethod.Post,
+                    $"api/plugins/marketplaces/{Escape(context.ParseResult.GetValueForArgument(id))}" +
+                    (operation is "enable" or "disable" ? $"/{operation}" : string.Empty), null));
+            }
+            marketplace.AddCommand(command);
+        }
+        return marketplace;
+    }
+
+    private sealed record MarketplaceAddWireRequest(string Id, string Source, string? Reference);
+    private sealed record MarketplaceRegistrationWireRequest(string Source, string? Reference);
 
     private Command BuildNamed(
         string name,

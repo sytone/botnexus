@@ -111,6 +111,34 @@ public sealed class PlatformAgentReconciliationService : IHostedService
         try
         {
             var snapshot = await _writer.ReadAsync(cancellationToken);
+            foreach (var definition in _catalog)
+            {
+                if (!EntryExists(snapshot, AgentId.From(definition.AgentId)))
+                    continue;
+
+                if (snapshot["agents"]?[definition.AgentId] is not JsonObject existing)
+                {
+                    _logger.LogWarning(
+                        "Bundled agent {AgentId} already exists but is not a configuration object; "
+                        + "it was left unchanged. The agent configuration editor cannot patch this value. "
+                        + "Contact installation support to review and explicitly correct the canonical configuration. "
+                        + "Do not edit the generated JSON projection.",
+                        definition.AgentId);
+                }
+                else if (!TryReadProviderAndModel(existing, out _))
+                {
+                    // Presence still means user-owned, including placeholders written by older
+                    // versions. Diagnose actual missing prerequisites, never infer provenance.
+                    _logger.LogWarning(
+                        "Bundled agent {AgentId} already exists without a complete provider/model pair; "
+                        + "it was left unchanged. This can block validated configuration writes even when disabled. "
+                        + "Use PATCH /api/agents/{AgentId}/configuration to set provider and model together "
+                        + "to a configured provider and supported model. Omit enabled to preserve the current opt-out "
+                        + "and omit other fields to preserve customizations. Do not edit the generated JSON projection.",
+                        definition.AgentId, definition.AgentId);
+                }
+            }
+
             var missing = _catalog.Where(d => !EntryExists(snapshot, AgentId.From(d.AgentId))).ToList();
             if (missing.Count == 0)
             {
@@ -121,6 +149,7 @@ public sealed class PlatformAgentReconciliationService : IHostedService
             }
 
             List<string> inserted = [];
+            List<string> deferred = [];
 
             // Re-run the existence check inside the writer's locked read-modify-write so the
             // decision is made against the authoritative on-disk document, not the detached
@@ -133,16 +162,32 @@ public sealed class PlatformAgentReconciliationService : IHostedService
                     if (EntryExists(root, AgentId.From(definition.AgentId)))
                         continue;
 
+                    var entry = BuildEntry(definition, ResolveProviderAndModel(root));
+                    if (entry is null)
+                    {
+                        deferred.Add(definition.AgentId);
+                        continue;
+                    }
+
                     if (root["agents"] is not JsonObject agents)
                     {
                         agents = new JsonObject();
                         root["agents"] = agents;
                     }
 
-                    agents[definition.AgentId] = BuildEntry(root, definition);
+                    agents[definition.AgentId] = entry;
                     inserted.Add(definition.AgentId);
                 }
             }, "bundled-agent-reconciliation", cancellationToken);
+
+            if (deferred.Count > 0)
+            {
+                _logger.LogWarning(
+                    "Bundled agent insertion deferred for {AgentIds}: no eligible configured agent supplies "
+                    + "both provider and model. No placeholder was created. Configure an agent with a usable "
+                    + "provider/model pair, then restart the gateway to retry bundled-agent setup.",
+                    string.Join(", ", deferred));
+            }
 
             if (inserted.Count > 0)
             {
@@ -181,9 +226,6 @@ public sealed class PlatformAgentReconciliationService : IHostedService
     internal static bool EntryExists(JsonObject root, AgentId agentId)
         => root["agents"] is JsonObject agents && agents.ContainsKey(agentId.Value);
 
-    private static JsonObject BuildEntry(JsonObject root, BundledAgentDefinition definition)
-        => BuildEntry(definition, ResolveProviderAndModel(root));
-
     /// <summary>
     /// Materialises the config entry for a bundled agent from its template and an already-resolved
     /// provider/model pair.
@@ -197,28 +239,24 @@ public sealed class PlatformAgentReconciliationService : IHostedService
     /// </remarks>
     /// <param name="definition">The bundled agent to materialise.</param>
     /// <param name="resolved">
-    /// The provider/model to adopt, or <see langword="null"/> when none could be resolved, in which
-    /// case the entry is produced disabled with an actionable description.
+    /// The provider/model to adopt, or <see langword="null"/> when none could be resolved.
     /// </param>
-    internal static JsonObject BuildEntry(
+    /// <returns>A complete entry, or null when prerequisites are missing and insertion must be deferred.</returns>
+    internal static JsonObject? BuildEntry(
         BundledAgentDefinition definition,
         (string Provider, string Model)? resolved)
     {
         ArgumentNullException.ThrowIfNull(definition);
 
+        // Disabled agents have the same prerequisites as enabled agents. Absence, rather
+        // than an incomplete placeholder, keeps subsequent whole-document writes valid.
+        if (resolved is null
+            || string.IsNullOrWhiteSpace(resolved.Value.Provider)
+            || string.IsNullOrWhiteSpace(resolved.Value.Model))
+            return null;
+
         var entry = definition.CreateTemplate();
-
         entry[BundledPlatformAgents.DefinitionVersionMetadataKey] = definition.DefinitionVersion;
-
-        if (resolved is null)
-        {
-            // No provider/model anywhere in this installation. Writing a half-formed enabled
-            // agent would just produce a validation error on every config load, so insert it
-            // disabled and say plainly in the description what the operator has to fill in.
-            entry["enabled"] = false;
-            entry["description"] = BundledPlatformAgents.UnresolvedProviderDescription;
-            return entry;
-        }
 
         entry["provider"] = resolved.Value.Provider;
         entry["model"] = resolved.Value.Model;
@@ -239,8 +277,8 @@ public sealed class PlatformAgentReconciliationService : IHostedService
     ///   model. This is the installation's own answer to "which model do I use", so copying it
     ///   gives the bundled agent the behaviour the user already trusts.</item>
     ///   <item>Otherwise the first enabled config agent with a valid provider and model.</item>
-    ///   <item>Otherwise <see langword="null"/> — the caller inserts a disabled entry with an
-    ///   actionable description rather than guessing a provider that does not exist.</item>
+    ///   <item>Otherwise <see langword="null"/> — insertion is deferred with an actionable
+    ///   diagnostic rather than persisting an incomplete entry or guessing a provider.</item>
     /// </list>
     /// </remarks>
     internal static (string Provider, string Model)? ResolveProviderAndModel(JsonObject root)

@@ -23,7 +23,9 @@ public sealed class MicrosoftFoundryProviderCompositionTests
             models,
             NullLoggerFactory.Instance);
 
-        providers.Get("microsoft-foundry-responses").ShouldNotBeNull();
+        var registered = providers.Get("microsoft-foundry-responses");
+        registered.ShouldNotBeNull();
+        registered.ShouldBeAssignableTo<IProviderHealthCheck>();
         var model = models.GetModel("azure-foundry-test", "example-deployment");
         model.ShouldNotBeNull();
         model.Api.ShouldBe("microsoft-foundry-responses");

@@ -69,6 +69,38 @@ public sealed partial class ConfigMutationReceiptTests : IDisposable
     }
 
     [Fact]
+    public async Task ProviderAdd_AbsentStoreProjection_ReportsOnlySqlite()
+    {
+        await ConfigStoreBootstrap.PopulateAsync(_storePath, new JsonObject());
+        File.Delete(_configPath);
+        (await AddProviderAsync()).ShouldBe(0);
+        var output = Normalize(_output.ToString());
+        output.ShouldContain($"SQLite: {_storePath} (wins on read)");
+        output.ShouldNotContain("JSON:");
+        output.ShouldNotContain("Config saved to:");
+        output.ShouldNotContain(Secret);
+        File.Exists(_configPath).ShouldBeFalse();
+        var entries = await new SqliteConfigStore($"Data Source={_storePath}").ReadEntriesAsync();
+        entries["providers.receipt-test.apiKey"].Value.ShouldBe(System.Text.Json.JsonSerializer.Serialize(Secret));
+    }
+
+    [Fact]
+    public async Task RejectedStoreOnlyMutation_DoesNotPrintSuccessReceipt()
+    {
+        await ConfigStoreBootstrap.PopulateAsync(_storePath, new JsonObject());
+        File.Delete(_configPath);
+        var result = await CliConfigMutation.ApplyAsync(_configPath, _ => "deliberate rejection",
+            "receipt-failure", false, CancellationToken.None);
+        result.ExitCode.ShouldBe(1);
+        result.PrintReceipt();
+        var output = Normalize(_output.ToString());
+        output.ShouldContain("deliberate rejection");
+        output.ShouldNotContain("Updated configuration backends:");
+        output.ShouldNotContain("Config saved to:");
+        File.Exists(_configPath).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task ProviderAdd_WithStore_PrintsEveryBackendAndPersistsToBoth()
     {
         await ConfigStoreBootstrap.PopulateAsync(_storePath, new JsonObject());

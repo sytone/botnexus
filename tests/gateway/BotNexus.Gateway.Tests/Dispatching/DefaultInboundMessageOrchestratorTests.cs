@@ -1,7 +1,10 @@
+using System.Collections.Concurrent;
+using BotNexus.Gateway.Abstractions.Channels;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Dispatching;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using NSubstitute;
@@ -476,6 +479,424 @@ public sealed class DefaultInboundMessageOrchestratorTests
 
         // Post returns true = message was accepted onto the queue.
         result.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 0)]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    [InlineData(false, 2)]
+    [InlineData(true, 2)]
+    [InlineData(false, 3)]
+    [InlineData(true, 3)]
+    public async Task Post_ProcessingPersistenceFailure_ReportsGenericFeedbackAndContinuesWithoutReplay(
+        bool usePostAsync, int feedbackMode)
+    {
+        // 0 = recording adapter, 1 = adapter fails after recording the attempt,
+        // 2 = no originating adapter, 3 = lookup throws. All are best effort.
+        await AssertPostedFailureAsync(usePostAsync, feedbackMode, cancelled: false);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Post_ProcessorCancellation_DoesNotReportProcessingFailureAndContinuesWithoutReplay(
+        bool usePostAsync)
+    {
+        await AssertPostedFailureAsync(usePostAsync, feedbackMode: 0, cancelled: true);
+    }
+
+    private static async Task AssertPostedFailureAsync(bool usePostAsync, int feedbackMode, bool cancelled)
+    {
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFailure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var followingStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var processed = new ConcurrentQueue<InboundMessage>();
+        var feedback = new ConcurrentQueue<(OutboundMessage Message, CancellationToken Token)>();
+        var first = CreateMessage("addr-persistence-failure", sessionId: "s_persistence_failure");
+        // Different addresses on the same session prove feedback targets the failed origin,
+        // not whichever message happens to follow it on the shared queue.
+        var following = CreateMessage("addr-following-success", sessionId: "s_persistence_failure");
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor.ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(async callInfo =>
+            {
+                var message = callInfo.Arg<InboundMessage>();
+                processed.Enqueue(message);
+                if (ReferenceEquals(message, first))
+                {
+                    firstStarted.TrySetResult();
+                    await releaseFailure.Task;
+                    if (cancelled)
+                    {
+                        throw new OperationCanceledException("private cancellation detail");
+                    }
+                    // Represents a persistence failure before the processor can return an outcome.
+                    // No real store or host is needed to exercise the queue's failure boundary.
+                    throw new IOException("private persistence detail: sessions.sqlite / operator-path");
+                }
+
+                followingStarted.TrySetResult();
+                return new InboundProcessingOutcome(new[] { CreateDispatchResult() }, false);
+            });
+
+        var adapter = Substitute.For<IChannelAdapter>();
+        adapter.SendAsync(Arg.Any<OutboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                feedback.Enqueue((callInfo.Arg<OutboundMessage>(), callInfo.Arg<CancellationToken>()));
+                return feedbackMode == 1
+                    ? Task.FromException(new IOException("private adapter failure"))
+                    : Task.CompletedTask;
+            });
+        var channelManager = Substitute.For<IChannelManager>();
+        channelManager.Get(first.ChannelType).Returns(_ => feedbackMode == 3
+            ? throw new IOException("private lookup failure")
+            : feedbackMode == 2 ? null : adapter);
+        var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance, channelManager);
+
+        try
+        {
+            if (usePostAsync)
+            {
+                (await orchestrator.PostAsync(first)).ShouldBe(InboundDispatchStatus.Accepted);
+            }
+            else
+            {
+                orchestrator.Post(first).ShouldBeTrue();
+            }
+            await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            // Queue the successor while the first processor is held, not after its failure.
+            if (usePostAsync)
+            {
+                (await orchestrator.PostAsync(following)).ShouldBe(InboundDispatchStatus.Accepted);
+            }
+            else
+            {
+                orchestrator.Post(following).ShouldBeTrue();
+            }
+            releaseFailure.TrySetResult();
+            await followingStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            releaseFailure.TrySetResult();
+            // Processor entry/finally is not queue completion. Await the actual worker drain
+            // before asserting exact send/call counts or the absence of cancellation feedback.
+            await orchestrator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        processed.ToArray().ShouldBe(new[] { first, following },
+            "a failed or cancelled message must not be replayed or stop its queued successor");
+        if (cancelled || feedbackMode is 2 or 3)
+        {
+            feedback.ShouldBeEmpty();
+            return;
+        }
+
+        var attempt = feedback.ShouldHaveSingleItem();
+        attempt.Message.ChannelType.ShouldBe(first.ChannelType);
+        attempt.Message.ChannelAddress.ShouldBe(first.ChannelAddress);
+        attempt.Message.SessionId.ShouldBe("s_persistence_failure");
+        attempt.Token.CanBeCanceled.ShouldBeTrue(
+            "failure feedback has its own bounded deadline, not an unbounded None token");
+        // Exact generic wording excludes exception details, persistence/execution claims,
+        // and retry advice that could cause a duplicate after an uncertain processing failure.
+        attempt.Message.Content.ShouldBe(
+            "Your message could not be processed because an internal error occurred.");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcceptAsync_FailureFeedback_PreservesDistinctRoutingHints(bool conversationOnly)
+    {
+        var original = new IOException("private persistence failure");
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor.ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<InboundProcessingOutcome>(original));
+        var adapter = Substitute.For<IChannelAdapter>();
+        OutboundMessage? feedback = null;
+        adapter.SendAsync(Arg.Any<OutboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                feedback = call.Arg<OutboundMessage>();
+                return Task.CompletedTask;
+            });
+        var manager = Substitute.For<IChannelManager>();
+        manager.Get(Arg.Any<ChannelKey>()).Returns(adapter);
+        var message = CreateMessage("origin-address") with
+        {
+            RoutingHints = InboundMessageRoutingHints.LiftFromStrings(
+                null, conversationOnly ? null : "distinct-session", "distinct-conversation"),
+            ChannelRequestId = "distinct-request"
+        };
+        await using var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance, manager);
+
+        var actual = await Should.ThrowAsync<IOException>(() => orchestrator.AcceptAsync(message));
+        actual.ShouldBeSameAs(original);
+        feedback.ShouldNotBeNull();
+        feedback.ChannelType.ShouldBe(message.ChannelType);
+        feedback.ChannelAddress.ShouldBe(message.ChannelAddress);
+        feedback.ConversationId.ShouldBe("distinct-conversation");
+        feedback.SessionId.ShouldBe(conversationOnly ? null : "distinct-session");
+        feedback.ChannelRequestId.ShouldBe("distinct-request");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcceptAsync_FailedOrTimedOutFeedback_PreservesOriginalExceptionAndDrains(bool timeout)
+    {
+        var original = new IOException("original persistence failure");
+        var lateFailure = new IOException("late adapter failure");
+        var send = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sendStarted = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deadline = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deadlineStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var followingStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var logger = new FeedbackLogger();
+        var first = CreateMessage("shared-failure-queue");
+        var following = CreateMessage("shared-failure-queue");
+        var processed = new ConcurrentQueue<InboundMessage>();
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor.ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var message = call.Arg<InboundMessage>();
+                processed.Enqueue(message);
+                if (ReferenceEquals(message, first))
+                    return Task.FromException<InboundProcessingOutcome>(original);
+                followingStarted.TrySetResult();
+                return Task.FromResult(new InboundProcessingOutcome(EmptyDispatches, false));
+            });
+        var adapter = Substitute.For<IChannelAdapter>();
+        adapter.SendAsync(Arg.Any<OutboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                sendStarted.TrySetResult(call.Arg<CancellationToken>());
+                return send.Task; // Deliberately ignores cancellation.
+            });
+        var manager = Substitute.For<IChannelManager>();
+        manager.Get(Arg.Any<ChannelKey>()).Returns(adapter);
+        var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, logger, manager,
+            failureFeedbackDelay: (duration, token) =>
+            {
+                duration.ShouldBe(TimeSpan.FromSeconds(3));
+                token.CanBeCanceled.ShouldBeTrue();
+                deadlineStarted.TrySetResult();
+                return deadline.Task;
+            });
+        using var admission = new CancellationTokenSource();
+        try
+        {
+            var accepted = orchestrator.AcceptAsync(first, admission.Token);
+            var feedbackToken = await sendStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await deadlineStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            feedbackToken.CanBeCanceled.ShouldBeTrue();
+            feedbackToken.ShouldNotBe(admission.Token);
+            orchestrator.Post(following).ShouldBeTrue();
+            followingStarted.Task.IsCompleted.ShouldBeFalse();
+            accepted.IsCompleted.ShouldBeFalse();
+
+            if (timeout)
+                deadline.TrySetResult();
+            else
+                send.TrySetException(lateFailure);
+
+            var actual = await Should.ThrowAsync<IOException>(
+                async () => await accepted.WaitAsync(TimeSpan.FromSeconds(5)));
+            actual.ShouldBeSameAs(original);
+            await followingStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await orchestrator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            processed.ToArray().ShouldBe(new[] { first, following });
+            if (timeout)
+            {
+                send.Task.IsCompleted.ShouldBeFalse("deadline releases the worker; it does not stop the send");
+                send.TrySetException(lateFailure);
+            }
+            // Logging the exact underlying fault is an explicit observation boundary, not GC timing.
+            (await logger.SendFault.Task.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeSameAs(lateFailure);
+            await adapter.Received(1).SendAsync(Arg.Any<OutboundMessage>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            deadline.TrySetResult();
+            send.TrySetResult();
+            await orchestrator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcceptAsync_FeedbackCancellationCallbacks_DrainIndependentlyAndRetainRegistrations(bool callbackThrows)
+    {
+        var original = new IOException("original persistence failure");
+        var callbackFailure = new InvalidOperationException("adapter cancellation callback failure");
+        var send = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deadline = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbackFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var trailingCallback = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseCallback = new ManualResetEventSlim();
+        var followingStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var processed = new ConcurrentQueue<InboundMessage>();
+        var logger = new FeedbackLogger();
+        var first = CreateMessage("callback-lifetime");
+        var following = CreateMessage("callback-lifetime");
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor.ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var message = call.Arg<InboundMessage>();
+                processed.Enqueue(message);
+                if (ReferenceEquals(message, first))
+                    return Task.FromException<InboundProcessingOutcome>(original);
+                followingStarted.TrySetResult();
+                return Task.FromResult(new InboundProcessingOutcome(EmptyDispatches, false));
+            });
+        var registrations = new List<CancellationTokenRegistration>();
+        var adapter = Substitute.For<IChannelAdapter>();
+        adapter.SendAsync(Arg.Any<OutboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var token = call.Arg<CancellationToken>();
+                // Cancellation invokes registrations in reverse order. The first registration
+                // must survive while the second callback blocks and the FIFO worker drains.
+                registrations.Add(token.Register(() => trailingCallback.TrySetResult()));
+                registrations.Add(token.Register(() =>
+                {
+                    callbackEntered.TrySetResult();
+                    releaseCallback.Wait();
+                    try
+                    {
+                        // Access requires the source to remain alive, not just a cancelled token.
+                        token.WaitHandle.WaitOne(0).ShouldBeTrue();
+                        callbackFinished.TrySetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        callbackFinished.TrySetException(ex);
+                    }
+                    if (callbackThrows)
+                        throw callbackFailure;
+                }));
+                registered.TrySetResult(token);
+                return send.Task;
+            });
+        var manager = Substitute.For<IChannelManager>();
+        manager.Get(Arg.Any<ChannelKey>()).Returns(adapter);
+        var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, logger, manager, failureFeedbackDelay: (_, _) => deadline.Task);
+        try
+        {
+            var accepted = orchestrator.AcceptAsync(first);
+            var token = await registered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            token.IsCancellationRequested.ShouldBeFalse();
+            orchestrator.Post(following).ShouldBeTrue();
+            accepted.IsCompleted.ShouldBeFalse();
+            deadline.TrySetResult();
+            await callbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            token.IsCancellationRequested.ShouldBeTrue();
+            var actual = await Should.ThrowAsync<IOException>(
+                async () => await accepted.WaitAsync(TimeSpan.FromSeconds(5)));
+            actual.ShouldBeSameAs(original);
+            await followingStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await orchestrator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            callbackFinished.Task.IsCompleted.ShouldBeFalse();
+            trailingCallback.Task.IsCompleted.ShouldBeFalse();
+            send.Task.IsCompleted.ShouldBeFalse("the hard deadline does not terminate the send");
+            processed.ToArray().ShouldBe(new[] { first, following });
+
+            releaseCallback.Set();
+            await callbackFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await trailingCallback.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (callbackThrows)
+            {
+                var fault = await logger.SendFault.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                fault.ShouldBeOfType<AggregateException>().InnerExceptions.ShouldContain(callbackFailure);
+            }
+            send.TrySetResult();
+            await adapter.Received(1).SendAsync(Arg.Any<OutboundMessage>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            releaseCallback.Set();
+            deadline.TrySetResult();
+            send.TrySetResult();
+            await orchestrator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            // Dispose registrations only after callbacks have returned; this also drains a
+            // surviving callback if an assertion above failed, without blocking the FIFO worker.
+            foreach (var registration in registrations)
+                await registration.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task PostAsync_AdmissionCancelledAfterAcceptance_FailureFeedbackUsesIndependentToken()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor.ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(async _ =>
+            {
+                started.TrySetResult();
+                await release.Task;
+                throw new IOException("private failure");
+            });
+        using var admission = new CancellationTokenSource();
+        var tokens = new ConcurrentQueue<CancellationToken>();
+        var adapter = Substitute.For<IChannelAdapter>();
+        adapter.SendAsync(Arg.Any<OutboundMessage>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var token = call.Arg<CancellationToken>();
+                token.IsCancellationRequested.ShouldBeFalse();
+                tokens.Enqueue(token);
+                return Task.CompletedTask;
+            });
+        var manager = Substitute.For<IChannelManager>();
+        manager.Get(Arg.Any<ChannelKey>()).Returns(adapter);
+        var orchestrator = new DefaultInboundMessageOrchestrator(
+            processor, NullLogger<DefaultInboundMessageOrchestrator>.Instance, manager);
+        try
+        {
+            (await orchestrator.PostAsync(CreateMessage("cancelled-admission"), admission.Token))
+                .ShouldBe(InboundDispatchStatus.Accepted);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            admission.Cancel();
+        }
+        finally
+        {
+            release.TrySetResult();
+            await orchestrator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        var feedbackToken = tokens.ShouldHaveSingleItem();
+        feedbackToken.CanBeCanceled.ShouldBeTrue();
+        feedbackToken.ShouldNotBe(admission.Token);
+    }
+
+    private sealed class FeedbackLogger : ILogger<DefaultInboundMessageOrchestrator>
+    {
+        public TaskCompletionSource<Exception> SendFault { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Debug && exception is not null)
+                SendFault.TrySetResult(exception);
+        }
     }
 
     [Fact]

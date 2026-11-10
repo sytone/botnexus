@@ -54,6 +54,12 @@ public sealed record ContentDeltaPayload(
 /// <summary>Agent stream event for MessageStart, ThinkingDelta, ToolStart, ToolEnd, MessageEnd, Error.</summary>
 public sealed record AgentStreamEvent
 {
+    [JsonPropertyName("agentRunId")]
+    public string? AgentRunId { get; init; }
+
+    [JsonPropertyName("completion")]
+    public RunCompletionPayload? Completion { get; init; }
+
     [JsonPropertyName("type")]
     public string? Type { get; init; }
 
@@ -101,6 +107,26 @@ public sealed record AgentStreamEvent
 
     [JsonPropertyName("userInputRequest")]
     public AskUserRequestPayload? UserInputRequest { get; init; }
+}
+
+/// <summary>Terminal evidence needed by the shared desktop/mobile projection.</summary>
+public sealed record RunCompletionPayload
+{
+    [JsonPropertyName("stopReason")]
+    public string? StopReason { get; init; }
+
+    [JsonPropertyName("toolResultBudget")]
+    public BotNexus.Gateway.Abstractions.Models.ToolResultBudgetSignal? ToolResultBudget { get; init; }
+
+    [JsonPropertyName("guardObservations")]
+    public IReadOnlyList<RunGuardPayload> GuardObservations { get; init; } = [];
+}
+
+/// <summary>Legacy absolute-fuse evidence, distinct from semantic nonprogress.</summary>
+public sealed record RunGuardPayload
+{
+    [JsonPropertyName("absoluteLimitReached")]
+    public bool AbsoluteLimitReached { get; init; }
 }
 
 /// <summary>Token usage emitted with MessageEnd events.</summary>

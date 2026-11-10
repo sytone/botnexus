@@ -32,6 +32,8 @@ public sealed class UpdateGatewayLivenessTests
 
         public int RestartCalls { get; private set; }
 
+        protected override string GetCommitSha(string repoRoot) => new string('a', 40);
+
         protected override Task<int> RunGitPullStepAsync(string repoRoot, bool verbose, CancellationToken cancellationToken)
         {
             LastPullWasNoOp = pullWasNoOp;
@@ -83,6 +85,7 @@ public sealed class UpdateGatewayLivenessTests
         var binary = UpdateCommand.ResolveGatewayBinaryPath(root);
         Directory.CreateDirectory(Path.GetDirectoryName(binary)!);
         File.WriteAllText(binary, "fake assembly");
+        UpdateDeploymentIdentity.RecordAsync(binary, new string('a', 40), CancellationToken.None).GetAwaiter().GetResult();
         return root;
     }
 

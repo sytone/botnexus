@@ -18,6 +18,11 @@ namespace BotNexus.Gateway.Conversations;
 /// </summary>
 internal static class ConversationStoreShared
 {
+    /// <summary>Combines durable conversation and channel timestamps for Activity queries.</summary>
+    public static DateTimeOffset EffectiveActivity(Conversation conversation) =>
+        conversation.ChannelBindings.SelectMany(b => new[] { b.LastInboundAt, b.LastOutboundAt })
+            .Append(conversation.CreatedAt).Append(conversation.UpdatedAt)
+            .Where(at => at.HasValue).Max(at => at.GetValueOrDefault());
     /// <summary>
     /// Stamps the current world id onto a conversation being persisted (Create/Save). Only fills an
     /// empty <see cref="Conversation.WorldId"/> — explicit non-empty values are preserved so cross-world

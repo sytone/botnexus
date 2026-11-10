@@ -87,6 +87,12 @@ public static class ConfigPathBinding
                     return false;
             }
 
+            if (IsOpaque(current))
+            {
+                declaredType = null;
+                return true;
+            }
+
             if (index is not null)
             {
                 if (!TryGetElementType(current, out var elementType))

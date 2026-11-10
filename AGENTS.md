@@ -9,7 +9,7 @@ BotNexus runs on **Windows and Linux**. All code, tests, scripts, and documentat
 The authoritative repository gate is remote by default (#2158):
 
 ```powershell
-scripts/repo/Validate-PreCommit.ps1
+scripts/repo/Invoke-PreCommitValidation.ps1
 ```
 
 With nothing configured this runs **remote** Azure Container Apps validation. Set
@@ -25,12 +25,12 @@ and say so:
 
 ```powershell
 $env:BOTNEXUS_VALIDATION_MODE = 'local'
-scripts/repo/Validate-PreCommit.ps1
+scripts/repo/Invoke-PreCommitValidation.ps1
 ```
 
 `-LocalFallback` remains a backward-compatible alias for local mode. The lower-level scripts remain focused diagnostic tools, not substitutes for the strict gate.
 
-**Stage → validate → commit.** Stage the exact snapshot you intend to commit, then run the strict gate, then commit. A successful run emits a content-addressed validation receipt keyed to the staged Git tree hash plus the validation-policy and toolchain identities. The pre-commit hook reuses that receipt to skip redundant build/test only when the exact staged content still matches; any missing, malformed, failed, stale, expired, or mismatched receipt fails closed and reruns validation. See `docs/development/validation-receipts.md`.
+**Stage → commit → validate.** Stage the intended changes, commit them on the isolated development branch, confirm that the candidate has no staged, unstaged or untracked source changes, then run the required validation. A local development commit may be unvalidated; it is not proof of success or permission to push. Fix validation failures in another commit and validate that candidate. Do not amend or add a commit after the qualifying final run without validating the resulting candidate again. The explicit strict gate reuses a successful receipt only when the actual content, HEAD, base, required mode and current validation approval match. Missing, malformed, failed, stale, expired or mismatched evidence fails closed. Keep required validation before every push and readiness claim. See `docs/development/validation-receipts.md`.
 
 ## Documentation Standards
 
@@ -90,20 +90,20 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
 2. **Run authoritative validation before every push.** This is not optional:
 
    ```shell
-   scripts/repo/Validate-PreCommit.ps1
+   scripts/repo/Invoke-PreCommitValidation.ps1
    ```
 
    By default this invokes remote Azure Container Apps validation; a qualifying exact-content receipt then bypasses redundant remote validation. Set `BOTNEXUS_VALIDATION_MODE=local` to explicitly select globally serialized local strict validation instead. Remote validation runs the complete fail-closed non-browser core suite. Browser-emulated E2E is temporarily quarantined under #3601 and remains available only through explicit diagnostic modes until its reliability review and re-entry criteria are satisfied.
 
    The lower-level `test-impacted.ps1 -DryRun` remains useful to preview impacted projects during diagnosis, but it is not an additional pre-push requirement after a qualifying remote receipt.
 
-3. **Zero failures required.** If any test fails, diagnose and fix the issue before proceeding. Do not commit code with failing tests.
+3. **Zero failures required before push or completion.** Local development commits may contain unvalidated work or an intentionally failing tests-first case. Mark that evidence honestly. If validation fails, fix the problem in another commit and validate again; do not push, publish as ready or mark the task complete until the required checks pass. Never weaken or skip assertions to obtain success.
 
 4. **Do not skip or disable tests** to make the suite pass. If a test is failing, the production code or the test itself must be fixed — not removed.
 
-5. **Do not use `--no-verify`** for code changes. There is deliberately no pre-commit hook - commit-time local validation is banned, and `scripts/repo/install-hooks.ps1` activates only the `pre-push` `core.bare` guard (#1602). `--no-verify` therefore skips that guard, not a test gate. Run `scripts/repo/Validate-PreCommit.ps1` for the final candidate instead.
+5. **Do not use `--no-verify`** for code changes. There is deliberately no pre-commit hook - commit-time local validation is banned, and `scripts/repo/install-hooks.ps1` activates only the `pre-push` `core.bare` guard (#1602). `--no-verify` therefore skips that guard, not a test gate. Run `scripts/repo/Invoke-PreCommitValidation.ps1` for the final candidate instead.
 
-6. **Local `dotnet build` is permitted and expected; local test execution is not.** Compile the projects you changed before spending a remote gate - `dotnet build` starts no test host and no gateway process, so it cannot leak, and it catches in about a second the compile errors that otherwise cost a full remote run. Never run `dotnet test`, `test-impacted.ps1`, or `Validate-PreCommit.ps1 -LocalFallback` on a host with a live gateway: a test host boots real gateway processes that survive their parent, claim scheduled jobs from the shared cron store, and starve the live gateway - that is the orphan-process leak #2158 exists to close. All ordinary test execution is remote and authoritative: `scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>`. Browser-emulated E2E is excluded from ordinary validation while #3601 is reviewed; `-Mode full` and `-Mode playwright` are explicit diagnostics, not required gates or passing evidence for the quarantine. If the remote infrastructure is genuinely unavailable, `Validate-PreCommit.ps1 -ValidationMode local` (or the `-LocalFallback` alias) is the sole supported local gate; state that fallback explicitly whenever you use it.
+6. **Local `dotnet build` is permitted and expected; local test execution is not.** Compile the projects you changed before spending a remote gate - `dotnet build` starts no test host and no gateway process, so it cannot leak, and it catches in about a second the compile errors that otherwise cost a full remote run. Never run `dotnet test`, `test-impacted.ps1`, or `Invoke-PreCommitValidation.ps1 -LocalFallback` on a host with a live gateway: a test host boots real gateway processes that survive their parent, claim scheduled jobs from the shared cron store, and starve the live gateway - that is the orphan-process leak #2158 exists to close. All ordinary test execution is remote and authoritative: `scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>`. Browser-emulated E2E is excluded from ordinary validation while #3601 is reviewed; `-Mode full` and `-Mode playwright` are explicit diagnostics, not required gates or passing evidence for the quarantine. If the remote infrastructure is genuinely unavailable, `Invoke-PreCommitValidation.ps1 -ValidationMode local` (or the `-LocalFallback` alias) is the sole supported local gate; state that fallback explicitly whenever you use it.
 
 7. **Documentation-only changes do not run the test gate.** If a change touches nothing but `*.md`, `docs/**`, or `mkdocs.yml`, the required validation is the documentation build, not the ~12-minute remote test suite:
 
@@ -144,7 +144,7 @@ All test warnings will be treated as test failures once warnings-as-errors is en
 
 Before every `git push` on a PR branch:
 
-1. `scripts/repo/Validate-PreCommit.ps1` passes in the selected mode, or remote mode finds a qualifying exact-content strict Azure receipt.
+1. `scripts/repo/Invoke-PreCommitValidation.ps1` passes in the selected mode, or remote mode finds a qualifying exact-content strict Azure receipt.
 2. Do not rerun build/tests when a qualifying remote receipt applies.
 3. Record the chosen validation mode and strict gate evidence.
 4. No `--no-verify` used on commits containing code changes.
@@ -209,14 +209,14 @@ chore(deps): bump Microsoft.Extensions.* to 10.0.1
 Use the selected strict repository gate for normal candidate validation:
 
 ```shell
-scripts/repo/Validate-PreCommit.ps1
+scripts/repo/Invoke-PreCommitValidation.ps1
 ```
 
 A hand-run `dotnet build` is encouraged before validating - it is the cheapest way to catch a compile error, and it never starts a test host. It is not itself a validation gate. Remote is the default (#2158); select local explicitly only when the remote infrastructure is unavailable:
 
 ```shell
 $env:BOTNEXUS_VALIDATION_MODE = 'local'
-scripts/repo/Validate-PreCommit.ps1
+scripts/repo/Invoke-PreCommitValidation.ps1
 ```
 
 ### Build Warnings

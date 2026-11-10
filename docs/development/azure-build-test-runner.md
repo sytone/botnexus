@@ -1,6 +1,8 @@
 # Azure build and test runner
 
-BotNexus validates worktrees remotely on an Azure Container Apps Job, and **remote is the default gate** (#2158). The runner captures the worktree as it exists-including staged, unstaged, and untracked files-without requiring a commit or push.
+For developers running validation and operators maintaining its infrastructure. BotNexus validates worktrees remotely on an Azure Container Apps Job, and **remote is the default gate** (#2158). The runner captures the worktree as it exists—including staged, unstaged, and untracked files—without requiring a commit or push.
+
+The #5140 compatibility implementation requires a current external operator qualification before upload or launch. Read [Qualify a remote runner release](runner-release-contract.md) for the manifest schema, capabilities, input digest, release lifecycle and trust limits. That contract keeps the immutable image, qualified execution inputs and exact candidate snapshot separate. It does **not** approve the currently installed image or authorize installation or deployment.
 
 ## Security model
 
@@ -16,7 +18,9 @@ The storage and registry endpoints remain publicly routable but require Entra au
 
 ## Run validation
 
-Authenticate with Azure CLI and configure your deployment through environment variables. Do not commit subscription-specific values:
+Before running, obtain the trusted coordinator-selected `BOTNEXUS_RUNNER_RELEASE_MANIFEST` launch-environment setting. It must name an absolute local profile file outside the repository under ordinary existing user-profile permissions. The coordinator and local shell are trusted. Native peer tool restrictions remain applicable, but provide no OS/shell isolation or operator-only ACL/nonreplacement guarantee. A missing, revoked or incompatible release blocks validation; neither a source tag nor a cached receipt supplies approval. Qualification and any required installation are separate operator-reviewed actions, not steps performed by validation.
+
+The existing Azure CLI setup below requires authorized access. Configure your deployment through environment variables. Do not commit subscription-specific values:
 
 ```powershell
 az login
@@ -25,12 +29,12 @@ $env:BOTNEXUS_BUILDTEST_RESOURCE_GROUP = '<resource-group>'
 $env:BOTNEXUS_BUILDTEST_STORAGE_ACCOUNT = '<storage-account>'
 $env:BOTNEXUS_BUILDTEST_JOB_NAME = '<container-apps-job>'
 $env:BOTNEXUS_VALIDATION_MODE = 'remote'
-./scripts/repo/Validate-PreCommit.ps1
+./scripts/repo/Invoke-PreCommitValidation.ps1
 ```
 
 Set these as user-level environment variables when the runner should survive shell restarts and reboots. On Windows, use `[Environment]::SetEnvironmentVariable('<name>', '<value>', 'User')`, then open a new shell. Explicit script parameters remain available for one-off overrides.
 
-The standard hook command always uses strict mode. When `BOTNEXUS_VALIDATION_MODE=remote`, it accepts an exact-content receipt or invokes Azure. Use the lower-level runner to select a diagnostic mode:
+The current canonical gate remains `scripts/repo/Invoke-PreCommitValidation.ps1`. Its remote mode defaults to `core`; the gate's “strict gate” label is not the lower-level `-Mode strict`. When `BOTNEXUS_VALIDATION_MODE=remote`, it accepts a qualifying v2 exact-content receipt or invokes Azure. Current operator approval is required in both paths. Use the lower-level runner for focused diagnostics:
 
 Modes:
 
@@ -64,7 +68,7 @@ For maintainers investigating a hung test host, use a literal repository-relativ
 ./scripts/repo/Invoke-AzureBuildTest.ps1 -Mode diagnostic -DiagnosticProject tests/gateway/BotNexus.Gateway.Conversations.Tests/BotNexus.Gateway.Conversations.Tests.csproj -DiagnosticHangSeconds 120
 ```
 
-The source snapshot is verified before building. The sender requires a deployed runner image whose content-addressed identity matches the candidate runner sources; unknown or mismatched images are refused before a job starts. Changing a worktree does not deploy its runner image. Infrastructure deployment remains a separate operator action.
+The source snapshot is verified before building. The sender requires an externally qualified immutable image, matching execution-input digest and requested mode. Diagnostic runs also require `diagnostic-containment-v1` as well as `exact-source-v1`. A source-tag difference is advisory, not automatic grounds for rebuilding or redeploying. Changing a worktree does not deploy its runner image. See the [release contract](runner-release-contract.md) for blockers and separate operator qualification.
 
 The diagnostic project must exist below `tests/`, explicitly reference the test SDK, and not opt out of test execution. Absolute paths, wildcards, traversal, links, and build-output paths are rejected. No test filter is added. The existing generated run settings and isolated test home are preserved.
 
@@ -138,7 +142,9 @@ Two properties are deliberate:
 
 **The budget itself was deliberately not raised.** A larger number would hide the defect rather than remove it: the failure mode was "killed, no evidence", not "killed too early". Whether `-Mode full` genuinely needs more than 20 minutes is a separate question, answerable only once a timed-out run produces attribution — which is what this change delivers.
 
-A successful `strict`, `impacted`, or `full` run writes a receipt under the worktree's Git metadata. The receipt records a SHA-256 fingerprint over the current HEAD, resolved base commit, and exact Git tree containing staged, unstaged, and untracked files. `Validate-PreCommit.ps1` recalculates that fingerprint when it is invoked. It skips redundant validation only when the receipt matches exactly; any content or base-ref change invalidates it and starts a new remote run. Note that no git hook consumes this receipt: #2841 removed the pre-commit hook, and `scripts/repo/install-hooks.ps1` activates only the `pre-push` `core.bare` guard (#1602). The client refuses to issue a strict receipt unless the downloaded artifacts include `playwright.log`; this fails safely when an older deployed runner treats the mode as impacted-only. Impacted, full, and Playwright-only receipts remain useful diagnostic evidence but do not bypass strict validation.
+A successful non-diagnostic run can write a v2 receipt under the worktree's Git metadata only after provider, release, exact-source and complete-test checks pass. Its fingerprint covers HEAD, resolved base commit, candidate tree and raw source-manifest digest, including staged, unstaged and untracked candidate content. `Invoke-PreCommitValidation.ps1` recomputes that identity and rereads current external approval before reuse. The receipt mode must equal the requested remote mode (`core` by default); other modes do not substitute. Legacy receipts cannot self-upgrade.
+
+No git hook consumes this receipt: #2841 removed the pre-commit hook, and `scripts/repo/install-hooks.ps1` activates only the `pre-push` `core.bare` guard (#1602). Lower-level `strict` still requires a fresh `playwright.log`; this does not change the browser quarantine or make it the ordinary gate. See [receipt reuse and interrupted-run recovery](validation-receipts.md).
 
 **Remote is the default and local is opt-in (#2158).** With nothing configured, `Resolve-BotNexusValidationMode` returns `remote`. Local validation spawns real gateway processes on the development host; when their parent dies the children survive, and because every gateway opens the shared cron store they claim scheduled jobs belonging to the live gateway and fail them. On 2026-08-06 three such orphans - two of them 30+ hours old - starved the live gateway until the portal would not load. To choose local deliberately, set `BOTNEXUS_VALIDATION_MODE=local` at process, user, or machine scope (process scope wins), pass `-ValidationMode local`, or use the `-LocalFallback` / `BOTNEXUS_VALIDATION_LOCAL_FALLBACK=1` aliases.
 
@@ -156,7 +162,7 @@ The deployed job uses 4 vCPU, 8 GiB, and a two-hour timeout. All identifiers can
 
 ## Provision or update infrastructure
 
-The Bicep template and runner image live under `infra/buildtest/`. Deployment requires Owner or equivalent resource and RBAC permissions:
+The Bicep template and runner image live under `infra/buildtest/`. The existing deployment procedure below is a separate operator action; reading this guide or passing compatibility checks does not authorize it. Deployment alone does not publish an approved release manifest. Review the [qualification lifecycle](runner-release-contract.md#operator-prerequisites-and-lifecycle) separately. Deployment requires Owner or equivalent resource and RBAC permissions:
 
 ```powershell
 $env:BOTNEXUS_BUILDTEST_SUBSCRIPTION_ID = '<subscription-id>'
@@ -169,7 +175,7 @@ The script uses the current Azure CLI user as the operator identity and builds t
 
 ### Runner image tags are content-addressed
 
-Do not pick a version number for the runner image. The tag is **derived from a SHA-256 over the contents of `infra/buildtest/runner/`** and looks like `src-1bc35f62d232` (#2900).
+Do not pick a version number for the runner image. The tag is **derived from a SHA-256 over the contents of `infra/buildtest/runner/`** and looks like `src-1bc35f62d232` (#2900). This build/source attribution is distinct from the immutable registry digest and the broader qualified execution-input digest. It does not confer operator approval.
 
 This is a correctness guard, not a convenience. **ACR tags are mutable**: `az acr build` against an existing tag republishes over it with exit 0 and no warning. On 2026-08-09 a hand-picked "next" version destroyed the existing `0.1.12` image, because the default in the deploy script read `0.1.11` while the deployed job was actually running `0.1.15` and `main.bicep` claimed `0.1.4` — three sources of truth, all disagreeing.
 
@@ -185,15 +191,10 @@ Files under `infra/buildtest/runner/tests/` are excluded from the hash — they 
 
 ## Snapshot format
 
-The local script uploads a small payload containing:
-
-1. a Git bundle with repository history and refs, needed by `dotnet-affected`; and
-2. a tar overlay containing all tracked and untracked, non-ignored worktree files.
-
-The runner clones the bundle, applies the overlay, commits a temporary snapshot, and then invokes the repository's canonical build and test scripts. The temporary commit exists only inside the ephemeral job replica.
+The local script uploads a payload with exactly four regular entries: `repository.bundle`, `workspace.zip`, `source-manifest.json` and the sender's `SourceSnapshot.psm1` verifier. The runner clones without checkout, restores the exact candidate files, and verifies their names and raw bytes before restore/build. It does not create a synthetic pre-validation commit. See [Exact-source remote validation snapshots](remote-source-snapshots.md) for the complete transport and proof contract. Release qualification never replaces that proof.
 
 ## Maintenance and PR automation
 
-All agents, maintenance jobs, PR workflows, and human development flows call `scripts/repo/Validate-PreCommit.ps1` once for the final candidate. Record the selected mode and gate evidence in Merge Notes. Hand-run `dotnet build` freely - compiling the projects you changed before spending a remote gate is expected practice, and a build starts no test host or gateway process - but a build is not an extra pre-push gate and does not substitute for one. Do not run `dotnet test` or `test-impacted.ps1` on the development host at all: the test host boots gateway processes that outlive their parent, and that is the leak path #2158 exists to close. Remote mode retains exact-content receipt reuse; local mode, when explicitly requested, is globally serialized across BotNexus worktrees.
+All agents, maintenance jobs, PR workflows, and human development flows call `scripts/repo/Invoke-PreCommitValidation.ps1` once for the final candidate. Record the selected mode and gate evidence in Merge Notes. Hand-run `dotnet build` freely - compiling the projects you changed before spending a remote gate is expected practice, and a build starts no test host or gateway process - but a build is not an extra pre-push gate and does not substitute for one. Do not run `dotnet test` or `test-impacted.ps1` on the development host at all: the test host boots gateway processes that outlive their parent, and that is the leak path #2158 exists to close. Remote mode retains exact-content receipt reuse; local mode, when explicitly requested, is globally serialized across BotNexus worktrees.
 
 **Do not run this gate for a documentation-only change.** When a change touches nothing but `*.md`, `docs/**`, or `mkdocs.yml`, the remote suite exercises no part of the diff: it costs a container run and roughly twelve minutes to prove something unrelated. Build the documentation instead with `npm run docs:build` (about twenty seconds, and it exits non-zero on a dead link). `ci-build-test.yml` takes the same position already, listing `docs/**` and `**/*.md` under `paths-ignore` so a docs-only PR never triggers the test workflow. A change that touches documentation *and* code is a code change and takes the full gate.

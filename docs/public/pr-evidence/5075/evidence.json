@@ -1,0 +1,375 @@
+{
+  "schemaVersion": "1.0",
+  "source": {
+    "commit": "d7da37e7886a3095e0783b7cf824351167eb412a",
+    "tree": "a0803e98d6eb90ec7f81da93b48f684bf3b5b73a27e101acc7dfa97774f9535e",
+    "changedCodeDigest": "1d035cd3f97b57178d5813e963b05878de0514ed5ba913b37fc0dd55fe0c34ab",
+    "treeDigestScope": "Container source after restore/publish, using repository Dockerfile digest; includes task-local harness edits. changedCodeDigest separately identifies the dirty product candidate."
+  },
+  "scenario": {
+    "name": "tool-result-budget-no-summary",
+    "provider": "integration-mock",
+    "maxToolResults": 1,
+    "realRunner": true,
+    "network": "none"
+  },
+  "captures": [
+    {
+      "name": "desktop-budget-live",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "screenshot": {
+        "path": "desktop-budget-live.png",
+        "sha256": "46f65ca823a6307cb845af3ff84e08daa9d44480d2c1b56a9a64a1c66eef88b3"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "desktop-budget-live:single-notice",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "desktop-budget-live:notice-in-viewport",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "desktop-budget-live:idle",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "desktop-budget-live:actual-route",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "desktop-budget-live:no-browser-errors",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "desktop-budget-reload",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "screenshot": {
+        "path": "desktop-budget-reload.png",
+        "sha256": "d7ee186a4cc841588ec8358b3fd42c37054e6964a3908c0fbd8ade77820fabcc"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "desktop-budget-reload:single-notice",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "desktop-budget-reload:notice-in-viewport",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "desktop-budget-reload:idle",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "desktop-budget-reload:actual-route",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "desktop-budget-reload:no-browser-errors",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "mobile-budget",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "screenshot": {
+        "path": "mobile-budget.png",
+        "sha256": "99878282b42021b73cb3d9623dfb671e6d414656f8afc6e901057442cc1ee6b3"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "mobile-budget:single-notice",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "mobile-budget:notice-in-viewport",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "mobile-budget:idle",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "mobile-budget:actual-route",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "mobile-budget:no-browser-errors",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "mobile-budget-reload",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "screenshot": {
+        "path": "mobile-budget-reload.png",
+        "sha256": "99878282b42021b73cb3d9623dfb671e6d414656f8afc6e901057442cc1ee6b3"
+      },
+      "assertions": [
+        {
+          "kind": "browserState",
+          "target": "mobile-budget-reload:single-notice",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "mobile-budget-reload:notice-in-viewport",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "mobile-budget-reload:idle",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "mobile-budget-reload:actual-route",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "kind": "browserState",
+          "target": "mobile-budget-reload:no-browser-errors",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    }
+  ],
+  "assertions": [
+    {
+      "kind": "browserState",
+      "target": "conversation-created",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "session-primed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "live-terminal-tool-result-budget",
+      "passed": true,
+      "detail": "[{\"stopReason\":\"ToolResultBudget\",\"status\":\"Parked\",\"toolResultBudget\":{\"limit\":1,\"executedResults\":1,\"overshoot\":0}}]"
+    },
+    {
+      "kind": "browserState",
+      "target": "desktop-budget-live:single-notice",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "desktop-budget-live:notice-in-viewport",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "desktop-budget-live:idle",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "desktop-budget-live:actual-route",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "desktop-budget-live:no-browser-errors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "desktop-budget-reload:single-notice",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "desktop-budget-reload:notice-in-viewport",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "desktop-budget-reload:idle",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "desktop-budget-reload:actual-route",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "desktop-budget-reload:no-browser-errors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "mobile-budget:single-notice",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "mobile-budget:notice-in-viewport",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "mobile-budget:idle",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "mobile-budget:actual-route",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "mobile-budget:no-browser-errors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "mobile-budget-reload:single-notice",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "mobile-budget-reload:notice-in-viewport",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "mobile-budget-reload:idle",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "mobile-budget-reload:actual-route",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "mobile-budget-reload:no-browser-errors",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "persisted-history-ok",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "persisted-single-host-notice",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "retained-executed-tool-result",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "kind": "browserState",
+      "target": "optional-summary-absent",
+      "passed": true,
+      "detail": ""
+    }
+  ],
+  "runtime": {
+    "stopReason": "ToolResultBudget",
+    "status": "Parked",
+    "limit": 1,
+    "executedResults": 1,
+    "overshoot": 0,
+    "optionalAssistantSummaryAbsent": true
+  },
+  "timestamps": {
+    "startedUtc": "2026-10-28T18:34:34.787Z",
+    "completedUtc": "2026-10-28T18:34:51.428Z"
+  },
+  "cleanup": {
+    "browserClosed": true,
+    "gatewayStopped": true,
+    "temporaryDataRemoved": true,
+    "containerRemoved": true,
+    "imageRemoved": true,
+    "volumeRemoved": true,
+    "hostResourcesVerifiedAbsent": true
+  }
+}

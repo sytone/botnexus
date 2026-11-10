@@ -1236,7 +1236,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
             entry.ToolCallId,
             entry.ToolArgs,
             entry.ToolIsError,
-            entry.ThinkingContent);
+            entry.ThinkingContent) with
+        {
+            Kind = (entry.Kind ?? entry.MessageKind) == BotNexus.Gateway.Abstractions.Models.ToolResultBudgetNotice.Kind
+                ? BotNexus.Gateway.Abstractions.Models.ToolResultBudgetNotice.Kind : "message",
+            AgentRunId = entry.AgentRunId
+        };
 
     /// <summary>
     /// Single source of truth for projecting a conversation-history transcript entry
@@ -1254,7 +1259,12 @@ public sealed class AgentInteractionService : IAgentInteractionService
             entry.ToolArgs,
             entry.ToolIsError,
             entry.ThinkingContent,
-            ToChatAttachments(entry.Attachments));
+            ToChatAttachments(entry.Attachments)) with
+        {
+            Kind = entry.MessageKind == BotNexus.Gateway.Abstractions.Models.ToolResultBudgetNotice.Kind
+                ? entry.MessageKind : "message",
+            AgentRunId = entry.AgentRunId
+        };
 
     // Shared projection logic for both transcript-entry DTO shapes. An entry is treated
     // as a tool call when it carries a tool name; only then is its content surfaced as the

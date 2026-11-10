@@ -39,6 +39,37 @@ public sealed class SubAgentResultReceiptTests : IDisposable
         ToolArgs = "{\"action\":\"wait\",\"subAgentId\":\"retained-run\"}", Content = "retained-result"
     };
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Consume_LegacyPairHasSameClassificationBeforeAndAfterCleanup(bool cleanup)
+    {
+        var store = await ArrangeAsync();
+        var parent = (await store.GetAsync(Parent)).ShouldNotBeNull();
+        parent.AddEntries([
+            new SessionEntry { Role = MessageRole.Tool, Kind = MessageKind.ToolStart, ToolCallId = "legacy", ToolName = "manage_subagent", ToolArgs = "{}", Content = "started" },
+            Result("legacy") with { ToolArgs = null }
+        ]);
+        await store.SaveAsync(parent);
+        await using (var connection = new SqliteConnection(ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE session_history AS h SET
+                    tool_args=CASE WHEN h.message_kind='tool-start' THEN i.arguments_json END,
+                    content=CASE WHEN h.message_kind='tool-result' THEN i.result_content ELSE h.content END,
+                    tool_args_from_invocation=0, message_kind=NULL
+                FROM tool_invocations i WHERE i.id=h.tool_invocation_id;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+        if (cleanup)
+            store.MigrateLegacyToolData().Cleanup.CleanedRows.ShouldBe(2);
+        (await Store().ConsumeSubAgentResultAsync("retained-run", Parent, Conversation, Result("legacy")))
+            .ShouldBe("retained-result");
+    }
+
     [Fact]
     public async Task Consume_ColdSameCallRetry_RetainsPayloadAndOneOriginalToolRow()
     {

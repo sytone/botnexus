@@ -1,9 +1,10 @@
 # Content-Addressed Validation Receipts
 
 > **Note:** receipts are still live, but no git hook consumes them. #2841 removed the
-> pre-commit hook; `scripts/repo/Validate-PreCommit.ps1` is now the only reader, and it
+> pre-commit hook; `scripts/repo/Invoke-PreCommitValidation.ps1` is now the only reader, and it
 > is invoked explicitly rather than on commit. References to "the pre-commit hook" below
-> mean that explicit invocation.
+> mean that explicit invocation. The staged/local receipt below and the remote Azure v2 receipt
+> are different formats; see [Remote Azure receipts](#remote-azure-receipts) for the current remote path.
 
 **Purpose:** Explain how BotNexus lets repeat validation safely skip redundant
 build/test work when the *exact content being committed* has already passed the current
@@ -11,25 +12,39 @@ required validation policy (issue #2143).
 
 ---
 
-## The stage → validate → commit workflow
+## The stage → commit → validate workflow
 
-Explicit validation is a safety catch, not a mandatory duplicate test runner. To benefit
-from receipt reuse, follow this order:
+Commit the final candidate before the authoritative validation run. This gives the run a
+stable commit ID and avoids invalidating its receipt by committing the same content afterward.
 
-1. **Stage the intended snapshot.** `git add` exactly what you plan to commit.
-2. **Run canonical validation** against that staged snapshot:
+1. **Stage the intended changes** in the issue's isolated worktree.
+2. **Commit on the development branch.** Confirm there are no staged, unstaged or untracked
+   source changes left in the candidate. A local development commit is allowed before validation;
+   it is not a success claim or permission to push.
+3. **Run the required validation** against that committed candidate:
 
    ```powershell
-   scripts/repo/Validate-PreCommit.ps1
+   scripts/repo/Invoke-PreCommitValidation.ps1
    ```
 
-   On success this emits a *validation receipt* describing the exact staged content.
-3. **Commit.** A later `Validate-PreCommit.ps1` run recomputes the staged identity and,
-   if it matches a valid receipt, prints a cache-hit message and returns without rerunning
-   build/tests.
+   Code changes require the strict gate. Documentation-only changes use the documentation
+   build described in `AGENTS.md`, not a remote test run.
+4. **Before push, verify the same candidate.** A later strict-gate invocation can reuse its
+   qualifying receipt without another build/test run. Do not create or amend a commit after
+   final validation and assume the old receipt still applies.
 
-If you change any staged file, the validation policy, or the toolchain between steps 2
-and 3, the receipt no longer matches and the hook falls back to full validation.
+If validation fails, repair the problem in another commit and validate that candidate. Keep
+push, readiness and merge gates unchanged. Cheap compilation and permitted tests-first feedback
+may still run during development; they do not replace final validation. Never use local test
+execution on a live-gateway host as a shortcut.
+
+A commit ID alone is not the reuse key. The remote receipt also binds actual source content,
+base, mode and current runner qualification. Staged, unstaged or untracked source changes,
+a changed HEAD or base, and changed validation inputs can invalidate it. The strict gate checks
+those conditions; do not skip it based on a remembered successful run.
+
+The local/staged receipt format described below remains supported by its existing helpers.
+Its historical design does not change the required contributor order above.
 
 ---
 
@@ -92,6 +107,43 @@ identity field matches.
 
 ---
 
+## Remote Azure receipts
+
+The default remote path uses a separate receipt at
+`<worktree-git-dir>/botnexus-validation/azure-buildtest.json`, not the common-directory local
+receipt described above. `BOTNEXUS_VALIDATION_RECEIPT` is not its selector. The implementation
+is in `AzureBuildTestRecovery.psm1`; `Invoke-PreCommitValidation.ps1` is its explicit cache reader.
+
+An Azure receipt uses outer `version: 2` and records:
+
+- HEAD, base reference/commit, candidate tree and fingerprint, including the raw source digest.
+  This covers the actual worktree candidate, not only staged files.
+- Requested mode, run/execution identity, completion time and verified version 1 source proof.
+- `runnerRelease`: exactly `releaseId`, `image`, `manifestSha256`, `runnerInputDigest`,
+  `payloadVersion`, `evidenceVersion` and `mode`.
+- `executionConfiguration: image-entrypoint-v1`.
+
+Creation requires successful provider execution, the matching immutable image and execution
+configuration, current external qualification, unchanged candidate, verified source proof and
+complete numeric test evidence. Diagnostic runs never issue a receipt. The current gate remains
+`scripts/repo/Invoke-PreCommitValidation.ps1`; remote certification defaults to `core`. The lower-level
+`strict` mode is distinct and still needs its fresh Playwright artifact.
+
+Cache reuse requires v2 evidence, matching fingerprint/HEAD/base/tree and the requested mode,
+valid source proof and a fresh approval comparison selected by the trusted coordinator's
+launch-environment `BOTNEXUS_RUNNER_RELEASE_MANIFEST`. This external profile sits outside the
+repository under ordinary existing user-profile permissions. The cache trusts the previously
+validated execution image in local evidence; it does **not** query the provider again. The
+coordinator, local shell, scripts, Git metadata and receipts are trusted. Native peer tool
+restrictions do not provide OS/shell isolation or operator-only ACL/nonreplacement guarantees. Neither receipt data nor a persisted manifest path is approval
+authority. Legacy receipts cannot self-upgrade.
+
+Changing or revoking approval blocks reuse. The launch binding hashes exact manifest bytes,
+so even whitespace-only rotation invalidates old evidence. Missing capabilities, unknown
+capabilities and changed execution inputs are real blockers, not permission to edit a receipt
+or bypass source/completeness checks. A cache miss can invoke the normal remote path; its launch
+must still pass qualification. See the [manifest schema, lifecycle and trust limits](runner-release-contract.md).
+
 ## Related Documentation
 
 - **[running-tests.md](running-tests.md)** - impacted-test selection and firewall rules
@@ -101,8 +153,9 @@ identity field matches.
 
 For contributors using remote validation, `Invoke-AzureBuildTest.ps1` now prints a
 **Recovery context** path before waiting. `-NoWait` also returns it as `ContextPath`.
-The context is stored under the worktree's Git directory, not in the temporary
-download directory. Keep that file and the candidate unchanged.
+The v2 context is stored under the worktree's Git directory, not in the temporary
+download directory. Keep that file and the candidate unchanged. Recovery also needs the current
+operator-selected `BOTNEXUS_RUNNER_RELEASE_MANIFEST`; a context cannot select its own approval.
 
 If the client stops waiting, do not start a second validation run. With PowerShell 7,
 Azure CLI, and access to the original job and artifact storage, run this from the
@@ -117,9 +170,10 @@ It does not upload source, start another execution, or delete remote artifacts.
 A running or failed execution is rejected. Try recovery again only after you have
 confirmed that the original execution succeeded; recovery does not wait or poll.
 
-Recovery requires the provider's successful execution status and matching run/mode
-environment, canonical `result.json`, verified source digest, and complete numeric test
-results. It recomputes HEAD, base commit, prospective tree and source fingerprint.
+Recovery rereads current external qualification before download and again at final certification.
+It requires the original provider's successful execution status, matching immutable execution
+image, `image-entrypoint-v1` without command/args overrides, matching run/mode environment,
+canonical `result.json`, verified source digest, and complete numeric test results. It recomputes HEAD, base commit, prospective tree and source fingerprint.
 Changed candidates, missing or malformed evidence, incomplete tests and fixture failures
 cannot produce a receipt. The normal strict gate can reuse the resulting receipt.
 
@@ -133,7 +187,9 @@ manual deletion. A distinct intervening writer wins: a late conflicting run fail
 and cannot overwrite its receipt. Do not delete or edit receipts to bypass that conflict.
 Strict mode checks `playwright.log` in the fresh canonical download before merging local
 artifacts, so a stale local copy cannot certify a run.
-Older runs without the persisted start context cannot use this recovery path. Recovery
+Older runs without a v2 qualified launch context cannot use this recovery path. Legacy contexts
+cannot acquire approval after the fact. Changed manifest bytes, even whitespace-only edits,
+invalidate the original binding; do not edit the context to make it match. Recovery
 also requires that the original artifacts still exist remotely; normal successful runs
 may already have cleaned them up. Use `-KeepRemoteArtifacts` when starting a run whose
 remote evidence needs to remain available after success.

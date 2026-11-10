@@ -122,6 +122,9 @@ public static class AgentLoopRunner
         messages.Add(prompt);
         await emit(new MessageEndEvent(prompt, DateTimeOffset.UtcNow)).ConfigureAwait(false);
 
+        var capacityGuard = new ToolNonProgressGuard(
+            config.ToolProgressPolicy ?? DefaultToolProgressPolicy.EvaluateAsync, config.GuardEvidenceObserver,
+            config.MaxToolResults, config.AgentRunId, config.ToolCapacityObserver);
         var transformed = config.AgentContextTransformer is null
             ? messages
             : (await config.AgentContextTransformer(messages, cancellationToken).ConfigureAwait(false)).ToList();
@@ -129,6 +132,8 @@ public static class AgentLoopRunner
                 new AgentContext(context.SystemPrompt, transformed, []),
                 config.ProviderMessageTransformer,
                 cancellationToken)
+            .ConfigureAwait(false);
+        providerContext = await ProjectRequestContextAsync(providerContext, capacityGuard.Capacity, config, cancellationToken)
             .ConfigureAwait(false);
         var executionOptions = await config.ProviderExecutionOptionsProvider(config.Model.Provider, cancellationToken)
             .ConfigureAwait(false);
@@ -278,7 +283,7 @@ public static class AgentLoopRunner
         RunCompletionDecision? lastCompletionDecision = null;
         var nonProgressGuard = new ToolNonProgressGuard(
             config.ToolProgressPolicy ?? DefaultToolProgressPolicy.EvaluateAsync, config.GuardEvidenceObserver,
-            config.MaxToolResults);
+            config.MaxToolResults, config.AgentRunId, config.ToolCapacityObserver);
 
         // #2519: taint accumulation is scoped to the whole RUN, not to each provider turn. The
         // laundering path this closes is inherently multi-turn - the model fetches a page on one
@@ -372,6 +377,7 @@ public static class AgentLoopRunner
                         executionOptions,
                         emit,
                         toolResultContextLease,
+                        nonProgressGuard,
                         cancellationToken)
                     .ConfigureAwait(false);
 
@@ -491,7 +497,7 @@ public static class AgentLoopRunner
                         assistantMessage.ToolCalls!, toolResults, cancellationToken).ConfigureAwait(false);
                     nonProgressGuard.Record(budget, "terminal");
                     await FinalizeBudgetAsync(messages, newMessages, currentContext, config, emit,
-                        metrics, budget, nonProgressGuard.Evidence, lastCompletionDecision, completionContinuationAttempts,
+                        metrics, budget, nonProgressGuard.Capacity, nonProgressGuard.Evidence, lastCompletionDecision, completionContinuationAttempts,
                         assistantMessage, toolResults, turnToolNames, cancellationToken).ConfigureAwait(false);
                     return;
                 }
@@ -629,7 +635,7 @@ public static class AgentLoopRunner
     private static async Task FinalizeBudgetAsync(
         List<AgentMessage> messages, List<AgentMessage> newMessages, AgentContext context,
         AgentLoopConfig config, Func<AgentEvent, Task> emit, RunMetricsAccumulator metrics,
-        ToolNonProgressObservation observation, IReadOnlyList<GuardObservation> guardObservations,
+        ToolNonProgressObservation observation, ToolCapacitySnapshot capacity, IReadOnlyList<GuardObservation> guardObservations,
         RunCompletionDecision? priorDecision,
         int continuationAttempts, AssistantAgentMessage boundaryMessage,
         IReadOnlyList<ToolResultAgentMessage> boundaryResults, IReadOnlySet<string> boundaryToolNames,
@@ -736,6 +742,8 @@ public static class AgentLoopRunner
                 : (await config.AgentContextTransformer(isolatedContext, summaryToken).WaitAsync(summaryToken).ConfigureAwait(false)).ToList();
             var providerContext = await ContextConverter.ToProviderContext(
                 new AgentContext(context.SystemPrompt, transformed, []), config.ProviderMessageTransformer, summaryToken)
+                .WaitAsync(summaryToken).ConfigureAwait(false);
+            providerContext = await ProjectRequestContextAsync(providerContext, capacity, config, summaryToken)
                 .WaitAsync(summaryToken).ConfigureAwait(false);
             var execution = await config.ProviderExecutionOptionsProvider(config.Model.Provider, summaryToken)
                 .WaitAsync(summaryToken).ConfigureAwait(false);
@@ -1038,6 +1046,23 @@ public static class AgentLoopRunner
         return (int)Math.Min(candidate, ceiling);
     }
 
+    private static async Task<Context> ProjectRequestContextAsync(
+        Context context, ToolCapacitySnapshot capacity, AgentLoopConfig config, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var request = new ProviderRequestContext(capacity);
+        var section = await (config.ProviderRequestContextProvider ?? DefaultProviderRequestContextProvider.RenderAsync)(request, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(section))
+            section = await DefaultProviderRequestContextProvider.RenderAsync(request, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        // Copy only the provider message list. Never expose this dynamic section to transforms,
+        // stored run lists, result leases, compaction or the cache-stable system prefix.
+        return context with { Messages = [.. context.Messages, new BotNexus.Agent.Providers.Core.Models.UserMessage(
+            new UserMessageContent(section ?? throw new InvalidOperationException("Missing default capacity section.")),
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) { IsRequestOnlyContext = true }] };
+    }
+
     private static async Task<AssistantAgentMessage> ExecuteWithRetryAsync(
         List<AgentMessage> messages,
         string? systemPrompt,
@@ -1047,6 +1072,7 @@ public static class AgentLoopRunner
         ProviderExecutionOptions? executionOptions,
         Func<AgentEvent, Task> emit,
         ToolResultContextLease toolResultContextLease,
+        ToolNonProgressGuard nonProgressGuard,
         CancellationToken cancellationToken)
     {
         const int maxAttempts = 4;
@@ -1108,6 +1134,8 @@ public static class AgentLoopRunner
                     transformedContext,
                     config.ProviderMessageTransformer,
                     cancellationToken)
+                .ConfigureAwait(false);
+            providerContext = await ProjectRequestContextAsync(providerContext, nonProgressGuard.Capacity, config, cancellationToken)
                 .ConfigureAwait(false);
 
             var messageCountBeforeStream = messages.Count;

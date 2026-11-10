@@ -874,7 +874,9 @@ public sealed class Agent
             RecoveryCoordinator: _options.RecoveryCoordinator,
             RecoveryAdmissionTimeout: _options.RecoveryAdmissionTimeout,
             ToolProgressPolicy: _options.ToolProgressPolicy,
-            MaxToolResults: _options.MaxToolResults);
+            MaxToolResults: _options.MaxToolResults,
+            ProviderRequestContextProvider: _options.ProviderRequestContextProvider,
+            ToolCapacityObserver: _options.ToolCapacityObserver);
     }
 
     private Func<CancellationToken, Task<AgentContext?>>? BuildContextCompactionService()

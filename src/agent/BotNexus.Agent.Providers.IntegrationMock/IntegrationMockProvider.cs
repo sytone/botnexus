@@ -275,14 +275,14 @@ public sealed class IntegrationMockProvider : IApiProvider
 
     /// <summary>
     /// Extract the lookup key from <paramref name="context"/>. The key is the trimmed text of
-    /// the final <see cref="UserMessage"/>; multi-block user messages concatenate their
+    /// the final conversational <see cref="UserMessage"/>, excluding request-only host context; multi-block user messages concatenate their
     /// <see cref="TextContent"/> blocks. Returns an empty string when no user message is found.
     /// </summary>
     public static string ExtractKey(Context context)
     {
         for (var i = context.Messages.Count - 1; i >= 0; i--)
         {
-            if (context.Messages[i] is not UserMessage user)
+            if (context.Messages[i].IsRequestOnlyContext || context.Messages[i] is not UserMessage user)
                 continue;
 
             if (user.Content.IsText)

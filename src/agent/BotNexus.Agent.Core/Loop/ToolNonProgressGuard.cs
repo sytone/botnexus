@@ -9,9 +9,45 @@ namespace BotNexus.Agent.Core.Loop;
 /// Bounded run-local aggregation for completed results classified by a tool-progress policy.
 /// The guard owns sequence state only; policy owns classification and the loop owns control flow.
 /// </summary>
-internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy, Action<IReadOnlyList<GuardObservation>>? evidenceObserver = null,
-    int maxToolResults = ToolNonProgressGuard.AbsoluteToolResultLimit)
+internal sealed class ToolNonProgressGuard
 {
+    private readonly ToolProgressPolicy policy;
+    private readonly Action<IReadOnlyList<GuardObservation>>? evidenceObserver;
+    private readonly int maxToolResults;
+    private readonly AgentRunId _agentRunId;
+    private readonly ToolCapacityObserver? _capacityObserver;
+    private int _capacityStages;
+
+    internal ToolNonProgressGuard(ToolProgressPolicy policy, Action<IReadOnlyList<GuardObservation>>? evidenceObserver = null,
+        int maxToolResults = AbsoluteToolResultLimit, AgentRunId? agentRunId = null, ToolCapacityObserver? capacityObserver = null)
+    {
+        this.policy = policy;
+        this.evidenceObserver = evidenceObserver;
+        this.maxToolResults = maxToolResults;
+        _agentRunId = agentRunId ?? AgentRunId.Create();
+        _capacityObserver = capacityObserver;
+        PublishCapacity(ToolCapacityStage.Start);
+    }
+
+    internal ToolCapacitySnapshot Capacity => new(_agentRunId, _totalResults, maxToolResults,
+        _totalResults >= maxToolResults ? ToolCapacityPhase.Finalizing : ToolCapacityPhase.Executing);
+
+    private void PublishCapacity(ToolCapacityStage stage)
+    {
+        var bit = 1 << (int)stage;
+        if ((_capacityStages & bit) != 0) return;
+        _capacityStages |= bit;
+        BotNexus.Agent.Core.Diagnostics.DiagnosticNotification.Report(_capacityObserver, new ToolCapacityObservation(stage, Capacity));
+    }
+
+    private void PublishCapacityCrossings()
+    {
+        // Integer products avoid rounding errors for odd and tiny limits. Every crossing sees
+        // the actual full batch, and only the existing _totalResults counter owns usage.
+        if (_totalResults * 100 >= maxToolResults * 75L) PublishCapacity(ToolCapacityStage.SeventyFivePercent);
+        if (_totalResults * 100 >= maxToolResults * 90L) PublishCapacity(ToolCapacityStage.NinetyPercent);
+        if (_totalResults >= maxToolResults) PublishCapacity(ToolCapacityStage.Exhausted);
+    }
     internal const int WarningThreshold = 3;
     internal const int StopThreshold = 6;
     internal const int AbsoluteToolResultLimit = 128;
@@ -65,6 +101,7 @@ internal sealed class ToolNonProgressGuard(ToolProgressPolicy policy, Action<IRe
         CancellationToken cancellationToken)
     {
         _totalResults += results.Count;
+        PublishCapacityCrossings();
         if (_totalResults >= maxToolResults)
             return new ToolNonProgressObservation(_count, "absolute-tool-result-limit", null,
                 false, true, true, _totalResults);

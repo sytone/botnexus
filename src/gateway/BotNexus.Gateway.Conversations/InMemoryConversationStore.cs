@@ -386,6 +386,22 @@ public sealed class InMemoryConversationStore : IConversationStore
     }
 
     /// <inheritdoc />
+    public Task<IReadOnlyList<ConversationSummary>> GetSummariesAsync(
+        DateTimeOffset? activitySince, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        IReadOnlyList<ConversationSummary> summaries = [.. _conversations.Values
+            .Where(c => c.Status == ConversationStatus.Active && c.ParentConversationId is null)
+            .Select(c => (Conversation: c, Activity: ConversationStoreShared.EffectiveActivity(c)))
+            .Where(x => activitySince is null || x.Activity >= activitySince.Value)
+            .OrderByDescending(x => x.Conversation.IsPinned)
+            .ThenByDescending(x => x.Conversation.PinnedAt)
+            .ThenByDescending(x => x.Activity)
+            .ThenBy(x => x.Conversation.ConversationId.Value, StringComparer.Ordinal)
+            .Select(x => ToSummary(x.Conversation) with { UpdatedAt = x.Activity })];
+        return Task.FromResult(summaries);
+    }
+    /// <inheritdoc />
     public Task<IReadOnlyList<ConversationRetentionCandidate>> GetRetentionCandidatesAsync(
         ConversationSource? source = null,
         CancellationToken ct = default)

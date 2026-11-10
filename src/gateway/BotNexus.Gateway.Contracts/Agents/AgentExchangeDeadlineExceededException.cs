@@ -8,14 +8,14 @@ namespace BotNexus.Gateway.Abstractions.Agents;
 /// Raised after the engine's deadline seal/archive handling. Remaining a cancellation exception
 /// preserves existing cancellation catches; ambient caller cancellation still takes precedence.
 /// </remarks>
-public sealed class AgentExchangeDeadlineExceededException : OperationCanceledException
+public sealed class AgentExchangeDeadlineExceededException : AgentExchangeCancelledException
 {
     /// <summary>
     /// Retains the original cancellation and token for diagnostics without asking callers to
     /// infer deadline ownership from elapsed time or exception text.
     /// </summary>
     public AgentExchangeDeadlineExceededException(OperationCanceledException innerException)
-        : base("Agent exchange exceeded its deadline.", innerException, innerException.CancellationToken)
+        : base("Agent exchange exceeded its deadline.", innerException)
     {
     }
 }

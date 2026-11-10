@@ -12,6 +12,9 @@
     <ProjectReference Include="$(MSBuildThisFileDirectory)src\dirs.proj" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)tests\dirs.proj" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)tools\BotNexus.PromptBehaviorEval\BotNexus.PromptBehaviorEval.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)tools\BotNexus.Satellite.Client.Core\BotNexus.Satellite.Client.Core.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)tools\BotNexus.Satellite.Client.SignalR\BotNexus.Satellite.Client.SignalR.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)tools\BotNexus.Satellite.Client.Windows\BotNexus.Satellite.Client.Windows.csproj" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)tools\BotNexus.TestEventCollector\BotNexus.TestEventCollector.csproj" />
   </ItemGroup>
 

@@ -1,4 +1,7 @@
 using System.Collections.Frozen;
+using System.Diagnostics;
+using System.Net;
+using Azure.Identity;
 using BotNexus.Agent.Providers.Core;
 using BotNexus.Agent.Providers.Core.Models;
 using BotNexus.Agent.Providers.Core.Registry;
@@ -22,7 +25,7 @@ public sealed record MicrosoftFoundryResponsesInstance(
 /// Dispatches the fixed Microsoft Foundry Responses API contract to immutable named endpoint instances.
 /// Register this provider once; models select an instance by exact <see cref="LlmModel.Provider"/>.
 /// </summary>
-public sealed class MicrosoftFoundryResponsesProvider : IApiProvider, IDisposable
+public sealed class MicrosoftFoundryResponsesProvider : IApiProvider, IProviderHealthCheck, IDisposable
 {
     private static readonly ProviderCapabilities ProviderCapabilities = new(
         RecoversLeakedToolCallMarkup: false,
@@ -89,6 +92,79 @@ public sealed class MicrosoftFoundryResponsesProvider : IApiProvider, IDisposabl
         return Stream(model, context, streamOptions);
     }
 
+    /// <summary>
+    /// Probes the instance's models endpoint without inference, using its existing authentication
+    /// cache and approved-origin transport. The entire check is bounded to ten seconds; caller
+    /// cancellation propagates. Diagnostics never include response bodies or exception messages.
+    /// A successful probe validates endpoint authentication, not a deployment's inference permissions.
+    /// </summary>
+    public async Task<ProviderHealthResult> CheckAsync(string providerId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var stopwatch = Stopwatch.StartNew();
+        var hasCredentials = false;
+        ProviderHealthResult Result(string? error) => new(
+            providerId, error is null ? ProviderHealthStatus.Healthy : ProviderHealthStatus.Unhealthy,
+            stopwatch.ElapsedMilliseconds, DateTimeOffset.UtcNow, 0, hasCredentials, error);
+
+        if (!_instances.TryGetValue(providerId, out var instance))
+            return Result("No Microsoft Foundry instance is configured for this provider.");
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        using var request = new HttpRequestMessage(HttpMethod.Get, instance.HealthUri);
+        try
+        {
+            try
+            {
+                await instance.AuthenticationResolver.ApplyAsync(request, timeout.Token).ConfigureAwait(false);
+                hasCredentials = true;
+            }
+            catch (CredentialUnavailableException)
+            {
+                return Result("Credential unavailable for Microsoft Foundry. Configure the selected identity source.");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                return Result("Token acquisition failed for Microsoft Foundry. Check the configured identity and Entra access.");
+            }
+
+            using var response = await instance.HttpClient.SendAsync(
+                request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode)
+                return Result(null);
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                hasCredentials = false;
+                return Result("Microsoft Foundry authentication rejected (HTTP 401). Check the credential and expected audience https://ai.azure.com/.default.");
+            }
+
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+                return Result("Microsoft Foundry access denied (HTTP 403). Check identity RBAC and endpoint access policy.");
+            if ((int)response.StatusCode is >= 300 and < 400)
+                return Result("Microsoft Foundry endpoint returned a redirect; redirects are not followed.");
+
+            return Result($"Microsoft Foundry upstream check failed (HTTP {(int)response.StatusCode}).");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Result("Microsoft Foundry health check timed out.");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return Result("Connectivity check failed for Microsoft Foundry.");
+        }
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -148,6 +224,8 @@ public sealed class MicrosoftFoundryResponsesProvider : IApiProvider, IDisposabl
         public HttpClient HttpClient { get; }
 
         public MicrosoftFoundryAuthenticationResolver AuthenticationResolver { get; }
+
+        public Uri HealthUri => new(_approvedOrigin, "/openai/v1/models");
 
         public Uri BuildRequestUri(LlmModel model)
         {

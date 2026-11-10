@@ -8,15 +8,23 @@ internal static class DiagnosticNotification
     /// to replace the caller's outcome. A null observer performs no delivery.
     /// </summary>
     public static void Report(Action<string>? observer, string message)
+        => ReportSubscribers(observer, subscriber => ((Action<string>)subscriber)(message));
+
+    /// <summary>Delivers typed capacity facts with the same informational subscriber isolation.</summary>
+    public static void Report(BotNexus.Agent.Core.ExtensionPoints.ToolResults.ToolCapacityObserver? observer,
+        BotNexus.Agent.Core.ExtensionPoints.ToolResults.ToolCapacityObservation observation)
+        => ReportSubscribers(observer, subscriber => ((BotNexus.Agent.Core.ExtensionPoints.ToolResults.ToolCapacityObserver)subscriber)(observation));
+
+    private static void ReportSubscribers(Delegate? observer, Action<Delegate> deliver)
     {
         if (observer is null)
             return;
 
-        foreach (var subscriber in observer.GetInvocationList().Cast<Action<string>>())
+        foreach (var subscriber in observer.GetInvocationList())
         {
             try
             {
-                subscriber(message);
+                deliver(subscriber);
             }
             catch (Exception)
             {
