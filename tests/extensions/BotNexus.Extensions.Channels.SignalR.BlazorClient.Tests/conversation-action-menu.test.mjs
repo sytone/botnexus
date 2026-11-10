@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 const source = fs.readFileSync(process.argv[2], 'utf8');
 
-function fixture() {
+function fixture({ scrollOnFocus = false } = {}) {
     const log = [], frames = new Map(), cancelled = [], errors = [];
     let reportError;
     const errorReported = new Promise(resolve => { reportError = resolve; });
@@ -43,7 +43,12 @@ function fixture() {
         showPopover() { if (this.failShow) throw new Error('show failed'); this.open = true; this.shows++; }
         hidePopover() { this.open = false; this.hides++; log.push('hide'); }
         getBoundingClientRect() { this.measures++; return { left: 790, top: 590, width: 120, height: 100 }; }
-        focus(options) { document.activeElement = this; log.push(this.name); this.focusOptions = options; }
+        focus(options) {
+            document.activeElement = this; log.push(this.name); this.focusOptions = options;
+            // Model a browser scrolling a focused item into view. Keep this opt-in so existing
+            // ownership tests retain their original event schedules; explicit user scroll is unchanged.
+            if (scrollOnFocus && options?.preventScroll !== true) window.dispatch('scroll');
+        }
     }
     function owner(name, revision = 1, existing) {
         const overlay = existing?.overlay ?? new Element(), menu = existing?.menu ?? new Element();
@@ -297,3 +302,46 @@ test('equivalent section rerender does not revoke a queued single-use focus perm
     deliver(); assert.equal(f.document.activeElement, a.trigger);
     const count = f.log.length; deliver(); assert.equal(f.log.length, count);
 });
+
+for (const index of [0, -1]) {
+    test(`opening focusItem index=${index} does not cause scroll dismissal; genuine scroll still retires`, () => {
+        const f = fixture({ scrollOnFocus: true }), a = f.owner('section');
+        f.open(a);
+        f.api.focusItem(a.token, a.menu, index);
+        assert.equal(a.overlay.open, true, 'Opening focus must not scroll and dismiss its own popover.');
+        const expected = a.menu.children[index < 0 ? 3 : index];
+        assert.equal(f.document.activeElement, expected);
+        assert.equal(expected.focusOptions.preventScroll, true);
+        assert.equal(a.calls.length, 0, 'No synthetic scroll callback during focus.');
+        assert.equal(f.window.listeners.length, 2, 'Real scroll/resize listeners remain installed.');
+        f.window.dispatch('scroll');
+        assert.equal(a.overlay.open, false);
+        assert.deepEqual(a.calls, [['DismissFromBrowser', 'scroll', a.token]]);
+        assert.equal(f.document.activeElement, a.trigger);
+        assert.equal(a.trigger.focusOptions.preventScroll, true);
+        assert.equal(f.window.listeners.length, 0);
+    });
+}
+
+for (const [key, index] of [['ArrowDown', 1], ['ArrowUp', 3], ['Home', 0], ['End', 3]]) {
+    for (const dismissal of ['scroll', 'resize']) {
+        test(`${key} item focus prevents incidental scroll, preserving genuine ${dismissal} dismissal`, () => {
+            const f = fixture({ scrollOnFocus: true }), a = f.owner('section');
+            f.open(a);
+            // Focus setup is explicit and non-scrolling; the actual production key path is under test.
+            a.menu.children[0].focus({ preventScroll: true });
+            const event = a.menu.dispatch('keydown', { key });
+            assert.equal(event.prevented, true);
+            assert.equal(event.stopped, true);
+            assert.equal(a.overlay.open, true, 'Keyboard focus must not dismiss its own popover.');
+            assert.equal(f.document.activeElement, a.menu.children[index]);
+            assert.equal(a.menu.children[index].focusOptions.preventScroll, true);
+            assert.equal(a.calls.length, 0);
+            f.window.dispatch(dismissal);
+            assert.equal(a.overlay.open, false);
+            assert.deepEqual(a.calls, [['DismissFromBrowser', dismissal, a.token]]);
+            assert.equal(f.document.activeElement, a.trigger);
+            assert.equal(f.window.listeners.length, 0);
+        });
+    }
+}

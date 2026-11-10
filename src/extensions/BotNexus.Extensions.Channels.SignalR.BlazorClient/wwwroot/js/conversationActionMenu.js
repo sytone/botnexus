@@ -86,7 +86,7 @@ window.conversationActionMenu = (() => {
         if (!record || record.token !== token || record.menu !== menu || !current(record) || !menu.isConnected) return;
         const candidates = items(record);
         const item = index < 0 ? candidates[candidates.length - 1] : candidates[index];
-        item?.focus();
+        item?.focus({ preventScroll: true });
     }
 
     function dismiss(record, reason) {
@@ -132,7 +132,7 @@ window.conversationActionMenu = (() => {
                 const next = event.key === 'Home' ? 0 : event.key === 'End' ? candidates.length - 1
                     : event.key === 'ArrowUp' ? (index < 0 ? candidates.length - 1 : (index - 1 + candidates.length) % candidates.length)
                     : (index + 1) % candidates.length;
-                candidates[next].focus();
+                candidates[next].focus({ preventScroll: true });
             } else if (event.key === 'Escape') {
                 event.preventDefault();
                 event.stopPropagation();
