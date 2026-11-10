@@ -26,6 +26,9 @@ RUN dotnet restore src/gateway/BotNexus.Gateway.Api/BotNexus.Gateway.Api.csproj 
  && mkdir -p "/app/extensions/$extension" \
  && dotnet publish "src/extensions/$extension/$extension.csproj" -c Release -o "/app/extensions/$extension" -p:NuGetAudit=false \
  && cp "src/extensions/$extension/botnexus-extension.json" "/app/extensions/$extension/botnexus-extension.json"
+# The gateway/extension graph does not depend on Playwright. Restore the driver explicitly
+# in the image using the central version before consuming its bundled Node/package files.
+RUN dotnet restore skills/botnexus-ui-evidence/container/PlaywrightDriver.csproj --packages /root/.nuget/packages -p:NuGetAudit=false
 RUN mkdir -p /app/playwright/node_modules/playwright-core /app/playwright/node_modules/playwright \
  && cp -a /root/.nuget/packages/microsoft.playwright/1.44.0/.playwright/package/. /app/playwright/node_modules/playwright-core/ \
  && cp /root/.nuget/packages/microsoft.playwright/1.44.0/.playwright/node/linux-x64/node /app/playwright/node \
