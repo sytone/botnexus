@@ -4944,6 +4944,14 @@ details[open] > .thinking-summary::before {
     transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 
+/* Focused Chat keeps its narrow list width: wrap whole pills rather than clipping labels. */
+.focused-chat-scroll .conversation-filter-bar {
+    flex-wrap: wrap;
+}
+.focused-chat-scroll .conversation-filter-btn {
+    flex: 1 0 auto;
+}
+
 .conversation-filter-btn:hover {
     color: var(--text);
     border-color: var(--accent);

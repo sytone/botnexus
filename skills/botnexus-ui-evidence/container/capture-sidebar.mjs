@@ -139,6 +139,24 @@ try {
           && await menu.locator('[data-testid="section-rename-btn"], [data-testid="section-delete-btn"]').count() === 0;
         await group.locator('[data-testid="section-menu-dismiss"]').click();
       }
+      // Geometry qualification uses real layout after native input preparation; later capture setup resets top.
+      const filterBar = page.locator('[data-testid="conversation-filter-bar"]');
+      await filterBar.scrollIntoViewIfNeeded();
+      const filterOwner = await page.locator('.focused-chat-scroll').evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x + element.clientLeft, y: rect.y + element.clientTop, width: element.clientWidth, height: element.clientHeight };
+      });
+      const filterPills = filterBar.locator('.conversation-filter-btn');
+      check(`${theme}-${width}:filter-pill-count`, await filterPills.count() === 3);
+      const filterLabels = ['None', 'Today', 'This Week'];
+      for (let index = 0; index < 3; index += 1) {
+        const pill = filterPills.nth(index);
+        const bounds = await box(pill);
+        const minimum = await pill.evaluate(element => parseFloat(getComputedStyle(element).getPropertyValue('--hit-pointer')));
+        check(`${theme}-${width}:filter-pill-${index}:fully-contained`, bounds.x >= Math.max(0, filterOwner.x) - 0.5 && bounds.y >= Math.max(0, filterOwner.y) - 0.5 && bounds.x + bounds.width <= Math.min(width, filterOwner.x + filterOwner.width) + 0.5 && bounds.y + bounds.height <= Math.min(height, filterOwner.y + filterOwner.height) + 0.5);
+        check(`${theme}-${width}:filter-pill-${index}:hit-target`, Number.isFinite(minimum) && minimum > 0 && bounds.height >= minimum - 0.5 && bounds.width >= minimum - 0.5);
+        check(`${theme}-${width}:filter-pill-${index}:label`, (await pill.textContent()).trim() === filterLabels[index] && await pill.evaluate(element => element.scrollWidth <= element.clientWidth));
+      }
       diagnosticContext.stage = 'journey';
       // Picker keyboard behavior stays native. Escape must restore focus.
       await trigger.focus();
