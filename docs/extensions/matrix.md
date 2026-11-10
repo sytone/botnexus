@@ -156,8 +156,9 @@ owner, SYSTEM and Administrators. Keep the parent directory protected from other
 The file must be readable by the gateway's operating-system account. `~` refers to that account's
 home directory, not necessarily the home of the person editing configuration. Absolute Windows
 paths, for example `file:C:\BotNexus\secrets\matrix-token`, are also supported.
-This `file:` form is currently resolved by the Matrix extension for its access-token field; it is
-not yet a general interpolation syntax for arbitrary configuration values.
+The Matrix extension resolves this `file:` form for its access-token field. Other consumers can
+opt in to the core configuration value reader's `[[scheme:identifier]]` expansion; configuration
+values are not expanded automatically.
 
 Trailing CR/LF characters are removed, so a final newline from an editor is safe. Other token
 characters are preserved. Missing, unreadable, empty or over-permissive files cause the account to

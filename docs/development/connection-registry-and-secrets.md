@@ -100,6 +100,27 @@ Resolution happens **at call time**, not at start-up. That is what makes credent
 rotation take effect without restarting the gateway — the caveat referenced above, since
 environment variables are otherwise fixed for a process lifetime.
 
+### Opt-in expansion in configuration values
+
+The JSON and SQLite configuration providers return stored values unchanged. A consumer that needs
+references embedded in a string can use `IConfigurationValueReader` and choose explicitly between
+the raw value and expanded value:
+
+```csharp
+var raw = valueReader.GetRawValue(configuration, "services:matrix:endpoint");
+var expanded = await valueReader.GetExpandedValueAsync(
+    configuration, "services:matrix:endpoint", cancellationToken);
+```
+
+Expanded strings use `[[scheme:identifier]]`, for example
+`https://[[env:MATRIX_HOST]]/[[file:~/.botnexus/secrets/path-fragment]]`. The existing secret
+providers resolve the schemes, and additional providers can be registered through
+`ISecretProvider`. Malformed or unavailable references become the literal
+`INVALID_SCHEMA_IDENTIFIER`; the configuration load and reload are unaffected. Expansion is
+asynchronous because file, SQLite, and keyring providers may perform asynchronous I/O. It is
+opt-in, does not alter `IConfiguration`'s normal indexer or binding behavior, and must only be used
+where the caller can keep the resulting plaintext out of logs, APIs, and agent context.
+
 ### 4. The agent-facing `locations` tool
 
 Returns **metadata only**: name, type, endpoint, username, description, tags. Never

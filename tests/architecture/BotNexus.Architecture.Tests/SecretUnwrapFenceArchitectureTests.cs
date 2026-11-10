@@ -44,6 +44,9 @@ public sealed class SecretUnwrapFenceArchitectureTests : ArchitectureTest
 
         // Passes the webhook secret to Telegram as secret_token when registering the webhook.
         "src/extensions/BotNexus.Extensions.Channels.Telegram/TelegramChannelAdapter.cs",
+
+        // Expands a value only when a configuration consumer explicitly requests it.
+        "src/gateway/BotNexus.Gateway/Security/ConfigurationSecretReferenceResolver.cs",
     };
 
     private static readonly Regex RevealCall = new(@"\.Reveal\s*\(\s*\)", RegexOptions.Compiled);

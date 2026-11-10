@@ -171,6 +171,8 @@ public static class GatewayServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ISecretProvider, SqliteSecretProvider>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<ISecretProvider, KeyringSecretProvider>());
         services.TryAddSingleton<ISecretResolver, SecretResolver>();
+        services.TryAddSingleton<IConfigurationSecretReferenceResolver, ConfigurationSecretReferenceResolver>();
+        services.TryAddSingleton<IConfigurationValueReader, ConfigurationValueReader>();
         // #2855: the OPTIONAL embeddings capability registry. Always registered and normally
         // empty - composition populates it only for providers that opted in, and an empty
         // registry resolves every key to absent, which is the lexical-only default.
