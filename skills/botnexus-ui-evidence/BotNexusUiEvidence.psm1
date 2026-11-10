@@ -165,6 +165,8 @@ Reads the manifest and artifacts. Missing state, hashes, assertions, scenario in
 Directory containing only this invocation artifacts.
 .PARAMETER ExpectedScenario
 Requested scenario identity; rejects downgraded or substituted manifests when supplied by the host.
+.PARAMETER ExpectedTree
+Independently computed pre-build source context digest.
 .PARAMETER ExpectedCommit
 Exact requested candidate commit; rejects substituted image evidence.
 .EXAMPLE
@@ -174,7 +176,16 @@ System.Boolean
 #>
 function Test-UiEvidenceOutput {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$OutputDirectory, [string]$ExpectedScenario, [string]$ExpectedCommit)
+    param([Parameter(Mandatory)][string]$OutputDirectory, [string]$ExpectedScenario, [string]$ExpectedCommit, [string]$ExpectedTree)
+    $outputRoot = Get-Item -LiteralPath $OutputDirectory -Force
+    if (($outputRoot.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Output root is a link.'
+    }
+    foreach ($entry in @(Get-ChildItem -LiteralPath $OutputDirectory -Force)) {
+        if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Output contains a directory or link.'
+        }
+    }
     $manifestPath = Join-Path $OutputDirectory 'evidence.json'
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         throw 'evidence.json is missing.'
@@ -189,6 +200,9 @@ function Test-UiEvidenceOutput {
         if ($null -eq $manifest.$property) {
             throw "evidence.json is missing '$property'."
         }
+    }
+    if ($ExpectedTree -and $manifest.source.tree -cne $ExpectedTree) {
+        throw 'Source context digest mismatch.'
     }
     if ($ExpectedScenario -and $manifest.scenario.name -cne $ExpectedScenario) {
         throw 'Requested evidence scenario mismatch.'
@@ -324,6 +338,8 @@ function Test-UiEvidenceSidebar {
                 }
             }
         })
+    $allowed = @('evidence.json') + @($expected | ForEach-Object { "$_.png"; "$_.json" })
+    Test-UiEvidenceInventory -OutputDirectory $OutputDirectory -Allowed $allowed
     $names = @($Manifest.captures | ForEach-Object { $_.name })
     if ($names.Count -ne 16 -or @($names | Select-Object -Unique).Count -ne 16) {
         throw 'Sidebar capture matrix must contain 16 unique captures.'
@@ -392,4 +408,72 @@ function Test-UiEvidenceSidebar {
     }
 }
 
-Export-ModuleMember -Function *
+
+
+<#
+.SYNOPSIS
+Reject unexpected or non-regular collected output.
+.DESCRIPTION
+Checks the directory itself and every immediate entry without traversing links. Exact case-sensitive inventory is required. Directories, reparse points, symbolic links and extra files fail closed.
+.PARAMETER OutputDirectory
+Task-owned collected output directory.
+.PARAMETER Allowed
+Exact case-sensitive regular filenames allowed by the scenario.
+.EXAMPLE
+Test-UiEvidenceInventory -OutputDirectory ./evidence -Allowed @('evidence.json', 'portal.png')
+.OUTPUTS
+None
+#>
+function Test-UiEvidenceInventory {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$OutputDirectory, [Parameter(Mandatory)][string[]]$Allowed)
+    $root = Get-Item -LiteralPath $OutputDirectory -Force
+    if (($root.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Output root is a link or reparse point.'
+    }
+    $entries = @(Get-ChildItem -LiteralPath $OutputDirectory -Force)
+    if ($entries.Count -ne $Allowed.Count) {
+        throw 'Unexpected output inventory count.'
+    }
+    foreach ($entry in $entries) {
+        if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $entry.LinkType) {
+            throw 'Output contains a directory, link or reparse point.'
+        }
+        if ($Allowed -cnotcontains $entry.Name) {
+            throw 'Unexpected output inventory entry.'
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Prepare an immutable committed evidence source context.
+.DESCRIPTION
+Exports approved tracked Git blobs using the repository snapshot helper. Rejects dirty/untracked candidates, secret paths and links. Uses a new task-owned scratch directory outside the checkout and .botnexus. No container or product runtime starts.
+.PARAMETER RepositoryPath
+Clean committed candidate worktree.
+.PARAMETER SnapshotDirectory
+New absolute task-owned scratch context directory outside the repository and .botnexus.
+.PARAMETER ExpectedCommit
+Exact approved candidate commit.
+.EXAMPLE
+New-UiEvidenceSnapshot -RepositoryPath Q:/repos/candidate -SnapshotDirectory Q:/scratch/task/context -ExpectedCommit ('a' * 40)
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+#>
+function New-UiEvidenceSnapshot {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][string]$RepositoryPath, [Parameter(Mandatory)][string]$SnapshotDirectory, [Parameter(Mandatory)][string]$ExpectedCommit)
+    if (-not $PSCmdlet.ShouldProcess($SnapshotDirectory, 'Export approved committed source snapshot')) {
+        return
+    }
+    $packet = & python -B (Join-Path $PSScriptRoot 'snapshot.py') --repository $RepositoryPath --destination $SnapshotDirectory --expected-commit $ExpectedCommit
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Clean committed source snapshot preparation failed.'
+    }
+    $snapshot = $packet | ConvertFrom-Json
+    if ($snapshot.commit -cne $ExpectedCommit -or $snapshot.tree -cnotmatch '^[0-9a-f]{64}$') {
+        throw 'Source snapshot identity mismatch.'
+    }
+    return $snapshot
+}

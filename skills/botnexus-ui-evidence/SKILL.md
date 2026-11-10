@@ -15,6 +15,7 @@ Docker or Podman must be installed and able to build Linux containers. The norma
 $evidence = @{
     RepositoryPath = '<worktree>'
     OutputDirectory = '<empty-output-directory>'
+    ScratchDirectory = '<task-owned-scratch-outside-worktree-and-.botnexus>'
     ViewportWidth = 1440
     ViewportHeight = 1000
     PromptKey = 'SLOW_STREAM'
@@ -25,7 +26,9 @@ $evidence = @{
 ./skills/botnexus-ui-evidence/Invoke-BotNexusUiEvidence.ps1 @evidence
 ```
 
-The image is built from the current worktree, including tracked and untracked source in the build context. The committed revision and a SHA-256 digest of the copied build context are captured inside the image. A temporary integration-mock agent and catalog are provisioned in the container. The real gateway and Playwright Chromium run together on container loopback with external networking disabled. Use `-AccessibleNames` only for exact names expected on the candidate branch; selector assertions remain the portable default.
+The image is built only from an immutable export of a clean committed Git candidate. Dirty or untracked inputs are rejected. Ignored local files never enter the export. Tracked secret paths, symlinks, submodules and checkout reparse points are rejected. The exporter checks HEAD and cleanliness before and after export and verifies every exported file against its Git blob. The scratch directory must be outside the repository and `.botnexus`. Python 3.10+ and Git are required.
+
+The host independently hashes sorted source-file SHA-256 records before any build. The Dockerfile receives that exact digest, recomputes it before Git initialization/restore/publish and fails on mismatch. The runtime source and browser scripts come from this checked pre-build copy, not generated build output or a mutable host tree. The host compares manifest commit and digest with its own snapshot packet. Runtime networking remains disabled. A temporary integration-mock agent and catalog are provisioned in the container. The real gateway and Playwright Chromium run together on container loopback with external networking disabled. Use `-AccessibleNames` only for exact names expected on the candidate branch; selector assertions remain the portable default.
 
 For the full composer evidence matrix, add `-CaptureMatrix` and retain the default chat page. It captures eleven real browser states: desktop idle, mobile idle and active in the actual `/mobile/agent/evidence-agent/conversation/{id}` route, active pre-token, an active tool-call gap, focused-active, reduced-motion, returned-idle, preference-disabled active, and measured low/high desktop bottom-edge opacity. Mobile states assert `mobile-composer`, `aria-busy`, and stable active status text or idle status absence. Animation states assert computed `::before` opacity changes without a motion path. The original single-capture invocation remains the default.
 
@@ -34,10 +37,10 @@ For the full composer evidence matrix, add `-CaptureMatrix` and retain the defau
 Use `-FocusedSidebar` instead of `-CaptureMatrix`:
 
 ```powershell
-./skills/botnexus-ui-evidence/Invoke-BotNexusUiEvidence.ps1 -RepositoryPath '<worktree>' -OutputDirectory '<empty-output-directory>' -FocusedSidebar
+./skills/botnexus-ui-evidence/Invoke-BotNexusUiEvidence.ps1 -RepositoryPath '<worktree>' -OutputDirectory '<empty-output-directory>' -ScratchDirectory '<task-owned-scratch>' -FocusedSidebar
 ```
 
-The scenario seeds 48 task-owned mock agents and 48 conversations through the candidate configuration/API, pins a conversation and assigns another to a custom section. It enables the preference through real settings controls. It captures populated-at-top and scrolled states for Chat and Agents in light/dark themes at 1440x900 and 600x844: **16 PNG/JSON pairs**. Every pair has hashes, actual viewport/theme/section and scroll-owner geometry. Chat uses the inner `.focused-chat-scroll`; Agents uses the outer focused content area. Input checks require actual wheel and native PageDown movement, picker/document stability and Chat header/control stability. Sequential Tab navigation reaches the Chat region through New section; Agents keyboard navigation reaches its first real link. Picker Home/End/Escape focus is checked. Direct peer groups, the custom member link and built-in move-only menus are asserted without menu mutations. Seeding and teardown affect only disposable candidate state.
+The scenario seeds 48 task-owned mock agents and 48 conversations through the candidate configuration/API, pins a conversation and assigns another to a custom section. It enables the preference through real settings controls. It captures populated-at-top and scrolled states for Chat and Agents in light/dark themes at 1440x900 and 600x844: **16 PNG/JSON pairs**. Every pair has hashes, actual viewport/theme/section and scroll-owner geometry. Accepted sidebar output is exactly evidence.json plus these sixteen PNG/JSON pairs; extra files (including hidden/config/log files), directories and links fail closed. Chat uses the inner `.focused-chat-scroll`; Agents uses the outer focused content area. Input checks require actual wheel and native PageDown movement, picker/document stability and Chat header/control stability. Sequential Tab navigation reaches the Chat region through New section; Agents keyboard navigation reaches its first real link. Picker Home/End/Escape focus is checked. Direct peer groups, the custom member link and built-in move-only menus are asserted without menu mutations. Seeding and teardown affect only disposable candidate state.
 
 This is additional candidate evidence, not a replacement for `FocusedSidebarBrowserTests.cs`, the core gate, independent review or the full feature lifecycle qualifications. Synthetic tests validate harness failure behavior; they do not prove the real scenario passes.
 
@@ -51,6 +54,7 @@ The runtime has no external network, a read-only root, task-owned tmpfs home/dat
 
 ```powershell
 python -B skills/botnexus-ui-evidence/tests/test_focused_sidebar.py
+python -B -m unittest discover -s skills/botnexus-ui-evidence/tests -p test_hardening.py
 ./skills/botnexus-ui-evidence/tests/Test-BotNexusUiEvidence.ps1
 ```
 

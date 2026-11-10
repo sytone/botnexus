@@ -5,6 +5,8 @@ Collect isolated real candidate UI evidence.
 Builds an evidence image, runs a network-disabled read-only container and validates artifacts after verified owned cleanup. Never launches a host gateway or browser. WhatIf does not build, create output or start containers.
 .PARAMETER RepositoryPath
 Absolute candidate worktree root.
+.PARAMETER ScratchDirectory
+Task-owned scratch root outside the repository and .botnexus for immutable source export.
 .PARAMETER OutputDirectory
 Empty task-owned artifact destination.
 .PARAMETER ViewportWidth
@@ -28,7 +30,7 @@ Explicit Docker or Podman executable selection.
 .PARAMETER NuGetPackagesPath
 Optional read-only build-time package cache; never mounted into the runtime.
 .EXAMPLE
-./Invoke-BotNexusUiEvidence.ps1 -RepositoryPath Q:/repos/candidate -OutputDirectory Q:/scratch/evidence -FocusedSidebar
+./Invoke-BotNexusUiEvidence.ps1 -RepositoryPath Q:/repos/candidate -OutputDirectory Q:/scratch/evidence -ScratchDirectory Q:/scratch/task -FocusedSidebar
 .OUTPUTS
 System.IO.FileInfo. Validated evidence.json, or no output under WhatIf.
 #>
@@ -36,6 +38,7 @@ System.IO.FileInfo. Validated evidence.json, or no output under WhatIf.
 param(
     [Parameter(Mandatory)][string]$RepositoryPath,
     [Parameter(Mandatory)][string]$OutputDirectory,
+    [Parameter(Mandatory)][string]$ScratchDirectory,
     [ValidateRange(320, 7680)][int]$ViewportWidth = 1440,
     [ValidateRange(320, 4320)][int]$ViewportHeight = 1000,
     [ValidatePattern('^[A-Z0-9_/-]+$')][string]$PromptKey = 'SLOW_STREAM',
@@ -168,16 +171,32 @@ if (-not $PSCmdlet.ShouldProcess($repo, 'Build and run isolated UI evidence cont
     return
 }
 
+$sourceCommit = Get-RepositoryCommit -Root $repo
+$snapshot = New-UiEvidenceSnapshot -RepositoryPath $repo -SnapshotDirectory (Join-Path $ScratchDirectory $runId) -ExpectedCommit $sourceCommit
 try {
-    $dockerfile = Join-Path $PSScriptRoot 'container/Dockerfile'
-    $sourceCommit = Get-RepositoryCommit -Root $repo
-    $buildArguments = @('build', '--file', $dockerfile, '--tag', $image, '--build-arg', "SOURCE_COMMIT=$sourceCommit")
+    $dockerfile = Join-Path $snapshot.context 'source/skills/botnexus-ui-evidence/container/Dockerfile'
+    $buildArguments = @('build', '--file', $dockerfile, '--tag', $image, '--build-arg', "SOURCE_COMMIT=$sourceCommit", '--build-arg', "SOURCE_CONTEXT_DIGEST=$($snapshot.tree)")
     if ($nugetPackages -and (Test-Path -LiteralPath $nugetPackages -PathType Container)) {
         $buildArguments += @('--volume', "${nugetPackages}:/root/.nuget/packages:ro")
     }
-    $buildArguments += $repo
+    $buildArguments += $snapshot.context
     Invoke-UiEvidenceRuntime $runtime $buildArguments | Out-Null
     $cleanup = Invoke-UiEvidenceContainer -Runtime $runtime -Image $image -ContainerName $container -OutputVolumeName $volume -ScenarioJson $scenario -OutputDirectory $output
+    # Refuse links/directories before reading or rewriting the collected manifest.
+    $collected = @(Get-ChildItem -LiteralPath $output -Force)
+    Test-UiEvidenceInventory -OutputDirectory $output -Allowed @($collected.Name)
+    if ($FocusedSidebar) {
+        $allowed = @('evidence.json') + @(foreach ($theme in @('light', 'dark')) {
+                foreach ($size in @('1440x900', '600x844')) {
+                    foreach ($section in @('chat', 'agents')) {
+                        foreach ($state in @('populated', 'scrolled')) {
+                            "$theme-$size-$section-$state.png"; "$theme-$size-$section-$state.json"
+                        }
+                    }
+                }
+            })
+        Test-UiEvidenceInventory -OutputDirectory $output -Allowed $allowed
+    }
     $manifestPath = Join-Path $output 'evidence.json'
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -Depth 20
     if ($cleanup.ContainerRemoved -ne $true -or $cleanup.VolumeRemoved -ne $true) {
@@ -185,11 +204,14 @@ try {
     }
     $manifest.cleanup.containerRemoved = $cleanup.ContainerRemoved
     $manifest | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $manifestPath -Encoding utf8
-    Test-UiEvidenceOutput -OutputDirectory $output -ExpectedScenario (($scenario | ConvertFrom-Json).name) -ExpectedCommit $sourceCommit | Out-Null
+    Test-UiEvidenceOutput -OutputDirectory $output -ExpectedScenario (($scenario | ConvertFrom-Json).name) -ExpectedCommit $sourceCommit -ExpectedTree $snapshot.tree | Out-Null
     Get-Item -LiteralPath $manifestPath
 }
 finally {
     Invoke-UiEvidenceRuntime $runtime @('rm', '--force', $container) -AllowFailure | Out-Null
     Invoke-UiEvidenceRuntime $runtime @('volume', 'rm', '--force', $volume) -AllowFailure | Out-Null
     Invoke-UiEvidenceRuntime $runtime @('image', 'rm', '--force', $image) -AllowFailure | Out-Null
+    if (Get-Variable -Name snapshot -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $snapshot.context -Recurse -Force
+    }
 }
