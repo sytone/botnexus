@@ -189,6 +189,13 @@ my-project/skills/
 
 Use workspace skills for project-specific conventions that travel with the codebase.
 
+### Skills linked from another repository
+
+Linked skill folders and linked parent directories are blocked by default. To use a separate
+repository as the live source of a skill, enable `allowSymlinkedSkills` through the CLI.
+See [Allow skills linked from another repository](extensions/skills.md#allow-skills-linked-from-another-repository)
+for enable/disable commands, per-agent overrides, and security limits.
+
 ### Priority and merging
 
 When multiple locations define a skill with the same name, higher-priority sources override lower ones:

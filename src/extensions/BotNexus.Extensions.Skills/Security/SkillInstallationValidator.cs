@@ -3,17 +3,27 @@ using System.IO.Abstractions;
 namespace BotNexus.Extensions.Skills.Security;
 
 /// <summary>
-/// Installations and their ancestors must be ordinary paths. Child links are permitted only
-/// when their canonical targets remain contained. Checks are best-effort filesystem observations,
-/// not an atomic read/validation transaction.
+/// Installations and their ancestors must be ordinary paths unless linked roots are explicitly
+/// authorized. Child links must remain inside the physical installation. Checks are best-effort
+/// filesystem observations, not an atomic read/validation transaction.
 /// </summary>
 internal static class SkillInstallationValidator
 {
     private const int MaxEntries = 100_000;
 
+    internal static string ResolveRoot(string root, IFileSystem fileSystem, bool allowSymlinkedSkills)
+    {
+        // Only the operator's opt-in authorizes the link target as a new containment boundary.
+        var resolved = allowSymlinkedSkills
+            ? SkillPathValidator.ResolvePath(root, fileSystem)
+            : root;
+        EnsureOrdinaryPath(resolved, fileSystem);
+        return resolved;
+    }
+
     internal static IReadOnlyList<string> CollectFiles(string root, IFileSystem fileSystem)
     {
-        // Never canonicalize a linked installation into an authorized root.
+        // Linked roots must have been explicitly authorized and resolved before collection.
         EnsureOrdinaryPath(root, fileSystem);
         var allowedRoot = SkillPath.CreateRoot(root, fileSystem);
         var files = new List<string>();
@@ -95,7 +105,7 @@ internal static class SkillInstallationValidator
             : fileSystem.FileInfo.New(path).LinkTarget;
         if ((attributes & FileAttributes.ReparsePoint) != 0 || linkTarget is not null)
             throw new InvalidDataException(
-                $"Skill installation contains a link or reparse point at '{path}'. Install the skill as an ordinary directory with ordinary files, not a linked installation.");
+                $"Skill installation contains a link or reparse point at '{path}'. Install the skill as an ordinary directory, or enable allowSymlinkedSkills for trusted linked skill roots. Child links must remain inside the skill directory.");
         return attributes;
     }
 }

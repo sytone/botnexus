@@ -1,6 +1,12 @@
 using BotNexus.Extensions.Skills.Security;
+using BotNexus.Domain.Primitives;
+using BotNexus.Gateway.Abstractions.Agents;
+using BotNexus.Gateway.Abstractions.Hooks;
+using BotNexus.Gateway.Abstractions.Models;
 using Microsoft.Extensions.Logging;
+using NSubstitute;
 using System.IO.Abstractions;
+using System.Text.Json;
 
 namespace BotNexus.Extensions.Skills.Tests;
 
@@ -66,6 +72,173 @@ public sealed class SkillReadBoundaryTests : IDisposable
         (await Execute(tool, "list")).ShouldNotContain("sample");
         (await Execute(tool, "load")).ShouldContain("not found");
         (await Execute(tool, "view_file", "references/secret.md")).ShouldContain("not found");
+    }
+
+    [Fact]
+    public async Task Tool_LinkedRoot_OptInListsLoadsAndViewsRepositoryFiles()
+    {
+        var repository = Outside();
+        ReplaceRoot(repository);
+        var tool = new SkillTool(Global, null, null, new() { AllowSymlinkedSkills = true });
+
+        var skill = tool.GetDiscoveredSkills().ShouldHaveSingleItem();
+        skill.SourcePath.ShouldBe(repository);
+        skill.LinkedFiles.ShouldContain(file => file.RelativePath == "references/safe.md");
+        (await Execute(tool, "list")).ShouldContain("sample");
+        (await Execute(tool, "load")).ShouldContain("SAFE BODY");
+        (await Execute(tool, "view_file", "references/safe.md")).ShouldContain("SAFE REFERENCE");
+
+        File.WriteAllText(Path.Combine(repository, "references", "safe.md"), "UPDATED IN REPOSITORY");
+        (await Execute(tool, "view_file", "references/safe.md")).ShouldContain("UPDATED IN REPOSITORY");
+
+        var disabled = new SkillTool(Global, null, null, new() { AllowSymlinkedSkills = false });
+        (await Execute(disabled, "list")).ShouldNotContain("sample");
+        (await Execute(disabled, "load")).ShouldContain("not found");
+    }
+
+    [Fact]
+    public async Task Tool_LinkedAncestor_OptInUsesCanonicalBoundary()
+    {
+        var alias = Path.Combine(_temp, "linked-skills");
+        Directory.CreateSymbolicLink(alias, Global);
+        var tool = new SkillTool(alias, null, null, new() { AllowSymlinkedSkills = true });
+
+        tool.GetDiscoveredSkills().ShouldHaveSingleItem().SourcePath.ShouldBe(Skill);
+        (await Execute(tool, "load")).ShouldContain("SAFE BODY");
+        (await Execute(tool, "view_file", "references/safe.md")).ShouldContain("SAFE REFERENCE");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Prompt_LinkedWorkspaceSkill_UsesConfiguredPermission(bool allow)
+    {
+        ReplaceRoot(Outside());
+        var workspace = Substitute.For<IAgentWorkspaceManager>();
+        workspace.GetWorkspacePath(Arg.Any<string>()).Returns(_temp);
+        var descriptor = new AgentDescriptor
+        {
+            AgentId = AgentId.From("symlink-test"),
+            DisplayName = "Symlink test",
+            ModelId = "test-model",
+            ApiProvider = "test-provider",
+            DefaultExtensionConfig = new Dictionary<string, JsonElement>
+            {
+                [SkillsExtensionJson.ExtensionId] = JsonSerializer.SerializeToElement(
+                    new { allowSymlinkedSkills = allow, autoLoad = new[] { "sample" } }, SkillsExtensionJson.Options)
+            }
+        };
+        var hookEvent = new BeforePromptBuildEvent(
+            descriptor.AgentId, descriptor, "prompt", [],
+            DiagnosticExecutionOrigin.ForPromptConstruction(descriptor.AgentId, SessionId.From("symlink-session"), null, null));
+
+        var result = await new SkillPromptHookHandler(workspace).HandleAsync(hookEvent);
+        var prompt = result?.AppendSystemContext ?? string.Empty;
+
+        if (allow)
+            prompt.ShouldContain("SAFE BODY");
+        else
+            prompt.ShouldNotContain("SAFE BODY");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Discover_OptInStillRejectsEscapingChildren(bool linkedRoot)
+    {
+        var root = linkedRoot ? Outside() : Skill;
+        if (linkedRoot)
+            ReplaceRoot(root);
+        var outside = Path.Combine(_temp, "unrelated");
+        WriteSkill(outside);
+        Directory.CreateSymbolicLink(Path.Combine(root, "references", "external"), outside);
+
+        new SkillTool(Global, null, null, new() { AllowSymlinkedSkills = true })
+            .GetDiscoveredSkills().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Discover_LinkedRoot_OptInStillScansRepositoryScripts()
+    {
+        var repository = Outside();
+        ReplaceRoot(repository);
+        Directory.CreateDirectory(Path.Combine(repository, "scripts"));
+        File.WriteAllText(Path.Combine(repository, "scripts", "unsafe.js"), "eval('unsafe');");
+
+        new SkillTool(Global, null, null, new() { AllowSymlinkedSkills = true })
+            .GetDiscoveredSkills().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Discover_OptInStillRejectsLinkedMarkdownOutsideSkill()
+    {
+        File.Delete(Path.Combine(Skill, "SKILL.md"));
+        File.CreateSymbolicLink(Path.Combine(Skill, "SKILL.md"), Path.Combine(Outside(), "SKILL.md"));
+
+        new SkillTool(Global, null, null, new() { AllowSymlinkedSkills = true })
+            .GetDiscoveredSkills().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Discover_OptInStillRejectsDirectoryCycles()
+    {
+        var repository = Outside();
+        ReplaceRoot(repository);
+        Directory.CreateSymbolicLink(Path.Combine(repository, "references", "cycle"), repository);
+
+        new SkillTool(Global, null, null, new() { AllowSymlinkedSkills = true })
+            .GetDiscoveredSkills().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Tool_OptInCanonicalRootReplacedAfterDiscovery_IsRejected()
+    {
+        var repository = Outside();
+        ReplaceRoot(repository);
+        var config = new SkillsConfig { AllowSymlinkedSkills = true };
+        var skill = new SkillTool(Global, null, null, config).GetDiscoveredSkills().ShouldHaveSingleItem();
+        var cached = new SkillTool([skill], config, new FileSystem());
+        var replacement = Path.Combine(_temp, "replacement");
+        WriteSkill(replacement);
+        File.WriteAllText(Path.Combine(replacement, "references", "safe.md"), "SWAPPED SECRET");
+        Directory.Delete(repository, true);
+        Directory.CreateSymbolicLink(repository, replacement);
+
+        (await Execute(cached, "view_file", "references/safe.md")).ShouldNotContain("SWAPPED SECRET");
+    }
+
+    [Fact]
+    public async Task Manager_LinkedRoot_OptInPatchesRepositoryWithoutReplacingLink()
+    {
+        var repository = Outside();
+        ReplaceRoot(repository);
+        var manager = new SkillManagerTool(null, Global, new() { AllowSymlinkedSkills = true });
+
+        var result = await manager.ExecuteAsync("linked-management", new Dictionary<string, object?>
+        {
+            ["action"] = "patch", ["name"] = "sample", ["oldText"] = "SAFE BODY", ["newText"] = "REVIEW IN PR"
+        });
+
+        string.Join("", result.Content.Select(c => c.Value)).ShouldNotContain("Error:");
+        File.ReadAllText(Path.Combine(repository, "SKILL.md")).ShouldContain("REVIEW IN PR");
+        new DirectoryInfo(Skill).LinkTarget.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public async Task Manager_LinkedRoot_DeleteRemovesLinkNotRepository()
+    {
+        var repository = Outside();
+        ReplaceRoot(repository);
+        var manager = new SkillManagerTool(null, Global, new() { AllowSymlinkedSkills = true });
+
+        var result = await manager.ExecuteAsync("linked-delete", new Dictionary<string, object?>
+        {
+            ["action"] = "delete", ["name"] = "sample"
+        });
+
+        string.Join("", result.Content.Select(c => c.Value)).ShouldNotContain("Error:");
+        Directory.Exists(Skill).ShouldBeFalse();
+        File.ReadAllText(Path.Combine(repository, "SKILL.md")).ShouldContain("SAFE BODY");
     }
 
     [Fact]

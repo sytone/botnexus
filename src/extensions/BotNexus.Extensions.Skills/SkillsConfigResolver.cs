@@ -7,8 +7,8 @@ namespace BotNexus.Extensions.Skills;
 public static class SkillsConfigResolver
 {
     /// <summary>
-    /// Uses every named-agent property as authored and combines only security acknowledgements
-    /// from agent defaults, because the acknowledgement endpoint persists in that scope.
+    /// Uses named-agent settings as authored, inherits omitted filesystem permissions from
+    /// agent defaults, and combines security acknowledgements from both scopes.
     /// </summary>
     public static SkillsConfig? Resolve(AgentDescriptor descriptor)
     {
@@ -21,6 +21,7 @@ public static class SkillsConfigResolver
         return new SkillsConfig
         {
             Enabled = source.Enabled,
+            AllowSymlinkedSkills = ResolvePermission(descriptor, "allowSymlinkedSkills", defaults?.AllowSymlinkedSkills ?? false),
             AutoLoad = source.AutoLoad,
             Disabled = source.Disabled,
             Allowed = source.Allowed,
@@ -29,22 +30,24 @@ public static class SkillsConfigResolver
             TrustMode = source.TrustMode,
             AllowSkillCreation = source.AllowSkillCreation,
             AllowSkillDeletion = source.AllowSkillDeletion,
-            AllowSharedSkillManagement = ResolveSharedManagement(descriptor, defaults),
+            AllowSharedSkillManagement = ResolvePermission(descriptor, "allowSharedSkillManagement",
+                defaults?.AllowSharedSkillManagement ?? new SkillsConfig().AllowSharedSkillManagement),
             SecurityAcknowledgements = Combine(defaults?.SecurityAcknowledgements, source.SecurityAcknowledgements)
         };
     }
 
-    private static bool ResolveSharedManagement(AgentDescriptor descriptor, SkillsConfig? defaults)
+    private static bool ResolvePermission(AgentDescriptor descriptor, string propertyName, bool defaultValue)
     {
-        if (TryReadSharedManagement(descriptor.ExtensionConfig, out var namedValue))
+        if (TryReadPermission(descriptor.ExtensionConfig, propertyName, out var namedValue))
             return namedValue;
-        if (TryReadSharedManagement(descriptor.DefaultExtensionConfig, out var defaultValue))
-            return defaultValue;
-        return defaults?.AllowSharedSkillManagement ?? new SkillsConfig().AllowSharedSkillManagement;
+        if (TryReadPermission(descriptor.DefaultExtensionConfig, propertyName, out var inheritedValue))
+            return inheritedValue;
+        return defaultValue;
     }
 
-    private static bool TryReadSharedManagement(
+    private static bool TryReadPermission(
         IReadOnlyDictionary<string, JsonElement> scope,
+        string propertyName,
         out bool value)
     {
         value = default;
@@ -56,7 +59,7 @@ public static class SkillsConfigResolver
         var found = false;
         foreach (var property in extension.EnumerateObject())
         {
-            if (string.Equals(property.Name, "allowSharedSkillManagement", StringComparison.OrdinalIgnoreCase) &&
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase) &&
                 property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
             {
                 value = property.Value.GetBoolean();

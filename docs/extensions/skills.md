@@ -147,6 +147,53 @@ Skills integrate with the prompt pipeline through the `SkillPromptHookHandler`:
 
 ## Configuration
 
+### Allow skills linked from another repository
+
+`allowSymlinkedSkills` defaults to `false`: a skill directory or parent directory that is a
+symbolic link (or Windows junction) is rejected. Enable it when you keep skills in a separate
+repository and link its folders into one of the skill locations above.
+
+Only enable this for repositories you trust. Updates in the linked repository become available
+without copying files, and permitted `skill_manage` edits change that repository's working files,
+ready for review and a pull request. Existing skill-creation, deletion, and shared-management
+permissions still apply.
+
+**CLI:** Open a terminal under the account that runs BotNexus. Enable linked skills for agents
+that inherit the default:
+
+```shell
+botnexus config set agents.defaults.extensions.botnexus-skills.allowSymlinkedSkills true
+```
+
+Disable them again:
+
+```shell
+botnexus config set agents.defaults.extensions.botnexus-skills.allowSymlinkedSkills false
+```
+
+For one existing agent, replace `my-agent` with its ID:
+
+```shell
+botnexus config set agents.my-agent.extensions.botnexus-skills.allowSymlinkedSkills true
+botnexus config get agents.my-agent.extensions.botnexus-skills.allowSymlinkedSkills
+```
+
+Use the same agent-specific `config set` command with `false` to disable linked skills for
+that agent. An explicit agent value overrides the default; omitting the setting inherits it,
+even when the agent has other skills settings. Start a new agent session after changing the
+setting so its tools receive the updated configuration.
+
+**Expected result:** Ask the agent to list and load the linked skill, then view one of its listed
+support files. Load output reports the resolved repository directory as **Path**, and support
+files use that same physical boundary. The link's skill-folder name must still match the
+`name` in `SKILL.md`.
+
+This setting authorizes the linked **root**, not arbitrary file access. Child links must still
+resolve inside that physical skill directory. Escaping child links, link cycles, security-scan
+findings, and configured trust checks are not bypassed. Deleting a skill installed as a directory
+link removes that link, not its repository target. The Portal file browser retains its separate
+shared-directory boundary; this agent setting does not expand it.
+
 ### Agent-Level Skill Configuration
 
 Agents can auto-load specific skills via their configuration:
