@@ -36,9 +36,9 @@ public sealed class ClaudeMarketplaceSelectionTests
             Discover(fixture, "greet");
             var receipt = JsonSerializer.Serialize(record);
             fixture.Fetcher.Revision = "revision-2";
-            fixture.Fetcher.Write = root => { var selected = Populate(root, relative); Write(selected, "hooks/hooks.json", "{}"); };
+            fixture.Fetcher.Write = root => { var selected = Populate(root, relative); Write(selected, ".claude-plugin/plugin.json", "{\"name\":\"renamed\"}"); };
             var failed = await fixture.Manager.UpdateAsync("chosen");
-            Check(failed.Outcome == PluginOperationOutcome.Failed && failed.Errors.Any(e => e.Field == "hooks"), "foreign hooks rejected");
+            Check(failed.Outcome == PluginOperationOutcome.Failed && failed.Errors.Any(e => e.Field == "name"), "identity conflict rejected");
             Check(JsonSerializer.Serialize(fixture.Manager.List().Single()) == receipt, "failed update changed receipt");
             Check(File.ReadAllText(Path.Combine(destination, "skills/greet/SKILL.md")) == Skill("greet"), "failed update changed content");
             Discover(fixture, "greet");
@@ -121,14 +121,14 @@ public sealed class ClaudeMarketplaceSelectionTests
 #endif
     public async Task IdentityMetadataAndLinks_FailClosed()
     {
-        var mutationFields = new[] { "name", "name", ".claude-plugin/marketplace.json", "sourcePath", "hooks", ".claude-plugin/plugin.json/name", "#/commands", ".claude-plugin/marketplace.json", ".claude-plugin", "contained/subdir", "contained/subdir/linked", "contained" };
+        var mutationFields = new[] { "name", "name", ".claude-plugin/marketplace.json", "sourcePath", "skills", ".claude-plugin/plugin.json/name", "#/commands", ".claude-plugin/marketplace.json", ".claude-plugin", "contained/subdir", "contained/subdir/linked", "contained" };
         var mutationIndex = 0;
         foreach (var mutation in new Action<string>[] {
             root => Write(root, "contained/subdir/.claude-plugin/plugin.json", "{\"name\":\"other\"}"),
             root => Write(root, "contained/subdir/.botnexus-plugin/plugin.json", "{\"name\":\"other\"}"),
             root => File.Delete(Path.Combine(root, ".claude-plugin/marketplace.json")),
             root => Directory.Delete(Path.Combine(root, "contained/subdir"), true),
-            root => Write(root, "contained/subdir/.botnexus-plugin/plugin.json", "{\"name\":\"chosen\",\"hooks\":\"./custom\"}"),
+            root => Write(root, "contained/subdir/.botnexus-plugin/plugin.json", "{\"name\":\"chosen\",\"skills\":[\"./custom\"]}"),
             root => Write(root, "contained/subdir/.claude-plugin/plugin.json", "{\"name\":\"chosen\",\"name\":\"chosen\"}"),
             root => { File.Delete(Path.Combine(root, "contained/subdir/.claude-plugin/plugin.json")); Write(root, "contained/subdir/.botnexus-plugin/plugin.json", "{\"name\":\"chosen\",\"commands\":\"./custom\"}"); },
 
@@ -285,22 +285,47 @@ public sealed class ClaudeMarketplaceSelectionTests
     [Xunit.Fact]
     public async Task CopilotCatalog_AmbiguityUnsafePathsAndOverridesFailClosed()
     {
-        foreach (var mutation in new Action<string>[]
+        foreach (var (caseName, mutation) in new (string Name, Action<string> Mutate)[]
         {
-            root => Write(root, ".claude-plugin/marketplace.json", Catalog("{\"name\":\"chosen\",\"source\":\"./packages/chosen\"}")),
-            root => Write(root, ".github/plugin/marketplace.json", "{"),
-            root => Write(root, ".github/plugin/marketplace.json", Catalog("{\"name\":\"chosen\",\"source\":\"./../escape\",\"version\":\"1.0.0\"}")),
-            root => Write(root, ".github/plugin/marketplace.json", Catalog("{\"name\":\"chosen\",\"source\":\"./packages/chosen\",\"version\":42}")),
-            root => Write(root, ".github/plugin/marketplace.json", Catalog("{\"name\":\"chosen\",\"source\":\"./packages/chosen\",\"skills\":\"./elsewhere\"}")),
-            root => Write(root, ".github/plugin/marketplace.json", Catalog("{\"name\":\"chosen\",\"source\":\"./packages/chosen\",\"version\":\"1.0.0\",\"version\":\"2.0.0\"}")),
-            root => Write(root, "packages/chosen/hooks/hooks.json", "{}"),
-            root => { var path = Path.Combine(root, ".github/plugin/marketplace.json"); File.Delete(path); File.CreateSymbolicLink(path, Path.Combine(root, "missing")); },
+            ("ambiguous Claude and Copilot catalogs", root => Write(root, ".claude-plugin/marketplace.json", Catalog("{\"name\":\"chosen\",\"source\":\"./packages/chosen\"}"))),
+            ("malformed Copilot catalog JSON", root => Write(root, ".github/plugin/marketplace.json", "{")),
+            ("parent traversal selected source", root => Write(root, ".github/plugin/marketplace.json", Catalog("{\"name\":\"chosen\",\"source\":\"./../escape\",\"version\":\"1.0.0\"}"))),
+            ("non-string descriptive version", root => Write(root, ".github/plugin/marketplace.json", Catalog("{\"name\":\"chosen\",\"source\":\"./packages/chosen\",\"version\":42}"))),
+            ("unsupported catalog skills override", root => Write(root, ".github/plugin/marketplace.json", Catalog("{\"name\":\"chosen\",\"source\":\"./packages/chosen\",\"skills\":\"./elsewhere\"}"))),
+            ("duplicate version field", root => Write(root, ".github/plugin/marketplace.json", Catalog("{\"name\":\"chosen\",\"source\":\"./packages/chosen\",\"version\":\"1.0.0\",\"version\":\"2.0.0\"}"))),
+            ("linked Copilot catalog", root => { var path = Path.Combine(root, ".github/plugin/marketplace.json"); File.Delete(path); File.CreateSymbolicLink(path, Path.Combine(root, "missing")); }),
         })
         {
             using var fixture = new Fixture();
             fixture.Fetcher.Write = root => { PopulateCopilot(root); mutation(root); };
-            Reject(await fixture.Manager.InstallAsync(Request()), fixture, "unsafe Copilot catalog or package");
+            Reject(await fixture.Manager.InstallAsync(Request()), fixture, "unsafe Copilot catalog: " + caseName);
         }
+    }
+
+    [Xunit.Fact]
+    public async Task CopilotCatalog_SelectedHooks_ImportSkillsWithInactiveOwnedContentAndWarnings()
+    {
+        using var fixture = new Fixture();
+        const string hooks = "{\"Stop\":[{\"command\":\"never-execute-hook\"}]}";
+        fixture.Fetcher.Write = root =>
+        {
+            PopulateCopilot(root);
+            Write(root, "packages/chosen/hooks/hooks.json", hooks);
+        };
+        var result = await fixture.Manager.InstallAsync(Request());
+        Check(result.Outcome == PluginOperationOutcome.Installed, "mixed Copilot hooks install: " + Describe(result));
+        var record = new PluginStateStore(fixture.Root).Find("chosen") ?? throw new Exception("missing mixed Copilot receipt");
+        Check(record.SkillsOnly && record.ManifestFormat == PluginManifestFormat.Legacy, "hooks must not grant execution policy");
+        Check(record.SkippedComponents.SequenceEqual(new[] { "hooks" }), "hooks skipped category must survive reload");
+        Check(record.Warnings.Count == 2 && record.Warnings.Any(warning => warning.Contains("Skipped hooks", StringComparison.Ordinal))
+            && record.Warnings.All(warning => !warning.Contains("never-execute-hook", StringComparison.Ordinal)), "bounded inactive hooks warning");
+        Check(record.Files.Contains("hooks/hooks.json"), "preserved hooks remain exactly owned");
+        Check(File.ReadAllText(Path.Combine(fixture.Manager.GetPluginDirectory("chosen"), "hooks", "hooks.json")) == hooks,
+            "publisher hook content remains unchanged and inert");
+        Discover(fixture, "greet");
+        Check(fixture.Fetcher.Calls.Count == 1, "no external component fetch");
+        Check(ContentTrustCatalog.Verify(fixture.Manager.GetPluginDirectory("chosen"), detectUnlistedFiles: true).Trusted,
+            "preserved hook bytes remain covered by plugin trust catalog");
     }
 
     [Xunit.Fact]
@@ -463,8 +488,8 @@ public sealed class ClaudeMarketplaceSelectionTests
     {
         Check(result.Outcome == PluginOperationOutcome.Failed && result.Errors.Count > 0 && result.Errors.All(e => e.Field != "source"), "expected validation failure: " + context + " " + Describe(result));
         if (field is not null) Check(result.Errors.Any(e => e.Field == field), "expected field " + field + ": " + context + " " + Describe(result));
-        Check(fixture.Manager.List().Count == 0 && !Directory.Exists(fixture.Manager.GetPluginDirectory("chosen")), "rejected install materialized content");
-        Check(fixture.Fetcher.Staging.All(path => !Directory.Exists(path)), "failed staging cleanup");
+        Check(fixture.Manager.List().Count == 0 && !Directory.Exists(fixture.Manager.GetPluginDirectory("chosen")), "rejected install materialized content: " + context);
+        Check(fixture.Fetcher.Staging.All(path => !Directory.Exists(path)), "failed staging cleanup: " + context);
     }
     private sealed class Fixture : IDisposable
     {

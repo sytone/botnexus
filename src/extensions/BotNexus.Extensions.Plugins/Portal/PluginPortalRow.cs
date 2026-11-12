@@ -103,6 +103,18 @@ public sealed record PluginPortalRow
     [JsonPropertyName("fileCount")]
     public required int FileCount { get; init; }
 
+    /// <summary>Whether only conventional skills may be consumed.</summary>
+    [JsonPropertyName("skillsOnly")]
+    public bool SkillsOnly { get; init; }
+
+    /// <summary>Known components preserved without activation.</summary>
+    [JsonPropertyName("skippedComponents")]
+    public IReadOnlyList<string> SkippedComponents { get; init; } = [];
+
+    /// <summary>Fixed, bounded partial-support diagnostics.</summary>
+    [JsonPropertyName("warnings")]
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+
     /// <summary>Integrity state of the content on disk.</summary>
     [JsonPropertyName("trustState")]
     public required PluginTrustState TrustState { get; init; }

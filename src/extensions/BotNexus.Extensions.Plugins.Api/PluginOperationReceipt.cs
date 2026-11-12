@@ -57,6 +57,15 @@ public sealed record PluginOperationReceipt
     /// <summary>Bounded, sanitized errors that contain no raw fetch output.</summary>
     public IReadOnlyList<PluginOperationReceiptError> Errors { get; init; } = [];
 
+    /// <summary>Effective skills-only import policy, when an installed record is available.</summary>
+    public bool? SkillsOnly { get; init; }
+
+    /// <summary>Bounded known categories, without publisher-controlled text.</summary>
+    public IReadOnlyList<string> SkippedComponents { get; init; } = [];
+
+    /// <summary>Fixed partial-support diagnostics; no source or component internals.</summary>
+    public IReadOnlyList<string> Warnings { get; init; } = [];
+
     /// <summary>Projects an internal result onto the credential-safe public wire contract.</summary>
     /// <param name="operation">Lifecycle command being reported.</param>
     /// <param name="result">Internal lifecycle result.</param>
@@ -73,6 +82,9 @@ public sealed record PluginOperationReceipt
         ResolvedCommit = result.Plugin?.ResolvedVersion,
         UpdatesEnabled = result.Plugin?.UpdatesEnabled,
         PreviousVersion = result.PreviousVersion,
+        SkillsOnly = result.Plugin?.SkillsOnly,
+        SkippedComponents = PluginComponentPolicy.Normalize(result.Plugin?.SkippedComponents ?? []),
+        Warnings = result.Plugin?.Warnings ?? [],
         Errors = result.Errors
             .Take(MaximumErrors)
             .Select(SanitizeError)

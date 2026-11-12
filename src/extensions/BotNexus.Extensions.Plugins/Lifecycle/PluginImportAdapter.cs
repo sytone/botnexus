@@ -14,11 +14,6 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
     {
         "name", "description", "version", "author", "homepage", "repository", "license", "keywords",
     };
-    private static readonly HashSet<string> UnsupportedFields = new(StringComparer.Ordinal)
-    {
-        "hooks", "commands", "agents", "mcpServers", "lspServers",
-    };
-
     public PluginParseResult<ImportedPlugin> ParseDirectory(string directory, string? expectedName = null, bool marketplaceSelected = false)
     {
         // Root legacy inputs are a separate dialect, including when native enhancement is present.
@@ -29,7 +24,7 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
             var legacySafetyErrors = ValidateImportTree(directory);
             if (legacySafetyErrors.Count > 0)
                 return PluginParseResult<ImportedPlugin>.Failure(legacySafetyErrors);
-            return new LegacyPluginImportAdapter(parser).ParseDirectory(directory);
+            return new LegacyPluginImportAdapter(parser).ParseDirectory(directory, marketplaceSelected);
         }
 
         // Inspect entry names, not File.Exists: a dangling metadata link still marks a
@@ -79,28 +74,15 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
         }
 
         var errors = new List<PluginValidationError>();
+        var skipped = new HashSet<string>(PluginComponentPolicy.Discover(directory), StringComparer.Ordinal);
         if (native?.Value is { } dualNative)
         {
-            // Native wins as a whole, but cannot silently introduce behavior outside this
-            // import stage when a Claude manifest is also present. Native-only is unchanged.
-            foreach (var (field, declared) in new[]
-            {
-                ("hooks", dualNative.Hooks is not null),
-                ("commands", dualNative.Commands is not null),
-                ("agents", dualNative.Agents is not null),
-                ("mcpServers", dualNative.McpServers is not null),
-            })
-            {
-                if (declared)
-                    errors.Add(new(field, $"Dual-manifest skills-only import does not support native '{field}'."));
-            }
+            // Native metadata remains authoritative, but a dual input never gains native execution.
+            skipped.UnionWith(PluginComponentPolicy.Declared(dualNative));
             if (dualNative.Skills is { } skills
                 && (skills.Count != 1 || skills[0] is not ("./skills" or "skills")))
                 errors.Add(new("skills", "Dual-manifest import requires native skills to name only the conventional './skills' directory."));
         }
-        // These conventional paths can be discovered independently of manifest declarations.
-        errors.AddRange(ValidateDiscoveredComponents(directory));
-
         PluginManifest? claudeManifest = null;
         try
         {
@@ -127,8 +109,8 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
                             if (!IsConventionalSkills(property.Value))
                                 errors.Add(new("skills", "Claude skills must name only the conventional './skills' directory; custom or empty declarations are unsupported."));
                         }
-                        else if (UnsupportedFields.Contains(property.Name))
-                            errors.Add(new(property.Name, $"Claude skills-only import does not support '{property.Name}'."));
+                        else if (PluginComponentPolicy.CategoryForField(property.Name) is { } category)
+                            skipped.Add(category);
                         else
                             errors.Add(new(property.Name, $"Unknown Claude plugin field '{property.Name}'."));
                     }
@@ -151,9 +133,9 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
         if (errors.Count > 0)
             return PluginParseResult<ImportedPlugin>.Failure(errors);
         if (native?.Value is { } authoritative)
-            return PluginParseResult<ImportedPlugin>.Success(new(authoritative, PluginManifestFormat.Native));
+            return PluginParseResult<ImportedPlugin>.Success(new(authoritative, PluginManifestFormat.Native, true, PluginComponentPolicy.Normalize(skipped)));
         if (claudeManifest is not null)
-            return PluginParseResult<ImportedPlugin>.Success(new(claudeManifest, PluginManifestFormat.Claude));
+            return PluginParseResult<ImportedPlugin>.Success(new(claudeManifest, PluginManifestFormat.Claude, true, PluginComponentPolicy.Normalize(skipped)));
         return PluginParseResult<ImportedPlugin>.Failure(ClaudeManifestPath, "Claude plugin manifest could not be imported.");
     }
 
@@ -162,7 +144,6 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
         // Use the native schema for identity validation, never a source/directory-derived name.
         var metadata = parser.ParseManifest(JsonSerializer.Serialize(new { name = expectedName }));
         var errors = new List<PluginValidationError>(metadata.Errors);
-        errors.AddRange(ValidateDiscoveredComponents(directory));
         var skills = Path.Combine(directory, "skills");
         var foundSkill = false;
         if (Directory.Exists(skills))
@@ -186,7 +167,7 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
         if (errors.Count > 0)
             return PluginParseResult<ImportedPlugin>.Failure(errors);
         if (metadata.Value is { } manifest)
-            return PluginParseResult<ImportedPlugin>.Success(new(manifest, PluginManifestFormat.Claude));
+            return PluginParseResult<ImportedPlugin>.Success(new(manifest, PluginManifestFormat.Claude, true, PluginComponentPolicy.Discover(directory)));
         return PluginParseResult<ImportedPlugin>.Failure("name", "Manifestless import requires an explicit valid plugin name.");
     }
 
@@ -195,18 +176,6 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
         var path = Path.Combine(directory, metadataDirectory);
         return Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path)
             .Any(entry => Path.GetFileName(entry).Equals(PluginManifestParser.ManifestFileName, StringComparison.OrdinalIgnoreCase));
-    }
-
-    internal static List<PluginValidationError> ValidateDiscoveredComponents(string directory)
-    {
-        var errors = new List<PluginValidationError>();
-        foreach (var relative in new[] { "hooks", "commands", "agents", "lsp", ".mcp.json", ".lsp.json", ".botnexus-plugin/mcp.json" })
-        {
-            var path = Path.Combine(directory, relative.Replace('/', Path.DirectorySeparatorChar));
-            if (Directory.Exists(path) || File.Exists(path))
-                errors.Add(new(relative, $"Claude skills-only import does not support discovered path '{relative}'."));
-        }
-        return errors;
     }
 
     internal static List<PluginValidationError> ValidateImportTree(string directory)
@@ -324,4 +293,5 @@ internal sealed class PluginImportAdapter(PluginManifestParser parser)
     }
 }
 
-internal sealed record ImportedPlugin(PluginManifest Manifest, PluginManifestFormat Format);
+internal sealed record ImportedPlugin(PluginManifest Manifest, PluginManifestFormat Format,
+    bool SkillsOnly = false, IReadOnlyList<string>? SkippedComponents = null);

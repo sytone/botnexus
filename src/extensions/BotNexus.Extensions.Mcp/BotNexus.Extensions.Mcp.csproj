@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <RootNamespace>BotNexus.Extensions.Mcp</RootNamespace>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
     <Description>MCP (Model Context Protocol) extension with stdio transport and tool bridging.</Description>
   </PropertyGroup>
 
@@ -10,6 +11,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\BotNexus.Extensions.Plugins\BotNexus.Extensions.Plugins.csproj" />
     <ProjectReference Include="..\..\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
     <ProjectReference Include="..\..\domain\BotNexus.Domain\BotNexus.Domain.csproj" />
     <ProjectReference Include="..\..\gateway\BotNexus.Gateway.Abstractions\BotNexus.Gateway.Abstractions.csproj" />
@@ -23,7 +25,10 @@
       <ExtensionArtifactDir>$(MSBuildThisFileDirectory)..\..\..\artifacts\extensions\botnexus-mcp\</ExtensionArtifactDir>
     </PropertyGroup>
     <MakeDir Directories="$(ExtensionArtifactDir)" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ExtensionArtifactDir)" SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <ExtensionOutputFile Include="$(TargetDir)**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ExtensionOutputFile)" DestinationFiles="@(ExtensionOutputFile->'$(ExtensionArtifactDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(MSBuildThisFileDirectory)botnexus-extension.json" DestinationFolder="$(ExtensionArtifactDir)" SkipUnchangedFiles="true" />
   </Target>
 

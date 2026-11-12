@@ -17,34 +17,40 @@ internal sealed class LegacyPluginImportAdapter(PluginManifestParser parser)
         "name", "description", "version", "author", "homepage", "repository", "license", "keywords",
     };
 
-    public PluginParseResult<ImportedPlugin> ParseDirectory(string directory)
+    public PluginParseResult<ImportedPlugin> ParseDirectory(string directory, bool marketplaceSelected = false)
     {
-        var errors = PluginImportAdapter.ValidateDiscoveredComponents(directory);
-        foreach (var relative in new[] { "mcp.json", "com.github.copilot", ".claude-plugin" })
-        {
-            var path = Path.Combine(directory, relative);
-            if (File.Exists(path) || Directory.Exists(path))
-                errors.Add(new(relative, $"Legacy skills-only import does not support discovered path '{relative}'."));
-        }
+        var errors = new List<PluginValidationError>();
+        var skipped = new HashSet<string>(PluginComponentPolicy.Discover(directory), StringComparer.Ordinal);
+        // Claude metadata remains a conflicting envelope, not an opaque component payload.
+        var claude = Path.Combine(directory, ".claude-plugin");
+        var catalogOnly = marketplaceSelected && Directory.Exists(claude)
+            && Directory.GetFileSystemEntries(claude) is { Length: 1 } entries
+            && Path.GetFileName(entries[0]) == "marketplace.json" && File.Exists(entries[0]);
+        if ((File.Exists(claude) || Directory.Exists(claude)) && !catalogOnly)
+            errors.Add(new(".claude-plugin", "Legacy import does not accept a second foreign metadata envelope."));
 
         var baseline = ReadObject(directory, PortablePath, errors);
-        var projected = baseline is null ? new JsonObject() : Project(baseline, PortablePath, false, errors);
+        var projected = baseline is null ? new JsonObject() : Project(baseline, PortablePath, false, errors, skipped);
         // Validate baseline independently: enhancement cannot repair an invalid portable identity/metadata.
         var portable = parser.ParseManifest(projected.ToJsonString());
         errors.AddRange(portable.Errors);
 
-        // A present nested metadata entry is authoritative even if it is a malformed directory/file.
-        // Never fall back from a selected, unreadable nested enhancement to the root enhancement.
-        var selected = Directory.EnumerateFileSystemEntries(directory).Any(path =>
-            Path.GetFileName(path) == PluginManifestParser.PluginMetadataDirectoryName)
-                ? NestedEnhancement
-                : Directory.EnumerateFileSystemEntries(directory).Any(path => Path.GetFileName(path) == RootEnhancement)
-                    ? RootEnhancement : null;
+        // Component-only metadata is not an enhancement manifest. A present manifest entry,
+        // including a directory/alias, remains authoritative and cannot fall back to the root.
+        var nestedDirectory = Path.Combine(directory, PluginManifestParser.PluginMetadataDirectoryName);
+        if (File.Exists(nestedDirectory))
+            errors.Add(new(PluginManifestParser.PluginMetadataDirectoryName, "Plugin metadata must be a directory."));
+        var hasNestedManifest = Directory.Exists(nestedDirectory)
+            && Directory.EnumerateFileSystemEntries(nestedDirectory).Any(path =>
+                Path.GetFileName(path).Equals(PluginManifestParser.ManifestFileName, StringComparison.OrdinalIgnoreCase));
+        var selected = hasNestedManifest ? NestedEnhancement
+            : Directory.EnumerateFileSystemEntries(directory).Any(path => Path.GetFileName(path) == RootEnhancement)
+                ? RootEnhancement : null;
         if (selected is not null)
         {
             var enhancement = ReadObject(directory, selected, errors);
             if (enhancement is not null)
-                Merge(projected, Project(enhancement, selected, true, errors), "", selected, errors);
+                Merge(projected, Project(enhancement, selected, true, errors, skipped), "", selected, errors);
         }
 
         var merged = parser.ParseManifest(projected.ToJsonString());
@@ -52,7 +58,7 @@ internal sealed class LegacyPluginImportAdapter(PluginManifestParser parser)
         if (errors.Count > 0)
             return PluginParseResult<ImportedPlugin>.Failure(errors);
         return merged.Value is { } manifest
-            ? PluginParseResult<ImportedPlugin>.Success(new(manifest, PluginManifestFormat.Legacy))
+            ? PluginParseResult<ImportedPlugin>.Success(new(manifest, PluginManifestFormat.Legacy, true, PluginComponentPolicy.Normalize(skipped)))
             : PluginParseResult<ImportedPlugin>.Failure(PortablePath, "Legacy manifest could not be imported.");
     }
 
@@ -81,7 +87,7 @@ internal sealed class LegacyPluginImportAdapter(PluginManifestParser parser)
         return null;
     }
 
-    private static JsonObject Project(JsonObject source, string path, bool enhancement, List<PluginValidationError> errors)
+    private static JsonObject Project(JsonObject source, string path, bool enhancement, List<PluginValidationError> errors, HashSet<string> skipped)
     {
         var result = new JsonObject();
         foreach (var (field, value) in source)
@@ -100,6 +106,8 @@ internal sealed class LegacyPluginImportAdapter(PluginManifestParser parser)
                 if (value is not JsonValue display || !display.TryGetValue<string>(out _))
                     errors.Add(new(field, $"'{path}' displayName must be a string."));
             }
+            else if (PluginComponentPolicy.CategoryForField(field) is { } category)
+                skipped.Add(category);
             else if (field is "$schema" or "schemaVersion")
                 errors.Add(new(field, $"'{path}' opts into a schema dialect unsupported by legacy skills-only import."));
             else

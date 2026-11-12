@@ -1,4 +1,5 @@
 using BotNexus.Extensions.Mcp.Plugins;
+using BotNexus.Extensions.Plugins.Lifecycle;
 
 namespace BotNexus.Extensions.Mcp.Tests.Plugins;
 
@@ -43,6 +44,9 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
         var file = Path.Combine(dir, relativePath.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         File.WriteAllText(file, declarationJson);
+        var store = new PluginStateStore(_root);
+        store.Upsert(new InstalledPlugin { Name = name, Source = "https://example.invalid/native.git",
+            ResolvedVersion = "v1", InstalledAtUtc = DateTimeOffset.UtcNow });
         return dir;
     }
 
@@ -50,13 +54,29 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
         { "mcpServers": { "github": { "command": "node", "args": ["github.js"] } } }
         """;
 
+    [Theory]
+    [InlineData("Claude", null)]
+    [InlineData("Legacy", null)]
+    [InlineData("Native", true)]
+    public async Task SkillsOnlyInstalledRecord_NeverStartsPreservedServers(string format, bool? skillsOnly)
+    {
+        var host = new RecordingMcpServerHost();
+        var directory = CreatePlugin("foreign", GithubServer);
+        var policy = skillsOnly is true ? ",\"skillsOnly\":true" : "";
+        File.WriteAllText(Path.Combine(_root, "installed-plugins.json"), $$"""[{"name":"foreign","source":"https://example.invalid/repo.git","resolvedVersion":"v1","manifestFormat":"{{format}}","installedAtUtc":"2026-01-01T00:00:00Z"{{policy}}}]""");
+        var result = await new PluginMcpServerRegistrar(host, installedStore: new PluginStateStore(_root)).RegisterAsync("foreign", directory);
+        result.Registered.ShouldBeFalse();
+        result.SkippedReason.ShouldNotBeNull().ShouldContain("skills-only");
+        host.Started.ShouldBeEmpty();
+    }
+
     // ---- AC1: declared servers are registered with the existing manager ----
 
     [Fact]
     public async Task AC1_DeclaredServers_AreRegisteredWithTheServerManager()
     {
         var host = new RecordingMcpServerHost();
-        var registrar = new PluginMcpServerRegistrar(host);
+        var registrar = new PluginMcpServerRegistrar(host, installedStore: new PluginStateStore(_root));
         var dir = CreatePlugin("alpha", GithubServer);
 
         var result = await registrar.RegisterAsync("alpha", dir);
@@ -70,7 +90,7 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
     public async Task AC1_ServerConfiguration_IsPassedThroughUnchanged()
     {
         var host = new CapturingHost();
-        var registrar = new PluginMcpServerRegistrar(host);
+        var registrar = new PluginMcpServerRegistrar(host, installedStore: new PluginStateStore(_root));
         var dir = CreatePlugin("alpha", """
             { "mcpServers": { "github": { "command": "node", "args": ["github.js"], "initTimeoutMs": 1234 } } }
             """);
@@ -87,9 +107,10 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
     public async Task AC1_PluginWithNoDeclaration_RegistersNothingAndIsNotAnError()
     {
         var host = new RecordingMcpServerHost();
-        var registrar = new PluginMcpServerRegistrar(host);
+        var registrar = new PluginMcpServerRegistrar(host, installedStore: new PluginStateStore(_root));
         var dir = Path.Combine(_root, "bare");
         Directory.CreateDirectory(dir);
+        new PluginStateStore(_root).Upsert(new InstalledPlugin { Name = "bare", Source = "https://example.invalid/native.git", ResolvedVersion = "v1", InstalledAtUtc = DateTimeOffset.UtcNow });
 
         var result = await registrar.RegisterAsync("bare", dir);
 
@@ -102,7 +123,7 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
     public async Task AC1_ExplicitManifestPath_IsHonouredOverConvention()
     {
         var host = new RecordingMcpServerHost();
-        var registrar = new PluginMcpServerRegistrar(host);
+        var registrar = new PluginMcpServerRegistrar(host, installedStore: new PluginStateStore(_root));
         var dir = CreatePlugin("alpha", GithubServer, "config/servers.json");
 
         var result = await registrar.RegisterAsync("alpha", dir, declaredPath: "config/servers.json");
@@ -114,7 +135,7 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
     public async Task AC1_ManifestPathEscapingThePluginDirectory_IsRefused()
     {
         var host = new RecordingMcpServerHost();
-        var registrar = new PluginMcpServerRegistrar(host);
+        var registrar = new PluginMcpServerRegistrar(host, installedStore: new PluginStateStore(_root));
         var dir = CreatePlugin("alpha", GithubServer);
 
         var result = await registrar.RegisterAsync("alpha", dir, declaredPath: "../../etc/servers.json");
@@ -129,7 +150,7 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
     public async Task AC2_TwoPluginsDeclaringTheSameServerName_BothResolve()
     {
         var host = new RecordingMcpServerHost();
-        var registrar = new PluginMcpServerRegistrar(host);
+        var registrar = new PluginMcpServerRegistrar(host, installedStore: new PluginStateStore(_root));
         var alpha = CreatePlugin("alpha", GithubServer);
         var beta = CreatePlugin("beta", GithubServer);
 
@@ -170,7 +191,7 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
     public async Task AC3_Unregister_StopsOnlyTheRemovedPluginsServers()
     {
         var host = new RecordingMcpServerHost();
-        var registrar = new PluginMcpServerRegistrar(host);
+        var registrar = new PluginMcpServerRegistrar(host, installedStore: new PluginStateStore(_root));
         await registrar.RegisterAsync("alpha", CreatePlugin("alpha", GithubServer));
         await registrar.RegisterAsync("beta", CreatePlugin("beta", GithubServer));
 
@@ -189,7 +210,7 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
     public async Task AC3_UnregisteringAnUnknownPlugin_StopsNothing()
     {
         var host = new RecordingMcpServerHost();
-        var registrar = new PluginMcpServerRegistrar(host);
+        var registrar = new PluginMcpServerRegistrar(host, installedStore: new PluginStateStore(_root));
         await registrar.RegisterAsync("alpha", CreatePlugin("alpha", GithubServer));
 
         var removed = await registrar.UnregisterAsync("never-installed");
@@ -206,7 +227,7 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
     {
         var host = new RecordingMcpServerHost();
         var trust = new StubPluginTrustEvaluator(PluginTrustMode.Enforce, trusted: false);
-        var registrar = new PluginMcpServerRegistrar(host, trust);
+        var registrar = new PluginMcpServerRegistrar(host, trust, installedStore: new PluginStateStore(_root));
 
         var result = await registrar.RegisterAsync("alpha", CreatePlugin("alpha", GithubServer));
 
@@ -225,7 +246,7 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
     {
         var host = new RecordingMcpServerHost();
         var trust = new StubPluginTrustEvaluator(PluginTrustMode.Warn, trusted: false);
-        var registrar = new PluginMcpServerRegistrar(host, trust);
+        var registrar = new PluginMcpServerRegistrar(host, trust, installedStore: new PluginStateStore(_root));
 
         var result = await registrar.RegisterAsync("alpha", CreatePlugin("alpha", GithubServer));
 
@@ -238,7 +259,7 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
     {
         var host = new RecordingMcpServerHost();
         var trust = new StubPluginTrustEvaluator(PluginTrustMode.Enforce, trusted: true);
-        var registrar = new PluginMcpServerRegistrar(host, trust);
+        var registrar = new PluginMcpServerRegistrar(host, trust, installedStore: new PluginStateStore(_root));
 
         var result = await registrar.RegisterAsync("alpha", CreatePlugin("alpha", GithubServer));
 
@@ -254,7 +275,7 @@ public sealed class PluginMcpServerRegistrarTests : IDisposable
         // Enforce, proving the trust gate sits in front of the read rather than beside it.
         var host = new RecordingMcpServerHost();
         var trust = new StubPluginTrustEvaluator(PluginTrustMode.Enforce, trusted: false);
-        var registrar = new PluginMcpServerRegistrar(host, trust);
+        var registrar = new PluginMcpServerRegistrar(host, trust, installedStore: new PluginStateStore(_root));
         var dir = CreatePlugin("alpha", "{ this is not json ");
 
         var result = await registrar.RegisterAsync("alpha", dir);
