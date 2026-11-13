@@ -23,7 +23,7 @@ public sealed class MatrixAccessTokenReferenceTests : IDisposable
     public void Initialize_OwnerOnlyFile_ResolvesTokenWithoutChangingConfiguration(string prefix, string newline)
     {
         var path = WriteSecret(Token + newline);
-        var reference = prefix + path;
+        var reference = "[[" + prefix + path + "]]";
         var (adapter, factory, config, logger) = CreateAdapter(reference);
 
         adapter.GetAccountCount().ShouldBe(1);
@@ -42,21 +42,22 @@ public sealed class MatrixAccessTokenReferenceTests : IDisposable
 
     [Fact]
     public void Initialize_MissingFile_SkipsAccountWithoutPassingReferenceToFactory() =>
-        AssertRejected("file:" + Path.Combine(_directory, "missing"));
+        AssertRejected("[[file:" + Path.Combine(_directory, "missing") + "]]");
 
     [Theory]
-    [InlineData("file:")]
-    [InlineData("file:relative-token")]
-    [InlineData("file:~another-user/token")]
+    [InlineData("[[file:]]")]
+    [InlineData("[[file:relative-token]]")]
+    [InlineData("[[file:~another-user/token]]")]
     public void Initialize_InvalidReference_NeverTreatsItAsLiteral(string reference) => AssertRejected(reference);
 
     [Theory]
     [InlineData("")]
     [InlineData("\r\n")]
     [InlineData("   \n")]
-    [InlineData("file:/unresolved/nested-reference")]
+    [InlineData("[[file:/unresolved/nested-reference]]")]
+    [InlineData("token-prefix\ntoken-suffix")]
     public void Initialize_InvalidFileContent_SkipsAccountWithoutLeakingContent(string content) =>
-        AssertRejected("file:" + WriteSecret(content), content);
+        AssertRejected("[[file:" + WriteSecret(content) + "]]", content);
 
     [Fact]
     public void Initialize_OverPermissiveFile_SkipsAccountWithoutLeakingToken()
@@ -76,7 +77,7 @@ public sealed class MatrixAccessTokenReferenceTests : IDisposable
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
         }
 
-        AssertRejected("file:" + path, Token);
+        AssertRejected("[[file:" + path + "]]", Token);
     }
 
     [Theory]
@@ -122,7 +123,7 @@ public sealed class MatrixAccessTokenReferenceTests : IDisposable
         {
             File.WriteAllText(path, Token + "\n");
             SecureFilePermissions.RestrictToOwner(path).ShouldBe(FilePermissionOutcome.Applied);
-            var (adapter, factory, _, _) = CreateAdapter("file:~/" + Path.GetFileName(path));
+            var (adapter, factory, _, _) = CreateAdapter("[[file:~/" + Path.GetFileName(path) + "]]");
             adapter.GetAccountCount().ShouldBe(1);
             factory.Credentials["bot"].AccessToken.Reveal().ShouldBe(Token);
         }

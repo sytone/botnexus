@@ -7,6 +7,7 @@ using BotNexus.Gateway.Abstractions.Events;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Channels;
 using BotNexus.Gateway.Channels.Startup;
+using BotNexus.Gateway.Configuration;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -51,7 +52,7 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
     private readonly LateBoundChannelOptions<MatrixChannelOptions> _optionsHolder;
     private readonly IMatrixClientFactory _clientFactory;
     private readonly IMatrixSyncCursorStore? _cursorStore;
-    private readonly MatrixAccessTokenResolver _tokenResolver;
+    private readonly IConfigurationValueReader _configurationValueReader;
 
     // Read at point of use so a runtime config.json edit is reflected without a gateway restart
     // (#2010), matching every other channel extension.
@@ -73,14 +74,16 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
     /// Durable home for each account's <c>/sync</c> cursor (#3595). Optional: a host that registers
     /// none keeps the pre-#3595 in-memory-only behaviour rather than failing activation.
     /// </param>
-    /// <param name="fileSystem">Optional filesystem seam for resolving file-backed access tokens.</param>
+    /// <param name="fileSystem">Optional filesystem seam for the default configuration-reference reader.</param>
+    /// <param name="configurationValueReader">Shared configuration reference expander.</param>
     public MatrixChannelAdapter(
         ILogger<MatrixChannelAdapter> logger,
         IOptions<MatrixChannelOptions> optionsAccessor,
         IMatrixClientFactory clientFactory,
         IConfiguration? configuration = null,
         IMatrixSyncCursorStore? cursorStore = null,
-        IFileSystem? fileSystem = null)
+        IFileSystem? fileSystem = null,
+        IConfigurationValueReader? configurationValueReader = null)
         : base(logger)
     {
         ArgumentNullException.ThrowIfNull(optionsAccessor);
@@ -89,7 +92,11 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
         _logger = logger;
         _clientFactory = clientFactory;
         _cursorStore = cursorStore;
-        _tokenResolver = new MatrixAccessTokenResolver(fileSystem ?? new FileSystem());
+        var filesystem = fileSystem ?? new FileSystem();
+        _configurationValueReader = configurationValueReader ?? new ConfigurationValueReader([
+            new FileConfigurationReferenceResolver(filesystem),
+            new EnvironmentConfigurationReferenceResolver(),
+        ]);
         _optionsHolder = new LateBoundChannelOptions<MatrixChannelOptions>(
             () => ResolveOptions(optionsAccessor, configuration),
             configuration);
@@ -918,12 +925,21 @@ public sealed class MatrixChannelAdapter : ChannelAdapterBase, IStreamEventChann
 
             // Wrap before any branching so the credential exists only as a redacting value type from
             // here on. A `default` token means "absent", which is what the completeness check reads.
-            if (!_tokenResolver.TryResolve(config.AccessToken, out var accessToken, out var tokenError)
-                && tokenError is not null)
+            var expandedToken = _configurationValueReader
+                .ExpandValueAsync(config.AccessToken)
+                .GetAwaiter()
+                .GetResult();
+            if (expandedToken is null
+                || expandedToken.Contains(IConfigurationValueReader.InvalidSchemaIdentifier, StringComparison.Ordinal)
+                || expandedToken.Contains("[[", StringComparison.Ordinal)
+                || expandedToken.Contains("]]", StringComparison.Ordinal)
+                || expandedToken.Contains('\r')
+                || expandedToken.Contains('\n')
+                || !MatrixAccessToken.TryCreate(expandedToken, out var accessToken))
             {
                 _logger.LogWarning(
                     "{DisplayName} account '{AccountName}' access token resolution failed: {Reason}; account was skipped",
-                    DisplayName, accountName, tokenError);
+                    DisplayName, accountName, "one or more configuration references could not be resolved");
                 continue;
             }
 

@@ -1,62 +1,72 @@
 using System.Text;
-using BotNexus.Domain.Security;
 using Microsoft.Extensions.Configuration;
 
 namespace BotNexus.Gateway.Configuration;
 
-/// <summary>
-/// Resolves secret templates only when a caller explicitly requests an expanded configuration value.
-/// </summary>
+/// <summary>Reads configuration values either unchanged or with reference tokens expanded.</summary>
 public interface IConfigurationValueReader
 {
-    /// <summary>Reads the configured value unchanged, including any secret-reference templates.</summary>
+    /// <summary>Reads the configured value unchanged, including any reference tokens.</summary>
     string? GetRawValue(IConfiguration configuration, string key);
 
-    /// <summary>
-    /// Reads a value and replaces each <c>[[scheme:identifier]]</c> template with its resolved value.
-    /// Unavailable or malformed references are replaced with <see cref="InvalidSchemaIdentifier"/>.
-    /// </summary>
+    /// <summary>Reads a configured value and expands its <c>[[scheme:identifier]]</c> tokens.</summary>
     Task<string?> GetExpandedValueAsync(
         IConfiguration configuration,
         string key,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Marker returned in place of malformed or unresolved secret references.</summary>
+    /// <summary>Expands reference tokens in a value that has already been read or bound.</summary>
+    Task<string?> ExpandValueAsync(string? value, CancellationToken cancellationToken = default);
+
+    /// <summary>Marker substituted for malformed or unavailable reference tokens.</summary>
     public const string InvalidSchemaIdentifier = "INVALID_SCHEMA_IDENTIFIER";
 }
 
-/// <summary>Resolves one parsed reference for an opted-in configuration read.</summary>
-public interface IConfigurationSecretReferenceResolver
+/// <summary>Resolves one configuration reference scheme, such as <c>file</c> or <c>env</c>.</summary>
+public interface IConfigurationReferenceResolver
 {
-    /// <summary>
-    /// Resolves a parsed reference, or returns <see langword="null"/> when its value is unavailable.
-    /// </summary>
-    Task<string?> ResolveAsync(SecretRef reference, CancellationToken cancellationToken = default);
+    /// <summary>The scheme this resolver handles, without the trailing colon.</summary>
+    string Scheme { get; }
+
+    /// <summary>Returns the referenced value, or <see langword="null"/> when it is unavailable.</summary>
+    Task<string?> ResolveAsync(string identifier, CancellationToken cancellationToken = default);
 }
 
 /// <inheritdoc />
-public sealed class ConfigurationValueReader(IConfigurationSecretReferenceResolver secretResolver)
-    : IConfigurationValueReader
+public sealed class ConfigurationValueReader : IConfigurationValueReader
 {
     private const string ReferenceStart = "[[";
     private const string ReferenceEnd = "]]";
+    private readonly IReadOnlyDictionary<string, IConfigurationReferenceResolver> _resolvers;
+
+    /// <summary>Creates a reader with the registered scheme resolvers.</summary>
+    public ConfigurationValueReader(IEnumerable<IConfigurationReferenceResolver> resolvers)
+    {
+        ArgumentNullException.ThrowIfNull(resolvers);
+        _resolvers = resolvers.ToDictionary(resolver => resolver.Scheme, StringComparer.OrdinalIgnoreCase);
+    }
 
     /// <inheritdoc />
     public string? GetRawValue(IConfiguration configuration, string key)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
-
         return configuration[key];
     }
 
     /// <inheritdoc />
-    public async Task<string?> GetExpandedValueAsync(
+    public Task<string?> GetExpandedValueAsync(
         IConfiguration configuration,
         string key,
         CancellationToken cancellationToken = default)
     {
         var value = GetRawValue(configuration, key);
+        return ExpandValueAsync(value, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> ExpandValueAsync(string? value, CancellationToken cancellationToken = default)
+    {
         if (value is null || !value.Contains(ReferenceStart, StringComparison.Ordinal))
             return value;
 
@@ -65,7 +75,6 @@ public sealed class ConfigurationValueReader(IConfigurationSecretReferenceResolv
         while (position < value.Length)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
             var start = value.IndexOf(ReferenceStart, position, StringComparison.Ordinal);
             if (start < 0)
             {
@@ -81,16 +90,29 @@ public sealed class ConfigurationValueReader(IConfigurationSecretReferenceResolv
                 break;
             }
 
-            var referenceText = value.Substring(
-                start + ReferenceStart.Length,
-                end - start - ReferenceStart.Length);
-            if (!SecretRef.TryParse(referenceText, out var reference, out _))
+            var token = value.Substring(start + ReferenceStart.Length, end - start - ReferenceStart.Length);
+            var separator = token.IndexOf(':');
+            var scheme = separator > 0 ? token[..separator] : string.Empty;
+            var identifier = separator > 0 ? token[(separator + 1)..] : string.Empty;
+            if (!IsValidScheme(scheme) || identifier.Length == 0
+                || !_resolvers.TryGetValue(scheme, out var resolver))
             {
                 result.Append(IConfigurationValueReader.InvalidSchemaIdentifier);
             }
             else
             {
-                var resolved = await secretResolver.ResolveAsync(reference, cancellationToken).ConfigureAwait(false);
+                string? resolved;
+                try
+                {
+                    resolved = await resolver.ResolveAsync(identifier, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is ArgumentException or IOException
+                    or UnauthorizedAccessException or NotSupportedException or InvalidOperationException
+                    or System.Security.SecurityException)
+                {
+                    resolved = null;
+                }
+
                 result.Append(resolved ?? IConfigurationValueReader.InvalidSchemaIdentifier);
             }
 
@@ -99,4 +121,8 @@ public sealed class ConfigurationValueReader(IConfigurationSecretReferenceResolv
 
         return result.ToString();
     }
+
+    private static bool IsValidScheme(string scheme)
+        => scheme.Length > 0 && scheme.All(character =>
+            char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
 }

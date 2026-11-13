@@ -113,11 +113,12 @@ var expanded = await valueReader.GetExpandedValueAsync(
 ```
 
 Expanded strings use `[[scheme:identifier]]`, for example
-`https://[[env:MATRIX_HOST]]/[[file:~/.botnexus/secrets/path-fragment]]`. The existing secret
-providers resolve the schemes, and additional providers can be registered through
-`ISecretProvider`. Malformed or unavailable references become the literal
+`https://[[env:MATRIX_HOST]]/[[file:~/.botnexus/secrets/path-fragment]]`. The configuration reference
+resolvers are separate from credential-only `ISecretProvider`s: core `env` and owner-protected
+`file` resolvers are registered by default, and extensions can register additional
+`IConfigurationReferenceResolver` implementations. Malformed or unavailable references become the literal
 `INVALID_SCHEMA_IDENTIFIER`; the configuration load and reload are unaffected. Expansion is
-asynchronous because file, SQLite, and keyring providers may perform asynchronous I/O. It is
+asynchronous because reference resolvers may perform asynchronous I/O. It is
 opt-in, does not alter `IConfiguration`'s normal indexer or binding behavior, and must only be used
 where the caller can keep the resulting plaintext out of logs, APIs, and agent context.
 
