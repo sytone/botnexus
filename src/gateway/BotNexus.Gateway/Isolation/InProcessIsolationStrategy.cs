@@ -2193,7 +2193,7 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
             Type = AgentStreamEventType.Error,
             AgentRunId = ToDomainRunId(agentEvent.AgentRunId),
             ErrorMessage = string.IsNullOrWhiteSpace(end.Completion.Detail)
-                ? "The agent run failed but supplied no detail."
+                ? Streaming.StreamingSessionHelper.RunFailedWithoutDetail
                 : end.Completion.Detail,
             MessageId = messageId
         };

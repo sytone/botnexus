@@ -255,12 +255,7 @@ public static class StreamingSessionHelper
 
                     break;
                 case AgentStreamEventType.Error when options.IncludeErrorsInHistory && !string.IsNullOrWhiteSpace(evt.ErrorMessage):
-                    streamedHistory.Add(new SessionEntry
-                    {
-                        AgentRunId = agentRunId,
-                        Role = MessageRole.System,
-                        Content = $"Agent stream error: {evt.ErrorMessage}"
-                    });
+                    streamedHistory.Add(CreateErrorEntry(agentRunId, evt.ErrorMessage));
                     allHistoryEntries.Add(streamedHistory[^1]);
                     break;
                 case AgentStreamEventType.TurnEnd when streamedHistory.Count > 0 || streamedContent.Length > 0:
@@ -455,10 +450,7 @@ public static class StreamingSessionHelper
         // A failed terminal completion is recoverable work, not a clean lease release. Keep the
         // sentinel through the authoritative save so the live recovery subscriber (or startup scan
         // after a crash) has the same durable marker to accept-before-consume (#4406).
-        var terminalFailure = string.Equals(
-            runCompletion?.Status,
-            "Failed",
-            StringComparison.OrdinalIgnoreCase);
+        var terminalFailure = IsTerminalFailure(runCompletion);
         if (!terminalFailure)
             session.RemoveCrashSentinels();
 
@@ -532,6 +524,32 @@ public static class StreamingSessionHelper
             Add(aggregate?.OutputTokens, next.OutputTokens),
             Add(aggregate?.CacheRead, next.CacheRead),
             Add(aggregate?.CacheWrite, next.CacheWrite));
+    }
+
+    /// <summary>Error text for a failed run that carries no detail, on either execution branch.</summary>
+    internal const string RunFailedWithoutDetail = "The agent run failed but supplied no detail.";
+
+    /// <summary>
+    /// True when a settled run's completion says it failed. Shared with the blocking branch of
+    /// <see cref="GatewayHost"/> so both classify the same completion alike. A missing completion is not a failure.
+    /// </summary>
+    internal static bool IsTerminalFailure(RunCompletionSignal? completion)
+        => string.Equals(completion?.Status, "Failed", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The history row that records a run error, shared with the blocking branch so both record it in the same words.</summary>
+    internal static SessionEntry CreateErrorEntry(AgentRunId? agentRunId, string errorMessage)
+        => new() { AgentRunId = agentRunId, Role = MessageRole.System, Content = $"Agent stream error: {errorMessage}" };
+
+    /// <summary>
+    /// The error row for a failed blocking run, with the detail the stream boundary would emit for it:
+    /// the terminal turn's error, else the completion's detail, else <see cref="RunFailedWithoutDetail"/>.
+    /// </summary>
+    internal static SessionEntry CreateFailedRunEntry(AgentRunId? agentRunId, string? terminalError, RunCompletionSignal? completion)
+    {
+        if (!string.IsNullOrWhiteSpace(terminalError))
+            return CreateErrorEntry(agentRunId, terminalError);
+        return CreateErrorEntry(agentRunId,
+            completion?.Detail is { } detail && !string.IsNullOrWhiteSpace(detail) ? detail : RunFailedWithoutDetail);
     }
 
     /// <summary>
